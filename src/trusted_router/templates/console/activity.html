@@ -1,6 +1,6 @@
 {% extends "console/_layout.html" %}
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce() }}">
 (function () {
   "use strict";
 
@@ -441,6 +441,209 @@
   }
 })();
 </script>
+<script nonce="{{ csp_nonce() }}">
+(function () {
+  "use strict";
+
+  const ENDPOINT = "/console/activity/client-reliability.json";
+  const numberFormat = new Intl.NumberFormat("en-US");
+  let panel = null;
+  let content = null;
+  let empty = null;
+  let message = null;
+  let topErrors = null;
+  let recentFailures = null;
+  let requestId = 0;
+
+  function selectedRange() {
+    const input = panel.querySelector('input[name="client-range"]:checked');
+    return input ? input.value : "24h";
+  }
+
+  function formatPercent(value) {
+    return value === null || value === undefined ? "—" : `${Number(value).toFixed(2)}%`;
+  }
+
+  function formatMilliseconds(value) {
+    return value === null || value === undefined ? "—" : `${numberFormat.format(value)} ms`;
+  }
+
+  function formatTime(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value || "—") : date.toLocaleString();
+  }
+
+  function setMetric(name, value, sub) {
+    panel.querySelector(`[data-client-${name}]`).textContent = value;
+    panel.querySelector(`[data-client-${name}-sub]`).textContent = sub || "";
+  }
+
+  function cell(text, code) {
+    const node = document.createElement("td");
+    if (code) {
+      const child = document.createElement("code");
+      child.textContent = text;
+      node.appendChild(child);
+    } else {
+      node.textContent = text;
+    }
+    return node;
+  }
+
+  function emptyRow(columns, text) {
+    const row = document.createElement("tr");
+    const item = cell(text, false);
+    item.className = "empty";
+    item.colSpan = columns;
+    row.appendChild(item);
+    return row;
+  }
+
+  function renderTopErrors(rows) {
+    topErrors.replaceChildren();
+    if (rows.length === 0) {
+      topErrors.appendChild(emptyRow(3, "No sampled failures in this range."));
+      return;
+    }
+    rows.forEach((item) => {
+      const row = document.createElement("tr");
+      row.append(
+        cell(item.error_class || "unknown", true),
+        cell(item.http_status === null ? "—" : String(item.http_status), false),
+        cell(numberFormat.format(item.count || 0), false)
+      );
+      topErrors.appendChild(row);
+    });
+  }
+
+  function renderFailures(rows) {
+    recentFailures.replaceChildren();
+    if (rows.length === 0) {
+      recentFailures.appendChild(emptyRow(10, "No sampled failures in this range."));
+      return;
+    }
+    rows.forEach((item) => {
+      const requestIds = Array.isArray(item.attempt_request_id) ? item.attempt_request_id : [];
+      const hosts = Array.isArray(item.attempt_host) ? item.attempt_host : [];
+      const row = document.createElement("tr");
+      row.append(
+        cell(formatTime(item.created_at), false),
+        cell(item.endpoint || "—", true),
+        cell(item.model || "—", true),
+        cell(hosts.join("→") || "—", true),
+        cell(numberFormat.format(item.attempt_count || 0), false),
+        cell(item.final_outcome || "—", true),
+        cell(item.final_http_status === null ? "—" : String(item.final_http_status), false),
+        cell(item.first_error_class || "—", true),
+        cell(requestIds.at(-1) || "—", true),
+        cell([item.sdk, item.sdk_version].filter(Boolean).join(" ") || "—", true)
+      );
+      recentFailures.appendChild(row);
+    });
+  }
+
+  function render(data, meta) {
+    if (!data) {
+      content.hidden = true;
+      empty.hidden = true;
+      message.textContent = meta.reason === "unavailable"
+        ? "Client telemetry is unavailable on this cloud."
+        : "Client telemetry is unavailable right now.";
+      message.hidden = false;
+      return;
+    }
+    const summary = data.summary || {};
+    const failures = Array.isArray(data.recent_failures) ? data.recent_failures : [];
+    const requests = Number(summary.requests || 0);
+    if (requests === 0 && failures.length === 0) {
+      content.hidden = true;
+      empty.hidden = false;
+      message.hidden = true;
+      return;
+    }
+
+    empty.hidden = true;
+    content.hidden = false;
+    message.textContent = meta.truncated
+      ? `Showing a partial server-latency scan across ${numberFormat.format(meta.scanned || 0)} rows.`
+      : `Scanned ${numberFormat.format(meta.scanned || 0)} rows · freshness ${numberFormat.format(meta.freshness_seconds || 0)}s.`;
+    message.hidden = false;
+    setMetric("requests", numberFormat.format(requests), "logical SDK calls observed");
+    if (summary.availability_percent === null || summary.availability_percent === undefined) {
+      setMetric(
+        "availability",
+        "—",
+        `${numberFormat.format(summary.successes || 0)} successes · ${numberFormat.format(summary.tr_fault || 0)} faults; percentage after 100 requests`
+      );
+    } else {
+      setMetric(
+        "availability",
+        `${Number(summary.availability_percent).toFixed(4)}%`,
+        `${numberFormat.format(summary.successes || 0)} successes · ${numberFormat.format(summary.tr_fault || 0)} faults`
+      );
+    }
+    setMetric("retried", formatPercent(summary.retried_percent), "requests with retry overhead");
+    setMetric("failover", formatPercent(summary.failover_percent), "requests that advanced host path");
+    setMetric(
+      "total",
+      `${formatMilliseconds(summary.p50_total_ms)} / ${formatMilliseconds(summary.p95_total_ms)}`,
+      "client total p50 / p95"
+    );
+    setMetric("ttft", formatMilliseconds(summary.p50_ttft_ms), "client p50 time to first token");
+    setMetric("server", formatMilliseconds(data.server_p50_elapsed_ms), "server p50 elapsed for the same window");
+    renderTopErrors(Array.isArray(data.top_errors) ? data.top_errors : []);
+    renderFailures(failures);
+  }
+
+  async function loadClientReliability() {
+    const token = ++requestId;
+    message.textContent = "Loading client telemetry…";
+    message.hidden = false;
+    try {
+      const params = new URLSearchParams({ range: selectedRange() });
+      const response = await fetch(`${ENDPOINT}?${params.toString()}`, {
+        headers: { Accept: "application/json" }
+      });
+      if (!response.ok) {
+        throw new Error(`client reliability endpoint returned ${response.status}`);
+      }
+      const payload = await response.json();
+      if (token === requestId) {
+        render(payload.data, payload.meta || {});
+      }
+    } catch (error) {
+      if (token === requestId) {
+        content.hidden = true;
+        empty.hidden = true;
+        message.textContent = "Couldn't load client telemetry right now.";
+        message.hidden = false;
+      }
+    }
+  }
+
+  function initClientReliabilityPanel() {
+    panel = document.querySelector("[data-client-panel]");
+    if (!panel) {
+      return;
+    }
+    content = panel.querySelector("[data-client-content]");
+    empty = panel.querySelector("[data-client-empty]");
+    message = panel.querySelector("[data-client-message]");
+    topErrors = panel.querySelector("[data-client-top-errors]");
+    recentFailures = panel.querySelector("[data-client-recent-failures]");
+    panel.querySelectorAll('input[name="client-range"]').forEach((input) => {
+      input.addEventListener("change", loadClientReliability);
+    });
+    loadClientReliability();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initClientReliabilityPanel);
+  } else {
+    initClientReliabilityPanel();
+  }
+})();
+</script>
 {% endblock %}
 {% block body %}
 <section class="panel usage-panel" data-usage-panel>
@@ -519,6 +722,56 @@
     <div class="empty usage-empty-state" data-usage-empty role="status" aria-live="polite" hidden>
       <p data-usage-empty-message>No activity yet. Make a request with your API key to see it here.</p>
       <button class="btn" type="button" data-usage-expand-range hidden></button>
+    </div>
+  </div>
+</section>
+
+<section class="panel usage-panel" data-client-panel>
+  <div class="panel-head usage-panel-head">
+    <div>
+      <h2>Client-observed reliability</h2>
+      <p class="panel-kicker">What your applications saw after SDK retries and failover.</p>
+    </div>
+    <span class="pill">from your SDKs · content-free</span>
+  </div>
+  <div class="panel-body">
+    <div class="usage-controls" aria-label="Client reliability range">
+      <fieldset class="usage-segmented-control">
+        <legend>Range</legend>
+        <label><input type="radio" name="client-range" value="1h"><span>1h</span></label>
+        <label><input type="radio" name="client-range" value="6h"><span>6h</span></label>
+        <label><input type="radio" name="client-range" value="24h" checked><span>24h</span></label>
+        <label><input type="radio" name="client-range" value="7d"><span>7d</span></label>
+      </fieldset>
+    </div>
+    <p class="usage-message" data-client-message role="status">Loading client telemetry…</p>
+    <div data-client-content hidden>
+      <div class="metrics">
+        <div class="metric"><div class="label">Requests observed</div><div class="value" data-client-requests>—</div><div class="sub" data-client-requests-sub></div></div>
+        <div class="metric"><div class="label">Client availability</div><div class="value" data-client-availability>—</div><div class="sub" data-client-availability-sub></div></div>
+        <div class="metric"><div class="label">Retried</div><div class="value" data-client-retried>—</div><div class="sub" data-client-retried-sub></div></div>
+        <div class="metric"><div class="label">Failover</div><div class="value" data-client-failover>—</div><div class="sub" data-client-failover-sub></div></div>
+        <div class="metric"><div class="label">Total latency</div><div class="value" data-client-total>—</div><div class="sub" data-client-total-sub></div></div>
+        <div class="metric"><div class="label">Time to first token</div><div class="value" data-client-ttft>—</div><div class="sub" data-client-ttft-sub></div></div>
+        <div class="metric"><div class="label">Server elapsed</div><div class="value" data-client-server>—</div><div class="sub" data-client-server-sub></div></div>
+      </div>
+      <h3 style="margin:24px 0 10px">Top errors</h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Error class</th><th>Status</th><th>Count</th></tr></thead>
+          <tbody data-client-top-errors></tbody>
+        </table>
+      </div>
+      <h3 style="margin:24px 0 10px">Recent failures</h3>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Time</th><th>Endpoint</th><th>Model</th><th>Host path</th><th>Attempts</th><th>Outcome</th><th>Status</th><th>Error class</th><th>Request id</th><th>SDK</th></tr></thead>
+          <tbody data-client-recent-failures></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="empty usage-empty-state" data-client-empty role="status" aria-live="polite" hidden>
+      <p>No client telemetry yet. TrustedRouter SDKs ≥ py 0.6.0 send content-free reliability beacons by default; opt out with <code>telemetry=False</code>, <code>TRUSTEDROUTER_TELEMETRY=0</code>, or <code>DO_NOT_TRACK=1</code>. <a href="/docs/telemetry">Read the telemetry contract.</a></p>
     </div>
   </div>
 </section>

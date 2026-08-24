@@ -1,29 +1,51 @@
 {% extends "public/_base.html" %}
 
+{% block hero %}
+<section class="public-hero marketing-hero developer-hero" aria-label="TrustedRouter for developers">
+  <div>
+    <div class="kicker">One API for every model</div>
+    <h1>Test hundreds of AI models without rewriting your app.</h1>
+    <p class="lead">Keep the OpenAI client you already use. Change one base URL, run the same prompt across open and frontier models, and compare the result on price, speed, privacy, and reliability.</p>
+    <div class="hero-actions">
+      <button class="btn primary" type="button" data-action="open-signin">Create my test key</button>
+      <a class="btn ghost" href="/models">Browse live models <span aria-hidden="true">→</span></a>
+    </div>
+    <p class="microcopy">No subscription. No card required. Text models cost the provider price plus 5.5%.</p>
+  </div>
+  <div class="public-hero-metrics" aria-label="TrustedRouter quick facts">
+    <div><strong>100s</strong><span>of model routes</span></div>
+    <div><strong>One</strong><span>OpenAI compatible client</span></div>
+    <div><strong>Zero</strong><span>prompt or output logs</span></div>
+  </div>
+</section>
+{% endblock %}
+
 {% block body %}
-<section class="public-proof-strip" aria-label="What to verify">
-  <div><strong>One request</strong><span>OpenAI SDK compatible.</span></div>
-  <div><strong>Live catalog</strong><span>Models, routes, and prices.</span></div>
-  <div><strong>Fresh evidence</strong><span>Challenge the gateway with your nonce.</span></div>
-  <div><strong>Public status</strong><span>Check the service before a test.</span></div>
+<section class="public-proof-strip" aria-label="Why developers use TrustedRouter">
+  <div><strong>Keep your client</strong><span>One base URL replaces separate integrations for every provider.</span></div>
+  <div><strong>Measure, do not guess</strong><span>Live prices, latency, throughput, and availability.</span></div>
+  <div><strong>Ship with fallback</strong><span>Healthy routes can roll over when a provider fails.</span></div>
+  <div><strong>Privacy with proof</strong><span>Open source gateway code, a measured image, and fresh attestation.</span></div>
 </section>
 
-<section class="marketing-split" aria-label="TrustedRouter quickstart">
+<section class="marketing-split" aria-label="Three model quickstart">
   <div class="marketing-copy">
-    <span class="eyebrow">60-second quickstart</span>
-    <h2>Change the base URL. Keep the client.</h2>
+    <span class="eyebrow">Your first useful test</span>
+    <h2>Run a three model bakeoff in 60 seconds.</h2>
+    <p>Do not choose a production model from a leaderboard alone. Send the same prompt from your application to three routes and inspect the answers yourself.</p>
     <ol class="plain-list">
       <li>Create an API key and export it as <code>TRUSTEDROUTER_API_KEY</code>.</li>
       <li>Install the OpenAI client: <code>pip install openai</code>.</li>
-      <li>Run the request at right. A successful response should contain <code>PONG</code>.</li>
+      <li>Run the script at right with a prompt from your real workload.</li>
     </ol>
     <div class="hero-actions">
-      <button class="btn primary" type="button" data-action="open-signin">Create key</button>
-      <a class="btn" href="/docs/migrate-from-openrouter">Migration guide <span aria-hidden="true">→</span></a>
+      <button class="btn primary" type="button" data-action="open-signin">Create my test key</button>
+      <a class="btn ghost" href="/docs/migrate-from-openrouter">Read the migration guide <span aria-hidden="true">→</span></a>
     </div>
+    <p class="microcopy">Start with aliases, then pin the exact model and provider combination that wins your eval.</p>
   </div>
   <div class="copy-terminal">
-    <div class="code-head"><span>Quickstart</span><span>Python</span></div>
+    <div class="code-head"><span>Three model bakeoff</span><span>Python</span></div>
     <pre><code>import os
 from openai import OpenAI
 
@@ -32,62 +54,83 @@ client = OpenAI(
     base_url="{{ api_base_url }}",
 )
 
-response = client.chat.completions.create(
-    model="trustedrouter/zdr",
-    messages=[{
-        "role": "user",
-        "content": "Reply with PONG only.",
-    }],
-    max_tokens=128,
-)
+prompt = "Write a retry helper with exponential backoff."
 
-print(response.choices[0].message.content)</code></pre>
+for model in (
+    "trustedrouter/fast",
+    "trustedrouter/cheap",
+    "trustedrouter/zdr",
+):
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=256,
+    )
+    print(f"\n--- {model} ---")
+    print(response.choices[0].message.content)</code></pre>
   </div>
 </section>
 
-<section class="marketing-grid three" aria-label="Developer test paths">
-  <a class="marketing-card card-as-link" href="/v1/models">
-    <span class="card-label">Catalog</span>
-    <h3>Inspect the live API.</h3>
-    <p>Use the deployed model list as the source of truth for model IDs, context, capabilities, and pricing.</p>
-    <span class="card-link">Open model JSON →</span>
+<div class="section-head">
+  <span class="eyebrow">Why change the base URL?</span>
+  <h2>Use competition between models instead of betting on one vendor.</h2>
+</div>
+
+<section class="marketing-grid three" aria-label="Developer benefits">
+  <a class="marketing-card card-as-link" href="/models">
+    <span class="card-label">Model choice</span>
+    <h3>Stop integrating providers one at a time.</h3>
+    <p>Use one request format across hundreds of open and frontier model routes. Compare context, capabilities, privacy, and current pricing before you call.</p>
+    <span class="card-link">Browse live models →</span>
   </a>
-  <a class="marketing-card card-as-link" href="https://trust.trustedrouter.com">
-    <span class="card-label">Attestation</span>
-    <h3>Verify before sending data.</h3>
-    <p>Generate fresh nonce-bound evidence and compare the running image with the published open-source release.</p>
-    <span class="card-link">Verify gateway →</span>
+  <a class="marketing-card card-as-link" href="/leaderboard">
+    <span class="card-label">Measured performance</span>
+    <h3>Stop choosing from marketing claims.</h3>
+    <p>Use routed samples to compare latency, throughput, availability, and cost. Then run a small eval on the task your users actually care about.</p>
+    <span class="card-link">Open the leaderboard →</span>
   </a>
   <a class="marketing-card card-as-link" href="https://status.trustedrouter.com">
-    <span class="card-label">Operations</span>
-    <h3>Check status and latency.</h3>
-    <p>See router-core health separately from provider response health and regional measurements.</p>
-    <span class="card-link">Open status →</span>
+    <span class="card-label">Production reliability</span>
+    <h3>Stop making one provider your single point of failure.</h3>
+    <p>Use ranked route candidates and provider fallback. Inspect router-core health separately from downstream model availability.</p>
+    <span class="card-link">Check live status →</span>
   </a>
 </section>
 
-<section class="marketing-split" aria-label="Test ideas">
+<section class="marketing-split" aria-label="Proof and evaluation">
   <div class="marketing-copy">
-    <span class="eyebrow">Test it honestly</span>
-    <h2>Four useful experiments.</h2>
+    <span class="eyebrow">A better model decision</span>
+    <h2>Evaluate on your work, not somebody else's average.</h2>
     <ul class="check-list">
-      <li>Change only <code>base_url</code> in an existing OpenAI integration.</li>
-      <li>Run the same three prompts across an open model, a frontier model, and <code>trustedrouter/cheap</code>.</li>
-      <li>Use an ordered <code>models</code> list and leave provider fallback enabled.</li>
-      <li>Challenge the live gateway with your own nonce before the request.</li>
+      <li>Start with three prompts that represent real success and failure.</li>
+      <li>Compare <code>trustedrouter/fast</code>, <code>trustedrouter/cheap</code>, and a model picked from the live catalog.</li>
+      <li>Measure answer quality, total cost, first-token latency, and failures.</li>
+      <li>Pin the winner, keep a fallback, and expand the eval only when it changes a decision.</li>
     </ul>
+    <a class="btn ghost" href="/docs/evals">Run a focused eval <span aria-hidden="true">→</span></a>
   </div>
   <div class="marketing-copy">
-    <span class="eyebrow">State the boundary</span>
-    <h2>What the proof does not claim.</h2>
-    <p>TrustedRouter attestation verifies the hosted gateway workload. It does not prove that the source has no bugs, and it does not make every downstream provider end-to-end encrypted.</p>
-    <p>{{ content_handling_claim }} Provider retention, training, jurisdiction, and confidential-compute posture remain provider specific.</p>
+    <span class="eyebrow">Privacy with proof</span>
+    <h2>Verify the router. Choose the provider boundary.</h2>
+    <p>TrustedRouter publishes its gateway source, measured workload image, and fresh attestation bound to your nonce. You can verify what runs before sending a prompt.</p>
+    <p>{{ content_handling_claim }} Downstream retention, training, jurisdiction, and confidential-compute posture remain provider specific, so each route publishes those facts instead of flattening them into one vague promise.</p>
     <div class="sdk-links">
+      <a class="pill" href="https://trust.trustedrouter.com">Verify gateway</a>
       <a class="pill" href="/providers">Provider posture</a>
       <a class="pill" href="/models">Model routes</a>
-      <a class="pill" href="/leaderboard">Measured performance</a>
       <a class="pill" href="https://github.com/Lore-Hex/quill-router">Source</a>
     </div>
+  </div>
+</section>
+
+<section class="cta-band developer-final-cta" aria-label="Create a TrustedRouter test key">
+  <div>
+    <strong>Run one prompt through three routes.</strong>
+    <span>No migration project. Keep your client and compare models on your own task.</span>
+  </div>
+  <div class="cta-band-actions">
+    <button class="btn primary" type="button" data-action="open-signin">Create my test key</button>
+    <span class="microcopy">No subscription. Delete the key whenever you want.</span>
   </div>
 </section>
 {% endblock %}

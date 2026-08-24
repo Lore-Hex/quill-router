@@ -40,7 +40,7 @@ operational wide-column store and was never a columnar warehouse.
 | AWS deployment | **Serving and attesting** — Nitro enclave + Fargate control plane |
 | Azure deployment | **Serving and attesting** — SEV-SNP/MAA enclave + Container App control plane |
 | Per-cloud *control-plane* independence — AWS | **LIVE 2026-08-06.** All 4 enclaves rolled to `aws-release-20260806-ownplane`, PCR0 `aef48a4539…`, dialling `aws.trustedrouter.com` first with the canonical plane as a dial-failure fallback. Status `up`, single measurement, 0 errors (§4.5) |
-| Per-cloud *control-plane* independence — Azure | **LIVE 2026-08-06** (uaenorth). Enclave rebuilt from main, `TR_CONTROL_PLANE_BASE_URL=azure.trustedrouter.com/v1,trustedrouter.com/v1`, HOST_DATA `1936719d7398e9ad…`, attestation verified. Second region (southeastasia) pending (§4.5b) |
+| Per-cloud *control-plane* independence — Azure | **LIVE 2026-08-06** (uaenorth). Enclave rebuilt from main, `TR_CONTROL_PLANE_BASE_URL=azure.trustedrouter.com/v1,trustedrouter.com/v1`, HOST_DATA `1936719d7398e9ad…`, attestation verified. Second region (australiaeast) pending (§4.5b) |
 | Postgres can serve `authorize` | **Fixed**, router#452 — 11 gateway-reachable methods used to raise (§4.6) |
 
 ### The single most useful result
@@ -321,10 +321,10 @@ python3 tools/verify-attestation.py --api-host api-azure.trustedrouter.com \
   --expected-maa-issuer https://trquilluaen.uaen.attest.azure.net --expected-hostdata "$HD"
 ```
 
-**Second region.** Confidential ACI validates in **southeastasia**, northeurope,
+**Second region.** Confidential ACI validates in **australiaeast**, northeurope,
 eastus2, switzerlandnorth and swedencentral; **westeurope is blocked by policy**
-on this subscription. southeastasia is the chosen second region — with the
-gateway in UAE North and GCP/AWS in US/EU, Singapore adds real geographic spread
+on this subscription. australiaeast is the chosen second region — with the
+gateway in UAE North and GCP/AWS in US/EU, Sydney adds real geographic spread
 rather than a second European site. Confirm a region with an ARM
 `deployment group validate` of the real template (rename the resource, drop
 `outputs`) rather than trusting a docs list.
@@ -397,6 +397,159 @@ Two things to check before trusting any green:
   noisy small samples instead of one good one.
 
 So AWS and Azure simply never schedule the throughput commands. No cross-cloud pipe.
+
+### 4.8 Azure region two (australiaeast) — BLOCKED on four IAM grants
+
+Everything except the grants is done and merged-or-in-review.
+
+**Provisioned and Ready** (verified 2026-08-21): resource group `tr-tee-sydney`
+(australiaeast), MAA instance `trquillsyd` → `https://trquillsyd.eau.attest.azure.net`,
+managed identity `tr-skr-identity` (principal `f8879ad4-734b-4091-85f7-3d7e3e169016`,
+client `24bea69e-9f18-4f6e-9c1e-fd1206fbcace`). Confidential ACI was proved in this
+region by provisioning a real SEV-SNP group with a genuine CCE policy, not by reading
+a docs list — the capabilities API reports nothing about the Confidential SKU.
+
+**The block.** The identity has *no role assignments*. `az role assignment create` is refused
+by this session's permission classifier — correctly, it is an IAM grant against the vault that
+holds every provider key — so a human applies them. They are now declared in
+quill-cloud-proxy `tools/azure-enclave/` (terraform): `bash import.sh` adopts what exists,
+then `terraform apply` creates exactly the four. Until then the deploy dies at its
+prerequisite check, which is the intended behaviour.
+
+Sydney is deliberately **not** granted `Key Vault Crypto Officer`, which uaenorth's identity
+holds: that role lets a workload rewrite the release policy constraining it, so the TEE
+becomes self-authorizing. `bind`/`narrow` run under the operator's credential instead.
+
+**Shared vs regional.** Vault `trquillkv`, wrapping key `tr-bootstrap-wrap` and registry
+`trquillacr` are **shared** across regions; the resource group, MAA instance, identity and
+container group are **regional**. The honest cost: the vault lives in UAE North, so a UAE
+North vault outage blocks a **cold start** in every region. It does not touch a running
+enclave, which holds its unsealed secrets in memory. The alternative — per-region keys —
+means per-region bundle re-sealing, and a bundle that drifts between regions is a provider
+that 401s *in one region only*. Wrong trade.
+
+**Region availability**, confirmed against ARM `deployment group validate` rather than docs:
+confidential ACI is supported in australiaeast, northeurope, eastus2, switzerlandnorth and
+swedencentral on this subscription. **westeurope is blocked by policy.**
+
+**What region two exposed in one-region code** (qcp #120):
+
+* `bound_hostdata` read hostdata from *every* authority's clause. The key is shared, so at two
+  regions `bind` computes its baseline from the other region's measurement.
+* Nothing ever reported an **open bind window**. `bind` widens the pin to {old, new} and
+  `narrow` closes it; a deploy that dies at `verify` leaves it open *by design*, so rollback
+  stays possible — and then nobody runs `narrow`. **UAE North was in this state**, from a
+  deploy that failed at verify weeks earlier. A retired measurement kept the right to unseal
+  every current provider credential. The new `audit` phase found it on its first run against
+  production; `narrow-live` closed it.
+* `narrow` can only narrow to what the *local workspace* built — useless for the case that
+  actually leaves windows open (a deploy that failed weeks ago into a temp directory since
+  deleted). Hence `narrow-live`, which narrows to what is running *after proving it attests*.
+
+### 4.9 Azure and four nines — where it actually stands
+
+**Azure is not at four nines, and the gap is structural, not a matter of waiting for samples.**
+Four nines is 52 minutes a year *total*. Here is each term, honestly.
+
+| | status |
+|---|---|
+| two regions, each attesting to its own MAA | **done** — uaenorth + australiaeast |
+| auto-recovery from a container fault | **done** — `restartPolicy: OnFailure` |
+| automatic failover *between* the two regions | **MISSING** — this is the blocker |
+| auto-recovery from group-level loss | **MISSING** |
+| shared-fate on Let's Encrypt (#56) | **MISSING** — caps availability regardless of region count |
+| enough samples to *demonstrate* a number | **no** — needs ~a week at 1/min |
+
+**`restartPolicy: Never` was the single largest term** and is now fixed. Anything that exited
+the process once — a panic, an OOM, a transient upstream stall — left the group in `Succeeded`
+forever, serving nothing, until a human noticed. One such event spends the entire annual
+budget before anyone has read the page.
+
+**Why two regions do not currently compose.** Each has its own hostname
+(`api-azure` / `api-azure-syd`), so a client pointed at one gets nothing when that region dies.
+Two regions with no failover is two independent single points of failure, not redundancy.
+
+**The mechanism to fix it already exists** and is how GCP runs many enclaves behind one name:
+`enclavetls.NewACME` takes a shared `autocert.Cache`, and `NewGCSCache`
+(`QUILL_ACME_CACHE_GCS_BUCKET`, bucket `gs://quill-acme-cache`) lets every replica answer the
+same TLS-ALPN-01 challenge and serve the same cert — which is what makes a multi-IP A record
+work at all. Its HTTP transport is behind `!cloud_aws`, so **it already ships in Azure
+builds**. The increment is:
+
+1. give both Azure regions GCS access — this is the first real use for the cross-cloud
+   identity federation described in §"Keyless cross-cloud identity (provisioned, currently
+   unused)"
+2. set `QUILL_API_HOST` in both regions to include a shared name as well as the per-region one
+3. publish an A record set over both regional IPs, with membership gated on attestation
+   (extend `tools/reconcile-enclave-dns.py`, which today only enumerates a GCP fleet)
+
+DNS is L4, so this does not terminate TLS and attestation stays intact. **Do not reach for
+Front Door or any L7 product here** — it would void attestation.
+
+**Do not claim a nines number from the probe data yet.** Four nines means one failure in
+10,000; at one sample a minute that is seven days of clean data before the number means
+anything. Until then the honest statement is architectural, not measured.
+
+### 4.10 The Let's Encrypt problem is a MISSING CACHE, not a CA problem — and it is one fix away from the failover work
+
+**uaenorth is down as of 2026-08-07 00:00 UTC and cannot recover before 03:46 UTC.** The
+enclave is healthy — Running, 0 restarts, attesting internally — but has no TLS certificate:
+
+```
+enclavetls.acme_get_certificate_failed sni="api-azure.trustedrouter.com"
+  err=429 urn:ietf:params:acme:error:rateLimited: too many certificates (5) already issued
+  for this exact set of identifiers in the last 168h0m0s, retry after 2026-08-07 03:46:03 UTC
+```
+
+**Root cause, one line above it in the same log:**
+
+```
+bootstrap/azure bootstrap: no "tr-cross-cloud-sa-key" entry in the bundle:
+  shared ACME cache and BYOK unwrap are DISABLED
+```
+
+**Azure has no shared ACME cache, so every deploy issues a NEW certificate.** Let's Encrypt
+allows 5 per exact identifier set per 168h. Three rolls in one day exhausted it. This is not
+about buying a certificate and not about Let's Encrypt being unreliable — the deploy is
+spending a scarce resource it should not be touching at all, because a redeploy should
+*reuse* the cert, not mint one.
+
+**One fix, three payoffs.** Seal `tr-cross-cloud-sa-key` into the Azure bundle (the deploy
+already passes `SA_KEY_ENTRY`; bundle version `867e5261…` simply lacks the entry) and set
+`QUILL_ACME_CACHE_GCS_BUCKET`:
+
+1. redeploys stop burning issuances — the rate limit stops being reachable
+2. it is the **prerequisite for §4.9's region failover**: a multi-IP A record only works
+   because every replica can answer the same TLS-ALPN-01 challenge from a shared cache
+3. it is the first real use of the cross-cloud identity federation that has been provisioned
+   and unused
+
+**#56 (no ACME fallback) is still separate and still real** — `QUILL_ACME_DIRECTORY_URL` is
+already an env knob, so a second CA is a config change plus EAB credentials. But note the
+ordering: the cache fix removes the *self-inflicted* rate-limit outage, which is the one that
+has actually happened. #56 covers the LE-outage case, which has not.
+
+**Current uaenorth state, deliberately left as-is:** the new measurement
+`dd260d452768f807…` is deployed and authorized; the bind window is still OPEN with the retired
+`1936719d7398e9ad…`. That is the designed-safe state — `narrow` must not run until `verify`
+proves the workload, and `verify` needs TLS. After 03:46 UTC:
+
+```
+LOCATION=uaenorth RESOURCE_GROUP=tr-tee-dubai \
+  MAA_ENDPOINT=trquilluaen.uaen.attest.azure.net API_HOST=api-azure.trustedrouter.com \
+  ./tools/deploy-azure-aci.sh --apply verify narrow
+```
+
+**Do not redeploy uaenorth again before then** — each attempt burns the next issuance the
+moment the window reopens. southeastasia was unaffected and serving at the time
+(it has since been retired in favour of australiaeast).
+
+**Run `audit` against every region before believing a green dashboard.** It is read-only:
+
+```
+LOCATION=<region> RESOURCE_GROUP=<rg> MAA_ENDPOINT=<region MAA host> \
+  ./tools/deploy-azure-aci.sh audit
+```
 
 ---
 

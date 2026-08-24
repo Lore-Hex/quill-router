@@ -32,6 +32,8 @@ class _ParamTypes:
 # typed-DML-owned counters start at 0.
 _TYPED_DEFAULTS: dict[str, dict[str, Any]] = {
     "tr_credit_balance": {"total_credits": 0, "total_usage": 0, "reserved": 0},
+    "tr_earnings_balance": {"total_earned": 0, "total_transferred": 0},
+    "tr_user_lifetime_topup": {"total_microdollars": 0},
     "tr_key_limit": {
         "limit_micro": None,
         "usage": 0,
@@ -98,6 +100,21 @@ try:  # subclass the real exception so production `except AlreadyExists` catches
     from google.api_core.exceptions import AlreadyExists as _AlreadyExists
 except ImportError:  # pragma: no cover - google always present in the test venv
     _AlreadyExists = Exception  # type: ignore[assignment,misc]
+
+
+try:  # subclass the real exception so production handlers see the prod type
+    from google.api_core.exceptions import FailedPrecondition as _FailedPrecondition
+except ImportError:  # pragma: no cover - google always present in the test venv
+    _FailedPrecondition = Exception  # type: ignore[assignment,misc]
+
+
+class FakeFailedPrecondition(_FailedPrecondition):
+    """Non-retryable statement rejection (e.g. writing PENDING_COMMIT_TIMESTAMP()
+    into a column without allow_commit_timestamp). run_in_transaction does NOT
+    retry it; the callback either handles it or the whole transaction fails."""
+
+    def __init__(self, detail: str = "failed precondition") -> None:
+        super().__init__(detail)
 
 
 class FakeAlreadyExists(_AlreadyExists):
@@ -171,6 +188,16 @@ class FakeSpannerDatabase:
         self.aborts = 0
         self.commits = 0
         self.last_timeout_secs: float | None = None
+        # Preserve the exact consistency options passed by production code so
+        # tests can distinguish a deliberate stale display read from a strong
+        # money / authorization read.  The fake does not model historical row
+        # versions; this records the contract without pretending that it does.
+        self.snapshot_calls: list[dict[str, Any]] = []
+        # Read-RPC instrumentation for fan-out tests.  Count the statement
+        # handed to a snapshot, not helper calls, so a hidden fallback lookup
+        # cannot masquerade as one logical Store operation.
+        self.snapshot_execute_sql_calls = 0
+        self.snapshot_sql: list[str] = []
 
     def run_in_transaction(self, fn: Any, *, timeout_secs: float | None = None) -> Any:
         # timeout_secs mirrors google-cloud-spanner's Database.run_in_transaction
@@ -306,11 +333,15 @@ class FakeSpannerDatabase:
                     self.entity_kind_versions[kind] = new_version
             return True
 
-    def snapshot(self, *, multi_use: bool = False, **_kwargs: Any) -> _FakeSnapshot:
+    def snapshot(self, *, multi_use: bool = False, **kwargs: Any) -> _FakeSnapshot:
         # Models real Spanner: a single-use snapshot (the default) permits exactly
         # ONE read; a second read on it raises. Only multi_use=True allows many.
         # Prod bug fa9f5d4 was a single-use snapshot that grew a second read and
         # faulted live — the old fake "allowed repeated reads regardless" and hid it.
+        call = dict(kwargs)
+        if multi_use:
+            call["multi_use"] = True
+        self.snapshot_calls.append(call)
         return _FakeSnapshot(self, multi_use=multi_use)
 
     def batch(self) -> _FakeBatch:
@@ -448,7 +479,7 @@ class _FakeTransaction:
         DML can't see mutations; mixing is rejected in execute_update). Records
         the read version on first read for conflict detection."""
         for op in reversed(self.pending_writes):
-            if op[0] == "update_typed" and op[1] == table and op[2] == pk:
+            if op[0] in ("insert_typed_dml", "update_typed") and op[1] == table and op[2] == pk:
                 return dict(op[3])
         return self._pinned_read(
             ("typed", table, pk),
@@ -472,6 +503,28 @@ class _FakeTransaction:
             )
         self._did_dml = True
         p = params or {}
+        if "UPDATE tr_credit_balance SET total_credits = total_credits - @amt" in sql:
+            _require_pred(
+                sql,
+                "AND (total_credits - total_usage - reserved) >= @amt",
+                "guarded-workspace-debit",
+            )
+            pk = (p["ws"], 0)
+            rec = self._typed_current("tr_credit_balance", pk)
+            available = (
+                rec["total_credits"] - rec["total_usage"] - rec["reserved"]
+                if rec is not None
+                else -1
+            )
+            if rec is None or available < p["amt"]:
+                return 0
+            new = dict(
+                rec,
+                total_credits=rec["total_credits"] - p["amt"],
+                updated_at=p["now"],
+            )
+            self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+            return 1
         if "UPDATE tr_credit_balance SET total_usage = total_usage + @amt" in sql:
             # Federated settlement's usage booking: UNCONDITIONAL by design.
             # The spend already happened on a peer plane while this one was
@@ -612,6 +665,97 @@ class _FakeTransaction:
                 self.pending_writes.append(("update_typed", "tr_key_limit", pk, new))
                 return 1
             return 0
+        if sql.startswith("UPDATE tr_earnings_balance SET total_earned"):
+            pk = (p["user_id"], 0)
+            rec = self._typed_current("tr_earnings_balance", pk)
+            if rec is None:
+                return 0
+            new = dict(
+                rec,
+                total_earned=rec["total_earned"] + p["amount"],
+                updated_at=p.get("now", dt.datetime.now(dt.UTC)),
+            )
+            self.pending_writes.append(("update_typed", "tr_earnings_balance", pk, new))
+            return 1
+        if sql.startswith("UPDATE tr_earnings_balance SET total_transferred"):
+            _require_pred(
+                sql,
+                "AND (total_earned - total_transferred) >= @amount",
+                "guarded-earnings-transfer",
+            )
+            pk = (p["user_id"], 0)
+            rec = self._typed_current("tr_earnings_balance", pk)
+            if rec is None or rec["total_earned"] - rec["total_transferred"] < p["amount"]:
+                return 0
+            new = dict(
+                rec,
+                total_transferred=rec["total_transferred"] + p["amount"],
+                updated_at=p["now"],
+            )
+            self.pending_writes.append(("update_typed", "tr_earnings_balance", pk, new))
+            return 1
+        if sql.startswith("INSERT INTO tr_earnings_balance"):
+            pk = (p["user_id"], 0)
+            if self._typed_current("tr_earnings_balance", pk) is not None:
+                raise FakeAlreadyExists(f"tr_earnings_balance/{pk}")
+            record = dict(
+                _TYPED_DEFAULTS["tr_earnings_balance"],
+                user_id=p["user_id"],
+                shard=0,
+                total_earned=p.get("amount", 0),
+                updated_at=p.get("now", dt.datetime.now(dt.UTC)),
+            )
+            self.pending_writes.append(("insert_typed_dml", "tr_earnings_balance", pk, record))
+            return 1
+        if sql.startswith("UPDATE tr_user_lifetime_topup"):
+            pk = (p["user_id"],)
+            rec = self._typed_current("tr_user_lifetime_topup", pk)
+            if rec is None:
+                return 0
+            new = dict(
+                rec,
+                total_microdollars=rec["total_microdollars"] + p["amount"],
+                updated_at=p["now"],
+            )
+            self.pending_writes.append(("update_typed", "tr_user_lifetime_topup", pk, new))
+            return 1
+        if sql.startswith("INSERT INTO tr_user_lifetime_topup"):
+            pk = (p["user_id"],)
+            if self._typed_current("tr_user_lifetime_topup", pk) is not None:
+                raise FakeAlreadyExists(f"tr_user_lifetime_topup/{pk}")
+            record = {
+                "user_id": p["user_id"],
+                "total_microdollars": p["amount"],
+                "updated_at": p["now"],
+            }
+            self.pending_writes.append(("insert_typed_dml", "tr_user_lifetime_topup", pk, record))
+            return 1
+        if sql.startswith(("INSERT INTO tr_credit_movement", "INSERT OR IGNORE INTO tr_credit_movement")):
+            pk = (p["account_id"], p["movement_id"])
+            if self._typed_current("tr_credit_movement", pk) is not None:
+                if sql.startswith("INSERT OR IGNORE"):
+                    return 0
+                raise FakeAlreadyExists(f"tr_credit_movement/{pk}")
+            # Strict on purpose: created_at is NOT a commit-timestamp column,
+            # so real Spanner requires a client TIMESTAMP param here. A writer
+            # that omits it (or writes PENDING_COMMIT_TIMESTAMP()) must fail
+            # in the fake exactly as it would in prod.
+            if "PENDING_COMMIT_TIMESTAMP" in sql:
+                raise FakeFailedPrecondition(
+                    "tr_credit_movement.created_at: allow_commit_timestamp is not set"
+                )
+            record = {
+                "account_id": p["account_id"],
+                "movement_id": p["movement_id"],
+                "kind": p["kind"],
+                "amount_microdollars": p["amount"],
+                "counterparty_account_id": p["counterparty"],
+                "custom_model_id": p["custom_model_id"],
+                "authorization_id": p["authorization_id"],
+                "created_at": p["created_at"],
+            }
+            self.pending_writes.append(("insert_typed_dml", "tr_credit_movement", pk, record))
+            return 1
         if "UPDATE tr_key_limit " in sql and "reserved = reserved - @hold" in sql:
             _require_pred(sql, "key_hash=@kh AND shard=@shard AND reserved >= @hold", "key-release")
             pk = (p["kh"], p["shard"])
@@ -1133,6 +1277,8 @@ class _FakeSnapshot:
                 "database.snapshot(multi_use=True) for multiple reads "
                 "(models real Spanner — see prod fix fa9f5d4)"
             )
+        self.db.snapshot_execute_sql_calls += 1
+        self.db.snapshot_sql.append(sql)
         return _execute_sql(self.db, None, sql, params or {})
 
 
@@ -1351,9 +1497,382 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+    if "/* nonclosed_regional_quota_leases_for_repair */" in sql:
+        workspace_id = str(params["ws"])
+        count = 0
+        for (row_kind, _entity_id), row in db.rows.items():
+            if row_kind != "regional_quota_lease":
+                continue
+            try:
+                body = json.loads(row.body)
+            except (TypeError, ValueError):
+                continue
+            if body.get("workspace_id") == workspace_id and body.get("state") != "closed":
+                count += 1
+        return [[count]]
+    if "/* open_regional_quota_escrow */" in sql:
+        _require_pred(
+            sql,
+            "open_index.kind='regional_quota_lease_open'",
+            "regional quota open-index kind",
+        )
+        _require_pred(
+            sql,
+            "lease_record.kind='regional_quota_lease'",
+            "regional quota canonical kind",
+        )
+        _require_pred(
+            sql,
+            "lease_record.id=JSON_VALUE(open_index.body, '$.lease_entity_id')",
+            "regional quota canonical pointer",
+        )
+        _require_pred(sql, "LEFT JOIN", "regional quota missing-target detection")
+        output: list[list[Any]] = []
+        for (row_kind, index_id), index_row in db.rows.items():
+            if row_kind != "regional_quota_lease_open":
+                continue
+            try:
+                open_body = json.loads(index_row.body)
+                lease_entity_id = open_body.get("lease_entity_id")
+            except (AttributeError, TypeError, ValueError):
+                lease_entity_id = None
+            lease_row = (
+                db.rows.get(("regional_quota_lease", lease_entity_id))
+                if isinstance(lease_entity_id, str)
+                else None
+            )
+            output.append(
+                [
+                    index_id,
+                    index_row.body,
+                    lease_entity_id if lease_row is not None else None,
+                    lease_row.body if lease_row is not None else None,
+                ]
+            )
+        output.sort(key=lambda row: str(row[0]))
+        return output
+    if "/* console_api_keys */" in sql:
+        _require_pred(
+            sql,
+            "key_index.kind='api_key_by_workspace'",
+            "console-api-keys index kind",
+        )
+        _require_pred(
+            sql,
+            "key_record.id=JSON_VALUE(key_index.body, '$.key_id')",
+            "console-api-keys index target",
+        )
+        _require_pred(
+            sql,
+            "JSON_VALUE(key_record.body, '$.hash')=key_record.id",
+            "console-api-keys canonical key id",
+        )
+        _require_pred(
+            sql,
+            "STARTS_WITH(key_index.id, @prefix)",
+            "console-api-keys workspace prefix",
+        )
+        _require_pred(
+            sql,
+            "key_index.id=CONCAT(@workspace_id, '#', key_record.id)",
+            "console-api-keys canonical workspace index",
+        )
+        _require_pred(
+            sql,
+            "JSON_VALUE(key_record.body, '$.workspace_id')=@workspace_id",
+            "console-api-keys ownership boundary",
+        )
+        _require_pred(
+            sql,
+            "key_limit.shard<COALESCE(",
+            "console-api-keys configured shard bound",
+        )
+        _require_pred(
+            sql,
+            "ORDER BY JSON_VALUE(key_record.body, '$.created_at') DESC",
+            "console-api-keys newest-first ordering",
+        )
+
+        workspace_id = str(params["workspace_id"])
+        prefix = str(params["prefix"])
+        keys: list[tuple[str, str, dict[str, Any]]] = []
+        for (row_kind, index_id), index_row in db.rows.items():
+            if row_kind != "api_key_by_workspace" or not index_id.startswith(prefix):
+                continue
+            key_id = str(json.loads(index_row.body).get("key_id", ""))
+            key_row = db.rows.get(("api_key", key_id))
+            if key_row is None:
+                continue
+            key_body = json.loads(key_row.body)
+            if (
+                index_id != f"{workspace_id}#{key_id}"
+                or key_body.get("hash") != key_id
+                or key_body.get("workspace_id") != workspace_id
+            ):
+                continue
+            keys.append((str(key_body.get("created_at", "")), key_id, key_body))
+        keys.sort(key=lambda item: item[1])
+        keys.sort(key=lambda item: item[0], reverse=True)
+
+        output: list[list[Any]] = []
+        usage_columns = (
+            "shard",
+            "usage",
+            "byok_usage",
+            "reserved",
+            "day_usage",
+            "day_start",
+            "week_usage",
+            "week_start",
+            "month_usage",
+            "month_start",
+        )
+        for _created_at, key_id, key_body in keys:
+            shard_count = int(key_body.get("usage_shard_count", 1))
+            usage_rows = [
+                record
+                for record in db.typed.get("tr_key_limit", {}).values()
+                if record.get("key_hash") == key_id
+                and 0 <= int(record.get("shard", 0)) < shard_count
+            ]
+            usage_rows.sort(key=lambda record: int(record.get("shard", 0)))
+            if not usage_rows:
+                output.append([json.dumps(key_body), *([None] * len(usage_columns))])
+                continue
+            output.extend(
+                [json.dumps(key_body), *(record.get(column) for column in usage_columns)]
+                for record in usage_rows
+            )
+        return output
+    if "/* custom_model_list_for_user */" in sql:
+        return _execute_owner_model_list(
+            db,
+            sql,
+            params,
+            index_kind="custom_model_by_user",
+            model_kind="custom_model",
+        )
+    if "/* user_model_list_for_user */" in sql:
+        return _execute_owner_model_list(
+            db,
+            sql,
+            params,
+            index_kind="user_provided_model_by_user",
+            model_kind="user_provided_model",
+        )
+    if "/* user_models_by_id */" in sql:
+        _require_pred(
+            sql,
+            "WHERE kind='user_provided_model' AND id IN UNNEST(@model_ids)",
+            "user-model batch IDs",
+        )
+        return [
+            [model_id, row.body]
+            for model_id in params["model_ids"]
+            if (row := db.rows.get(("user_provided_model", str(model_id)))) is not None
+        ]
+    if "/* auth_session_context */" in sql:
+        _require_pred(
+            sql,
+            "lookup_record.kind='auth_session_lookup'",
+            "session-auth-context lookup kind",
+        )
+        _require_pred(
+            sql,
+            "session_record.id=JSON_VALUE(lookup_record.body, '$.session_id')",
+            "session-auth-context lookup join",
+        )
+        _require_pred(
+            sql,
+            "user_record.kind='user' AND user_record.id=resolved.user_id",
+            "session-auth-context user join",
+        )
+        _require_pred(
+            sql,
+            "member_record.kind='member'",
+            "session-auth-context membership kind",
+        )
+        _require_pred(
+            sql,
+            "JSON_VALUE(member_record.body, '$.user_id')=resolved.user_id",
+            "session-auth-context membership boundary",
+        )
+        _require_pred(
+            sql,
+            "member_record.id=CONCAT(JSON_VALUE(member_record.body, '$.workspace_id'), '#', resolved.user_id)",
+            "session-auth-context canonical membership key",
+        )
+        _require_pred(
+            sql,
+            "workspace_record.id=JSON_VALUE(member_record.body, '$.workspace_id')",
+            "session-auth-context workspace join",
+        )
+        _require_pred(
+            sql,
+            "ORDER BY member_record.id",
+            "session-auth-context deterministic workspace order",
+        )
+        lookup = db.rows.get(("auth_session_lookup", str(params["lookup_hash"])))
+        if lookup is None:
+            return []
+        session_id = str(json.loads(lookup.body)["session_id"])
+        session = db.rows.get(("auth_session", session_id))
+        if session is None:
+            return []
+        user_id = str(json.loads(session.body)["user_id"])
+        user = db.rows.get(("user", user_id))
+        members = sorted(
+            (
+                (entity_id, row)
+                for (row_kind, entity_id), row in db.rows.items()
+                if row_kind == "member"
+                and str(json.loads(row.body).get("user_id")) == user_id
+                and entity_id
+                == f"{json.loads(row.body).get('workspace_id')}#{user_id}"
+            ),
+            key=lambda item: item[0],
+        )
+        if not members:
+            return [[session.body, user.body if user is not None else None, None, None]]
+        rows: list[list[Any]] = []
+        for _member_id, member in members:
+            workspace_id = str(json.loads(member.body)["workspace_id"])
+            workspace = db.rows.get(("workspace", workspace_id))
+            rows.append(
+                [
+                    session.body,
+                    user.body if user is not None else None,
+                    workspace.body if workspace is not None else None,
+                    member.body,
+                ]
+            )
+        return rows
+    if "/* api_key_auth_context */" in sql:
+        _require_pred(
+            sql,
+            "lookup_record.kind='api_key_lookup'",
+            "API-key-auth-context lookup kind",
+        )
+        _require_pred(
+            sql,
+            "key_record.kind='api_key'",
+            "API-key-auth-context key kind",
+        )
+        _require_pred(
+            sql,
+            "key_record.id=JSON_VALUE(lookup_record.body, '$.key_id')",
+            "API-key-auth-context lookup join",
+        )
+        _require_pred(
+            sql,
+            "workspace_record.id=JSON_VALUE(key_record.body, '$.workspace_id')",
+            "API-key-auth-context workspace join",
+        )
+        lookup = db.rows.get(("api_key_lookup", str(params["lookup_hash"])))
+        if lookup is None:
+            return []
+        key_id = str(json.loads(lookup.body)["key_id"])
+        api_key = db.rows.get(("api_key", key_id))
+        if api_key is None:
+            return []
+        workspace_id = str(json.loads(api_key.body)["workspace_id"])
+        workspace = db.rows.get(("workspace", workspace_id))
+        return [
+            [
+                api_key.body,
+                workspace.body if workspace is not None else None,
+            ]
+        ]
+    if (
+        "FROM tr_credit_movement " in sql
+        and "WHERE kind='custom_model_payout' AND created_at>=@since" in sql
+    ):
+        movements = [
+            dict(rec)
+            for rec in db.typed.get("tr_credit_movement", {}).values()
+            if rec["kind"] == "custom_model_payout"
+            and rec["created_at"] >= params["since"]
+        ]
+        movements.sort(
+            key=lambda rec: (
+                rec["created_at"],
+                rec["account_id"],
+                rec["movement_id"],
+            )
+        )
+        columns = [
+            column.strip()
+            for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [[rec.get(column) for column in columns] for rec in movements]
+    if "FROM tr_credit_movement@{FORCE_INDEX=tr_credit_movement_by_time}" in sql:
+        records = list(db.typed.get("tr_credit_movement", {}).items())
+        visible = [
+            txn._typed_current("tr_credit_movement", pk) if txn is not None else dict(rec)
+            for pk, rec in records
+        ]
+        movements = [rec for rec in visible if rec is not None]
+        movements = [rec for rec in movements if rec["account_id"] == params["account_id"]]
+        if "kind IN UNNEST(@kinds)" in sql:
+            movements = [rec for rec in movements if rec["kind"] in params["kinds"]]
+        if "created_at < @before" in sql:
+            movements = [rec for rec in movements if rec["created_at"] < params["before"]]
+        if "kind='custom_model_payout'" in sql:
+            totals: dict[str, int] = {}
+            for rec in movements:
+                custom_model_id = rec.get("custom_model_id")
+                if (
+                    rec["kind"] == "custom_model_payout"
+                    and custom_model_id is not None
+                    and rec["created_at"] >= params["since"]
+                ):
+                    totals[str(custom_model_id)] = totals.get(str(custom_model_id), 0) + int(
+                        rec["amount_microdollars"]
+                    )
+            return [[model_id, total] for model_id, total in sorted(totals.items())]
+        movements.sort(
+            key=lambda rec: (rec["created_at"], rec["movement_id"]),
+            reverse=True,
+        )
+        movements = movements[: int(params["limit"])]
+        columns = [
+            column.strip() for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [[rec.get(column) for column in columns] for rec in movements]
+    if "FROM tr_earnings_balance" in sql:
+        pk = (params["user_id"], 0)
+        rec = (
+            txn._typed_current("tr_earnings_balance", pk)
+            if txn is not None
+            else db.typed.get("tr_earnings_balance", {}).get(pk)
+        )
+        if rec is None:
+            return []
+        columns = [
+            column.strip() for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [[rec.get(column) for column in columns]]
+    if "FROM tr_user_lifetime_topup" in sql:
+        pk = (params["user_id"],)
+        rec = (
+            txn._typed_current("tr_user_lifetime_topup", pk)
+            if txn is not None
+            else db.typed.get("tr_user_lifetime_topup", {}).get(pk)
+        )
+        return [] if rec is None else [[rec["total_microdollars"]]]
     if sql.startswith("SELECT payload FROM tr_generation"):
         generation = db.generation_records.get(str(params["generation_id"]))
         return [[str(generation["payload"])]] if generation is not None else []
+    if sql.startswith("SELECT payload FROM tr_gateway_authorization "):
+        rows = [
+            rec
+            for rec in db.gateway_authorizations.values()
+            if rec.get("settled")
+            and rec.get("created_at") >= params["since"]
+            and rec.get("payload")
+        ]
+        rows.sort(key=lambda rec: (rec["created_at"], rec["authorization_id"]))
+        return [[str(rec["payload"])] for rec in rows]
     # Guarded legacy terminal_at backfill. These narrow handlers intentionally
     # assert every real predicate they model (MF6); a production SQL regression
     # must fail tests instead of being repaired by the fake's Python filtering.
@@ -1859,7 +2378,13 @@ def _execute_sql(
         rows.sort(key=lambda item: item[0])
         if "LIMIT @limit" in sql:
             rows = rows[: int(params["limit"])]
-        return [[body] for _, body in rows]
+        columns = [
+            column.strip() for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [
+            [(entity_id if column == "id" else body) for column in columns]
+            for entity_id, body in rows
+        ]
     if "ENDS_WITH" in sql:
         suffix = params.get("suffix", "")
         rows = [
@@ -1880,6 +2405,60 @@ def _execute_sql(
             rows = rows[: int(params["limit"])]
         return [[body] for _, body in rows]
     raise NotImplementedError(sql)
+
+
+def _execute_owner_model_list(
+    db: FakeSpannerDatabase,
+    sql: str,
+    params: dict[str, Any],
+    *,
+    index_kind: str,
+    model_kind: str,
+) -> list[list[str]]:
+    """Model the one-statement owner-index hydration queries exactly."""
+    marker = f"{model_kind}-owner-list"
+    _require_pred(sql, f"model_ref.kind='{index_kind}'", f"{marker} index kind")
+    _require_pred(sql, f"model_record.kind='{model_kind}'", f"{marker} model kind")
+    _require_pred(
+        sql,
+        "model_record.id=JSON_VALUE(model_ref.body, '$.model_id')",
+        f"{marker} pointer join",
+    )
+    _require_pred(sql, "STARTS_WITH(model_ref.id, @prefix)", f"{marker} owner index")
+    _require_pred(
+        sql,
+        "model_ref.id=CONCAT(@owner_user_id, '#', "
+        "JSON_VALUE(model_ref.body, '$.model_id'))",
+        f"{marker} canonical index id",
+    )
+    _require_pred(
+        sql,
+        "JSON_VALUE(model_record.body, '$.owner_user_id')=@owner_user_id",
+        f"{marker} body owner boundary",
+    )
+    _require_pred(
+        sql,
+        "ORDER BY JSON_VALUE(model_record.body, '$.created_at'), model_ref.id",
+        f"{marker} deterministic order",
+    )
+    prefix = str(params["prefix"])
+    owner_user_id = str(params["owner_user_id"])
+    hydrated: list[tuple[str, str, str]] = []
+    for (row_kind, ref_id), ref_row in db.rows.items():
+        if row_kind != index_kind or not ref_id.startswith(prefix):
+            continue
+        model_id = str(json.loads(ref_row.body).get("model_id") or "")
+        if ref_id != f"{owner_user_id}#{model_id}":
+            continue
+        model_row = db.rows.get((model_kind, model_id))
+        if model_row is None:
+            continue
+        body = json.loads(model_row.body)
+        if str(body.get("owner_user_id")) != owner_user_id:
+            continue
+        hydrated.append((str(body.get("created_at") or ""), ref_id, model_row.body))
+    hydrated.sort(key=lambda item: (item[0], item[1]))
+    return [[body] for _created_at, _ref_id, body in hydrated]
 
 
 class FakeBigtableTable:
@@ -1969,6 +2548,7 @@ def make_fake_store(
     )
     from trusted_router.storage_gcp_rate_limits import SpannerRateLimits
     from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
+    from trusted_router.storage_gcp_user_models import SpannerUserProvidedModels
     from trusted_router.storage_gcp_verification_tokens import SpannerVerificationTokens
     from trusted_router.storage_gcp_video_jobs import SpannerVideoJobs
     from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
@@ -1991,12 +2571,16 @@ def make_fake_store(
     store._analytics_read_mode = "bigtable"
     store._analytics_dual_read_grace_seconds = 0
     store._operational_analytics = None
+    store._regional_quota_ledger = None
+    store._regional_quota_lease_cache = {}
+    store._regional_quota_lease_cache_lock = threading.Lock()
     from trusted_router.storage_gcp_credit_shards import CreditShardCountCache
 
     store._credit_shard_counts = CreditShardCountCache()
     io = SpannerIO(
         database=db,
         spanner_module=_SpannerModule,
+        param_types=_ParamTypes,
         write_entity_batch=store._write_entity_batch,
         read_entity_tx=store._read_entity_tx,
         write_entity_tx=store._write_entity_tx,
@@ -2028,6 +2612,7 @@ def make_fake_store(
     )
     store.byok_store = SpannerByok(io)
     store.custom_model_store = SpannerCustomModels(io)
+    store.user_model_store = SpannerUserProvidedModels(io)
     store.broadcast_store = SpannerBroadcastDestinations(io)
     store.video_job_store = SpannerVideoJobs(io)
     store.settle_outbox = SpannerSettleOutbox(store._database, store._param_types)

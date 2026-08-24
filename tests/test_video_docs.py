@@ -30,4 +30,4 @@ def test_video_docs_are_public_discoverable_and_truthful(client: TestClient) -> 
 def test_standalone_video_guide_uses_video_pricing() -> None:
     guide = Path("docs/video-generation.md").read_text()
     assert "TrustedRouter's 20% video fee" in guide
-    assert "TrustedRouter's 5% fee" not in guide
+    assert "TrustedRouter's 5.5% fee" not in guide

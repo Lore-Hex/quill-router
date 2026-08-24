@@ -9,6 +9,11 @@ import re
 import struct
 from typing import Any, Protocol
 
+from clickhouse.ingest_operational_outbox import (
+    ACTIVITY_BOOLEAN_COLUMNS,
+    ACTIVITY_OPTIONAL_DEFAULTS,
+)
+
 SAFE_ID = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 
 
@@ -34,7 +39,10 @@ def canonical_fingerprint(payload: dict[str, Any], *, surface: str) -> str:
             if canonical.get(field) is not None:
                 canonical[field] = bool(canonical[field])
     if surface == "activity":
-        for field in ("streamed", "usage_estimated"):
+        for field, default in ACTIVITY_OPTIONAL_DEFAULTS.items():
+            if canonical.get(field) is None and default is not None:
+                canonical[field] = default
+        for field in ACTIVITY_BOOLEAN_COLUMNS:
             if canonical.get(field) is not None:
                 canonical[field] = bool(canonical[field])
         if canonical.get("speed_tokens_per_second") is not None:

@@ -4554,12 +4554,14 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "axiom-py" },
+    { name = "beautifulsoup4" },
     { name = "boto3" },
     { name = "cbor2" },
     { name = "cryptography" },
     { name = "email-validator" },
     { name = "eth-account" },
     { name = "fastapi" },
+    { name = "google-auth" },
     { name = "google-cloud-bigtable" },
     { name = "google-cloud-kms" },
     { name = "google-cloud-spanner" },
@@ -4570,12 +4572,12 @@ dependencies = [
     { name = "python-multipart" },
     { name = "sentry-sdk", extra = ["fastapi"] },
     { name = "stripe" },
+    { name = "trusted-router-py" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.dev-dependencies]
 dev = [
-    { name = "beautifulsoup4" },
     { name = "docling" },
     { name = "hypothesis" },
     { name = "mypy" },
@@ -4592,12 +4594,14 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "axiom-py", specifier = ">=0.9.0" },
+    { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "boto3", specifier = ">=1.35.0" },
     { name = "cbor2", specifier = ">=5.6" },
     { name = "cryptography", specifier = ">=43.0.0" },
     { name = "email-validator", specifier = ">=2.0.0" },
     { name = "eth-account", specifier = ">=0.13.7" },
     { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "google-auth", specifier = ">=2.38.0" },
     { name = "google-cloud-bigtable", specifier = ">=2.26.0" },
     { name = "google-cloud-kms", specifier = ">=3.0.0" },
     { name = "google-cloud-spanner", specifier = ">=3.50.0" },
@@ -4608,12 +4612,12 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.20.0" },
     { name = "stripe", specifier = ">=11.0.0" },
+    { name = "trusted-router-py", specifier = ">=0.6.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "docling", specifier = ">=2.58.0" },
     { name = "hypothesis", specifier = ">=6.152.4" },
     { name = "mypy", specifier = ">=1.13" },
@@ -4625,6 +4629,19 @@ dev = [
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruff", specifier = ">=0.8.0" },
     { name = "sec-parser", specifier = ">=0.58.0" },
+]
+
+[[package]]
+name = "trusted-router-py"
+version = "0.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ef/3e/e01a5aefef2244b6bd23bb20eeaf7fd06d461ffc7fd43c461950a280c70e/trusted_router_py-0.6.0.tar.gz", hash = "sha256:7fe711906f339289062ca7d4054375babb72be074a9d83ec4bd061f51b37e7ce", size = 229523, upload-time = "2026-08-17T03:40:28.388Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ea/05/98679b53b4b2624b47809b2795b60c04b5a8f5e6258f143c037badceac6d/trusted_router_py-0.6.0-py3-none-any.whl", hash = "sha256:010a73ae2b12f39892225408a555e744af1265a9b132d745dc55405e2a7237a9", size = 86234, upload-time = "2026-08-17T03:40:26.782Z" },
 ]
 
 [[package]]

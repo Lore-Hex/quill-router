@@ -3,7 +3,7 @@
 <section class="public-proof-strip">
   <div><strong>LiteLLM for your own infra</strong><span>Run the router in your environment.</span></div>
   <div><strong>TrustedRouter for hosted attestation</strong><span>Use a managed service with a verifiable prompt path.</span></div>
-  <div><strong>Apache licensed</strong><span>Run it yourself or build another service.</span></div>
+  <div><strong>Source you can read</strong><span>LiteLLM is MIT-core; the TrustedRouter gateway is source-available (BUSL-1.1).</span></div>
 </section>
 
 <section class="marketing-split">
@@ -11,7 +11,7 @@
     <span class="eyebrow">Hosted or owned</span>
     <h2>Use the shape that matches your team.</h2>
     <p>LiteLLM is a good fit when you want to own and operate the routing layer. TrustedRouter is a fit when you want a hosted router, public status, billing, BYOK, and a gateway trust record.</p>
-    <p>The TrustedRouter code is open source, so you can still run it yourself if hosted does not match your security model.</p>
+    <p>The TrustedRouter gateway and control plane are source-available under BUSL-1.1, so every line that touches your prompt is public to inspect, and each release converts to Apache-2.0 four years after publication.</p>
   </div>
   <div class="copy-terminal">
     <div class="code-head"><span>Hosted route</span><span>OpenAI SDK</span></div>
@@ -35,19 +35,20 @@ model="trustedrouter/auto"
     <p>Create a key, add credits or BYOK, and route requests through the attested gateway.</p>
   </div>
   <div class="marketing-card">
-    <span class="card-label">Open source</span>
-    <h3>Fork the router.</h3>
-    <p>The control plane and gateway are public so teams can inspect, fork, or operate their own service.</p>
+    <span class="card-label">Source-available</span>
+    <h3>Read every line.</h3>
+    <p>The control plane and gateway source is public under BUSL-1.1, so teams can inspect the exact code the attested build runs. Each release becomes Apache-2.0 four years after publication.</p>
   </div>
 </section>
 
 <section class="quote-feature">
   <div>
-    <span class="eyebrow">Why open source matters</span>
+    <span class="eyebrow">Why public source matters</span>
     <h2>Router infrastructure should be inspectable.</h2>
   </div>
   <div>
-    <p>Developers should be able to see how model routing, fallback, billing, prompt handling, and provider selection actually work. Open source makes that possible, whether you use the hosted service or run the code yourself.</p>
+    <p>Developers should be able to see how model routing, fallback, billing, prompt handling, and provider selection actually work. Published source makes that possible: LiteLLM's MIT core and TrustedRouter's BUSL-1.1 repositories can both be read line by line.</p>
   </div>
 </section>
+{% include "public/_competitor_evidence.html" %}
 {% endblock %}

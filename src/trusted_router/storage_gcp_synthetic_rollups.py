@@ -90,7 +90,11 @@ def _rollup_key(rollup: SyntheticRollup) -> bytes:
 
 
 def _seen_key(rollup: SyntheticRollup, sample_id: str) -> bytes:
-    return _rollup_key(rollup).replace(b"synthetic_rollup#", b"synthetic_rollup_seen#", 1) + b"#" + sample_id.encode("utf-8")
+    return (
+        _rollup_key(rollup).replace(b"synthetic_rollup#", b"synthetic_rollup_seen#", 1)
+        + b"#"
+        + sample_id.encode("utf-8")
+    )
 
 
 def _row_exists(table: Any, family: FamilyNames, key: bytes) -> bool:
@@ -134,7 +138,11 @@ def _rollups_from_rows(
             continue
         try:
             payload = json.loads(cells[0].value.decode("utf-8"))
-            if not isinstance(payload, dict) or payload.get("period") not in {"hour", "day", "month"}:
+            if not isinstance(payload, dict) or payload.get("period") not in {
+                "hour",
+                "day",
+                "month",
+            }:
                 continue
             if not include_histograms:
                 payload["latency_histogram"] = {}

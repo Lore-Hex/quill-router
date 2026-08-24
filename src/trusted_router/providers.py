@@ -37,9 +37,11 @@ from trusted_router.provider_types import (
     mock_text,
 )
 from trusted_router.secrets import LocalKeyFile
+from trusted_router.wafer_policy import wafer_zdr_support
 
 OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "meta": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
+    "openrouter-exclusive": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
     "openai": (("OPENAI_API_KEY",), "https://api.openai.com/v1"),
     "cerebras": (("CEREBRAS_API_KEY",), "https://api.cerebras.ai/v1"),
     "deepseek": (("DEEPSEEK_API_KEY",), "https://api.deepseek.com"),
@@ -92,6 +94,14 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
         "https://wharf.neurometric.ai/v1",
     ),
     "engy": (("ENGY_API_KEY",), "https://api.engy.ai/v1"),
+    "pearl": (
+        ("PEARL_RESEARCH_API_KEY",),
+        "https://inference.pearlresearch.ai/v1",
+    ),
+    "databricks": (
+        ("DATABRICKS_TOKEN",),
+        "https://invalid-unconfigured.cloud.databricks.com/serving-endpoints",
+    ),
     # 0G Private Computer. TeeTLS only attests the router; forcing private
     # ensures inference itself uses a TeeML confidential-compute route.
     "zero-g": (("ZERO_G_API_KEY",), "https://router-api.0g.ai/v1"),
@@ -100,25 +110,8 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
         ("ALIBABA_API_KEY", "DASHSCOPE_API_KEY", "ALIYUN_API_KEY"),
         "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/compatible-mode/v1",
     ),
+    "sakana": (("SAKANA_API_KEY",), "https://api.sakana.ai/v1"),
 }
-
-WAFER_ZDR_NATIVE_MODELS = frozenset(
-    {
-        "GLM-5.1",
-        "GLM-5.2",
-        # Wafer withdrew ZDR support for Kimi-K2.6 on 2026-06-26
-        # (capabilities.zdr.supported=false in their /v1/models). Keep it out
-        # of the static live-provider ZDR-header allowlist.
-        "Qwen3.6-35B-A3B",
-        "deepseek-v4-flash",
-        "deepseek-v4-pro",
-    }
-)
-
-
-def _wafer_model_supports_zdr(model_id: str) -> bool:
-    return model_id in WAFER_ZDR_NATIVE_MODELS
-
 
 __all__ = [
     "OPENAI_COMPATIBLE_PROVIDERS",
@@ -458,7 +451,10 @@ class ProviderClient:
     def _provider_extra_headers(model: Model) -> dict[str, str]:
         if model.provider == "zero-g":
             return {"X-0G-Provider-Trust-Mode": "private"}
-        if model.provider == "wafer" and _wafer_model_supports_zdr(model.upstream_id or model.id):
+        if (
+            model.provider == "wafer"
+            and wafer_zdr_support(model.upstream_id or model.id) is True
+        ):
             return {"Wafer-ZDR": "required"}
         return {}
 
@@ -490,6 +486,11 @@ class ProviderClient:
             if not account_id:
                 raise RuntimeError("CLOUDFLARE_WORKERS_AI_ACCOUNT_ID is required")
             return default.format(account_id=account_id)
+        if provider == "databricks":
+            host = (self._secret("DATABRICKS_HOST") or "").strip().rstrip("/")
+            if not host:
+                raise RuntimeError("DATABRICKS_HOST is required")
+            return f"{host}/serving-endpoints"
         return self._secret(f"{provider.upper()}_BASE_URL") or default
 
     def _vertex_auth_and_base_url(self) -> tuple[str, str]:

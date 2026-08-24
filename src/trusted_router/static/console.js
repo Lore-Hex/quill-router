@@ -324,8 +324,99 @@ function toggleTheme() {
   updateThemeToggleGlyph();
 }
 
+function updateCheckoutMinimum() {
+  const method = document.querySelector("[data-checkout-payment-method]");
+  const amount = document.querySelector("[data-checkout-amount]");
+  const message = document.querySelector("[data-paypal-minimum-message]");
+  if (!method || !amount)
+    return;
+
+  const isPayPal = method.value === "paypal";
+  const minimum = isPayPal
+    ? Number(amount.dataset.paypalMinimum)
+    : Number(amount.dataset.defaultMinimum);
+  if (Number.isFinite(minimum)) {
+    amount.min = String(minimum);
+    if (isPayPal && Number(amount.value) < minimum) {
+      amount.value = String(minimum);
+    }
+  }
+  if (message) {
+    message.hidden = !isPayPal;
+  }
+}
+
+function replaceCreditsStripeFragment(documentFragment, sourceSelector, targetSelector) {
+  const source = documentFragment.querySelector(sourceSelector);
+  const target = document.querySelector(targetSelector);
+  if (!source || !target)
+    return;
+  target.replaceChildren(
+    ...Array.from(source.childNodes, (node) => node.cloneNode(true)),
+  );
+}
+
+async function loadCreditsStripeDetails() {
+  const panel = document.querySelector("[data-credits-stripe-details-url]");
+  if (!panel)
+    return;
+  const history = document.querySelector("[data-credits-payment-history]");
+  const count = document.querySelector("[data-credits-payment-history-count]");
+  try {
+    const response = await fetch(panel.dataset.creditsStripeDetailsUrl, {
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { Accept: "text/html" },
+    });
+    if (!response.ok || response.redirected)
+      throw new Error("credits_stripe_details_unavailable");
+    const fragment = new DOMParser().parseFromString(await response.text(), "text/html");
+    const fragmentHistory = fragment.querySelector(
+      "[data-credits-payment-history-fragment]",
+    );
+    if (!fragmentHistory)
+      throw new Error("credits_stripe_details_invalid");
+    replaceCreditsStripeFragment(
+      fragment,
+      "[data-credits-saved-payment-method-fragment]",
+      "[data-credits-saved-payment-method]",
+    );
+    replaceCreditsStripeFragment(
+      fragment,
+      "[data-credits-payment-history-count-fragment]",
+      "[data-credits-payment-history-count]",
+    );
+    replaceCreditsStripeFragment(
+      fragment,
+      "[data-credits-payment-history-fragment]",
+      "[data-credits-payment-history]",
+    );
+  } catch {
+    if (count)
+      count.textContent = "unavailable";
+    if (history) {
+      history.replaceChildren();
+      const message = document.createElement("p");
+      message.style.cssText = "color:var(--muted);font-size:14px;margin:0";
+      message.textContent = (
+        "Payment history is temporarily unavailable. "
+        + "Your balance and billing controls are unaffected."
+      );
+      history.append(message);
+    }
+  } finally {
+    history?.setAttribute("aria-busy", "false");
+  }
+}
+
 function initConsole() {
   applyStoredTheme();
+  updateCheckoutMinimum();
+  loadCreditsStripeDetails();
+  const checkoutMethod = document.querySelector("[data-checkout-payment-method]");
+  if (checkoutMethod) {
+    checkoutMethod.addEventListener("change", updateCheckoutMinimum);
+  }
   if (window.location.hash === "#new-api-key") {
     const panel = document.getElementById("new-api-key");
     if (panel) {

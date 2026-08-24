@@ -39,3 +39,36 @@ def test_price_refresh_validates_generated_catalog_before_committing() -> None:
     assert "uv run ruff check ." in validation
     assert "uv run mypy" in validation
     assert "uv run pytest -q" in validation
+
+
+def test_model_discovery_gap_alerts_without_freezing_safe_provider_updates() -> None:
+    workflow = (ROOT / ".github/workflows/refresh-prices.yml").read_text(
+        encoding="utf-8"
+    )
+    coverage_step = "- name: Price-source coverage audit"
+    commit_step = "- name: Commit and push if changed"
+    final_alert = "- name: Reconcile model-discovery coverage issue"
+
+    assert workflow.index(coverage_step) < workflow.index(commit_step)
+    assert workflow.index(commit_step) < workflow.index(final_alert)
+    coverage = workflow[
+        workflow.index(coverage_step) : workflow.index(commit_step)
+    ]
+    assert "id: coverage_audit" in coverage
+    assert "continue-on-error: true" in coverage
+    assert "--strict-model-discovery" in coverage
+    assert "tee /tmp/coverage-summary.txt" in coverage
+    alert = workflow[workflow.index(final_alert) :]
+    assert "COVERAGE_OUTCOME: ${{ steps.coverage_audit.outcome }}" in alert
+    assert 'title="[bot] Model discovery coverage gaps"' in alert
+    assert "gh issue create" in alert
+    assert "gh issue edit" in alert
+    assert "gh issue close" in alert
+    assert "exit 1" not in alert
+    assert "issues: write" in workflow
+
+    spike_gate = workflow[
+        workflow.index("- name: Sanity-check for price spikes + record deltas") :
+        workflow.index("- name: Refresh provider social cards")
+    ]
+    assert "continue-on-error" not in spike_gate

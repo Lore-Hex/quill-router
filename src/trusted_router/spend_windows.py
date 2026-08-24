@@ -15,6 +15,9 @@ counted; a window boundary mid-request books to the window the settle lands in).
 from __future__ import annotations
 
 import datetime as dt
+import math
+from dataclasses import dataclass
+from typing import Any
 
 # Window names, in the order they appear everywhere (columns, API fields).
 WINDOWS = ("daily", "weekly", "monthly")
@@ -35,13 +38,42 @@ def suggested_window_limits() -> dict[str, int]:
     return {"daily": daily, "weekly": weekly, "monthly": monthly}
 
 
-class KeyWindowLimitExceeded(ValueError):
-    """A per-window key spend limit blocked the request. Carries which window
-    so callers can compute Retry-After from the window's reset time."""
+SPEND_WINDOW_DECISION_STATE = "spend_window_rate_limit_decision"
 
-    def __init__(self, window: str) -> None:
-        super().__init__(f"key {window} spend limit exceeded")
-        self.window = window
+
+@dataclass(frozen=True)
+class KeyWindowLimitDecision:
+    """The authoritative result of one per-key spend-window check.
+
+    ``remaining`` is the settled spend headroom observed by the check. In-flight
+    holds are intentionally absent because the limiter itself is approximate and
+    does not count them. Keeping the response metadata on this object prevents a
+    later counter read from disagreeing with the allow/deny decision.
+    """
+
+    window: str
+    limit: int
+    remaining: int
+    resets_at: dt.datetime
+    reset_seconds: int
+    allowed: bool
+
+
+class KeyWindowLimitExceeded(ValueError):
+    """A per-window key spend limit blocked the request."""
+
+    def __init__(self, decision: KeyWindowLimitDecision) -> None:
+        super().__init__(f"key {decision.window} spend limit exceeded")
+        self.decision = decision
+        self.window = decision.window
+
+
+class KeyLimitExceeded(ValueError):
+    """The lifetime key cap blocked after an optional window check passed."""
+
+    def __init__(self, decision: KeyWindowLimitDecision | None = None) -> None:
+        super().__init__("key limit exceeded")
+        self.decision = decision
 
 
 def utcnow() -> dt.datetime:
@@ -75,6 +107,78 @@ def window_resets_at(window: str, now: dt.datetime) -> dt.datetime:
         start = floors["monthly"]
         return (start + dt.timedelta(days=32)).replace(day=1)
     raise ValueError(f"unknown window {window!r}")
+
+
+def decide_key_window_limits(
+    window_limits: dict[str, int],
+    used_by_window: dict[str, int],
+    amount_microdollars: int,
+    *,
+    now: dt.datetime,
+) -> KeyWindowLimitDecision | None:
+    """Return the window that governs this request, or ``None`` if uncapped.
+
+    A rejecting window wins in the stable daily/weekly/monthly enforcement
+    order. When every configured window allows the request, the window with the
+    least absolute spend headroom is the useful policy for an agent deciding
+    whether it can afford its next call.
+    """
+    decisions: list[KeyWindowLimitDecision] = []
+    for window in WINDOWS:
+        configured = window_limits.get(window)
+        if configured is None:
+            continue
+        limit = int(configured)
+        used = int(used_by_window.get(window, 0))
+        remaining = max(0, limit - used)
+        resets_at = window_resets_at(window, now)
+        reset_seconds = max(0, math.ceil((resets_at - now).total_seconds()))
+        decisions.append(
+            KeyWindowLimitDecision(
+                window=window,
+                limit=limit,
+                remaining=remaining,
+                resets_at=resets_at,
+                reset_seconds=reset_seconds,
+                allowed=amount_microdollars <= remaining,
+            )
+        )
+    if not decisions:
+        return None
+    rejected = next((decision for decision in decisions if not decision.allowed), None)
+    if rejected is not None:
+        return rejected
+    return min(decisions, key=lambda decision: decision.remaining)
+
+
+def spend_window_headers(
+    decision: KeyWindowLimitDecision,
+    *,
+    retry_after: bool = False,
+) -> dict[str, str]:
+    """Serialize one spend-window verdict using the public HTTP convention."""
+    headers = {
+        "RateLimit-Limit": str(decision.limit),
+        "RateLimit-Remaining": str(decision.remaining),
+        "RateLimit-Reset": str(decision.reset_seconds),
+    }
+    if retry_after:
+        headers["Retry-After"] = str(max(1, decision.reset_seconds))
+    return headers
+
+
+def remember_spend_window_decision(
+    request: Any | None,
+    decision: KeyWindowLimitDecision | None,
+) -> None:
+    """Make a verdict available to response middleware without another read."""
+    if request is not None and decision is not None:
+        setattr(request.state, SPEND_WINDOW_DECISION_STATE, decision)
+
+
+def spend_window_limit_error_message(decision: KeyWindowLimitDecision) -> str:
+    reset = decision.resets_at.isoformat().replace("+00:00", "Z")
+    return f"API key {decision.window} spend limit exceeded; resets at {reset}"
 
 
 def key_window_limits(key: object) -> dict[str, int]:

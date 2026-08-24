@@ -120,11 +120,7 @@ def aggregate_video_leaderboard(
         {
             **_aggregate_group(provider=provider, model=None, samples=group),
             "model_count": len(
-                {
-                    model
-                    for route_provider, model in by_model
-                    if route_provider == provider
-                }
+                {model for route_provider, model in by_model if route_provider == provider}
             ),
         }
         for provider, group in by_provider.items()

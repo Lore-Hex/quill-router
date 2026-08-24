@@ -22,7 +22,10 @@ from typing import Any
 import stripe
 from fastapi import APIRouter, HTTPException, Request
 
-from trusted_router.acquisition import record_credit_purchase
+from trusted_router.acquisition import (
+    record_credit_purchase,
+    record_payment_method_saved,
+)
 from trusted_router.auth import SettingsDep
 from trusted_router.errors import api_error
 from trusted_router.money import MICRODOLLARS_PER_CENT
@@ -68,8 +71,14 @@ def register(router: APIRouter) -> None:
                 event: dict[str, Any] = constructed
             else:
                 event = constructed._to_dict_recursive()  # noqa: SLF001
-        else:
+        elif settings.environment.lower() in {"local", "test"}:
             event = await json_body(request)
+        else:
+            raise api_error(
+                503,
+                "Stripe webhook verification is not configured",
+                ErrorType.SERVICE_UNAVAILABLE,
+            )
         event_id = str(event.get("id") or uuid.uuid4())
         event_type = event.get("type")
 
@@ -127,7 +136,10 @@ def register(router: APIRouter) -> None:
                     payment_method=payment_method,
                 )
                 credited = STORE.credit_workspace_typed_direct(
-                    workspace_id, amount_microdollars, credit_event_id
+                    workspace_id,
+                    amount_microdollars,
+                    credit_event_id,
+                    lifetime_topup_user_id=_lifetime_topup_user_id(workspace_id, metadata),
                 )
                 if credited:
                     record_credit_purchase(
@@ -171,6 +183,10 @@ def register(router: APIRouter) -> None:
                     workspace_id,
                     customer_id=customer_id,
                     payment_method_id=payment_method,
+                )
+                record_payment_method_saved(
+                    workspace_id,
+                    payment_method="stripe_card",
                 )
                 return {
                     "data": {
@@ -222,7 +238,10 @@ def register(router: APIRouter) -> None:
                     payment_intent_amount_cents=obj.get("amount"),
                 )
                 credited = STORE.credit_workspace_typed_direct(
-                    workspace_id, amount_microdollars, event_id
+                    workspace_id,
+                    amount_microdollars,
+                    event_id,
+                    lifetime_topup_user_id=_lifetime_topup_user_id(workspace_id, metadata),
                 )
                 if credited:
                     record_credit_purchase(
@@ -241,6 +260,10 @@ def register(router: APIRouter) -> None:
                         customer_id=str(obj.get("customer") or ""),
                         payment_method_id=payment_method,
                     )
+                    record_payment_method_saved(
+                        workspace_id,
+                        payment_method="stripe_card",
+                    )
                 return {"data": {"credited": credited, "event_id": event_id, "auto_refill": True}}
             if (
                 metadata.get("payment_method") in {None, "auto", "card"}
@@ -254,6 +277,10 @@ def register(router: APIRouter) -> None:
                         workspace_id,
                         customer_id=customer_id,
                         payment_method_id=payment_method,
+                    )
+                    record_payment_method_saved(
+                        workspace_id,
+                        payment_method="stripe_card",
                     )
                     return {
                         "data": {
@@ -314,6 +341,14 @@ def register(router: APIRouter) -> None:
                 }
 
         return {"data": {"ignored": True, "event_id": event_id}}
+
+
+def _lifetime_topup_user_id(workspace_id: str, metadata: dict[str, Any]) -> str | None:
+    initiating_user_id = metadata.get("initiating_user_id")
+    if isinstance(initiating_user_id, str) and initiating_user_id:
+        return initiating_user_id
+    workspace = STORE.get_workspace(workspace_id)
+    return workspace.owner_user_id if workspace is not None else None
 
 
 def _checkout_credit_event_id(

@@ -5,7 +5,7 @@ from dataclasses import asdict
 import pytest
 from fastapi.testclient import TestClient
 
-from trusted_router.catalog import PROVIDER_JURISDICTION_US, PROVIDERS
+from trusted_router.catalog import FAST_MODEL_ORDER, MODELS, PROVIDER_JURISDICTION_US, PROVIDERS
 from trusted_router.spend_windows import KeyWindowLimitExceeded
 from trusted_router.storage import STORE
 
@@ -141,12 +141,17 @@ def test_chat_activity_generation_and_no_content_storage(
     assert sample.provider_name == "Cerebras"
     assert sample.elapsed_milliseconds is not None
     assert sample.total_cost_microdollars == generation_data["total_cost_microdollars"]
-    assert "workspace_id" not in safe_sample
+    # `workspace_id` IS carried, deliberately. ClickHouse keeps these rows for
+    # 400 days while Spanner's tr_generation deletes after 30, so this is the
+    # only durable per-customer usage record. The table is VPC-internal; the
+    # public surfaces that read these samples aggregate them and must never
+    # project the tenant id — pinned by tests/test_analytics_workspace_id.py.
+    assert safe_sample["workspace_id"], "sample must carry tenant attribution"
+    # Credential material and prompt bodies remain excluded — those guarantees
+    # are unchanged and are the ones that actually matter here.
     assert "key_hash" not in safe_sample
     # `app` is the caller's public, opt-in self-reported title (X-Title): it
-    # powers the /apps directory and is NOT tenant / credential / prompt data.
-    # It is intentionally carried on the benchmark sample; the real privacy
-    # guarantees below (no workspace, no key, no prompt body) still hold.
+    # powers the /apps directory and is NOT credential / prompt data.
     assert isinstance(safe_sample["app"], str)
     assert prompt not in str(safe_sample)
 
@@ -587,7 +592,10 @@ def test_embeddings_and_model_endpoints(
         "Credits",
         "BYOK",
     ]
-    assert {item["provider"] for item in kimi.json()["data"]} >= {"kimi", "together"}
+    # The first-party Moonshot route is the stable contract. Secondary
+    # providers are discovered from their live serverless catalogs and may
+    # legitimately add or remove Kimi K2.6 without a code change.
+    assert "kimi" in {item["provider"] for item in kimi.json()["data"]}
 
     # gpt-5.5 is OpenAI's served flagship (Credits + BYOK on the openai
     # provider). NB: the GPT-5.4 line and the "-pro" tiers are dropped from
@@ -806,23 +814,29 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/aristotle",
         "trustedrouter/aristotle-1.0",
         "trustedrouter/aristotle-1.1",
+        "trustedrouter/aristotle-2.0",
         "trustedrouter/plato",
         "trustedrouter/plato-1.0",
+        "trustedrouter/plato-3.0",
         "trustedrouter/plato-pro",
         "trustedrouter/plato-pro-1.0",
         "trustedrouter/plato-pro-2.0",
         "trustedrouter/socrates-1.1",
+        "trustedrouter/socrates-2.0",
         "trustedrouter/socrates-pro",
         "trustedrouter/socrates-pro-1.0",
         "trustedrouter/socrates-pro-plus",
         "trustedrouter/socrates-pro-plus-1.0",
         "trustedrouter/iris-1.0",
         "trustedrouter/iris-2.0",
+        "trustedrouter/iris-3.0",
         "trustedrouter/prometheus-1.0",
         "trustedrouter/prometheus-1.0-1m",
         "trustedrouter/prometheus-2.0",
+        "trustedrouter/prometheus-3.0",
         "trustedrouter/zeus-1.0",
         "trustedrouter/zeus-1.0-mini",
+        "trustedrouter/zeus-2.0",
         "trustedrouter/iris-code",
         "trustedrouter/prometheus-code",
         "trustedrouter/zeus-code",
@@ -831,8 +845,12 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/zeus-code-1.0",
         "trustedrouter/openpatcher-g1",
         "trustedrouter/openpatcher-g2",
+        "trustedrouter/openpatcher-g3",
         "trustedrouter/openpatcher-s2",
+        "trustedrouter/openpatcher-s3",
         "trustedrouter/athena",
+        "trustedrouter/athena-1.0",
+        "trustedrouter/athena-2.0",
         "trustedrouter/selector",
         "trustedrouter/mapreduce",
         "trustedrouter/liberty-1.0",
@@ -846,16 +864,19 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     models_by_id = {model["id"]: model for model in models}
     fast_meta = models_by_id["trustedrouter/fast"]["trustedrouter"]
     assert fast_meta["route_kind"] == "fast_pool"
+    assert fast_meta["auto_candidates"]
     assert fast_meta["auto_candidates"] == [
-        "cerebras/gpt-oss-120b",
-        "xiaomi/mimo-v2.5-pro-ultraspeed",
-        "cerebras/zai-glm-4.7",
+        model_id for model_id in FAST_MODEL_ORDER if model_id in MODELS
     ]
     plato_meta = models_by_id["trustedrouter/plato"]["trustedrouter"]
-    plato_pro_meta = models_by_id["trustedrouter/plato-pro-1.0"]["trustedrouter"]
+    plato_3_meta = models_by_id["trustedrouter/plato-3.0"]["trustedrouter"]
     assert models_by_id["trustedrouter/plato"]["context_length"] == 1_048_576
-    assert plato_meta["canonical_model_id"] == "trustedrouter/plato-pro-1.0"
-    assert plato_meta["auto_candidates"] == plato_pro_meta["auto_candidates"]
+    assert plato_meta["canonical_model_id"] == "trustedrouter/plato-3.0"
+    assert plato_meta["auto_candidates"] == plato_3_meta["auto_candidates"]
+    assert plato_meta["auto_candidates"] == [
+        "deepseek/deepseek-v4-pro-0813",
+        "trustedrouter/prometheus-3.0",
+    ]
     plato_pro_2_meta = models_by_id["trustedrouter/plato-pro-2.0"]["trustedrouter"]
     assert models_by_id["trustedrouter/plato-pro"]["trustedrouter"]["canonical_model_id"] == (
         "trustedrouter/plato-pro-2.0"
@@ -870,36 +891,44 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     ]
     iris_meta = models_by_id["trustedrouter/iris"]["trustedrouter"]
     assert iris_meta["route_kind"] == "fusion_panel"
-    assert iris_meta["canonical_model_id"] == "trustedrouter/iris-2.0"
+    assert iris_meta["canonical_model_id"] == "trustedrouter/iris-3.0"
     assert models_by_id["trustedrouter/iris"]["context_length"] == 1_048_576
     assert iris_meta["auto_candidates"] == [
         "minimax/minimax-m3",
         "moonshotai/kimi-k3",
-        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-pro-0813",
     ]
     assert models_by_id["trustedrouter/iris-1.0"]["trustedrouter"]["auto_candidates"] == [
         "minimax/minimax-m3",
         "moonshotai/kimi-k2.6",
-        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-pro-0423",
     ]
     prometheus_code_meta = models_by_id["trustedrouter/prometheus-code"]["trustedrouter"]
     assert prometheus_code_meta["route_kind"] == "fusion_panel"
     assert "moonshotai/kimi-k2.7-code" in prometheus_code_meta["auto_candidates"]
-    assert (
-        models_by_id["trustedrouter/prometheus-code-1.0"]["trustedrouter"]["auto_candidates"]
-        == prometheus_code_meta["auto_candidates"]
-    )
+    assert models_by_id["trustedrouter/prometheus-code-1.0"]["trustedrouter"][
+        "auto_candidates"
+    ][-1] == "deepseek/deepseek-v4-pro-0423"
+    assert prometheus_code_meta["auto_candidates"][-1] == "deepseek/deepseek-v4-pro-0813"
     prometheus_2_meta = models_by_id["trustedrouter/prometheus-2.0"]["trustedrouter"]
+    prometheus_3_meta = models_by_id["trustedrouter/prometheus-3.0"]["trustedrouter"]
     assert models_by_id["trustedrouter/prometheus"]["context_length"] == 1_048_576
     assert models_by_id["trustedrouter/prometheus-2.0"]["context_length"] == 1_048_576
     assert models_by_id["trustedrouter/prometheus"]["trustedrouter"]["canonical_model_id"] == (
-        "trustedrouter/prometheus-2.0"
+        "trustedrouter/prometheus-3.0"
     )
     assert prometheus_2_meta["auto_candidates"] == [
         "minimax/minimax-m3",
         "moonshotai/kimi-k3",
         "z-ai/glm-5.2",
-        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-pro-0423",
+        "xiaomi/mimo-v2.5-pro",
+    ]
+    assert prometheus_3_meta["auto_candidates"] == [
+        "minimax/minimax-m3",
+        "moonshotai/kimi-k3",
+        "z-ai/glm-5.2",
+        "deepseek/deepseek-v4-pro-0813",
         "xiaomi/mimo-v2.5-pro",
     ]
     zeus_meta = models_by_id["trustedrouter/zeus"]["trustedrouter"]
@@ -914,11 +943,11 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "minimax/minimax-m3",
         "z-ai/glm-5.2",
         "xiaomi/mimo-v2.5-pro",
-        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-pro-0813",
     ]
-    assert (
-        models_by_id["trustedrouter/zeus-1.0"]["trustedrouter"]["auto_candidates"]
-        == zeus_meta["auto_candidates"]
+    assert zeus_meta["canonical_model_id"] == "trustedrouter/zeus-2.0"
+    assert models_by_id["trustedrouter/zeus-1.0"]["trustedrouter"]["auto_candidates"][-1] == (
+        "deepseek/deepseek-v4-pro-0423"
     )
     assert models_by_id["trustedrouter/zeus-1.0-mini"]["trustedrouter"]["auto_candidates"] == [
         "google/gemini-3.1-pro-preview",
@@ -926,7 +955,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "minimax/minimax-m3",
         "z-ai/glm-5.2",
         "xiaomi/mimo-v2.5-pro",
-        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-pro-0423",
     ]
     aristotle_10_meta = models_by_id["trustedrouter/aristotle-1.0"]["trustedrouter"]
     aristotle_11_meta = models_by_id["trustedrouter/aristotle-1.1"]["trustedrouter"]
@@ -938,13 +967,17 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     ]
     assert models_by_id["trustedrouter/aristotle-1.1"]["context_length"] == 1_048_576
     assert models_by_id["trustedrouter/aristotle"]["context_length"] == 1_048_576
-    assert aristotle_meta["canonical_model_id"] == "trustedrouter/aristotle-1.1"
+    assert aristotle_meta["canonical_model_id"] == "trustedrouter/aristotle-2.0"
     assert aristotle_11_meta["auto_candidates"] == [
         "z-ai/glm-5.2-fast",
         "z-ai/glm-5.2",
         "trustedrouter/zeus-1.0",
     ]
-    assert aristotle_meta["auto_candidates"] == aristotle_11_meta["auto_candidates"]
+    assert aristotle_meta["auto_candidates"] == [
+        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.2",
+        "trustedrouter/zeus-2.0",
+    ]
     socrates_pro_plus_meta = models_by_id["trustedrouter/socrates-pro-plus-1.0"]["trustedrouter"]
     assert socrates_pro_plus_meta["auto_candidates"] == [
         "xiaomi/mimo-v2.5-pro-ultraspeed",
@@ -972,11 +1005,24 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "google/gemma-4-31b-it",
         "trustedrouter/prometheus-2.0",
     ]
+    openpatcher_g3_meta = models_by_id["trustedrouter/openpatcher-g3"]["trustedrouter"]
+    assert openpatcher_g3_meta["route_kind"] == "advisor_orchestration"
+    assert openpatcher_g3_meta["auto_candidates"] == [
+        "moonshotai/kimi-k3",
+        "google/gemma-4-31b-it",
+        "trustedrouter/prometheus-3.0",
+    ]
     openpatcher_s2_meta = models_by_id["trustedrouter/openpatcher-s2"]["trustedrouter"]
     assert openpatcher_s2_meta["route_kind"] == "fusion_panel"
     assert openpatcher_s2_meta["auto_candidates"] == [
         "moonshotai/kimi-k3",
         "z-ai/glm-5.2",
+    ]
+    openpatcher_s3_meta = models_by_id["trustedrouter/openpatcher-s3"]["trustedrouter"]
+    assert openpatcher_s3_meta["route_kind"] == "fusion_panel"
+    assert openpatcher_s3_meta["auto_candidates"] == [
+        "z-ai/glm-5.2",
+        "deepseek/deepseek-v4-pro-0813",
     ]
     athena_meta = models_by_id["trustedrouter/athena"]["trustedrouter"]
     assert athena_meta["route_kind"] == "private_orchestration"
@@ -1066,7 +1112,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         not provider["provider_zero_data_retention"] or provider["stores_content"] is False
         for provider in providers
     )
-    assert [provider["id"] for provider in providers[:2]] == ["tinfoil", "trustedrouter"]
+    assert [provider["id"] for provider in providers[:2]] == ["trustedrouter", "tinfoil"]
     assert {
         "anthropic",
         "openai",

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from trusted_router.byok_crypto import decrypt_byok_secret, encrypt_byok_secret
+from trusted_router.byok_crypto import (
+    NAMESPACE_PROVIDER,
+    _aad_v2,
+    decrypt_byok_secret,
+    encrypt_byok_secret,
+)
 from trusted_router.config import Settings
 
 
@@ -55,7 +60,13 @@ def test_byok_envelope_uses_kms_wrap_without_plaintext_in_envelope(monkeypatch) 
     assert raw not in str(envelope)
     assert _FakeKmsClient.calls[0]["op"] == "encrypt"
     assert _FakeKmsClient.calls[0]["name"] == key_name
-    assert _FakeKmsClient.calls[0]["additional_authenticated_data"] == b"trustedrouter:byok:ws_1:openai"
+    # v2 AAD: length-prefixed components with a namespace, not the v1
+    # colon-joined string. The KMS wrap is bound to the same bytes the
+    # ciphertext is, which is why the migration has to re-wrap rather than
+    # re-encrypt only the payload.
+    assert _FakeKmsClient.calls[0]["additional_authenticated_data"] == _aad_v2(
+        NAMESPACE_PROVIDER, "ws_1", "openai"
+    )
     assert decrypt_byok_secret(
         envelope,
         settings,

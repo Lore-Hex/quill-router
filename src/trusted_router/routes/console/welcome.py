@@ -13,7 +13,7 @@ from trusted_router.typed_balance import live_credit_summary
 
 def register(app: FastAPI) -> None:
     @app.get("/console/welcome")
-    async def console_welcome(
+    def console_welcome(
         request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
@@ -57,7 +57,7 @@ def register(app: FastAPI) -> None:
             response.delete_cookie(
                 key=PENDING_REVEAL_COOKIE,
                 path="/console/welcome",
-                secure=settings.environment.lower() == "production",
+                secure=settings.environment.lower() not in {"local", "test"},
                 samesite="lax",
             )
         return response

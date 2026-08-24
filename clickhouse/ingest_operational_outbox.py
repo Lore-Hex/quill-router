@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import logging
 import math
@@ -24,6 +25,7 @@ ACTIVITY_COLUMNS = (
     "generation_id",
     "request_id",
     "tenant_id",
+    "workspace_id",
     "key_id",
     "model",
     "provider",
@@ -50,6 +52,51 @@ ACTIVITY_COLUMNS = (
     "app_categories",
     "tags",
     "created_at",
+    "gateway_request_id",
+    "synthetic",
+    "client_source",
+    "client_sdk",
+    "client_sdk_version",
+    "client_lang",
+    "client_runtime",
+    "client_os",
+    "client_arch",
+    "client_timeout_ms",
+    "client_attempt",
+    "client_prev_outcome",
+    "client_prev_error_class",
+    "client_prev_host",
+    "client_prev_elapsed_ms",
+    "client_since_first_ms",
+    "client_stream",
+    "client_failover_used",
+)
+ACTIVITY_OPTIONAL_DEFAULTS: dict[str, Any] = {
+    "gateway_request_id": "",
+    "synthetic": 0,
+    "client_source": "none",
+    "client_sdk": "",
+    "client_sdk_version": "",
+    "client_lang": "",
+    "client_runtime": "",
+    "client_os": "",
+    "client_arch": "",
+    "client_timeout_ms": None,
+    "client_attempt": None,
+    "client_prev_outcome": "",
+    "client_prev_error_class": "",
+    "client_prev_host": "",
+    "client_prev_elapsed_ms": None,
+    "client_since_first_ms": None,
+    "client_stream": None,
+    "client_failover_used": None,
+}
+ACTIVITY_BOOLEAN_COLUMNS = (
+    "streamed",
+    "usage_estimated",
+    "synthetic",
+    "client_stream",
+    "client_failover_used",
 )
 SYNTHETIC_COLUMNS = (
     "id",
@@ -81,9 +128,93 @@ SYNTHETIC_COLUMNS = (
     "created_at",
 )
 
+CLIENT_REQUEST_COLUMNS = (
+    "event_id",
+    "tenant_id",
+    "key_id",
+    "batch_id",
+    "instance_id",
+    "seq",
+    "received_at",
+    "created_at",
+    "clock_skew_ms",
+    "synthetic",
+    "sdk",
+    "sdk_version",
+    "lang",
+    "runtime",
+    "os",
+    "arch",
+    "plane",
+    "endpoint",
+    "method",
+    "streaming",
+    "provider_pinned",
+    "model",
+    "final_outcome",
+    "final_http_status",
+    "final_host",
+    "first_error_class",
+    "error_source",
+    "total_ms",
+    "ttft_ms",
+    "timeout_phase",
+    "configured_timeout_ms",
+    "attempt_count",
+    "failover_used",
+    "attempt_host",
+    "attempt_outcome",
+    "attempt_http_status",
+    "attempt_error_class",
+    "attempt_error_source",
+    "attempt_should_retry",
+    "attempt_retry_after_ms",
+    "attempt_elapsed_ms",
+    "attempt_ttfb_ms",
+    "attempt_request_id",
+    "attempt_moved",
+    "sample_rate",
+    "sample_reason",
+    "tr_fault",
+    "methodology_version",
+)
+CLIENT_COUNTER_COLUMNS = (
+    "event_id",
+    "tenant_id",
+    "key_id",
+    "instance_id",
+    "bucket_start",
+    "received_at",
+    "synthetic",
+    "sdk",
+    "sdk_version",
+    "level",
+    "endpoint",
+    "streaming",
+    "host",
+    "outcome",
+    "error_class",
+    "http_status_class",
+    "timeout_phase",
+    "timeout_floor_met",
+    "provider_pinned",
+    "requests",
+    "attempts",
+    "failover_used",
+    "first_attempt_success",
+    "total_ms_hist",
+    "first_event_ms_hist",
+    "tr_fault",
+    "methodology_version",
+)
+
 EVENT_TABLES = {
     "activity": "activity_generations",
     "synthetic": "synthetic_probe_samples",
+    "client_events": ("client_request_events", "client_minute_counters"),
+    "client_request": "client_request_events",
+    "client_counter": "client_minute_counters",
+    "quarantine": "operational_outbox_quarantine",
 }
 
 log = logging.getLogger("trusted_router.operational_analytics_ingest")
@@ -113,6 +244,7 @@ class DrainResult:
     fetched: int
     inserted: int
     rows_per_second: float
+    quarantined: int = 0
 
 
 class OutboxSource(Protocol):
@@ -264,6 +396,10 @@ class ClickHouseOperationalWriter:
             table = EVENT_TABLES.get(event_kind)
             if table is None:
                 raise ValueError(f"unsupported operational event kind: {event_kind}")
+            if not isinstance(table, str):
+                raise ValueError(
+                    f"operational event kind must be expanded before insert: {event_kind}"
+                )
             payload = "\n".join(
                 json.dumps(row, separators=(",", ":"), sort_keys=True) for row in rows
             ).encode("utf-8")
@@ -309,25 +445,233 @@ class ClickHouseOperationalWriter:
                 raise RuntimeError(f"ClickHouse {event_kind} insert failed: {detail}")
 
 
-def normalise_operational_event(row: OperationalOutboxRow) -> CanonicalOperationalEvent:
+def _event_id(tenant_id: str, batch_id: str, kind: str, index: int) -> str:
+    value = f"{tenant_id}:{batch_id}:{kind}:{index}"
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _object(value: Any, *, field: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"client_events {field} is not a JSON object")
+    return value
+
+
+def _objects(value: Any, *, field: str) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise ValueError(f"client_events {field} is not a JSON array")
+    return [_object(item, field=f"{field}[{index}]") for index, item in enumerate(value)]
+
+
+def _required(payload: dict[str, Any], field: str) -> Any:
+    try:
+        return payload[field]
+    except KeyError:
+        raise ValueError(f"client_events payload missing required field: {field}") from None
+
+
+def _retry_value(value: Any) -> str:
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if value == "true" or value == "false":
+        return str(value)
+    return "absent"
+
+
+def expand_client_events_payload(
+    payload: dict[str, Any],
+    commit_ts: dt.datetime,
+) -> list[CanonicalOperationalEvent]:
+    """Expand one validated beacon POST into ClickHouse request/counter rows."""
+
+    if _required(payload, "schema_version") != 1:
+        raise ValueError("client_events schema_version must be 1")
+    tenant_id = str(_required(payload, "tenant_id"))
+    key_id = str(_required(payload, "key_id"))
+    batch_id = str(_required(payload, "batch_id"))
+    instance_id = str(_required(payload, "instance_id"))
+    received_at = _required(payload, "received_at")
+    clock_skew_ms = int(_required(payload, "clock_skew_ms"))
+    synthetic = int(bool(_required(payload, "synthetic")))
+    seq = int(_required(payload, "seq"))
+    sdk = _object(_required(payload, "sdk"), field="sdk")
+    sdk_name = str(_required(sdk, "name"))
+    sdk_version = str(_required(sdk, "version"))
+    ingest_version = _utc(commit_ts).isoformat()
+    common = {
+        "tenant_id": tenant_id,
+        "key_id": key_id,
+        "instance_id": instance_id,
+        "received_at": received_at,
+        "synthetic": synthetic,
+        "sdk": sdk_name,
+        "sdk_version": sdk_version,
+    }
+    result: list[CanonicalOperationalEvent] = []
+    for index, event in enumerate(_objects(_required(payload, "events"), field="events")):
+        attempts = _objects(_required(event, "attempts"), field=f"events[{index}].attempts")
+        if not attempts:
+            raise ValueError(f"client_events events[{index}].attempts is empty")
+        error_classes = [
+            "" if attempt.get("error_class") is None else str(attempt["error_class"])
+            for attempt in attempts
+        ]
+        error_sources = [
+            "" if attempt.get("error_source") is None else str(attempt["error_source"])
+            for attempt in attempts
+        ]
+        row = {
+            "event_id": _event_id(tenant_id, batch_id, "r", index),
+            **common,
+            "batch_id": batch_id,
+            "seq": seq,
+            "created_at": _required(event, "created_at"),
+            "clock_skew_ms": clock_skew_ms,
+            "lang": str(_required(sdk, "lang")),
+            "runtime": str(_required(sdk, "runtime")),
+            "os": str(_required(sdk, "os")),
+            "arch": str(_required(sdk, "arch")),
+            "plane": _required(event, "plane"),
+            "endpoint": _required(event, "endpoint"),
+            "method": _required(event, "method"),
+            "streaming": int(bool(_required(event, "streaming"))),
+            "provider_pinned": int(bool(_required(event, "provider_pinned"))),
+            "model": "" if event.get("model") is None else str(event["model"]),
+            "final_outcome": _required(event, "final_outcome"),
+            "final_http_status": int(event.get("final_http_status") or 0),
+            "final_host": str(_required(attempts[-1], "host")),
+            "first_error_class": next((value for value in error_classes if value), ""),
+            "error_source": next((value for value in error_sources if value), ""),
+            "total_ms": int(_required(event, "total_ms")),
+            "ttft_ms": event.get("ttft_ms"),
+            "timeout_phase": _required(event, "timeout_phase"),
+            "configured_timeout_ms": event.get("configured_timeout_ms"),
+            "attempt_count": len(attempts),
+            "failover_used": int(bool(_required(event, "failover_used"))),
+            "attempt_host": [str(_required(attempt, "host")) for attempt in attempts],
+            "attempt_outcome": [str(_required(attempt, "outcome")) for attempt in attempts],
+            "attempt_http_status": [int(attempt.get("http_status") or 0) for attempt in attempts],
+            "attempt_error_class": error_classes,
+            "attempt_error_source": error_sources,
+            "attempt_should_retry": [
+                _retry_value(attempt.get("should_retry")) for attempt in attempts
+            ],
+            "attempt_retry_after_ms": [
+                int(attempt.get("retry_after_ms") or 0) for attempt in attempts
+            ],
+            "attempt_elapsed_ms": [int(_required(attempt, "elapsed_ms")) for attempt in attempts],
+            "attempt_ttfb_ms": [int(attempt.get("ttfb_ms") or 0) for attempt in attempts],
+            "attempt_request_id": [
+                "" if attempt.get("request_id") is None else str(attempt["request_id"])
+                for attempt in attempts
+            ],
+            "attempt_moved": [int(bool(_required(attempt, "moved"))) for attempt in attempts],
+            "sample_rate": float(_required(event, "sample_rate")),
+            "sample_reason": _required(event, "sample_reason"),
+            "tr_fault": int(bool(_required(event, "tr_fault"))),
+            "methodology_version": int(_required(event, "methodology_version")),
+            "ingest_version": ingest_version,
+        }
+        result.append(CanonicalOperationalEvent(event_kind="client_request", row=row))
+    for index, counter in enumerate(_objects(_required(payload, "counters"), field="counters")):
+        row = {
+            "event_id": _event_id(tenant_id, batch_id, "c", index),
+            **common,
+            "bucket_start": _required(counter, "bucket_start"),
+            "level": _required(counter, "level"),
+            "endpoint": _required(counter, "endpoint"),
+            "streaming": int(bool(_required(counter, "streaming"))),
+            "host": _required(counter, "host"),
+            "outcome": _required(counter, "outcome"),
+            "error_class": ("" if counter.get("error_class") is None else counter["error_class"]),
+            "http_status_class": _required(counter, "http_status_class"),
+            "timeout_phase": _required(counter, "timeout_phase"),
+            "timeout_floor_met": int(bool(_required(counter, "timeout_floor_met"))),
+            "provider_pinned": int(bool(_required(counter, "provider_pinned"))),
+            "requests": int(_required(counter, "requests")),
+            "attempts": int(_required(counter, "attempts")),
+            "failover_used": int(_required(counter, "failover_used")),
+            "first_attempt_success": int(_required(counter, "first_attempt_success")),
+            "total_ms_hist": _object(
+                _required(counter, "total_ms_hist"),
+                field=f"counters[{index}].total_ms_hist",
+            ),
+            "first_event_ms_hist": _object(
+                _required(counter, "first_event_ms_hist"),
+                field=f"counters[{index}].first_event_ms_hist",
+            ),
+            "tr_fault": int(bool(_required(counter, "tr_fault"))),
+            "methodology_version": int(_required(counter, "methodology_version")),
+            "ingest_version": ingest_version,
+        }
+        result.append(CanonicalOperationalEvent(event_kind="client_counter", row=row))
+    if not result:
+        raise ValueError("client_events payload has no events or counters")
+    return result
+
+
+def normalise_operational_event(
+    row: OperationalOutboxRow,
+) -> list[CanonicalOperationalEvent]:
     raw = json.loads(row.payload)
     if not isinstance(raw, dict):
         raise ValueError("operational outbox payload is not a JSON object")
+    if row.event_kind == "client_events":
+        try:
+            return expand_client_events_payload(raw, row.commit_ts)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(str(exc)) from None
     allowed: tuple[str, ...]
+    required: tuple[str, ...]
     if row.event_kind == "activity":
         allowed = ACTIVITY_COLUMNS
+        required = tuple(
+            column for column in ACTIVITY_COLUMNS if column not in ACTIVITY_OPTIONAL_DEFAULTS
+        )
     elif row.event_kind == "synthetic":
         allowed = SYNTHETIC_COLUMNS
+        required = SYNTHETIC_COLUMNS
     else:
         raise ValueError(f"unsupported operational event kind: {row.event_kind}")
-    missing = [column for column in allowed if column not in raw]
+    missing = [column for column in required if column not in raw]
     if missing:
         raise ValueError(
             f"{row.event_kind} payload missing required fields: {', '.join(missing)}"
         )
-    canonical = {column: raw[column] for column in allowed}
+    canonical: dict[str, Any] = {}
+    for column in allowed:
+        value = raw.get(column)
+        if row.event_kind == "activity" and value is None:
+            default = ACTIVITY_OPTIONAL_DEFAULTS.get(column)
+            if default is not None:
+                value = default
+        if row.event_kind == "activity" and column in ACTIVITY_BOOLEAN_COLUMNS:
+            if value is not None:
+                value = int(bool(value))
+        canonical[column] = value
     canonical["ingest_version"] = _utc(row.commit_ts).isoformat()
-    return CanonicalOperationalEvent(event_kind=row.event_kind, row=canonical)
+    return [CanonicalOperationalEvent(event_kind=row.event_kind, row=canonical)]
+
+
+def quarantine_event(
+    row: OperationalOutboxRow,
+    exc: ValueError,
+    *,
+    now: dt.datetime | None = None,
+) -> CanonicalOperationalEvent:
+    return CanonicalOperationalEvent(
+        event_kind="quarantine",
+        row={
+            "shard": row.shard,
+            "commit_ts": _utc(row.commit_ts).isoformat(),
+            "event_kind": row.event_kind,
+            "event_id": row.event_id,
+            "payload": row.payload,
+            "reason": str(exc)[:500],
+            "quarantined_at": _utc(now or dt.datetime.now(dt.UTC)).isoformat(),
+        },
+    )
 
 
 def drain_once(
@@ -339,15 +683,23 @@ def drain_once(
     rows = source.fetch(limit=batch_size)
     if not rows:
         return DrainResult(fetched=0, inserted=0, rows_per_second=0.0)
-    events = [normalise_operational_event(row) for row in rows]
+    events: list[CanonicalOperationalEvent] = []
+    quarantined = 0
+    for row in rows:
+        try:
+            events.extend(normalise_operational_event(row))
+        except ValueError as exc:
+            events.append(quarantine_event(row, exc))
+            quarantined += 1
     started = time.monotonic()
     writer.insert(events)
     source.delete(rows)
     elapsed = max(time.monotonic() - started, 0.000_001)
     return DrainResult(
         fetched=len(rows),
-        inserted=len(events),
+        inserted=len(events) - quarantined,
         rows_per_second=len(events) / elapsed,
+        quarantined=quarantined,
     )
 
 
@@ -391,10 +743,11 @@ def main() -> int:
         result = drain_once(source, writer, batch_size=max(1, args.batch_size))
         log.info(
             "operational_analytics_outbox.metrics rows=%d rows_per_second=%.3f "
-            "drain_lag_seconds=%.3f",
+            "drain_lag_seconds=%.3f quarantined=%d",
             result.inserted,
             result.rows_per_second,
             _lag_seconds(source.oldest_commit_ts()),
+            result.quarantined,
         )
         if args.once:
             return 0

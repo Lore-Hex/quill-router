@@ -20,6 +20,7 @@ from trusted_router.storage_gcp_authorize import (
     AuthorizeOutcome,
     authorize_atomic,
     check_key_window_limits,
+    key_window_limit_decision,
     settle_atomic,
 )
 from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE
@@ -81,6 +82,19 @@ def test_settle_bumps_windows_and_authorize_blocks_then_rolls_over() -> None:
     assert row["week_usage"] == 700
     assert row["month_usage"] == 700
     assert row["day_start"] == _floors()["daily"]
+
+    decision = key_window_limit_decision(
+        store._database,
+        store._param_types,
+        key_hash=key.hash,
+        estimate=200,
+        window_limits={"daily": 1_000},
+    )
+    assert decision is not None
+    assert decision.allowed is True
+    assert decision.limit == 1_000
+    assert decision.remaining == 300
+    assert decision.reset_seconds >= 1
 
     # 700 + 400 > 1000 -> the snapshot check blocks, naming WHICH window.
     assert _check(store, key.hash, 400, {"daily": 1_000}) == "daily"

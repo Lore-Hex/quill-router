@@ -49,6 +49,12 @@ def test_cluster_migration_is_parity_gated_and_keeps_local_backup() -> None:
     assert "source and replicated fingerprints differ" in script
     assert "timedelta(minutes=5)" in script
     assert "service account did not become visible" in script
+    assert "bigtable instances add-iam-policy-binding" in script
+    assert '"$BIGTABLE_INSTANCE_ID"' in script
+    assert "roles/bigtable.reader" in script
+    assert "could not grant Bigtable read access" in script
+    assert "roles/spanner.databaseUser" in script
+    assert "spanner databases add-iam-policy-binding" in script
     assert "provider_benchmark_samples_local_backup" in script
     assert "RENAME TABLE provider_benchmark_samples TO" in script
     assert "DROP TABLE provider_benchmark_samples_local_backup" not in script
@@ -70,6 +76,22 @@ def test_rollout_prefers_private_clickhouse_load_balancer() -> None:
 
     assert "compute addresses describe tr-clickhouse-ilb" in script
     assert 'TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL=${PROVIDER_ANALYTICS_CLICKHOUSE_URL}' in script
+
+
+def test_operational_deploy_moves_benchmark_code_schema_and_replay_together() -> None:
+    script = (ROOT / "scripts/deploy/clickhouse_operational_analytics.sh").read_text()
+
+    upload = script.index("sudo tar -xzf - -C /opt/tr-clickhouse")
+    stop = script.index("systemctl stop tr-clickhouse-operational-ingest.service")
+    migration = script.index('log "adding workspace attribution to benchmark samples"')
+    restart = script.index(
+        "systemctl start tr-clickhouse-operational-ingest.service", migration
+    )
+    replay = script.index("clickhouse.backfill_benchmark_samples")
+
+    assert upload < stop < migration < restart < replay
+    assert "007_benchmark_samples_workspace_id.sql" in script
+    assert "TR_CLICKHOUSE_BENCHMARK_WORKSPACE_BACKFILL_LIMIT" in script
 
 
 # --------------------------------------------------------------------------
@@ -298,23 +320,22 @@ def test_stockholm_backfill_runs_in_the_direction_that_is_actually_open() -> Non
 
 
 def test_stockholm_states_which_tables_the_second_copy_covers() -> None:
-    """The drain replicates the two tables it drains, not all four in the DDL.
-
-    006 creates activity_generations, synthetic_probe_samples,
-    synthetic_status_rollups and public_analytics_snapshots; EVENT_TABLES maps
-    only the first two. Nothing on this cloud writes the other two today, but
-    "a second, independent copy of that history" is a claim that has to name
-    its own edges rather than let a reader assume all four.
-    """
+    """The drain names every ingested table and excludes derived products."""
     from clickhouse.ingest_operational_outbox import EVENT_TABLES
 
     script = STOCKHOLM.read_text()
 
     assert "COVERAGE:" in script
-    for table in EVENT_TABLES.values():
+    tables = {
+        table
+        for value in EVENT_TABLES.values()
+        for table in ((value,) if isinstance(value, str) else value)
+    }
+    for table in tables:
         assert table in script
     assert "does NOT write" in script
     assert "synthetic_status_rollups" in script
+    assert "client_availability_rollups" in script
     assert "public_analytics_snapshots" in script
 
 

@@ -46,6 +46,8 @@ def test_chat_page_renders_without_auth() -> None:
     assert "data-chat-input" in body
     assert "data-chat-send" in body
     assert 'data-action="clear-chat"' in body
+    assert '<h1 class="chat-header-chat-title"' in body
+    assert "TrustedRouter Chat</h1>" in body
 
     # The marketing chrome's sign-in modal trigger is reachable
     # (this is what the Send-button gate fall back to when signed-out)

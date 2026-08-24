@@ -123,7 +123,7 @@ def test_video_leaderboard_page_and_json_are_separate_from_text_metrics() -> Non
     data = payload.json()["data"]
     assert data["model_count"] > 1
     routes = {(row["provider"], row["model"]) for row in data["models"]}
-    assert ("minimax", "minimax/hailuo-3") in routes
+    assert ("atlas-cloud", "minimax/hailuo-3") in routes
     assert ("ltx", "lightricks/ltx-2.3-fast") in routes
     assert "Awaiting sample" in page.text
     assert "minimax/hailuo-3" not in text_page.text

@@ -1,0 +1,95 @@
+{% extends "public/_base.html" %}
+{% block hero %}
+<section class="public-hero marketing-hero" aria-labelledby="rrh-title">
+  <div>
+    <div class="kicker">Customer story · Legal AI · OpenAI compatible API</div>
+    <h1 id="rrh-title">From first call to production-scale legal AI in three weeks.</h1>
+    <p class="lead">Robot, Robot &amp; Human routed billions of tokens in its first month through TrustedRouter while processing privileged litigation documents at production scale.</p>
+    <div class="hero-actions">
+      <a class="btn primary" href="#results">See the results</a>
+      <a class="btn" href="https://trust.trustedrouter.com">Verify the gateway <span aria-hidden="true">→</span></a>
+    </div>
+  </div>
+  <div class="public-hero-metrics" aria-label="Robot, Robot and Human results">
+    <div><strong>Billions</strong><span>of tokens routed in the first month</span></div>
+    <div><strong>170,974</strong><span>documents across 34 active matters</span></div>
+    <div><strong>3 weeks</strong><span>from first call to production batch scale</span></div>
+  </div>
+</section>
+{% endblock %}
+{% block body %}
+<section class="public-proof-strip" aria-label="Customer proof points">
+  <div><strong>616,682 pages</strong><span>extracted and analyzed</span></div>
+  <div><strong>~1.49B characters</strong><span>of extracted litigation text</span></div>
+  <div><strong>More than 1B tokens</strong><span>during the peak week</span></div>
+  <div><strong>One base URL</strong><span>to start routing production calls</span></div>
+</section>
+
+<section class="marketing-split" aria-label="Customer challenge and solution">
+  <article class="marketing-copy">
+    <span class="eyebrow">The customer</span>
+    <h2>Legal reasoning over documents that cannot be treated casually.</h2>
+    <p>Robot, Robot &amp; Human is a legal AI platform. It ingests litigation productions, performs OCR and text extraction, embeds the resulting material, and runs multi-stage reasoning to produce searchable evidence, timelines, contradiction analysis, and attorney work product.</p>
+    <p>The inputs include opposing-party productions, privileged communications, and matters under active litigation. The team needed production-scale inference without building its own GPU fleet or maintaining a separate integration for every model provider.</p>
+  </article>
+  <article class="marketing-copy">
+    <span class="eyebrow">The implementation</span>
+    <h2>One API, explicit route policy, and an attested gateway.</h2>
+    <p>RRH kept its OpenAI-shaped application calls and moved the base URL to TrustedRouter. It could use lower-cost models for extraction and stronger models for synthesis and verification while keeping routing, provider fallback, billing, and metadata accounting behind one interface.</p>
+    <p>Every request entered through TrustedRouter's attested confidential-compute gateway. TrustedRouter does not log or store prompt or output content. RRH can verify the running gateway image against the published source and choose ZDR or independently verified end-to-end confidential provider routes where the workload requires them.</p>
+  </article>
+</section>
+
+<section class="panel" id="results" aria-labelledby="results-title">
+  <div class="panel-head"><h2 id="results-title">Production results as of August 5, 2026</h2></div>
+  <div class="panel-body">
+    <div class="metrics">
+      <div class="metric"><div class="value">170,974</div><div class="label">documents processed</div><div class="sub">across 34 active matters</div></div>
+      <div class="metric"><div class="value">616,682</div><div class="label">pages analyzed</div></div>
+      <div class="metric"><div class="value">~126 GB</div><div class="label">source files ingested</div></div>
+      <div class="metric"><div class="value">609,090</div><div class="label">retrieval chunks embedded</div></div>
+      <div class="metric"><div class="value">190,054</div><div class="label">case insights generated</div></div>
+      <div class="metric"><div class="value">25,610</div><div class="label">evidence highlights surfaced</div></div>
+      <div class="metric"><div class="value">4,528</div><div class="label">contradiction pairs</div><div class="sub">2,381 verified against source</div></div>
+      <div class="metric"><div class="value">2,254</div><div class="label">timeline events reconstructed</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="quote-feature" aria-label="Customer statement">
+  <div>
+    <span class="eyebrow">In their words</span>
+    <h2>Privacy had to be evidence, not another promise.</h2>
+  </div>
+  <blockquote>
+    “We handle other people's privileged litigation documents, the kind of material that gets subpoenaed. ‘Trust us, we won't peek’ was never an acceptable answer to give a client. [...] And it was a base-URL change. We went from the first call to hundreds of thousands of documents in a few weeks, running cheap models for extraction and frontier models for the reasoning that actually matters [...] without standing up a single GPU.”
+    <br><strong>Robot, Robot &amp; Human</strong>
+  </blockquote>
+</section>
+
+<section class="limitation-band" aria-label="Trust boundary">
+  <span class="pill good">Trust boundary</span>
+  <div>
+    <strong>Gateway attestation and provider guarantees answer different questions.</strong>
+    <p class="muted-copy">The live attestation proves which TrustedRouter gateway workload is receiving the request and that it matches the published image. Downstream model handling remains route-specific and is published on each model and provider page. Use ZDR routes for contractual zero retention and independently verified E2E routes when the provider's model-serving boundary must also be confidential.</p>
+  </div>
+</section>
+
+<section class="marketing-grid three" aria-label="Why the deployment worked">
+  <article class="marketing-card"><span class="card-label">Speed</span><h3>Production in weeks</h3><p>RRH onboarded on July 3 and reached production batch scale within three weeks. The public snapshot covers the first month through August 5.</p></article>
+  <article class="marketing-card"><span class="card-label">Scale</span><h3>Batch inference without a GPU platform</h3><p>The same API handled extraction, retrieval preparation, synthesis, source verification, and timeline reconstruction across entire litigation productions.</p></article>
+  <article class="marketing-card"><span class="card-label">Control</span><h3>Model tier matched to the task</h3><p>Lower-cost routes handled volume work. Stronger routes handled the reasoning stages where answer quality mattered most.</p></article>
+</section>
+
+<section class="panel" aria-labelledby="method-title">
+  <div class="panel-head"><h2 id="method-title">Measurement note</h2></div>
+  <div class="panel-body">
+    <p>Corpus and reasoning counts came from RRH's production database. Token-volume claims were cross-checked against TrustedRouter's metadata-only usage records. TrustedRouter did not inspect prompt or output content. Public figures are aggregated and do not identify a matter, party, document, user, or API key.</p>
+  </div>
+</section>
+
+<section class="cta-band">
+  <div><h2>Route sensitive document workloads through an API your team can inspect.</h2><p>Keep the SDK, choose the privacy tier, and verify the running gateway.</p></div>
+  <div class="cta-band-actions"><button class="btn primary" type="button" data-action="open-signin">Create key</button><a class="btn" href="/llm-api-for-law-firms">Legal AI guide</a></div>
+</section>
+{% endblock %}

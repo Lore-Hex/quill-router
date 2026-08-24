@@ -1,0 +1,13 @@
+# Review ownership for this repository.
+#
+# Lore Hex Corp currently has one person in it, so this assigns review rather
+# than adding a second reviewer, and we do not claim otherwise: see SECURITY.md
+# and https://trustedrouter.com/trust for the controls that do not depend on
+# headcount — gated CI on every change, and measured deployments whose published
+# measurement makes an undisclosed change to the serving path externally
+# detectable.
+#
+# This file becomes load-bearing at first hire. Until then it keeps ownership
+# explicit and routes review requests somewhere real.
+
+* @jperla

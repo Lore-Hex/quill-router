@@ -43,7 +43,7 @@
     <header class="chat-header">
       <button class="chat-hamburger" type="button" aria-label="Toggle sidebar" data-action="toggle-sidebar">&#9776;</button>
       <div class="chat-header-title">
-        <span class="chat-header-chat-title" data-chat-header-title></span>
+        <h1 class="chat-header-chat-title" data-chat-header-title>TrustedRouter Chat</h1>
         <span class="chat-header-chat-cost" data-chat-header-cost></span>
       </div>
       <div class="chat-models-bar" data-chat-models-bar>
@@ -152,7 +152,7 @@
 
 {# Inline config so chat.js doesn't need a second roundtrip just to
    know which API base URL to call. Mirrors the dashboard.js pattern. #}
-<script>
+<script nonce="{{ csp_nonce() }}">
   window.__TR_CHAT__ = {
     apiBaseUrl: {{ api_base_url|tojson }},
     catalogBaseUrl: {{ catalog_base_url|tojson }},
@@ -166,7 +166,7 @@
 </script>
 {# Markdown + code highlighting + XSS sanitization loaded from CDN.
    marked turns the assistant's content into HTML; highlight.js paints
-   code blocks; DOMPurify strips any <script> a model might emit
+   code blocks; DOMPurify strips any <script nonce="{{ csp_nonce() }}"> a model might emit
    before insertion. chunk 4 may vendor these locally for offline +
    subresource-integrity guarantees. #}
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css">

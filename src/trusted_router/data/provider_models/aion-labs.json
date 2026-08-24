@@ -1,0 +1,100 @@
+{
+  "provider": "aion-labs",
+  "models": [
+    {
+      "display_name": "AionLabs: Aion 2.0",
+      "title": "aion-labs/aion-2.0",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "aion-labs/aion-2.0",
+      "upstream_id": "aion-labs/aion-2.0",
+      "context_length": 131072,
+      "max_output_tokens": 32768,
+      "routable": true,
+      "input_token_price_per_m": 800000,
+      "output_token_price_per_m": 1600000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "AionLabs: Aion 3.0",
+      "title": "aion-labs/aion-3.0",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "aion-labs/aion-3.0",
+      "upstream_id": "aion-labs/aion-3.0",
+      "context_length": 131072,
+      "max_output_tokens": 32768,
+      "routable": true,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 6000000,
+      "cached_input_token_price_per_m": 750000
+    },
+    {
+      "display_name": "AionLabs: Aion 3.0 Mini",
+      "title": "aion-labs/aion-3.0-mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "aion-labs/aion-3.0-mini",
+      "upstream_id": "aion-labs/aion-3.0-mini",
+      "context_length": 131072,
+      "max_output_tokens": 32768,
+      "routable": true,
+      "input_token_price_per_m": 700000,
+      "output_token_price_per_m": 1400000,
+      "cached_input_token_price_per_m": 180000
+    },
+    {
+      "display_name": "AionLabs: Aion-RP 1.0 (8B)",
+      "title": "aion-labs/aion-rp-llama-3.1-8b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "aion-labs/aion-rp-llama-3.1-8b",
+      "upstream_id": "aion-labs/aion-rp-llama-3.1-8b",
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "routable": true,
+      "input_token_price_per_m": 800000,
+      "output_token_price_per_m": 1600000
+    }
+  ],
+  "source": "https://api.aionlabs.ai/v1/models",
+  "generated_at": "2026-08-22T20:13:03Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 4
+}

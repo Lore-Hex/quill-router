@@ -12,10 +12,14 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
+from trusted_router.operational_analytics_freshness import OutboxFreshness
+from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage_models import (
     AcquisitionAttribution,
     ActivationReminderTask,
     ApiKey,
+    ApiKeyAuthContext,
+    ApiKeyUsageSnapshot,
     AuthSession,
     BedrockGroupBuyAggregate,
     BedrockGroupBuyPledge,
@@ -24,22 +28,27 @@ from trusted_router.storage_models import (
     BroadcastDestination,
     ByokProviderConfig,
     CreditAccount,
+    CreditMovement,
     CreditTransfer,
     CustomModel,
     EmailSendBlock,
     EncryptedSecretEnvelope,
     GatewayAuthorization,
     Generation,
+    GoogleAdsConversion,
     Member,
     OAuthAuthorizationCode,
     ProviderAccessGrant,
     ProviderBenchmarkSample,
     RateLimitHit,
     Reservation,
+    SessionAuthContext,
     SignupResult,
     SyntheticProbeSample,
     SyntheticRollup,
     User,
+    UserModelPayout,
+    UserProvidedModel,
     VerificationToken,
     VideoJob,
     WalletChallenge,
@@ -69,6 +78,28 @@ class Store(Protocol):
     def create_wallet_user(self, address: str) -> User: ...
     def set_user_email(self, user_id: str, email: str) -> User | None: ...
     def mark_user_email_verified(self, user_id: str) -> User | None: ...
+    def set_user_identity_status(
+        self,
+        user_id: str,
+        *,
+        status: str,
+        session_id: str | None = ...,
+        session_url: str | None = ...,
+        decision_code: int | None = ...,
+        decision_reason: str | None = ...,
+        decision_reason_code: int | None = ...,
+        verified_name: str | None = ...,
+        increment_attempts: bool = ...,
+    ) -> User | None: ...
+    # Phone ownership proof for notifications. The rules live in
+    # phone_verification.py; a backend only reads the user, applies them, and
+    # writes it back, so the three stores cannot drift apart on policy.
+    def begin_phone_verification(
+        self, user_id: str, phone: str, channel: str | None = ...
+    ) -> tuple[str, User] | None: ...
+    def confirm_phone_verification(self, user_id: str, code: str) -> tuple[str, User | None]: ...
+    def cancel_phone_verification(self, user_id: str) -> User | None: ...
+    def clear_user_phone(self, user_id: str) -> User | None: ...
     def get_user(self, user_id: str) -> User | None: ...
     def signup(
         self,
@@ -93,9 +124,33 @@ class Store(Protocol):
         amount_microdollars: int,
         occurred_at: str,
     ) -> AcquisitionAttribution | None: ...
-    def list_activation_reminders(
-        self, *, limit: int = ...
-    ) -> list[ActivationReminderTask]: ...
+    def repair_google_ads_delivery_queue(self, *, since: str, limit: int) -> int: ...
+    def purge_expired_google_ads_click_ids(self, *, before: str, limit: int) -> int: ...
+    def claim_google_ads_deliveries(
+        self,
+        *,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[GoogleAdsConversion]: ...
+    def mark_google_ads_delivery_submitted(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        request_id: str,
+    ) -> GoogleAdsConversion | None: ...
+    def mark_google_ads_delivery_failed(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        error: str,
+        retryable: bool,
+        max_attempts: int,
+    ) -> GoogleAdsConversion | None: ...
+    def list_activation_reminders(self, *, limit: int = ...) -> list[ActivationReminderTask]: ...
     def delete_activation_reminders(self, reminder_ids: list[str]) -> None: ...
     def claim_activation_reminder(
         self,
@@ -107,9 +162,7 @@ class Store(Protocol):
     def upsert_bedrock_group_buy_pledge(
         self, pledge: BedrockGroupBuyPledge
     ) -> BedrockGroupBuyPledge: ...
-    def get_bedrock_group_buy_pledge(
-        self, user_id: str
-    ) -> BedrockGroupBuyPledge | None: ...
+    def get_bedrock_group_buy_pledge(self, user_id: str) -> BedrockGroupBuyPledge | None: ...
     def withdraw_bedrock_group_buy_pledge(self, user_id: str) -> bool: ...
     def bedrock_group_buy_aggregate(self) -> BedrockGroupBuyAggregate: ...
     def list_bedrock_group_buy_public_messages(
@@ -166,6 +219,12 @@ class Store(Protocol):
     ) -> tuple[str, AuthSession]: ...
     def get_auth_session_by_raw(self, raw_token: str) -> AuthSession | None: ...
     def delete_auth_session_by_raw(self, raw_token: str) -> bool: ...
+    def session_auth_context(
+        self,
+        raw_token: str,
+        *,
+        requested_workspace_id: str | None = ...,
+    ) -> SessionAuthContext | None: ...
     def upgrade_auth_session(self, raw_token: str, *, state: str) -> AuthSession | None: ...
     def set_auth_session_workspace(
         self, raw_token: str, workspace_id: str
@@ -229,6 +288,7 @@ class Store(Protocol):
     def is_email_blocked(self, email: str) -> bool: ...
     def get_email_block(self, email: str) -> EmailSendBlock | None: ...
     def record_sns_message_once(self, message_id: str) -> bool: ...
+    def record_webhook_event_once(self, source: str, event_id: str) -> bool: ...
 
     # API keys ----------------------------------------------------------------
     def create_api_key(
@@ -250,7 +310,12 @@ class Store(Protocol):
         tags: dict[str, str] | None = ...,
     ) -> tuple[str, ApiKey]: ...
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None: ...
-    def typed_key_usage(self, key_hash: str) -> dict[str, Any] | None: ...
+    def typed_key_usage(
+        self,
+        key_hash: str,
+        *,
+        allow_stale: bool = ...,
+    ) -> dict[str, Any] | None: ...
     def get_key_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None: ...
 
     def upsert_federated_api_key(self, record: dict[str, Any]) -> ApiKey:
@@ -316,8 +381,11 @@ class Store(Protocol):
         """DESTINATION: decide once. Returns the DECIDED outcome, which may
         differ from `accept` when another caller got there first."""
         ...
+
     def get_key_by_raw(self, raw_key: str) -> ApiKey | None: ...
+    def api_key_auth_context(self, raw_key: str) -> ApiKeyAuthContext | None: ...
     def list_keys(self, workspace_id: str) -> list[ApiKey]: ...
+    def list_api_keys_with_usage(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]: ...
     def delete_key(self, key_hash: str) -> bool: ...
     def update_key(self, key_hash: str, patch: dict[str, Any]) -> ApiKey | None: ...
     def reserve_key_limit(
@@ -326,7 +394,7 @@ class Store(Protocol):
         amount_microdollars: int,
         *,
         usage_type: UsageType | str,
-    ) -> None: ...
+    ) -> KeyWindowLimitDecision | None: ...
     def settle_key_limit(
         self,
         key_hash: str,
@@ -379,6 +447,87 @@ class Store(Protocol):
         patch: dict[str, Any],
     ) -> CustomModel | None: ...
     def delete_custom_model(self, model_id: str, *, owner_user_id: str) -> bool: ...
+
+    # User-provided models ----------------------------------------------------
+    def create_user_model(
+        self,
+        *,
+        owner_user_id: str,
+        owner_workspace_id: str,
+        name: str,
+        kind: str,
+        description: str = ...,
+        display_identity: str = ...,
+        display_name: str = ...,
+        endpoint_url: str,
+        upstream_model_id: str | None = ...,
+        encrypted_endpoint_api_key: EncryptedSecretEnvelope | None = ...,
+        endpoint_key_hint: str | None = ...,
+        encrypted_signing_secret: EncryptedSecretEnvelope | None = ...,
+        supports_streaming: bool = ...,
+        heartbeat_interval_seconds: int | None = ...,
+        max_concurrency: int = ...,
+        prompt_price_microdollars_per_million_tokens: int = ...,
+        completion_price_microdollars_per_million_tokens: int = ...,
+        human_verified: bool = ...,
+        enabled: bool = ...,
+        status: str = ...,
+        slug: str | None = ...,
+    ) -> UserProvidedModel: ...
+    def list_user_models_for_user(self, owner_user_id: str) -> list[UserProvidedModel]: ...
+    def get_user_model(self, model_id: str) -> UserProvidedModel | None: ...
+    def get_user_models_by_ids(
+        self,
+        model_ids: list[str],
+    ) -> dict[str, UserProvidedModel]: ...
+    def update_user_model(
+        self,
+        model_id: str,
+        *,
+        owner_user_id: str,
+        patch: dict[str, Any],
+    ) -> UserProvidedModel: ...
+    def delete_user_model(self, model_id: str, *, owner_user_id: str) -> bool: ...
+    def set_user_model_online(
+        self,
+        model_id: str,
+        *,
+        owner_user_id: str,
+        online: bool,
+    ) -> UserProvidedModel: ...
+    def record_user_model_heartbeat(
+        self,
+        model_id: str,
+        *,
+        expires_at: str,
+    ) -> UserProvidedModel: ...
+    def record_user_model_probe(
+        self,
+        model_id: str,
+        *,
+        status: str,
+        checked_at: str,
+    ) -> UserProvidedModel: ...
+    def record_user_model_dispatch_result(
+        self,
+        model_id: str,
+        *,
+        success: bool,
+    ) -> UserProvidedModel: ...
+    def acquire_user_model_slot(
+        self,
+        model_id: str,
+        authorization_id: str,
+        *,
+        limit: int,
+        ttl_seconds: int,
+    ) -> bool: ...
+    def release_user_model_slot(self, model_id: str, authorization_id: str) -> None: ...
+    def list_public_user_models(
+        self,
+        *,
+        kind: str | None = ...,
+    ) -> list[UserProvidedModel]: ...
 
     # Broadcast destinations -------------------------------------------------
     def create_broadcast_destination(
@@ -468,11 +617,78 @@ class Store(Protocol):
     # Credit ledger -----------------------------------------------------------
     def get_credit_account(self, workspace_id: str) -> CreditAccount | None: ...
     def credit_workspace_typed_direct(
-        self, workspace_id: str, amount_microdollars: int, event_id: str
+        self,
+        workspace_id: str,
+        amount_microdollars: int,
+        event_id: str,
+        *,
+        lifetime_topup_user_id: str | None = ...,
     ) -> bool: ...
     def credit_workspace_once(
         self, workspace_id: str, amount_microdollars: int, event_id: str
     ) -> bool: ...
+
+    # Earnings & movement primitives -----------------------------------------
+    def debit_workspace_guarded(
+        self,
+        workspace_id: str,
+        amount_microdollars: int,
+        event_id: str,
+        *,
+        kind: str,
+        custom_model_id: str | None = ...,
+        authorization_id: str | None = ...,
+    ) -> str: ...
+    def credit_user_earnings(
+        self,
+        user_id: str,
+        amount_microdollars: int,
+        event_id: str,
+        *,
+        custom_model_id: str | None = ...,
+        payer_workspace_id: str | None = ...,
+    ) -> bool: ...
+    def transfer_earnings_to_workspace(
+        self,
+        user_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        event_id: str,
+    ) -> str: ...
+    def ensure_earnings_account(self, user_id: str) -> None: ...
+    def earnings_summary(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = ...,
+    ) -> dict[str, int]: ...
+    def list_credit_movements(
+        self,
+        account_id: str,
+        *,
+        kinds: list[str] | None = ...,
+        limit: int = ...,
+        before: str | None = ...,
+    ) -> list[CreditMovement]: ...
+    def custom_model_earnings_by_model(
+        self,
+        user_id: str,
+        *,
+        since: str,
+    ) -> dict[str, int]: ...
+    def add_lifetime_topup(
+        self,
+        user_id: str,
+        amount_microdollars: int,
+        event_id: str,
+    ) -> bool: ...
+    def get_lifetime_topup_microdollars(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = ...,
+    ) -> int: ...
+
     def reserve(
         self,
         workspace_id: str,
@@ -514,6 +730,7 @@ class Store(Protocol):
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
+        authorization_id: str | None = ...,
         requested_model_id: str | None = ...,
         candidate_model_ids: list[str] | None = ...,
         region: str | None = ...,
@@ -524,6 +741,11 @@ class Store(Protocol):
         idempotency_fingerprint: str | None = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,
+        user_provided_model_id: str | None = ...,
+        user_provided_model_revision: int | None = ...,
+        user_model_prompt_price_microdollars_per_m: int | None = ...,
+        user_model_completion_price_microdollars_per_m: int | None = ...,
+        user_model_owner_user_id: str | None = ...,
         additional_cost_reservation_microdollars: int = ...,
         native_batch_eligible: bool = ...,
         # Deferred settlement. `settlement="deferred_home"` records that this
@@ -554,6 +776,7 @@ class Store(Protocol):
 
     # Generations + activity --------------------------------------------------
     def add_generation(self, generation: Generation) -> None: ...
+    def record_client_events_batch(self, payload: dict[str, Any]) -> None: ...
     def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None: ...
     def provider_benchmark_samples(
         self,
@@ -582,6 +805,12 @@ class Store(Protocol):
         include_histograms: bool = ...,
         limit: int = ...,
     ) -> list[SyntheticRollup]: ...
+    # Operational-analytics drain freshness -----------------------------------
+    # Declared on the Protocol, not duck-typed off STORE, so a backend that
+    # forgets it is a mypy error rather than a cloud that quietly publishes no
+    # drain signal. That omission is the exact shape of the AWS-EU outage of
+    # 2026-08-02..17: the drain was absent and the only alarm was the drain's.
+    def operational_analytics_outbox_freshness(self) -> OutboxFreshness: ...
     def reconcile_generation_activity(
         self,
         workspace_id: str,
@@ -672,6 +901,7 @@ class TypedBillingStore(Protocol):
         *,
         workspace_id: str,
         key_hash: str,
+        authorization_id: str | None = ...,
         estimate: int,
         has_credit_candidate: bool,
         reservation_usage_type: UsageType | str,
@@ -688,6 +918,11 @@ class TypedBillingStore(Protocol):
         tags: dict[str, str] | None = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,
+        user_provided_model_id: str | None = ...,
+        user_provided_model_revision: int | None = ...,
+        user_model_prompt_price_microdollars_per_m: int | None = ...,
+        user_model_completion_price_microdollars_per_m: int | None = ...,
+        user_model_owner_user_id: str | None = ...,
         additional_cost_reservation_microdollars: int = ...,
         native_batch_eligible: bool = ...,
         expires_at: Any = ...,
@@ -702,6 +937,7 @@ class TypedBillingStore(Protocol):
         actual_microdollars: int,
         selected_usage_type: UsageType | str,
         generation: Generation | None = ...,
+        user_model_payout: UserModelPayout | None = ...,
     ) -> bool: ...
 
     def typed_finalize_gateway(self, **kwargs: Any) -> dict[str, Any]: ...

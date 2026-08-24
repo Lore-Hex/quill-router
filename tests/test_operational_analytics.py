@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import json
+import re
 import threading
 from typing import Any
 
@@ -13,6 +14,7 @@ from clickhouse.ingest_operational_outbox import (
     CanonicalOperationalEvent,
     OperationalOutboxRow,
     drain_once,
+    expand_client_events_payload,
     normalise_operational_event,
 )
 from clickhouse.rollup_synthetic import (
@@ -20,6 +22,7 @@ from clickhouse.rollup_synthetic import (
     complete_window_rollups,
     monthly_from_daily,
 )
+from trusted_router.client_events_schema import ClientEventsBatch
 from trusted_router.operational_analytics import (
     OperationalAnalyticsClient,
     stable_rows_fingerprint,
@@ -35,6 +38,14 @@ from trusted_router.storage_models import (
     Generation,
     ProviderBenchmarkSample,
     SyntheticProbeSample,
+)
+from trusted_router.storage_operational_analytics import (
+    CLIENT_EVENTS_EVENT_KIND,
+    OPERATIONAL_ANALYTICS_OUTBOX_SHARDS,
+    build_client_events_payload,
+)
+from trusted_router.storage_postgres_operational_analytics_outbox import (
+    PostgresOperationalAnalyticsOutbox,
 )
 from trusted_router.types import UsageType
 
@@ -94,7 +105,12 @@ class _Database:
         callback(self.transaction)
 
 
-def test_activity_payload_uses_surrogates_and_omits_content_and_raw_ids() -> None:
+def test_activity_payload_names_its_workspace_but_never_keys_or_content() -> None:
+    """The 2026-08-19 boundary: workspace_id is pseudonymous and belongs in the
+    row (it is what makes rows joinable without a refreshed directory); key
+    hashes and generation content remain surrogate-only/absent. If this test
+    fails on the workspace_id line, someone is re-anonymising the private
+    table -- that decision was made deliberately, reverse it deliberately."""
     generation = _generation()
     payload = activity_payload(generation)
     encoded = json.dumps(payload, sort_keys=True)
@@ -102,8 +118,8 @@ def test_activity_payload_uses_surrogates_and_omits_content_and_raw_ids() -> Non
     assert payload["tenant_id"] == analytics_surrogate(
         "workspace", generation.workspace_id
     )
+    assert payload["workspace_id"] == generation.workspace_id
     assert payload["key_id"] == analytics_surrogate("api-key", generation.key_hash)
-    assert generation.workspace_id not in encoded
     assert generation.key_hash not in encoded
     assert "private model output" not in encoded
     assert "tool_calls" not in payload
@@ -133,6 +149,166 @@ def test_operational_outbox_enqueue_is_sharded_and_commit_timestamped() -> None:
         "event_id": "STRING",
         "payload": "STRING",
     }
+
+
+def _client_events_payload() -> dict[str, Any]:
+    batch = ClientEventsBatch.model_validate(
+        {
+            "schema_version": 1,
+            "batch_id": "a" * 32,
+            "instance_id": "b" * 16,
+            "seq": 9,
+            "sent_at_ms": 0,
+            "sdk": {
+                "name": "tr-py",
+                "version": "1.2.3",
+                "lang": "python",
+                "runtime": "cpython/3.12.4",
+                "os": "linux",
+                "arch": "arm64",
+            },
+            "events": [
+                {
+                    "age_ms": 1_500,
+                    "plane": "inference",
+                    "endpoint": "responses",
+                    "method": "POST",
+                    "streaming": True,
+                    "provider_pinned": False,
+                    "model": "private/model-name",
+                    "attempts": [
+                        {
+                            "index": 0,
+                            "host": "ally",
+                            "outcome": "transport_error",
+                            "http_status": None,
+                            "error_class": "connect_timeout",
+                            "error_source": "router",
+                            "should_retry": "false",
+                            "retry_after_ms": None,
+                            "elapsed_ms": 10_000,
+                            "ttfb_ms": None,
+                            "request_id": None,
+                            "moved": False,
+                        }
+                    ],
+                    "final_outcome": "exhausted",
+                    "final_http_status": None,
+                    "total_ms": 10_000,
+                    "ttft_ms": None,
+                    "failover_used": False,
+                    "timeout_phase": "connect",
+                    "configured_timeout_ms": 10_000,
+                    "sample_rate": 1.0,
+                    "sample_reason": "failure",
+                }
+            ],
+            "counters": [
+                {
+                    "window_start_age_ms": 61_500,
+                    "level": "request",
+                    "endpoint": "responses",
+                    "streaming": True,
+                    "host": "apex",
+                    "outcome": "ok",
+                    "error_class": None,
+                    "http_status_class": "2xx",
+                    "timeout_phase": "none",
+                    "timeout_floor_met": False,
+                    "provider_pinned": False,
+                    "requests": 4,
+                    "attempts": 4,
+                    "failover_used": 0,
+                    "first_attempt_success": 4,
+                    "total_ms_hist": {"lt400": 4},
+                    "first_event_ms_hist": {"lt200": 4},
+                }
+            ],
+        }
+    )
+    return build_client_events_payload(
+        batch,
+        tenant_id="raw-workspace",
+        key_id="raw-key-hash",
+        received_at=dt.datetime(2026, 8, 17, 12, 1, 2, 345000, tzinfo=dt.UTC),
+        is_synthetic=False,
+        success_sample_rate=0.01,
+    )
+
+
+def test_client_events_payload_round_trips_through_clickhouse_expansion() -> None:
+    payload = _client_events_payload()
+
+    rows = expand_client_events_payload(
+        payload,
+        dt.datetime(2026, 8, 17, 12, 1, 3, tzinfo=dt.UTC),
+    )
+
+    assert set(payload) == {
+        "schema_version",
+        "tenant_id",
+        "key_id",
+        "received_at",
+        "clock_skew_ms",
+        "synthetic",
+        "batch_id",
+        "instance_id",
+        "seq",
+        "sdk",
+        "events",
+        "counters",
+    }
+    assert len(rows) == 2
+    request = next(row.row for row in rows if row.event_kind == "client_request")
+    counter = next(row.row for row in rows if row.event_kind == "client_counter")
+    assert request["tr_fault"] == 1
+    assert counter["tr_fault"] == 0
+    assert request["final_host"] == "ally"
+    assert request["model"] == "other"
+
+
+def test_spanner_client_events_enqueue_uses_one_batch_outbox_row() -> None:
+    database = _Database()
+    payload = _client_events_payload()
+
+    SpannerOperationalAnalyticsOutbox(database, _ParamTypes()).enqueue_client_events(
+        payload
+    )
+
+    [(sql, params, _)] = database.transaction.calls
+    event_id = f"{payload['tenant_id']}:{payload['batch_id']}"
+    assert "PENDING_COMMIT_TIMESTAMP()" in sql
+    assert params["event_kind"] == CLIENT_EVENTS_EVENT_KIND
+    assert params["event_id"] == event_id
+    assert params["shard"] == operational_analytics_shard(
+        f"{CLIENT_EVENTS_EVENT_KIND}:{event_id}"
+    )
+    assert json.loads(params["payload"]) == payload
+
+
+def test_postgres_client_events_enqueue_uses_one_idempotent_batch_row() -> None:
+    statements: list[tuple[str, tuple[Any, ...]]] = []
+
+    class Connection:
+        def execute(self, sql: str, params: tuple[Any, ...]) -> None:
+            statements.append((sql, params))
+
+    connection = Connection()
+    outbox = PostgresOperationalAnalyticsOutbox(
+        lambda operation: operation(connection)
+    )
+    payload = _client_events_payload()
+
+    outbox.enqueue_client_events(payload)
+    outbox.enqueue_client_events(payload)
+
+    assert len(statements) == 2
+    for sql, params in statements:
+        event_id = f"{payload['tenant_id']}:{payload['batch_id']}"
+        assert "ON CONFLICT" in sql
+        assert params[1] == CLIENT_EVENTS_EVENT_KIND
+        assert params[2] == event_id
+        assert json.loads(params[3]) == payload
 
 
 def test_clickhouse_balanced_benchmark_reader_uses_one_window_query() -> None:
@@ -218,12 +394,24 @@ def test_clickhouse_balanced_benchmark_reader_uses_one_window_query() -> None:
     ]
 
 
-def test_public_snapshot_reads_newest_revision_across_month_partitions() -> None:
+@pytest.mark.parametrize(
+    "snapshot_name",
+    [
+        "leaderboard",
+        "apps",
+        "video_leaderboard",
+        "status_inputs",
+        "client_reliability",
+    ],
+)
+def test_public_snapshot_reads_newest_revision_across_month_partitions(
+    snapshot_name: str,
+) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         sql = request.content.decode()
         assert "WHERE name = {name:String}" in sql
         assert "ORDER BY generated_at DESC" in sql
-        assert request.url.params["param_name"] == "leaderboard"
+        assert request.url.params["param_name"] == snapshot_name
         return httpx.Response(
             200,
             json={"data": [{"payload": '{"generated_at":"2026-08-01T00:00:00Z"}'}]},
@@ -236,9 +424,39 @@ def test_public_snapshot_reads_newest_revision_across_month_partitions() -> None
         transport=httpx.MockTransport(handler),
     )
 
-    assert client.public_snapshot("leaderboard") == {
+    assert client.public_snapshot(snapshot_name) == {
         "generated_at": "2026-08-01T00:00:00Z"
     }
+
+
+def test_public_snapshot_rejects_unknown_products_without_querying() -> None:
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse",
+        user="reader",
+        password="secret",  # noqa: S106 - inert test credential.
+    )
+
+    with pytest.raises(ValueError, match="unsupported public analytics snapshot"):
+        client.public_snapshot("prompt_contents")
+
+
+def test_public_snapshot_uses_a_short_optional_read_timeout(monkeypatch) -> None:
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse",
+        user="reader",
+        password="secret",  # noqa: S106 - inert test credential.
+    )
+    observed: dict[str, float] = {}
+
+    def query(_sql, *, params=None, timeout_seconds=20.0):
+        _ = params
+        observed["timeout_seconds"] = timeout_seconds
+        return []
+
+    monkeypatch.setattr(client, "_query", query)
+
+    assert client.public_snapshot("leaderboard") is None
+    assert observed == {"timeout_seconds": 2.0}
 
 
 def _outbox_row() -> OperationalOutboxRow:
@@ -252,15 +470,13 @@ def _outbox_row() -> OperationalOutboxRow:
 
 
 def test_operational_normalizer_adds_commit_version_and_rejects_unknown_kind() -> None:
-    event = normalise_operational_event(_outbox_row())
+    [event] = normalise_operational_event(_outbox_row())
     assert event.event_kind == "activity"
     assert event.row["generation_id"] == _generation().id
     assert event.row["ingest_version"].startswith("2026-07-31T12:35:00")
 
     with pytest.raises(ValueError, match="unsupported operational event kind"):
-        normalise_operational_event(
-            dataclasses.replace(_outbox_row(), event_kind="prompt")
-        )
+        normalise_operational_event(dataclasses.replace(_outbox_row(), event_kind="prompt"))
 
 
 class _Source:
@@ -376,6 +592,148 @@ def test_clickhouse_activity_reader_binds_private_filters_and_never_sends_raw_id
     assert generation.workspace_id == tenant_id
     assert generation.tags == {"team": "legal"}
     assert generation.created_at == "2026-07-31T12:34:56.789Z"
+
+
+def test_client_reliability_reader_binds_tenant_and_uses_final_rollups() -> None:
+    tenant_id = analytics_surrogate("workspace", "ws-client-reliability")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = request.content.decode()
+        assert request.url.params["param_tenant_id"] == tenant_id
+        assert request.url.params["param_window_minutes"] == "60"
+        assert "ws-client-reliability" not in body
+        assert "FROM client_availability_rollups FINAL" in body
+        assert "tenant_id = {tenant_id:String}" in body
+        assert "period IN ('5m', 'hour')" in body
+        assert "INTERVAL {window_minutes:UInt32} MINUTE" in body
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "period": "5m",
+                        "host": "",
+                        "endpoint": "",
+                        "sdk": "",
+                        "requests": 100,
+                        "successes": 99,
+                        "tr_fault_failures": 1,
+                        "excluded_failures": 2,
+                        "aborted": 1,
+                        "attempts": 110,
+                        "attempt_tr_fault": 0,
+                        "failover_used": 5,
+                        "first_attempt_success": 94,
+                        "total_ms_hist": {"lt100": 50, "lt200": 50},
+                        "first_event_ms_hist": {"lt100": 100},
+                    },
+                    {
+                        "period": "5m",
+                        "host": "apex",
+                        "endpoint": "",
+                        "sdk": "",
+                        "requests": 0,
+                        "successes": 0,
+                        "tr_fault_failures": 0,
+                        "excluded_failures": 0,
+                        "aborted": 0,
+                        "attempts": 110,
+                        "attempt_tr_fault": 2,
+                        "failover_used": 0,
+                        "first_attempt_success": 0,
+                        "total_ms_hist": {},
+                        "first_event_ms_hist": {},
+                    },
+                ]
+            },
+        )
+
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse.test:8123",
+        user="reader",
+        password="secret",  # noqa: S106 - inert test credential.
+        transport=httpx.MockTransport(handler),
+    )
+
+    summary = client.client_reliability_summary(tenant_id, window_minutes=60)
+
+    assert summary == {
+        "requests": 100,
+        "successes": 99,
+        "tr_fault": 1,
+        "excluded": 2,
+        "aborted": 1,
+        "attempts": 110,
+        "failover_used": 5,
+        "first_attempt_success": 94,
+        "p50_total_ms": 100,
+        "p95_total_ms": 200,
+        "p50_ttft_ms": 100,
+        "by_host": {
+            "apex": {"attempts": 110, "attempt_tr_fault": 2, "rate": 0.018182}
+        },
+    }
+
+
+def test_client_event_reader_binds_since_limit_and_normalizes_failures() -> None:
+    tenant_id = analytics_surrogate("workspace", "ws-client-events")
+    since = dt.datetime(2026, 8, 17, 10, 30, tzinfo=dt.UTC)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = request.content.decode()
+        assert request.url.params["param_tenant_id"] == tenant_id
+        assert request.url.params["param_since"] == "2026-08-17T10:30:00Z"
+        assert request.url.params["param_limit"] == "50"
+        assert "ws-client-events" not in body
+        assert "FROM client_request_events FINAL" in body
+        assert "created_at >= parseDateTime64BestEffort({since:String}, 3)" in body
+        assert "final_outcome != 'ok'" in body
+        assert "LIMIT {limit:UInt32}" in body
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "created_at": "2026-08-17 10:45:00.000",
+                        "endpoint": "responses",
+                        "model": "openai/gpt-5",
+                        "attempt_host": ["apex", "ally"],
+                        "attempt_count": 2,
+                        "final_outcome": "transport_error",
+                        "final_http_status": 0,
+                        "first_error_class": "connect_timeout",
+                        "sdk": "tr-py",
+                        "sdk_version": "0.6.0",
+                        "attempt_request_id": ["", "rlog_0123456789abcdef0123456789abcdef"],
+                    }
+                ]
+            },
+        )
+
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse.test:8123",
+        user="reader",
+        password="secret",  # noqa: S106 - inert test credential.
+        transport=httpx.MockTransport(handler),
+    )
+
+    rows = client.client_events_recent(tenant_id, since=since, limit=100)
+
+    assert rows == [
+        {
+            "created_at": "2026-08-17T10:45:00.000Z",
+            "endpoint": "responses",
+            "model": "openai/gpt-5",
+            "attempt_host": ["apex", "ally"],
+            "attempt_count": 2,
+            "final_outcome": "transport_error",
+            "final_http_status": None,
+            "first_error_class": "connect_timeout",
+            "sdk": "tr-py",
+            "sdk_version": "0.6.0",
+            "attempt_request_id": ["rlog_0123456789abcdef0123456789abcdef"],
+        }
+    ]
 
 
 def _read_router(mode: str) -> SpannerBigtableStore:
@@ -500,8 +858,9 @@ def test_synthetic_rollups_preserve_exact_counts_histograms_and_costs() -> None:
         ),
     ]
 
-    first = build_raw_rollups(samples, periods={"hour", "day"})
-    second = build_raw_rollups(samples, periods={"hour", "day"})
+    fixed_now = "2026-07-31T12:03:00Z"
+    first = build_raw_rollups(samples, periods={"hour", "day"}, now=lambda: fixed_now)
+    second = build_raw_rollups(samples, periods={"hour", "day"}, now=lambda: fixed_now)
     assert [dataclasses.asdict(item) for item in first] == [
         dataclasses.asdict(item) for item in second
     ]
@@ -515,6 +874,33 @@ def test_synthetic_rollups_preserve_exact_counts_histograms_and_costs() -> None:
         assert rollup.latency_histogram == {"10": 1, "30": 1}
         assert rollup.error_counts == {"timeout": 1}
         assert rollup.cost_microdollars == 4
+
+
+def test_synthetic_rollups_count_repeated_sample_id_once() -> None:
+    first = _synthetic_sample(
+        "shared-heartbeat",
+        status="down",
+        created_at="2026-07-31T12:01:00Z",
+        latency=30,
+        error_type="timeout",
+    )
+    latest = _synthetic_sample(
+        "shared-heartbeat",
+        status="up",
+        created_at="2026-07-31T12:04:00Z",
+        latency=10,
+    )
+
+    rollups = build_raw_rollups([first, latest], periods={"hour", "day"})
+
+    assert rollups
+    for rollup in rollups:
+        assert rollup.sample_count == 1
+        assert rollup.up_count == 1
+        assert rollup.down_count == 0
+        assert rollup.latency_histogram == {"10": 1}
+        assert rollup.error_counts == {}
+        assert rollup.cost_microdollars == 2
 
 
 def test_synthetic_monthly_rollups_merge_daily_without_losing_dimensions() -> None:
@@ -578,3 +964,165 @@ def test_synthetic_rollup_rebuild_never_overwrites_partial_ttl_boundary() -> Non
     assert ("hour", "2026-07-17T12:00:00Z") not in starts
     assert ("day", "2026-07-17T00:00:00Z") not in starts
     assert ("day", "2026-07-18T00:00:00Z") in starts
+
+
+# ---------------------------------------------------------------------------
+# The published lag read: how old is the oldest row the drain has not moved?
+# ---------------------------------------------------------------------------
+
+
+class _SnapshotDatabase:
+    """A Spanner database whose snapshot answers the one-statement lag read.
+
+    The read is a single `SELECT MIN(commit_ts) FROM (<32 per-shard seeks>)`,
+    so this fake parses the shard literals back out of the SQL and answers the
+    minimum over the shards it was asked about. Parsing rather than ignoring
+    them is deliberate: it is what lets the tests below assert that all 32
+    heads really were consulted, which is the property the old 32-round-trip
+    form made obvious and this one does not.
+    """
+
+    def __init__(self, rows_by_shard: dict[int, list[dt.datetime]]) -> None:
+        self._rows_by_shard = rows_by_shard
+        self.queries: list[tuple[str, dict[str, Any]]] = []
+        self.multi_use: list[bool] = []
+        self.timeouts: list[float | None] = []
+
+    def snapshot(self, **kwargs: Any) -> Any:
+        self.multi_use.append(bool(kwargs.get("multi_use")))
+        outer = self
+
+        class _Snapshot:
+            def __enter__(self) -> Any:
+                return self
+
+            def __exit__(self, *_exc: Any) -> None:
+                return None
+
+            def execute_sql(self, sql: str, **kwargs: Any) -> list[list[Any]]:
+                outer.timeouts.append(kwargs.get("timeout"))
+                outer.queries.append((sql, kwargs.get("params") or {}))
+                shards = [int(value) for value in re.findall(r"WHERE shard=(\d+)", sql)]
+                stamps = sorted(
+                    stamp
+                    for shard in shards
+                    for stamp in outer._rows_by_shard.get(shard, [])
+                )
+                return [[stamps[0]]] if stamps else [[None]]
+
+        return _Snapshot()
+
+
+def _queried_shards(sql: str) -> set[int]:
+    return {int(value) for value in re.findall(r"WHERE shard=(\d+)", sql)}
+
+
+def test_spanner_oldest_enqueued_at_is_the_minimum_across_every_shard() -> None:
+    """The oldest row can sit in any shard, so all 32 heads are read.
+
+    A single global `ORDER BY commit_ts LIMIT 1` would be a table scan -- the
+    primary key leads with `shard` -- and would get more expensive exactly as
+    the backlog it measures grows.
+    """
+    oldest = dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)
+    database = _SnapshotDatabase(
+        {
+            0: [dt.datetime(2026, 8, 17, 11, 0, tzinfo=dt.UTC)],
+            7: [oldest, dt.datetime(2026, 8, 10, 0, 0, tzinfo=dt.UTC)],
+            31: [dt.datetime(2026, 8, 5, 0, 0, tzinfo=dt.UTC)],
+        }
+    )
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
+
+    assert outbox.oldest_enqueued_at() == oldest
+    [(sql, _)] = database.queries
+    assert _queried_shards(sql) == set(range(OPERATIONAL_ANALYTICS_OUTBOX_SHARDS))
+    assert sql.count("ORDER BY commit_ts LIMIT 1") == OPERATIONAL_ANALYTICS_OUTBOX_SHARDS
+    assert "count(" not in sql.lower()
+
+
+def test_spanner_lag_read_is_one_round_trip_not_one_per_shard() -> None:
+    """32 sequential round trips do not fit the budget that bounds this read.
+
+    Measured against production Spanner on 2026-08-17, the per-shard loop this
+    replaced took 9.76s (2.22s for the first shard, ~0.25s for each of the
+    rest) against a 3.0s budget, so it raised TimeoutError on EVERY call and
+    /status.json published `unreachable` for a cloud whose outbox was empty --
+    a healthy drain reported as a broken one, on the very page added to notice
+    broken drains. As one statement: 2.93s cold, 1.01s warm.
+
+    The count is the assertion. Anything that walks the shards in Python is
+    correct and unusably slow, and it would pass every other test here.
+    """
+    database = _SnapshotDatabase({5: [dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)]})
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
+
+    outbox.oldest_enqueued_at(timeout=3.0)
+
+    assert len(database.queries) == 1
+
+
+def test_spanner_lag_read_never_scans_the_whole_table() -> None:
+    """Every arm carries a shard predicate; a bare MIN() would scan.
+
+    One round trip is achievable the wrong way -- `SELECT MIN(commit_ts) FROM
+    tr_operational_analytics_outbox` is also one statement, and it degrades
+    precisely as the backlog grows, which is when this number matters most.
+    """
+    database = _SnapshotDatabase({0: [dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)]})
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
+
+    outbox.oldest_enqueued_at()
+
+    [(sql, _)] = database.queries
+    selects = sql.count("FROM tr_operational_analytics_outbox")
+    assert selects == OPERATIONAL_ANALYTICS_OUTBOX_SHARDS
+    assert selects == sql.count("WHERE shard=")
+
+
+def test_spanner_oldest_enqueued_at_is_none_when_every_shard_is_drained() -> None:
+    """Fully drained is the healthiest state, and it is not an absence of data."""
+    outbox = SpannerOperationalAnalyticsOutbox(_SnapshotDatabase({}), _ParamTypes())
+
+    assert outbox.oldest_enqueued_at() is None
+
+
+def test_spanner_oldest_enqueued_at_returns_utc_aware_timestamps() -> None:
+    """A naive value would compare against `now` as if it were local time."""
+    database = _SnapshotDatabase({3: [dt.datetime(2026, 8, 2, 3, 0)]})
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
+
+    result = outbox.oldest_enqueued_at()
+
+    assert result is not None
+    assert result.tzinfo is not None
+    assert result == dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)
+
+
+def test_spanner_oldest_enqueued_at_spends_one_budget_across_all_shards() -> None:
+    """The bound is on the CALL, not on each of the 32 statements.
+
+    This read runs on the public /status.json path inside an async handler, so
+    the number that matters is how long the whole thing can hold the event
+    loop. With one statement the two are the same thing by construction, which
+    is the second reason to prefer it: the earlier form had to subtract
+    elapsed time from a deadline to keep the promise this now keeps for free.
+    """
+    database = _SnapshotDatabase({0: [dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)]})
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
+
+    outbox.oldest_enqueued_at(timeout=5.0)
+
+    assert database.timeouts == [5.0]
+
+
+def test_activity_allowlist_carries_workspace_id_to_clickhouse() -> None:
+    """The drain projects payloads onto ACTIVITY_COLUMNS; a key missing from
+    the allowlist is dropped silently, which would ship this feature as a
+    column of empty strings."""
+    from clickhouse.ingest_operational_outbox import ACTIVITY_COLUMNS
+
+    assert "workspace_id" in ACTIVITY_COLUMNS
+    # Order stability: appended after tenant_id's group, never before
+    # generation_id -- the archive row hash is computed over this tuple.
+    assert ACTIVITY_COLUMNS.index("workspace_id") > ACTIVITY_COLUMNS.index("tenant_id")

@@ -3,6 +3,7 @@
 [![CI](https://github.com/Lore-Hex/quill-router/actions/workflows/ci.yml/badge.svg)](https://github.com/Lore-Hex/quill-router/actions/workflows/ci.yml)
 [![Deploy](https://github.com/Lore-Hex/quill-router/actions/workflows/deploy.yml/badge.svg)](https://github.com/Lore-Hex/quill-router/actions/workflows/deploy.yml)
 [![Prod smoke](https://github.com/Lore-Hex/quill-router/actions/workflows/prod-smoke.yml/badge.svg)](https://github.com/Lore-Hex/quill-router/actions/workflows/prod-smoke.yml)
+[![Trust drift](https://github.com/Lore-Hex/quill-router/actions/workflows/trust-drift.yml/badge.svg)](https://github.com/Lore-Hex/quill-router/actions/workflows/trust-drift.yml)
 [![Status](https://img.shields.io/website?url=https%3A%2F%2Fstatus.trustedrouter.com&label=status)](https://status.trustedrouter.com)
 [![Verifiable trust](https://img.shields.io/website?url=https%3A%2F%2Ftrust.trustedrouter.com&label=trust)](https://trust.trustedrouter.com)
 [![JavaScript SDK](https://img.shields.io/npm/v/@lore-hex/trusted-router?label=JS%20SDK&logo=npm)](https://www.npmjs.com/package/@lore-hex/trusted-router)
@@ -71,6 +72,7 @@ client = OpenAI(base_url="https://api.trustedrouter.com/v1", api_key="sk-tr-v1-.
 - **Get a key / take my money:** https://trustedrouter.com
 - **Try it first (no signup):** https://trustedrouter.com/chat
 - **The technical details (for the nerds):** https://trustedrouter.com/security
+- **Generate images:** [docs/image-generation.md](docs/image-generation.md)
 - **Generate video:** [docs/video-generation.md](docs/video-generation.md)
 - **Why we built it:** https://jperla.com/blog/attestation-is-all-you-need
 
@@ -318,10 +320,9 @@ The goal is to support OpenRouter-class scale:
 
 The current production deployment does **not** meet that target yet. It runs
 the control plane in four GCP regions behind a global LB with per-region
-Serverless NEGs, with three live attested API regions until additional
-attested regional pools are deployed. Capacity scales horizontally as more
-attested pools come online; correctness, trust, billing, and SDK compatibility
-are in steady-state.
+Serverless NEGs and four live attested API regions. Capacity scales
+horizontally as more attested pools come online; correctness, trust, billing,
+and SDK compatibility are in steady-state.
 
 Request volume depends heavily on average generation size. At 1 trillion
 tokens/day:
@@ -384,22 +385,27 @@ gateway replicas before public traffic is allowed to ramp.
 Multi-region is feasible while preserving the trust boundary, but it has to be
 done carefully:
 
-- Run independent warm attested gateway pools in at least `us-central1`,
-  `us-east4`, and `europe-west4`, then Asia once the first three regions are
-  boring.
+- Run independent warm attested gateway pools in `us-central1`, `us-east4`,
+  `europe-west4`, and `southamerica-east1`, then add Asia after the four-region
+  fleet is operationally boring.
 - Keep TLS private keys inside each regional Confidential Space workload.
-- Move ACME from TLS-ALPN-01 to DNS-01 or another challenge flow that works
-  with multiple regional endpoints for the same hostname. The current
-  TLS-ALPN-01 flow is fine for one region, but a global DNS record can route
-  challenges to the wrong replica.
+- Keep certificate issuance inside the attested workload. Certificates are
+  shared between replicas through the encrypted cache. A first regional
+  hostname is exposed to one node only after every node passes canonical
+  attestation and a settled PONG; it is expanded only after the regional
+  certificate and the same gates pass on every node.
 - Keep regional hostnames such as `api-us-central1.quillrouter.com`,
-  `api-us-east4.quillrouter.com`, and `api-europe-west4.quillrouter.com` for
-  deterministic attestation, smoke tests, and SDK failover.
+  `api-us-east4.quillrouter.com`, `api-europe-west4.quillrouter.com`, and
+  `api-southamerica-east1.quillrouter.com` for deterministic attestation,
+  smoke tests, and SDK failover.
 - Put `api.trustedrouter.com` behind latency/geo DNS or TCP passthrough that does
   not terminate TLS. Cloudflare orange-cloud proxying remains incompatible
   with the prompt-path trust claim.
 - Authorize through regional quota leases, not a synchronous global Spanner
-  transaction for every request.
+  counter mutation for every request. New workspaces and keys start with 16
+  exact billing shards; eligible allowlisted traffic can additionally use 16
+  independently fenced regional escrow rows whose combined grant is already
+  reserved in Spanner.
 - Write generation metadata to regional Bigtable clusters, then aggregate into
   global activity views asynchronously.
 - Keep provider routing regional, with provider-specific circuit breakers,

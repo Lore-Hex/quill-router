@@ -80,8 +80,8 @@ def test_priority_authorization_uses_only_openai_and_reserves_priority_price() -
 
     assert auth["provider"] == "openai"
     assert {route["provider"] for route in auth["route_candidates"]} == {"openai"}
-    expected = token_cost_microdollars(1_000, 10_500_000) + token_cost_microdollars(
-        1_000, 63_000_000
+    expected = token_cost_microdollars(1_000, 10_550_000) + token_cost_microdollars(
+        1_000, 63_300_000
     )
     assert auth["estimated_cost_microdollars"] == expected
 
@@ -122,8 +122,8 @@ def test_priority_settlement_bills_actual_returned_tier() -> None:
         },
     )
     assert priority_settle.status_code == 200, priority_settle.text
-    expected_priority = token_cost_microdollars(1_000, 10_500_000) + token_cost_microdollars(
-        1_000, 63_000_000
+    expected_priority = token_cost_microdollars(1_000, 10_550_000) + token_cost_microdollars(
+        1_000, 63_300_000
     )
     assert priority_settle.json()["data"]["cost_microdollars"] == expected_priority
     assert expected_priority > expected_default
@@ -147,9 +147,9 @@ def test_priority_cached_tokens_use_priority_cached_rate() -> None:
     )
     assert settled.status_code == 200, settled.text
     expected = (
-        token_cost_microdollars(100, 10_500_000)
-        + token_cost_microdollars(900, 1_050_000)
-        + token_cost_microdollars(100, 63_000_000)
+        token_cost_microdollars(100, 10_550_000)
+        + token_cost_microdollars(900, 1_055_000)
+        + token_cost_microdollars(100, 63_300_000)
     )
     assert settled.json()["data"]["cost_microdollars"] == expected
 
@@ -216,8 +216,8 @@ def test_auto_reserves_priority_but_settles_reported_default() -> None:
         service_tier="auto",
         idempotency_key="auto-downgrade",
     )
-    priority_estimate = token_cost_microdollars(1_000, 10_500_000) + token_cost_microdollars(
-        1_000, 63_000_000
+    priority_estimate = token_cost_microdollars(1_000, 10_550_000) + token_cost_microdollars(
+        1_000, 63_300_000
     )
     assert auth["estimated_cost_microdollars"] == priority_estimate
 
@@ -294,9 +294,9 @@ def test_catalog_advertises_openai_priority_pricing() -> None:
         "priority",
     ]
     assert openai_endpoint["trustedrouter"]["priority_pricing"] == {
-        "prompt_microdollars_per_million_tokens": 10_500_000,
-        "cached_prompt_microdollars_per_million_tokens": 1_050_000,
-        "completion_microdollars_per_million_tokens": 63_000_000,
+        "prompt_microdollars_per_million_tokens": 10_550_000,
+        "cached_prompt_microdollars_per_million_tokens": 1_055_000,
+        "completion_microdollars_per_million_tokens": 63_300_000,
         "max_prompt_tokens": 272_000,
     }
 

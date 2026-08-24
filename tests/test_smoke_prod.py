@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import os
 import socket
+from typing import Any
 
 import httpx
 import pytest
+
+from trusted_router.routing_candidates import auto_candidate_models
 
 PROD_BASE_URL = os.environ.get("TR_PROD_BASE_URL", "https://trustedrouter.com")
 PROD_STATUS_URL = os.environ.get("TR_PROD_STATUS_URL", "https://status.trustedrouter.com")
@@ -35,6 +38,13 @@ def client() -> httpx.Client:
 @pytest.fixture(scope="module")
 def api_client() -> httpx.Client:
     return httpx.Client(base_url=PROD_API_BASE_URL, timeout=10.0, follow_redirects=False)
+
+
+@pytest.fixture(scope="module")
+def model_catalog(client: httpx.Client) -> list[dict[str, Any]]:
+    response = client.get("/v1/models", timeout=20.0)
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
 
 
 @pytest.fixture(scope="module")
@@ -100,19 +110,25 @@ def test_public_dns_resolves_expected_hosts() -> None:
         assert socket.getaddrinfo(host, 443), host
 
 
-def test_api_catalog_and_regions_are_publicly_reachable(client: httpx.Client) -> None:
-    """Public discovery remains available on the control-plane mirror.
-    The canonical API origin is checked separately so SDKs can use one
-    documented hostname for catalog discovery and inference."""
-    models = client.get("/v1/models")
+def test_api_catalog_and_regions_are_publicly_reachable(
+    client: httpx.Client,
+    model_catalog: list[dict[str, Any]],
+) -> None:
+    """The catalog (models / providers / regions) must be readable without
+    auth — SDKs call these BEFORE the user has a key.
+
+    Both origins serve it: verified 2026-08-24, api.trustedrouter.com/v1/models
+    and trustedrouter.com/v1/models each returned 617 models. api is the
+    canonical one SDKs are pointed at, and the control-plane path stays as a
+    compatibility mirror. An earlier version of this docstring said the
+    attested gateway had no catalog routes; that is no longer true."""
     providers = client.get("/v1/providers")
     regions = client.get("/v1/regions")
 
-    assert models.status_code == 200, models.text
     assert providers.status_code == 200, providers.text
     assert regions.status_code == 200, regions.text
-    assert any(item["id"] == "trustedrouter/auto" for item in models.json()["data"])
-    assert any(item["id"] == "trustedrouter/eu" for item in models.json()["data"])
+    assert any(item["id"] == "trustedrouter/auto" for item in model_catalog)
+    assert any(item["id"] == "trustedrouter/eu" for item in model_catalog)
     assert {
         "anthropic",
         "openai",
@@ -123,6 +139,7 @@ def test_api_catalog_and_regions_are_publicly_reachable(client: httpx.Client) ->
         "mistral",
         "kimi",
         "zai",
+        "azure",
     }.issubset({item["id"] for item in providers.json()["data"]})
     assert "europe-west4" in {item["id"] for item in regions.json()["data"]}
 
@@ -155,6 +172,38 @@ def test_embeddings_catalog_lists_embedding_models(client: httpx.Client) -> None
         assert row["architecture"]["modality"] == "text->embedding", row["id"]
 
 
+def test_image_catalog_is_live_on_control_and_attested_origins(
+    client: httpx.Client,
+    api_client: httpx.Client,
+) -> None:
+    """Discovery must ship on both documented origins before generation is live."""
+
+    for label, image_client in {
+        "control": client,
+        "attested": api_client,
+    }.items():
+        response = image_client.get("/images/models", timeout=20.0)
+        assert response.status_code == 200, f"{label}: {response.status_code} {response.text}"
+        rows = response.json()["data"]
+        ids = {row["id"] for row in rows}
+        assert "google/gemini-3.1-flash-image" in ids, (label, ids)
+        model = next(row for row in rows if row["id"] == "google/gemini-3.1-flash-image")
+        assert model["architecture"]["output_modalities"] == ["image"]
+        assert model["supported_parameters"]["resolution"]["values"] == [
+            "512",
+            "1K",
+            "2K",
+            "4K",
+        ]
+
+    endpoint = api_client.get(
+        "/images/models/google/gemini-3.1-flash-image/endpoints",
+        timeout=20.0,
+    )
+    assert endpoint.status_code == 200, endpoint.text
+    assert endpoint.json()["endpoints"], endpoint.text
+
+
 def test_attested_gateway_rejects_unauthenticated_embeddings(api_client: httpx.Client) -> None:
     """The attested gateway must never serve embeddings without a bearer —
     same billing/key-limit gate as chat. Tolerates 404 only in the window
@@ -166,6 +215,15 @@ def test_attested_gateway_rejects_unauthenticated_embeddings(api_client: httpx.C
         content=b'{"model":"openai/text-embedding-3-large","input":"x"}',
     )
     assert response.status_code in {401, 404}, response.text
+
+
+def test_attested_gateway_rejects_unauthenticated_images(api_client: httpx.Client) -> None:
+    response = api_client.post(
+        "/images",
+        headers={"content-type": "application/json"},
+        content=b'{"model":"google/gemini-3.1-flash-image","prompt":"x"}',
+    )
+    assert response.status_code == 401, response.text
 
 
 def test_status_pages_are_publicly_reachable(
@@ -209,25 +267,21 @@ def test_attested_gateway_rejects_unauthenticated_chat(api_client: httpx.Client)
     assert response.status_code == 401, response.text
 
 
-def test_v1_models_includes_kimi_and_auto_fallback_chain(client: httpx.Client) -> None:
-    """trustedrouter/auto's auto_candidates list is the rollover chain
-    used when a user requests the meta-model. If the chain regresses, all
-    auto routes fail open in unexpected order."""
-    response = client.get("/v1/models")
-    assert response.status_code == 200
-    models = {item["id"]: item for item in response.json()["data"]}
+def test_v1_models_includes_kimi_and_auto_fallback_chain(
+    model_catalog: list[dict[str, Any]],
+) -> None:
+    """Production publishes the versioned auto ladder in its intended order."""
+    models = {item["id"]: item for item in model_catalog}
 
     assert "moonshotai/kimi-k2.6" in models
+    assert "moonshotai/kimi-k3" in models
     auto = models["trustedrouter/auto"]
     candidates = auto["trustedrouter"]["auto_candidates"]
-    assert "anthropic/claude-opus-4.7" in candidates
-    assert "openai/gpt-4.1-mini" in candidates
-    assert "google/gemini-2.5-flash" in candidates
-    assert "deepseek/deepseek-v4-flash" in candidates
-    assert "minimax/minimax-m3" in candidates
-    assert "moonshotai/kimi-k2.6" in candidates
-    assert "mistralai/mistral-small-2603" in candidates
-    assert "z-ai/glm-4.6" in candidates
+    expected = [model.id for model in auto_candidate_models()]
+    assert candidates == expected
+
+    for vendor in ("deepseek/", "moonshotai/", "z-ai/", "openai/", "google/", "minimax/", "anthropic/"):
+        assert any(candidate.startswith(vendor) for candidate in candidates)
 
     eu = models["trustedrouter/eu"]
     eu_candidates = eu["trustedrouter"]["auto_candidates"]
@@ -265,15 +319,15 @@ def test_regions_list_covers_all_ten_gcp_regions(client: httpx.Client) -> None:
 def test_marketing_page_advertises_production_not_alpha(client: httpx.Client) -> None:
     """Belt-and-suspenders for the alpha-removal: if a future deploy
     accidentally restores 'Public Alpha' framing, this test fails. The
-    regions copy is also the smoke check that the regions panel
-    rendered (Jinja didn't error out on map_regions)."""
+    cloud copy also verifies that the multi-cloud reliability section rendered."""
     response = client.get("/")
     assert response.status_code == 200
     body = response.text
     assert "Public Alpha" not in body
-    assert "Live regions" in body
-    assert "regional routing" in body or "multi-region" in body
-    assert "world-map.svg" in body or "<svg" in body  # map renders
+    assert "3 clouds" in body
+    assert "GCP · AWS · Azure" in body
+    assert "GCP, AWS, and Azure" in body
+    assert "world-map.svg" not in body
 
 
 def test_oauth_login_redirects_to_provider(client: httpx.Client) -> None:
@@ -322,6 +376,63 @@ def test_console_pages_all_redirect_unauthenticated_to_signin(client: httpx.Clie
         assert response.status_code in {302, 303}, f"{path}: {response.status_code} {response.text[:200]}"
         location = response.headers["location"]
         assert location in {"/?reason=signin", "/console/api-keys"}, f"{path}: location={location}"
+
+
+def test_stripe_webhook_rejects_invalid_signature(client: httpx.Client) -> None:
+    """A garbage Stripe-Signature must 400. If this ever returns 200 the
+    endpoint has stopped verifying signatures (e.g. the webhook secret
+    went empty in the deploy env) and anyone can forge credit grants."""
+    response = client.post(
+        "/v1/internal/stripe/webhook",
+        content=b'{"id":"evt_smoke_bad_sig","object":"event","type":"trustedrouter.smoke"}',
+        headers={
+            "Content-Type": "application/json",
+            "Stripe-Signature": "t=1,v1=deadbeef",
+        },
+    )
+    assert response.status_code == 400, response.text
+
+
+def test_stripe_webhook_accepts_validly_signed_event(client: httpx.Client) -> None:
+    """A correctly signed no-op event must 200. This is the drift guard
+    for the 2026-06-07 outage: a stale signing secret was uploaded to
+    Secret Manager, every real Stripe delivery 400'd for three days, and
+    a customer's $100 purchase sat uncredited until manual replay. The
+    event type below matches no handler branch, so the endpoint just
+    verifies the signature and returns {"ignored": true} — no state is
+    touched. The payload must carry "object":"event" because Stripe's
+    construct_event builds a stripe.Event and rejects shapes that lack
+    it (a bare {id,type} 400s regardless of signature). Requires
+    TR_STRIPE_WEBHOOK_SECRET in the env (the GHA workflow injects it
+    from repo secrets); skipped when absent so local runs without prod
+    credentials still pass."""
+    secret = os.environ.get("TR_STRIPE_WEBHOOK_SECRET", "")
+    if not secret:
+        pytest.skip("TR_STRIPE_WEBHOOK_SECRET not set")
+    import hashlib
+    import hmac
+    import time
+
+    payload = b'{"id":"evt_smoke_sig_check","object":"event","type":"trustedrouter.smoke"}'
+    timestamp = int(time.time())
+    signature = hmac.new(
+        secret.encode(), f"{timestamp}.".encode() + payload, hashlib.sha256
+    ).hexdigest()
+    response = client.post(
+        "/v1/internal/stripe/webhook",
+        content=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Stripe-Signature": f"t={timestamp},v1={signature}",
+        },
+    )
+    assert response.status_code == 200, (
+        f"signed webhook rejected ({response.status_code}): the deployed "
+        f"TR_STRIPE_WEBHOOK_SECRET no longer matches the live Stripe "
+        f"endpoint's signing secret. Real deliveries are failing too — "
+        f"customer payments are NOT being credited. {response.text[:200]}"
+    )
+    assert response.json()["data"]["event_id"] == "evt_smoke_sig_check"
 
 
 def test_security_headers_include_hsts(client: httpx.Client) -> None:
@@ -452,15 +563,15 @@ def test_health_check_response_is_under_one_kilobyte(client: httpx.Client) -> No
     assert len(response.content) < 1024
 
 
-def test_v1_models_exposes_trustedrouter_metadata_block(client: httpx.Client) -> None:
+def test_v1_models_exposes_trustedrouter_metadata_block(
+    model_catalog: list[dict[str, Any]],
+) -> None:
     """Every model in the catalog has to carry the `trustedrouter` block
     SDKs use for routing decisions (prepaid vs BYOK availability,
     attested-gateway flag, microdollar pricing). One model missing the
     block silently breaks SDK auto-fallback."""
-    response = client.get("/v1/models")
-    models = response.json()["data"]
-    assert len(models) >= 5
-    for model in models:
+    assert len(model_catalog) >= 5
+    for model in model_catalog:
         assert "trustedrouter" in model, f"{model.get('id')} missing trustedrouter block"
         meta = model["trustedrouter"]
         assert "provider" in meta
@@ -556,12 +667,20 @@ def test_trust_page_and_release_files_are_published(trust_client: httpx.Client) 
     page = trust_client.get("/")
     release = trust_client.get("/trust/gcp-release.json")
     digest = trust_client.get("/trust/image-digest-gcp.txt")
+    accepted_digests = trust_client.get(
+        "/trust/accepted-image-digests-gcp.txt"
+    )
     image = trust_client.get("/trust/image-reference-gcp.txt")
+    accepted_images = trust_client.get(
+        "/trust/accepted-image-references-gcp.txt"
+    )
 
     assert page.status_code == 200, page.text
     assert release.status_code == 200, release.text
     assert digest.status_code == 200, digest.text
+    assert accepted_digests.status_code == 200, accepted_digests.text
     assert image.status_code == 200, image.text
+    assert accepted_images.status_code == 200, accepted_images.text
     body = page.text
     for repo in [
         "Lore-Hex/quill-router",
@@ -577,3 +696,9 @@ def test_trust_page_and_release_files_are_published(trust_client: httpx.Client) 
     assert data["source_repositories"]["control_plane"].endswith("/quill-router")
     assert digest.text.strip() == data["image_digest"]
     assert image.text.strip() == data["image_reference"]
+    assert accepted_digests.text.strip().split(",") == data["accepted_image_digests"]
+    assert accepted_images.text.strip().split(",") == data[
+        "accepted_image_references"
+    ]
+    assert data["image_digest"] in data["accepted_image_digests"]
+    assert data["image_reference"] in data["accepted_image_references"]

@@ -1,8 +1,8 @@
 {
-  "_about": "Provider-native supplement for the Cerebras models enabled on the TrustedRouter Cerebras account. Verified from Cerebras /v1/models and direct chat completions on 2026-06-05. The canonical OpenRouter-style model IDs remain openai/gpt-oss-120b and z-ai/glm-4.7; cerebras/* aliases are included so users can request the Cerebras-specific route directly.",
+  "_about": "Provider-native supplement generated from Cerebras's public model catalog. Canonical model IDs and cerebras/* provider aliases are included when the upstream catalog exposes them.",
   "provider": "cerebras",
   "source": "https://api.cerebras.ai/public/v1/models",
-  "generated_at": "2026-08-05T12:55:53Z",
+  "generated_at": "2026-08-24T16:40:13Z",
   "model_count": 6,
   "models": [
     {
@@ -97,7 +97,10 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "cerebras/zai-glm-4.7",
@@ -129,7 +132,10 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Gemma 4 31B",
@@ -148,6 +154,8 @@
       "status": 1,
       "id": "cerebras/gemma-4-31b",
       "upstream_id": "gemma-4-31b",
+      "retirement_at": "2026-09-03T00:00:00Z",
+      "replacement_model_id": "qwen/qwen3.8-27b",
       "features": [
         "function-calling",
         "high-throughput",
@@ -181,6 +189,8 @@
       "status": 1,
       "id": "google/gemma-4-31b-it",
       "upstream_id": "gemma-4-31b",
+      "retirement_at": "2026-09-03T00:00:00Z",
+      "replacement_model_id": "qwen/qwen3.8-27b",
       "features": [
         "function-calling",
         "high-throughput",

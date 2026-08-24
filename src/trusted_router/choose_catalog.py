@@ -13,13 +13,19 @@ from typing import Any
 
 from trusted_router.ai_iq import ai_iq_catalog_payload
 from trusted_router.catalog import (
+    ADVISOR_MODEL_ID,
     AUTO_MODEL_ID,
     CHEAP_MODEL_ID,
+    CONFIDENTIAL_MODEL_ID,
     E2E_MODEL_ID,
+    EU_MODEL_ID,
+    FAST_MODEL_ID,
     META_MODEL_IDS,
     MODELS,
+    ORCHESTRATION_PRIMITIVE_MODEL_IDS,
     PRIVACY_TIER_LABELS,
     PROVIDERS,
+    ROUTING_MODEL_ALIAS_TARGETS,
     ROUTING_MODEL_MIN_PRIVACY_TIERS,
     SYNTH_MODEL_ID,
     ZDR_MODEL_ID,
@@ -37,10 +43,14 @@ from trusted_router.storage_models import utcnow
 
 _ROUTE_IDS = (
     AUTO_MODEL_ID,
+    FAST_MODEL_ID,
     CHEAP_MODEL_ID,
+    EU_MODEL_ID,
     ZDR_MODEL_ID,
     E2E_MODEL_ID,
+    CONFIDENTIAL_MODEL_ID,
     SYNTH_MODEL_ID,
+    ADVISOR_MODEL_ID,
 )
 
 _ROUTE_DESCRIPTIONS = {
@@ -48,15 +58,29 @@ _ROUTE_DESCRIPTIONS = {
         "Ranks configured model candidates and rolls over across healthy providers. "
         "No upstream privacy floor is implied."
     ),
+    FAST_MODEL_ID: (
+        "Prefers healthy candidates with low measured time to first token and keeps fallback. "
+        "No upstream privacy floor is implied."
+    ),
     CHEAP_MODEL_ID: (
         "Chooses from the lowest-cost paid candidates. No upstream privacy floor is implied."
+    ),
+    EU_MODEL_ID: (
+        "Prefers EU-focused providers. Use the EU regional API hostname when gateway region "
+        "also matters."
     ),
     ZDR_MODEL_ID: "Enforces a zero-retention or stronger provider endpoint for every attempt.",
     E2E_MODEL_ID: (
         "Enforces provider confidential compute plus provider-side end-to-end encryption."
     ),
+    CONFIDENTIAL_MODEL_ID: (
+        "Readable alias for the same confidential-compute plus provider-E2EE route pool."
+    ),
     SYNTH_MODEL_ID: (
         "Runs a model panel, judge, and synthesizer. Every inner inference call is billable."
+    ),
+    ADVISOR_MODEL_ID: (
+        "Runs a worker with optional advisor calls. Every inner inference call is billable."
     ),
 }
 
@@ -101,9 +125,11 @@ def build_choose_catalog_payload(
     }
     models: list[dict[str, Any]] = []
     catalog_route_count = 0
+    catalog_provider_slugs: set[str] = set()
     for model in catalog_models:
         endpoints = list(endpoints_for_model(model.id))
         catalog_route_count += len(endpoints)
+        catalog_provider_slugs.update(endpoint.provider for endpoint in endpoints)
         quality = quality_models.get(model.id)
         if quality is None or not endpoints or _positive_quality_score(quality) is None:
             continue
@@ -148,13 +174,13 @@ def build_choose_catalog_payload(
         "quality_updated_at": quality_updated_at,
         "performance_updated_at": str(measured.get("generated_at", "")),
         "catalog_model_count": len(catalog_models),
+        "catalog_provider_count": len(catalog_provider_slugs),
         "catalog_route_count": catalog_route_count,
         "evaluated_model_count": len(models),
         "models": models,
         "routes": [_meta_route_row(route_id) for route_id in _ROUTE_IDS if route_id in MODELS],
         "privacy_tiers": [
-            {"tier": tier, "label": label}
-            for tier, label in sorted(PRIVACY_TIER_LABELS.items())
+            {"tier": tier, "label": label} for tier, label in sorted(PRIVACY_TIER_LABELS.items())
         ],
     }
 
@@ -258,8 +284,9 @@ def _meta_route_row(model_id: str) -> dict[str, Any]:
     shape = model_to_openrouter_shape(MODELS[model_id])
     trustedrouter = shape["trustedrouter"]
     assert isinstance(trustedrouter, dict)
-    floor = ROUTING_MODEL_MIN_PRIVACY_TIERS.get(model_id, 0)
-    component_usage = model_id == SYNTH_MODEL_ID
+    canonical_model_id = ROUTING_MODEL_ALIAS_TARGETS.get(model_id, model_id)
+    floor = ROUTING_MODEL_MIN_PRIVACY_TIERS.get(canonical_model_id, 0)
+    component_usage = model_id in ORCHESTRATION_PRIMITIVE_MODEL_IDS
     return {
         "id": model_id,
         "name": model_id.removeprefix("trustedrouter/"),

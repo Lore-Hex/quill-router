@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#0d1117"/>
+  <path d="M0 0h1200v12H0z" fill="#3fb950"/>
+  <g fill="none" stroke="#30363d" stroke-width="1" opacity=".55">
+    <path d="M0 126h1200M0 252h1200M0 378h1200M0 504h1200"/>
+    <path d="M200 0v630M400 0v630M600 0v630M800 0v630M1000 0v630"/>
+  </g>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <text x="72" y="78" fill="#e6edf3" font-size="28" font-weight="700">Trusted<tspan fill="#3fb950">Router</tspan></text>
+    <text x="1128" y="78" fill="#8b949e" font-size="18" text-anchor="end" letter-spacing="3">CUSTOMER STORY</text>
+    <text x="72" y="190" fill="#3fb950" font-size="21" font-weight="700" letter-spacing="2">ROBOT, ROBOT &amp; HUMAN</text>
+    <text x="72" y="262" fill="#f0f6fc" font-size="54" font-weight="700">Production legal AI</text>
+    <text x="72" y="326" fill="#f0f6fc" font-size="54" font-weight="700">in three weeks.</text>
+    <text x="72" y="380" fill="#8b949e" font-size="24">Billions of tokens through an attested gateway.</text>
+    <g transform="translate(72 456)">
+      <rect width="292" height="104" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="22" y="46" fill="#f0f6fc" font-size="34" font-weight="700">170,974</text>
+      <text x="22" y="76" fill="#8b949e" font-size="18">documents processed</text>
+    </g>
+    <g transform="translate(386 456)">
+      <rect width="292" height="104" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="22" y="46" fill="#f0f6fc" font-size="34" font-weight="700">616,682</text>
+      <text x="22" y="76" fill="#8b949e" font-size="18">pages analyzed</text>
+    </g>
+    <g transform="translate(700 456)">
+      <rect width="428" height="104" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text x="22" y="46" fill="#f0f6fc" font-size="34" font-weight="700">One base URL</text>
+      <text x="22" y="76" fill="#8b949e" font-size="18">to production batch scale</text>
+    </g>
+  </g>
+</svg>

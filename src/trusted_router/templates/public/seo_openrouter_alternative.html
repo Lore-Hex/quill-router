@@ -1,13 +1,13 @@
 {% extends "public/_base.html" %}
 {% block body %}
 
-<section class="marketing-split" aria-label="OpenRouter alternative">
+<section class="marketing-split" aria-label="OpenRouter alternative quickstart">
   <div class="marketing-copy">
-    <span class="eyebrow">OpenRouter alternative</span>
+    <span class="eyebrow">OpenRouter alternatives · Reviewed {{ verified_on_label }}</span>
     <h2>Switch from OpenRouter in one base URL.</h2>
-    <p>Keep your OpenAI SDK and model IDs. Change one URL to route through an open-source, hardware-attested gateway that never stores prompts or outputs.</p>
+    <p>Keep the OpenAI SDK and move the same application to a different gateway. TrustedRouter combines a hosted model catalog, automatic fallback, and an attested prompt path that never stores prompt or output content.</p>
     <p><button class="btn primary" type="button" data-action="open-signin">Create my API key</button></p>
-    <p class="microcopy">No card required. <a href="/compare/openrouter">Read the detailed comparison.</a></p>
+    <p class="microcopy">No card required. <a href="/compare/openrouter">Compare OpenRouter and TrustedRouter directly.</a></p>
   </div>
   <div class="copy-terminal">
     <div class="code-head"><span>One line</span><span>OpenAI SDK</span></div>
@@ -18,29 +18,99 @@ client = OpenAI(
     base_url="{{ api_base_url }}",
     api_key=os.environ["TRUSTEDROUTER_API_KEY"],
 )
-# Keep the SDK. Change one URL.</code></pre>
+
+response = client.chat.completions.create(
+    model="trustedrouter/auto",
+    messages=[{"role": "user", "content": "Hello"}],
+)</code></pre>
   </div>
 </section>
 
-<section class="marketing-grid three">
-  <div class="marketing-card">
-    <span class="card-label">Privacy</span>
-    <h3>No prompt or output logs.</h3>
-    <p>The attested gateway never persists request or response bodies. You can verify this by reading the open source.</p>
-  </div>
-  <div class="marketing-card">
-    <span class="card-label">Attestation</span>
-    <h3>Cryptographic, not contractual.</h3>
-    <p>GCP Confidential Space signs the running image. The hosted prompt path is GCP-only and fails closed if attestation cannot be verified.</p>
-  </div>
-  <div class="marketing-card">
-    <span class="card-label">Open source</span>
-    <h3>Every line that touches your prompt.</h3>
-    <p>Control plane, gateway, configuration, web UI. Self-host if you want; the attestation story still works.</p>
+<section class="panel comparison-article" aria-labelledby="quick-answer-heading">
+  <div class="panel-head"><h2 id="quick-answer-heading">The short answer</h2><span class="pill">2026 guide</span></div>
+  <div class="panel-body">
+    <p><strong>The best OpenRouter alternative depends on why you are changing.</strong> Choose TrustedRouter for a hosted multi-provider API with privacy you can verify. Choose LiteLLM when your team wants to operate its own gateway. Choose Portkey for mature gateway controls and observability. Choose Vercel AI Gateway for a Vercel and AI SDK centered stack. Choose Cloudflare AI Gateway for edge controls. Choose Bedrock or Vertex AI when cloud procurement and IAM matter more than portability.</p>
+    <p>OpenRouter remains a strong choice for catalog breadth and a large developer ecosystem. A useful comparison should make that clear. The alternatives below solve different problems, so the right decision starts with deployment model, privacy boundary, provider access, fallback, and operational ownership.</p>
   </div>
 </section>
 
-<section class="compare-matrix" aria-label="OpenRouter alternative comparison">
+<section class="panel" aria-labelledby="alternatives-table-heading">
+  <div class="panel-head"><h2 id="alternatives-table-heading">10 OpenRouter alternatives compared</h2><span class="pill">Reviewed {{ verified_on_label }}</span></div>
+  <div class="model-table-wrap">
+    <table class="openrouter-alternatives-table">
+      <thead>
+        <tr><th>Alternative</th><th>Best for</th><th>Access model</th><th>Main tradeoff</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><a href="/compare/openrouter">TrustedRouter</a></td><td>Hosted routing with verifiable privacy</td><td>Prepaid credits or BYOK</td><td>Newer ecosystem than OpenRouter</td></tr>
+        <tr><td><a href="/compare/litellm">LiteLLM</a></td><td>Teams that want to self-host</td><td>Bring provider accounts and keys</td><td>You operate the gateway and provider contracts</td></tr>
+        <tr><td><a href="/compare/portkey">Portkey</a></td><td>Gateway governance and observability</td><td>Hosted or self-hosted gateway</td><td>More controls and configuration to manage</td></tr>
+        <tr><td><a href="/compare/vercel-ai-gateway">Vercel AI Gateway</a></td><td>Vercel and AI SDK applications</td><td>Hosted unified API</td><td>Most natural inside the Vercel ecosystem</td></tr>
+        <tr><td><a href="/compare/cloudflare-ai-gateway">Cloudflare AI Gateway</a></td><td>Edge policy, caching, and analytics</td><td>Unified billing or BYOK</td><td>Gateway controls differ from a model marketplace</td></tr>
+        <tr><td><a href="/compare/helicone">Helicone</a></td><td>LLM observability and debugging</td><td>Gateway or provider keys</td><td>Privacy depends on the logging configuration you choose</td></tr>
+        <tr><td><a href="/compare/requesty">Requesty</a></td><td>Hosted routing and request controls</td><td>Hosted unified API</td><td>Smaller ecosystem and catalog</td></tr>
+        <tr><td><a href="/compare/aws-bedrock">Amazon Bedrock</a></td><td>AWS procurement, IAM, and governance</td><td>AWS account and regional model access</td><td>AWS-specific setup and model availability</td></tr>
+        <tr><td><a href="/compare/google-vertex-ai">Google Vertex AI</a></td><td>GCP procurement and Model Garden</td><td>GCP project and regional model access</td><td>GCP-specific setup and model availability</td></tr>
+        <tr><td><a href="/providers">Direct provider APIs</a></td><td>One provider with the fewest intermediaries</td><td>Separate provider account for every API</td><td>You build routing, billing, failover, and reporting</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="marketing-grid two" aria-label="OpenRouter alternative details">
+  <article class="marketing-card">
+    <span class="card-label">Hosted and private</span>
+    <h3>TrustedRouter</h3>
+    <p>TrustedRouter is the closest fit when you want OpenRouter-style hosted model access with a different trust boundary. The gateway is source-visible and hardware-attested. It stores metadata for billing and reliability while prompt and output content remain ephemeral. Downstream retention and confidential-compute claims stay route-specific and visible on model and provider pages.</p>
+    <p><a href="/compare/openrouter">TrustedRouter vs OpenRouter</a></p>
+  </article>
+  <article class="marketing-card">
+    <span class="card-label">Self-hosted</span>
+    <h3>LiteLLM</h3>
+    <p>LiteLLM is the practical answer when your team wants an OpenAI-compatible proxy under its own operational control. It translates provider APIs and includes budgets, rate limits, and cost tracking. That control comes with responsibility for deployment, scaling, secrets, provider accounts, and incident response.</p>
+    <p><a href="/compare/litellm">TrustedRouter vs LiteLLM</a></p>
+  </article>
+  <article class="marketing-card">
+    <span class="card-label">Controls</span>
+    <h3>Portkey and Helicone</h3>
+    <p>Portkey is strongest when policy, fallbacks, budgets, and gateway observability are the center of the decision. Helicone is strongest when tracing, cost analysis, and request debugging are the center. Both can fit teams that already have provider relationships. Review logging and content capture settings before sending sensitive traffic.</p>
+    <p><a href="/compare/portkey">Compare Portkey</a> · <a href="/compare/helicone">Compare Helicone</a></p>
+  </article>
+  <article class="marketing-card">
+    <span class="card-label">Framework native</span>
+    <h3>Vercel AI Gateway</h3>
+    <p>Vercel AI Gateway offers one endpoint, model routing, budgets, monitoring, and provider fallback. It is especially convenient for applications already built with the AI SDK or hosted on Vercel. Teams outside that stack should compare the convenience against a provider-neutral gateway.</p>
+    <p><a href="/compare/vercel-ai-gateway">TrustedRouter vs Vercel AI Gateway</a></p>
+  </article>
+  <article class="marketing-card">
+    <span class="card-label">Edge</span>
+    <h3>Cloudflare AI Gateway</h3>
+    <p>Cloudflare AI Gateway puts analytics, caching, rate limits, retries, and fallback close to Cloudflare's network. It is compelling when those edge controls are already part of your architecture. Its product shape is a gateway layer first, rather than a broad model marketplace first.</p>
+    <p><a href="/compare/cloudflare-ai-gateway">TrustedRouter vs Cloudflare AI Gateway</a></p>
+  </article>
+  <article class="marketing-card">
+    <span class="card-label">Cloud native</span>
+    <h3>Bedrock and Vertex AI</h3>
+    <p>Amazon Bedrock and Google Vertex AI fit organizations that want model access inside an existing cloud account, IAM structure, procurement process, and regional footprint. They trade some portability for cloud-native governance. Model names, regions, quotas, and compatibility vary by platform.</p>
+    <p><a href="/compare/aws-bedrock">Compare Bedrock</a> · <a href="/compare/google-vertex-ai">Compare Vertex AI</a></p>
+  </article>
+</section>
+
+<section class="quote-feature" aria-labelledby="how-to-choose-heading">
+  <div>
+    <span class="eyebrow">Decision guide</span>
+    <h2 id="how-to-choose-heading">How to choose an OpenRouter alternative.</h2>
+  </div>
+  <div>
+    <p><strong>Start with the deployment model.</strong> Decide whether you want a hosted marketplace, a self-hosted proxy, a cloud-native service, or direct provider integrations.</p>
+    <p><strong>Define the privacy boundary.</strong> Separate gateway content handling from the downstream provider's retention and confidential-compute posture. Ask what can be verified technically and what remains contractual.</p>
+    <p><strong>Test failure behavior.</strong> Confirm which errors trigger retries, whether fallback crosses providers, and how duplicate billing is prevented.</p>
+    <p><strong>Run a small task-specific eval.</strong> Price and benchmark tables narrow the field. Your own prompts reveal the quality, latency, and reliability that matter in production.</p>
+    <p><strong>Check operating cost.</strong> Include platform fees, provider markup, engineering ownership, observability, support, and the cost of maintaining several integrations.</p>
+  </div>
+</section>
+
+<section class="compare-matrix" aria-label="OpenRouter and TrustedRouter comparison">
   <div class="matrix-row matrix-head">
     <span></span><strong>OpenRouter</strong><strong>TrustedRouter</strong>
   </div>
@@ -48,35 +118,40 @@ client = OpenAI(
     <span>API compatibility</span><span>OpenAI compatible</span><span>OpenAI compatible</span>
   </div>
   <div class="matrix-row">
-    <span>Source code</span><span>Closed</span><span>Open</span>
+    <span>Source visibility</span><span>Closed hosted prompt path</span><span>Public gateway and control-plane source</span>
   </div>
   <div class="matrix-row">
-    <span>Prompt path</span><span>Hosted, opaque</span><span>Hardware-attested, verifiable</span>
+    <span>Prompt path</span><span>Hosted service</span><span>Hardware-attested gateway</span>
   </div>
   <div class="matrix-row">
-    <span>Logging</span><span>Retention policy</span><span>None by construction</span>
+    <span>Gateway content storage</span><span>Metadata by default; content logging is optional</span><span>No prompt or output logs</span>
   </div>
   <div class="matrix-row">
-    <span>Self-host</span><span>No</span><span>Yes</span>
+    <span>Provider privacy</span><span>Provider policies and routing controls</span><span>Route-specific ZDR and verified E2E labels</span>
   </div>
   <div class="matrix-row">
-    <span>Platform charge</span><span><a href="https://openrouter.ai/pricing">5.5% on credit purchases</a></span><span>5% on prepaid model cost</span>
+    <span>Self-host</span><span>Hosted service</span><span>Available from the published source</span>
   </div>
   <div class="matrix-row">
-    <span>Status SLOs</span><span>Status page</span><span>99.99% target with public burn-rate alerts</span>
+    <span>Platform charge</span><span><a href="https://openrouter.ai/docs/faq">5.5% on credit purchases</a></span><span>See current <a href="/pricing">TrustedRouter pricing</a></span>
   </div>
 </section>
 
-<section class="quote-feature">
-  <div>
-    <span class="eyebrow">When to use TR over OpenRouter</span>
-    <h2>The teams switching over.</h2>
-  </div>
-  <div>
-    <p><strong>Privacy-sensitive workloads.</strong> Medical, legal, financial, internal tooling. Anywhere prompts shouldn't leave a hardware-attested boundary.</p>
-    <p><strong>Regulated industries.</strong> HIPAA, FINRA, GDPR-strict deployments where "no logging" needs to be verifiable, not promised.</p>
-    <p><strong>Audited routing.</strong> Build-vs-buy decisions where the security review team needs to read the routing code.</p>
-    <p><strong>Self-hosters.</strong> Run TrustedRouter inside your own VPC and keep attestation working — your image hash is your image hash.</p>
+<section class="panel comparison-article" aria-labelledby="official-sources-heading">
+  <div class="panel-head"><h2 id="official-sources-heading">Official sources</h2><span class="pill">Checked {{ verified_on_label }}</span></div>
+  <div class="panel-body">
+    <p>Product capabilities change. This guide uses first-party documentation and links to the detailed, dated comparison pages where TrustedRouter maintains evidence.</p>
+    <ul>
+      <li><a href="https://openrouter.ai/docs/faq">OpenRouter FAQ and pricing</a>, <a href="https://openrouter.ai/docs/guides/privacy/provider-logging/">provider logging controls</a>, and <a href="https://openrouter.ai/docs/guides/overview/models">model catalog documentation</a></li>
+      <li><a href="https://docs.litellm.ai/">LiteLLM documentation</a></li>
+      <li><a href="https://portkey.ai/docs/product/ai-gateway">Portkey AI Gateway documentation</a></li>
+      <li><a href="https://vercel.com/docs/ai-gateway">Vercel AI Gateway documentation</a></li>
+      <li><a href="https://developers.cloudflare.com/ai-gateway/">Cloudflare AI Gateway documentation</a></li>
+      <li><a href="https://docs.helicone.ai/gateway/overview">Helicone AI Gateway documentation</a></li>
+      <li><a href="https://www.requesty.ai/pricing">Requesty pricing and product terms</a></li>
+      <li><a href="https://docs.aws.amazon.com/bedrock/latest/userguide/models.html">Amazon Bedrock model documentation</a></li>
+      <li><a href="https://cloud.google.com/vertex-ai/generative-ai/docs/model-garden/explore-models">Vertex AI Model Garden documentation</a></li>
+    </ul>
   </div>
 </section>
 
@@ -89,6 +164,19 @@ client = OpenAI(
     <button class="btn primary" type="button" data-action="open-signin">Create my API key</button>
   </div>
   <span class="microcopy">No card required.</span>
+</section>
+
+<section class="panel" aria-label="OpenRouter migration resources">
+  <div class="panel-head"><h2>OpenRouter migration resources</h2><a href="/resources">All resources</a></div>
+  <div class="panel-body">
+    <ul class="link-list">
+      <li><a href="/docs/migrate-from-openrouter">Migration guide</a><span>Endpoints, headers, provider controls, and compatibility</span></li>
+      <li><a href="/compare/openrouter">Detailed gateway comparison</a><span>Trust, pricing, deployment, and API surface</span></li>
+      <li><a href="/docs/agent-setup">Agent setup</a><span>Codex, Claude Code, Cursor, and eval runners</span></li>
+      <li><a href="/compare/models">Model comparisons</a><span>Current price, latency, throughput, privacy, and provider routes</span></li>
+      <li><a href="/leaderboard">Provider leaderboard</a><span>Measured route performance and availability</span></li>
+    </ul>
+  </div>
 </section>
 
 {% endblock %}

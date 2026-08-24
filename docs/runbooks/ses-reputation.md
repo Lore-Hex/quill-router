@@ -13,6 +13,8 @@ above 0.1%.
 | `budget_alert` | `alerts` | Workspace spend alert |
 | `support_inquiry` | `default` | First-party support form to the support inbox |
 | `partner_inquiry` | `default` | First-party partner form to the operator inbox |
+| `activation_10m` | `default` | Optional first-call reminder; reputation brake keeps this disabled |
+| `activation_24h` | `default` | Optional first-call reminder; reputation brake keeps this disabled |
 
 The `alerts` profile sends as `alerts@alerts.trustedrouter.com` through the
 `trustedrouter-alerts` configuration set. It has Easy DKIM, a custom MAIL FROM
@@ -33,12 +35,20 @@ addresses and message content must never be added to logs or metric tags.
    enabled.
 3. Do not delete a suppression entry unless the recipient has independently
    confirmed control of the address and requested another send.
+   Permanent bounces and complaints are written to both Spanner and the SES
+   account-wide suppression list before the SNS notification is acknowledged.
+   A failed SES mirror write returns 503 so SNS retries it.
 4. Group `email_send.accepted` and `ses_feedback.received` by mail class and
-   acquisition source in Axiom. Compare feedback counts to accepted sends for
-   the same window.
+   acquisition source in Axiom. Correlate on `ses_message_id` and count unique
+   message IDs or feedback IDs, not raw webhook deliveries: SNS retries are
+   normal and must not inflate reputation-event totals.
 5. Pause the offending acquisition source or mail class if it exceeds the
    recovery thresholds. Authentication and billing behavior must continue even
    when best-effort alert email is paused.
+6. Keep `TR_ACTIVATION_REMINDER_INTERVAL_SECONDS=0` in every production region
+   until the recovery gate below has passed. A delayed complaint can arrive
+   after the brake; use `ses_message_id` to compare it with the original send
+   time before concluding that mail resumed.
 
 AWS documents account-level suppression and automated configuration-set
 pausing here:

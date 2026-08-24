@@ -90,7 +90,7 @@
   </div>
 </section>
 
-<style>
+<style nonce="{{ csp_nonce() }}">
   .support-layout {
     display: grid;
     grid-template-columns: minmax(0, 1.65fr) minmax(260px, .75fr);
@@ -170,7 +170,7 @@
 {% endblock %}
 
 {% block body_scripts %}
-<script>
+<script nonce="{{ csp_nonce() }}">
   (function () {
     var form = document.getElementById("support-inquiry");
     if (!form) return;

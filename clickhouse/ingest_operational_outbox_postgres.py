@@ -34,6 +34,19 @@ delivery for all 32 shards.  Non-retryable errors drop the connection so the
 next pass reconnects; DSQL expires long-lived connections, so that path is
 ordinary rather than exceptional.
 
+**That silence has one bound this module cannot provide.**  ``backlog_alarm``
+below is emitted BY this process, so it says nothing when the process does not
+exist, which is what happened on AWS-EU for fifteen days (2026-08-02..17: no
+unit, no env file, 470,370 rows).  The out-of-band answer is the same number
+read from the outside: the control plane publishes ``SELECT_OLDEST_SQL``'s
+result as ``analytics.drain_lag_seconds`` in ``/status.json``
+(:mod:`trusted_router.operational_analytics_freshness`), and
+:mod:`clickhouse.check_fleet_analytics_freshness` checks every cloud's with no
+credentials.  This module's lag and that published lag are the same statement
+by construction — ``SELECT_OLDEST_SQL`` is imported from the control-plane
+outbox rather than retyped — because the alarm and the monitor meaning
+different things is a defect nothing would report.
+
 Durability: two independent nodes, no quorum
 --------------------------------------------
 
@@ -149,12 +162,12 @@ than one whose edges are known:
   and nothing notices, because the drain has forgotten the rows and the two
   nodes are never compared to each other.  The fan-out makes *total* loss much
   less likely; it does not make a single node's just-acked writes durable.
-* **Two of the four tables.**  This drain writes ``activity_generations`` and
-  ``synthetic_probe_samples`` (``EVENT_TABLES``).  The single-node DDL also
-  creates ``synthetic_status_rollups`` and ``public_analytics_snapshots``, which
-  nothing on this cloud writes today — they are produced by GCP timers — so both
-  nodes hold them empty.  If such a job is ever pointed at Paris, its output is
-  NOT replicated by this drain and the second copy is not complete until it is.
+* **Only ingested tables.**  This drain writes ``activity_generations``,
+  ``synthetic_probe_samples``, both raw client telemetry tables, and quarantine
+  rows (``EVENT_TABLES``). It does not write synthetic/client rollups or public
+  snapshots. Nothing on this cloud produces those today — they are GCP timers —
+  so both nodes hold them empty. If such a job is ever pointed at Paris, its
+  output is NOT replicated by this drain and the second copy is not complete.
 * **The alarm needs this process alive.**  ``backlog_alarm`` is emitted from the
   sweep loop, so it says nothing while the drain is not running.  A
   configuration error therefore exits with ``CONFIG_EXIT_CODE``, which the unit
@@ -180,6 +193,7 @@ from clickhouse.ingest_operational_outbox import (
     _lag_seconds,
     _utc,
     normalise_operational_event,
+    quarantine_event,
 )
 from trusted_router.postgres_dsn import (
     aws_dsql_connection_details,
@@ -194,6 +208,12 @@ from trusted_router.postgres_dsn import (
 # unrepresentable rather than merely unlikely.
 from trusted_router.storage_operational_analytics import (
     OPERATIONAL_ANALYTICS_OUTBOX_SHARDS as OUTBOX_SHARDS,
+)
+
+# Same argument, applied to the lag statement: the control plane's outbox owns
+# the definition, and this daemon reads it rather than restating it.
+from trusted_router.storage_postgres_operational_analytics_outbox import (
+    SELECT_OLDEST_ENQUEUED_AT_SQL,
 )
 
 #: Aurora DSQL surfaces every OCC abort here; stock Postgres uses it for
@@ -244,9 +264,14 @@ DELETE_BY_KEY_SQL = (
 # One statement for the whole table, not one per shard: the lag metric used to
 # cost 32 transactions per poll even when the queue was empty. Backed by
 # tr_operational_analytics_outbox_enqueued_at_idx, so this is an index seek.
-SELECT_OLDEST_SQL = (
-    "SELECT enqueued_at FROM tr_operational_analytics_outbox ORDER BY enqueued_at LIMIT 1"
-)
+#
+# IMPORTED, not retyped. The control plane publishes this same statement's
+# result as `analytics.drain_lag_seconds`, and the whole value of that field is
+# that an outside observer's number and this daemon's `backlog_alarm` are the
+# same measurement. Two literals kept equal by a comment is a drift waiting to
+# happen, and the drift would be invisible: both sides would keep returning a
+# number, and only their meanings would part company.
+SELECT_OLDEST_SQL = SELECT_OLDEST_ENQUEUED_AT_SQL
 
 log = logging.getLogger("trusted_router.operational_analytics_ingest_postgres")
 
@@ -635,6 +660,7 @@ class ShardDrainResult:
     fetched: int
     inserted: int
     deleted: int
+    quarantined: int = 0
 
 
 @dataclass(frozen=True)
@@ -655,6 +681,7 @@ class SweepResult:
     rows_per_second: float
     failed_shards: int = 0
     degraded_targets: tuple[str, ...] = ()
+    quarantined: int = 0
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -911,7 +938,14 @@ def drain_shard_once(
     exhausted = len(rows) < batch_size
     last_key = (rows[-1].event_kind, rows[-1].event_id)
     try:
-        events = [normalise_operational_event(row) for row in rows]
+        events: list[Any] = []
+        quarantined = 0
+        for row in rows:
+            try:
+                events.extend(normalise_operational_event(row))
+            except ValueError as exc:
+                events.append(quarantine_event(row, exc))
+                quarantined += 1
         writer.insert(events)
     except BaseException:
         if cursors is not None:
@@ -926,8 +960,9 @@ def drain_shard_once(
     return ShardDrainResult(
         shard=shard,
         fetched=len(rows),
-        inserted=len(events),
+        inserted=len(events) - quarantined,
         deleted=int(deleted or 0),
+        quarantined=quarantined,
     )
 
 
@@ -951,6 +986,7 @@ def drain_once(
     """
     fetched = 0
     inserted = 0
+    quarantined = 0
     failed_shards = 0
     degraded: dict[str, None] = {}
     # Lets a fan-out stop re-dialling a target that has already failed several
@@ -982,6 +1018,7 @@ def drain_once(
             continue
         fetched += result.fetched
         inserted += result.inserted
+        quarantined += result.quarantined
     elapsed = max(time.monotonic() - started, 0.000_001)
     return SweepResult(
         fetched=fetched,
@@ -989,6 +1026,7 @@ def drain_once(
         rows_per_second=inserted / elapsed,
         failed_shards=failed_shards,
         degraded_targets=tuple(degraded),
+        quarantined=quarantined,
     )
 
 
@@ -1087,13 +1125,14 @@ def main() -> int:
         log.info(
             "operational_analytics_outbox.metrics backend=postgres rows=%d "
             "rows_per_second=%.3f drain_lag_seconds=%.3f failed_shards=%d "
-            "copies=%d degraded_targets=%s",
+            "copies=%d degraded_targets=%s quarantined=%d",
             result.inserted,
             result.rows_per_second,
             lag_seconds,
             result.failed_shards,
             len(targets),
             ",".join(degraded) or "-",
+            result.quarantined,
         )
         # The bound on outbox growth is this line plus an operator. There is no
         # automatic one: the only automatic bounds available are "delete rows a

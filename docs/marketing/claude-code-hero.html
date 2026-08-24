@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TrustedRouter Claude Code hero source</title>
+  <style>
+    @font-face {
+      font-family: Archivo;
+      src: url("../../src/trusted_router/static/fonts/archivo-latin.woff2") format("woff2");
+    }
+    @font-face {
+      font-family: Plex;
+      src: url("../../src/trusted_router/static/fonts/ibm-plex-mono-400-latin.woff2") format("woff2");
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body {
+      position: relative;
+      background: #090d0a;
+      color: #edf0e9;
+      font-family: Archivo, sans-serif;
+    }
+    .grid {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      opacity: .24;
+    }
+    .grid span { border-right: 1px solid #202820; }
+    .grid span:first-child { border-left: 1px solid #202820; }
+    .signal {
+      position: absolute;
+      right: 104px;
+      bottom: 72px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      color: #728073;
+      font-family: Plex, monospace;
+      font-size: 12px;
+    }
+    .signal i {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #9dcbb1;
+      box-shadow: 0 0 22px rgb(157 203 177 / 66%);
+    }
+    .terminal {
+      position: absolute;
+      top: 88px;
+      right: 96px;
+      width: 660px;
+      min-height: 640px;
+      overflow: hidden;
+      border: 1px solid #3b473e;
+      border-radius: 4px;
+      background: #0b100c;
+      box-shadow: 0 36px 100px rgb(0 0 0 / 58%);
+    }
+    .terminal-head {
+      display: flex;
+      height: 48px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 18px;
+      border-bottom: 1px solid #273029;
+      color: #818d82;
+      font-family: Plex, monospace;
+      font-size: 11px;
+    }
+    .terminal-head strong { color: #dce2da; font-weight: 400; }
+    .terminal-body { padding: 28px 30px 30px; font-family: Plex, monospace; }
+    .prompt-label {
+      margin-bottom: 13px;
+      color: #91a197;
+      font-size: 11px;
+    }
+    .prompt {
+      margin: 0;
+      color: #eff2eb;
+      font-size: 16px;
+      line-height: 1.58;
+    }
+    .prompt .cursor { color: #a9cdb9; }
+    .activity {
+      margin-top: 32px;
+      border-top: 1px solid #253028;
+      border-bottom: 1px solid #253028;
+    }
+    .row {
+      display: grid;
+      min-height: 50px;
+      grid-template-columns: 25px 170px 1fr;
+      gap: 10px;
+      align-items: center;
+      border-bottom: 1px solid #202820;
+      font-size: 12px;
+    }
+    .row:last-child { border-bottom: 0; }
+    .row .check { color: #a9cdb9; }
+    .row .label { color: #758177; }
+    .row .value { color: #cbd5cb; }
+    .ready {
+      display: grid;
+      margin-top: 28px;
+      padding: 18px;
+      grid-template-columns: 10px 1fr auto;
+      gap: 12px;
+      align-items: center;
+      border: 1px solid #3b5846;
+      border-radius: 3px;
+      background: #101a13;
+    }
+    .ready i {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #a9cdb9;
+      box-shadow: 0 0 18px rgb(169 205 185 / 56%);
+    }
+    .ready strong { color: #dce9df; font-size: 13px; font-weight: 400; }
+    .ready span { color: #88a08e; font-size: 11px; }
+    .brand-mark {
+      position: absolute;
+      top: 74px;
+      right: 784px;
+      display: grid;
+      width: 46px;
+      height: 46px;
+      place-items: center;
+      border: 1px solid #465449;
+      border-radius: 4px;
+      background: #101712;
+      color: #b8d8c5;
+      font-family: Plex, monospace;
+      font-size: 12px;
+    }
+    .og-copy { display: none; }
+    @media (max-width: 1300px) {
+      .og-copy {
+        position: absolute;
+        top: 112px;
+        left: 64px;
+        display: block;
+        width: 480px;
+      }
+      .og-copy span {
+        color: #9fc8b1;
+        font-family: Plex, monospace;
+        font-size: 11px;
+        text-transform: uppercase;
+      }
+      .og-copy h1 {
+        margin: 22px 0 14px;
+        color: #f0eee6;
+        font-size: 46px;
+        font-weight: 400;
+        line-height: 1.06;
+      }
+      .og-copy p {
+        width: 420px;
+        margin: 0;
+        color: #aeb8ad;
+        font-size: 16px;
+        line-height: 1.55;
+      }
+      .terminal {
+        top: 46px;
+        right: 52px;
+        width: 520px;
+        min-height: 530px;
+      }
+      .terminal-head { height: 42px; }
+      .terminal-body { padding: 22px 24px 24px; }
+      .prompt { font-size: 13px; }
+      .activity { margin-top: 22px; }
+      .row {
+        min-height: 40px;
+        grid-template-columns: 20px 128px 1fr;
+        font-size: 10px;
+      }
+      .ready { margin-top: 20px; padding: 14px; }
+      .ready strong { font-size: 11px; }
+      .ready span { font-size: 9px; }
+      .brand-mark {
+        top: 48px;
+        right: 594px;
+      }
+      .signal {
+        right: 56px;
+        bottom: 24px;
+        font-size: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="grid" aria-hidden="true">
+    <span></span><span></span><span></span><span></span><span></span><span></span>
+    <span></span><span></span><span></span><span></span><span></span><span></span>
+  </div>
+  <div class="brand-mark">TR</div>
+  <div class="og-copy">
+    <span>TrustedRouter for your favorite agent</span>
+    <h1>Cut your token bill in 10 seconds.</h1>
+    <p>Just paste one short message. Your agent calls another model and streams the answer into the same chat.</p>
+  </div>
+  <div class="terminal">
+    <div class="terminal-head"><strong>New agent chat</strong><span>Claude Code / Codex / any agent</span></div>
+    <div class="terminal-body">
+      <div class="prompt-label">YOU</div>
+      <p class="prompt"><span class="cursor">&#8250;</span> Use TrustedRouter to ask DeepSeek: What is the capital of France?</p>
+      <div class="activity">
+        <div class="row"><span class="check">&#10003;</span><span class="label">host agent</span><span class="value">unchanged</span></div>
+        <div class="row"><span class="check">&#10003;</span><span class="label">called model</span><span class="value">DeepSeek</span></div>
+        <div class="row"><span class="check">&#10003;</span><span class="label">response</span><span class="value">live stream</span></div>
+        <div class="row"><span class="check">&#10003;</span><span class="label">answer</span><span class="value">Paris</span></div>
+      </div>
+      <div class="ready"><i></i><strong>Streaming into this chat.</strong><span>same agent settings</span></div>
+    </div>
+  </div>
+  <div class="signal"><i></i><span>hundreds of models / one key / seconds</span></div>
+</body>
+</html>

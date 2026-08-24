@@ -102,6 +102,7 @@ def test_production_ops_chat_requires_https_destinations() -> None:
     with pytest.raises(ValidationError, match="only HTTPS URLs"):
         Settings(
             environment="production",
+            service_surface="actions",
             ops_chat_webhook_urls="http://a.example",
             ops_chat_webhook_secret=hook_secret,
         )

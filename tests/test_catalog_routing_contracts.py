@@ -5,13 +5,19 @@ import json
 import pytest
 
 from trusted_router.catalog import (
+    ADVISOR_CATALOG_MODEL_ORDERS,
     ADVISOR_MODEL_ID,
     ARISTOTLE_1_0_MODEL_ID,
     ARISTOTLE_1_1_MODEL_ID,
+    ARISTOTLE_2_0_MODEL_ID,
     ARISTOTLE_MODEL_ID,
+    ATHENA_1_0_MODEL_ID,
+    ATHENA_2_0_MODEL_ID,
     ATHENA_MODEL_ID,
     AUTO_MODEL_ID,
     CONFIDENTIAL_MODEL_ID,
+    DEEPSEEK_V4_PRO_0423_MODEL_ID,
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
     E2E_MODEL_ID,
     EU_FOCUSED_PROVIDER_ORDER,
     EU_MODEL_ID,
@@ -19,6 +25,7 @@ from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     IRIS_1_0_MODEL_ID,
     IRIS_2_0_MODEL_ID,
+    IRIS_3_0_MODEL_ID,
     IRIS_MODEL_ID,
     LIBERTY_1_0_1M_MODEL_ID,
     LIBERTY_1_0_MODEL_ID,
@@ -32,10 +39,13 @@ from trusted_router.catalog import (
     OPEN_PATCHER_FAST1_MODEL_ID,
     OPEN_PATCHER_G1_MODEL_ID,
     OPEN_PATCHER_G2_MODEL_ID,
+    OPEN_PATCHER_G3_MODEL_ID,
     OPEN_PATCHER_S1_MODEL_ID,
     OPEN_PATCHER_S2_MODEL_ID,
+    OPEN_PATCHER_S3_MODEL_ID,
     PARASAIL_LIBERTY_2_0_MODEL_ID,
     PLATO_1_0_MODEL_ID,
+    PLATO_3_0_MODEL_ID,
     PLATO_MODEL_ID,
     PLATO_PRO_1_0_MODEL_ID,
     PLATO_PRO_2_0_MODEL_ID,
@@ -46,12 +56,14 @@ from trusted_router.catalog import (
     PROMETHEUS_1_0_1M_MODEL_ID,
     PROMETHEUS_1_0_MODEL_ID,
     PROMETHEUS_2_0_MODEL_ID,
+    PROMETHEUS_3_0_MODEL_ID,
     PROMETHEUS_MODEL_ID,
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
     SELECTOR_MODEL_ID,
     SOCRATES_1_0_MODEL_ID,
     SOCRATES_1_1_MODEL_ID,
+    SOCRATES_2_0_MODEL_ID,
     SOCRATES_MODEL_ID,
     SOCRATES_PRO_1_0_MODEL_ID,
     SOCRATES_PRO_MODEL_ID,
@@ -61,6 +73,7 @@ from trusted_router.catalog import (
     ZDR_MODEL_ID,
     ZEUS_1_0_MINI_MODEL_ID,
     ZEUS_1_0_MODEL_ID,
+    ZEUS_2_0_MODEL_ID,
     ZEUS_MODEL_ID,
     InvalidAutoModelOrder,
     auto_candidate_models,
@@ -78,10 +91,16 @@ from trusted_router.catalog import (
     orchestration_role,
     provider_privacy_tier,
 )
-from trusted_router.catalog_ingest import _modalities
+from trusted_router.catalog_ingest import _authoritative_provider_model_ids, _modalities
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.provider_lifecycle import provider_model_retired
+from trusted_router.routes.internal.gateway import _gateway_provider_route_payload
 from trusted_router.routing import chat_route_candidates, chat_route_endpoint_candidates
+
+
+def _cataloged_model_ids(model_ids: list[str]) -> list[str]:
+    return [model_id for model_id in model_ids if model_id in MODELS]
 
 
 def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
@@ -178,7 +197,6 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         ("moonshotai/kimi-k2.7-code", "novita"),
         ("tencent/hy3", "novita"),
         ("z-ai/glm-5.2", "zai"),
-        ("z-ai/glm-5.2", "gmi"),
         ("z-ai/glm-5.2", "deepinfra"),
         ("z-ai/glm-5.2", "fireworks"),
         ("z-ai/glm-5.2", "novita"),
@@ -289,16 +307,17 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
         ),
         (
             "nebius",
-            20,
+            18,
             [
                 # Nebius retired Meta-Llama-3.1-8B + gemma-2-2b-it earlier, then
                 # announced 11 more Token Factory model retirements for
-                # 2026-06-22. These are intentionally absent; this contract keeps
-                # representative non-deprecated Nebius routes alive.
-                "meta-llama/Llama-3.3-70B-Instruct",
+                # 2026-06-22 and 12 more for 2026-08-31. Those are intentionally
+                # absent after their cutovers; this contract keeps representative
+                # non-deprecated Nebius routes alive.
                 "Qwen/Qwen3.5-397B-A17B",
                 "deepseek-ai/DeepSeek-V4-Pro",
-                "MiniMaxAI/MiniMax-M2.5",
+                "MiniMaxAI/MiniMax-M3",
+                "moonshotai/kimi-k3",
             ],
         ),
         (
@@ -312,16 +331,6 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
             ],
         ),
         (
-            "cerebras",
-            4,
-            [
-                "openai/gpt-oss-120b",
-                "cerebras/gpt-oss-120b",
-                "z-ai/glm-4.7",
-                "cerebras/zai-glm-4.7",
-            ],
-        ),
-        (
             "google-ai-studio",
             5,
             [
@@ -332,8 +341,9 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
         ),
         (
             "grok",
-            4,
+            5,
             [
+                "x-ai/grok-4.6",
                 "x-ai/grok-4.5",
                 "x-ai/grok-4.3",
             ],
@@ -368,6 +378,24 @@ def test_native_provider_catalog_preserves_live_model_ids(
         assert f"{model_id}@{provider}/byok" in MODEL_ENDPOINTS
         assert MODEL_ENDPOINTS[f"{model_id}@{provider}/prepaid"].upstream_id
         assert MODEL_ENDPOINTS[f"{model_id}@{provider}/byok"].upstream_id
+
+
+def test_cerebras_native_catalog_preserves_every_live_model_id() -> None:
+    expected = _authoritative_provider_model_ids("cerebras")
+    provider_model_ids = {
+        endpoint.model_id
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.provider == "cerebras"
+    }
+
+    assert expected
+    assert provider_model_ids == expected
+    for model_id in expected:
+        assert f"{model_id}@cerebras/prepaid" in MODEL_ENDPOINTS
+        assert f"{model_id}@cerebras/byok" in MODEL_ENDPOINTS
+
+
+def test_non_chat_deepseek_ocr_is_not_routable_as_chat() -> None:
     assert "deepseek/deepseek-ocr-2@deepseek/prepaid" not in MODEL_ENDPOINTS
     assert "deepseek/deepseek-ocr-2@deepseek/byok" not in MODEL_ENDPOINTS
 
@@ -391,9 +419,41 @@ def test_grok_45_uses_xai_native_model_id_and_pricing() -> None:
     assert model.context_length == 500_000
     assert prepaid.upstream_id == "grok-4.5"
     assert byok.upstream_id == "grok-4.5"
-    assert prepaid.prompt_price_microdollars_per_million_tokens == 2_100_000
-    assert prepaid.completion_price_microdollars_per_million_tokens == 6_300_000
-    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 525_000
+    assert prepaid.prompt_price_microdollars_per_million_tokens > 0
+    assert prepaid.completion_price_microdollars_per_million_tokens > 0
+    cached_prompt = prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+    assert cached_prompt is not None
+    assert 0 < cached_prompt < prepaid.prompt_price_microdollars_per_million_tokens
+
+
+def test_grok_46_uses_xai_native_model_id_and_long_context_pricing() -> None:
+    model = MODELS["x-ai/grok-4.6"]
+    prepaid = MODEL_ENDPOINTS["x-ai/grok-4.6@grok/prepaid"]
+    byok = MODEL_ENDPOINTS["x-ai/grok-4.6@grok/byok"]
+
+    assert model.provider == "grok"
+    assert model.context_length == 500_000
+    assert prepaid.upstream_id == "grok-4.6"
+    assert byok.upstream_id == "grok-4.6"
+    assert [tier.max_prompt_tokens for tier in prepaid.price_tiers] == [200_000, None]
+    for tier in prepaid.price_tiers:
+        assert tier.prompt_price_microdollars_per_million_tokens > 0
+        assert tier.completion_price_microdollars_per_million_tokens > 0
+        assert tier.prompt_cached_price_microdollars_per_million_tokens is not None
+        assert (
+            0
+            < tier.prompt_cached_price_microdollars_per_million_tokens
+            < tier.prompt_price_microdollars_per_million_tokens
+        )
+
+
+def test_qwen_38_routes_only_through_hosts_with_verified_pricing() -> None:
+    model_id = "qwen/qwen3.8-max"
+
+    assert f"{model_id}@novita/prepaid" in MODEL_ENDPOINTS
+    assert f"{model_id}@atlas-cloud/prepaid" in MODEL_ENDPOINTS
+    assert f"{model_id}@alibaba/prepaid" not in MODEL_ENDPOINTS
+    assert f"{model_id}@alibaba/byok" not in MODEL_ENDPOINTS
 
 
 def test_novita_hy3_uses_live_provider_id_and_price_floor() -> None:
@@ -406,9 +466,9 @@ def test_novita_hy3_uses_live_provider_id_and_price_floor() -> None:
     assert model.context_length == 262_144
     assert prepaid.upstream_id == "tencent/hy3"
     assert byok.upstream_id == "tencent/hy3"
-    assert prepaid.prompt_price_microdollars_per_million_tokens == 147_000
-    assert prepaid.completion_price_microdollars_per_million_tokens == 609_000
-    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 36_750
+    assert prepaid.prompt_price_microdollars_per_million_tokens == 147_700
+    assert prepaid.completion_price_microdollars_per_million_tokens == 611_900
+    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 36_925
 
 
 def test_minimax_empty_operator_routes_are_not_prepaid() -> None:
@@ -467,16 +527,16 @@ def test_minimax_m3_uses_provider_native_context_tiers() -> None:
     assert [tier.max_prompt_tokens for tier in prepaid.price_tiers] == [512_000, None]
 
     low, high = prepaid.price_tiers
-    assert low.prompt_price_microdollars_per_million_tokens == 315_000
-    assert low.completion_price_microdollars_per_million_tokens == 1_260_000
-    assert low.prompt_cached_price_microdollars_per_million_tokens == 63_000
-    assert high.prompt_price_microdollars_per_million_tokens == 630_000
-    assert high.completion_price_microdollars_per_million_tokens == 2_520_000
-    assert high.prompt_cached_price_microdollars_per_million_tokens == 126_000
+    assert low.prompt_price_microdollars_per_million_tokens == 316_500
+    assert low.completion_price_microdollars_per_million_tokens == 1_266_000
+    assert low.prompt_cached_price_microdollars_per_million_tokens == 63_300
+    assert high.prompt_price_microdollars_per_million_tokens == 633_000
+    assert high.completion_price_microdollars_per_million_tokens == 2_532_000
+    assert high.prompt_cached_price_microdollars_per_million_tokens == 126_600
 
 
 def test_prompt_price_equals_published_under_uniform_markup() -> None:
-    """Under the uniform pricing formula (cost+5%, $0.01/M floor), TR no
+    """Under the uniform pricing formula (cost+5.5%, $0.01/M floor), TR no
     longer carries a separate 1¢/M discount. `prompt_price_*` and
     `published_*` are the same number — the customer pays the headline
     price. Any model where they differ is either pre-formula leftover
@@ -693,7 +753,7 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
     ], "provider-scoped AI Studio retirement must preserve healthy routes"
 
 
-def test_anthropic_opus_41_drops_prepaid_but_keeps_byok_until_retirement() -> None:
+def test_anthropic_opus_41_is_never_prepaid_during_retirement_transition() -> None:
     endpoints = [
         endpoint
         for endpoint in endpoints_for_model("anthropic/claude-opus-4.1")
@@ -701,7 +761,78 @@ def test_anthropic_opus_41_drops_prepaid_but_keeps_byok_until_retirement() -> No
     ]
 
     assert not [endpoint for endpoint in endpoints if endpoint.usage_type == "Credits"]
-    assert [endpoint for endpoint in endpoints if endpoint.usage_type == "BYOK"]
+    # Anthropic retired Opus 4.1 on 2026-08-05. A committed snapshot from
+    # before retirement may retain its BYOK route until the next successful
+    # hourly refresh; a fresh provider catalog may remove the route entirely.
+    # Either state is safe, but it must never regain a prepaid operator route.
+    assert not endpoints or [
+        endpoint for endpoint in endpoints if endpoint.usage_type == "BYOK"
+    ]
+
+
+def test_deepseek_v4_pro_release_routes_are_keyed_and_credits_only() -> None:
+    old_routes = endpoints_for_model(DEEPSEEK_V4_PRO_0423_MODEL_ID)
+    current_routes = endpoints_for_model(DEEPSEEK_V4_PRO_0813_MODEL_ID)
+
+    assert old_routes
+    assert all(endpoint.usage_type == "Credits" for endpoint in old_routes)
+    assert all(endpoint.provider != "deepseek" for endpoint in old_routes)
+    assert {endpoint.provider for endpoint in old_routes} <= (
+        GATEWAY_PREPAID_PROVIDER_SLUGS - {"deepseek"}
+    )
+    assert current_routes
+    assert all(endpoint.usage_type == "Credits" for endpoint in current_routes)
+    assert {endpoint.provider for endpoint in current_routes} == {
+        "deepseek",
+        "baseten",
+    }
+    assert {endpoint.provider for endpoint in current_routes} <= GATEWAY_PREPAID_PROVIDER_SLUGS
+    assert [
+        (endpoint.provider, endpoint.upstream_id)
+        for endpoint in current_routes
+        if endpoint.provider == "deepseek"
+    ] == [("deepseek", "deepseek-v4-pro")]
+    assert [
+        (endpoint.provider, endpoint.upstream_id)
+        for endpoint in current_routes
+        if endpoint.provider == "baseten"
+    ] == [("baseten", "deepseek-ai/DeepSeek-V4-Pro-0813")]
+    baseten = next(
+        endpoint for endpoint in current_routes if endpoint.provider == "baseten"
+    )
+    # Public prepaid rates include the normal 5.5% TrustedRouter markup over the
+    # exact provider-native $1.32 / $3.96 prices asserted in the parser test.
+    assert baseten.prompt_price_microdollars_per_million_tokens == 1_392_600
+    assert baseten.completion_price_microdollars_per_million_tokens == 4_177_800
+    assert endpoint_zero_data_retention(baseten) is True
+    assert endpoint_privacy_tier(baseten) >= PRIVACY_TIER_ZERO_RETENTION
+    assert MODELS[DEEPSEEK_V4_PRO_0423_MODEL_ID].byok_available is False
+    assert MODELS[DEEPSEEK_V4_PRO_0813_MODEL_ID].byok_available is False
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "moonshotai/kimi-k3",
+        "z-ai/glm-5.2",
+        "minimax/minimax-m3",
+    ],
+)
+def test_current_orchestration_backups_have_zdr_routes(model_id: str) -> None:
+    candidates = chat_route_endpoint_candidates(
+        {
+            "model": model_id,
+            "messages": [{"role": "user", "content": "PONG"}],
+            "provider": {"min_privacy": "zdr"},
+        },
+        Settings(environment="test"),
+    )
+
+    assert candidates
+    assert all(
+        endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_ZERO_RETENTION
+        for _model, endpoint in candidates
+    )
 
 
 def test_synth_alias_is_cataloged_but_not_silent_auto_route() -> None:
@@ -728,7 +859,7 @@ def test_selector_and_mapreduce_primitives_are_cataloged_but_gateway_only() -> N
                 "moonshotai/kimi-k2.6",
                 "z-ai/glm-5.2",
                 "google/gemma-4-31b-it",
-                "deepseek/deepseek-v4-pro",
+                DEEPSEEK_V4_PRO_0813_MODEL_ID,
                 "moonshotai/kimi-k2.7-code",
             ],
         ),
@@ -741,7 +872,7 @@ def test_selector_and_mapreduce_primitives_are_cataloged_but_gateway_only() -> N
                 "moonshotai/kimi-k2.6",
                 "z-ai/glm-5.2",
                 "google/gemma-4-31b-it",
-                "deepseek/deepseek-v4-pro",
+                DEEPSEEK_V4_PRO_0813_MODEL_ID,
             ],
         ),
     }
@@ -769,34 +900,44 @@ def test_socrates_aliases_are_cataloged_with_advisor_candidates() -> None:
         "xiaomi/mimo-v2.5-pro-ultraspeed",
         "anthropic/claude-opus-4.8",
     ]
-    rolling_candidates = [
+    socrates_1_1_candidates = [
         "xiaomi/mimo-v2.5-pro-ultraspeed",
         "minimax/minimax-m3",
         "z-ai/glm-5.2-fast",
         "deepseek/deepseek-v4-flash",
         "trustedrouter/zeus-1.0",
     ]
+    socrates_2_0_candidates = [
+        "xiaomi/mimo-v2.5-pro-ultraspeed",
+        "minimax/minimax-m3",
+        "z-ai/glm-5.2-fast",
+        DEEPSEEK_V4_PRO_0813_MODEL_ID,
+        ZEUS_2_0_MODEL_ID,
+    ]
 
     for model_id, candidates in (
         (SOCRATES_1_0_MODEL_ID, socrates_1_0_candidates),
-        (SOCRATES_1_1_MODEL_ID, rolling_candidates),
-        (SOCRATES_MODEL_ID, rolling_candidates),
+        (SOCRATES_1_1_MODEL_ID, socrates_1_1_candidates),
+        (SOCRATES_2_0_MODEL_ID, socrates_2_0_candidates),
+        (SOCRATES_MODEL_ID, socrates_2_0_candidates),
         (ADVISOR_MODEL_ID, socrates_1_0_candidates),
     ):
         model = MODELS[model_id]
         shape = model_to_openrouter_shape(model)
+        available_candidates = _cataloged_model_ids(candidates)
 
+        assert ADVISOR_CATALOG_MODEL_ORDERS[model_id] == tuple(candidates)
         assert model.provider == "trustedrouter"
         assert shape["trustedrouter"]["route_kind"] == "advisor_orchestration"
         assert shape["trustedrouter"]["orchestration_primitive"] == "advisor"
         assert shape["trustedrouter"]["stores_content"] is False
-        assert shape["trustedrouter"]["auto_candidates"] == candidates
-        assert [model.id for model in meta_candidate_models(model_id)] == candidates
+        assert shape["trustedrouter"]["auto_candidates"] == available_candidates
+        assert [model.id for model in meta_candidate_models(model_id)] == available_candidates
 
     assert orchestration_role(ADVISOR_MODEL_ID) == "primitive"
     assert canonical_orchestration_model_id(ADVISOR_MODEL_ID) == ADVISOR_MODEL_ID
     assert orchestration_role(SOCRATES_MODEL_ID) == "rolling_alias"
-    assert canonical_orchestration_model_id(SOCRATES_MODEL_ID) == SOCRATES_1_1_MODEL_ID
+    assert canonical_orchestration_model_id(SOCRATES_MODEL_ID) == SOCRATES_2_0_MODEL_ID
     assert orchestration_role(SOCRATES_1_1_MODEL_ID) == "named_preset"
     assert canonical_orchestration_model_id(SOCRATES_1_1_MODEL_ID) == SOCRATES_1_1_MODEL_ID
 
@@ -808,9 +949,10 @@ def test_orchestration_taxonomy_distinguishes_primitives_presets_and_legacy_alia
         FUSION_MODEL_ID: ("synth", "legacy_alias", SYNTH_MODEL_ID),
         SELECTOR_MODEL_ID: ("selector", "primitive", SELECTOR_MODEL_ID),
         MAPREDUCE_MODEL_ID: ("mapreduce", "primitive", MAPREDUCE_MODEL_ID),
-        SOCRATES_MODEL_ID: ("advisor", "rolling_alias", SOCRATES_1_1_MODEL_ID),
+        SOCRATES_MODEL_ID: ("advisor", "rolling_alias", SOCRATES_2_0_MODEL_ID),
         SOCRATES_1_1_MODEL_ID: ("advisor", "named_preset", SOCRATES_1_1_MODEL_ID),
-        ARISTOTLE_MODEL_ID: ("advisor", "rolling_alias", ARISTOTLE_1_1_MODEL_ID),
+        SOCRATES_2_0_MODEL_ID: ("advisor", "named_preset", SOCRATES_2_0_MODEL_ID),
+        ARISTOTLE_MODEL_ID: ("advisor", "rolling_alias", ARISTOTLE_2_0_MODEL_ID),
         ARISTOTLE_1_1_MODEL_ID: (
             "advisor",
             "named_preset",
@@ -821,8 +963,14 @@ def test_orchestration_taxonomy_distinguishes_primitives_presets_and_legacy_alia
             "named_preset",
             ARISTOTLE_1_0_MODEL_ID,
         ),
-        PLATO_MODEL_ID: ("advisor", "rolling_alias", PLATO_PRO_1_0_MODEL_ID),
+        ARISTOTLE_2_0_MODEL_ID: (
+            "advisor",
+            "named_preset",
+            ARISTOTLE_2_0_MODEL_ID,
+        ),
+        PLATO_MODEL_ID: ("advisor", "rolling_alias", PLATO_3_0_MODEL_ID),
         PLATO_1_0_MODEL_ID: ("advisor", "named_preset", PLATO_1_0_MODEL_ID),
+        PLATO_3_0_MODEL_ID: ("advisor", "named_preset", PLATO_3_0_MODEL_ID),
         PLATO_PRO_MODEL_ID: ("advisor", "rolling_alias", PLATO_PRO_2_0_MODEL_ID),
         PLATO_PRO_1_0_MODEL_ID: (
             "advisor",
@@ -834,14 +982,22 @@ def test_orchestration_taxonomy_distinguishes_primitives_presets_and_legacy_alia
             "named_preset",
             PLATO_PRO_2_0_MODEL_ID,
         ),
-        IRIS_MODEL_ID: ("synth", "rolling_alias", IRIS_2_0_MODEL_ID),
+        IRIS_MODEL_ID: ("synth", "rolling_alias", IRIS_3_0_MODEL_ID),
         IRIS_2_0_MODEL_ID: ("synth", "named_preset", IRIS_2_0_MODEL_ID),
-        PROMETHEUS_MODEL_ID: ("synth", "rolling_alias", PROMETHEUS_2_0_MODEL_ID),
+        IRIS_3_0_MODEL_ID: ("synth", "named_preset", IRIS_3_0_MODEL_ID),
+        PROMETHEUS_MODEL_ID: ("synth", "rolling_alias", PROMETHEUS_3_0_MODEL_ID),
         PROMETHEUS_2_0_MODEL_ID: (
             "synth",
             "named_preset",
             PROMETHEUS_2_0_MODEL_ID,
         ),
+        PROMETHEUS_3_0_MODEL_ID: (
+            "synth",
+            "named_preset",
+            PROMETHEUS_3_0_MODEL_ID,
+        ),
+        ZEUS_MODEL_ID: ("synth", "rolling_alias", ZEUS_2_0_MODEL_ID),
+        ZEUS_2_0_MODEL_ID: ("synth", "named_preset", ZEUS_2_0_MODEL_ID),
         OPEN_PATCHER_S1_MODEL_ID: ("synth", "named_preset", OPEN_PATCHER_S1_MODEL_ID),
         OPEN_PATCHER_S2_MODEL_ID: ("synth", "named_preset", OPEN_PATCHER_S2_MODEL_ID),
         OPEN_PATCHER_G2_MODEL_ID: (
@@ -849,6 +1005,14 @@ def test_orchestration_taxonomy_distinguishes_primitives_presets_and_legacy_alia
             "named_preset",
             OPEN_PATCHER_G2_MODEL_ID,
         ),
+        OPEN_PATCHER_G3_MODEL_ID: (
+            "advisor",
+            "named_preset",
+            OPEN_PATCHER_G3_MODEL_ID,
+        ),
+        ATHENA_MODEL_ID: ("advisor", "rolling_alias", ATHENA_2_0_MODEL_ID),
+        ATHENA_1_0_MODEL_ID: ("advisor", "named_preset", ATHENA_1_0_MODEL_ID),
+        ATHENA_2_0_MODEL_ID: ("advisor", "named_preset", ATHENA_2_0_MODEL_ID),
     }
 
     for model_id, (primitive, role, canonical) in expected.items():
@@ -866,6 +1030,8 @@ def test_orchestration_taxonomy_distinguishes_primitives_presets_and_legacy_alia
 def test_open_weights_badge_is_recursive_for_combo_models() -> None:
     open_ids = [
         "deepseek/deepseek-v4-pro",
+        DEEPSEEK_V4_PRO_0423_MODEL_ID,
+        DEEPSEEK_V4_PRO_0813_MODEL_ID,
         "z-ai/glm-5.2",
         "moonshotai/kimi-k2.6",
         "moonshotai/kimi-k3",
@@ -873,8 +1039,11 @@ def test_open_weights_badge_is_recursive_for_combo_models() -> None:
         PROMETHEUS_MODEL_ID,
         PROMETHEUS_1_0_MODEL_ID,
         PROMETHEUS_2_0_MODEL_ID,
+        PROMETHEUS_3_0_MODEL_ID,
         IRIS_2_0_MODEL_ID,
+        IRIS_3_0_MODEL_ID,
         PLATO_MODEL_ID,
+        PLATO_3_0_MODEL_ID,
         PLATO_1_0_MODEL_ID,
         PLATO_PRO_MODEL_ID,
         PLATO_PRO_1_0_MODEL_ID,
@@ -883,6 +1052,7 @@ def test_open_weights_badge_is_recursive_for_combo_models() -> None:
         OPEN_PATCHER_A1_MODEL_ID,
         OPEN_PATCHER_FAST1_MODEL_ID,
         OPEN_PATCHER_G2_MODEL_ID,
+        OPEN_PATCHER_G3_MODEL_ID,
         OPEN_PATCHER_S2_MODEL_ID,
     ]
     for model_id in open_ids:
@@ -895,9 +1065,11 @@ def test_open_weights_badge_is_recursive_for_combo_models() -> None:
         SOCRATES_PRO_PLUS_1_0_MODEL_ID,
         ZEUS_MODEL_ID,
         ZEUS_1_0_MODEL_ID,
+        ZEUS_2_0_MODEL_ID,
         ARISTOTLE_MODEL_ID,
         ARISTOTLE_1_1_MODEL_ID,
         ARISTOTLE_1_0_MODEL_ID,
+        ARISTOTLE_2_0_MODEL_ID,
     ]
     for model_id in closed_ids:
         assert not model_open_weights(MODELS[model_id]), model_id
@@ -915,7 +1087,7 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             "minimax/minimax-m3",
             "z-ai/glm-5.2",
             "xiaomi/mimo-v2.5-pro",
-            "deepseek/deepseek-v4-pro",
+            DEEPSEEK_V4_PRO_0423_MODEL_ID,
         ],
         ARISTOTLE_1_1_MODEL_ID: [
             "z-ai/glm-5.2-fast",
@@ -925,7 +1097,12 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
         ARISTOTLE_MODEL_ID: [
             "z-ai/glm-5.2-fast",
             "z-ai/glm-5.2",
-            "trustedrouter/zeus-1.0",
+            ZEUS_2_0_MODEL_ID,
+        ],
+        ARISTOTLE_2_0_MODEL_ID: [
+            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.2",
+            ZEUS_2_0_MODEL_ID,
         ],
         PLATO_1_0_MODEL_ID: [
             "deepseek/deepseek-v4-flash",
@@ -933,11 +1110,15 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             "minimax/minimax-m3",
             "moonshotai/kimi-k2.6",
             "google/gemma-4-31b-it",
-            "deepseek/deepseek-v4-pro",
+            DEEPSEEK_V4_PRO_0423_MODEL_ID,
         ],
         PLATO_MODEL_ID: [
-            "z-ai/glm-5.2",
-            "trustedrouter/prometheus-1.0-1m",
+            DEEPSEEK_V4_PRO_0813_MODEL_ID,
+            PROMETHEUS_3_0_MODEL_ID,
+        ],
+        PLATO_3_0_MODEL_ID: [
+            DEEPSEEK_V4_PRO_0813_MODEL_ID,
+            PROMETHEUS_3_0_MODEL_ID,
         ],
         PLATO_PRO_1_0_MODEL_ID: [
             "z-ai/glm-5.2",
@@ -975,6 +1156,20 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             "deepseek/deepseek-v4-flash",
             "trustedrouter/zeus-1.0",
         ],
+        SOCRATES_2_0_MODEL_ID: [
+            "xiaomi/mimo-v2.5-pro-ultraspeed",
+            "minimax/minimax-m3",
+            "z-ai/glm-5.2-fast",
+            DEEPSEEK_V4_PRO_0813_MODEL_ID,
+            ZEUS_2_0_MODEL_ID,
+        ],
+        SOCRATES_MODEL_ID: [
+            "xiaomi/mimo-v2.5-pro-ultraspeed",
+            "minimax/minimax-m3",
+            "z-ai/glm-5.2-fast",
+            DEEPSEEK_V4_PRO_0813_MODEL_ID,
+            ZEUS_2_0_MODEL_ID,
+        ],
         SOCRATES_PRO_PLUS_MODEL_ID: [
             "xiaomi/mimo-v2.5-pro-ultraspeed",
             "minimax/minimax-m3",
@@ -1001,14 +1196,20 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             "google/gemma-4-31b-it",
             "trustedrouter/prometheus-2.0",
         ],
+        OPEN_PATCHER_G3_MODEL_ID: [
+            "moonshotai/kimi-k3",
+            "google/gemma-4-31b-it",
+            PROMETHEUS_3_0_MODEL_ID,
+        ],
     }
     for model_id, candidates in expected.items():
         shape = model_to_openrouter_shape(MODELS[model_id])
+        available_candidates = _cataloged_model_ids(candidates)
 
         assert shape["trustedrouter"]["route_kind"] == "advisor_orchestration"
         assert shape["trustedrouter"]["stores_content"] is False
-        assert shape["trustedrouter"]["auto_candidates"] == candidates
-        assert [model.id for model in meta_candidate_models(model_id)] == candidates
+        assert shape["trustedrouter"]["auto_candidates"] == available_candidates
+        assert [model.id for model in meta_candidate_models(model_id)] == available_candidates
     assert MODELS[PLATO_PRO_1_0_MODEL_ID].context_length == 1_048_576
     assert MODELS[PLATO_PRO_2_0_MODEL_ID].context_length == 1_048_576
     assert MODELS[PLATO_PRO_MODEL_ID].context_length == 1_048_576
@@ -1106,8 +1307,8 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         "image",
     ]
     assert inkling_small_shape["trustedrouter"]["open_weights"] is True
-    assert inkling_small.prompt_price_microdollars_per_million_tokens == 315_000
-    assert inkling_small.completion_price_microdollars_per_million_tokens == 1_260_000
+    assert inkling_small.prompt_price_microdollars_per_million_tokens == 316_500
+    assert inkling_small.completion_price_microdollars_per_million_tokens == 1_266_000
     inkling_small_routes = {
         (endpoint.provider, endpoint.upstream_id)
         for endpoint in endpoints_for_model(inkling_small.id)
@@ -1139,38 +1340,63 @@ def test_liberty_nemotron_resolves_only_to_working_canonical_prepaid_routes() ->
         if endpoint.usage_type == "Credits"
     }
     assert prepaid["baseten"] == "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B"
-    assert prepaid["nebius"] == "nvidia/Nemotron-3-Ultra-550b-a55b"
+    if provider_model_retired(
+        "nebius",
+        model_id,
+        "nvidia/Nemotron-3-Ultra-550b-a55b",
+    ):
+        assert "nebius" not in prepaid
+    else:
+        assert prepaid["nebius"] == "nvidia/Nemotron-3-Ultra-550b-a55b"
     assert prepaid["together"] == "nvidia/nemotron-3-ultra-550b-a55b"
     assert "gmi" not in prepaid
 
 
 def test_athena_catalog_hides_orchestration_configuration() -> None:
-    from trusted_router.catalog import ATHENA_MODEL_ID
+    expected = {
+        ATHENA_1_0_MODEL_ID: [
+            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.2",
+            ZEUS_1_0_MINI_MODEL_ID,
+            "moonshotai/kimi-k2.7-code",
+            "moonshotai/kimi-k2.6",
+        ],
+        ATHENA_2_0_MODEL_ID: [
+            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.2",
+            ZEUS_2_0_MODEL_ID,
+            "moonshotai/kimi-k2.7-code",
+            "moonshotai/kimi-k2.6",
+        ],
+        ATHENA_MODEL_ID: [
+            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.2",
+            ZEUS_2_0_MODEL_ID,
+            "moonshotai/kimi-k2.7-code",
+            "moonshotai/kimi-k2.6",
+        ],
+    }
 
-    model = MODELS[ATHENA_MODEL_ID]
-    shape = model_to_openrouter_shape(model)
+    for model_id, candidates in expected.items():
+        model = MODELS[model_id]
+        shape = model_to_openrouter_shape(model)
 
-    assert model.name == "TrustedRouter Athena"
-    assert model.hidden_public_metadata is True
-    assert model.context_length == 1_048_576
-    assert shape["trustedrouter"]["route_kind"] == "private_orchestration"
-    assert shape["trustedrouter"]["configuration_hidden"] is True
-    assert shape["trustedrouter"]["auto_candidates"] is None
-    assert [model.id for model in meta_candidate_models(ATHENA_MODEL_ID)] == [
-        "z-ai/glm-5.2-fast",
-        "z-ai/glm-5.2",
-        "trustedrouter/zeus-1.0-mini",
-        "moonshotai/kimi-k2.7-code",
-        "moonshotai/kimi-k2.6",
-    ]
-    assert shape["trustedrouter"]["open_weights"] is False
+        assert model.hidden_public_metadata is True
+        assert model.context_length == 1_048_576
+        assert shape["trustedrouter"]["route_kind"] == "private_orchestration"
+        assert shape["trustedrouter"]["configuration_hidden"] is True
+        assert shape["trustedrouter"]["auto_candidates"] is None
+        assert [candidate.id for candidate in meta_candidate_models(model_id)] == candidates
+        assert shape["trustedrouter"]["open_weights"] is False
+
+    assert canonical_orchestration_model_id(ATHENA_MODEL_ID) == ATHENA_2_0_MODEL_ID
 
 
-def test_zeus_1_0_and_mini_have_expected_panels() -> None:
+def test_zeus_versions_are_frozen_and_rolling_alias_uses_2_0() -> None:
     assert MODELS[ZEUS_MODEL_ID].context_length == 1_048_576
     assert MODELS[ZEUS_1_0_MODEL_ID].context_length == 1_048_576
     assert MODELS[ZEUS_1_0_MINI_MODEL_ID].context_length == 1_048_576
-    assert [model.id for model in meta_candidate_models(ZEUS_1_0_MODEL_ID)] == [
+    zeus_1_0 = [
         "anthropic/claude-opus-4.8",
         "openai/gpt-5.5",
         "google/gemini-3.1-pro-preview",
@@ -1178,8 +1404,12 @@ def test_zeus_1_0_and_mini_have_expected_panels() -> None:
         "minimax/minimax-m3",
         "z-ai/glm-5.2",
         "xiaomi/mimo-v2.5-pro",
-        "deepseek/deepseek-v4-pro",
+        DEEPSEEK_V4_PRO_0423_MODEL_ID,
     ]
+    zeus_2_0 = [*zeus_1_0[:-1], DEEPSEEK_V4_PRO_0813_MODEL_ID]
+    assert [model.id for model in meta_candidate_models(ZEUS_1_0_MODEL_ID)] == zeus_1_0
+    assert [model.id for model in meta_candidate_models(ZEUS_2_0_MODEL_ID)] == zeus_2_0
+    assert [model.id for model in meta_candidate_models(ZEUS_MODEL_ID)] == zeus_2_0
     zeus_shape = model_to_openrouter_shape(MODELS[ZEUS_1_0_MODEL_ID])
     assert zeus_shape["trustedrouter"]["us_provider_available"] is True
     assert zeus_shape["trustedrouter"]["eu_focused_provider_available"] is True
@@ -1189,10 +1419,11 @@ def test_zeus_1_0_and_mini_have_expected_panels() -> None:
         "minimax/minimax-m3",
         "z-ai/glm-5.2",
         "xiaomi/mimo-v2.5-pro",
-        "deepseek/deepseek-v4-pro",
+        DEEPSEEK_V4_PRO_0423_MODEL_ID,
     ]
     assert model_us_provider_available(MODELS[ZEUS_1_0_MINI_MODEL_ID]) is True
     assert model_eu_focused_provider_available(MODELS[ZEUS_1_0_MINI_MODEL_ID]) is True
+    assert canonical_orchestration_model_id(ZEUS_MODEL_ID) == ZEUS_2_0_MODEL_ID
 
 
 def test_openpatcher_s1_is_cataloged_as_custom_synth_preset() -> None:
@@ -1224,27 +1455,39 @@ def test_openpatcher_s2_replaces_k2_with_k3_without_mutating_s1() -> None:
     assert model_to_openrouter_shape(s2)["trustedrouter"]["auto_candidates"] == s2_candidates
 
 
-def test_iris_2_and_rolling_alias_use_k3_while_iris_1_stays_pinned() -> None:
-    expected = [
+def test_openpatcher_s3_uses_glm_and_deepseek_0813() -> None:
+    model = MODELS[OPEN_PATCHER_S3_MODEL_ID]
+    candidates = [candidate.id for candidate in meta_candidate_models(model.id)]
+
+    assert model.name == "TrustedRouter OpenPatcher-S3"
+    assert model.context_length == 1_048_576
+    assert candidates == ["z-ai/glm-5.2", DEEPSEEK_V4_PRO_0813_MODEL_ID]
+    assert model_to_openrouter_shape(model)["trustedrouter"]["auto_candidates"] == candidates
+
+
+def test_iris_versions_are_frozen_and_rolling_alias_uses_3_0() -> None:
+    iris_2_0 = [
         "minimax/minimax-m3",
         "moonshotai/kimi-k3",
-        "deepseek/deepseek-v4-pro",
+        DEEPSEEK_V4_PRO_0423_MODEL_ID,
     ]
+    iris_3_0 = [*iris_2_0[:-1], DEEPSEEK_V4_PRO_0813_MODEL_ID]
 
     assert [model.id for model in meta_candidate_models(IRIS_1_0_MODEL_ID)] == [
         "minimax/minimax-m3",
         "moonshotai/kimi-k2.6",
-        "deepseek/deepseek-v4-pro",
+        DEEPSEEK_V4_PRO_0423_MODEL_ID,
     ]
-    for model_id in (IRIS_MODEL_ID, IRIS_2_0_MODEL_ID):
+    assert [model.id for model in meta_candidate_models(IRIS_2_0_MODEL_ID)] == iris_2_0
+    for model_id in (IRIS_MODEL_ID, IRIS_3_0_MODEL_ID):
         assert MODELS[model_id].context_length == 1_048_576
-        assert [model.id for model in meta_candidate_models(model_id)] == expected
+        assert [model.id for model in meta_candidate_models(model_id)] == iris_3_0
         assert (
             model_to_openrouter_shape(MODELS[model_id])["trustedrouter"]["auto_candidates"]
-            == expected
+            == iris_3_0
         )
 
-    assert canonical_orchestration_model_id(IRIS_MODEL_ID) == IRIS_2_0_MODEL_ID
+    assert canonical_orchestration_model_id(IRIS_MODEL_ID) == IRIS_3_0_MODEL_ID
 
 
 def test_prometheus_1m_uses_only_long_context_open_weight_components() -> None:
@@ -1258,7 +1501,7 @@ def test_prometheus_1m_uses_only_long_context_open_weight_components() -> None:
         "minimax/minimax-m3",
         "xiaomi/mimo-v2.5-pro",
         "z-ai/glm-5.2",
-        "deepseek/deepseek-v4-pro",
+        DEEPSEEK_V4_PRO_0423_MODEL_ID,
     ]
     assert all(candidate.context_length >= 1_000_000 for candidate in candidates)
     assert all(model_open_weights(candidate) for candidate in candidates)
@@ -1270,24 +1513,32 @@ def test_prometheus_1m_uses_only_long_context_open_weight_components() -> None:
     assert shape["trustedrouter"]["open_weights"] is True
 
 
-def test_prometheus_2_uses_requested_one_million_open_weight_graph() -> None:
-    expected = [
+def test_prometheus_versions_are_frozen_and_rolling_alias_uses_3_0() -> None:
+    prometheus_2_0 = [
         "minimax/minimax-m3",
         "moonshotai/kimi-k3",
         "z-ai/glm-5.2",
-        "deepseek/deepseek-v4-pro",
+        DEEPSEEK_V4_PRO_0423_MODEL_ID,
         "xiaomi/mimo-v2.5-pro",
     ]
-    for model_id in (PROMETHEUS_MODEL_ID, PROMETHEUS_2_0_MODEL_ID):
+    prometheus_3_0 = [
+        *prometheus_2_0[:3],
+        DEEPSEEK_V4_PRO_0813_MODEL_ID,
+        *prometheus_2_0[4:],
+    ]
+    assert [
+        candidate.id for candidate in meta_candidate_models(PROMETHEUS_2_0_MODEL_ID)
+    ] == prometheus_2_0
+    for model_id in (PROMETHEUS_MODEL_ID, PROMETHEUS_3_0_MODEL_ID):
         model = MODELS[model_id]
         shape = model_to_openrouter_shape(model)
 
         assert model.context_length == 1_048_576
-        assert [candidate.id for candidate in meta_candidate_models(model_id)] == expected
-        assert shape["trustedrouter"]["auto_candidates"] == expected
+        assert [candidate.id for candidate in meta_candidate_models(model_id)] == prometheus_3_0
+        assert shape["trustedrouter"]["auto_candidates"] == prometheus_3_0
         assert shape["trustedrouter"]["open_weights"] is True
 
-    assert canonical_orchestration_model_id(PROMETHEUS_MODEL_ID) == PROMETHEUS_2_0_MODEL_ID
+    assert canonical_orchestration_model_id(PROMETHEUS_MODEL_ID) == PROMETHEUS_3_0_MODEL_ID
 
 
 def test_trustedrouter_meta_models_are_credits_only_not_byok() -> None:
@@ -1309,15 +1560,21 @@ def test_trustedrouter_meta_models_are_credits_only_not_byok() -> None:
         E2E_MODEL_ID,
         EU_MODEL_ID,
         SOCRATES_1_1_MODEL_ID,
+        SOCRATES_2_0_MODEL_ID,
         SOCRATES_PRO_PLUS_1_0_MODEL_ID,
         OPEN_PATCHER_G1_MODEL_ID,
         OPEN_PATCHER_G2_MODEL_ID,
+        OPEN_PATCHER_G3_MODEL_ID,
         OPEN_PATCHER_S2_MODEL_ID,
+        OPEN_PATCHER_S3_MODEL_ID,
         IRIS_2_0_MODEL_ID,
+        IRIS_3_0_MODEL_ID,
         PLATO_PRO_2_0_MODEL_ID,
         ZEUS_1_0_MODEL_ID,
+        ZEUS_2_0_MODEL_ID,
         PROMETHEUS_1_0_1M_MODEL_ID,
         PROMETHEUS_2_0_MODEL_ID,
+        PROMETHEUS_3_0_MODEL_ID,
     ],
 )
 def test_trustedrouter_meta_route_expansion_is_credits_only(model_id: str) -> None:
@@ -1345,6 +1602,8 @@ def test_trustedrouter_meta_route_expansion_is_credits_only(model_id: str) -> No
         OPEN_PATCHER_A1_MODEL_ID,
         OPEN_PATCHER_FAST1_MODEL_ID,
         OPEN_PATCHER_G1_MODEL_ID,
+        ATHENA_1_0_MODEL_ID,
+        ATHENA_2_0_MODEL_ID,
         ATHENA_MODEL_ID,
     ],
 )
@@ -1383,6 +1642,30 @@ def test_openpatcher_g2_explicitly_uses_global_moonshot_k3_route() -> None:
         "trustedrouter/prometheus-2.0",
     ]
 
+
+def test_openpatcher_g1_and_g2_stay_frozen_while_g3_uses_prometheus_3() -> None:
+    expected = {
+        OPEN_PATCHER_G1_MODEL_ID: [
+            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.2",
+            "moonshotai/kimi-k2.7-code",
+            PROMETHEUS_1_0_1M_MODEL_ID,
+        ],
+        OPEN_PATCHER_G2_MODEL_ID: [
+            "moonshotai/kimi-k3",
+            "google/gemma-4-31b-it",
+            PROMETHEUS_2_0_MODEL_ID,
+        ],
+        OPEN_PATCHER_G3_MODEL_ID: [
+            "moonshotai/kimi-k3",
+            "google/gemma-4-31b-it",
+            PROMETHEUS_3_0_MODEL_ID,
+        ],
+    }
+
+    for model_id, candidates in expected.items():
+        assert [candidate.id for candidate in meta_candidate_models(model_id)] == candidates
+
     s2_shape = model_to_openrouter_shape(MODELS[OPEN_PATCHER_S2_MODEL_ID])
     assert s2_shape["trustedrouter"]["required_provider_jurisdiction"] is None
     assert s2_shape["trustedrouter"]["auto_candidates"] == [
@@ -1417,6 +1700,7 @@ def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
     assert zdr_endpoints
     assert e2e_endpoints
     assert e2e_endpoints[0][1].provider == "tinfoil"
+    assert "chutes" in {endpoint.provider for _model, endpoint in e2e_endpoints}
     assert "anthropic" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
     assert "google-ai-studio" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
     assert "google-vertex" in {endpoint.provider for _model, endpoint in zdr_endpoints}
@@ -1485,9 +1769,9 @@ def test_venice_privacy_is_model_specific_and_never_claims_tee() -> None:
         "minimax/hailuo-3",
     }
     endpoints = [endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "venice"]
-    assert {endpoint.model_id for endpoint in endpoints} == (
-        private_models | anonymized_models | video_models
-    )
+    assert private_models | anonymized_models | video_models <= {
+        endpoint.model_id for endpoint in endpoints
+    }
     assert all(
         PROVIDERS[endpoint.provider].provider_confidential_compute is False
         for endpoint in endpoints
@@ -1671,6 +1955,7 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
         "xiaomi/mimo-v2.5-pro": "mimo-v2.5-pro",
         "xiaomi/mimo-v2.5-pro-ultraspeed": "mimo-v2.5-pro-ultraspeed",
     }
+    xiaomi_credits = {}
     for model_id, upstream in expected.items():
         model = MODELS.get(model_id)
         assert model is not None, f"{model_id} missing from catalog"
@@ -1684,26 +1969,32 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
         ]
         assert credits, f"{model_id} has no xiaomi prepaid endpoint"
         assert {endpoint.upstream_id for endpoint in credits} == {upstream}
+        xiaomi_credits[model_id] = credits[0]
 
     pro = MODELS["xiaomi/mimo-v2.5-pro"]
     # Xiaomi documents this as a 1M context window. Live catalogs use both the
     # binary 1,048,576 value and a rounded 1,050,000 value, so guard the public
     # capability rather than freezing one representation.
     assert 1_000_000 <= pro.context_length <= 1_050_000
-    assert pro.prompt_price_microdollars_per_million_tokens == 456_750
-    assert pro.completion_price_microdollars_per_million_tokens == 913_500
+    pro_xiaomi = xiaomi_credits["xiaomi/mimo-v2.5-pro"]
+    assert pro_xiaomi.prompt_price_microdollars_per_million_tokens == 458_925
+    assert pro_xiaomi.completion_price_microdollars_per_million_tokens == 917_850
+    # The model headline is the cheapest healthy route across every provider,
+    # so a reseller may legitimately undercut Xiaomi's first-party endpoint.
+    assert pro.prompt_price_microdollars_per_million_tokens <= 458_925
+    assert pro.completion_price_microdollars_per_million_tokens <= 917_850
 
     # UltraSpeed is the 1T-param speed-serving tier with its own ¥9/¥18
-    # ($1.305/$2.61) cost, marked up by the manifest loader (cost x 1.05,
+    # ($1.305/$2.61) cost, marked up by the manifest loader (cost x 1.055,
     # $0.01/M floor). Guard the exact prices so a regen can't silently
     # collapse them onto the regular v2.5-pro numbers.
-    ultraspeed = MODELS["xiaomi/mimo-v2.5-pro-ultraspeed"]
-    assert ultraspeed.prompt_price_microdollars_per_million_tokens == 1_370_250
-    assert ultraspeed.completion_price_microdollars_per_million_tokens == 2_740_500
+    ultraspeed_xiaomi = xiaomi_credits["xiaomi/mimo-v2.5-pro-ultraspeed"]
+    assert ultraspeed_xiaomi.prompt_price_microdollars_per_million_tokens == 1_376_775
+    assert ultraspeed_xiaomi.completion_price_microdollars_per_million_tokens == 2_753_550
     # ...and that it is genuinely a distinct row from regular v2.5-pro.
     assert (
-        ultraspeed.completion_price_microdollars_per_million_tokens
-        != pro.completion_price_microdollars_per_million_tokens
+        ultraspeed_xiaomi.completion_price_microdollars_per_million_tokens
+        != pro_xiaomi.completion_price_microdollars_per_million_tokens
     )
 
 
@@ -1908,11 +2199,38 @@ def test_wafer_kimi_k26_is_available_but_standard_tier_only() -> None:
     assert "No route candidates match" in str(exc.value)
 
 
+@pytest.mark.parametrize(
+    "endpoint_id",
+    [
+        "z-ai/glm-5.2@wafer/prepaid",
+        "moonshotai/kimi-k3@wafer/prepaid",
+        # moonshotai/kimi-k3-fast@wafer/prepaid retired 2026-08-17 00:00 UTC
+        # (provider_lifecycle WAFER_AUGUST_2026_RETIREMENT_AT); the catalog is
+        # built against the real clock, so the endpoint no longer exists.
+        "deepseek/deepseek-v4-flash-0731-fast@wafer/prepaid",
+    ],
+)
+def test_wafer_manifest_drives_zdr_routing_and_gateway_enforcement(
+    endpoint_id: str,
+) -> None:
+    zdr_endpoint = MODEL_ENDPOINTS[endpoint_id]
+
+    assert endpoint_privacy_tier(zdr_endpoint) == PRIVACY_TIER_ZERO_RETENTION
+    assert endpoint_zero_data_retention(zdr_endpoint) is True
+    assert _gateway_provider_route_payload(zdr_endpoint) == {
+        "wafer_zdr_required": True
+    }
+    standard_endpoint = MODEL_ENDPOINTS.get("moonshotai/kimi-k2.6@wafer/prepaid")
+    if standard_endpoint is not None:
+        assert endpoint_zero_data_retention(standard_endpoint) is False
+        assert _gateway_provider_route_payload(standard_endpoint) == {}
+
+
 def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     model = MODELS["z-ai/glm-5.2"]
     prepaid = MODEL_ENDPOINTS["z-ai/glm-5.2@zai/prepaid"]
     byok = MODEL_ENDPOINTS["z-ai/glm-5.2@zai/byok"]
-    gmi = MODEL_ENDPOINTS["z-ai/glm-5.2@gmi/prepaid"]
+    gmi = MODEL_ENDPOINTS.get("z-ai/glm-5.2@gmi/prepaid")
     deepinfra = MODEL_ENDPOINTS["z-ai/glm-5.2@deepinfra/prepaid"]
     fireworks = MODEL_ENDPOINTS["z-ai/glm-5.2@fireworks/prepaid"]
     novita = MODEL_ENDPOINTS["z-ai/glm-5.2@novita/prepaid"]
@@ -1931,7 +2249,8 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert model.supports_chat
     assert prepaid.upstream_id == "glm-5.2"
     assert byok.upstream_id == "glm-5.2"
-    assert gmi.upstream_id == "zai-org/GLM-5.2-FP8"
+    if gmi is not None:
+        assert gmi.upstream_id == "zai-org/GLM-5.2-FP8"
     assert deepinfra.upstream_id == "zai-org/GLM-5.2"
     assert fireworks.upstream_id == "accounts/fireworks/models/glm-5p2"
     assert novita.upstream_id == "zai-org/glm-5.2"
@@ -1945,7 +2264,6 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert baseten.upstream_id == "zai-org/GLM-5.2"
     assert wafer.upstream_id == "GLM-5.2"
     for endpoint in (
-        gmi,
         deepinfra,
         fireworks,
         novita,
@@ -1955,6 +2273,9 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     ):
         assert endpoint.prompt_price_microdollars_per_million_tokens > 0
         assert endpoint.completion_price_microdollars_per_million_tokens > 0
+    if gmi is not None:
+        assert gmi.prompt_price_microdollars_per_million_tokens > 0
+        assert gmi.completion_price_microdollars_per_million_tokens > 0
 
 
 def test_parasail_qwen_397b_uses_working_native_upstream_id() -> None:
@@ -1964,5 +2285,5 @@ def test_parasail_qwen_397b_uses_working_native_upstream_id() -> None:
     assert MODELS["qwen/qwen3.5-397b-a17b"].context_length == 262_144
     assert prepaid.upstream_id == "parasail-qwen35-397b-a17b"
     assert byok.upstream_id == "parasail-qwen35-397b-a17b"
-    assert prepaid.prompt_price_microdollars_per_million_tokens == 525_000
-    assert prepaid.completion_price_microdollars_per_million_tokens == 3_780_000
+    assert prepaid.prompt_price_microdollars_per_million_tokens == 527_500
+    assert prepaid.completion_price_microdollars_per_million_tokens == 3_798_000

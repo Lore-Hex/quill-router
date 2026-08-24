@@ -148,6 +148,35 @@ function trackEngagedLanding(): void {
   }, 1500);
 }
 
+// Swap a click-to-load video facade for the real player.
+//
+// The facade exists so the homepage makes NO third-party request until the
+// visitor asks for one. A page whose claim is "we cannot read your requests"
+// should not hand Google a pageview to render. We therefore load the
+// privacy-enhanced host (youtube-nocookie.com), and only on an explicit press.
+function loadVideoEmbed(facade: HTMLElement): void {
+  const videoId = facade.dataset.videoId;
+  if (!videoId || facade.classList.contains("is-loaded")) {
+    return;
+  }
+  const start = Number.parseInt(facade.dataset.videoStart ?? "", 10);
+  const params = new URLSearchParams({ autoplay: "1", rel: "0" });
+  if (Number.isFinite(start) && start > 0) {
+    params.set("start", String(start));
+  }
+  const iframe = document.createElement("iframe");
+  iframe.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${params}`;
+  iframe.title = facade.dataset.videoTitle || "TrustedRouter explainer video";
+  iframe.allow = "accelerometer; autoplay; encrypted-media; picture-in-picture";
+  iframe.referrerPolicy = "strict-origin-when-cross-origin";
+  iframe.setAttribute("allowfullscreen", "");
+  facade.classList.add("is-loaded");
+  facade.replaceChildren(iframe);
+  facade.removeAttribute("role");
+  facade.removeAttribute("tabindex");
+  facade.removeAttribute("aria-label");
+}
+
 async function copyCode(button: HTMLElement): Promise<void> {
   const targetId = button.dataset.copyTarget;
   const target = targetId ? document.getElementById(targetId) : null;
@@ -314,6 +343,12 @@ function init(): void {
       event.preventDefault();
       void startMetaMaskSignin();
     }
+    const videoFacade = target.closest('[data-action="load-video"]') as HTMLElement | null;
+    if (videoFacade) {
+      event.preventDefault();
+      loadVideoEmbed(videoFacade);
+      return;
+    }
     const regionLi = target.closest(".region-list li[data-region-id]") as HTMLElement | null;
     if (regionLi && regionLi.dataset.regionId) {
       selectRegion(regionLi.dataset.regionId);
@@ -329,6 +364,15 @@ function init(): void {
     if (regionLi && regionLi.dataset.regionId) {
       event.preventDefault();
       selectRegion(regionLi.dataset.regionId);
+      return;
+    }
+    // The video facade is a role="button", so it must answer Enter/Space too.
+    const videoFacade = target && target.closest
+      ? (target.closest('[data-action="load-video"]') as HTMLElement | null)
+      : null;
+    if (videoFacade) {
+      event.preventDefault();
+      loadVideoEmbed(videoFacade);
     }
   });
 

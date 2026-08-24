@@ -1,0 +1,76 @@
+{
+  "provider": "upstage",
+  "models": [
+    {
+      "display_name": "solar-pro2",
+      "title": "solar-pro2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "upstage/solar-pro2",
+      "upstream_id": "solar-pro2",
+      "created": 20250710,
+      "routable": true,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000,
+      "cached_input_token_price_per_m": 15000
+    },
+    {
+      "display_name": "solar-pro3",
+      "title": "solar-pro3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "upstage/solar-pro3",
+      "upstream_id": "solar-pro3",
+      "created": 20260126,
+      "routable": true,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000,
+      "cached_input_token_price_per_m": 15000
+    },
+    {
+      "display_name": "solar-pro4",
+      "title": "solar-pro4",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "upstage/solar-pro4",
+      "upstream_id": "solar-pro4",
+      "created": 20260806,
+      "routable": true,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 60000
+    }
+  ],
+  "source": "https://api.upstage.ai/v1/models",
+  "pricing_source": "https://www.upstage.ai/pricing/api",
+  "generated_at": "2026-08-22T20:15:34Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 3
+}

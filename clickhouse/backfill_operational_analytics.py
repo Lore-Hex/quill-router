@@ -131,7 +131,7 @@ def iter_activity_events(
         generation = _parse(Generation, _body(row, FAMILIES["activity"]))
         if generation is None:
             continue
-        yield normalise_operational_event(
+        yield from normalise_operational_event(
             OperationalOutboxRow(
                 shard=0,
                 commit_ts=_created_at(generation.created_at),
@@ -157,7 +157,7 @@ def iter_synthetic_events(
         sample = _parse(SyntheticProbeSample, _body(row, FAMILIES["synthetic"]))
         if sample is None:
             continue
-        yield normalise_operational_event(
+        yield from normalise_operational_event(
             OperationalOutboxRow(
                 shard=0,
                 commit_ts=_created_at(sample.created_at),

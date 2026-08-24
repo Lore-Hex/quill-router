@@ -27,7 +27,12 @@ from scripts.pricing.base import (
     reconcile_manifest_tombstones,
     validate,
 )
-from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
+from scripts.pricing.model_ids import (
+    canonicalize_unqualified_model_id,
+    mapped_or_canonical_model_id,
+    remember_upstream_id,
+)
+from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "wafer"
 URL = "https://pass.wafer.ai/v1/models"
@@ -41,12 +46,10 @@ MANIFEST_PATH = (
 )
 
 EXPECTED_MODELS = [
-    "z-ai/glm-5.1",
     "z-ai/glm-5.2",
-    "z-ai/glm-5.2-fast",
     # Pinning a model Wafer might delist deadlocks manifest rebuilds
     # (validate raises -> stale fallback -> prune skipped); kimi-k2.6 already
-    # flipped non-ZDR once.
+    # flipped non-ZDR once. Retiring models must not be pinned here either.
     "minimax/minimax-m3",
 ]
 
@@ -124,9 +127,16 @@ def _manifest_row(
     zdr_capabilities = capabilities.get("zdr")
     zdr_capabilities = zdr_capabilities if isinstance(zdr_capabilities, dict) else {}
     supports_vision = bool(
-        capabilities.get("vision")
+        source_row.get("supports_vision")
+        or capabilities.get("vision")
         or chat_capabilities.get("vision")
         or message_capabilities.get("vision")
+    )
+    top_level_zdr = source_row.get("zdr_supported")
+    zdr_supported = (
+        top_level_zdr
+        if isinstance(top_level_zdr, bool)
+        else bool(zdr_capabilities.get("supported"))
     )
 
     row: dict[str, Any] = {
@@ -134,9 +144,11 @@ def _manifest_row(
         "upstream_id": native_id,
         "display_name": str(wafer.get("display_name") or native_id),
         "endpoints": ["chat/completions"],
-        "zdr_supported": bool(zdr_capabilities.get("supported")),
+        "zdr_supported": zdr_supported,
     }
-    context_length = _positive_int(wafer.get("context_length"))
+    context_length = _positive_int(source_row.get("max_model_len")) or _positive_int(
+        wafer.get("context_length")
+    )
     if context_length is not None:
         row["context_length"] = context_length
     if supports_vision:
@@ -174,10 +186,14 @@ def fetch() -> ProviderPricingResult:
         native_id = row.get("id")
         if not isinstance(native_id, str):
             continue
-        or_id = mapped_or_canonical_model_id(native_id, _NATIVE_TO_OR_ID)
+        or_id = mapped_or_canonical_model_id(
+            native_id, _NATIVE_TO_OR_ID
+        ) or canonicalize_unqualified_model_id(native_id)
         if or_id is None:
             continue
         remember_upstream_id(UPSTREAM_ID_MAP, or_id, native_id)
+        if provider_model_retired(SLUG, or_id, native_id):
+            continue
         # Feed presence is authoritative even when Wafer renames a pricing
         # key. Record it before parsing so a schema drift cannot look like a
         # delisting and destroy the route's committed price.

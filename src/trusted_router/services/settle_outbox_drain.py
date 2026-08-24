@@ -14,6 +14,7 @@ from trusted_router.services.settle_outbox_apply import (
 from trusted_router.storage import STORE
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
 from trusted_router.storage_models import SettleOutboxRow, generation_id_for_authorization
+from trusted_router.synthetic.alerts import ops_alert
 
 logger = logging.getLogger(__name__)
 
@@ -129,10 +130,7 @@ def _resolve_row(
                 candidate_since = dt.datetime.fromisoformat(
                     candidate_since_text.replace("Z", "+00:00")
                 )
-                if (
-                    candidate_since.tzinfo is None
-                    or candidate_since.utcoffset() is None
-                ):
+                if candidate_since.tzinfo is None or candidate_since.utcoffset() is None:
                     raise ValueError("activity repair since must include a timezone")
             except (OverflowError, ValueError):
                 # A malformed timestamp is a separate data bug. Start the
@@ -197,17 +195,17 @@ def _resolve_row(
                     row.intent_kind,
                 )
                 return
-            logger.error(
+            ops_alert(
                 "ALERT settle outbox activity repair expired "
-                "authorization_id=%s generation_id=%s request_id=%s "
-                "reservation_id=%s; CHARGE IS ALREADY APPLIED and Spanner is "
+                f"authorization_id={row.authorization_id} "
+                f"generation_id={generation_id_for_authorization(row.authorization_id)} "
+                f"request_id={_request_id(row)} "
+                f"reservation_id={row.reservation_id}; CHARGE IS ALREADY APPLIED and Spanner is "
                 "correct; only the per-request Bigtable activity row is missing; "
                 "row is now dead with settle_body PRESERVED for repair; fix "
                 "Bigtable, then set the row back to pending to let the drain retry",
-                row.authorization_id,
-                generation_id_for_authorization(row.authorization_id),
-                _request_id(row),
-                row.reservation_id,
+                fingerprint=["settle-outbox", "activity-repair-expired"],
+                tags={"authorization_id": row.authorization_id},
             )
             return
         outbox.park(
@@ -276,10 +274,11 @@ def _resolve_row(
                     row.intent_kind,
                 )
                 return
-            logger.error(
-                "ALERT settle outbox lost charge authorization_id=%s actual_cost_micro=%s",
-                row.authorization_id,
-                row.actual_cost_micro,
+            ops_alert(
+                f"ALERT settle outbox lost charge authorization_id={row.authorization_id} "
+                f"actual_cost_micro={row.actual_cost_micro}",
+                fingerprint=["settle-outbox", "lost-charge"],
+                tags={"authorization_id": row.authorization_id},
             )
         else:
             outbox.mark(row.authorization_id, row.intent_kind, done=True, lease_owner=lease_owner)
@@ -304,10 +303,11 @@ def _resolve_row(
                 row.intent_kind,
             )
             return
-        logger.error(
-            "ALERT settle outbox reservation missing authorization_id=%s reservation_id=%s",
-            row.authorization_id,
-            row.reservation_id,
+        ops_alert(
+            f"ALERT settle outbox reservation missing authorization_id={row.authorization_id} "
+            f"reservation_id={row.reservation_id}",
+            fingerprint=["settle-outbox", "reservation-missing"],
+            tags={"authorization_id": row.authorization_id},
         )
         return
 
@@ -364,10 +364,11 @@ def _resolve_row(
             lease_owner=lease_owner,
         )
         if status == "dead":
-            logger.error(
-                "ALERT settle outbox exhausted retries authorization_id=%s intent_kind=%s",
-                row.authorization_id,
-                row.intent_kind,
+            ops_alert(
+                f"ALERT settle outbox exhausted retries authorization_id={row.authorization_id} "
+                f"intent_kind={row.intent_kind}",
+                fingerprint=["settle-outbox", "exhausted-retries"],
+                tags={"authorization_id": row.authorization_id, "intent_kind": row.intent_kind},
             )
         return
 
@@ -379,10 +380,11 @@ def _resolve_row(
         lease_owner=lease_owner,
     )
     if status == "dead":
-        logger.error(
-            "ALERT settle outbox exhausted retries authorization_id=%s intent_kind=%s",
-            row.authorization_id,
-            row.intent_kind,
+        ops_alert(
+            f"ALERT settle outbox exhausted retries authorization_id={row.authorization_id} "
+            f"intent_kind={row.intent_kind}",
+            fingerprint=["settle-outbox", "exhausted-retries"],
+            tags={"authorization_id": row.authorization_id, "intent_kind": row.intent_kind},
         )
 
 

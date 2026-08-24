@@ -16,6 +16,78 @@
     {% if not can_manage %}<p class="muted">Only workspace owners and admins can rename a workspace.</p>{% endif %}
   </div>
 </section>
+<section class="panel" id="phone">
+  <div class="panel-head">
+    <h2>Notifications</h2>
+    {% if phone_verified %}<span class="pill good">verified</span>{% else %}<span class="pill">not set up</span>{% endif %}
+  </div>
+  <div class="panel-body">
+    {% if phone_error == 'phone' %}<p class="notice bad">{{ phone_error_detail or 'Enter a mobile number in international format, e.g. +15551234567.' }}</p>
+    {% elif phone_error == 'send' %}<p class="notice bad">Could not send the code: {{ phone_error_detail }}</p>
+    {% elif phone_error == 'mismatch' %}<p class="notice bad">That code is not right. Check the digits and try again.</p>
+    {% elif phone_error == 'expired' %}<p class="notice bad">That code expired. Send a new one.</p>
+    {% elif phone_error == 'too_many_attempts' %}<p class="notice bad">Too many attempts — that code is now dead. Send a new one.</p>
+    {% elif phone_error == 'no_pending' %}<p class="notice bad">No code is waiting. Send one first.</p>
+    {% elif phone_error == 'rate' %}<p class="notice bad">A code was just sent. Wait a moment before asking for another.</p>
+    {% elif phone_error == 'consent' %}<p class="notice bad">Tick the consent box before we can text or call you.</p>{% endif %}
+    {% if phone_error == 'funding' %}<p class="notice bad">Add credits first — phone verification is available after your first top-up. <a href="/console/credits?purpose=identity_verification">Add credits</a></p>
+    {% elif phone_error == 'email' %}<p class="notice bad">Add an email address before verifying a phone. <a href="/console/account/preferences">Add email</a></p>{% endif %}
+    {% if phone_sent == 'voice' %}<p class="notice ok">We're calling {{ phone_pending }} now — pick up to hear your code. It expires in 10 minutes.</p>
+    {% elif phone_sent == 'sms' %}<p class="notice ok">Code texted to {{ phone_pending }}. It expires in 10 minutes.</p>{% endif %}
+    {% if phone_saved %}<p class="notice ok">Number verified.</p>{% endif %}
+
+    {% if phone_verified %}
+      <p>Alerts go to <strong>{{ phone }}</strong>.</p>
+      <p class="muted">Your agents can reach you here with <code>POST /v1/notify</code> — push, email, SMS, or a phone call. They cannot send anywhere else: the destination is resolved from the API key to this account, never from the request. <a href="/docs/notify">How it works</a>.</p>
+      <form class="form" method="post" action="/console/settings/phone/remove">
+        <button class="btn" type="submit">Remove this number</button>
+      </form>
+    {% elif phone_pending %}
+      <p>A code is on its way to <strong>{{ phone_pending }}</strong>.</p>
+      <form class="form" method="post" action="/console/settings/phone/confirm">
+        <label>Code<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" required></label>
+        <button class="btn primary" type="submit">Verify</button>
+      </form>
+      {% if phone_code_channel == 'sms' %}
+        <form class="form" method="post" action="/console/settings/phone/start">
+          <input type="hidden" name="phone" value="{{ phone_pending }}">
+          <input type="hidden" name="channel" value="sms">
+          <button class="btn primary" type="submit" {% if resend_wait_seconds %}disabled{% endif %}>{% if resend_wait_seconds %}You can request another in {{ resend_wait_seconds }}s{% else %}Send again{% endif %}</button>
+        </form>
+        <form class="form" method="post" action="/console/settings/phone/start">
+          <input type="hidden" name="phone" value="{{ phone_pending }}">
+          <input type="hidden" name="channel" value="voice">
+          <button class="btn" type="submit" {% if resend_wait_seconds %}disabled{% endif %}>Call me instead</button>
+        </form>
+      {% else %}
+        <form class="form" method="post" action="/console/settings/phone/start">
+          <input type="hidden" name="phone" value="{{ phone_pending }}">
+          <input type="hidden" name="channel" value="voice">
+          <button class="btn primary" type="submit" {% if resend_wait_seconds %}disabled{% endif %}>{% if resend_wait_seconds %}You can request another in {{ resend_wait_seconds }}s{% else %}Call again{% endif %}</button>
+        </form>
+        {% if notify_sms_available %}
+          <form class="form" method="post" action="/console/settings/phone/start">
+            <input type="hidden" name="phone" value="{{ phone_pending }}">
+            <input type="hidden" name="channel" value="sms">
+            <button class="btn" type="submit" {% if resend_wait_seconds %}disabled{% endif %}>Send as text instead</button>
+          </form>
+        {% endif %}
+      {% endif %}
+      <form class="form" method="post" action="/console/settings/phone/cancel">
+        <button class="btn" type="submit">Use a different number</button>
+      </form>
+    {% elif phone_missing_requirements %}
+      {% if phone_missing_requirements[0] == 'email' and phone_error != 'email' %}<p class="notice bad">Add an email address before verifying a phone. <a href="/console/account/preferences">Add email</a></p>
+      {% elif phone_missing_requirements[0] == 'funding' and phone_error != 'funding' %}<p class="notice bad">Add credits first — phone verification is available after your first top-up. <a href="/console/credits?purpose=identity_verification">Add credits</a></p>{% endif %}
+    {% else %}
+      <p>Add a mobile number so your agents can reach you when something breaks. Verifying it is what unlocks every notification channel, email included.</p>
+      <form class="form" method="post" action="/console/settings/phone/start">
+        {% include "_sms_enrolment_fields.html" %}
+      </form>
+      <p class="muted">A phone call works on any number, including landlines and desk phones, and needs no carrier registration. <a href="/docs/notify">What we send</a>.</p>
+    {% endif %}
+  </div>
+</section>
 <section class="panel">
   <div class="panel-head"><h2>Prompt and output handling</h2><span class="pill">never logged</span></div>
   <div class="panel-body">

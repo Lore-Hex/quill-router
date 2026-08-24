@@ -208,6 +208,37 @@ def test_adyen_checkout_session_has_exact_money_and_no_balance_side_effect(
     assert sum(item["amountIncludingTax"] for item in payload["lineItems"]) == 2609
 
 
+def test_small_adyen_checkout_applies_card_fee_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": "CS_FLOOR", "sessionData": "opaque"})
+
+    monkeypatch.setattr(
+        adyen_billing.httpx,
+        "Client",
+        _http_client_factory(handler),
+    )
+    app = create_app(
+        _settings(adyen_card_fee_basis_points=300, adyen_card_fee_fixed_cents=30),
+        init_observability=False,
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/billing/checkout",
+            headers={"x-trustedrouter-user": "adyen@example.com"},
+            json={"amount": "3.00", "payment_method": "adyen"},
+        )
+
+    assert response.status_code == 201, response.text
+    payload = captured["payload"]
+    assert payload["amount"] == {"currency": "USD", "value": 380}
+    assert [item["amountIncludingTax"] for item in payload["lineItems"]] == [300, 80]
+
+
 def test_adyen_inactive_merchant_is_a_retryable_checkout_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -296,6 +327,28 @@ def test_adyen_authorisation_credits_exactly_once() -> None:
     assert first.text == "[accepted]"
     assert second.status_code == 200
     assert after - before == 5_000_000
+
+
+def test_adyen_authorisation_accrues_lifetime_topup_to_the_owner_exactly_once() -> None:
+    # Every real purchase must accrue lifetime top-up, or an Adyen payer stays
+    # funding-gated for phone verification. The signed reference carries no
+    # initiator, so it lands on the workspace owner; the replayed notification
+    # must not accrue twice.
+    app = create_app(_settings(adyen_enabled=False), init_observability=False)
+    with TestClient(app) as client:
+        workspace_id = _workspace_id(client)
+        owner_id = STORE.get_workspace(workspace_id).owner_user_id
+        assert STORE.get_lifetime_topup_microdollars(owner_id) == 0
+        item = _notification_item(workspace_id)
+        client.post("/v1/internal/adyen/webhook", json=_webhook_payload(item))
+        replay = _notification_item(
+            workspace_id,
+            psp_reference="PSP000000000002",
+            merchant_reference=str(item["merchantReference"]),
+        )
+        client.post("/v1/internal/adyen/webhook", json=_webhook_payload(replay))
+
+    assert STORE.get_lifetime_topup_microdollars(owner_id) == 5_000_000
 
 
 def test_adyen_webhook_remains_available_when_checkout_is_dark_but_needs_hmac() -> None:

@@ -1,5 +1,5 @@
 {% extends "console/_layout.html" %}
-{% from "console/_api_key_reveal.html" import api_key_reveal %}
+{% from "console/_api_key_reveal.html" import agent_chat_prompt, api_key_reveal %}
 {% block body %}
 {% if revealed_key %}
 <div
@@ -23,8 +23,13 @@
       <span class="pill warn">one time reveal</span>
     </div>
     <div class="panel-body">
+      <div class="activation-code-panel activation-onboarding-agent">
+        <div class="activation-code-head"><strong>Paste this short message into a Claude Code, Codex, or your favorite agent chat.</strong><button class="btn" type="button" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key" aria-describedby="welcome-agent-copy-status">Copy message</button></div>
+        <pre id="welcome-agent-message" data-copy-lines>{{ agent_chat_prompt(revealed_key) }}</pre>
+        <p class="copy-status" id="welcome-agent-copy-status" role="status" aria-live="polite"></p>
+      </div>
       {{ api_key_reveal(revealed_key, "welcome", workspace_name, False) }}
-      <p class="activation-security-note">This is the only copy on this page. TrustedRouter stores a salted hash, not the raw key.</p>
+      <p class="activation-security-note">This one-time reveal contains the complete key. TrustedRouter stores its salted hash.</p>
     </div>
   </section>
 
@@ -44,7 +49,7 @@
           <span data-run-label>Run my first API request</span>
           <span class="activation-button-arrow" aria-hidden="true">&#8594;</span>
         </button>
-        <span class="activation-no-card">No card required</span>
+        <span class="activation-no-card">Ready to run</span>
       </div>
       {% else %}
       <div class="activation-credit-needed">
@@ -96,19 +101,12 @@
     </div>
     <div class="panel-body">
       <div class="activation-tabs" role="tablist" aria-label="Setup method">
-        <button class="activation-tab" id="setup-agent-tab" type="button" role="tab" aria-selected="true" aria-controls="setup-agent" data-setup-tab="setup-agent">Claude Code / Codex</button>
-        <button class="activation-tab" id="setup-python-tab" type="button" role="tab" aria-selected="false" aria-controls="setup-python" tabindex="-1" data-setup-tab="setup-python">Python</button>
+        <button class="activation-tab" id="setup-python-tab" type="button" role="tab" aria-selected="true" aria-controls="setup-python" data-setup-tab="setup-python">Python</button>
         <button class="activation-tab" id="setup-js-tab" type="button" role="tab" aria-selected="false" aria-controls="setup-js" tabindex="-1" data-setup-tab="setup-js">JavaScript</button>
         <button class="activation-tab" id="setup-curl-tab" type="button" role="tab" aria-selected="false" aria-controls="setup-curl" tabindex="-1" data-setup-tab="setup-curl">curl</button>
       </div>
 
-      <div class="activation-code-panel" id="setup-agent" role="tabpanel" aria-labelledby="setup-agent-tab" data-setup-panel>
-        <div class="activation-code-head"><strong>Paste this whole message into Claude Code or Codex</strong><button class="btn" type="button" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key" aria-describedby="welcome-agent-copy-status">Copy prompt</button></div>
-        <pre id="welcome-agent-message" data-copy-lines><span>Please use TrustedRouter.com using the following key to ask DeepSeek the following question: "What is the capital of France?"</span><span>YOUR_TRUSTEDROUTER_API_KEY</span></pre>
-        <p class="copy-status" id="welcome-agent-copy-status" role="status" aria-live="polite"></p>
-      </div>
-
-      <div class="activation-code-panel" id="setup-python" role="tabpanel" aria-labelledby="setup-python-tab" data-setup-panel hidden>
+      <div class="activation-code-panel" id="setup-python" role="tabpanel" aria-labelledby="setup-python-tab" data-setup-panel>
         <div class="activation-code-head"><strong>OpenAI Python SDK</strong><button class="btn" type="button" data-copy-template-target="welcome-python-code" data-secret-source="welcome-api-key" aria-describedby="welcome-python-copy-status">Copy code</button></div>
         <pre id="welcome-python-code">from openai import OpenAI
 

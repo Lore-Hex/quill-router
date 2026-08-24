@@ -7,7 +7,9 @@ from fastapi.testclient import TestClient
 from pytest_httpx import HTTPXMock
 
 from trusted_router.auth import SESSION_COOKIE_NAME
+from trusted_router.catalog import endpoint_for_id
 from trusted_router.config import Settings
+from trusted_router.routes.internal.gateway import _endpoint_cost_microdollars
 from trusted_router.services.broadcast import should_drain_inline
 from trusted_router.services.broadcast_adapters import adapter_for, supported_destination_types
 from trusted_router.storage import STORE
@@ -52,14 +54,11 @@ def test_broadcast_inline_drain_defaults_to_non_production_only() -> None:
     assert should_drain_inline(
         Settings(
             environment="production",
+            service_surface="internal",
             storage_backend="spanner-bigtable",
             internal_gateway_token="token",  # noqa: S106 - placeholder test secret.
-            stripe_webhook_secret="whsec",  # noqa: S106 - placeholder test secret.
-            stripe_secret_key="sk_live",  # noqa: S106 - placeholder test secret.
+            observer_internal_token="observer-token",  # noqa: S106 - test secret.
             sentry_dsn="https://example@sentry.invalid/1",
-            aws_access_key_id="test-access-key",
-            aws_secret_access_key="test-secret-key",  # noqa: S106 - test fixture.
-            ses_from_email="noreply@example.com",
             spanner_instance_id="inst",
             spanner_database_id="db",
             bigtable_instance_id="bt",
@@ -262,13 +261,15 @@ def test_metadata_broadcast_omits_prompt_and_output(
         },
     )
     assert authorize.status_code == 200, authorize.text
+    authorization_data = authorize.json()["data"]
 
     settle = client.post(
         "/v1/internal/gateway/settle",
         json={
-            "authorization_id": authorize.json()["data"]["authorization_id"],
+            "authorization_id": authorization_data["authorization_id"],
             "actual_input_tokens": 12,
             "actual_output_tokens": 8,
+            "price_tier_input_tokens": 6,
             "request_id": "resp_test",
             "finish_reason": "stop",
             "elapsed_seconds": 0.5,
@@ -280,6 +281,13 @@ def test_metadata_broadcast_omits_prompt_and_output(
         },
     )
     assert settle.status_code == 200, settle.text
+    endpoint = endpoint_for_id(authorization_data["endpoint_id"])
+    assert endpoint is not None
+    assert settle.json()["data"]["cost_microdollars"] == _endpoint_cost_microdollars(
+        endpoint,
+        12,
+        8,
+    )
     request = httpx_mock.get_request()
     payload = json.loads(request.content)
     assert payload["event"] == "$ai_generation"
@@ -291,6 +299,10 @@ def test_metadata_broadcast_omits_prompt_and_output(
     assert "prompt" not in json.dumps(payload).lower()
     assert "output text" not in json.dumps(payload).lower()
     assert all(job.status == "sent" for job in STORE.broadcast_store.delivery_jobs.values())
+    assert all(
+        "price_tier_input_tokens" not in job.settle_body
+        for job in STORE.broadcast_store.delivery_jobs.values()
+    )
 
 
 def test_metadata_broadcast_queues_and_retries_failures(

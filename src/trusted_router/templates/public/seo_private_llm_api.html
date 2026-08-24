@@ -8,9 +8,11 @@
     <p>Every hosted LLM provider claims privacy. Almost none of them give you a way to verify it.</p>
     <p>TrustedRouter routes to every major model — Claude, GPT, Gemini, DeepSeek, Kimi, Llama, Mistral — through a hardware-attested gateway. The code is open source. The image is hashed. You can check what runs.</p>
     <p>
-      <a class="btn primary" href="/chat">Try the playground</a>
+      <button class="btn primary" type="button" data-action="open-signin">Create key and test privately</button>
+      <a class="btn" href="/chat">Try the playground</a>
       <a class="btn" href="/security">Trust surface</a>
     </p>
+    <p class="microcopy">New email signups receive starter credit. No card required.</p>
   </div>
   <div class="copy-terminal">
     <div class="code-head"><span>Standard call</span><span>OpenAI SDK</span></div>
@@ -78,6 +80,19 @@ resp = client.chat.completions.create(
   </div>
   <div class="matrix-row">
     <span>Self-host</span><span>No</span><span>Yes</span>
+  </div>
+</section>
+
+<section class="panel" aria-label="Private LLM API resources">
+  <div class="panel-head"><h2>Build a private routing policy</h2><a href="/resources">All resources</a></div>
+  <div class="panel-body">
+    <ul class="link-list">
+      <li><a href="/providers">Provider privacy directory</a><span>ZDR, confidential compute, E2EE, and policy sources</span></li>
+      <li><a href="/deepseek-api-privacy">DeepSeek API privacy</a><span>Hosting boundaries and fail-closed ZDR filters</span></li>
+      <li><a href="/claude-api-privacy">Claude API privacy</a><span>Route-specific retention and provider controls</span></li>
+      <li><a href="/confidential-computing-llm">Confidential computing for LLMs</a><span>Hardware attestation and trust boundaries</span></li>
+      <li><a href="/legal">Legal and procurement packet</a><span>DPA, BAA, subprocessors, and readiness evidence</span></li>
+    </ul>
   </div>
 </section>
 

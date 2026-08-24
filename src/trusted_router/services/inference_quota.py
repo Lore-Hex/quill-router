@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, Request
 
 from trusted_router.auth import Principal
 from trusted_router.catalog import PROVIDERS, Model
@@ -26,6 +26,13 @@ from trusted_router.providers import ProviderError
 from trusted_router.services.inference_errors import (
     provider_error_type,
     provider_http_error,
+)
+from trusted_router.spend_windows import (
+    KeyLimitExceeded,
+    KeyWindowLimitExceeded,
+    remember_spend_window_decision,
+    spend_window_headers,
+    spend_window_limit_error_message,
 )
 from trusted_router.storage import STORE, GatewayAuthorization, ProviderBenchmarkSample
 from trusted_router.types import ErrorType, UsageType
@@ -82,6 +89,7 @@ async def reserved_quota(
     streamed: bool,
     region: str | None,
     usage_type_override: UsageType | None = None,
+    request: Request | None = None,
 ) -> AsyncIterator[QuotaTicket]:
     """Acquire a reservation against the principal's key limit and (for
     prepaid models) the workspace credit account, yield a `QuotaTicket`,
@@ -90,11 +98,27 @@ async def reserved_quota(
     assert principal.api_key is not None
     usage_type = usage_type_override or UsageType.for_model(model)
     try:
-        STORE.reserve_key_limit(
+        window_decision = STORE.reserve_key_limit(
             principal.api_key.hash,
             reserve_amount,
             usage_type=usage_type,
         )
+        remember_spend_window_decision(request, window_decision)
+    except KeyWindowLimitExceeded as exc:
+        remember_spend_window_decision(request, exc.decision)
+        raise api_error(
+            429,
+            spend_window_limit_error_message(exc.decision),
+            ErrorType.KEY_WINDOW_LIMIT_EXCEEDED,
+            headers=spend_window_headers(exc.decision, retry_after=True),
+        ) from exc
+    except KeyLimitExceeded as exc:
+        remember_spend_window_decision(request, exc.decision)
+        raise api_error(
+            402,
+            "API key spend limit exceeded",
+            ErrorType.KEY_LIMIT_EXCEEDED,
+        ) from exc
     except ValueError as exc:
         raise api_error(
             402,

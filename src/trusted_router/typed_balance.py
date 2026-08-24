@@ -32,8 +32,16 @@ def live_credit_summary(
     """
     active_store = STORE if store is None else store
     typed_store = typed_billing_store(active_store)
-    if typed_store is not None:
-        typed = typed_store.typed_credit_snapshot(workspace_id)
+    # Postgres owns the same typed balance table but does not implement the
+    # Spanner-only TypedBillingStore authorization capability. Accept its
+    # narrow snapshot reader without treating it as that broader capability.
+    typed_snapshot = (
+        typed_store.typed_credit_snapshot
+        if typed_store is not None
+        else getattr(active_store, "typed_credit_snapshot", None)
+    )
+    if typed_snapshot is not None:
+        typed = typed_snapshot(workspace_id)
         if typed is None:
             return None
         return _summary(int(typed[0]), int(typed[1]), int(typed[2]))

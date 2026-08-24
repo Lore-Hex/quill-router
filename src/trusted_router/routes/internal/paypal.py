@@ -7,6 +7,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Request
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import SettingsDep
 from trusted_router.errors import api_error
@@ -29,7 +30,8 @@ def register(router: APIRouter) -> None:
         if not isinstance(event, dict):
             raise api_error(400, "Invalid PayPal webhook payload", ErrorType.BAD_REQUEST)
 
-        verify_paypal_webhook_signature(
+        await run_in_threadpool(
+            verify_paypal_webhook_signature,
             headers=request.headers,
             event=event,
             settings=settings,
@@ -37,7 +39,11 @@ def register(router: APIRouter) -> None:
 
         event_id = str(event.get("id") or uuid.uuid4())
         if event.get("event_type") == "PAYMENT.CAPTURE.COMPLETED":
-            result = credit_paypal_capture(event)
+            # Signature verification and the idempotent credit transaction are
+            # synchronous. Keep both off the shared async control-plane loop so
+            # a slow PayPal API/Store cannot stall unrelated login or console
+            # requests.
+            result = await run_in_threadpool(credit_paypal_capture, event)
             return {
                 "data": {
                     "event_id": event_id,
@@ -47,6 +53,8 @@ def register(router: APIRouter) -> None:
                     "credited": result.credited,
                     "status": result.status,
                     **money_pair("amount", result.amount_microdollars),
+                    **money_pair("processing_fee", result.processing_fee_microdollars),
+                    **money_pair("total", result.charge_amount_microdollars),
                 }
             }
         return {"data": {"ignored": True, "event_id": event_id}}

@@ -270,7 +270,11 @@ class _CommitDatabase:
         return result
 
 
-def test_configure_spanner_rpc_deadlines_caps_commit_and_retry_budget() -> None:
+def test_configure_spanner_rpc_deadlines_caps_commit_and_retry_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _Clock()
+    _install_clock(monkeypatch, clock)
     database = _CommitDatabase(_CommitApi())
     configure_spanner_rpc_deadlines(database, max_seconds=7.0)
 

@@ -2,9 +2,9 @@
   "_about": "Provider-native Telnyx inference routes, context windows, capabilities, and reconciled account-billable prices refreshed hourly from Telnyx-owned sources.",
   "provider": "telnyx",
   "source": "https://api.telnyx.com/v2/ai/openai/models",
-  "generated_at": "2026-08-05T12:55:53Z",
+  "generated_at": "2026-08-24T16:40:13Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 12,
+  "model_count": 14,
   "models": [
     {
       "display_name": "gemma-2b-it",
@@ -315,6 +315,58 @@
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 4000000,
       "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "DeepSeek-V4-Flash-0731",
+      "title": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "context_length": 1048576,
+      "provider_regions": [
+        "ap-southeast-2",
+        "us-east-1",
+        "us-west-1"
+      ],
+      "input_token_price_per_m": 130000,
+      "output_token_price_per_m": 260000,
+      "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "Qwen3.8-27B",
+      "title": "Qwen/Qwen3.8-27B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-27b",
+      "upstream_id": "Qwen/Qwen3.8-27B",
+      "context_length": 262144,
+      "provider_regions": [
+        "us-east-1",
+        "us-west-1"
+      ],
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 50000
     }
   ]
 }

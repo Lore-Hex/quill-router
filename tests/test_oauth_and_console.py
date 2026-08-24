@@ -868,19 +868,26 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
 
     resp = client.get("/console/welcome?first=1", follow_redirects=False)
     assert resp.status_code == 200
-    assert resp.text.count(fake_raw_key) == 1, (
-        "the raw API key must have exactly one DOM copy; setup copy buttons "
-        "inject it only when the user clicks"
+    assert resp.text.count(fake_raw_key) == 2, (
+        "the raw API key must appear in the direct reveal and the visible "
+        "Claude Code / Codex message"
     )
     assert 'data-copy-secret="welcome-api-key"' in resp.text
     assert 'data-copy-template-target="welcome-agent-message"' in resp.text
     assert 'data-secret-source="welcome-api-key"' in resp.text
     assert 'id="welcome-agent-message" data-copy-lines' in resp.text
-    assert "YOUR_TRUSTEDROUTER_API_KEY" in resp.text
-    assert '<pre id="welcome-agent-message"' in resp.text
+    agent_message = re.search(
+        r'<pre id="welcome-agent-message".*?</pre>', resp.text, re.DOTALL
+    )
+    assert agent_message is not None
+    assert fake_raw_key in agent_message.group(0)
+    assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
+    assert resp.text.index('id="welcome-agent-message"') < resp.text.index(
+        'id="welcome-api-key"'
+    )
     assert "Run my first API request" in resp.text
     assert 'data-endpoint="/chat-proxy/v1/chat/completions"' in resp.text
-    assert "Claude Code / Codex" in resp.text
+    assert "Claude Code, Codex" in resp.text
     assert "Python" in resp.text
     assert "JavaScript" in resp.text
     assert "curl" in resp.text
@@ -934,7 +941,7 @@ def test_console_welcome_without_first_query_does_not_read_pending_reveal(
     )
 
 
-def test_console_create_api_key_form_shows_raw_key_once(
+def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
     console_session: tuple[TestClient, str],
 ) -> None:
     client, _ = console_session
@@ -947,14 +954,32 @@ def test_console_create_api_key_form_shows_raw_key_once(
     assert "console-created" in resp.text
     match = re.search(r"sk-tr-v1-[A-Za-z0-9_-]+", resp.text)
     assert match is not None
-    assert resp.text.count(match.group(0)) == 1
+    assert resp.text.count(match.group(0)) == 2
     assert 'data-copy-secret="created-api-key"' in resp.text
     assert 'data-copy-template-target="created-agent-message"' in resp.text
     assert 'data-secret-source="created-api-key"' in resp.text
     assert 'id="created-agent-message" data-copy-lines' in resp.text
     assert '<pre id="created-agent-message"' not in resp.text
-    assert "YOUR_TRUSTEDROUTER_API_KEY" in resp.text
-    assert "Paste this whole message into your agent or Claude Code" in resp.text
+    agent_message = re.search(
+        r'<div class="agent-message" id="created-agent-message".*?</div>\s*</div>',
+        resp.text,
+        re.DOTALL,
+    )
+    assert agent_message is not None
+    assert match.group(0) in agent_message.group(0)
+    assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
+    assert (
+        "Paste this short message into a Claude Code, Codex, or your favorite agent chat."
+        in resp.text
+    )
+    assert "Paste this short message" not in agent_message.group(0)
+    assert resp.text.index('id="created-agent-message"') < resp.text.index(
+        'id="created-api-key"'
+    )
+    assert "stream the answer into this chat as it arrives" not in resp.text
+    assert "Keep this agent's model" not in resp.text
+    assert "Use it in memory for this request" not in resp.text
+    assert "stream=true" not in resp.text
     assert "Copied to clipboard." not in resp.text
     workspace_id = next(iter(STORE.workspaces))
     keys = STORE.list_keys(workspace_id)
@@ -1124,6 +1149,7 @@ def test_console_workspace_selector_persists_session_workspace(
         "/console/broadcast",
         "/console/settings",
         "/console/credits",
+        "/console/account/verification",
         "/console/account/preferences",
     )
     for path in console_pages:
@@ -1131,6 +1157,10 @@ def test_console_workspace_selector_persists_session_workspace(
         assert workspace_page.status_code == 200, path
         assert f'<option value="{org.id}" selected>' in workspace_page.text, path
         assert f'<option value="{personal.id}" selected>' not in workspace_page.text, path
+
+    credits_page = client.get("/console/credits")
+    normalized_credits = " ".join(credits_page.text.split())
+    assert "with an $0.80 minimum fee" in normalized_credits
 
     created = client.post(
         "/console/api-keys",
@@ -1323,6 +1353,33 @@ def test_console_checkout_post_does_not_404_in_local_mock_mode(
     assert resp.headers["location"] == "/console/credits?checkout=mock"
 
 
+def test_console_checkout_exposes_and_enforces_paypal_minimum(
+    console_session: tuple[TestClient, str],
+) -> None:
+    client, _ = console_session
+    page = client.get("/console/credits")
+
+    assert page.status_code == 200
+    assert 'data-paypal-minimum="10"' in page.text
+    assert "PayPal purchases have a $10 minimum." in page.text
+
+    too_small = client.post(
+        "/console/credits/checkout",
+        data={"amount": "9.99", "payment_method": "paypal"},
+        follow_redirects=False,
+    )
+    assert too_small.status_code == 303
+    assert too_small.headers["location"] == "/console/credits?error=invalid_checkout"
+
+    minimum = client.post(
+        "/console/credits/checkout",
+        data={"amount": "10", "payment_method": "paypal"},
+        follow_redirects=False,
+    )
+    assert minimum.status_code == 303
+    assert minimum.headers["location"] == "/console/credits?checkout=mock"
+
+
 def test_console_checkout_get_redirects_back_to_credits(
     console_session: tuple[TestClient, str],
 ) -> None:
@@ -1398,9 +1455,10 @@ def test_console_add_payment_method_mock_saves_method(
     assert account.stripe_customer_id
     assert account.stripe_payment_method_id
     page = client.get("/console/credits")
+    details = client.get("/console/credits/stripe-details")
     assert "Replace card" in page.text
     assert "Manage in Stripe" in page.text
-    assert "Test card" in page.text
+    assert "Test card" in details.text
     assert "Remove" in page.text
 
 
@@ -1543,12 +1601,15 @@ def test_console_credits_lists_saved_stripe_card(monkeypatch) -> None:
     )
 
     page = client.get("/console/credits")
+    details = client.get("/console/credits/stripe-details")
 
     assert page.status_code == 200
-    assert "Visa card" in page.text
-    assert "ending in 4242" in page.text
-    assert "expires 12/2031" in page.text
-    assert "id ...e_card" in page.text
+    assert details.status_code == 200
+    assert "Stripe card details are temporarily unavailable" in page.text
+    assert "Visa card" in details.text
+    assert "ending in 4242" in details.text
+    assert "expires 12/2031" in details.text
+    assert "id ...e_card" in details.text
     assert "Remove" in page.text
 
 

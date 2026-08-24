@@ -6,6 +6,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from trusted_router.client_context import parse_client_context, parse_gateway_request_id
 from trusted_router.money import microdollars_to_float
 from trusted_router.types import UsageType
 
@@ -87,6 +88,40 @@ class User:
     created_at: str = field(default_factory=iso_now)
     email_verified: bool = False
     wallet_address: str | None = None
+    # Owner notifications (see phone_verification.py). A verified phone is the
+    # cost floor on account farming, so it gates every notify channel including
+    # email. `pending_phone` is the number awaiting proof and is deliberately
+    # NOT reachable — otherwise starting verification would itself be a way to
+    # send someone a message.
+    phone: str | None = None
+    phone_verified: bool = False
+    phone_verified_at: str | None = None
+    pending_phone: str | None = None
+    phone_code_hash: str | None = None
+    phone_code_salt: str | None = None
+    phone_code_expires_at: str | None = None
+    phone_code_attempts: int = 0
+    phone_code_sent_at: str | None = None
+    phone_code_channel: str | None = None
+    identity_status: str = "none"
+    identity_verified_at: str | None = None
+    identity_verified_name: str | None = None
+    veriff_session_id: str | None = None
+    veriff_session_url: str | None = None
+    veriff_session_created_at: str | None = None
+    veriff_decision_code: int | None = None
+    #: Veriff's granular reason for the last decision, kept for OPERATORS.
+    #: Never rendered to the person being verified when the decision is a
+    #: decline: codes 503/504/505/515-518/526 name the exact fraud signal that
+    #: fired, and Veriff publishes no end-user guidance for them. Resubmission
+    #: reasons are different — Veriff asks integrators to show those.
+    veriff_decision_reason: str | None = None
+    veriff_decision_reason_code: int | None = None
+    veriff_attempt_count: int = 0
+
+    @property
+    def identity_verified(self) -> bool:
+        return self.identity_status == "approved"
 
 
 @dataclass
@@ -181,9 +216,9 @@ class ApiKey:
     created_at: str = field(default_factory=iso_now)
     updated_at: str | None = None
     reserved_microdollars: int = 0
-    # Independent usage-counter rows for a high-throughput key. Keys with an
-    # exact lifetime spend limit remain at one shard. Fixed-window limits are
-    # approximate snapshot checks and may sum usage across shards.
+    # Independent usage-counter rows for a high-throughput key. Exact lifetime
+    # caps use escrowed per-shard sub-budgets; fixed-window limits are
+    # approximate snapshot checks and sum usage across shards.
     usage_shard_count: int = 1
     tags: dict[str, str] = field(default_factory=dict)
     # Non-empty marks a key learned from a home plane via federation. Such a
@@ -192,8 +227,37 @@ class ApiKey:
     federated_home: str = ""
 
 
+@dataclass(frozen=True)
+class ApiKeyUsageSnapshot:
+    """One API key plus the live counters needed by key-management pages.
+
+    Keeping this as a storage value (rather than making the route point-read
+    usage for every key) lets each backend fetch the whole page in one
+    strongly-consistent operation.  ``windows`` contains current-window
+    microdollar usage under the ``daily``/``weekly``/``monthly`` keys.
+    """
+
+    api_key: ApiKey
+    usage_microdollars: int
+    byok_usage_microdollars: int
+    reserved_microdollars: int
+    windows: dict[str, int]
+
+
 @dataclass
 class EncryptedSecretEnvelope:
+    algorithm: str
+    key_ref: str
+    encrypted_dek: str
+    dek_nonce: str
+    ciphertext: str
+    nonce: str
+
+
+@dataclass
+class EncryptedGoogleClickEnvelope:
+    """Dedicated-KMS envelope that is never part of the BYOK migration surface."""
+
     algorithm: str
     key_ref: str
     encrypted_dek: str
@@ -229,6 +293,50 @@ class CustomModel:
     enabled: bool = True
     created_at: str = field(default_factory=iso_now)
     updated_at: str | None = None
+
+
+@dataclass
+class UserProvidedModel:
+    id: str
+    owner_user_id: str
+    owner_workspace_id: str
+    name: str
+    kind: str
+    description: str = ""
+    display_identity: str = "handle"
+    display_name: str = ""
+    endpoint_url: str = ""
+    upstream_model_id: str | None = None
+    encrypted_endpoint_api_key: EncryptedSecretEnvelope | None = None
+    endpoint_key_hint: str | None = None
+    encrypted_signing_secret: EncryptedSecretEnvelope | None = None
+    supports_streaming: bool = True
+    online: bool = False
+    online_changed_at: str | None = None
+    heartbeat_interval_seconds: int | None = None
+    heartbeat_expires_at: str | None = None
+    consecutive_dispatch_failures: int = 0
+    max_concurrency: int = 4
+    prompt_price_microdollars_per_million_tokens: int = 0
+    completion_price_microdollars_per_million_tokens: int = 0
+    human_verified: bool = False
+    enabled: bool = True
+    status: str = "active"
+    revision: int = 1
+    probe_status: str = "unprobed"
+    probe_checked_at: str | None = None
+    created_at: str = field(default_factory=iso_now)
+    updated_at: str | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.encrypted_endpoint_api_key, dict):
+            self.encrypted_endpoint_api_key = EncryptedSecretEnvelope(
+                **self.encrypted_endpoint_api_key
+            )
+        if isinstance(self.encrypted_signing_secret, dict):
+            self.encrypted_signing_secret = EncryptedSecretEnvelope(
+                **self.encrypted_signing_secret
+            )
 
 
 @dataclass
@@ -352,8 +460,9 @@ class SettleOutboxRow:
 class CreditAccount:
     workspace_id: str
     # Number of independent tr_credit_balance sub-ledgers owned by this
-    # workspace. The default preserves the original one-row behavior; only the
-    # pause/drain operator path may activate more shards for a hot workspace.
+    # workspace. The dataclass default must remain one so legacy JSON that
+    # predates this field keeps its original row interpretation. Production
+    # account creation explicitly chooses the current multi-shard default.
     shard_count: int = 1
     # Auto-refill: when available drops below threshold, charge the saved
     # Stripe payment method off-session for `auto_refill_amount_microdollars`.
@@ -378,6 +487,18 @@ class CreditMoney:
     total_credits_microdollars: int = 0
     total_usage_microdollars: int = 0
     reserved_microdollars: int = 0
+
+
+@dataclass
+class CreditMovement:
+    account_id: str
+    movement_id: str
+    kind: str
+    amount_microdollars: int
+    counterparty_account_id: str | None = None
+    custom_model_id: str | None = None
+    authorization_id: str | None = None
+    created_at: str = field(default_factory=iso_now)
 
 
 @dataclass
@@ -422,6 +543,11 @@ class GatewayAuthorization:
     idempotency_fingerprint: str | None = None
     custom_model_id: str | None = None
     custom_model_revision: int | None = None
+    user_provided_model_id: str | None = None
+    user_provided_model_revision: int | None = None
+    user_model_prompt_price_microdollars_per_m: int | None = None
+    user_model_completion_price_microdollars_per_m: int | None = None
+    user_model_owner_user_id: str | None = None
     additional_cost_reservation_microdollars: int = 0
     # Frozen at authorization time. Settlement must never infer this from a
     # caller-supplied route_type because native provider Batch APIs retain
@@ -433,6 +559,12 @@ class GatewayAuthorization:
     # authorization before this field existed); "deferred_home" records the
     # spend as debt to the home plane's ledger, forwarded asynchronously.
     settlement: str = "local"
+    # Present only when a bounded regional escrow authorized this request.
+    # These are content-free routing facts used to settle/refund the durable
+    # regional hold before the global request record becomes terminal.
+    regional_lease_id: str | None = None
+    regional_fencing_token: int | None = None
+    regional_hold_id: str | None = None
     # Only deferred authorizations carry an expiry: it is what lets the reaper
     # reclaim the outstanding-counter estimate when the enclave dies between
     # authorize and settle. Local authorizations keep their pre-existing
@@ -501,6 +633,14 @@ class TypedFinalizeResult:
     request_record_typed: bool = False
 
 
+@dataclass(frozen=True)
+class UserModelPayout:
+    owner_user_id: str
+    model_id: str
+    amount_microdollars: int
+    payer_workspace_id: str
+
+
 @dataclass
 class Generation:
     id: str
@@ -535,9 +675,28 @@ class Generation:
     http_referer: str | None = None
     app_categories: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)
+    gateway_request_id: str | None = None
+    synthetic: bool = False
+    client_source: str | None = None
+    client_sdk: str | None = None
+    client_sdk_version: str | None = None
+    client_lang: str | None = None
+    client_runtime: str | None = None
+    client_os: str | None = None
+    client_arch: str | None = None
+    client_timeout_ms: int | None = None
+    client_attempt: int | None = None
+    client_prev_outcome: str | None = None
+    client_prev_error_class: str | None = None
+    client_prev_host: str | None = None
+    client_prev_elapsed_ms: int | None = None
+    client_since_first_ms: int | None = None
+    client_stream: bool | None = None
+    client_failover_used: bool | None = None
     # Internal provider COGS for fixed-price orchestration leaves. This is
     # intentionally omitted from public generation/activity response shapes.
     operator_cost_microdollars: int | None = None
+    custom_model_id: str | None = None
     route_type: str | None = None
     video_input_mode: str | None = None
     video_duration_seconds: int | None = None
@@ -666,8 +825,13 @@ class Generation:
         first_token = max(float(first_token_raw), 0.001) if first_token_raw is not None else None
         first_byte_raw = body.get("first_byte_seconds") or body.get("time_to_first_byte_seconds")
         first_byte = max(float(first_byte_raw), 0.001) if first_byte_raw is not None else None
+        client_context = parse_client_context(body.get("client"))
+        gateway_request_id = parse_gateway_request_id(body.get("gateway_request_id"))
+        synthetic = _is_synthetic_metadata(body.get("metadata")) or (
+            body.get("app") == "TrustedRouter Synthetic"
+        )
         app = str(body.get("app") or "TrustedRouter Gateway")
-        if _is_synthetic_metadata(body.get("metadata")):
+        if synthetic:
             app = "TrustedRouter Synthetic"
         return cls(
             id=generation_id_for_authorization(authorization.id),
@@ -688,8 +852,18 @@ class Generation:
             status=str(body.get("status") or "success"),
             streamed=bool(body.get("streamed", False)),
             usage_estimated=bool(body.get("usage_estimated", False)),
+            # `cache_read_input_tokens` is the canonical settle-body field: it is
+            # what the attested gateway sends, what SettleRequest declares, and
+            # what billing reads via `cache_read_count`. Reading only the two
+            # legacy aliases meant this metric was silently 0 on every attested
+            # generation. Billing was never affected — the cost is computed
+            # upstream and passed in as `actual_cost_microdollars`; only this
+            # activity-index field was blank.
             cached_input_tokens=int(
-                body.get("cached_input_tokens") or body.get("cached_tokens") or 0
+                body.get("cache_read_input_tokens")
+                or body.get("cached_input_tokens")
+                or body.get("cached_tokens")
+                or 0
             ),
             reasoning_tokens=int(body.get("reasoning_tokens") or 0),
             # Tool-call arguments are model output content, not activity
@@ -712,7 +886,36 @@ class Generation:
             ),
             app_categories=[str(item) for item in body.get("app_categories") or []],
             tags=dict(authorization.tags),
+            gateway_request_id=gateway_request_id,
+            synthetic=synthetic,
+            client_source=client_context.source if client_context is not None else None,
+            client_sdk=client_context.sdk if client_context is not None else None,
+            client_sdk_version=(client_context.sdk_version if client_context is not None else None),
+            client_lang=client_context.lang if client_context is not None else None,
+            client_runtime=client_context.runtime if client_context is not None else None,
+            client_os=client_context.os if client_context is not None else None,
+            client_arch=client_context.arch if client_context is not None else None,
+            client_timeout_ms=client_context.timeout_ms if client_context is not None else None,
+            client_attempt=client_context.attempt if client_context is not None else None,
+            client_prev_outcome=(
+                client_context.prev_outcome if client_context is not None else None
+            ),
+            client_prev_error_class=(
+                client_context.prev_error_class if client_context is not None else None
+            ),
+            client_prev_host=client_context.prev_host if client_context is not None else None,
+            client_prev_elapsed_ms=(
+                client_context.prev_elapsed_ms if client_context is not None else None
+            ),
+            client_since_first_ms=(
+                client_context.since_first_ms if client_context is not None else None
+            ),
+            client_stream=client_context.stream if client_context is not None else None,
+            client_failover_used=(
+                client_context.failover_used if client_context is not None else None
+            ),
             operator_cost_microdollars=operator_cost_microdollars,
+            custom_model_id=authorization.user_provided_model_id,
             route_type=(str(body["route_type"]) if body.get("route_type") else None),
             video_input_mode=(
                 str(body["video_input_mode"]) if body.get("video_input_mode") else None
@@ -801,10 +1004,18 @@ def scrub_provider_error_message(value: str) -> str:
 
 @dataclass
 class ProviderBenchmarkSample:
-    """Privacy-safe provider performance sample for future public rankings.
+    """Provider performance sample, and the durable per-workspace usage record.
 
-    This intentionally omits workspace_id, key_hash, app, prompt, and output.
-    Public ranking pages can aggregate these rows without exposing tenants.
+    Prompts, outputs, and key material are never carried here. `workspace_id`
+    IS carried: this row is the only usage record that outlives Spanner's
+    30-day `tr_generation` deletion policy, so without it there is no way to
+    answer "how much has this customer used" beyond a month.
+
+    That places a hard requirement on every consumer: these rows feed PUBLIC
+    surfaces (the leaderboard, provider/model rankings, the /apps directory).
+    Those aggregate samples into their own explicit dicts and must never
+    project `workspace_id` into a response. `tests/test_analytics_workspace_id.py`
+    pins that boundary — if you add a public consumer, extend that test.
     """
 
     id: str
@@ -814,6 +1025,9 @@ class ProviderBenchmarkSample:
     status: str
     usage_type: UsageType
     streamed: bool
+    # Tenant that generated the sample. Empty only for rows predating this
+    # field and for error paths without an authorization in scope.
+    workspace_id: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
     total_cost_microdollars: int = 0
@@ -862,6 +1076,7 @@ class ProviderBenchmarkSample:
             status=generation.status,
             usage_type=generation.usage_type,
             streamed=generation.streamed,
+            workspace_id=generation.workspace_id,
             input_tokens=generation.tokens_prompt,
             output_tokens=generation.tokens_completion,
             total_cost_microdollars=generation.total_cost_microdollars,
@@ -927,6 +1142,7 @@ class ProviderBenchmarkSample:
         error_type: str,
         region: str | None,
         provider: str | None = None,
+        workspace_id: str = "",
     ) -> ProviderBenchmarkSample:
         return cls(
             id=f"bench-{uuid.uuid4().hex}",
@@ -936,6 +1152,7 @@ class ProviderBenchmarkSample:
             status="error",
             usage_type=UsageType.coerce(usage_type),
             streamed=streamed,
+            workspace_id=workspace_id,
             input_tokens=input_tokens,
             output_tokens=0,
             total_cost_microdollars=0,
@@ -1108,9 +1325,10 @@ class SignupResult:
 class AcquisitionAttribution:
     """Privacy-bounded acquisition record for one workspace.
 
-    Click identifiers are retained here so paid conversions can eventually be
-    uploaded to the originating ad platform. They are never copied into logs,
-    public APIs, generation metadata, or the prompt path.
+    Advertising click identifiers are retained only as envelope-encrypted
+    control-plane secrets. Fingerprints remain available for first-party
+    reporting. Neither form is copied into public APIs, generation metadata,
+    logs, or the prompt path.
     """
 
     workspace_id: str
@@ -1118,13 +1336,59 @@ class AcquisitionAttribution:
     first_touch: dict[str, str]
     last_touch: dict[str, str]
     signup_provider: str
+    starter_credit_microdollars: int = 0
     signup_at: str = field(default_factory=iso_now)
     milestones: dict[str, str] = field(default_factory=dict)
     purchase_count: int = 0
     purchase_microdollars: int = 0
     first_purchase_at: str | None = None
     last_purchase_at: str | None = None
+    google_click_id_kind: str | None = None
+    encrypted_google_click_id: EncryptedGoogleClickEnvelope | None = None
+    google_click_expires_at: str | None = None
     updated_at: str = field(default_factory=iso_now)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.encrypted_google_click_id, dict):
+            self.encrypted_google_click_id = EncryptedGoogleClickEnvelope(
+                **self.encrypted_google_click_id
+            )
+
+
+@dataclass
+class GoogleAdsConversion:
+    """Metadata-only, encrypted conversion queued for Google Ads.
+
+    The row has no user, email, workspace, API-key, prompt, output, model, or
+    provider identifier. ``attribution_id`` is a random value used only as the
+    encryption context and to derive an opaque transaction ID.
+    """
+
+    order_id: str
+    conversion_action: str
+    occurred_at: str
+    attribution_id: str
+    click_id_kind: str
+    encrypted_click_id: EncryptedGoogleClickEnvelope | None
+    click_expires_at: str | None = None
+    value_microdollars: int = 0
+    currency_code: str = "USD"
+    created_at: str = field(default_factory=iso_now)
+    delivery_status: str = "pending"
+    delivery_attempts: int = 0
+    next_attempt_at: str = field(default_factory=iso_now)
+    last_error: str | None = None
+    lease_owner: str | None = None
+    leased_until: str | None = None
+    google_request_id: str | None = None
+    submitted_at: str | None = None
+    updated_at: str = field(default_factory=iso_now)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.encrypted_click_id, dict):
+            self.encrypted_click_id = EncryptedGoogleClickEnvelope(
+                **self.encrypted_click_id
+            )
 
 
 ACTIVATION_REMINDER_DELAYS_SECONDS: tuple[tuple[str, int], ...] = (
@@ -1152,8 +1416,8 @@ def activation_reminder_tasks(
         signup_at = signup_at.replace(tzinfo=dt.UTC)
     tasks: list[ActivationReminderTask] = []
     for stage, delay_seconds in ACTIVATION_REMINDER_DELAYS_SECONDS:
-        due_at = (signup_at + dt.timedelta(seconds=delay_seconds)).isoformat().replace(
-            "+00:00", "Z"
+        due_at = (
+            (signup_at + dt.timedelta(seconds=delay_seconds)).isoformat().replace("+00:00", "Z")
         )
         tasks.append(
             ActivationReminderTask(
@@ -1247,6 +1511,27 @@ class AuthSession:
     created_at: str = field(default_factory=iso_now)
     expires_at: str | None = None
     state: str = "active"  # "active" | "pending_email" (legacy wallet email attach)
+
+
+@dataclass(frozen=True)
+class SessionAuthContext:
+    """Strong, point-in-time view used to authenticate a browser session."""
+
+    session: AuthSession
+    user: User | None
+    workspace: Workspace | None
+    workspaces: tuple[Workspace, ...]
+    is_member: bool
+    is_management: bool
+    management_workspace_ids: frozenset[str]
+
+
+@dataclass(frozen=True)
+class ApiKeyAuthContext:
+    """Strong, point-in-time view used to authenticate an API key."""
+
+    api_key: ApiKey
+    workspace: Workspace | None
 
 
 @dataclass

@@ -88,6 +88,37 @@ def reserve_credit(
     return count == 1
 
 
+def debit_workspace_credit(
+    transaction: Any,
+    param_types: Any,
+    workspace_id: str,
+    amount: int,
+    *,
+    now: Any,
+) -> bool:
+    """Atomically remove a grant from authoritative shard zero.
+
+    This is deliberately a negative grant (``total_credits`` down), never
+    booked usage. The conditional predicate keeps current usage and live holds
+    covered even under concurrent debits.
+    """
+    if amount <= 0:
+        raise ValueError("amount_must_be_positive")
+    count = transaction.execute_update(
+        "UPDATE tr_credit_balance "
+        "SET total_credits = total_credits - @amt, updated_at=@now "
+        "WHERE workspace_id=@ws AND shard=0 "
+        "AND (total_credits - total_usage - reserved) >= @amt",
+        params={"amt": int(amount), "now": now, "ws": workspace_id},
+        param_types={
+            "amt": param_types.INT64,
+            "now": param_types.TIMESTAMP,
+            "ws": param_types.STRING,
+        },
+    )
+    return count == 1
+
+
 def debit_credit_shard(
     transaction: Any,
     param_types: Any,

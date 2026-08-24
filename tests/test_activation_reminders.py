@@ -200,9 +200,9 @@ def test_spanner_attribution_and_reminders_share_one_create_transaction() -> Non
     assert replay_claimed is False
 
 
-def test_reminder_worker_is_off_by_default_and_enabled_in_production_rollout() -> None:
+def test_reminder_worker_is_off_by_default_and_in_production_rollout() -> None:
     settings = Settings(_env_file=None)
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text(encoding="utf-8")
 
     assert settings.activation_reminder_interval_seconds == 0
-    assert '"TR_ACTIVATION_REMINDER_INTERVAL_SECONDS=60"' in rollout
+    assert '"TR_ACTIVATION_REMINDER_INTERVAL_SECONDS=0"' in rollout

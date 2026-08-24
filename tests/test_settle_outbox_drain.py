@@ -12,9 +12,12 @@ from fastapi.testclient import TestClient
 
 from tests.fakes.spanner import _FakeTransaction, make_fake_store
 from trusted_router.config import Settings
+from trusted_router.custom_model_billing import user_model_payout_event_id
 from trusted_router.main import create_app
+from trusted_router.regional_quota_ledger import RegionalLeaseLedgerError
 from trusted_router.services import settle_outbox_apply as apply_mod
 from trusted_router.services import settle_outbox_drain as drain_mod
+from trusted_router.services.regional_quota_leases import LeaseSettlementError
 from trusted_router.services.settle_outbox_apply import ApplyOutcome
 from trusted_router.storage import InMemoryStore, configure_store
 from trusted_router.storage_gcp_authorize import (
@@ -25,11 +28,18 @@ from trusted_router.storage_gcp_authorize import (
 )
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
-from trusted_router.storage_models import CreditAccount, GatewayAuthorization, SettleOutboxRow
+from trusted_router.storage_models import (
+    CreditAccount,
+    GatewayAuthorization,
+    SettleOutboxRow,
+    TypedFinalizeResult,
+)
 
 MODEL_ID = "anthropic/claude-haiku-4.5"
 PROVIDER = "anthropic"
 ENDPOINT_ID = "anthropic/claude-haiku-4.5@anthropic/prepaid"
+USER_MODEL_ID = "trustedrouter/user-outbox-repair"
+USER_MODEL_ENDPOINT_ID = f"{USER_MODEL_ID}@trustedrouter/credits"
 ESTIMATE = 1_000_000
 TOTAL_CREDIT = 5_000_000
 NOW = "2026-07-04T12:00:00Z"
@@ -122,6 +132,39 @@ def _typed_authorization(
         idempotency_key=None,
         idempotency_fingerprint=None,
         expires_at=expires_at,
+    )
+    assert outcome == AuthorizeOutcome.ACCEPTED
+    assert auth is not None
+    return auth
+
+
+def _typed_user_model_authorization(
+    store: Any,
+    *,
+    workspace_id: str,
+    key_hash: str,
+) -> GatewayAuthorization:
+    outcome, auth = store.authorize_gateway_typed(
+        workspace_id=workspace_id,
+        key_hash=key_hash,
+        estimate=ESTIMATE,
+        has_credit_candidate=True,
+        reservation_usage_type="Credits",
+        model_id=USER_MODEL_ID,
+        provider="trustedrouter",
+        requested_model_id=USER_MODEL_ID,
+        candidate_model_ids=[USER_MODEL_ID],
+        region="us",
+        endpoint_id=USER_MODEL_ENDPOINT_ID,
+        candidate_endpoint_ids=[USER_MODEL_ENDPOINT_ID],
+        idempotency_key="typed-user-model-outbox-repair",
+        idempotency_fingerprint="typed-user-model-outbox-repair-fingerprint",
+        user_provided_model_id=USER_MODEL_ID,
+        user_provided_model_revision=4,
+        user_model_prompt_price_microdollars_per_m=2_000_000,
+        user_model_completion_price_microdollars_per_m=3_000_000,
+        user_model_owner_user_id="owner-outbox-repair",
+        expires_at="2026-01-01T00:00:00Z",
     )
     assert outcome == AuthorizeOutcome.ACCEPTED
     assert auth is not None
@@ -1481,6 +1524,94 @@ def test_lost_charge_recovery_end_to_end(
     assert reap_expired_reservations(store._database, store._param_types, now=NOW) == 0
 
 
+@pytest.mark.parametrize(
+    "failure",
+    [
+        LeaseSettlementError("unknown regional reservation"),
+        RegionalLeaseLedgerError("regional ledger unavailable"),
+    ],
+)
+def test_regional_settlement_failure_is_retryable_after_outbox_enqueue(
+    fake_store: tuple[Any, Any, Any],
+    failure: Exception,
+) -> None:
+    store, db, _bt = fake_store
+    ws = "ws-regional-settle-retry"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+
+    def fail_finalize(*_args: Any, **_kwargs: Any) -> TypedFinalizeResult:
+        raise failure
+
+    store.typed_finalize_gateway_authorization_result = fail_finalize
+    client = _client(Settings(environment="test", settle_outbox_enabled=True))
+
+    response = client.post(
+        "/v1/internal/gateway/settle",
+        json=_settle_json(auth.id),
+    )
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "1"
+    assert response.json()["error"]["type"] == "service_unavailable"
+    row = _outbox(store).get(auth.id, "settle")
+    assert row is not None and row.status == "pending"
+    assert db.reservations[auth.credit_reservation_id]["settled"] is False
+
+
+def test_user_model_inline_finalize_loss_repairs_one_payout_from_frozen_outbox(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, _db, _bt = fake_store
+    ws = "ws-user-model-outbox-repair"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_user_model_authorization(store, workspace_id=ws, key_hash=key.hash)
+    original = store.typed_finalize_gateway_authorization_result
+
+    def lose_inline_finalize(*_args: Any, **_kwargs: Any) -> TypedFinalizeResult:
+        return TypedFinalizeResult(finalized=False, activity_indexed=False)
+
+    store.typed_finalize_gateway_authorization_result = lose_inline_finalize
+    client = _client(Settings(environment="test", settle_outbox_enabled=True))
+    response = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth.id,
+            "actual_input_tokens": 1_000,
+            "actual_output_tokens": 2_000,
+            "request_id": "req-user-model-outbox-repair",
+            "finish_reason": "stop",
+            "status": "success",
+            "elapsed_seconds": 0.2,
+            "selected_model": USER_MODEL_ID,
+            "selected_endpoint": USER_MODEL_ENDPOINT_ID,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["already_settled"] is True
+    row = _outbox(store).get(auth.id, "settle")
+    assert row is not None
+    assert row.status == "pending"
+    assert row.settle_body is not None
+
+    store.typed_finalize_gateway_authorization_result = original
+    assert apply_mod.apply_frozen_settle(row) == ApplyOutcome.SETTLED_NOW
+    assert (
+        apply_mod.apply_frozen_settle(row)
+        == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+    )
+    payout = 5_600
+    assert store.earnings_summary("owner-outbox-repair")["total_earned"] == payout
+    movements = store.list_credit_movements("user:owner-outbox-repair")
+    assert len(movements) == 1
+    assert movements[0].movement_id == user_model_payout_event_id(auth.id)
+    assert movements[0].amount_microdollars == payout
+    assert movements[0].custom_model_id == USER_MODEL_ID
+    assert movements[0].counterparty_account_id == ws
+
+
 def test_charged_settle_then_sibling_refund_resolves_and_arms_retention(
     fake_store: tuple[Any, Any, Any],
     caplog: pytest.LogCaptureFixture,
@@ -1817,3 +1948,175 @@ def test_drain_endpoint_requires_internal_token(fake_store: tuple[Any, Any, Any]
     assert wrong.status_code == 401
     assert ok.status_code == 200
     assert ok.json() == {"claimed": 0, "outcomes": {}, "recovered_micro": 0, "purged": 0, "reaped": 0}
+
+
+# --- Review-round regressions: the primary prod payout path -----------------
+
+
+def _typed_settle_body(auth: GatewayAuthorization, **overrides: Any) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "authorization_id": auth.id,
+        "actual_input_tokens": 1_000,
+        "actual_output_tokens": 2_000,
+        "request_id": "req-user-model-inline",
+        "finish_reason": "stop",
+        "status": "success",
+        "elapsed_seconds": 0.2,
+        "selected_model": USER_MODEL_ID,
+        "selected_endpoint": USER_MODEL_ENDPOINT_ID,
+    }
+    body.update(overrides)
+    return body
+
+
+def test_user_model_inline_typed_finalize_pays_owner_once_and_replay_is_a_noop(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    """The path prod actually takes: inline typed finalize WINS on Spanner.
+
+    The earlier test only covered the inline-LOSS → outbox repair path; a
+    mutant dropping `user_model_payout` from the inline finalize passed the
+    whole suite. Here the inline settle must pay exactly once, and both a
+    duplicate HTTP settle and the outbox repair replay must leave the payout
+    at one movement / one increment.
+    """
+    store, _db, _bt = fake_store
+    ws = "ws-user-model-inline-win"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_user_model_authorization(store, workspace_id=ws, key_hash=key.hash)
+    client = _client(Settings(environment="test", settle_outbox_enabled=True))
+
+    response = client.post("/v1/internal/gateway/settle", json=_typed_settle_body(auth))
+    assert response.status_code == 200, response.text
+    assert response.json()["data"].get("already_settled") is not True
+    payout = 5_600  # 70% of 8_000 µ$ (1k×2µ$ + 2k×3µ$)
+    assert store.earnings_summary("owner-outbox-repair")["total_earned"] == payout
+    movements = store.list_credit_movements("user:owner-outbox-repair")
+    assert [m.movement_id for m in movements] == [user_model_payout_event_id(auth.id)]
+    assert movements[0].created_at  # client timestamp landed (not a commit-ts write)
+    # Payer ledger: exactly the owner-priced charge booked, hold fully released.
+    payer = store._database.typed[CREDIT_BALANCE_TABLE][(ws, 0)]
+    assert payer["total_usage"] == 8_000
+    assert payer["reserved"] == 0
+
+    replay = client.post("/v1/internal/gateway/settle", json=_typed_settle_body(auth))
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["data"]["already_settled"] is True
+    # The inline win marks the outbox row done (terminal; frozen body dropped),
+    # so the drain never re-applies it — the replay surface is the HTTP one.
+    row = _outbox(store).get(auth.id, "settle")
+    assert row is not None and row.status == "done"
+    assert store.earnings_summary("owner-outbox-repair")["total_earned"] == payout
+    assert len(store.list_credit_movements("user:owner-outbox-repair")) == 1
+
+
+def test_user_model_payout_movement_pk_is_a_real_second_guard(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    """If the movement row already exists (a prior path paid this
+    authorization), the finalize must NOT bump earnings again — the PK is
+    the guard behind the claim, and it has to be load-bearing on its own."""
+    store, _db, _bt = fake_store
+    ws = "ws-user-model-second-guard"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_user_model_authorization(store, workspace_id=ws, key_hash=key.hash)
+    # Pre-pay through the other writer of the same movement id.
+    assert store.credit_user_earnings(
+        "owner-outbox-repair",
+        5_600,
+        user_model_payout_event_id(auth.id),
+        custom_model_id=USER_MODEL_ID,
+        payer_workspace_id=ws,
+    )
+    client = _client(Settings(environment="test", settle_outbox_enabled=False))
+    response = client.post("/v1/internal/gateway/settle", json=_typed_settle_body(auth))
+    assert response.status_code == 200, response.text
+    assert store.earnings_summary("owner-outbox-repair")["total_earned"] == 5_600
+    assert len(store.list_credit_movements("user:owner-outbox-repair")) == 1
+
+
+def test_user_model_settle_does_not_double_bill_cached_prompt_tokens(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    """Owner endpoints speak the OpenAI dialect: prompt_tokens already
+    includes the cached subset. Billing input + cache_read double-charged the
+    prompt and let an owner reporting cached==prompt double their revenue."""
+    store, _db, _bt = fake_store
+    ws = "ws-user-model-cache"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_user_model_authorization(store, workspace_id=ws, key_hash=key.hash)
+    client = _client(Settings(environment="test", settle_outbox_enabled=False))
+    response = client.post(
+        "/v1/internal/gateway/settle",
+        json=_typed_settle_body(
+            auth,
+            actual_input_tokens=1_000,
+            actual_output_tokens=10,
+            cache_read_input_tokens=800,
+        ),
+    )
+    assert response.status_code == 200, response.text
+    # 1_000 prompt tokens at 2 µ$ + 10 completion at 3 µ$ = 2_030, not 3_630.
+    assert response.json()["data"]["cost_microdollars"] == 2_030
+
+
+def test_user_model_settle_is_capped_at_the_authorized_hold(
+    fake_store: tuple[Any, Any, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The token counts are the payee's own meter; the caller's hold is the
+    ceiling on both the charge and the 70% payout."""
+    store, _db, _bt = fake_store
+    ws = "ws-user-model-cap"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_user_model_authorization(store, workspace_id=ws, key_hash=key.hash)
+    client = _client(Settings(environment="test", settle_outbox_enabled=False))
+    with caplog.at_level(logging.WARNING):
+        response = client.post(
+            "/v1/internal/gateway/settle",
+            json=_typed_settle_body(
+                auth, actual_input_tokens=10_000_000, actual_output_tokens=10_000_000
+            ),
+        )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["cost_microdollars"] == ESTIMATE
+    assert store.earnings_summary("owner-outbox-repair")["total_earned"] == ESTIMATE * 7 // 10
+    assert any("user_model_settle_capped_to_hold" in r.getMessage() for r in caplog.records)
+
+
+def test_user_model_settle_accepts_the_callers_raw_model_spelling(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    """The enclave may echo the caller's spelling as selected_model; a refused
+    settle here strands the hold, so it must compare normalized."""
+    store, _db, _bt = fake_store
+    ws = "ws-user-model-raw-spelling"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_user_model_authorization(store, workspace_id=ws, key_hash=key.hash)
+    client = _client(Settings(environment="test", settle_outbox_enabled=False))
+    response = client.post(
+        "/v1/internal/gateway/settle",
+        json=_typed_settle_body(auth, selected_model="TrustedRouter/User-Outbox-Repair"),
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_user_model_settle_refuses_a_different_model_id(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, _db, _bt = fake_store
+    ws = "ws-user-model-wrong-model"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_user_model_authorization(store, workspace_id=ws, key_hash=key.hash)
+    client = _client(Settings(environment="test", settle_outbox_enabled=False))
+    other = client.post(
+        "/v1/internal/gateway/settle",
+        json=_typed_settle_body(auth, selected_model="trustedrouter/user-someone-else"),
+    )
+    assert other.status_code == 400, other.text

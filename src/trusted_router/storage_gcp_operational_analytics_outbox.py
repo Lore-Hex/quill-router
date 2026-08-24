@@ -14,12 +14,14 @@ unchanged.  What stays is the Spanner-specific writer.
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
 from trusted_router.storage_gcp_codec import json_body
 from trusted_router.storage_models import Generation, SyntheticProbeSample
 from trusted_router.storage_operational_analytics import (
     ACTIVITY_EVENT_KIND,
+    CLIENT_EVENTS_EVENT_KIND,
     OPERATIONAL_ANALYTICS_OUTBOX_SHARDS,
     SYNTHETIC_EVENT_KIND,
     activity_payload,
@@ -30,6 +32,7 @@ from trusted_router.storage_operational_analytics import (
 
 __all__ = [
     "ACTIVITY_EVENT_KIND",
+    "CLIENT_EVENTS_EVENT_KIND",
     "OPERATIONAL_ANALYTICS_OUTBOX_SHARDS",
     "SYNTHETIC_EVENT_KIND",
     "SpannerOperationalAnalyticsOutbox",
@@ -96,6 +99,73 @@ class SpannerOperationalAnalyticsOutbox:
             event_id=sample.id,
             payload=synthetic_payload(sample),
         )
+
+    def enqueue_client_events(self, payload: dict[str, Any]) -> None:
+        self._enqueue(
+            event_kind=CLIENT_EVENTS_EVENT_KIND,
+            event_id=f"{payload['tenant_id']}:{payload['batch_id']}",
+            payload=payload,
+        )
+
+    def oldest_enqueued_at(self, *, timeout: float | None = None) -> dt.datetime | None:
+        """Commit timestamp of the oldest undelivered row, or ``None`` if empty.
+
+        Spanner's column is ``commit_ts``, not ``enqueued_at`` -- the method is
+        named for the contract it feeds (``analytics.oldest_enqueued_at`` in
+        /status.json) rather than for one backend's column, so the publisher
+        can hold either outbox without knowing which cloud it is on.
+
+        Per shard rather than one global ``ORDER BY commit_ts LIMIT 1``: the
+        table's primary key leads with ``shard``, so the global form is a scan
+        of the whole outbox and gets more expensive exactly as the backlog it
+        is measuring grows. Each shard read is a seek on the key prefix, and
+        the oldest of the 32 heads is the oldest row in the table.
+
+        This is the same read the Spanner drain performs
+        (``clickhouse.ingest_operational_outbox.oldest_commit_ts``); keeping
+        them identical is what stops the published number and the drain's own
+        ``backlog_alarm`` from meaning different things.
+
+        ``timeout`` bounds the one statement, which is the whole call. This
+        runs on the public /status.json path, in an async handler, where a
+        blocking wait stops the event loop rather than one thread. Running out
+        raises rather than returning a partial answer: a minimum over the
+        shards that happened to reply before the clock expired is not the
+        oldest row, it is a smaller number that would publish as better health.
+        """
+        # ONE round trip, not 32. Each arm is still a seek on the key prefix
+        # (the primary key leads with `shard`), so this keeps the cost the
+        # per-shard form was chosen for while paying the network once.
+        #
+        # Measured against production Spanner on 2026-08-17, the 32-statement
+        # loop this replaces took 9.76s -- 2.22s for the first shard, ~0.25s
+        # for each of the rest -- against a 3.0s budget. It therefore raised
+        # TimeoutError on every call, and /status.json published
+        # `{"available": false, "reason": "unreachable"}` for a cloud whose
+        # outbox was in fact EMPTY, i.e. whose drain was perfectly healthy. The
+        # same sweep as one statement: 2.93s cold, 1.01s warm.
+        #
+        # `MIN(commit_ts)` over the whole table would be one round trip too and
+        # is the wrong fix: no shard predicate means a scan, which gets slower
+        # exactly as the backlog it measures grows.
+        arms = " UNION ALL ".join(
+            "SELECT (SELECT commit_ts FROM tr_operational_analytics_outbox "  # noqa: S608
+            f"WHERE shard={shard} ORDER BY commit_ts LIMIT 1) AS commit_ts"
+            for shard in range(self._shard_count)
+        )
+        # Interpolation is safe and unavoidable here: shard numbers come from
+        # range(self._shard_count), never from a caller, and a query parameter
+        # cannot stand in for the literal each arm seeks on.
+        sql = f"SELECT MIN(commit_ts) FROM ({arms})"  # noqa: S608
+        kwargs: dict[str, Any] = {} if timeout is None else {"timeout": timeout}
+        with self._database.snapshot() as snapshot:
+            rows = list(snapshot.execute_sql(sql, **kwargs))
+        if not rows or rows[0][0] is None:
+            return None
+        oldest: dt.datetime = rows[0][0]
+        if oldest.tzinfo is None:
+            oldest = oldest.replace(tzinfo=dt.UTC)
+        return oldest
 
     def _enqueue(
         self,

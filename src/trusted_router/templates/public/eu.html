@@ -7,6 +7,26 @@
   <div><strong>Same trust model</strong><span>TLS terminates inside the attested gateway.</span></div>
 </section>
 
+<section class="panel" aria-label="EU deployment decision">
+  <div class="panel-head"><h2>EU deployment checklist</h2><span class="pill">three separate controls</span></div>
+  <div class="panel-body">
+    <ol class="plain-list">
+      <li><strong>Gateway region:</strong> set the base URL to <span class="mono">https://api-europe-west4.quillrouter.com/v1</span>.</li>
+      <li><strong>Provider geography:</strong> use <span class="mono">trustedrouter/eu</span>, then enforce your approved providers with <span class="mono">provider.only</span>.</li>
+      <li><strong>Privacy posture:</strong> set <span class="mono">provider.min_privacy</span> to <span class="mono">zdr</span> or <span class="mono">confidential</span> when policy requires it.</li>
+    </ol>
+    <p class="muted">Review current route health on the <a href="/leaderboard">live leaderboard</a> and cite stable history from the <a href="/benchmarks/reports">monthly benchmark reports</a>.</p>
+  </div>
+</section>
+
+<section class="panel" aria-label="EU LLM gateway explained">
+  <div class="panel-head"><h2>What the EU LLM gateway controls</h2><span class="pill good">Europe West</span></div>
+  <div class="panel-body">
+    <p>An EU LLM gateway controls where your application connects to TrustedRouter and where routing decisions happen. Use <span class="mono">https://api-europe-west4.quillrouter.com/v1</span> so authentication, policy checks, provider selection, and response streaming begin in Europe West inside the attested gateway.</p>
+    <p>Gateway region, provider region, and privacy posture are separate controls. The regional hostname selects the gateway. <span class="mono">trustedrouter/eu</span> prefers EU-focused routes. <span class="mono">provider.only</span> enforces your approved provider list, while <span class="mono">provider.min_privacy</span> enforces ZDR or confidential-compute requirements.</p>
+  </div>
+</section>
+
 <section class="marketing-split" aria-label="EU quickstart">
   <div class="marketing-copy">
     <span class="eyebrow">Europe-first routing</span>
@@ -68,6 +88,21 @@ response = client.chat.completions.create(
 }</code></pre>
       <p class="muted">The alias narrows to the EU-focused pool first. A caller-supplied <span class="mono">provider.only</span> narrows it further.</p>
     </div>
+  </div>
+</section>
+
+<section class="panel" aria-label="EU AI infrastructure resources">
+  <div class="panel-head"><h2>EU AI infrastructure resources</h2><a href="/resources">All resources</a></div>
+  <div class="panel-body">
+    <ul class="link-list">
+      <li><a href="/eu-ai-models">EU AI models and providers</a><span>Which labs and which operators are registered in the EU</span></li>
+      <li><a href="/llm-data-residency">LLM data residency</a><span>Separate gateway, provider, and storage regions</span></li>
+      <li><a href="/gdpr-compliant-llm-api">GDPR-compliant LLM API</a><span>DPA, subprocessors, and routing evidence</span></li>
+      <li><a href="/eu-ai-act-llm-compliance">EU AI Act</a><span>Evidence for deployers and procurement teams</span></li>
+      <li><a href="/private-llm-api">Private LLM API</a><span>Attestation, ZDR, and confidential provider routes</span></li>
+      <li><a href="/providers">Provider directory</a><span>Privacy posture and policy sources by provider</span></li>
+      <li><a href="/benchmarks/reports">Monthly benchmark reports</a><span>Stable first-party provider and route measurements</span></li>
+    </ul>
   </div>
 </section>
 {% endblock %}

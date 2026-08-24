@@ -9,7 +9,10 @@ module.exports = defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "TR_ENVIRONMENT=test TR_STORAGE_BACKEND=memory TR_SENTRY_DSN= TR_STRIPE_SECRET_KEY= TR_STRIPE_WEBHOOK_SECRET= TR_GOOGLE_CLIENT_ID=browser-test-client TR_GOOGLE_CLIENT_SECRET=not-a-real-secret TR_GITHUB_CLIENT_ID= TR_GITHUB_CLIENT_SECRET= uv run uvicorn trusted_router.main:app --host 127.0.0.1 --port 18081",
+    // Every browser worker and subresource shares 127.0.0.1. Leaving source
+    // admission enabled makes the suite race its 240-request/minute production
+    // bucket; dedicated Python tests cover that middleware deterministically.
+    command: "TR_ENVIRONMENT=test TR_STORAGE_BACKEND=memory TR_RATE_LIMIT_ENABLED=false TR_SENTRY_DSN= TR_STRIPE_SECRET_KEY= TR_STRIPE_WEBHOOK_SECRET= TR_GOOGLE_CLIENT_ID=browser-test-client TR_GOOGLE_CLIENT_SECRET=not-a-real-secret TR_GITHUB_CLIENT_ID= TR_GITHUB_CLIENT_SECRET= uv run uvicorn trusted_router.main:app --host 127.0.0.1 --port 18081",
     url: "http://127.0.0.1:18081/health",
     reuseExistingServer: true,
     timeout: 30_000,

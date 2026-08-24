@@ -839,7 +839,7 @@
         const costEl = document.querySelector("[data-chat-header-cost]");
         const chat = getActiveChat();
         if (titleEl) {
-            titleEl.textContent = (chat && chat.title) || "";
+            titleEl.textContent = (chat && chat.title) || "TrustedRouter Chat";
         }
         updateTabTitle();
         if (costEl) {
