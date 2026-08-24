@@ -1268,3 +1268,25 @@ def test_a_status_url_that_is_not_a_url_stops_the_run(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "not an https:// URL" in result.stderr
     assert harness.fetched_urls == []
+
+
+def test_every_gcp_surface_that_serves_status_builds_the_outbox() -> None:
+    """The surface that answers /status.json must be able to SEE the outbox.
+
+    When the T1 public website became its own service (#742) it took over
+    trustedrouter.com — including /status.json — with an env list that never
+    set TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED. Its store was built with no
+    outbox object, the page published `analytics.reason=not_configured`, and
+    stage (c) of verify-cloud-complete failed on every subsequent deploy
+    while the actual pipeline (enqueued by the API service) drained green.
+
+    The rollout script for any surface that serves the public status page
+    must therefore carry the flag. The API service's rollout.sh already
+    does; this pins the public one.
+    """
+    public = (ROOT / "scripts/deploy/public_surface.sh").read_text(encoding="utf-8")
+    assert '"TR_SERVICE_SURFACE=public"' in public
+    assert '"TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true"' in public
+
+    api = (ROOT / "scripts/deploy/rollout.sh").read_text(encoding="utf-8")
+    assert "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED" in api

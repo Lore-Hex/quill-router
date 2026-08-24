@@ -1636,14 +1636,88 @@ PROVIDERS: dict[str, Provider] = {
     "io-net": Provider(
         slug="io-net",
         name="IO Intelligence",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "IO Intelligence publishes exact per-token prices in its authenticated "
+            "catalog. TrustedRouter admits only priced routes that pass a live chat "
+            "canary. No contractual ZDR, confidential-compute, or E2EE claim is "
+            "tracked for this account, so these routes are Standard."
+        ),
+        provider_policy_url="https://docs.io.net/docs/io-intelligence",
+    ),
+    "scaleway": Provider(
+        slug="scaleway",
+        name="Scaleway",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Scaleway routes are discovered from its authenticated Model as a "
+            "Service catalog and priced from Scaleway's first-party EUR price "
+            "feed with a bounded FX reserve. No contractual ZDR, confidential-"
+            "compute, or E2EE claim is tracked for this account, so these routes "
+            "are Standard."
+        ),
+        provider_policy_url="https://www.scaleway.com/en/pricing/model-as-a-service/",
+        provider_headquarters_country=PROVIDER_JURISDICTION_FR,
+    ),
+    "featherless": Provider(
+        slug="featherless",
+        name="Featherless AI",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Featherless routes are limited to chat models explicitly available "
+            "on TrustedRouter's current plan with exact prices in Featherless's "
+            "authenticated catalog. No contractual ZDR, confidential-compute, or "
+            "E2EE claim is tracked for this account, so these routes are Standard."
+        ),
+        provider_policy_url="https://docs.featherless.ai/",
+        # Featherless's terms identify the API operator as a Delaware LLC.
+        # https://featherless.ai/legal/terms-of-service
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "jina": Provider(
+        slug="jina",
+        name="Jina AI",
+        supports_chat=False,
+        supports_embeddings=True,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Jina routes are embedding-only and use exact prices from Jina's "
+            "authenticated model catalog. No contractual ZDR, confidential-compute, "
+            "or E2EE claim is tracked for this account, so these routes are Standard."
+        ),
+        provider_policy_url="https://jina.ai/embeddings/",
+        provider_headquarters_country=PROVIDER_JURISDICTION_DE,
+    ),
+    "ovhcloud": Provider(
+        slug="ovhcloud",
+        name="OVHcloud",
         supports_prepaid=False,
         supports_byok=False,
         provider_policy=(
-            "IO Intelligence exposes a model catalog, but exact account-billable "
-            "token prices were not available from that catalog. Routes remain dark "
-            "until an authoritative price feed is available."
+            "Not routable: the configured OVH credential is not an AI Endpoints "
+            "access token and the live model catalog rejects it. The provider stays "
+            "listed while a valid inference token is obtained."
         ),
-        provider_policy_url="https://docs.io.net/docs/io-intelligence",
+        provider_policy_url="https://help.ovhcloud.com/csm/en-public-cloud-ai-endpoints-getting-started?id=kb_article_view&sysparm_article=KB0065407",
+        provider_headquarters_country=PROVIDER_JURISDICTION_FR,
+    ),
+    "vultr": Provider(
+        slug="vultr",
+        name="Vultr",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Not routable: the configured credential is rejected by both Vultr's "
+            "account API and Serverless Inference API. Vultr issues a distinct "
+            "inference key per subscription; the provider stays listed until that "
+            "key is available."
+        ),
+        provider_policy_url="https://docs.vultr.com/products/serverless-inference/",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     "liquid": Provider(
         slug="liquid",
@@ -1783,6 +1857,10 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "sambanova",
         "arcee",
         "inception",
+        "io-net",
+        "scaleway",
+        "featherless",
+        "jina",
         "nebius",
         "minimax",
         # Alibaba Cloud Model Studio — Frankfurt workspace. The production
@@ -3065,6 +3143,15 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
         ),
     ),
     # --- Germany ---
+    "jina-ai": ModelOrigin(
+        country=PROVIDER_JURISDICTION_DE,
+        lab_name="Jina AI",
+        source_url="https://jina.ai/en-US/contact-sales/",
+        note=(
+            "Jina's first-party company page identifies Jina AI GmbH as the "
+            "company headquarters in Germany and the issuer of API invoices."
+        ),
+    ),
     "black-forest-labs": ModelOrigin(
         country=PROVIDER_JURISDICTION_DE,
         lab_name="Black Forest Labs",

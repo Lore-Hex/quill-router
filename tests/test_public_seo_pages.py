@@ -345,10 +345,16 @@ def test_openrouter_experiment_honors_global_privacy_control(
 def test_unknown_openrouter_landing_variant_is_a_real_404(
     client: TestClient,
 ) -> None:
-    response = client.get("/openrouter-alternative/lp/unknown")
+    response = client.get("/openrouter-alternative/lp/unknown", headers={"accept": "text/html"})
 
     assert response.status_code == 404
     assert "Page Not Found" in response.text
+
+    agent = client.get("/openrouter-alternative/lp/unknown", headers={"accept": "*/*"})
+
+    assert agent.status_code == 404
+    assert agent.headers["content-type"].startswith("text/markdown")
+    assert "/llms.txt" in agent.text
 
 
 def test_public_footer_links_to_canonical_trust_page(client: TestClient) -> None:
@@ -503,7 +509,7 @@ def test_search_console_opportunity_pages_answer_observed_queries(
 ) -> None:
     eu = client.get("/eu")
     assert eu.status_code == 200
-    assert "<title>EU LLM Gateway: Private AI Routing | TrustedRouter</title>" in eu.text
+    assert "<title>EU LLM Gateway Base URL &amp; Data Residency | TrustedRouter</title>" in eu.text
     assert "What the EU LLM gateway controls" in eu.text
     assert "https://api-europe-west4.quillrouter.com/v1" in eu.text
     assert "Does the EU gateway guarantee EU data residency?" in eu.text
@@ -511,7 +517,10 @@ def test_search_console_opportunity_pages_answer_observed_queries(
 
     agents = client.get("/docs/agent-setup")
     assert agents.status_code == 200
-    assert "<title>AI Agent Router Base URL Setup | TrustedRouter</title>" in agents.text
+    assert (
+        "<title>Agent Router Base URL: Claude Code &amp; Codex | TrustedRouter</title>"
+        in agents.text
+    )
     assert "Agent router base URLs" in agents.text
     assert "https://api.trustedrouter.com/v1" in agents.text
     assert "What base URL should an OpenAI-compatible agent use?" in agents.text
@@ -531,6 +540,11 @@ def test_search_console_opportunity_pages_answer_observed_queries(
 def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClient) -> None:
     models = client.get("/models")
     assert models.status_code == 200
+    assert (
+        "<title>AI Models: Prices, Providers &amp; API Routes | TrustedRouter</title>"
+        in models.text
+    )
+    assert 'href="/china-ai-models"' in models.text
     models_payload = _json_ld(models.text)
     models_types = {item["@type"] for item in models_payload["@graph"]}
     assert {"BreadcrumbList", "ItemList"}.issubset(models_types)
@@ -1358,6 +1372,8 @@ def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> 
     assert 'href="/resources"' in footer.text
     assert 'href="/customers/robot-robot-human"' in footer.text
     assert 'href="/careers"' in footer.text
+    footer_markup = footer.text.split('<footer class="site-footer"', maxsplit=1)[1]
+    assert 'href="/china-ai-models"' not in footer_markup
 
 
 def test_high_authority_pages_link_the_primary_intent_hubs(client: TestClient) -> None:

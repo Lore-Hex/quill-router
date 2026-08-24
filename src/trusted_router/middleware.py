@@ -46,6 +46,7 @@ from trusted_router.domains import (
     request_hostname,
 )
 from trusted_router.errors import error_response
+from trusted_router.markdown_negotiation import MarkdownNegotiationMiddleware
 from trusted_router.request_body_limit import (
     RequestBodyLimitMiddleware,
     UnreadRequestBodyCloseMiddleware,
@@ -104,6 +105,18 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
     Starlette prepends each newly registered middleware, so the final
     registration is the outermost wrapper.
     """
+
+    # Registered BEFORE GZipMiddleware on purpose. Starlette prepends, so the
+    # later registration is the outer wrapper: gzip ends up outside this, sees
+    # the markdown body, and compresses that. Register it after gzip and this
+    # would be handed already-compressed bytes.
+    #
+    # It is a raw ASGI class rather than an @app.middleware("http") function.
+    # BaseHTTPMiddleware, which that decorator uses, converts every response
+    # into a streaming one -- including the ones this passes through untouched
+    # -- which pushed GZipMiddleware onto its chunked branch and dropped
+    # Content-Length from every static asset. See the class docstring.
+    app.add_middleware(MarkdownNegotiationMiddleware)
 
     app.add_middleware(GZipMiddleware, minimum_size=1_000, compresslevel=6)
     app.add_middleware(
@@ -601,9 +614,7 @@ def _trusted_internal_credential(
             return "federation_peer", supplied
         return None
     if route_path == "/internal/federation/apply-usage":
-        supplied = (
-            request.headers.get("x-trustedrouter-federation-settlement-token") or ""
-        )
+        supplied = request.headers.get("x-trustedrouter-federation-settlement-token") or ""
         matched = False
         for expected in federation_settlement_tokens:
             matched |= constant_time_equal(supplied, expected)

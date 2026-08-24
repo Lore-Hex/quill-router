@@ -44,7 +44,10 @@ from scripts.pricing.providers import (
     arcee,
     bfl,
     decart,
+    featherless,
     inception,
+    io_net,
+    jina,
     mancer,
     nextbit,
     nvidia_nim,
@@ -53,6 +56,7 @@ from scripts.pricing.providers import (
     relace,
     sail_research,
     sambanova,
+    scaleway,
     stepfun,
     upstage,
 )
@@ -451,6 +455,12 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
         ("PEARL_RESEARCH_API_KEY",),
         _canonical_provider_model_id,
     ),
+    (
+        "io-net",
+        io_net.URL,
+        io_net.CATALOG.api_key_envs,
+        io_net.CATALOG.model_id,
+    ),
 )
 
 _DIRECT_OPENAI_DISCOVERY_MODULES = (
@@ -466,8 +476,20 @@ _DIRECT_OPENAI_DISCOVERY_MODULES = (
     inception,
 )
 
+# These providers use the same direct OpenAI catalog adapter, but their
+# credentials are available to the hourly refresh workflow. Keep them out of
+# the runtime-only set so a missing workflow secret is a deployment error, not
+# an intentionally skipped discovery check.
+_CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
+    scaleway,
+    featherless,
+)
+
 _STALE_MANIFEST_PROVIDER_MODULES = (
     *_DIRECT_OPENAI_DISCOVERY_MODULES,
+    *_CI_DIRECT_OPENAI_DISCOVERY_MODULES,
+    io_net,
+    jina,
     bfl,
     decart,
     nvidia_nim,
@@ -497,7 +519,10 @@ _DISCOVERABLE_MANIFEST_PROVIDERS = _DISCOVERABLE_MANIFEST_PROVIDERS_BASE + tuple
         module.CATALOG.api_key_envs,
         module.CATALOG.model_id,
     )
-    for module in _DIRECT_OPENAI_DISCOVERY_MODULES
+    for module in (
+        *_DIRECT_OPENAI_DISCOVERY_MODULES,
+        *_CI_DIRECT_OPENAI_DISCOVERY_MODULES,
+    )
 )
 
 _GLM_DISCOVERABLE_PROVIDER_APIS: tuple[tuple[str, str, tuple[str, ...]], ...] = (

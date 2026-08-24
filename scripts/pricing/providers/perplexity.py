@@ -9,8 +9,8 @@ from typing import Any
 from scripts.pricing.providers._direct_openai import DirectOpenAIProvider, DirectOpenAIProviderSpec
 
 SLUG = "perplexity"
-BASE_URL = "https://api.perplexity.ai/v1"
-URL = f"{BASE_URL}/models"
+BASE_URL = "https://api.perplexity.ai"
+URL = f"{BASE_URL}/v1/models"
 MANIFEST_PATH = Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/perplexity.json"
 
 
@@ -64,6 +64,7 @@ CATALOG = DirectOpenAIProvider(
     DirectOpenAIProviderSpec(
         slug=SLUG,
         base_url=BASE_URL,
+        catalog_url=URL,
         api_key_env="PERPLEXITY_API_KEY",
         explicit_model_map={},
         namespace_unqualified="perplexity",

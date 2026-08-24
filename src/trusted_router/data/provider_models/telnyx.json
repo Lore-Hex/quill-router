@@ -2,7 +2,7 @@
   "_about": "Provider-native Telnyx inference routes, context windows, capabilities, and reconciled account-billable prices refreshed hourly from Telnyx-owned sources.",
   "provider": "telnyx",
   "source": "https://api.telnyx.com/v2/ai/openai/models",
-  "generated_at": "2026-08-23T17:22:26Z",
+  "generated_at": "2026-08-23T20:25:34Z",
   "price_scale": "microdollars_per_million",
   "model_count": 14,
   "models": [

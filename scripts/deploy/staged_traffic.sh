@@ -89,15 +89,21 @@ shift_traffic() {
   local old_pct=$((100 - new_pct))
   log "shifting traffic: ${new_pct}% ${NEW_REV} / ${old_pct}% ${OLD_REV}"
   if [ "$old_pct" -eq 0 ]; then
-    gcloud run services update-traffic "$SERVICE" \
-      --region="$REGION" --project="$PROJECT_ID" \
-      --to-revisions="${NEW_REV}=100" \
-      --quiet
+    if ! gcloud run services update-traffic "$SERVICE" \
+        --region="$REGION" --project="$PROJECT_ID" \
+        --to-revisions="${NEW_REV}=100" \
+        --quiet; then
+      rollback_to_old "traffic update to ${new_pct}% failed"
+      return 1
+    fi
   else
-    gcloud run services update-traffic "$SERVICE" \
-      --region="$REGION" --project="$PROJECT_ID" \
-      --to-revisions="${NEW_REV}=${new_pct},${OLD_REV}=${old_pct}" \
-      --quiet
+    if ! gcloud run services update-traffic "$SERVICE" \
+        --region="$REGION" --project="$PROJECT_ID" \
+        --to-revisions="${NEW_REV}=${new_pct},${OLD_REV}=${old_pct}" \
+        --quiet; then
+      rollback_to_old "traffic update to ${new_pct}% failed"
+      return 1
+    fi
   fi
 }
 

@@ -28,6 +28,10 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS | frozen
     {
         "bfl",
         "decart",
+        "io-net",
+        "scaleway",
+        "featherless",
+        "jina",
         "nvidia-nim",
         "recraft",
         "relace",
@@ -86,6 +90,10 @@ def provider_manifest_valid_until(
                 valid_price = int(
                     row.get("fixed_output_price_per_second_microdollars") or 0
                 ) > 0
+            elif model_type == "embedding":
+                prompt = int(row.get("input_token_price_per_m") or 0)
+                completion = int(row.get("output_token_price_per_m") or 0)
+                valid_price = prompt > 0 and completion == 0
             else:
                 valid_price = False
         except (TypeError, ValueError):

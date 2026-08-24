@@ -29,6 +29,7 @@ from scripts.pricing.openai_catalog import (
 IncludeRow = Callable[[dict[str, Any]], bool]
 NormalizeRows = Callable[[list[dict[str, Any]]], list[dict[str, Any]]]
 PriceLoader = Callable[[], dict[str, ModelPrice]]
+CatalogLoader = Callable[[str], list[dict[str, Any]]]
 
 
 def positive_chat_prices(prices: dict[str, ModelPrice]) -> dict[str, ModelPrice]:
@@ -56,6 +57,7 @@ class DirectOpenAIProviderSpec:
     pricing_source_url: str | None = None
     static_prices: dict[str, ModelPrice] = field(default_factory=dict)
     price_loader: PriceLoader | None = None
+    catalog_loader: CatalogLoader | None = None
     include: IncludeRow | None = None
     normalize_rows: NormalizeRows | None = None
     canary_max_tokens: int = 16
@@ -135,11 +137,14 @@ class DirectOpenAIProvider:
                 f"{self.spec.slug}: one of {self.api_key_envs!r} is required for discovery"
             )
         catalog_url = self.spec.catalog_url or f"{self.spec.base_url.rstrip('/')}/models"
-        payload = fetch_json(
-            catalog_url,
-            extra_headers={"Authorization": f"Bearer {api_key}"},
-        )
-        rows = _catalog_rows(payload, slug=self.spec.slug)
+        if self.spec.catalog_loader is None:
+            payload = fetch_json(
+                catalog_url,
+                extra_headers={"Authorization": f"Bearer {api_key}"},
+            )
+            rows = _catalog_rows(payload, slug=self.spec.slug)
+        else:
+            rows = self.spec.catalog_loader(api_key)
         if self.spec.normalize_rows is not None:
             rows = self.spec.normalize_rows(rows)
 

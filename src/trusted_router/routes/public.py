@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, Query, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import (
     FileResponse,
@@ -81,7 +81,6 @@ from trusted_router.dashboard import (
     public_model_region_html,
     public_model_section_html,
     public_models_html,
-    public_not_found_html,
     public_openrouter_experiment_html,
     public_page_html,
     public_privacy_html,
@@ -128,6 +127,7 @@ from trusted_router.provider_contract import (
 )
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
 from trusted_router.request_limits import normalized_client_identity
+from trusted_router.routes.mcp import MCP_PROTOCOL_VERSION
 from trusted_router.serialization import user_model_public_shape
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.ops_chat import OpsChatSupportMessage, fanout_support_message
@@ -317,10 +317,7 @@ def _inquiry_client_identity(request: Request, settings: Settings) -> str:
     contract and never trust forwarding headers or an arbitrary socket peer.
     """
 
-    if (
-        settings.service_surface == "combined"
-        and settings.allow_deployed_combined_surface
-    ):
+    if settings.service_surface == "combined" and settings.allow_deployed_combined_surface:
         return request.client.host if request.client else "unknown"
     return normalized_client_identity(request, settings)
 
@@ -1023,10 +1020,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def seo_openrouter_alternative(
         request: Request,
     ) -> Response:
-        if (
-            request.query_params.get("utm_campaign")
-            in OPENROUTER_LANDING_EXPERIMENT_CAMPAIGNS
-        ):
+        if request.query_params.get("utm_campaign") in OPENROUTER_LANDING_EXPERIMENT_CAMPAIGNS:
             return openrouter_landing_experiment_redirect(request)
         return HTMLResponse(public_page_html(settings, "openrouter-alternative"))
 
@@ -1057,13 +1051,11 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         variant_slug: str,
     ) -> Response:
         if variant_slug not in OPENROUTER_PAID_LANDING_VARIANTS:
-            return HTMLResponse(
-                public_not_found_html(
-                    settings,
-                    f"/openrouter-alternative/lp/{variant_slug}",
-                ),
-                status_code=404,
-            )
+            # Raise rather than return HTML: the central 404 handler picks the
+            # representation from Accept, so an agent gets the markdown body
+            # with the site indexes and a browser gets the same styled page as
+            # before. Returning HTML here would hand every client HTML.
+            raise HTTPException(status_code=404)
         return HTMLResponse(public_openrouter_experiment_html(settings, variant_slug))
 
     @public_html_route("/private-llm-api/quickstart")
@@ -1262,10 +1254,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             )
         html = public_blog_post_html(settings, slug)
         if html is None:
-            return HTMLResponse(
-                public_not_found_html(settings, f"/blog/{slug}"),
-                status_code=404,
-            )
+            raise HTTPException(status_code=404)
         return html
 
     @public_html_route("/security")
@@ -1385,7 +1374,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def benchmark_report(period: str) -> HTMLResponse:
         body = public_benchmark_report_html(settings, period)
         if body is None:
-            return HTMLResponse(public_not_found_html(settings, "/benchmarks/reports"), 404)
+            raise HTTPException(status_code=404)
         return HTMLResponse(body)
 
     @public_html_route("/rankings")
@@ -1451,6 +1440,51 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             headers={"cache-control": "public, max-age=300, s-maxage=3600"},
         )
 
+    @app.get("/.well-known/mcp.json", include_in_schema=False)
+    async def mcp_discovery() -> JSONResponse:
+        """Where the MCP server is, for a client that has only the domain.
+
+        Lives with the public documents rather than beside the MCP endpoint
+        itself: /mcp is authenticated and mounted on the control surface, while
+        discovery has to be reachable by anyone holding only the hostname. The
+        surface-routing contract caught the first version of this, which was
+        registered next to the server and so was absent from the public app the
+        URL map points at.
+
+        Everything needed to connect was published in prose on /docs/mcp: the
+        URL, the transport, that it wants a Bearer key. An agent handed
+        "trustedrouter.com" and asked to use its MCP server had to read a
+        marketing page to find them, which is the same discoverability gap that
+        made openapi.json unfindable.
+
+        This mirrors the values the server itself reports at `initialize`
+        rather than restating them, so the document cannot describe a server
+        different from the one that answers.
+        """
+        domain = settings.trusted_domain
+        return JSONResponse(
+            {
+                "name": "trustedrouter",
+                "description": (
+                    "Model catalog, provider metadata, routing advice and inference "
+                    "across hundreds of models through one OpenAI-compatible gateway."
+                ),
+                "version": settings.release,
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "transport": "http",
+                "url": f"https://{domain}/mcp",
+                "authentication": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "description": "A TrustedRouter API key: Authorization: Bearer sk-tr-...",
+                    "tokenUrl": f"https://{domain}/console/keys",
+                },
+                "capabilities": {"tools": {}},
+                "documentation": f"https://{domain}/docs/mcp",
+            },
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
     @app.api_route("/llms.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
     async def llms() -> PlainTextResponse:
         return PlainTextResponse(
@@ -1475,6 +1509,32 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             docs_llms_full_txt(settings),
             headers=public_document_headers("/docs/llms-full.txt"),
         )
+
+    # Root-level aliases for the paths an agent tries by convention before it
+    # tries anything else. /llms-full.txt and /.well-known/llms.txt are where
+    # the llms.txt convention says to look; both used to 404 while the real
+    # documents sat under /docs, which is discoverable only after you have
+    # already found the index you were looking for.
+    @app.api_route("/llms-full.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
+    async def llms_full() -> PlainTextResponse:
+        return PlainTextResponse(
+            docs_llms_full_txt(settings),
+            headers=public_document_headers("/llms-full.txt"),
+        )
+
+    @app.api_route(
+        "/.well-known/llms.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse
+    )
+    async def well_known_llms() -> PlainTextResponse:
+        return PlainTextResponse(
+            llms_txt(settings),
+            headers=public_document_headers("/llms.txt"),
+        )
+
+    @app.api_route("/api", methods=["GET", "HEAD"], include_in_schema=False)
+    async def api_alias() -> RedirectResponse:
+        """/api is the first URL an agent guesses for API docs. It 404'd."""
+        return RedirectResponse(url="/docs", status_code=308)
 
     @public_html_route("/status")
     async def status_page(request: Request, background_tasks: BackgroundTasks) -> Response:
@@ -1680,10 +1740,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def competitor_compare(competitor_slug: str) -> HTMLResponse:
         body = public_competitor_compare_html(settings, competitor_slug.strip())
         if body is None:
-            return HTMLResponse(
-                public_not_found_html(settings, f"/compare/{competitor_slug}"),
-                status_code=404,
-            )
+            raise HTTPException(status_code=404)
         return HTMLResponse(body)
 
     @public_html_route("/chat")
@@ -1741,18 +1798,12 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         body = public_model_detail_html(settings, cleaned)
         if body is None:
             user_model = STORE.get_user_model(normalize_custom_model_id(cleaned))
-            if (
-                user_model is not None
-                and user_model.enabled
-                and user_model.status == "active"
-            ):
+            if user_model is not None and user_model.enabled and user_model.status == "active":
                 shape = user_model_public_shape(user_model)
                 body = render_template(
                     "public/user_model_detail.html",
                     api_base_url=settings.api_base_url,
-                    site_url=(
-                        f"https://{settings.trusted_domain}/models/{user_model.id}"
-                    ),
+                    site_url=(f"https://{settings.trusted_domain}/models/{user_model.id}"),
                     title=f"{user_model.name} | User-provided model",
                     heading=user_model.name,
                     description=shape["privacy_notice"],
@@ -2313,9 +2364,7 @@ def _apply_public_client_observed_policy(
 ) -> dict[str, Any]:
     result = dict(payload)
     if not settings.public_client_observed_enabled:
-        result["client_observed"] = _client_observed_liveness(
-            result.get("client_observed")
-        )
+        result["client_observed"] = _client_observed_liveness(result.get("client_observed"))
     return result
 
 
