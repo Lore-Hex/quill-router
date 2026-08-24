@@ -95,8 +95,8 @@ def test_leaderboard_page_renders_measurements() -> None:
     assert "Ranked by p50 time-to-first-token" in body
     assert "Capacity accepted" in body
     assert "Provider availability" in body
-    assert "p50 TTFB" not in body
-    assert "p95 TTFB" not in body
+    assert "TTFB" not in body
+    assert "time-to-first-byte" not in body.lower()
     assert "cerebras" in body  # seeded provider row
     assert "meta/llama-3.3-70b" in body  # seeded model row
 

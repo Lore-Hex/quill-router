@@ -1789,7 +1789,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         og_card="llm-provider-latency-benchmarks.png",
         title="LLM Provider Latency Benchmarks",
         description=(
-            "Measured time-to-first-token, time-to-first-byte, throughput, and "
+            "Measured time-to-first-token, throughput, and "
             "success rate for LLM providers routed through TrustedRouter."
         ),
         faq_items=(
@@ -3395,8 +3395,8 @@ def public_leaderboard_html(settings: Settings, snapshot: dict[str, object]) -> 
             title="LLM Provider & Model Speed Leaderboard | TrustedRouter",
             heading="Provider & model performance",
             description=(
-                "Measured time-to-first-token, time-to-first-byte, effective throughput, and "
-                "uptime for every LLM provider and model TrustedRouter routes to — "
+                "Measured time-to-first-token, effective throughput, and uptime for every "
+                "LLM provider and model TrustedRouter routes to — "
                 "continuously sampled, not vendor-claimed."
             ),
             page_kind="leaderboard",
@@ -3407,7 +3407,7 @@ def public_leaderboard_html(settings: Settings, snapshot: dict[str, object]) -> 
                 _dataset_node(
                     name="TrustedRouter LLM provider and model speed leaderboard",
                     description=(
-                        "Metadata-only measurements for provider TTFT, TTFB, effective throughput, "
+                        "Metadata-only measurements for provider TTFT, effective throughput, "
                         "success rate, and excluded probe configuration rows."
                     ),
                     url=f"https://{settings.trusted_domain}/leaderboard",
@@ -3681,7 +3681,7 @@ def public_provider_performance_html(settings: Settings, provider_slug: str) -> 
             title=f"{provider.name} Speed, Uptime and Throughput | TrustedRouter",
             heading=f"{provider.name} performance",
             description=(
-                f"Review measured TTFT, TTFB, effective throughput, uptime, and sampled model routes "
+                f"Review measured TTFT, effective throughput, uptime, and sampled model routes "
                 f"for {provider.name} on TrustedRouter using metadata-only production probes."
             ),
             og_image=_absolute_url(settings, provider_og_image_url(provider.slug)),
@@ -4896,7 +4896,7 @@ def _model_section_description(model: Model, section: str) -> str:
         )
     if section == "performance":
         return (
-            f"Compare measured TTFT, TTFB, throughput, uptime, and route health for {name} across "
+            f"Compare measured TTFT, throughput, uptime, and route health for {name} across "
             "TrustedRouter providers using metadata-only production probes."
         )
     if section == "pricing":
@@ -4959,7 +4959,7 @@ def _model_section_json_ld(
             _dataset_node(
                 name=f"{model.name} TrustedRouter performance measurements",
                 description=(
-                    f"Measured TTFT, TTFB, throughput, and uptime for {model.name} "
+                    f"Measured TTFT, throughput, and uptime for {model.name} "
                     f"across TrustedRouter provider routes. Current sample count: {sample_count}."
                 ),
                 url=section_url,
