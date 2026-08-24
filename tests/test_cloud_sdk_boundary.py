@@ -57,6 +57,9 @@ ALLOWED = {
     # PROVIDER. Routing to Vertex requires Google credentials no matter which
     # cloud we run on, exactly as routing to OpenAI requires an OpenAI key.
     "providers.py",
+    # Google Ads reporting is a vendor-product adapter. google.auth mints the
+    # scoped OAuth token; aggregate reporting itself uses the portable REST API.
+    "google_ads_reporting.py",
     # boto3 talks to Amazon SES to send transactional mail. SES is reachable
     # from any cloud; this is a vendor choice, not a deployment coupling.
     "services/email.py",

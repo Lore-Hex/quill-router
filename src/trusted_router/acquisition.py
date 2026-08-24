@@ -43,9 +43,7 @@ _ANONYMOUS_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 _CLICK_ID_RE = re.compile(r"^[A-Za-z0-9._~-]{1,256}$")
 _RAW_CLICK_ID_FIELDS = ("gclid", "gbraid", "wbraid", "twclid")
 _GOOGLE_CLICK_ID_FIELDS = ("gclid", "gbraid", "wbraid")
-_CLICK_FINGERPRINT_FIELDS = tuple(
-    f"{name}_fingerprint" for name in _RAW_CLICK_ID_FIELDS
-)
+_CLICK_FINGERPRINT_FIELDS = tuple(f"{name}_fingerprint" for name in _RAW_CLICK_ID_FIELDS)
 _AUTOMATED_USER_AGENT_TOKENS = (
     "bot",
     "crawler",
@@ -280,7 +278,11 @@ def record_signup_attribution(
         except Exception as exc:  # noqa: BLE001 - attribution never blocks signup.
             log.warning(
                 "acquisition.google_click_encrypt_failed",
-                extra={"error": type(exc).__name__},
+                extra={
+                    "event": "acquisition.google_click_encrypt_failed",
+                    "anonymous_fingerprint": _fingerprint(context.anonymous_id),
+                    "error": type(exc).__name__,
+                },
             )
     record = AcquisitionAttribution(
         workspace_id=workspace_id,
@@ -290,9 +292,7 @@ def record_signup_attribution(
         signup_provider=signup_provider,
         starter_credit_microdollars=max(0, starter_credit_microdollars),
         signup_at=occurred_at,
-        google_click_id_kind=(
-            context.google_click_id_kind if encrypted_google_click_id else None
-        ),
+        google_click_id_kind=(context.google_click_id_kind if encrypted_google_click_id else None),
         encrypted_google_click_id=encrypted_google_click_id,
         google_click_expires_at=(
             _google_click_expires_at(context) if encrypted_google_click_id else None
@@ -563,6 +563,9 @@ def _log_conversion(
         "first_utm_medium": record.first_touch.get("utm_medium"),
         "first_utm_campaign": record.first_touch.get("utm_campaign"),
         "first_landing_path": record.first_touch.get("landing_path"),
+        "google_ads_click_persisted": bool(
+            record.google_click_id_kind and record.encrypted_google_click_id
+        ),
     }
     if extra:
         fields.update(extra)
@@ -695,8 +698,7 @@ def acquisition_request_is_automated(request: Request) -> bool:
     if any(token in user_agent for token in _AUTOMATED_USER_AGENT_TOKENS):
         return True
     purpose = " ".join(
-        request.headers.get(name, "").lower()
-        for name in ("purpose", "sec-purpose", "x-purpose")
+        request.headers.get(name, "").lower() for name in ("purpose", "sec-purpose", "x-purpose")
     )
     return any(token in purpose for token in _AUTOMATED_PURPOSE_TOKENS)
 
@@ -778,11 +780,7 @@ def _click_id_fingerprint(name: str, value: str, settings: Settings) -> str:
 
 
 def _click_id_log_fields(touch: dict[str, str]) -> dict[str, str]:
-    return {
-        name: value
-        for name in _CLICK_FINGERPRINT_FIELDS
-        if (value := touch.get(name))
-    }
+    return {name: value for name in _CLICK_FINGERPRINT_FIELDS if (value := touch.get(name))}
 
 
 def _cookie_expired(created_at: str) -> bool:
@@ -805,9 +803,11 @@ def _google_click_expires_at(context: AttributionContext) -> str:
     if captured.tzinfo is None:
         captured = captured.replace(tzinfo=dt.UTC)
     return (
-        captured.astimezone(dt.UTC)
-        + dt.timedelta(seconds=ATTRIBUTION_COOKIE_MAX_AGE)
-    ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        (captured.astimezone(dt.UTC) + dt.timedelta(seconds=ATTRIBUTION_COOKIE_MAX_AGE))
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _age_seconds(earlier: str, later: str) -> float:

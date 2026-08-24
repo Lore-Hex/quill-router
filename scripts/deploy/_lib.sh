@@ -109,6 +109,10 @@ gc() { gcloud --project "$PROJECT_ID" "$@"; }
 
 PROJECT_NUMBER="$(gc projects describe "$PROJECT_ID" --format='value(projectNumber)')"
 RUN_SERVICE_ACCOUNT="${RUN_SERVICE_ACCOUNT:-${PROJECT_NUMBER}-compute@developer.gserviceaccount.com}"
+# The regional control-plane services run under a dedicated identity. Keep it
+# separate from RUN_SERVICE_ACCOUNT, which still owns legacy jobs and
+# synthetics, so KMS grants follow the identity that actually handles signup.
+CONTROL_RUN_SERVICE_ACCOUNT="${TR_CONTROL_RUN_SERVICE_ACCOUNT:-trusted-router-control-run@${PROJECT_ID}.iam.gserviceaccount.com}"
 
 read_key_file_var() {
   local env_name="$1"

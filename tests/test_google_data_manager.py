@@ -43,16 +43,23 @@ from trusted_router.storage_models import (
 
 
 def _now() -> str:
-    return dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace(
-        "+00:00",
-        "Z",
+    return (
+        dt.datetime.now(dt.UTC)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace(
+            "+00:00",
+            "Z",
+        )
     )
 
 
 def _later(days: int) -> str:
     return (
-        dt.datetime.now(dt.UTC).replace(microsecond=0) + dt.timedelta(days=days)
-    ).isoformat().replace("+00:00", "Z")
+        (dt.datetime.now(dt.UTC).replace(microsecond=0) + dt.timedelta(days=days))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -256,9 +263,7 @@ def test_request_supports_each_google_click_identifier(click_id_kind: str) -> No
             settings=settings,
         )
     )
-    assert payload["events"][0]["adIdentifiers"] == {
-        click_id_kind: f"{click_id_kind}-value"
-    }
+    assert payload["events"][0]["adIdentifiers"] == {click_id_kind: f"{click_id_kind}-value"}
 
 
 def test_durable_rows_never_contain_plaintext_click_or_identity_data() -> None:
@@ -337,11 +342,7 @@ def test_client_waits_for_asynchronous_success_before_accepting() -> None:
         assert str(request.url).startswith(DATA_MANAGER_STATUS_URL)
         return httpx.Response(
             200,
-            json={
-                "requestStatusPerDestination": [
-                    {"requestStatus": next(statuses)}
-                ]
-            },
+            json={"requestStatusPerDestination": [{"requestStatus": next(statuses)}]},
         )
 
     http, client = _client(handler, sleeps=sleeps)
@@ -369,9 +370,7 @@ def test_client_rejects_failed_asynchronous_processing(final_status: str) -> Non
                     {
                         "requestStatus": final_status,
                         "errorInfo": {
-                            "errorCounts": [
-                                {"reason": "INVALID_CONVERSION_ACTION", "count": "1"}
-                            ]
+                            "errorCounts": [{"reason": "INVALID_CONVERSION_ACTION", "count": "1"}]
                         },
                     }
                 ]
@@ -475,26 +474,20 @@ def test_retryable_failure_requeues_and_permanent_failure_dead_letters() -> None
         settings=_settings(),
         client=_FailingClient(retryable=True),  # type: ignore[arg-type]
     )
-    retry_conversion = next(
-        iter(retry_store.acquisition_store.google_ads_conversions.values())
-    )
+    retry_conversion = next(iter(retry_store.acquisition_store.google_ads_conversions.values()))
     assert retry_result.failed == 1
     assert retry_conversion.delivery_status == "pending"
     assert retry_conversion.delivery_attempts == 1
     assert retry_conversion.lease_owner is None
 
     dead_store = InMemoryStore()
-    assert dead_store.create_acquisition_attribution(
-        _attribution(workspace_id="ws-dead")
-    )
+    assert dead_store.create_acquisition_attribution(_attribution(workspace_id="ws-dead"))
     dead_result = run_google_data_manager_once(
         store=dead_store,
         settings=_settings(),
         client=_FailingClient(retryable=False),  # type: ignore[arg-type]
     )
-    dead_conversion = next(
-        iter(dead_store.acquisition_store.google_ads_conversions.values())
-    )
+    dead_conversion = next(iter(dead_store.acquisition_store.google_ads_conversions.values()))
     assert dead_result.failed == 1
     assert dead_conversion.delivery_status == "dead"
     assert dead_conversion.delivery_attempts == 1
@@ -601,18 +594,39 @@ def test_deploy_worker_has_only_dedicated_kms_and_metadata_config() -> None:
     assert "TR_BYOK_KMS_KEY_NAME=" not in deploy_script
     assert "--update-secrets" not in deploy_script
     assert '"$GOOGLE_ADS_KMS_KEY_ID"' in infra
-    assert '"$BYOK_KMS_KEY_ID"' not in infra.split(
-        "# Metadata-only Google Ads conversion worker", 1
+    assert (
+        '"$BYOK_KMS_KEY_ID"'
+        not in infra.split("# Metadata-only Google Ads conversion worker", 1)[1]
+    )
+
+
+def test_control_plane_can_encrypt_click_ids_but_worker_alone_can_decrypt() -> None:
+    root = Path(__file__).parents[1]
+    shared = (root / "scripts/deploy/_lib.sh").read_text()
+    infra = (root / "scripts/deploy/infra.sh").read_text()
+    click_key_section = infra.split(
+        "# Google Ads click identifiers use a separate envelope key.",
+        1,
+    )[1].split("# Runtime-SA project-level role grants.", 1)[0]
+    worker_section = infra.split(
+        "# Metadata-only Google Ads conversion worker",
+        1,
     )[1]
+
+    assert "CONTROL_RUN_SERVICE_ACCOUNT=" in shared
+    assert "serviceAccount:${CONTROL_RUN_SERVICE_ACCOUNT}" in click_key_section
+    assert "roles/cloudkms.cryptoKeyEncrypter" in click_key_section
+    assert "roles/cloudkms.cryptoKeyDecrypter" not in click_key_section
+    assert "serviceAccount:${GOOGLE_DATA_MANAGER_SERVICE_ACCOUNT}" in worker_section
+    assert "roles/cloudkms.cryptoKeyDecrypter" in worker_section
+    assert "serviceAccount:${CONTROL_RUN_SERVICE_ACCOUNT}" not in worker_section
 
 
 def test_worker_uses_spanner_only_and_raw_https() -> None:
     root = Path(__file__).parents[1]
     cli_source = (root / "src/trusted_router/google_data_manager_cli.py").read_text()
     store_source = (root / "src/trusted_router/storage_gcp_google_ads.py").read_text()
-    service_source = (
-        root / "src/trusted_router/services/google_data_manager.py"
-    ).read_text()
+    service_source = (root / "src/trusted_router/services/google_data_manager.py").read_text()
 
     assert "create_google_ads_delivery_store" in cli_source
     assert "create_store" not in cli_source

@@ -145,6 +145,17 @@ gc kms keys add-iam-policy-binding "$GOOGLE_ADS_KMS_KEY_ID" \
   --member="serviceAccount:${RUN_SERVICE_ACCOUNT}" \
   --role="roles/cloudkms.cryptoKeyEncrypter" \
   --quiet >/dev/null
+if ! gc iam service-accounts describe \
+  "$CONTROL_RUN_SERVICE_ACCOUNT" >/dev/null 2>&1; then
+  echo "ERROR: control-plane service account ${CONTROL_RUN_SERVICE_ACCOUNT} is missing" >&2
+  exit 1
+fi
+gc kms keys add-iam-policy-binding "$GOOGLE_ADS_KMS_KEY_ID" \
+  --keyring "$KMS_KEYRING_ID" \
+  --location "$REGION" \
+  --member="serviceAccount:${CONTROL_RUN_SERVICE_ACCOUNT}" \
+  --role="roles/cloudkms.cryptoKeyEncrypter" \
+  --quiet >/dev/null
 
 # Runtime-SA project-level role grants. These call projects.setIamPolicy
 # and need roles/resourcemanager.projectIamAdmin on the caller, so they

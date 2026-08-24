@@ -177,9 +177,9 @@ def test_legacy_v2_fingerprint_cookie_remains_readable() -> None:
     }
     context = AttributionContext("d" * 32, touch, touch, now)
 
-    assert decode_attribution_cookie(
-        _legacy_cookie(context, settings, version=2), settings
-    ) == context
+    assert (
+        decode_attribution_cookie(_legacy_cookie(context, settings, version=2), settings) == context
+    )
 
 
 def test_paid_landing_sets_signed_httponly_cookie(client: TestClient) -> None:
@@ -439,8 +439,48 @@ def test_signup_persists_attribution_and_emits_no_raw_click_id(
     assert set(record.milestones) == {"signup_completed", "api_key_created"}
     assert "acquisition.signup_completed" in caplog.text
     assert "acquisition.api_key_created" in caplog.text
+    signup_log = next(
+        item for item in caplog.records if item.getMessage() == "acquisition.signup_completed"
+    )
+    assert signup_log.google_ads_click_persisted is True
     assert raw_click_id not in caplog.text
     assert str(payload["key"]) not in caplog.text
+
+
+def test_google_click_encryption_failure_is_visible_and_does_not_block_signup(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    raw_click_id = "gclid-encryption-failure-123"
+    _campaign_landing(client, click_id=raw_click_id)
+
+    def fail_encrypt(*_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("kms permission denied")
+
+    monkeypatch.setattr(acquisition_module, "encrypt_google_ads_click_id", fail_encrypt)
+    caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
+
+    payload = _signup(client, "click-encryption-failure@example.com")
+
+    record = STORE.get_acquisition_attribution(str(payload["workspace_id"]))
+    assert record is not None
+    assert record.google_click_id_kind is None
+    assert record.encrypted_google_click_id is None
+    failure_log = next(
+        item
+        for item in caplog.records
+        if item.getMessage() == "acquisition.google_click_encrypt_failed"
+    )
+    assert failure_log.event == "acquisition.google_click_encrypt_failed"
+    assert failure_log.error == "RuntimeError"
+    signup_log = next(
+        item for item in caplog.records if item.getMessage() == "acquisition.signup_completed"
+    )
+    assert signup_log.has_gclid is True
+    assert signup_log.google_ads_click_persisted is False
+    assert raw_click_id not in caplog.text
+    assert "kms permission denied" not in caplog.text
 
 
 def test_attribution_failure_never_blocks_signup(
