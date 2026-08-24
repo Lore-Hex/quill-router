@@ -3,8 +3,8 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-08-24T05:40:25Z",
-  "model_count": 144,
+  "generated_at": "2026-08-24T07:01:48Z",
+  "model_count": 145,
   "models": [
     {
       "id": "Sao10K/L3-8B-Stheno-v3.2",
@@ -4080,6 +4080,38 @@
       "input_token_price_per_m": 14000,
       "output_token_price_per_m": 44000,
       "cached_input_token_price_per_m": 2600
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash-vision-exp",
+      "upstream_id": "deepseek/deepseek-v4-flash-vision-exp",
+      "display_name": "DeepSeek V4 Flash Vision Exp",
+      "title": "deepseek/deepseek-v4-flash-vision-exp",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "anthropic",
+        "responses"
+      ],
+      "status": 1,
+      "created": 1787550870,
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "input_token_price_per_m": 4400,
+      "output_token_price_per_m": 13200,
+      "cached_input_token_price_per_m": 280
     }
   ]
 }
