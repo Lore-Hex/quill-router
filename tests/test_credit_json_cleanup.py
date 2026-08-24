@@ -33,17 +33,24 @@ def _seed_credit(
         "auto_refill_enabled": True,
         "future_metadata": {"preserve": True},
     }
+    typed = db.typed.setdefault(CREDIT_BALANCE_TABLE, {})
+    count = shard_count if complete_typed else max(0, shard_count - 1)
     if with_legacy_money:
         body.update(
             {
                 "total_credits_microdollars": 10_000_000,
-                "total_usage_microdollars": 2_000_000,
+                # Must equal the typed usage this fixture goes on to write, summed
+                # over shards. audit_typed_invariants now reconstructs total_usage
+                # from this baseline plus the settled/federated ledgers, and the
+                # cleanup CLI refuses to run while that is violated -- deliberately,
+                # since cleanup DELETES this field and it is the only thing that
+                # makes the check possible afterwards. An arbitrary number here
+                # reads as real drift.
+                "total_usage_microdollars": count * 1_000_000,
                 "reserved_microdollars": 300_000,
             }
         )
     store._write_entity("credit", workspace_id, body)
-    typed = db.typed.setdefault(CREDIT_BALANCE_TABLE, {})
-    count = shard_count if complete_typed else max(0, shard_count - 1)
     for shard in range(count):
         typed[(workspace_id, shard)] = {
             "workspace_id": workspace_id,
