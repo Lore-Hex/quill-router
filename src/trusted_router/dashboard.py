@@ -151,6 +151,8 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     # source, so adding a region adds its sitemap entry with it.
     *(f"/{slug}" for slug in MODEL_REGION_SLUGS),
     "/",
+    "/about",
+    "/contact",
     "/choose",
     "/models",
     "/providers",
@@ -1789,8 +1791,8 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         og_card="llm-provider-latency-benchmarks.png",
         title="LLM Provider Latency Benchmarks",
         description=(
-            "Measured time-to-first-token, time-to-first-byte, throughput, and "
-            "success rate for LLM providers routed through TrustedRouter."
+            "Compare measured time-to-first-token, throughput, uptime, and success rates "
+            "across LLM providers routed continuously through TrustedRouter."
         ),
         faq_items=(
             (
@@ -2349,6 +2351,7 @@ def _organization_node(settings: Settings) -> dict[str, object]:
         "name": "TrustedRouter",
         "legalName": settings.legal_entity_name,
         "url": f"https://{domain}/",
+        "mainEntityOfPage": f"https://{domain}/about",
         "logo": _absolute_url(settings, "/static/logo.png"),
         # EIN and DUNS are already published on /legal for procurement. Repeating
         # them here in the machine-readable node is the difference between a
@@ -2390,7 +2393,7 @@ def _organization_node(settings: Settings) -> dict[str, object]:
                 "contactType": "sales",
                 "email": settings.support_email,
                 "telephone": settings.legal_entity_phone,
-                "url": f"https://{domain}/legal",
+                "url": f"https://{domain}/contact",
                 "availableLanguage": ["en"],
             },
         ],
@@ -2915,13 +2918,101 @@ def public_legal_html(settings: Settings) -> str:
     )
 
 
+def public_about_html(settings: Settings) -> str:
+    path = "/about"
+    page_url = f"https://{settings.trusted_domain}{path}"
+    return (
+        _env()
+        .get_template("public/about.html")
+        .render(
+            json_ld_blob=_json_ld_graph(
+                settings,
+                _breadcrumb_node(settings, (("Home", "/"), ("About", path))),
+                {
+                    "@type": "AboutPage",
+                    "name": "About TrustedRouter",
+                    "url": page_url,
+                    "description": (
+                        "TrustedRouter is operated by Lore Hex Corp and provides an "
+                        "OpenAI-compatible, attested AI routing service."
+                    ),
+                    "mainEntity": {"@id": f"https://{settings.trusted_domain}/#organization"},
+                },
+            ),
+            api_base_url=settings.api_base_url,
+            site_url=page_url,
+            title="About TrustedRouter | Company, Product & Trust",
+            heading="About TrustedRouter",
+            description=(
+                "Meet the company behind TrustedRouter, review its legal identity, product, "
+                "open-source infrastructure, customers, and independently checkable trust evidence."
+            ),
+            entity=legal_entity(settings),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
+    )
+
+
+def public_contact_html(settings: Settings) -> str:
+    path = "/contact"
+    page_url = f"https://{settings.trusted_domain}{path}"
+    return (
+        _env()
+        .get_template("public/contact.html")
+        .render(
+            json_ld_blob=_json_ld_graph(
+                settings,
+                _breadcrumb_node(settings, (("Home", "/"), ("Contact", path))),
+                {
+                    "@type": "ContactPage",
+                    "name": "Contact TrustedRouter",
+                    "url": page_url,
+                    "description": (
+                        "Direct product, business, support, security, privacy, legal, and "
+                        "procurement contact details for TrustedRouter and Lore Hex Corp."
+                    ),
+                    "mainEntity": {"@id": f"https://{settings.trusted_domain}/#organization"},
+                },
+            ),
+            api_base_url=settings.api_base_url,
+            site_url=page_url,
+            title="Contact TrustedRouter | Support, Security & Business",
+            heading="Contact TrustedRouter",
+            description=(
+                "Contact Lore Hex Corp for TrustedRouter product, business, support, security, "
+                "privacy, legal, procurement, billing, and account questions."
+            ),
+            entity=legal_entity(settings),
+            support_email=settings.support_email,
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
+    )
+
+
 def public_privacy_html(settings: Settings) -> str:
+    path = "/privacy"
+    page_url = f"https://{settings.trusted_domain}{path}"
     return (
         _env()
         .get_template("public/privacy.html")
         .render(
+            json_ld_blob=_json_ld_graph(
+                settings,
+                _breadcrumb_node(settings, (("Home", "/"), ("Privacy", path))),
+                {
+                    "@type": "WebPage",
+                    "name": "TrustedRouter Privacy Policy",
+                    "url": page_url,
+                    "dateModified": "2026-08-24",
+                    "about": {"@id": f"https://{settings.trusted_domain}/#organization"},
+                },
+            ),
             api_base_url=settings.api_base_url,
-            site_url=f"https://{settings.trusted_domain}/privacy",
+            site_url=page_url,
             title="Privacy Policy | TrustedRouter",
             heading="Privacy policy",
             description=(
@@ -3395,8 +3486,8 @@ def public_leaderboard_html(settings: Settings, snapshot: dict[str, object]) -> 
             title="LLM Provider & Model Speed Leaderboard | TrustedRouter",
             heading="Provider & model performance",
             description=(
-                "Measured time-to-first-token, time-to-first-byte, effective throughput, and "
-                "uptime for every LLM provider and model TrustedRouter routes to — "
+                "Measured time-to-first-token, effective throughput, and uptime for every "
+                "LLM provider and model TrustedRouter routes to — "
                 "continuously sampled, not vendor-claimed."
             ),
             page_kind="leaderboard",
@@ -3407,7 +3498,7 @@ def public_leaderboard_html(settings: Settings, snapshot: dict[str, object]) -> 
                 _dataset_node(
                     name="TrustedRouter LLM provider and model speed leaderboard",
                     description=(
-                        "Metadata-only measurements for provider TTFT, TTFB, effective throughput, "
+                        "Metadata-only measurements for provider TTFT, effective throughput, "
                         "success rate, and excluded probe configuration rows."
                     ),
                     url=f"https://{settings.trusted_domain}/leaderboard",
@@ -3681,7 +3772,7 @@ def public_provider_performance_html(settings: Settings, provider_slug: str) -> 
             title=f"{provider.name} Speed, Uptime and Throughput | TrustedRouter",
             heading=f"{provider.name} performance",
             description=(
-                f"Review measured TTFT, TTFB, effective throughput, uptime, and sampled model routes "
+                f"Review measured TTFT, effective throughput, uptime, and sampled model routes "
                 f"for {provider.name} on TrustedRouter using metadata-only production probes."
             ),
             og_image=_absolute_url(settings, provider_og_image_url(provider.slug)),
@@ -4106,6 +4197,9 @@ def llms_txt(settings: Settings) -> str:
         "",
         "## Primary Links",
         f"- [Homepage](https://{domain}/)",
+        f"- [About TrustedRouter](https://{domain}/about)",
+        f"- [Contact TrustedRouter](https://{domain}/contact)",
+        f"- [Privacy policy](https://{domain}/privacy)",
         f"- [Models](https://{domain}/models)",
         f"- [Providers](https://{domain}/providers)",
         f"- [AI gateway comparisons](https://{domain}/compare)",
@@ -4168,6 +4262,18 @@ def llms_txt(settings: Settings) -> str:
         "- OpenPatcher G2: use trustedrouter/openpatcher-g2 for a Kimi K3 worker with parallel Gemma 4 and Prometheus 2.0 advisors.",
         "- Plato Pro 2.0: use trustedrouter/plato-pro-2.0 for GLM 5.2 advised by Prometheus 2.0.",
         "- Synth Code: use trustedrouter/synth-code, trustedrouter/iris-code-1.0, trustedrouter/prometheus-code-1.0, or trustedrouter/zeus-code-1.0 for code-tuned panel and synthesis prompts",
+        "",
+        "## Official CLI",
+        "- Command name: trustedrouter",
+        "- Python install: pipx install trusted-router-py",
+        "- npm install: npm install --global @lore-hex/trusted-router",
+        "- Run without installing: npx --yes @lore-hex/trusted-router models --json",
+        "- After a Python install: trustedrouter models --json",
+        "- Authentication: set TRUSTEDROUTER_API_KEY; never pass API keys as command arguments.",
+        "- [PyPI package](https://pypi.org/project/trusted-router-py/)",
+        "- [npm package](https://www.npmjs.com/package/@lore-hex/trusted-router)",
+        "- [Python CLI source](https://github.com/Lore-Hex/trusted-router-py)",
+        "- [JavaScript CLI source](https://github.com/Lore-Hex/trusted-router-js)",
         "",
         "## Developer Resources",
         (
@@ -4243,6 +4349,15 @@ def docs_llms_txt(settings: Settings) -> str:
             "- Agent skill name: trustedrouter-model-advisor",
             "- Agent playbook source: https://github.com/Lore-Hex/LLM-advisor",
             "- Raw agent playbook: https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md",
+            "- [Official CLI on PyPI](https://pypi.org/project/trusted-router-py/)",
+            "- [Official CLI on npm](https://www.npmjs.com/package/@lore-hex/trusted-router)",
+            "- [Python CLI source](https://github.com/Lore-Hex/trusted-router-py)",
+            "- [JavaScript CLI source](https://github.com/Lore-Hex/trusted-router-js)",
+            "- Install with Python: pipx install trusted-router-py",
+            "- Install with npm: npm install --global @lore-hex/trusted-router",
+            "- Run without installing: npx --yes @lore-hex/trusted-router models --json",
+            "- After a Python install: trustedrouter models --json",
+            "- Authentication: set TRUSTEDROUTER_API_KEY; never pass API keys as command arguments.",
             f"- Evals guide: https://{domain}/docs/evals",
             f"- Provider conformance suite: https://{domain}/docs/provider-conformance",
             f"- Synth guide: https://{domain}/docs/synth",
@@ -4358,6 +4473,15 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- Agent skill name: trustedrouter-model-advisor",
         "- Agent playbook source: https://github.com/Lore-Hex/LLM-advisor",
         "- Raw agent playbook: https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md",
+        "- [Official CLI on PyPI](https://pypi.org/project/trusted-router-py/)",
+        "- [Official CLI on npm](https://www.npmjs.com/package/@lore-hex/trusted-router)",
+        "- [Python CLI source](https://github.com/Lore-Hex/trusted-router-py)",
+        "- [JavaScript CLI source](https://github.com/Lore-Hex/trusted-router-js)",
+        "- Install with Python: pipx install trusted-router-py",
+        "- Install with npm: npm install --global @lore-hex/trusted-router",
+        "- Run without installing: npx --yes @lore-hex/trusted-router models --json",
+        "- After a Python install: trustedrouter models --json",
+        "- Authentication: set TRUSTEDROUTER_API_KEY; never pass API keys as command arguments.",
         f"- Evals guide: https://{domain}/docs/evals",
         f"- Provider conformance suite: https://{domain}/docs/provider-conformance",
         f"- Synth guide: https://{domain}/docs/synth",
@@ -4404,6 +4528,14 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- Provider caches are provider and route scoped. Fallback can reduce cache hits, while provider.only improves locality at the cost of rollover.",
         "- TrustedRouter does not create a durable router-side prompt cache. Real-time inference remains content-stateless; Batch retention is separate and explicit.",
         "- prompt_cache_retention is not supported and returns a stable 501 error.",
+        "",
+        "## Spend-Window Rate Limits",
+        "- Requests governed by a hard per-key daily, weekly, or monthly spend window return RateLimit-Limit, RateLimit-Remaining, and RateLimit-Reset.",
+        "- Limit and remaining are integer microdollars. Reset is the number of whole seconds until the fixed UTC window resets.",
+        "- A 429 also returns Retry-After. Wait at least that many seconds before retrying; the value is at least 1.",
+        "- The headers come from the same verdict that admitted or rejected the request. In-flight holds are intentionally not counted.",
+        "- Keys without a hard spend window do not receive fabricated rate-limit headers.",
+        f"- Worked agent backoff loop: https://{domain}/docs#rate-limit-headers",
         "",
         "## Synth",
         "- Endpoint shape: POST /v1/chat/completions.",
@@ -4896,7 +5028,7 @@ def _model_section_description(model: Model, section: str) -> str:
         )
     if section == "performance":
         return (
-            f"Compare measured TTFT, TTFB, throughput, uptime, and route health for {name} across "
+            f"Compare measured TTFT, throughput, uptime, and route health for {name} across "
             "TrustedRouter providers using metadata-only production probes."
         )
     if section == "pricing":
@@ -4959,7 +5091,7 @@ def _model_section_json_ld(
             _dataset_node(
                 name=f"{model.name} TrustedRouter performance measurements",
                 description=(
-                    f"Measured TTFT, TTFB, throughput, and uptime for {model.name} "
+                    f"Measured TTFT, throughput, and uptime for {model.name} "
                     f"across TrustedRouter provider routes. Current sample count: {sample_count}."
                 ),
                 url=section_url,

@@ -45,6 +45,8 @@ DETECTORS (v1, all T0 blast radius — detection and paging only):
   * monitor freshness    — this deployment's own probe fleet has stopped
                            reporting (peers will also catch this within
                            three cadences; local detection is faster).
+  * transaction probes  — the general probe fleet is alive but authorize,
+                           settle, or fallback coverage has gone silent.
 
 Every detector is exception-isolated: a broken detector loses its own
 signal, never the loop, and the loop itself heartbeats so /fleet shows the
@@ -69,6 +71,10 @@ REMEDIATION_PROBE = "remediation"
 # Best effort: one decision row per (playbook, subject, bucket) per process.
 # The check and set are unsynchronised, so duplicates are possible.
 DECISION_BUCKET_SECONDS = 30 * 60
+# Regional monitor jobs run every three minutes. Five missed cadences is long
+# enough to absorb rollout/cold-start jitter without allowing a billing or
+# fallback blind spot to survive unnoticed for hours.
+TRANSACTION_PROBE_STALE_SECONDS = 15 * 60
 _DECISION_MARKS: dict[str, int] = {}
 
 
@@ -191,10 +197,77 @@ def _detect_monitor_stale(settings: Settings) -> list[Decision]:
     ]
 
 
+def _detect_transaction_probe_stale(settings: Settings) -> list[Decision]:
+    """Page when privileged transaction coverage disappears by itself."""
+
+    import datetime as dt
+
+    from trusted_router.storage import STORE
+    from trusted_router.storage_models import utcnow
+    from trusted_router.synthetic.components import OPS_PROBE_TYPES
+
+    if not (
+        settings.service_surface in {"combined", "internal"}
+        and settings.synthetic_monitor_api_key
+        and settings.internal_gateway_token
+    ):
+        return []
+
+    # Absence before any monitor sample exists is provisioning, not an outage.
+    # Once sibling probes are flowing, each privileged probe becomes required.
+    recent = STORE.synthetic_probe_samples(limit=50)
+    if not any(sample.probe_type not in OPS_PROBE_TYPES for sample in recent):
+        return []
+
+    now = utcnow()
+    required: dict[str, tuple[str, ...]] = {
+        "gateway_authorize": ("gateway_authorize", "gateway_authorize_settle"),
+        "gateway_settle": ("gateway_settle", "gateway_authorize_settle"),
+        "provider_fallback": ("provider_fallback",),
+    }
+    decisions: list[Decision] = []
+    for subject, probe_types in required.items():
+        candidates = [
+            sample
+            for probe_type in probe_types
+            for sample in STORE.synthetic_probe_samples(probe_type=probe_type, limit=1)
+        ]
+        ages: list[tuple[float, str]] = []
+        for sample in candidates:
+            try:
+                created = dt.datetime.fromisoformat(sample.created_at.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            ages.append(((now - created).total_seconds(), sample.created_at))
+        if ages:
+            age, last_sample_at = min(ages, key=lambda item: item[0])
+            if age <= TRANSACTION_PROBE_STALE_SECONDS:
+                continue
+            detail = (
+                f"no {subject} sample for {int(age)}s (last {last_sample_at}); "
+                "the general probe fleet is alive but transaction effectiveness is unobserved"
+            )
+        else:
+            detail = (
+                f"no {subject} sample exists while the general probe fleet is alive; "
+                "transaction effectiveness is unobserved"
+            )
+        decisions.append(
+            Decision(
+                playbook="transaction-monitor-stale",
+                subject=subject,
+                detail=detail,
+                page=True,
+            )
+        )
+    return decisions
+
+
 DETECTORS = (
     _detect_stale_heartbeats,
     _detect_route_quarantine,
     _detect_monitor_stale,
+    _detect_transaction_probe_stale,
 )
 
 

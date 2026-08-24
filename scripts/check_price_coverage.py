@@ -55,6 +55,7 @@ from scripts.pricing.providers import (
     reka,
     relace,
     sail_research,
+    sakana,
     sambanova,
     scaleway,
     stepfun,
@@ -483,6 +484,7 @@ _DIRECT_OPENAI_DISCOVERY_MODULES = (
 _CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
     scaleway,
     featherless,
+    sakana,
 )
 
 _STALE_MANIFEST_PROVIDER_MODULES = (

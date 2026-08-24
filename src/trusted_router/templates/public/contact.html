@@ -1,0 +1,57 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<article data-substantive-content="contact">
+  <section class="public-proof-strip" aria-label="TrustedRouter contact details">
+    <div><strong>Email</strong><span><a href="mailto:{{ support_email }}">{{ support_email }}</a></span></div>
+    <div><strong>Security</strong><span><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a></span></div>
+    <div><strong>Telephone</strong><span><a href="tel:{{ entity.phone }}">{{ entity.phone }}</a></span></div>
+    <div><strong>Mail</strong><span>{{ entity.address }}</span></div>
+  </section>
+
+  <section class="model-catalog">
+    <div class="model-catalog-head">
+      <div>
+        <span class="eyebrow">Direct channels</span>
+        <h2>Reach the right person without guessing.</h2>
+      </div>
+      <p>TrustedRouter is operated by {{ entity.name }}. Use the channel that matches your request so account details and security reports reach the appropriate queue.</p>
+    </div>
+    <div class="marketing-grid three">
+      <div class="marketing-card">
+        <span class="card-label">Product and business</span>
+        <h3><a href="mailto:{{ support_email }}">{{ support_email }}</a></h3>
+        <p>Use this address for product questions, sales and enterprise discussions, integrations, model or provider availability, billing, invoices, account access, partnerships, and general company inquiries. Existing customers can also use the structured <a href="/support">support form</a>.</p>
+      </div>
+      <div class="marketing-card">
+        <span class="card-label">Security and privacy</span>
+        <h3><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a></h3>
+        <p>Use this private address for vulnerability reports, responsible disclosure, suspected incidents, privacy requests, data access or deletion requests, and questions about the attested gateway. Do not publish an unpatched vulnerability or include live credentials.</p>
+      </div>
+      <div class="marketing-card">
+        <span class="card-label">Legal and procurement</span>
+        <h3>{{ entity.name }}</h3>
+        <p>Contract, DPA, BAA, subprocessor, tax, and vendor-onboarding information is collected in the <a href="/legal">legal and procurement packet</a>. Send follow-up questions to <a href="mailto:{{ support_email }}">{{ support_email }}</a> and identify the customer or organization involved.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="marketing-split">
+    <div class="marketing-copy">
+      <span class="eyebrow">Help us investigate</span>
+      <h2>Include identifiers, never secrets.</h2>
+      <p>For a routing or API problem, include the approximate UTC time, model ID, provider or route if known, region, HTTP status, and the request or generation ID. Those identifiers let us trace operational metadata without needing to see the prompt or output.</p>
+      <p>Never send an API key, BYOK provider credential, full prompt, model output, payment-card number, wallet secret, password, or other sensitive credential by email or through the support form. Redact customer data from screenshots and reproducible examples.</p>
+      <p>Support is provided on a commercially reasonable basis unless a signed agreement states a specific response time. For an active availability issue, check <a href="https://status.trustedrouter.com">status.trustedrouter.com</a> first; it publishes current incidents and service history.</p>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>Company contact</h2></div>
+      <div class="panel-body">
+        <p><strong>{{ entity.name }}</strong><br>{{ entity.address }}</p>
+        <p><a href="tel:{{ entity.phone }}">{{ entity.phone }}</a><br><a href="mailto:{{ support_email }}">{{ support_email }}</a></p>
+        <p>For information about the company, read <a href="/about">About TrustedRouter</a>. For personal-information practices and rights requests, read the <a href="/privacy">Privacy Policy</a>.</p>
+        <p>Source-code issues that contain no customer data or credentials can be reported in the relevant <a href="https://github.com/Lore-Hex">Lore Hex GitHub repository</a>.</p>
+      </div>
+    </div>
+  </section>
+</article>
+{% endblock %}

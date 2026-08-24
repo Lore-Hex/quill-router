@@ -69,6 +69,7 @@ from trusted_router.partner_billing import (
 )
 from trusted_router.pricing import resolve_request_rates
 from trusted_router.provider_compat import byok_storage_provider_candidates
+from trusted_router.provider_contracts import SAKANA_FUGU_MODEL_ID
 from trusted_router.provider_types import estimate_tokens_from_text
 from trusted_router.regional_quota_ledger import RegionalLeaseLedgerError
 from trusted_router.regions import choose_region, region_payload
@@ -250,7 +251,7 @@ def _authorize_gateway_sync(
     require_internal_gateway(request, settings)
     api_key = _api_key_for_gateway_authorization(body)
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
-        raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+        raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
@@ -588,8 +589,9 @@ def _authorize_gateway_sync(
 
         from trusted_router.spend_windows import (
             enforced_window_limits,
-            utcnow,
-            window_resets_at,
+            remember_spend_window_decision,
+            spend_window_headers,
+            spend_window_limit_error_message,
         )
         from trusted_router.storage_gcp_authorize import AuthorizeOutcome
         from trusted_router.storage_gcp_counters import key_usage_shard_count
@@ -724,22 +726,21 @@ def _authorize_gateway_sync(
         except BaseException:
             release_user_model_slot_after_error()
             raise
+        window_decision = getattr(outcome, "rate_limit", None)
+        remember_spend_window_decision(request, window_decision)
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
             release_user_model_slot_after_error()
             record_free_credit_exhausted_safely(workspace.id)
             raise _insufficient_credits_error(workspace)
         if outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED):
             release_user_model_slot_after_error()
-            _, _, window = outcome.partition(":")
-            window = window or "daily"
-            resets_at = window_resets_at(window, utcnow())
-            retry_after = max(1, int((resets_at - utcnow()).total_seconds()))
+            if window_decision is None:
+                raise RuntimeError("typed window rejection omitted its rate-limit verdict")
             raise api_error(
                 429,
-                f"API key {window} spend limit exceeded; resets at "
-                f"{resets_at.isoformat().replace('+00:00', 'Z')}",
+                spend_window_limit_error_message(window_decision),
                 ErrorType.KEY_WINDOW_LIMIT_EXCEEDED,
-                headers={"Retry-After": str(retry_after)},
+                headers=spend_window_headers(window_decision, retry_after=True),
             )
         if outcome in (AuthorizeOutcome.KEY_LIMIT_EXCEEDED, AuthorizeOutcome.KEY_MISSING):
             release_user_model_slot_after_error()
@@ -763,24 +764,35 @@ def _authorize_gateway_sync(
         credit_reservation_id = authorization.credit_reservation_id
     else:
         from trusted_router.spend_windows import (
+            KeyLimitExceeded,
             KeyWindowLimitExceeded,
-            utcnow,
-            window_resets_at,
+            remember_spend_window_decision,
+            spend_window_headers,
+            spend_window_limit_error_message,
         )
 
         try:
-            STORE.reserve_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
+            window_decision = STORE.reserve_key_limit(
+                api_key.hash,
+                estimate,
+                usage_type=reservation_usage_type,
+            )
+            remember_spend_window_decision(request, window_decision)
         except KeyWindowLimitExceeded as exc:
             release_user_model_slot_after_error()
+            remember_spend_window_decision(request, exc.decision)
             # InMemory twin of the typed window rejection (same 429 shape).
-            resets_at = window_resets_at(exc.window, utcnow())
-            retry_after = max(1, int((resets_at - utcnow()).total_seconds()))
             raise api_error(
                 429,
-                f"API key {exc.window} spend limit exceeded; resets at "
-                f"{resets_at.isoformat().replace('+00:00', 'Z')}",
+                spend_window_limit_error_message(exc.decision),
                 ErrorType.KEY_WINDOW_LIMIT_EXCEEDED,
-                headers={"Retry-After": str(retry_after)},
+                headers=spend_window_headers(exc.decision, retry_after=True),
+            ) from exc
+        except KeyLimitExceeded as exc:
+            release_user_model_slot_after_error()
+            remember_spend_window_decision(request, exc.decision)
+            raise api_error(
+                402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
             ) from exc
         except ValueError as exc:
             release_user_model_slot_after_error()
@@ -944,7 +956,7 @@ def _gateway_validate_sync(
         api_key_lookup_hash=body.api_key_lookup_hash,
     )
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
-        raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+        raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
@@ -976,7 +988,7 @@ def _gateway_key_info_sync(
         api_key_lookup_hash=body.api_key_lookup_hash,
     )
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
-        raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+        raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     from trusted_router.routes.keys import _enriched_key_shape
 
     return {"data": _enriched_key_shape(api_key)}
@@ -993,7 +1005,7 @@ def _gateway_resolve_custom_model_sync(
         api_key_lookup_hash=body.api_key_lookup_hash,
     )
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
-        raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+        raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
@@ -1773,6 +1785,14 @@ def _settle_gateway_authorization(
             "Parasail Liberty does not support BYOK routes",
             ErrorType.MODEL_NOT_SUPPORTED,
         )
+    # Only Fugu defines this provider-private tier basis, and Fugu remains
+    # operator-held until its internal orchestration spend has a hard bound.
+    # Ignoring the field for every other model prevents a future provider
+    # extension from silently selecting a cheaper context tier.
+    price_tier_input_tokens = _provider_price_tier_input_tokens(
+        selected_endpoint,
+        body.price_tier_input_tokens,
+    )
     actual_cost = (
         custom_model_cost_microdollars(
             input_tokens=total_input,
@@ -1793,6 +1813,7 @@ def _settle_gateway_authorization(
             output_tokens,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
+            price_tier_input_tokens=price_tier_input_tokens,
             effective_at=authorization.created_at,
             service_tier=service_tier,
         )
@@ -1840,6 +1861,7 @@ def _settle_gateway_authorization(
             output_tokens,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
+            price_tier_input_tokens=price_tier_input_tokens,
             effective_at=authorization.created_at,
             service_tier=service_tier,
         )
@@ -2200,6 +2222,7 @@ def _settle_gateway_authorization(
         # correlation id is useful to them, the client telemetry object is not.
         broadcast_settle_body = dict(settle_body)
         broadcast_settle_body.pop("client", None)
+        broadcast_settle_body.pop("price_tier_input_tokens", None)
         enqueue_metadata_broadcast(generation, settle_body=broadcast_settle_body)
         if should_drain_inline(settings) and background_tasks is not None:
             background_tasks.add_task(
@@ -2888,6 +2911,20 @@ def _native_batch_cost_or_error(
     return max(1, (cost_microdollars * billed_fraction_bps + 9_999) // 10_000)
 
 
+def _provider_price_tier_input_tokens(
+    endpoint: ModelEndpoint,
+    reported_input_tokens: int | None,
+) -> int | None:
+    """Admit a provider-private tier basis only for its pinned model contract."""
+
+    if (
+        endpoint.provider == "sakana"
+        and endpoint.model_id == SAKANA_FUGU_MODEL_ID
+    ):
+        return reported_input_tokens
+    return None
+
+
 def _endpoint_cost_microdollars(
     endpoint: ModelEndpoint,
     input_tokens: int,
@@ -2895,6 +2932,7 @@ def _endpoint_cost_microdollars(
     *,
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
+    price_tier_input_tokens: int | None = None,
     effective_at: datetime | str | None = None,
     service_tier: str | None = None,
     reserve_auto: bool = False,
@@ -2914,11 +2952,22 @@ def _endpoint_cost_microdollars(
             cache_creation_tokens=cache_creation_tokens,
         )
     total_prompt = input_tokens + cache_read_tokens + cache_creation_tokens
+    # Some providers expose separately billable internal orchestration tokens
+    # while selecting their long-context tier from the initial request context.
+    # The attested gateway supplies that exact provider-metered count. Invalid
+    # values fall back to the larger aggregate, which is conservative for COGS.
+    tier_prompt = total_prompt
+    if (
+        price_tier_input_tokens is not None
+        and price_tier_input_tokens > 0
+        and price_tier_input_tokens <= total_prompt
+    ):
+        tier_prompt = price_tier_input_tokens
     rates = resolve_request_rates(
         getattr(endpoint, "price_tiers", ()) or (),
         headline_prompt_micro_per_m=endpoint.prompt_price_microdollars_per_million_tokens,
         headline_completion_micro_per_m=endpoint.completion_price_microdollars_per_million_tokens,
-        total_prompt_tokens=total_prompt,
+        total_prompt_tokens=tier_prompt,
     )
     prompt_price = rates.prompt_price_microdollars_per_million_tokens
 

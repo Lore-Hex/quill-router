@@ -9,6 +9,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 from trusted_router.catalog import MODELS
+from trusted_router.mcp_metadata import MCP_SERVER_NAME, MCP_SERVER_TITLE
 from trusted_router.routes import mcp as mcp_routes
 from trusted_router.routes.mcp import (
     MAX_MCP_BATCH_ITEMS,
@@ -152,7 +153,9 @@ def test_mcp_initialize_and_tool_list(
         json={"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {}},
     )
     assert initialize.status_code == 200
-    assert initialize.json()["result"]["serverInfo"]["name"] == "trustedrouter"
+    server_info = initialize.json()["result"]["serverInfo"]
+    assert server_info["name"] == MCP_SERVER_NAME
+    assert server_info["title"] == MCP_SERVER_TITLE
 
     listed = client.post(
         "/mcp",

@@ -2849,7 +2849,10 @@ async def test_primary_synthetic_job_invokes_scheduled_remediator(
 
 
 def test_synthetic_credential_selection_uses_gateway_only_for_combined_bridge() -> None:
-    from trusted_router.synthetic.internal_auth import synthetic_observer_token
+    from trusted_router.synthetic.internal_auth import (
+        synthetic_observer_token,
+        synthetic_transaction_token,
+    )
 
     both = Settings(
         environment="test",
@@ -2870,6 +2873,39 @@ def test_synthetic_credential_selection_uses_gateway_only_for_combined_bridge() 
     assert synthetic_observer_token(both) == "observer-only"
     assert synthetic_observer_token(billing_only) is None
     assert synthetic_observer_token(bridged) == "billing-only"
+    assert synthetic_transaction_token(both) is None
+    assert synthetic_transaction_token(billing_only) is None
+    assert synthetic_transaction_token(bridged) == "billing-only"
+
+
+@pytest.mark.asyncio
+async def test_combined_bridge_job_keeps_transaction_probe_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    transaction_tokens: list[str | None] = []
+
+    async def empty_pass(**kwargs: Any) -> tuple[list[Any], list[Any]]:
+        transaction_tokens.append(kwargs["internal_token"])
+        return [], []
+
+    settings = Settings(
+        environment="test",
+        service_surface="combined",
+        allow_deployed_combined_surface=True,
+        internal_gateway_token="billing-only",  # noqa: S106 - test placeholder.
+    )
+    monkeypatch.setattr(cli_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "_probe_and_rotation_pass", empty_pass)
+    monkeypatch.setenv("TR_SYNTHETIC_RUNS_PER_INVOCATION", "1")
+    monkeypatch.delenv("TR_SYNTHETIC_REMEDIATOR_URL", raising=False)
+    monkeypatch.delenv("TR_SYNTHETIC_ROTATION_ENABLED", raising=False)
+    monkeypatch.delenv("TR_SYNTHETIC_THROUGHPUT_ENABLED", raising=False)
+    monkeypatch.delenv("TR_SYNTHETIC_THROUGHPUT_ONLY", raising=False)
+
+    assert await cli_module.run() == 0
+    assert transaction_tokens == ["billing-only"]
 
 
 @pytest.mark.asyncio

@@ -38,6 +38,8 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 import httpx
 from bs4 import BeautifulSoup
 
+from trusted_router.pricing import provider_manifest_price_profile_is_valid
+
 log = logging.getLogger("pricing")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -276,6 +278,17 @@ def read_stale_provider_manifest(
     rows = raw.get("models") if isinstance(raw, dict) else None
     if not isinstance(rows, list) or not rows:
         return None, "committed provider manifest has no model rows"
+    scale_raw = raw.get("price_scale_to_microdollars_per_million_tokens", 1)
+    if isinstance(scale_raw, bool) or (
+        isinstance(scale_raw, float) and not scale_raw.is_integer()
+    ):
+        return None, "committed provider manifest has invalid price scale"
+    try:
+        price_scale = int(scale_raw)
+    except (TypeError, ValueError, OverflowError):
+        return None, "committed provider manifest has invalid price scale"
+    if price_scale <= 0:
+        return None, "committed provider manifest has invalid price scale"
 
     prices: dict[str, ModelPrice] = {}
     invalid_rows = 0
@@ -292,22 +305,40 @@ def read_stale_provider_manifest(
             continue
         if not row.get("routable", True):
             continue
-        try:
-            prompt = int(row.get("input_token_price_per_m") or 0)
-            completion = int(row.get("output_token_price_per_m") or 0)
+        if not provider_manifest_price_profile_is_valid(row):
+            invalid_rows += 1
+            continue
+        raw_tiers = row.get("price_tiers")
+        if isinstance(raw_tiers, list):
+            tiers = [
+                PriceTier(
+                    max_prompt_tokens=(
+                        int(raw_tier["max_prompt_tokens"])
+                        if raw_tier.get("max_prompt_tokens") is not None
+                        else None
+                    ),
+                    prompt_micro_per_m=int(raw_tier["input_token_price_per_m"])
+                    * price_scale,
+                    completion_micro_per_m=int(raw_tier["output_token_price_per_m"])
+                    * price_scale,
+                    prompt_cached_micro_per_m=(
+                        int(raw_tier["cached_input_token_price_per_m"]) * price_scale
+                        if "cached_input_token_price_per_m" in raw_tier
+                        else None
+                    ),
+                )
+                for raw_tier in raw_tiers
+            ]
+            prices[model_id] = ModelPrice(tiers=tiers)
+        else:
             cached_raw = row.get("cached_input_token_price_per_m")
-            cached = int(cached_raw) if cached_raw is not None else None
-        except (TypeError, ValueError):
-            invalid_rows += 1
-            continue
-        if prompt <= 0 or completion <= 0 or (cached is not None and cached < 0):
-            invalid_rows += 1
-            continue
-        prices[model_id] = ModelPrice(
-            prompt_micro_per_m=prompt,
-            completion_micro_per_m=completion,
-            prompt_cached_micro_per_m=cached,
-        )
+            prices[model_id] = ModelPrice(
+                prompt_micro_per_m=int(row["input_token_price_per_m"]) * price_scale,
+                completion_micro_per_m=int(row["output_token_price_per_m"]) * price_scale,
+                prompt_cached_micro_per_m=(
+                    int(cached_raw) * price_scale if cached_raw is not None else None
+                ),
+            )
 
     if invalid_rows:
         return None, (
@@ -733,6 +764,13 @@ def reconcile_manifest_tombstones(
     """
 
     fresh = source == "api"
+    discovery_managed_reasons = {
+        "account-unfunded",
+        "awaiting-price",
+        "delisted-upstream",
+        "price-unavailable",
+        "provider-canary-failed",
+    }
     today = missing_date or datetime.now(UTC).date().isoformat()
     existing_ids = {
         row["id"]
@@ -750,21 +788,39 @@ def reconcile_manifest_tombstones(
             reconciled.append(dict(old_row))
             continue
 
-        # A false row without a machine-owned reason is curated metadata. Its
-        # contents and route state are outside discovery's authority.
+        # A false row without a reason is fully curated metadata. Discovery
+        # cannot safely merge or replace it because there is no machine-owned
+        # state marker to distinguish from a deliberate operator decision.
         curated_unroutable = old_row.get("routable") is False and "routable_reason" not in old_row
         if curated_unroutable:
             reconciled.append(dict(old_row))
             continue
 
+        old_reason = old_row.get("routable_reason")
+        old_operator_hold = (
+            old_row.get("routable") is False
+            and isinstance(old_reason, str)
+            and old_reason not in discovery_managed_reasons
+        )
+
         present = present_rows.get(model_id)
         if present is not None:
             row = dict(present)
+            present_reason = row.get("routable_reason")
+            present_operator_hold = (
+                row.get("routable") is False
+                and isinstance(present_reason, str)
+                and present_reason not in discovery_managed_reasons
+            )
             if fresh:
                 row.pop("missing_since", None)
-                reason = old_row.get("routable_reason")
-                if reason == "delisted-upstream" or (
-                    reason == "awaiting-price" and model_id in priced_ids
+                if present_operator_hold:
+                    pass
+                elif old_operator_hold:
+                    row["routable"] = False
+                    row["routable_reason"] = old_reason
+                elif old_reason == "delisted-upstream" or (
+                    old_reason == "awaiting-price" and model_id in priced_ids
                 ):
                     row["routable"] = True
                     row.pop("routable_reason", None)
@@ -775,8 +831,9 @@ def reconcile_manifest_tombstones(
         row = dict(old_row)
         if fresh:
             if row.get("missing_since"):
-                row["routable"] = False
-                row["routable_reason"] = "delisted-upstream"
+                if not old_operator_hold:
+                    row["routable"] = False
+                    row["routable_reason"] = "delisted-upstream"
             else:
                 row["missing_since"] = today
         reconciled.append(row)

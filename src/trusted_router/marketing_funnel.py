@@ -12,8 +12,12 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
+
+if TYPE_CHECKING:
+    from trusted_router.google_ads_reporting import GoogleAdsSpendReport
 
 FUNNEL_EVENTS = (
     "acquisition.landing_engaged",
@@ -38,6 +42,12 @@ _EVENT_FIELD_BY_NAME = {
     "acquisition.payment_method_saved": "payment_method_saved_users",
     "acquisition.credit_purchase_completed": "purchasers",
     "acquisition.retained_api_usage_7d": "retained_users_7d",
+}
+_GOOGLE_CLICK_FIELD_BY_NAME = {
+    event: f"google_ads_click_{field}" for event, field in _EVENT_FIELD_BY_NAME.items()
+}
+_GOOGLE_PERSISTED_FIELD_BY_NAME = {
+    event: f"google_ads_persisted_{field}" for event, field in _EVENT_FIELD_BY_NAME.items()
 }
 
 
@@ -68,6 +78,24 @@ class FunnelRow:
     purchase_events: int = 0
     retained_users_7d: int = 0
     revenue_microdollars: int = 0
+    google_ads_click_engaged_visitors: int = 0
+    google_ads_click_sign_in_visitors: int = 0
+    google_ads_click_signups: int = 0
+    google_ads_click_activated_users: int = 0
+    google_ads_click_free_credit_exhausted_users: int = 0
+    google_ads_click_checkout_started_users: int = 0
+    google_ads_click_payment_method_saved_users: int = 0
+    google_ads_click_purchasers: int = 0
+    google_ads_click_retained_users_7d: int = 0
+    google_ads_persisted_engaged_visitors: int = 0
+    google_ads_persisted_sign_in_visitors: int = 0
+    google_ads_persisted_signups: int = 0
+    google_ads_persisted_activated_users: int = 0
+    google_ads_persisted_free_credit_exhausted_users: int = 0
+    google_ads_persisted_checkout_started_users: int = 0
+    google_ads_persisted_payment_method_saved_users: int = 0
+    google_ads_persisted_purchasers: int = 0
+    google_ads_persisted_retained_users_7d: int = 0
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -88,6 +116,13 @@ class FunnelRow:
             "retained_users_7d": self.retained_users_7d,
             "revenue_microdollars": self.revenue_microdollars,
             "revenue_usd": microdollars_to_usd(self.revenue_microdollars),
+            "google_ads_click_engaged_visitors": self.google_ads_click_engaged_visitors,
+            "google_ads_click_signups": self.google_ads_click_signups,
+            "google_ads_click_activated_users": self.google_ads_click_activated_users,
+            "google_ads_click_purchasers": self.google_ads_click_purchasers,
+            "google_ads_persisted_signups": self.google_ads_persisted_signups,
+            "google_ads_persisted_activated_users": self.google_ads_persisted_activated_users,
+            "google_ads_persisted_purchasers": self.google_ads_persisted_purchasers,
             "sign_in_rate": percentage(self.sign_in_visitors, self.engaged_visitors),
             "signup_rate": percentage(self.signups, self.engaged_visitors),
             "activation_rate": percentage(self.activated_users, self.signups),
@@ -109,6 +144,70 @@ class FunnelRow:
         }
 
 
+@dataclass(frozen=True)
+class AcquisitionMeasurementSummary:
+    engaged_visitors: int
+    signups: int
+    activated_users: int
+    checkout_started_users: int
+    payment_method_saved_users: int
+    purchasers: int
+    revenue_microdollars: int
+    google_ads_click_engaged_visitors: int
+    google_ads_click_signups: int
+    google_ads_click_activated_users: int
+    google_ads_click_purchasers: int
+    google_ads_persisted_signups: int
+    google_ads_persisted_activated_users: int
+    google_ads_persisted_purchasers: int
+    spend_microdollars: int | None
+    spend_currency_code: str | None
+    ad_impressions: int | None
+    ad_clicks: int | None
+    blockers: tuple[str, ...]
+
+    @property
+    def hold_scale(self) -> bool:
+        return bool(self.blockers)
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "decision": "hold" if self.hold_scale else "ready",
+            "blockers": list(self.blockers),
+            "engaged_visitors": self.engaged_visitors,
+            "signups": self.signups,
+            "activated_users": self.activated_users,
+            "checkout_started_users": self.checkout_started_users,
+            "payment_method_saved_users": self.payment_method_saved_users,
+            "purchasers": self.purchasers,
+            "revenue_microdollars": self.revenue_microdollars,
+            "google_ads_click_engaged_visitors": self.google_ads_click_engaged_visitors,
+            "google_ads_click_signups": self.google_ads_click_signups,
+            "google_ads_click_activated_users": self.google_ads_click_activated_users,
+            "google_ads_click_purchasers": self.google_ads_click_purchasers,
+            "google_ads_persisted_signups": self.google_ads_persisted_signups,
+            "google_ads_persisted_activated_users": self.google_ads_persisted_activated_users,
+            "google_ads_persisted_purchasers": self.google_ads_persisted_purchasers,
+            "spend_microdollars": self.spend_microdollars,
+            "spend_currency_code": self.spend_currency_code,
+            "ad_impressions": self.ad_impressions,
+            "ad_clicks": self.ad_clicks,
+            "signup_cac_microdollars": _cost_per_outcome(
+                self.spend_microdollars,
+                self.signups,
+            ),
+            "activation_cac_microdollars": _cost_per_outcome(
+                self.spend_microdollars,
+                self.activated_users,
+            ),
+            "purchase_cac_microdollars": _cost_per_outcome(
+                self.spend_microdollars,
+                self.purchasers,
+            ),
+            "roas": _ratio(self.revenue_microdollars, self.spend_microdollars),
+        }
+
+
 def build_axiom_funnel_query(dataset: str) -> str:
     """Return the stable APL contract consumed by the operator report."""
     if not _DATASET_RE.fullmatch(dataset):
@@ -118,6 +217,10 @@ def build_axiom_funnel_query(dataset: str) -> str:
         f"['{dataset}'] "
         f"| where event in ({event_values}) "
         "| summarize people=dcount(anonymous_fingerprint), "
+        "google_ads_click_people=dcountif(anonymous_fingerprint, "
+        "has_gclid == true or has_gbraid == true or has_wbraid == true), "
+        "google_ads_persisted_people=dcountif(anonymous_fingerprint, "
+        "column_ifexists('google_ads_click_persisted', false) == true), "
         "events=count(), revenue_microdollars=sum(amount_microdollars) "
         "by event, utm_source, utm_medium, utm_campaign, utm_content, landing_path "
         "| sort by utm_source asc, utm_campaign asc, utm_content asc, "
@@ -186,11 +289,21 @@ def aggregate_funnel_rows(
         )
         people = _nonnegative_int(record.get("people"))
         setattr(row, field, people)
+        google_click_field = _GOOGLE_CLICK_FIELD_BY_NAME[event]
+        setattr(
+            row,
+            google_click_field,
+            _nonnegative_int(record.get("google_ads_click_people")),
+        )
+        google_persisted_field = _GOOGLE_PERSISTED_FIELD_BY_NAME[event]
+        setattr(
+            row,
+            google_persisted_field,
+            _nonnegative_int(record.get("google_ads_persisted_people")),
+        )
         if event == "acquisition.credit_purchase_completed":
             row.purchase_events = _nonnegative_int(record.get("events"))
-            row.revenue_microdollars = _nonnegative_int(
-                record.get("revenue_microdollars")
-            )
+            row.revenue_microdollars = _nonnegative_int(record.get("revenue_microdollars"))
     return sorted(
         rows.values(),
         key=lambda row: (
@@ -203,6 +316,78 @@ def aggregate_funnel_rows(
             row.creative,
             row.landing_path,
         ),
+    )
+
+
+def summarize_measurement(
+    rows: Iterable[FunnelRow],
+    *,
+    source: str | None,
+    spend: GoogleAdsSpendReport | None,
+    spend_error: str | None = None,
+) -> AcquisitionMeasurementSummary:
+    materialized = tuple(rows)
+    totals = {
+        field: sum(getattr(row, field) for row in materialized)
+        for field in (
+            "engaged_visitors",
+            "signups",
+            "activated_users",
+            "checkout_started_users",
+            "payment_method_saved_users",
+            "purchasers",
+            "revenue_microdollars",
+            "google_ads_click_engaged_visitors",
+            "google_ads_click_signups",
+            "google_ads_click_activated_users",
+            "google_ads_click_purchasers",
+            "google_ads_persisted_signups",
+            "google_ads_persisted_activated_users",
+            "google_ads_persisted_purchasers",
+        )
+    }
+    blockers: list[str] = []
+    is_google = (source or "").casefold() == "google"
+    if is_google and totals["engaged_visitors"] > 0:
+        if totals["google_ads_click_engaged_visitors"] == 0:
+            blockers.append("google_click_ids_missing")
+        if totals["google_ads_click_signups"] > totals["google_ads_persisted_signups"]:
+            blockers.append("google_click_ids_not_persisted")
+        if spend is None:
+            blockers.append(spend_error or "native_spend_unavailable")
+        elif spend.currency_code != "USD":
+            blockers.append("spend_currency_not_usd")
+        elif spend.spend_microdollars > 0 and totals["purchasers"] == 0:
+            blockers.append("no_purchases_in_window")
+    return AcquisitionMeasurementSummary(
+        **totals,
+        spend_microdollars=spend.spend_microdollars if spend else None,
+        spend_currency_code=spend.currency_code if spend else None,
+        ad_impressions=spend.impressions if spend else None,
+        ad_clicks=spend.clicks if spend else None,
+        blockers=tuple(dict.fromkeys(blockers)),
+    )
+
+
+def render_measurement_markdown(summary: AcquisitionMeasurementSummary) -> str:
+    decision = "HOLD" if summary.hold_scale else "READY"
+    spend = (
+        f"${microdollars_to_usd(summary.spend_microdollars)}"
+        if summary.spend_microdollars is not None
+        else "unavailable"
+    )
+    blockers = ", ".join(summary.blockers) if summary.blockers else "none"
+    return (
+        f"**Scale decision:** {decision}\n\n"
+        f"**Funnel:** {summary.engaged_visitors} engaged -> {summary.signups} signup -> "
+        f"{summary.activated_users} first call -> {summary.checkout_started_users} checkout "
+        f"-> {summary.payment_method_saved_users} saved payment method -> "
+        f"{summary.purchasers} purchase\n\n"
+        f"**Google click evidence:** {summary.google_ads_click_engaged_visitors} of "
+        f"{summary.engaged_visitors} engaged visitors; "
+        f"{summary.google_ads_persisted_signups} of {summary.google_ads_click_signups} "
+        f"click-backed signups persisted | **Spend:** {spend} | "
+        f"**Blockers:** {blockers}\n\n"
     )
 
 
@@ -251,6 +436,18 @@ def percentage(numerator: int, denominator: int) -> str:
 def microdollars_to_usd(value: int) -> str:
     amount = Decimal(value) / Decimal(MICRODOLLARS_PER_DOLLAR)
     return f"{amount.quantize(Decimal('0.000001'))}"
+
+
+def _cost_per_outcome(spend_microdollars: int | None, outcomes: int) -> int | None:
+    if spend_microdollars is None or outcomes <= 0:
+        return None
+    return (spend_microdollars + outcomes // 2) // outcomes
+
+
+def _ratio(numerator: int, denominator: int | None) -> str | None:
+    if denominator is None or denominator <= 0:
+        return None
+    return str((Decimal(numerator) / Decimal(denominator)).quantize(Decimal("0.0001")))
 
 
 def _dimension(value: object, fallback: str) -> str:

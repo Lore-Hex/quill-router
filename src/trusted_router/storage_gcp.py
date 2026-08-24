@@ -29,6 +29,7 @@ from trusted_router.operational_analytics_freshness import (
     OutboxFreshness,
 )
 from trusted_router.security import lookup_hash_api_key, verify_api_key
+from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage import (
     AcquisitionAttribution,
     ActivationReminderTask,
@@ -3272,14 +3273,18 @@ class SpannerBigtableStore:
         def build_body(authorization_id: str, reservation_id: str) -> str:
             return _json_body(build_authorization(authorization_id, reservation_id))
 
+        window_decision = None
         if window_limits:
             # Lock-free snapshot check BEFORE the DML-only transaction (keeps
             # the authorize txn free of shared reads on the hot row — the
             # deadlock shape the typed migration removed). Replay-safe: an
             # existing same-fingerprint reservation passes through to the txn.
-            from trusted_router.storage_gcp_authorize import check_key_window_limits
+            from trusted_router.storage_gcp_authorize import (
+                AuthorizeVerdict,
+                key_window_limit_decision,
+            )
 
-            blocked = check_key_window_limits(
+            window_decision = key_window_limit_decision(
                 self._database,
                 self._param_types,
                 key_hash=key_hash,
@@ -3289,11 +3294,18 @@ class SpannerBigtableStore:
                 idempotency_scope=scope,
                 idempotency_fingerprint=idempotency_fingerprint,
             )
-            if blocked is not None:
+            if window_decision is not None and not window_decision.allowed:
                 # WHICH window rides as an outcome suffix so the
                 # (outcome, authorization) tuple shape stays unchanged; the
                 # gateway route splits on ':'.
-                return f"{AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED}:{blocked}", None
+                return (
+                    AuthorizeVerdict(
+                        f"{AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED}:"
+                        f"{window_decision.window}",
+                        rate_limit=window_decision,
+                    ),
+                    None,
+                )
 
         credit_shard_candidates = (
             self._credit_shard_candidates(workspace_id) if has_credit_candidate else (UNSHARDED,)
@@ -3448,7 +3460,9 @@ class SpannerBigtableStore:
         authorization: GatewayAuthorization | None = None
         if outcome in (AuthorizeOutcome.ACCEPTED, AuthorizeOutcome.REPLAY):
             authorization = self.get_gateway_authorization(result["authorization_id"])
-        return outcome, authorization
+        from trusted_router.storage_gcp_authorize import AuthorizeVerdict
+
+        return AuthorizeVerdict(outcome, rate_limit=window_decision), authorization
 
     def reap_expired_reservations(self, *, now: Any, limit: int = 100) -> int:
         from trusted_router.storage_gcp_authorize import (
@@ -3614,8 +3628,8 @@ class SpannerBigtableStore:
         amount_microdollars: int,
         *,
         usage_type: str,
-    ) -> None:
-        self.api_keys.reserve_limit(key_hash, amount_microdollars, usage_type=usage_type)
+    ) -> KeyWindowLimitDecision | None:
+        return self.api_keys.reserve_limit(key_hash, amount_microdollars, usage_type=usage_type)
 
     def settle_key_limit(
         self,

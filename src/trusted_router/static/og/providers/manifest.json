@@ -163,10 +163,10 @@
   },
   "deepseek": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 5,
     "name": "DeepSeek",
     "privacy": "Policy documented",
-    "route_count": 10,
+    "route_count": 8,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepseek"
   },
@@ -433,10 +433,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 111,
+    "model_count": 112,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 204,
+    "route_count": 206,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -487,10 +487,10 @@
   },
   "pearl": {
     "card_version": 2,
-    "model_count": 2,
+    "model_count": 3,
     "name": "Pearl Research Labs",
     "privacy": "Policy documented",
-    "route_count": 2,
+    "route_count": 3,
     "route_mode": "Prepaid",
     "slug": "pearl"
   },
@@ -595,10 +595,10 @@
   },
   "scaleway": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 12,
     "name": "Scaleway",
     "privacy": "Policy documented",
-    "route_count": 10,
+    "route_count": 12,
     "route_mode": "Prepaid",
     "slug": "scaleway"
   },

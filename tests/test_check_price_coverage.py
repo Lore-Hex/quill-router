@@ -26,6 +26,8 @@ _NEW_AUTOMATIC_FEED_MODELS = {
     "deepseek/deepseek-v4-flash-0731",
     "mistralai/mistral-small-2603",
     "z-ai/glm-5.2",
+    "sakana-ai/fugu-ultra-v1.1",
+    "sakana-ai/sakana-namazu-v1.0",
 }
 _NEW_AUTOMATIC_FEED_ALIASES = {
     "deepseek-v4-flash",
@@ -110,6 +112,13 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "glm-5.2"}]}
     if "api.featherless.ai" in url:
         return {"data": [{"id": "zai-org/GLM-5.2"}]}
+    if "api.sakana.ai" in url:
+        return {
+            "data": [
+                {"id": "fugu-ultra-v1.1"},
+                {"id": "sakana-namazu-v1.0"},
+            ]
+        }
     return {"data": []}
 
 
