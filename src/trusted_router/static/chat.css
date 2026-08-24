@@ -575,8 +575,8 @@
 
 .chat-send-kbd {
     margin-left: 8px;
-    background: rgba(255, 255, 255, 0.2);
-    color: rgba(255, 255, 255, 0.85);
+    background: rgb(255, 255, 255, 0.2);
+    color: rgb(255, 255, 255, 0.85);
     padding: 1px 5px;
     border-radius: 4px;
     font-size: 10px;
@@ -1063,15 +1063,15 @@
 }
 
 .chat-msg-edit-save {
-    background: rgba(255, 255, 255, 0.9);
+    background: rgb(255, 255, 255, 0.9);
     color: var(--chat-primary);
-    border-color: rgba(255, 255, 255, 0.9);
+    border-color: rgb(255, 255, 255, 0.9);
 }
 
 .chat-msg-edit-cancel {
     background: transparent;
-    color: rgba(255, 255, 255, 0.85);
-    border-color: rgba(255, 255, 255, 0.4);
+    color: rgb(255, 255, 255, 0.85);
+    border-color: rgb(255, 255, 255, 0.4);
 }
 
 .chat-msg-assistant .chat-msg-edit-save {
@@ -1176,17 +1176,17 @@
     border-radius: var(--chat-radius);
     object-fit: cover;
     cursor: pointer;
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    border: 1px solid rgb(255, 255, 255, 0.3);
 }
 
 .chat-msg-attachment-img:hover {
-    border-color: rgba(255, 255, 255, 0.6);
+    border-color: rgb(255, 255, 255, 0.6);
 }
 
 .chat-image-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(9, 9, 17, 0.85);
+    background: rgb(9, 9, 17, 0.85);
     z-index: 200;
     display: flex;
     align-items: center;
@@ -1199,7 +1199,7 @@
     max-width: 92vw;
     max-height: 92vh;
     border-radius: var(--chat-radius);
-    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 30px 80px rgb(0, 0, 0, 0.4);
 }
 
 .chat-msg-assistant .chat-msg-bubble {
@@ -1530,7 +1530,7 @@
 .chat-model-picker-backdrop {
     position: absolute;
     inset: 0;
-    background: rgba(9, 9, 17, 0.55);
+    background: rgb(9, 9, 17, 0.55);
 }
 
 .chat-model-picker-panel {
@@ -1656,7 +1656,7 @@
 }
 
 .chat-picker-filter.is-on .chat-picker-filter-count {
-    color: rgba(255, 255, 255, 0.85);
+    color: rgb(255, 255, 255, 0.85);
 }
 
 .chat-model-picker-footer {
@@ -1847,7 +1847,7 @@
 .chat-settings-backdrop {
     position: absolute;
     inset: 0;
-    background: rgba(9, 9, 17, 0.55);
+    background: rgb(9, 9, 17, 0.55);
 }
 
 .chat-settings-panel {
@@ -1987,7 +1987,7 @@
 .chat-help-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(9, 9, 17, 0.55);
+    background: rgb(9, 9, 17, 0.55);
     z-index: 200;
     display: flex;
     align-items: center;
@@ -2054,7 +2054,7 @@
     background: var(--chat-bg);
     border: 1px solid var(--chat-border);
     border-radius: var(--chat-radius);
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 6px 24px rgb(0, 0, 0, 0.08);
     display: flex;
     align-items: center;
     padding: 6px 8px;
@@ -2100,7 +2100,7 @@
 }
 
 .chat-search-mark {
-    background: rgba(255, 235, 59, 0.45);
+    background: rgb(255, 235, 59, 0.45);
     color: inherit;
     border-radius: 2px;
     padding: 0 1px;
@@ -2119,7 +2119,7 @@
     border-radius: var(--chat-radius);
     font-size: 13px;
     font-weight: 500;
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 6px 24px rgb(0, 0, 0, 0.15);
     opacity: 0;
     pointer-events: none;
     transition: opacity 180ms, transform 180ms;
@@ -2153,8 +2153,8 @@
     inset: 0;
     background: radial-gradient(
         circle at 50% 40%,
-        rgba(100, 103, 242, 0.22) 0%,
-        rgba(9, 9, 17, 0.92) 70%
+        rgb(100, 103, 242, 0.22) 0%,
+        rgb(9, 9, 17, 0.92) 70%
     );
     cursor: pointer;
 }
@@ -2179,8 +2179,8 @@
     width: 36px;
     height: 36px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgb(255, 255, 255, 0.08);
+    border: 1px solid rgb(255, 255, 255, 0.15);
     color: #fff;
     font-size: 22px;
     line-height: 1;
@@ -2189,7 +2189,7 @@
 }
 
 .chat-voice-exit:hover {
-    background: rgba(255, 255, 255, 0.18);
+    background: rgb(255, 255, 255, 0.18);
 }
 
 .chat-voice-orb {
@@ -2210,7 +2210,7 @@
     position: absolute;
     inset: -8px;
     border-radius: 50%;
-    border: 2px solid rgba(100, 103, 242, 0.6);
+    border: 2px solid rgb(100, 103, 242, 0.6);
     opacity: 0;
     animation: chat-voice-pulse 2400ms ease-out infinite;
     pointer-events: none;
@@ -2228,7 +2228,7 @@
 }
 
 .chat-voice-panel[data-state="listening"] .chat-voice-orb-pulse {
-    border-color: rgba(16, 163, 127, 0.7);
+    border-color: rgb(16, 163, 127, 0.7);
 }
 
 .chat-voice-panel[data-state="thinking"] .chat-voice-orb-pulse {
@@ -2242,7 +2242,7 @@
 
 .chat-voice-panel[data-state="speaking"] .chat-voice-orb-pulse {
     animation-duration: 1200ms;
-    border-color: rgba(100, 103, 242, 0.7);
+    border-color: rgb(100, 103, 242, 0.7);
 }
 
 .chat-voice-status {
@@ -2254,7 +2254,7 @@
 .chat-voice-transcript {
     font-size: 16px;
     line-height: 1.5;
-    color: rgba(255, 255, 255, 0.85);
+    color: rgb(255, 255, 255, 0.85);
     min-height: 48px;
     max-height: 200px;
     overflow-y: auto;
@@ -2264,12 +2264,12 @@
 
 .chat-voice-hint {
     font-size: 12px;
-    color: rgba(255, 255, 255, 0.55);
+    color: rgb(255, 255, 255, 0.55);
 }
 
 .chat-voice-hint kbd {
-    background: rgba(255, 255, 255, 0.12);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgb(255, 255, 255, 0.12);
+    border: 1px solid rgb(255, 255, 255, 0.2);
     padding: 1px 6px;
     border-radius: 4px;
     font-family: var(--chat-mono);
@@ -2294,7 +2294,7 @@
 .chat-prompt-backdrop {
     position: absolute;
     inset: 0;
-    background: rgba(9, 9, 17, 0.55);
+    background: rgb(9, 9, 17, 0.55);
 }
 
 .chat-prompt-panel {
@@ -2558,8 +2558,8 @@
     position: absolute;
     top: 8px;
     left: 8px;
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(230, 237, 243, 0.6);
+    background: rgb(255, 255, 255, 0.08);
+    color: rgb(230, 237, 243, 0.6);
     padding: 1px 6px;
     border-radius: 4px;
     font-size: 10px;
@@ -2578,8 +2578,8 @@
     position: absolute;
     top: 8px;
     right: 8px;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgb(255, 255, 255, 0.08);
+    border: 1px solid rgb(255, 255, 255, 0.18);
     color: #e6edf3;
     padding: 3px 8px;
     border-radius: 4px;
@@ -2595,7 +2595,7 @@
 }
 
 .chat-code-copy:hover {
-    background: rgba(255, 255, 255, 0.16);
+    background: rgb(255, 255, 255, 0.16);
 }
 
 /* ── Capability tags in model picker ──────────────────────────── */
@@ -2664,7 +2664,7 @@
     border-radius: 999px;
     background: var(--chat-bg);
     border: 1px solid var(--chat-border);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 4px 16px rgb(0, 0, 0, 0.08);
     color: var(--chat-text);
     font-size: 14px;
     cursor: pointer;
@@ -2693,7 +2693,7 @@
         display: block;
         position: fixed;
         inset: 56px 0 0 0;
-        background: rgba(9, 9, 17, 0.4);
+        background: rgb(9, 9, 17, 0.4);
         z-index: 49;
         animation: chat-fade-in 180ms ease-out;
     }
@@ -2748,7 +2748,7 @@
         transform: translateX(-100%);
         transition: transform 200ms ease-out;
         z-index: 50;
-        box-shadow: 2px 0 16px rgba(0, 0, 0, 0.08);
+        box-shadow: 2px 0 16px rgb(0, 0, 0, 0.08);
     }
     .chat-sidebar[data-open="true"] {
         transform: translateX(0);
