@@ -105,6 +105,10 @@ def test_public_surface_has_no_authenticated_or_internal_routes() -> None:
 
     assert "/" in paths
     assert {"/models", "/v1/models", "/ready", "/v1/ready"} <= paths
+    assert {
+        "/.well-known/mcp.json",
+        "/.well-known/mcp/server-card.json",
+    } <= paths
     assert {"/bedrock-group-buy", "/bedrock-group-buy/", "/v1/bedrock-group-buy"} <= paths
     assert "/bedrock-group-buy/manage" not in paths
     assert "/bedrock-group-buy/pledge" not in paths
