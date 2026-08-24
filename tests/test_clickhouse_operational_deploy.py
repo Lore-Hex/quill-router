@@ -101,6 +101,7 @@ def test_clickhouse_manual_deploys_bundle_only_valid_committed_source() -> None:
     for relative in (
         "scripts/deploy/clickhouse_live_ingestion.sh",
         "scripts/deploy/clickhouse_operational_analytics.sh",
+        "scripts/deploy/azure_clickhouse_drain_install.sh",
     ):
         script = (ROOT / relative).read_text()
         assert "source \"${SCRIPT_DIR}/_clickhouse_bundle.sh\"" in script

@@ -150,6 +150,20 @@ _STUB = r"""#!/usr/bin/env bash
 cat >/dev/null 2>&1 || true
 joined="${0##*/} $*"
 
+# Some deploy tests need to inspect the exact cloud-init document handed to
+# Azure. Capture the file at the command boundary, before the script's EXIT
+# trap removes its temporary copy.
+if [ "${0##*/}" = "az" ] && [ -n "${HARNESS_CAPTURE_CUSTOM_DATA:-}" ]; then
+  previous=""
+  for argument in "$@"; do
+    if [ "$previous" = "custom-data" ]; then
+      cp "$argument" "$HARNESS_CAPTURE_CUSTOM_DATA"
+      break
+    fi
+    [ "$argument" = "--custom-data" ] && previous="custom-data" || previous=""
+  done
+fi
+
 if { [ "${0##*/}" = "gcloud" ] || [ "${0##*/}" = "gc" ]; } \
     && [[ " $* " == *" run services describe "* ]] \
     && [[ " $* " == *"status.traffic[?tag="* ]]; then

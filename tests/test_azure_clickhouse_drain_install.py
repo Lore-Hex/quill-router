@@ -1,143 +1,184 @@
-"""Static guards on scripts/deploy/azure_clickhouse_drain_install.sh.
-
-The drain is the process the AWS-EU outage was missing for fifteen days, and
-every property below is one whose removal still produces an installer that
-"succeeds" while the drain delivers nothing.
-"""
+"""Execution contracts for the Azure operational-analytics drain installer."""
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts/deploy/azure_clickhouse_drain_install.sh"
+import pytest
+
+from .deploy_script_harness import (
+    SCRIPT_FIXTURES,
+    DeployScriptHarness,
+    ScriptFixture,
+    summarise,
+)
+
+SCRIPT = "scripts/deploy/azure_clickhouse_drain_install.sh"
 
 
-def _script() -> str:
-    return SCRIPT.read_text()
+def _fixture(
+    *, delivery_reply: str = "rows advanced: 10 -> 11\n__TR_RUNCMD_OK__"
+) -> ScriptFixture:
+    return ScriptFixture(
+        env={"VERSIONER_PERL_VERSION": "5.34"},
+        responses=(
+            (r"delivery proof: waiting", delivery_reply),
+            (r"vm run-command invoke", "__TR_RUNCMD_OK__"),
+        )
+    )
 
 
-def test_secrets_are_fetched_on_the_node_not_passed_in() -> None:
-    """systemd's EnvironmentFile performs NO command substitution.
-
-    A literal $(curl ...) written into it BECOMES the password: non-empty, so
-    every startup check passes, and then authentication fails forever while the
-    outbox grows. So the fetch and the write happen in one step ON the node,
-    and the values never pass through this script's output or arguments.
-    """
-    script = _script()
-
-    assert "identity/oauth2/token" in script
-    assert "vault.azure.net/secrets/" in script
-    # And the installer refuses an env file that captured a command instead --
-    # for BOTH secrets, since either one landing as an unexpanded $(...) is
-    # non-empty, passes every startup check, and then fails auth forever.
-    assert "CH_PASSWORD is a literal command; refusing" in script
-    assert "PGPASSWORD is a literal command; refusing" in script
-
-
-def test_the_postgres_password_is_not_put_in_the_dsn() -> None:
-    """The drain refuses a DSN carrying one, and says why:
-
-        DSN must not contain a password; set PGPASSWORD instead so the secret
-        does not appear in argv
-
-    The DSN is handed to libpq, where it can surface in a process listing. The
-    first version of this installer wrote it there and the drain rejected every
-    connection -- failed_shards=32 -- while looking perfectly healthy from the
-    outside: the unit was active and the outbox simply never drained.
-    """
-    script = _script()
-
-    assert "PGPASSWORD=%s" in script
-    assert "the DSN carries a password; the drain refuses that" in script
+def _harness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fixture: ScriptFixture | None = None,
+) -> DeployScriptHarness:
+    monkeypatch.setitem(SCRIPT_FIXTURES, SCRIPT, fixture or _fixture())
+    harness = DeployScriptHarness(tmp_path / "harness")
+    git = shutil.which("git")
+    assert git is not None
+    commands = (
+        ("init", "-q"),
+        ("config", "user.email", "test@trustedrouter.com"),
+        ("config", "user.name", "TrustedRouter Test"),
+        ("add", "clickhouse", "src/trusted_router"),
+        ("commit", "-qm", "harness worker snapshot"),
+    )
+    for command in commands:
+        subprocess.run(  # noqa: S603 - resolved system git, fixed test arguments
+            [git, *command],
+            cwd=harness.mirror,
+            check=True,
+            capture_output=True,
+        )
+    return harness
 
 
-def test_it_proves_the_secret_landed_without_printing_it() -> None:
-    """Length and shape only. A drain install that echoes a provider password
-    into a terminal has leaked it to the scrollback and the CI log."""
-    script = _script()
-
-    assert 'print \\"CH_PASSWORD length=\\" length(\\$2)' in script
-    assert "cut -d= -f1" in script  # names only
+def _joined_calls(run: object) -> list[str]:
+    return [" ".join(call) for call in run.calls]  # type: ignore[attr-defined]
 
 
-def test_the_payload_is_chunked_and_checksummed() -> None:
-    """`az vm run-command` truncates around 256KB SILENTLY.
+def test_preflight_authenticates_to_postgres_and_clickhouse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _harness(tmp_path, monkeypatch).run(SCRIPT)
 
-    A truncated tarball extracts into a partial tree that imports far enough to
-    look installed. The sha256 is checked on the node before extraction.
-    """
-    script = _script()
-
-    assert "CHUNK_BYTES" in script
-    assert "split -b" in script
-    assert "sha256sum" in script
-    assert "sha256 mismatch" in script
-
-
-def test_static_is_excluded_from_the_payload() -> None:
-    """9.5MB of images the drain never imports, which would turn 19 chunks into
-    130 and the install into an hour."""
-    assert "--exclude='static'" in _script()
-
-
-def test_appledouble_sidecars_are_removed_and_then_asserted_gone() -> None:
-    """COPYFILE_DISABLE stops macOS writing ._* into the tar; the delete and
-    the assertion catch the case where it did anyway. They land beside every
-    file and break `python -m` imports."""
-    script = _script()
-
-    assert "COPYFILE_DISABLE=1" in script
-    assert "-name '._*' -delete" in script
-    assert "AppleDouble sidecars survived" in script
+    assert run.returncode == 0, summarise(run)
+    preflight = next(
+        call
+        for call in _joined_calls(run)
+        if "vm run-command invoke" in call and "psql" in call
+    )
+    assert "PGPASSWORD=" in preflight
+    assert "psql" in preflight and "SELECT 1" in preflight
+    assert "CLICKHOUSE_PASSWORD=" in preflight
+    assert "clickhouse-client" in preflight
+    assert "__TR_RUNCMD_OK__" in preflight
+    secret_checks = [
+        call
+        for call in _joined_calls(run)
+        if "keyvault secret show" in call
+    ]
+    assert len(secret_checks) == 2
 
 
-def test_the_code_is_import_tested_before_it_replaces_what_runs() -> None:
-    """A staging dir that cannot import is a staging dir. The same tree moved
-    into place first is an outage."""
-    script = _script()
+def test_final_verification_requires_a_clickhouse_row_count_to_advance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _harness(tmp_path, monkeypatch).run(SCRIPT)
 
-    smoke = script.index("import smoke test")
-    swap = script.index("swap into place")
-    assert smoke < swap, "the smoke test must run before the swap"
-
-
-def test_the_unit_is_restarted_not_just_enabled() -> None:
-    """`systemctl enable --now` does NOT restart an already-running unit, so a
-    reinstall leaves the OLD process running the OLD code -- observed on
-    AWS-EU, where the PID never changed across a reinstall."""
-    script = _script()
-
-    assert "systemctl restart" in script
-
-
-def test_it_refuses_to_run_without_the_scoped_role() -> None:
-    """The drain connects as tr_drain, which has SELECT and DELETE on exactly
-    one table. Installing before that role exists produces a unit that starts,
-    fails every connection, and delivers nothing."""
-    script = _script()
-
-    assert "tr-azure-pg-drain-password" in script
-    assert "create-drain-role.sh first" in script
+    assert run.returncode == 0, summarise(run)
+    proof = next(
+        call
+        for call in _joined_calls(run)
+        if "vm run-command invoke" in call and "delivery proof" in call
+    )
+    assert "SELECT sum(c)" in proof
+    for table in (
+        "activity_generations",
+        "synthetic_probe_samples",
+        "client_request_events",
+        "client_minute_counters",
+    ):
+        assert table in proof
+    assert "after" in proof and "before" in proof
+    assert "-gt" in proof
+    assert "exit 1" in proof
+    assert "__TR_RUNCMD_OK__" in proof
 
 
-def test_run_command_failures_are_not_read_as_success() -> None:
-    """`az vm run-command invoke` exits 0 even when the script inside failed.
+def test_no_row_movement_makes_the_installer_fail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _harness(
+        tmp_path,
+        monkeypatch,
+        _fixture(delivery_reply="row count did not advance"),
+    ).run(SCRIPT)
 
-    Without an explicit marker every remote step "succeeds" and the installer
-    reports a drain it never installed.
-    """
-    script = _script()
-
-    assert "__TR_STEP_OK__" in script
-    assert "the remote script failed" in script
+    assert run.returncode != 0
+    assert "delivery proof: the remote script failed" in run.stderr
 
 
-def test_the_closing_note_refuses_to_call_active_evidence() -> None:
-    """"The unit is active" is the claim the AWS-EU outage would also have
-    passed, once the unit existed. Rows moving is the bar."""
-    script = _script()
+def test_every_remote_step_requires_the_success_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _harness(tmp_path, monkeypatch).run(SCRIPT)
 
-    assert "The unit being active is NOT the evidence" in script
-    assert "SELECT count() FROM activity_generations" in script
+    assert run.returncode == 0, summarise(run)
+    remote_calls = [
+        call for call in _joined_calls(run) if "vm run-command invoke" in call
+    ]
+    assert remote_calls
+    assert all("__TR_RUNCMD_OK__" in call for call in remote_calls)
+
+
+def test_passwords_reach_clients_only_through_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _harness(tmp_path, monkeypatch).run(SCRIPT)
+
+    assert run.returncode == 0, summarise(run)
+    calls = "\n".join(_joined_calls(run))
+    assert "PGPASSWORD=" in calls
+    assert "CLICKHOUSE_PASSWORD=" in calls
+    assert "CH_PASSWORD=%s" in calls
+    assert "TR_POSTGRES_DSN=host=%s" in calls
+    assert "CH_PASSWORD length=" in calls
+    assert "PGPASSWORD length=" in calls
+    assert "CH_PASSWORD is a literal command; refusing" in calls
+    assert "PGPASSWORD is a literal command; refusing" in calls
+    assert "cut -d= -f1" in calls
+    assert "--password " not in calls
+    assert "--value " not in calls
+
+
+def test_payload_is_a_checksummed_committed_head_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = _harness(tmp_path, monkeypatch)
+
+    run = harness.run(SCRIPT)
+
+    assert run.returncode == 0, summarise(run)
+    calls = _joined_calls(run)
+    joined = "\n".join(calls)
+    assert "sha256 mismatch" in joined
+    assert "AppleDouble sidecars survived" in joined
+    smoke = next(i for i, call in enumerate(calls) if "import smoke test" in call or "CONFIG_EXIT_CODE" in call)
+    swap = next(i for i, call in enumerate(calls) if "swap into place" in call or "installed at /opt/tr-clickhouse" in call)
+    assert smoke < swap
+    assert "systemctl restart tr-clickhouse-operational-ingest-postgres.service" in joined
+    installed = harness.mirror / "scripts/deploy/azure_clickhouse_drain_install.sh"
+    script = installed.read_text()
+    assert 'source "${SCRIPT_DIR}/_clickhouse_bundle.sh"' in script
+    assert 'build_clickhouse_bundle "$ROOT" "$archive"' in script
+    assert 'tar czf "$WORK/drain.tgz"' not in script

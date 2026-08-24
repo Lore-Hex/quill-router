@@ -1,7 +1,7 @@
 -- Column-for-column single-node counterpart to 010_workspace_directory.sql.
 -- The engine is the only difference from the replicated definition.
 
-CREATE TABLE IF NOT EXISTS tr.workspace_directory
+CREATE TABLE IF NOT EXISTS workspace_directory
 (
     tenant_id           FixedString(64),
     workspace_id        LowCardinality(String),

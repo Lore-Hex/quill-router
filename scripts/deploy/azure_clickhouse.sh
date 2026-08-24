@@ -78,6 +78,58 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 say() { printf '\n=== %s\n' "$*" >&2; }
 die() { printf '\n[FAIL] %s\n' "$*" >&2; exit 1; }
 
+# Azure standalone nodes consume only migrations explicitly named
+# *_single_node.sql. The other numbered files either define the separate
+# provider-benchmark dataset (001-002) or target the Keeper/ON CLUSTER
+# replicated topology (003-005, 007-008, 010, 012). Deriving this list makes a
+# newly added standalone migration impossible to omit by forgetting this file.
+SCHEMA_FILE="$(mktemp)"
+CLOUD_INIT=""
+trap 'rm -f "$SCHEMA_FILE" ${CLOUD_INIT:+"$CLOUD_INIT"}' EXIT
+single_node_migrations=()
+while IFS= read -r migration; do
+  single_node_migrations+=("$migration")
+done < <(
+  find "$REPO_ROOT/clickhouse" -maxdepth 1 -type f \
+    -name '[0-9][0-9][0-9]_*_single_node.sql' -print | LC_ALL=C sort
+)
+[ "${#single_node_migrations[@]}" -gt 0 ] \
+  || die "no numbered single-node ClickHouse migrations found"
+for migration in "${single_node_migrations[@]}"; do
+  {
+    printf '%s\n' "-- migration: ${migration##*/}"
+    cat "$migration"
+    printf '\n'
+  } >> "$SCHEMA_FILE"
+done
+
+refuse_existing() {
+  printf '\n[FAIL] existing VM %s/%s failed validation: %s\n' "$RG" "$VM" "$1" >&2
+  cat >&2 <<EOF
+Inspect the Azure resource shape with exactly:
+  az vm show -g ${RG} -n ${VM} --query '{nic:networkProfile.networkInterfaces[0].id,identities:keys(identity.userAssignedIdentities)}' -o json
+No credential was created or rotated.
+EOF
+  exit 1
+}
+
+run_existing() {
+  local label="$1"; shift
+  local out
+  out="$(az vm run-command invoke -g "$RG" -n "$VM" --command-id RunShellScript \
+    --scripts "set -eu
+$*
+echo __TR_RUNCMD_OK__" --query "value[0].message" -o tsv 2>&1)" || {
+      printf '%s\n' "$out" >&2
+      refuse_existing "$label: run-command failed"
+    }
+  printf '%s' "$out" | grep -q "__TR_RUNCMD_OK__" || {
+    printf '%s\n' "$out" >&2
+    refuse_existing "$label: remote command failed"
+  }
+  printf '%s' "$out" | grep -vE "^\s*$|__TR_RUNCMD_OK__|^\[stdout\]|^\[stderr\]" || true
+}
+
 # -- preflight ---------------------------------------------------------------
 say "preflight"
 
@@ -85,6 +137,71 @@ az account show >/dev/null 2>&1 || die "not logged in to Azure"
 
 az network vnet show -g "$RG" -n "$VNET" >/dev/null 2>&1 \
   || die "VNet ${RG}/${VNET} not found — run scripts/deploy/azure_canary.sh first"
+
+# Decide the existing-node case before any create or Key Vault mutation. A
+# rerun against the live analytics store validates and migrates it in place;
+# credential rotation is deliberately not a side effect of provisioning.
+if az vm show -g "$RG" -n "$VM" >/dev/null 2>&1; then
+  say "existing VM ${VM}: validate before idempotent schema apply"
+  IDENTITY_ID="$(az identity show -g "$RG" -n "$IDENTITY" --query id -o tsv 2>/dev/null)" \
+    || refuse_existing "managed identity ${IDENTITY} does not exist"
+  IDENTITY_CLIENT="$(az identity show -g "$RG" -n "$IDENTITY" --query clientId -o tsv 2>/dev/null)" \
+    || refuse_existing "could not read ${IDENTITY}'s client id"
+  [ -n "$IDENTITY_ID" ] && [ -n "$IDENTITY_CLIENT" ] \
+    || refuse_existing "managed identity ${IDENTITY} is incomplete"
+
+  vm_shape="$(az vm show -g "$RG" -n "$VM" \
+    --query '{nic:networkProfile.networkInterfaces[0].id,identities:keys(identity.userAssignedIdentities)}' \
+    -o json 2>/dev/null)" || refuse_existing "could not inspect VM identity and NIC"
+  NIC_ID="$(printf '%s' "$vm_shape" | python3 -c '
+import json, sys
+print(json.load(sys.stdin).get("nic") or "")
+')"
+  has_identity="$(printf '%s' "$vm_shape" | python3 -c '
+import json, sys
+want = sys.argv[1].lower()
+print(sum(1 for value in (json.load(sys.stdin).get("identities") or [])
+          if value.lower() == want))
+' "$IDENTITY_ID")"
+  [ -n "$NIC_ID" ] || refuse_existing "VM has no primary network interface"
+  [ "$has_identity" -eq 1 ] \
+    || refuse_existing "VM is not assigned ${IDENTITY_ID}"
+
+  EXPECTED_SUBNET_ID="$(az network vnet subnet show -g "$RG" \
+    --vnet-name "$VNET" -n "$SUBNET" --query id -o tsv 2>/dev/null)" \
+    || refuse_existing "expected subnet ${VNET}/${SUBNET} does not exist"
+  ACTUAL_SUBNET_ID="$(az network nic show --ids "$NIC_ID" \
+    --query 'ipConfigurations[0].subnet.id' -o tsv 2>/dev/null)" \
+    || refuse_existing "could not inspect VM subnet"
+  actual_subnet_lower="$(printf '%s' "$ACTUAL_SUBNET_ID" | tr '[:upper:]' '[:lower:]')"
+  expected_subnet_lower="$(printf '%s' "$EXPECTED_SUBNET_ID" | tr '[:upper:]' '[:lower:]')"
+  [ "$actual_subnet_lower" = "$expected_subnet_lower" ] \
+    || refuse_existing "subnet is ${ACTUAL_SUBNET_ID}, expected ${EXPECTED_SUBNET_ID}"
+
+  SCHEMA_B64="$(base64 < "$SCHEMA_FILE" | tr -d '\n')"
+  run_existing "ClickHouse authentication/schema" "
+systemctl is-active clickhouse-server >/dev/null || { echo 'clickhouse-server is not active'; exit 1; }
+TOKEN=\$(curl -fsS -H Metadata:true 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net&client_id=${IDENTITY_CLIENT}' | jq -r .access_token)
+CH_PW=\$(curl -fsS -H \"Authorization: Bearer \$TOKEN\" 'https://${VAULT}.vault.azure.net/secrets/${CH_SECRET}?api-version=7.4' | jq -r .value)
+test -n \"\$CH_PW\"
+CLICKHOUSE_PASSWORD=\"\$CH_PW\" clickhouse-client --user default --database default --query 'SELECT 1' >/dev/null
+printf %s '$SCHEMA_B64' | base64 -d > /tmp/tr-operational-schema.sql
+CLICKHOUSE_PASSWORD=\"\$CH_PW\" clickhouse-client --user default --database default --multiquery < /tmp/tr-operational-schema.sql
+rm -f /tmp/tr-operational-schema.sql
+schema_columns=\$(CLICKHOUSE_PASSWORD=\"\$CH_PW\" clickhouse-client --user default --database default --query \"SELECT count() FROM system.columns WHERE database = currentDatabase() AND table = 'activity_generations' AND name = 'workspace_id'\")
+schema_directory=\$(CLICKHOUSE_PASSWORD=\"\$CH_PW\" clickhouse-client --user default --database default --query \"SELECT count() FROM system.tables WHERE database = currentDatabase() AND name = 'workspace_directory'\")
+[ \"\$schema_columns\" = 1 ] && [ \"\$schema_directory\" = 1 ] || { echo 'schema is not at expected migration 013'; exit 1; }
+touch /var/lib/clickhouse/.tr-schema-013-applied
+echo 'ClickHouse authenticated; schema is at migration 013'
+"
+
+  PRIVATE_IP="$(az vm list-ip-addresses -g "$RG" -n "$VM" \
+    --query "[0].virtualMachine.network.privateIpAddresses[0]" -o tsv)"
+  [ -n "$PRIVATE_IP" ] || refuse_existing "could not read the private IP"
+  echo "  existing node validated and migrated idempotently"
+  echo "  http://${PRIVATE_IP}:8123"
+  exit 0
+fi
 
 # QUOTA AND CAPACITY ARE DIFFERENT THINGS, and this script learned that the
 # expensive way: Standard_D2s_v3 has 10 vCPUs of quota in uaenorth and cannot be
@@ -142,15 +259,26 @@ used="${family_used_limit% *}"; limit="${family_used_limit#* }"
 echo "  ${FAMILY} quota ${used}/${limit} — room for ${VM_SIZE} (${VCPUS} vCPU)"
 
 # -- password ----------------------------------------------------------------
-# Generated once and never echoed. Reused if it already exists, so re-running
-# this script does not lock the control plane out of its own analytics store.
+# This is a new-node-only branch. Existing nodes returned above before the
+# vault could be touched; live credential rotation must be a separate,
+# explicitly named operation. The generated value travels through a 0600 file,
+# never the az process argv.
 say "ClickHouse password in ${VAULT}/${CH_SECRET}"
 if az keyvault secret show --vault-name "$VAULT" -n "$CH_SECRET" >/dev/null 2>&1; then
   echo "  already exists, reusing"
 else
-  pw="$(openssl rand -base64 32 | tr -d '\n/+=' | head -c 40)"
-  az keyvault secret set --vault-name "$VAULT" -n "$CH_SECRET" --value "$pw" -o none
-  unset pw
+  pw_file="$(mktemp)"
+  chmod 600 "$pw_file"
+  if ! openssl rand -hex 20 | tr -d '\n' > "$pw_file"; then
+    rm -f "$pw_file"
+    die "could not generate the ClickHouse password"
+  fi
+  if ! az keyvault secret set --vault-name "$VAULT" -n "$CH_SECRET" \
+    --file "$pw_file" --encoding utf-8 -o none; then
+    shred -u "$pw_file" 2>/dev/null || rm -f "$pw_file"
+    die "could not create ${VAULT}/${CH_SECRET}"
+  fi
+  shred -u "$pw_file" 2>/dev/null || rm -f "$pw_file"
   echo "  created"
 fi
 
@@ -224,11 +352,6 @@ echo "  ready"
 # fifteen days: a node that is up but empty looks identical to one that is
 # working, and the only process that would have said otherwise was the one
 # nobody installed.
-SCHEMA_FILE="$(mktemp)"
-trap 'rm -f "$SCHEMA_FILE" "${CLOUD_INIT:-}"' EXIT
-cat "$REPO_ROOT/clickhouse/006_operational_analytics_single_node.sql" \
-    "$REPO_ROOT/clickhouse/009_client_events_single_node.sql" > "$SCHEMA_FILE"
-
 CLOUD_INIT="$(mktemp)"
 # The bootstrap goes in a write_files BLOCK SCALAR, not in runcmd entries.
 #
@@ -256,7 +379,7 @@ CLOUD_INIT="$(mktemp)"
   echo "    content: |"
   sed 's/^/      /' <<BOOTSTRAP
 #!/bin/bash
-set -eux
+set -eu
 export DEBIAN_FRONTEND=noninteractive
 curl -fsSL https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key | gpg --dearmor -o /usr/share/keyrings/clickhouse-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/clickhouse-keyring.gpg] https://packages.clickhouse.com/deb stable main" > /etc/apt/sources.list.d/clickhouse.list
@@ -281,10 +404,10 @@ systemctl enable clickhouse-server
 systemctl restart clickhouse-server
 # Wait for it to answer before applying the schema. A node that is up with no
 # tables is the "configured, healthy, and empty" shape.
-for i in \$(seq 1 60); do clickhouse-client --user default --password "\$CH_PW" --query "SELECT 1" >/dev/null 2>&1 && break; sleep 5; done
-clickhouse-client --user default --password "\$CH_PW" --database default --multiquery < /root/operational_schema.sql
+for i in \$(seq 1 60); do CLICKHOUSE_PASSWORD="\$CH_PW" clickhouse-client --user default --query "SELECT 1" >/dev/null 2>&1 && break; sleep 5; done
+CLICKHOUSE_PASSWORD="\$CH_PW" clickhouse-client --user default --database default --multiquery < /root/operational_schema.sql
 shred -u /root/operational_schema.sql || rm -f /root/operational_schema.sql
-touch /var/lib/clickhouse/.tr-schema-applied
+touch /var/lib/clickhouse/.tr-schema-013-applied
 BOOTSTRAP
   echo "runcmd:"
   echo "  - /root/bootstrap.sh"

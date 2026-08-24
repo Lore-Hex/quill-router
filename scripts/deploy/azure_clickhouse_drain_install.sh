@@ -19,9 +19,7 @@
 #
 #   * PAYLOAD SIZE. run-command silently truncates around 256KB, so the tarball
 #     is shipped as base64 CHUNKS and reassembled, with a sha256 checked on the
-#     node before anything is extracted. static/ is excluded: it is 9.5MB of
-#     images the drain never imports, and shipping it would turn 19 chunks into
-#     130.
+#     node before anything is extracted.
 #
 #   * AUTH. AWS mints a DSQL IAM token per connection, so its DSN carries no
 #     password. Azure Postgres is password-authenticated, so the DSN needs one
@@ -57,7 +55,10 @@ SERVICE="${SERVICE:-tr-clickhouse-operational-ingest-postgres.service}"
 STATE_DIR="${STATE_DIR:-/var/lib/tr-clickhouse-ingest}"
 SVC_USER="${SVC_USER:-tr-clickhouse-ingest}"
 CHUNK_BYTES="${CHUNK_BYTES:-120000}"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=scripts/deploy/_clickhouse_bundle.sh
+source "${SCRIPT_DIR}/_clickhouse_bundle.sh"
 
 say() { printf '\n=== %s\n' "$*" >&2; }
 die() { printf '\n[FAIL] %s\n' "$*" >&2; exit 1; }
@@ -70,17 +71,17 @@ run() {
   out="$(az vm run-command invoke -g "$RG" -n "$VM" --command-id RunShellScript \
         --scripts "set -eu
 $*
-echo __TR_STEP_OK__" --query "value[0].message" -o tsv 2>&1)" || {
+echo __TR_RUNCMD_OK__" --query "value[0].message" -o tsv 2>&1)" || {
     printf '%s\n' "$out" >&2; die "$label: run-command failed"
   }
-  printf '%s' "$out" | grep -q "__TR_STEP_OK__" || {
+  printf '%s' "$out" | grep -q "__TR_RUNCMD_OK__" || {
     printf '%s\n' "$out" >&2; die "$label: the remote script failed"
   }
   # `|| true` is load-bearing. grep -v exits 1 when it filters EVERYTHING out,
   # which is exactly what happens for a step whose only output is the success
   # marker -- and under `set -e` that killed the whole install silently, mid
   # chunk loop, with no error printed anywhere. The step had succeeded.
-  printf '%s' "$out" | grep -vE "^\s*$|__TR_STEP_OK__|Enable succeeded|^\[stdout\]|^\[stderr\]" || true
+  printf '%s' "$out" | grep -vE "^\s*$|__TR_RUNCMD_OK__|Enable succeeded|^\[stdout\]|^\[stderr\]" || true
 }
 
 # -- 1. preflight ------------------------------------------------------------
@@ -99,27 +100,41 @@ echo "  both secrets present in ${VAULT}"
 # Reachability and CREDENTIALS, from the node, before anything is installed. A
 # drain that starts and cannot connect delivers nothing while the outbox grows
 # -- the exact shape of the outage this exists to prevent.
-run "preflight: connectivity" "
+run "preflight: authenticated connectivity" "
 getent hosts '$PG_HOST' >/dev/null || { echo 'postgres does not resolve from the node'; exit 1; }
 timeout 8 bash -c '</dev/tcp/${PG_HOST}/5432' || { echo 'postgres not reachable on 5432'; exit 1; }
 systemctl is-active clickhouse-server >/dev/null || { echo 'clickhouse-server is not active'; exit 1; }
-echo 'postgres resolves and answers; clickhouse-server active'
+if ! command -v psql >/dev/null 2>&1; then
+  apt-get update -qq
+  apt-get install -y --no-install-recommends postgresql-client >/dev/null
+fi
+TOKEN=\$(curl -fsS -H Metadata:true 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net' | jq -r .access_token)
+CH_PW=\$(curl -fsS -H \"Authorization: Bearer \$TOKEN\" 'https://${VAULT}.vault.azure.net/secrets/${CH_SECRET}?api-version=7.4' | jq -r .value)
+PG_PW=\$(curl -fsS -H \"Authorization: Bearer \$TOKEN\" 'https://${VAULT}.vault.azure.net/secrets/${PG_SECRET}?api-version=7.4' | jq -r .value)
+test -n \"\$CH_PW\" && test -n \"\$PG_PW\"
+PGPASSWORD=\"\$PG_PW\" psql 'host=${PG_HOST} port=5432 user=${PG_USER} dbname=${PG_DB} sslmode=require' -v ON_ERROR_STOP=1 -Atqc 'SELECT 1' >/dev/null
+CLICKHOUSE_PASSWORD=\"\$CH_PW\" clickhouse-client --user '${CH_USER}' --database '${CH_DATABASE}' --query 'SELECT 1' >/dev/null
+echo 'authenticated to Postgres and ClickHouse'
 "
 
 # -- 2. payload --------------------------------------------------------------
 say "building the payload"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-# COPYFILE_DISABLE stops macOS writing ._* AppleDouble sidecars into the tar,
-# which land beside every file on the node and break `python -m` imports.
-COPYFILE_DISABLE=1 tar czf "$WORK/drain.tgz" \
-  --exclude='static' --exclude='__pycache__' --exclude='*.pyc' \
-  -C "$REPO_ROOT" clickhouse src/trusted_router
-SHA="$(shasum -a 256 "$WORK/drain.tgz" | cut -d' ' -f1)"
-base64 < "$WORK/drain.tgz" | tr -d '\n' > "$WORK/drain.b64"
+archive="$WORK/drain.tgz"
+build_clickhouse_bundle "$ROOT" "$archive"
+SHA="$(python3 - "$archive" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+
+print(hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest())
+PY
+)"
+base64 < "$archive" | tr -d '\n' > "$WORK/drain.b64"
 split -b "$CHUNK_BYTES" "$WORK/drain.b64" "$WORK/chunk."
 CHUNKS=("$WORK"/chunk.*)
-echo "  $(wc -c < "$WORK/drain.tgz") bytes, sha256 ${SHA:0:16}..., ${#CHUNKS[@]} chunks"
+echo "  $(wc -c < "$archive") bytes, sha256 ${SHA:0:16}..., ${#CHUNKS[@]} chunks"
 
 # -- 3. ship -----------------------------------------------------------------
 say "shipping ${#CHUNKS[@]} chunks"
@@ -251,7 +266,7 @@ cut -d= -f1 ${ENV_FILE}
 
 # -- 6. the unit -------------------------------------------------------------
 say "systemd unit"
-UNIT_B64="$(base64 < "$REPO_ROOT/clickhouse/${SERVICE}" | tr -d '\n')"
+UNIT_B64="$(base64 < "$ROOT/clickhouse/${SERVICE}" | tr -d '\n')"
 run "install unit" "
 printf %s '$UNIT_B64' | base64 -d > /etc/systemd/system/${SERVICE}
 chmod 644 /etc/systemd/system/${SERVICE}
@@ -271,14 +286,27 @@ systemctl is-active ${SERVICE}
 journalctl -u ${SERVICE} -n 12 --no-pager -o cat | tail -12
 "
 
-cat <<EOF
+# Active is necessary but insufficient: authenticate again and require a row
+# count to advance while the live drain is running. With no producer traffic,
+# the installer deliberately fails instead of claiming delivery it did not see.
+run "delivery proof" "
+echo 'delivery proof: waiting for ClickHouse row movement'
+TOKEN=\$(curl -fsS -H Metadata:true 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net' | jq -r .access_token)
+CH_PW=\$(curl -fsS -H \"Authorization: Bearer \$TOKEN\" 'https://${VAULT}.vault.azure.net/secrets/${CH_SECRET}?api-version=7.4' | jq -r .value)
+test -n \"\$CH_PW\"
+DELIVERY_COUNT_SQL='SELECT sum(c) FROM (SELECT count() AS c FROM activity_generations UNION ALL SELECT count() AS c FROM synthetic_probe_samples UNION ALL SELECT count() AS c FROM client_request_events UNION ALL SELECT count() AS c FROM client_minute_counters)'
+before=\$(CLICKHOUSE_PASSWORD=\"\$CH_PW\" clickhouse-client --user '${CH_USER}' --database '${CH_DATABASE}' --query \"\$DELIVERY_COUNT_SQL\")
+moved=0
+for attempt in \$(seq 1 12); do
+  sleep 5
+  after=\$(CLICKHOUSE_PASSWORD=\"\$CH_PW\" clickhouse-client --user '${CH_USER}' --database '${CH_DATABASE}' --query \"\$DELIVERY_COUNT_SQL\")
+  if [ \"\$after\" -gt \"\$before\" ]; then
+    echo \"rows advanced: \$before -> \$after\"
+    moved=1
+    break
+  fi
+done
+[ \"\$moved\" = 1 ] || { echo \"row count did not advance from \$before; refusing to claim delivery\"; exit 1; }
+"
 
-The unit being active is NOT the evidence. Two numbers ten minutes apart are:
-
-  az vm run-command invoke -g ${RG} -n ${VM} --command-id RunShellScript \\
-    --scripts 'TOKEN=\$(curl -fsS -H Metadata:true "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net" | jq -r .access_token); PW=\$(curl -fsS -H "Authorization: Bearer \$TOKEN" "https://${VAULT}.vault.azure.net/secrets/${CH_SECRET}?api-version=7.4" | jq -r .value); clickhouse-client --user ${CH_USER} --password "\$PW" --query "SELECT count() FROM activity_generations"'
-
-Rows only start existing once the control plane is wired to this node AND the
-outbox is switched on -- which is deliberately the LAST step, because an outbox
-enabled before this drain existed is exactly the AWS-EU outage.
-EOF
+echo "  installation verified: ClickHouse row count advanced"
