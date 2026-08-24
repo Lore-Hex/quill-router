@@ -29,10 +29,28 @@
 # to run for several minutes. Deletion of expired rows starts on the next TTL
 # background sweep (daily; deletions typically complete within 72h).
 #
-# Usage:
+# This is deliberately NOT part of the routine deployment workflow. Adding a
+# STORED generated column backfills the entire legacy table and can consume
+# enough Spanner system capacity to delay router-core transactions. The default
+# mode is verification only. A schema change requires both --apply and the
+# migration-specific acknowledgement below.
+#
+# Usage (verify only):
 #   SPANNER_INSTANCE_ID=... SPANNER_DATABASE_ID=... [GCP_PROJECT_ID=...] \
 #     scripts/deploy/migrate_entity_ttl.sh
+#
+# Usage (maintenance window only):
+#   TR_HEAVY_DDL_ACK=tr_entities.ephemeral_expires_at \
+#   SPANNER_INSTANCE_ID=... SPANNER_DATABASE_ID=... [GCP_PROJECT_ID=...] \
+#     scripts/deploy/migrate_entity_ttl.sh --apply
 set -euo pipefail
+
+APPLY=0
+case "${1:-}" in
+  "") ;;
+  --apply) APPLY=1 ;;
+  *) echo "usage: $0 [--apply]" >&2; exit 2 ;;
+esac
 
 INSTANCE="${SPANNER_INSTANCE_ID:?set SPANNER_INSTANCE_ID}"
 DATABASE="${SPANNER_DATABASE_ID:?set SPANNER_DATABASE_ID}"
@@ -66,6 +84,29 @@ policy_expression() {
 
 apply_ddl() {
   local ddl="$1"
+  if [ "$APPLY" != "1" ]; then
+    log "schema differs; verification mode will not run heavy DDL"
+    log "re-run with --apply and TR_HEAVY_DDL_ACK=tr_entities.ephemeral_expires_at"
+    exit 2
+  fi
+  if [ "${TR_HEAVY_DDL_ACK:-}" != "tr_entities.ephemeral_expires_at" ]; then
+    log "refusing heavy DDL without the migration-specific acknowledgement"
+    log "set TR_HEAVY_DDL_ACK=tr_entities.ephemeral_expires_at in a maintenance window"
+    exit 2
+  fi
+  local active_operations
+  if ! active_operations=$(gcloud spanner operations list \
+    --instance="$INSTANCE" --database="$DATABASE" \
+    ${PROJECT_ARG[@]+"${PROJECT_ARG[@]}"} \
+    --filter='done=false' --format='value(name)'); then
+    log "could not verify active Spanner operations; refusing heavy DDL"
+    exit 1
+  fi
+  if [ -n "$active_operations" ]; then
+    log "another Spanner operation is active; refusing concurrent heavy DDL"
+    printf '%s\n' "$active_operations"
+    exit 1
+  fi
   log "applying: ${ddl:0:60}..."
   gcloud spanner databases ddl update "$DATABASE" \
     --instance="$INSTANCE" ${PROJECT_ARG[@]+"${PROJECT_ARG[@]}"} --ddl="$ddl"
