@@ -1574,7 +1574,7 @@ PROVIDERS: dict[str, Provider] = {
             "is tracked for TrustedRouter's Sakana account. Version-pinned routes "
             "use Sakana's first-party token prices and authenticated availability."
         ),
-        provider_policy_url="https://console.sakana.ai/pricing",
+        provider_policy_url="https://console.sakana.ai/privacy-policy",
     ),
     # These providers are recorded so their public provider pages and compliance
     # posture are explicit, but they are not admitted to the chat gateway. Their

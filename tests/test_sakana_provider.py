@@ -83,6 +83,7 @@ def test_sakana_routes_are_prepaid_only_and_use_the_operator_secret() -> None:
     assert "sakana" in GATEWAY_PREPAID_PROVIDER_SLUGS
     assert PROVIDERS["sakana"].supports_prepaid is True
     assert PROVIDERS["sakana"].supports_byok is False
+    assert PROVIDERS["sakana"].provider_policy_url == "https://console.sakana.ai/privacy-policy"
     assert default_provider_secret_ref("sakana") == "env://SAKANA_API_KEY"
 
     fugu = endpoints_for_model("sakana-ai/fugu-ultra-v1.1")
