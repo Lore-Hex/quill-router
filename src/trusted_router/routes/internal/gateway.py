@@ -1793,6 +1793,9 @@ def _settle_gateway_authorization(
             output_tokens,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
+            price_tier_input_tokens=(
+                body.price_tier_input_tokens if selected_endpoint.provider == "sakana" else None
+            ),
             effective_at=authorization.created_at,
             service_tier=service_tier,
         )
@@ -2863,6 +2866,7 @@ def _endpoint_cost_microdollars(
     *,
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
+    price_tier_input_tokens: int | None = None,
     effective_at: datetime | str | None = None,
     service_tier: str | None = None,
     reserve_auto: bool = False,
@@ -2882,11 +2886,22 @@ def _endpoint_cost_microdollars(
             cache_creation_tokens=cache_creation_tokens,
         )
     total_prompt = input_tokens + cache_read_tokens + cache_creation_tokens
+    # Some providers expose separately billable internal orchestration tokens
+    # while selecting their long-context tier from the initial request context.
+    # The attested gateway supplies that exact provider-metered count. Invalid
+    # values fall back to the larger aggregate, which is conservative for COGS.
+    tier_prompt = total_prompt
+    if (
+        price_tier_input_tokens is not None
+        and price_tier_input_tokens > 0
+        and price_tier_input_tokens <= total_prompt
+    ):
+        tier_prompt = price_tier_input_tokens
     rates = resolve_request_rates(
         getattr(endpoint, "price_tiers", ()) or (),
         headline_prompt_micro_per_m=endpoint.prompt_price_microdollars_per_million_tokens,
         headline_completion_micro_per_m=endpoint.completion_price_microdollars_per_million_tokens,
-        total_prompt_tokens=total_prompt,
+        total_prompt_tokens=tier_prompt,
     )
     prompt_price = rates.prompt_price_microdollars_per_million_tokens
 

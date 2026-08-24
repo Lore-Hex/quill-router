@@ -147,6 +147,42 @@ def test_endpoint_cost_uses_total_prompt_for_cached_tier_selection() -> None:
     )
 
 
+def test_endpoint_cost_can_use_provider_metered_context_for_tier_only() -> None:
+    endpoint = endpoint_for_id("sakana-ai/fugu-ultra-v1.1@sakana/prepaid")
+    assert endpoint is not None
+
+    # Sakana bills all 300K input tokens but selects Fugu's context tier from
+    # the 100K initial request context. The remaining 200K are provider-side
+    # orchestration, not a larger client context.
+    expected = _tier_cost(endpoint, 100_000, 2_000, tier_index=0, cache_read_tokens=200_000)
+    assert (
+        _endpoint_cost_microdollars(
+            endpoint,
+            100_000,
+            2_000,
+            cache_read_tokens=200_000,
+            price_tier_input_tokens=100_000,
+        )
+        == expected
+    )
+
+
+def test_endpoint_cost_rejects_invalid_tier_basis_conservatively() -> None:
+    endpoint = endpoint_for_id("sakana-ai/fugu-ultra-v1.1@sakana/prepaid")
+    assert endpoint is not None
+    expected = _tier_cost(endpoint, 100_000, 2_000, tier_index=1, cache_read_tokens=200_000)
+    assert (
+        _endpoint_cost_microdollars(
+            endpoint,
+            100_000,
+            2_000,
+            cache_read_tokens=200_000,
+            price_tier_input_tokens=300_001,
+        )
+        == expected
+    )
+
+
 def test_endpoint_cost_flat_and_empty_tiers_match_headline_math_with_cache() -> None:
     single_tier = endpoint_for_id("anthropic/claude-haiku-4.5@anthropic/prepaid")
     assert single_tier is not None
@@ -197,9 +233,9 @@ def test_endpoint_cost_matches_model_helper_for_multitier_no_cache() -> None:
     )
 
     for prompt_tokens in (100_000, 300_000):
-        assert _endpoint_cost_microdollars(
-            endpoint, prompt_tokens, 2_000
-        ) == cost_microdollars(model, prompt_tokens, 2_000)
+        assert _endpoint_cost_microdollars(endpoint, prompt_tokens, 2_000) == cost_microdollars(
+            model, prompt_tokens, 2_000
+        )
 
 
 def test_endpoint_cost_reserves_one_microdollar_for_positive_fractional_cost() -> None:
