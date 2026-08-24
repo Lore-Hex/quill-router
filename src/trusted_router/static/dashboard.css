@@ -190,7 +190,7 @@ blockquote { margin:0 0 12px; padding-left:14px; border-left:3px solid var(--gre
 .public-proof-strip div { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; min-width:0; }
 .public-proof-strip strong { display:block; color:var(--ink); font-size:16px; line-height:1.25; }
 .public-proof-strip span { display:block; color:var(--muted); font-size:13px; line-height:1.35; margin-top:8px; }
-.public-proof-strip .mono, .panel-body .mono, .marketing-copy .mono { overflow-wrap:anywhere; word-break:break-word; }
+.public-proof-strip .mono, .panel-body .mono, .marketing-copy .mono { overflow-wrap:anywhere; }
 .home-topic-links { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:12px 22px; padding:18px clamp(20px, 4vw, 64px); border-top:1px solid var(--line); border-bottom:1px solid var(--line); background:var(--panel); }
 .home-topic-links > span { color:var(--muted); font:600 13px/1.2 var(--mono); text-transform:uppercase; }
 .home-topic-links a { color:var(--ink); font-size:15px; line-height:1.35; text-decoration:none; }
@@ -236,7 +236,7 @@ blockquote { margin:0 0 12px; padding-left:14px; border-left:3px solid var(--gre
 .matrix-head > * { border-color:var(--code-line); }
 .quote-feature { display:grid; grid-template-columns:minmax(230px,.62fr) minmax(0,1fr); gap:24px; align-items:start; }
 .quote-feature > * { min-width:0; }
-.quote-feature p code { overflow-wrap:anywhere; word-break:break-word; }
+.quote-feature p code { overflow-wrap:anywhere; }
 .quote-feature blockquote:last-child, .marketing-copy blockquote:last-child, .limitation-band blockquote:last-child { margin-bottom:0; }
 .trust-diagram { display:grid; gap:10px; align-content:center; background:var(--code-bg); color:var(--code-ink); border:1px solid var(--code-line); border-radius:8px; padding:24px; box-shadow:0 18px 56px var(--shadow-strong); }
 .trust-diagram div { border:1px solid rgb(123,224,177,.28); background:rgb(123,224,177,.08); border-radius:8px; padding:18px; font-weight:800; text-align:center; }

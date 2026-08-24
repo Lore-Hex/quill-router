@@ -1147,7 +1147,7 @@
     padding: 12px 16px;
     line-height: 1.55;
     font-size: 14px;
-    word-wrap: break-word;
+    overflow-wrap: break-word;
 }
 
 .chat-msg-user .chat-msg-bubble {
@@ -1161,7 +1161,7 @@
 
 .chat-msg-user-text {
     white-space: pre-wrap;
-    word-wrap: break-word;
+    overflow-wrap: break-word;
 }
 
 .chat-msg-attachments {
