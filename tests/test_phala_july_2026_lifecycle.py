@@ -78,9 +78,9 @@ def test_public_catalog_uses_effective_price_and_active_routes(
         endpoint.prompt_price_microdollars_per_million_tokens for endpoint in qwen_endpoints
     )
 
-    # Alibaba retires this same Qwen revision on 2026-10-09; after that no
-    # provider serves it and the model is absent from MODELS altogether, which
-    # is a stronger form of the same assertion.
+    # Alibaba retires this same Qwen revision on 2026-10-09, but W&B continues
+    # to serve it. Provider lifecycle policy must remove only the retired
+    # Phala and Alibaba routes rather than deleting the canonical model.
     if catalog_predates(provider_lifecycle.ALIBABA_OCTOBER_2026_RETIREMENT_AT):
         retired_qwen = model_to_openrouter_shape(MODELS["qwen/qwen3-30b-a3b-instruct-2507"])
         assert all(
@@ -88,7 +88,8 @@ def test_public_catalog_uses_effective_price_and_active_routes(
             for endpoint in retired_qwen["trustedrouter"]["endpoints"]
         )
     else:
-        assert "qwen/qwen3-30b-a3b-instruct-2507" not in MODELS
+        surviving_endpoints = endpoints_for_model("qwen/qwen3-30b-a3b-instruct-2507")
+        assert {endpoint.provider for endpoint in surviving_endpoints} == {"wandb"}
 
 
 def test_phala_hourly_parser_applies_announced_policy() -> None:
