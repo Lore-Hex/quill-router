@@ -1,7 +1,7 @@
 {
   "provider": "grok",
   "source": "https://api.x.ai/v1/language-models",
-  "generated_at": "2026-08-24T15:41:25Z",
+  "generated_at": "2026-08-24T16:40:13Z",
   "model_count": 7,
   "_note": "xAI first-party OpenAI-compatible chat at api.x.ai/v1. Model IDs are verified against the authenticated xAI catalog; context and tiered prices come from xAI's official pricing table.",
   "models": [

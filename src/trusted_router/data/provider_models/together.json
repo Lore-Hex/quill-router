@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Together AI routes that are live ahead of the shared OpenRouter snapshot. Verified against https://api.together.xyz/v1/models on 2026-06-22.",
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
-  "generated_at": "2026-08-24T15:41:25Z",
+  "generated_at": "2026-08-24T16:40:13Z",
   "model_count": 22,
   "models": [
     {
@@ -363,7 +363,8 @@
       ],
       "context_length": 32768,
       "input_token_price_per_m": 300000,
-      "output_token_price_per_m": 300000
+      "output_token_price_per_m": 300000,
+      "missing_since": "2026-08-24"
     },
     {
       "display_name": "Qwen3.5 9B FP8",
