@@ -49,6 +49,19 @@ else
 fi
 CH_PASSWORD="$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "$SECRET_ID" --query SecretString --output text)"
 
+# The standalone schema, DERIVED (see the helper for why a literal list rots).
+# Built before the node so a bad set fails here rather than half-way through a
+# boot, and so this script cannot create a node it has no schema for.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/deploy/_clickhouse_single_node_schema.sh
+. "$(dirname "${BASH_SOURCE[0]}")/_clickhouse_single_node_schema.sh"
+SCHEMA_FILES=()
+while IFS= read -r _schema; do
+  SCHEMA_FILES+=("$_schema")
+done < <(single_node_migrations "$REPO_ROOT") || exit 1
+[ "${#SCHEMA_FILES[@]}" -gt 0 ] || { echo "empty single-node schema set" >&2; exit 1; }
+OPERATIONAL_SCHEMA="$(cat "${SCHEMA_FILES[@]}")"
+
 # ---------------------------------------------------------------------------
 # 2. Security group: VPC-internal only. No 0.0.0.0/0 on 8123/9000 ever.
 # ---------------------------------------------------------------------------
@@ -132,6 +145,28 @@ chmod 640 /etc/clickhouse-server/users.d/default-password.xml
 
 systemctl enable clickhouse-server
 systemctl restart clickhouse-server
+
+# Apply the standalone schema HERE rather than printing it for someone to run.
+# It used to be step 1 of NEXT_STEPS, described as a human step needing the
+# ClickHouse password -- but this script already read that password from Secrets
+# Manager to write users.d above, so the only thing the human step added was a
+# chance to run a stale command. The set it told you to apply was the glob
+# clickhouse/00 star .sql, which silently stopped matching at 010.
+#
+# aws_eu_north_clickhouse.sh already does it this way; this makes the two nodes
+# of the same cloud boot the same.
+cat > /root/operational_schema.sql <<'SQLEOF'
+${OPERATIONAL_SCHEMA}
+SQLEOF
+for attempt in \$(seq 1 60); do
+  if CLICKHOUSE_PASSWORD='${CH_PASSWORD}' clickhouse-client --user default --database default --query 'SELECT 1' >/dev/null 2>&1; then
+    break
+  fi
+  sleep 5
+done
+CLICKHOUSE_PASSWORD='${CH_PASSWORD}' clickhouse-client --user default --database default \
+  --multiquery < /root/operational_schema.sql
+rm -f /root/operational_schema.sql
 USERDATA
 )"
   INSTANCE_ID="$(aws ec2 run-instances --region "$REGION" \
@@ -197,25 +232,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 NEXT_STEPS=$(cat <<NEXT
 
-The node is up but the AWS cloud is NOT complete. Run these, in order, and this
-script will exit 0 the next time it is run:
+The node is up WITH ITS SCHEMA APPLIED, but the AWS cloud is NOT complete. Run
+these, in order, and this script will exit 0 the next time it is run:
 
-  1. apply the schema to the node (from inside the VPC):
-       for f in clickhouse/00*.sql; do
-         clickhouse-client --host ${PRIVATE_IP} --user default --multiquery < "\$f"
-       done
-
-  2. redeploy the control plane so settle enqueues and the outbox is readable.
+  1. redeploy the control plane so settle enqueues and the outbox is readable.
      Its own knobs, not the TR_* names — it builds those:
        CLICKHOUSE_URL=http://${PRIVATE_IP}:8123 \\
        VPC_CONNECTOR_ARN=${CONNECTOR_ARN} \\
        bash scripts/deploy/aws_eu_control_plane.sh
      (EgressConfiguration=VPC follows from a non-empty VPC_CONNECTOR_ARN.)
 
-  3. install the process that actually MOVES rows — the step that was missed:
+  2. install the process that actually MOVES rows — the step that was missed:
        bash scripts/deploy/aws_eu_clickhouse_drain_install.sh
 
-  4. re-run this script, or just the check:
+  3. re-run this script, or just the check:
        bash scripts/deploy/verify_cloud_complete.sh aws
 
 NEXT
