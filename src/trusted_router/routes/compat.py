@@ -48,6 +48,19 @@ def register_compat_stub_routes(router: APIRouter) -> None:
         return error_response(404, "Private models are not supported", "private_models_not_supported")
 
     _add_guardrail_stubs(router)
+    _add_current_openrouter_stubs(router)
+
+
+def register_versioned_compat_stub_routes(router: APIRouter) -> None:
+    """Stubs whose unprefixed spelling is already a public HTML page."""
+
+    async def stub() -> JSONResponse:
+        return not_supported()
+
+    # GET /benchmarks is the public benchmark report hub. OpenRouter's API
+    # compatibility stub therefore exists only as GET /v1/benchmarks; mounting
+    # it unprefixed on the control service creates ambiguous LB ownership.
+    router.add_api_route("/benchmarks", stub, methods=["GET"])
 
 
 def _add_guardrail_stubs(router: APIRouter) -> None:
@@ -67,3 +80,53 @@ def _add_guardrail_stubs(router: APIRouter) -> None:
     router.add_api_route("/guardrails/{id}/assignments/members", stub, methods=["GET"])
     router.add_api_route("/guardrails/{id}/assignments/members", stub, methods=["POST"])
     router.add_api_route("/guardrails/{id}/assignments/members/remove", stub, methods=["POST"])
+
+
+def _add_current_openrouter_stubs(router: APIRouter) -> None:
+    async def stub() -> JSONResponse:
+        return not_supported()
+
+    routes = (
+        ("/analytics/meta", "GET"),
+        ("/analytics/query", "POST"),
+        ("/byok", "GET"),
+        ("/byok", "POST"),
+        ("/byok/{id}", "DELETE"),
+        ("/byok/{id}", "GET"),
+        ("/byok/{id}", "PATCH"),
+        ("/classifications/task", "GET"),
+        ("/datasets/app-rankings", "GET"),
+        ("/datasets/rankings-daily", "GET"),
+        ("/files", "GET"),
+        ("/files", "POST"),
+        ("/files/{file_id}", "DELETE"),
+        ("/files/{file_id}", "GET"),
+        ("/files/{file_id}/content", "GET"),
+        ("/generation/feedback", "POST"),
+        ("/images", "POST"),
+        ("/model/{author}/{slug}", "GET"),
+        ("/observability/destinations", "GET"),
+        ("/observability/destinations", "POST"),
+        ("/observability/destinations/{id}", "DELETE"),
+        ("/observability/destinations/{id}", "GET"),
+        ("/observability/destinations/{id}", "PATCH"),
+        ("/presets", "GET"),
+        ("/presets/{slug}", "GET"),
+        ("/presets/{slug}/chat/completions", "POST"),
+        ("/presets/{slug}/messages", "POST"),
+        ("/presets/{slug}/responses", "POST"),
+        ("/presets/{slug}/versions", "GET"),
+        ("/presets/{slug}/versions/{version}", "GET"),
+        ("/scim/group-mappings", "GET"),
+        ("/scim/group-mappings", "POST"),
+        ("/scim/group-mappings/{id}", "DELETE"),
+        ("/scim/group-mappings/{id}", "GET"),
+        ("/scim/group-mappings/{id}", "PATCH"),
+        ("/scim/groups", "GET"),
+        ("/workspaces/{id}/budgets", "GET"),
+        ("/workspaces/{id}/budgets/{interval}", "DELETE"),
+        ("/workspaces/{id}/budgets/{interval}", "PUT"),
+        ("/workspaces/{id}/members", "GET"),
+    )
+    for path, method in routes:
+        router.add_api_route(path, stub, methods=[method])

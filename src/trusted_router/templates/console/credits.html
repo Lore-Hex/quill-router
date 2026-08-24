@@ -10,24 +10,61 @@
     <div class="notice warn" style="margin-top:18px">
       Migration credits are available by approval for qualified design partners spending more than $100 per month on LLMs. This console does not grant them automatically. Apply credits manually after approval.
     </div>
+    {% if wallet_only_billing %}
+    <div class="notice" style="margin-top:18px">
+      Wallet-only accounts can fund with stablecoin. Add and verify an email in
+      <a href="/console/account/preferences">Preferences</a> to use cards or other payment methods.
+    </div>
+    {% endif %}
+    {% if identity_verification_checkout %}
+    <div class="notice" style="margin-top:18px">
+      Identity verification requires {{ verification_topup_remaining_display }} more in lifetime top-ups. Any successful top-up also unlocks phone verification.
+    </div>
+    {% endif %}
     <form class="form" method="post" action="/console/credits/checkout" style="margin-top:18px">
+      {% if identity_verification_checkout %}<input type="hidden" name="purpose" value="identity_verification">{% endif %}
       <div class="row">
-        <label>Amount (USD)<input name="amount" type="number" min="1" max="10000" step="1" value="25" required></label>
+        <label>Amount (USD)<input name="amount" type="number" min="1" max="10000" step="1" value="25" required data-checkout-amount data-default-minimum="1" data-paypal-minimum="{{ paypal_minimum_dollars }}"></label>
         <label>Payment method
-          <select name="payment_method">
+          {% if wallet_only_billing %}
+          <input type="hidden" name="payment_method" value="stablecoin">
+          <input type="text" value="Stablecoin (USDC)" readonly>
+          {% else %}
+          <select name="payment_method" data-checkout-payment-method>
             <option value="auto">Stripe card</option>
+            <option value="ach">Bank account (ACH)</option>
             <option value="stablecoin">Stripe USDC / stablecoin</option>
             {% if paypal_enabled %}
             <option value="paypal">PayPal</option>
             {% endif %}
+            {% if adyen_enabled %}
+            <option value="adyen">Adyen</option>
+            {% endif %}
           </select>
+          {% endif %}
         </label>
       </div>
       <button class="btn primary" type="submit">Continue to checkout</button>
+      <p class="form-help" data-paypal-minimum-message hidden>
+        PayPal purchases have a ${{ paypal_minimum_dollars }} minimum.
+      </p>
+      <p class="form-help">
+        {% if wallet_only_billing %}
+        Stablecoin checkout adds prepaid credits without attaching a card or bank account.
+        {% else %}
+        Card and PayPal checkouts show your credits and the same payment
+        processing fee as separate line items before you pay, with an $0.80
+        minimum fee. ACH and
+        stablecoin keep their lower rail-specific fees. ACH is 0.8%, capped
+        at $5, and can take up to four business days. Bank-funded credits
+        appear only after settlement.
+        {% endif %}
+      </p>
     </form>
   </div>
 </section>
 
+{% if not wallet_only_billing or saved_payment_method %}
 <section class="panel">
   <div class="panel-head">
     <h2>Payment methods</h2>
@@ -37,41 +74,20 @@
   </div>
   <div class="panel-body">
     <p style="color:var(--muted);font-size:14px;margin:0 0 14px">
-      Save a Stripe card for auto refill. Credit purchases can use Stripe, PayPal, or USDC checkout above.
+      {% if wallet_only_billing %}
+      Wallet-only accounts cannot add or charge a card. You can remove this previously saved card below.
+      {% else %}
+      Save a Stripe card for auto refill. One-time credit purchases can use a
+      card, ACH bank account, PayPal{% if adyen_enabled %}, Adyen{% endif %}, or USDC above.
       {% if payment_method_pending %}
       <br><strong>Stripe setup is pending. Auto-refill will unlock after Stripe confirms the card.</strong>
       {% endif %}
+      {% endif %}
     </p>
-    {% if saved_payment_method %}
-    <div class="payment-method-card">
-      <div>
-        <strong>
-          {% if saved_payment_method.brand %}
-            {{ saved_payment_method.brand|capitalize }} card
-          {% else %}
-            Stripe card
-          {% endif %}
-        </strong>
-        <span>
-          {% if saved_payment_method.last4 %}
-            ending in {{ saved_payment_method.last4 }}
-          {% else %}
-            saved payment method
-          {% endif %}
-          {% if saved_payment_method.exp_month and saved_payment_method.exp_year %}
-            · expires {{ saved_payment_method.exp_month }}/{{ saved_payment_method.exp_year }}
-          {% endif %}
-          · id ...{{ saved_payment_method.id_tail }}
-        </span>
-        {% if not saved_payment_method.details_available %}
-        <span>Stripe card details are temporarily unavailable. Removal still uses the saved Stripe id.</span>
-        {% endif %}
-      </div>
-      <form method="post" action="/console/credits/payment-methods/remove">
-        <button class="btn danger" type="submit">Remove</button>
-      </form>
+    <div data-credits-saved-payment-method aria-live="polite">
+      {% include "console/_credits_saved_payment_method.html" %}
     </div>
-    {% endif %}
+    {% if not wallet_only_billing %}
     <div class="button-row">
       <form method="post" action="/console/credits/payment-methods/add">
         <button class="btn primary" type="submit">
@@ -84,9 +100,12 @@
       </form>
       {% endif %}
     </div>
+    {% endif %}
   </div>
 </section>
+{% endif %}
 
+{% if not wallet_only_billing %}
 <section class="panel">
   <div class="panel-head">
     <h2>Auto refill</h2>
@@ -95,8 +114,9 @@
   <div class="panel-body">
     <p style="color:var(--muted);font-size:14px;margin:0 0 14px">
       When your available balance drops below the threshold, we'll charge
-      your saved card and add the refill amount automatically. Disabling
-      stops future charges but keeps your saved payment method.
+      your saved card for the refill amount plus a separate payment processing
+      fee, then add only the refill amount to your balance. Disabling stops
+      future charges but keeps your saved payment method.
       {% if payment_method_pending %}
       <br><strong>Stripe is still confirming your payment method.</strong>
       {% elif not has_payment_method %}
@@ -125,71 +145,31 @@
     {% endif %}
   </div>
 </section>
+{% endif %}
 
-<section class="panel">
+<section
+  class="panel"
+  data-credits-stripe-details-url="/console/credits/stripe-details"
+>
   <div class="panel-head">
     <h2>Payment history</h2>
-    <span class="pill">{{ payments|length }} recent</span>
+    <span class="pill" data-credits-payment-history-count>loading</span>
   </div>
-  <div class="panel-body">
-    {% if payments %}
-    <table class="data-table" style="width:100%;border-collapse:collapse">
-      <thead>
-        <tr style="text-align:left;border-bottom:1px solid var(--border)">
-          <th style="padding:8px 6px;font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em">Date</th>
-          <th style="padding:8px 6px;font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em">Amount</th>
-          <th style="padding:8px 6px;font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em">Payment</th>
-          <th style="padding:8px 6px;font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em">Status</th>
-          <th style="padding:8px 6px;font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em">Receipt</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for p in payments %}
-        <tr style="border-bottom:1px solid var(--border)">
-          <td style="padding:10px 6px;color:var(--muted);font-variant-numeric:tabular-nums">
-            {{ p.created_at | datetime_iso if p.created_at else 'none' }}
-          </td>
-          <td style="padding:10px 6px;font-variant-numeric:tabular-nums">
-            ${{ '%.2f'|format((p.amount_cents or 0) / 100) }}
-            <span style="color:var(--muted);font-size:11px">{{ (p.currency or 'usd')|upper }}</span>
-          </td>
-          <td style="padding:10px 6px">
-            {% if p.card_brand and p.card_last4 %}
-              <span style="text-transform:capitalize">{{ p.card_brand }}</span> ····{{ p.card_last4 }}
-            {% else %}
-              <span style="color:var(--muted)">none</span>
-            {% endif %}
-          </td>
-          <td style="padding:10px 6px">
-            {% if p.payment_status == 'paid' %}
-              <span class="pill good">paid</span>
-            {% elif p.payment_status == 'unpaid' %}
-              <span class="pill warn">unpaid</span>
-            {% elif p.status == 'expired' %}
-              <span class="pill">expired</span>
-            {% else %}
-              <span class="pill">{{ p.payment_status or p.status or 'none' }}</span>
-            {% endif %}
-          </td>
-          <td style="padding:10px 6px">
-            {% if p.receipt_url %}
-              <a href="{{ p.receipt_url }}" target="_blank" rel="noopener">Receipt ↗</a>
-            {% else %}
-              <span style="color:var(--muted)">none</span>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    <p style="color:var(--muted);font-size:12px;margin-top:12px">
-      Source: Stripe. Showing up to the 20 most recent checkout sessions tagged with this workspace. Hosted receipts open in Stripe.
-    </p>
-    {% else %}
+  <div
+    class="panel-body"
+    data-credits-payment-history
+    aria-busy="true"
+    aria-live="polite"
+  >
     <p style="color:var(--muted);font-size:14px;margin:0">
-      No payments yet. Your purchases will show up here within a few seconds of Stripe completing the charge.
+      Loading recent payments…
     </p>
-    {% endif %}
+    <noscript>
+      <p style="color:var(--muted);font-size:14px;margin-top:12px">
+        <a href="/console/credits/stripe-details">Open Stripe payment details</a>.
+        Your live balance above is unaffected.
+      </p>
+    </noscript>
   </div>
 </section>
 {% endblock %}

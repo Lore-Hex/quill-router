@@ -36,6 +36,11 @@ class InMemoryEmailBlocks:
         reason: str,
         bounce_type: str | None = None,
         feedback_id: str | None = None,
+        mail_class: str | None = None,
+        sender_profile: str | None = None,
+        acquisition_source: str | None = None,
+        acquisition_medium: str | None = None,
+        acquisition_campaign: str | None = None,
     ) -> EmailSendBlock:
         with self._lock:
             normalized = normalize_email(email)
@@ -44,6 +49,11 @@ class InMemoryEmailBlocks:
                 reason=reason,
                 bounce_type=bounce_type,
                 feedback_id=feedback_id,
+                mail_class=mail_class,
+                sender_profile=sender_profile,
+                acquisition_source=acquisition_source,
+                acquisition_medium=acquisition_medium,
+                acquisition_campaign=acquisition_campaign,
             )
             self._blocks[normalized] = block
             return block

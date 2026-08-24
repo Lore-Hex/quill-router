@@ -1,6 +1,6 @@
 """Per-key budget ALERT emails.
 
-When a key is in alert mode (`budget_alert_only`, the default), crossing a
+When a key explicitly opts into alert mode (`budget_alert_only`), crossing a
 daily/weekly/monthly window budget does NOT block the request — it emails the
 workspace owner instead ("know when weird shit is happening" without stopping a
 working app). Called from the gateway settle path AFTER the window usage is
@@ -29,9 +29,7 @@ from trusted_router.spend_windows import key_window_limits, utcnow, window_floor
 log = logging.getLogger(__name__)
 
 
-def maybe_send_budget_alerts(
-    *, api_key_hash: str, workspace_id: str, settings: Settings
-) -> None:
+def maybe_send_budget_alerts(*, api_key_hash: str, workspace_id: str, settings: Settings) -> None:
     """Email the workspace owner for each window whose budget this key just
     crossed (alert mode only). No-op for limit-mode keys, keys without window
     budgets, or a store with no window-usage view."""
@@ -86,15 +84,22 @@ def _deliver(
     if owner is None or not owner.email:
         log.info("budget_alert.no_owner_email key=%s ws=%s", api_key_hash, workspace_id)
         return
+    attribution = STORE.get_acquisition_attribution(workspace_id)
+    touch = attribution.last_touch if attribution is not None else {}
     message = build_budget_alert_email(
         to=owner.email,
         key_name=key_name,
         workspace_name=workspace.name,
         crossings=crossings,
+        acquisition_source=touch.get("utm_source"),
+        acquisition_medium=touch.get("utm_medium"),
+        acquisition_campaign=touch.get("utm_campaign"),
     )
     try:
         get_email_service(settings).send(message)
-    except Exception:  # best-effort: the window is already marked (at-most-once); make a drop observable
+    except (
+        Exception
+    ):  # best-effort: the window is already marked (at-most-once); make a drop observable
         log.exception("budget_alert.delivery_failed key=%s ws=%s", api_key_hash, workspace_id)
 
 
@@ -109,6 +114,9 @@ def build_budget_alert_email(
     workspace_name: str,
     crossings: list[tuple[str, int, int]],
     from_name: str = "TrustedRouter",
+    acquisition_source: str | None = None,
+    acquisition_medium: str | None = None,
+    acquisition_campaign: str | None = None,
 ) -> EmailMessage:
     windows = ", ".join(w for w, _, _ in crossings)
     subject = f"[{from_name}] Budget alert: key “{key_name}” crossed its {windows} budget"
@@ -141,4 +149,14 @@ def build_budget_alert_email(
         "<p>To hard-stop this key when a budget is crossed, switch it to Limit mode "
         "in the console (Console → API Keys → uncheck “Alert only”).</p>"
     )
-    return EmailMessage(to=to, subject=subject, text_body=text, html_body=html)
+    return EmailMessage(
+        to=to,
+        subject=subject,
+        text_body=text,
+        html_body=html,
+        mail_class="budget_alert",
+        sender_profile="alerts",
+        acquisition_source=acquisition_source,
+        acquisition_medium=acquisition_medium,
+        acquisition_campaign=acquisition_campaign,
+    )

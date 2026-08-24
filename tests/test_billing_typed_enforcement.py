@@ -68,9 +68,7 @@ def test_conditional_reserve_accepts_until_exhausted() -> None:
     pt = store._param_types
 
     def reserve(amount: int) -> bool:
-        return store._database.run_in_transaction(
-            lambda t: reserve_credit(t, pt, ws, amount)
-        )
+        return store._database.run_in_transaction(lambda t: reserve_credit(t, pt, ws, amount))
 
     assert reserve(600_000) is True
     assert reserve(300_000) is True
@@ -95,15 +93,11 @@ def test_conditional_reserve_no_overspend_under_concurrency() -> None:
     lock = threading.Lock()
 
     def reserve_once() -> None:
-        ok = store._database.run_in_transaction(
-            lambda t: reserve_credit(t, pt, ws, amount)
-        )
+        ok = store._database.run_in_transaction(lambda t: reserve_credit(t, pt, ws, amount))
         with lock:
             results.append(ok)
 
-    _run_workers(
-        [threading.Thread(target=reserve_once, daemon=True) for _ in range(n)], barrier
-    )
+    _run_workers([threading.Thread(target=reserve_once, daemon=True) for _ in range(n)], barrier)
 
     assert results.count(True) == 4, results
     assert results.count(False) == 4, results
@@ -118,9 +112,7 @@ def test_conditional_reserve_rejects_when_insufficient() -> None:
     ws = "ws_poor"
     _seed_credit(store, ws, 100_000)
     pt = store._param_types
-    ok = store._database.run_in_transaction(
-        lambda t: reserve_credit(t, pt, ws, 250_000)
-    )
+    ok = store._database.run_in_transaction(lambda t: reserve_credit(t, pt, ws, 250_000))
     assert ok is False
 
 
@@ -203,8 +195,11 @@ from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE  # noqa: E402
 
 def _make_key(store, ws: str, *, limit, include_byok=True):
     _raw, key = store.api_keys.create(
-        workspace_id=ws, name="k", creator_user_id=None,
-        limit_microdollars=limit, include_byok_in_limit=include_byok,
+        workspace_id=ws,
+        name="k",
+        creator_user_id=None,
+        limit_microdollars=limit,
+        include_byok_in_limit=include_byok,
     )
     return key
 
@@ -228,9 +223,7 @@ def test_reserve_key_capped_no_overcap_under_concurrency() -> None:
         with lock:
             results.append(r)
 
-    _run_workers(
-        [threading.Thread(target=reserve_once, daemon=True) for _ in range(n)], barrier
-    )
+    _run_workers([threading.Thread(target=reserve_once, daemon=True) for _ in range(n)], barrier)
     assert results.count(KEY_ACCEPTED) == 4, results
     assert results.count(KEY_INSUFFICIENT) == 4, results
     assert db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]["reserved"] == 1_000_000
@@ -261,24 +254,35 @@ def test_reserve_key_insufficient_and_missing() -> None:
     store, _db, _ = make_fake_store()
     key = _make_key(store, "ws_ins", limit=100_000)
     pt = store._param_types
-    assert store._database.run_in_transaction(
-        lambda t: reserve_key(t, pt, key.hash, 250_000, is_byok=False)
-    ) == KEY_INSUFFICIENT
-    assert store._database.run_in_transaction(
-        lambda t: reserve_key(t, pt, "nonexistent_key", 1, is_byok=False)
-    ) == KEY_MISSING
+    assert (
+        store._database.run_in_transaction(
+            lambda t: reserve_key(t, pt, key.hash, 250_000, is_byok=False)
+        )
+        == KEY_INSUFFICIENT
+    )
+    assert (
+        store._database.run_in_transaction(
+            lambda t: reserve_key(t, pt, "nonexistent_key", 1, is_byok=False)
+        )
+        == KEY_MISSING
+    )
 
 
 def test_release_key_settles_usage_and_byok() -> None:
     store, db, _ = make_fake_store()
     key = _make_key(store, "ws_krel", limit=2_000_000)
     pt = store._param_types
-    assert store._database.run_in_transaction(
-        lambda t: reserve_key(t, pt, key.hash, 500_000, is_byok=False)
-    ) == KEY_ACCEPTED
+    assert (
+        store._database.run_in_transaction(
+            lambda t: reserve_key(t, pt, key.hash, 500_000, is_byok=False)
+        )
+        == KEY_ACCEPTED
+    )
     # settle as Credits usage
     count = store._database.run_in_transaction(
-        lambda t: release_key(t, pt, key.hash, 500_000, 480_000, window_floors=_floors(), book_to_byok=False)
+        lambda t: release_key(
+            t, pt, key.hash, 500_000, 480_000, window_floors=_floors(), book_to_byok=False
+        )
     )
     assert count == 1
     row = db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
@@ -297,33 +301,52 @@ def test_reserve_key_include_byok_true_counts_byok_usage() -> None:
     db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]["byok_usage"] = 400_000
     pt = store._param_types
     # available = 1_000_000 - 0 - 400_000 - 0 = 600_000
-    assert store._database.run_in_transaction(
-        lambda t: reserve_key(t, pt, key.hash, 700_000, is_byok=False)
-    ) == KEY_INSUFFICIENT
-    assert store._database.run_in_transaction(
-        lambda t: reserve_key(t, pt, key.hash, 500_000, is_byok=False)
-    ) == KEY_ACCEPTED
+    assert (
+        store._database.run_in_transaction(
+            lambda t: reserve_key(t, pt, key.hash, 700_000, is_byok=False)
+        )
+        == KEY_INSUFFICIENT
+    )
+    assert (
+        store._database.run_in_transaction(
+            lambda t: reserve_key(t, pt, key.hash, 500_000, is_byok=False)
+        )
+        == KEY_ACCEPTED
+    )
 
 
 def test_release_key_book_to_byok_and_underflow() -> None:
     store, db, _ = make_fake_store()
     key = _make_key(store, "ws_kb", limit=2_000_000)
     pt = store._param_types
-    assert store._database.run_in_transaction(
-        lambda t: reserve_key(t, pt, key.hash, 300_000, is_byok=False)
-    ) == KEY_ACCEPTED
+    assert (
+        store._database.run_in_transaction(
+            lambda t: reserve_key(t, pt, key.hash, 300_000, is_byok=False)
+        )
+        == KEY_ACCEPTED
+    )
     # settle as BYOK usage -> books byok_usage, not usage
-    assert store._database.run_in_transaction(
-        lambda t: release_key(t, pt, key.hash, 300_000, 250_000, window_floors=_floors(), book_to_byok=True)
-    ) == 1
+    assert (
+        store._database.run_in_transaction(
+            lambda t: release_key(
+                t, pt, key.hash, 300_000, 250_000, window_floors=_floors(), book_to_byok=True
+            )
+        )
+        == 1
+    )
     row = db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
     assert row["reserved"] == 0
     assert row["byok_usage"] == 250_000
     assert row["usage"] == 0
     # underflow: releasing more than held is a 0-row no-op (never negative)
-    assert store._database.run_in_transaction(
-        lambda t: release_key(t, pt, key.hash, 500_000, 0, window_floors=_floors(), book_to_byok=False)
-    ) == 0
+    assert (
+        store._database.run_in_transaction(
+            lambda t: release_key(
+                t, pt, key.hash, 500_000, 0, window_floors=_floors(), book_to_byok=False
+            )
+        )
+        == 0
+    )
     assert db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]["reserved"] == 0
 
 
@@ -364,13 +387,21 @@ from trusted_router.storage_gcp_counter_dml import (  # noqa: E402
 def _insert_res(store, *, rid, scope=None, fingerprint=None, credit_hold=0, key_hold=0):
     def txn(t):
         insert_reservation(
-            t, store._param_types,
-            reservation_id=rid, workspace_id="ws", key_hash="kh",
-            ws_shard=0, key_shard=0, credit_reserved_micro=credit_hold,
-            key_reserved_micro=key_hold, hold_usage_type="Credits",
-            idempotency_scope=scope, idempotency_fingerprint=fingerprint,
+            t,
+            store._param_types,
+            reservation_id=rid,
+            workspace_id="ws",
+            key_hash="kh",
+            ws_shard=0,
+            key_shard=0,
+            credit_reserved_micro=credit_hold,
+            key_reserved_micro=key_hold,
+            hold_usage_type="Credits",
+            idempotency_scope=scope,
+            idempotency_fingerprint=fingerprint,
             expires_at="2026-01-01T00:00:00Z",
         )
+
     store._database.run_in_transaction(txn)
 
 
@@ -466,7 +497,9 @@ def test_reservation_claim_race_settles_once() -> None:
 
     def claim() -> None:
         w = store._database.run_in_transaction(
-            lambda t: claim_reservation(t, pt, "rr", actual_micro=90_000, settled_usage_type="Credits")
+            lambda t: claim_reservation(
+                t, pt, "rr", actual_micro=90_000, settled_usage_type="Credits"
+            )
         )
         with lock:
             wins.append(w)
@@ -490,15 +523,29 @@ def _auth_body(aid, rid):
     return _json.dumps({"id": aid, "credit_reservation_id": rid, "model": "m"})
 
 
-def _authorize(store, *, ws, key_hash, estimate, has_credit=True, scope=None, fp=None,
-               expires="2026-01-01T00:00:00Z"):
+def _authorize(
+    store,
+    *,
+    ws,
+    key_hash,
+    estimate,
+    has_credit=True,
+    scope=None,
+    fp=None,
+    expires="2026-01-01T00:00:00Z",
+):
     return authorize_atomic(
-        store._database, store._param_types,
-        workspace_id=ws, key_hash=key_hash, estimate=estimate,
+        store._database,
+        store._param_types,
+        workspace_id=ws,
+        key_hash=key_hash,
+        estimate=estimate,
         has_credit_candidate=has_credit,
         reservation_usage_type=("Credits" if has_credit else "BYOK"),
-        idempotency_scope=scope, idempotency_fingerprint=fp,
-        expires_at=expires, build_auth_body=_auth_body,
+        idempotency_scope=scope,
+        idempotency_fingerprint=fp,
+        expires_at=expires,
+        build_auth_body=_auth_body,
     )
 
 
@@ -614,9 +661,12 @@ from trusted_router.storage_gcp_authorize import SettleOutcome, settle_atomic  #
 
 def _settle(store, *, rid, actual, settled_ut="Credits", success=True):
     return settle_atomic(
-        store._database, store._param_types,
-        reservation_id=rid, actual_micro=actual,
-        settled_usage_type=settled_ut, success=success,
+        store._database,
+        store._param_types,
+        reservation_id=rid,
+        actual_micro=actual,
+        settled_usage_type=settled_ut,
+        success=success,
     )
 
 
@@ -833,14 +883,24 @@ def _typed_finalize(store, *, rid, aid, actual, settled_ut="Credits", success=Tr
     if gen and success:
         writes = [
             ("generation", f"gen-{rid}", _json.dumps({"id": f"gen-{rid}", "cost": actual})),
-            ("generation_by_workspace", f"genidx-{rid}", _json.dumps({"generation_id": f"gen-{rid}"})),
+            (
+                "generation_by_workspace",
+                f"genidx-{rid}",
+                _json.dumps({"generation_id": f"gen-{rid}"}),
+            ),
         ]
     auth_settled = _json.dumps({"id": aid, "settled": True})
     return typed_finalize_atomic(
-        store._database, store._param_types,
-        reservation_id=rid, authorization_id=aid, success=success,
-        actual_micro=actual, settled_usage_type=settled_ut, now=_TS,
-        auth_body_settled=auth_settled, generation_writes=writes,
+        store._database,
+        store._param_types,
+        reservation_id=rid,
+        authorization_id=aid,
+        success=success,
+        actual_micro=actual,
+        settled_usage_type=settled_ut,
+        now=_TS,
+        auth_body_settled=auth_settled,
+        generation_writes=writes,
     )
 
 
@@ -1035,10 +1095,15 @@ def test_store_authorize_wrapper_and_origin_detection() -> None:
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
     res = store.authorize_gateway_atomic(
-        workspace_id=ws, key_hash=key.hash, estimate=1_000_000,
-        has_credit_candidate=True, reservation_usage_type="Credits",
-        idempotency_scope=None, idempotency_fingerprint=None,
-        expires_at="2026-01-01T00:00:00Z", build_auth_body=_auth_body,
+        workspace_id=ws,
+        key_hash=key.hash,
+        estimate=1_000_000,
+        has_credit_candidate=True,
+        reservation_usage_type="Credits",
+        idempotency_scope=None,
+        idempotency_fingerprint=None,
+        expires_at="2026-01-01T00:00:00Z",
+        build_auth_body=_auth_body,
     )
     assert res["outcome"] == AuthorizeOutcome.ACCEPTED
     rid, aid = res["reservation_id"], res["authorization_id"]
@@ -1056,15 +1121,24 @@ def test_store_typed_finalize_wrapper_and_reaper_wrapper() -> None:
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
     res = store.authorize_gateway_atomic(
-        workspace_id=ws, key_hash=key.hash, estimate=1_000_000,
-        has_credit_candidate=True, reservation_usage_type="Credits",
-        idempotency_scope=None, idempotency_fingerprint=None,
-        expires_at="2026-01-01T00:00:00Z", build_auth_body=_auth_body,
+        workspace_id=ws,
+        key_hash=key.hash,
+        estimate=1_000_000,
+        has_credit_candidate=True,
+        reservation_usage_type="Credits",
+        idempotency_scope=None,
+        idempotency_fingerprint=None,
+        expires_at="2026-01-01T00:00:00Z",
+        build_auth_body=_auth_body,
     )
     rid, aid = res["reservation_id"], res["authorization_id"]
     out = store.typed_finalize_gateway(
-        reservation_id=rid, authorization_id=aid, success=True, actual_micro=900_000,
-        settled_usage_type="Credits", now=_TS,
+        reservation_id=rid,
+        authorization_id=aid,
+        success=True,
+        actual_micro=900_000,
+        settled_usage_type="Credits",
+        now=_TS,
         auth_body_settled=_json.dumps({"id": aid, "settled": True}),
         generation_writes=[("generation", f"g-{rid}", "{}")],
     )
@@ -1128,6 +1202,12 @@ def test_typed_finalize_gateway_authorization_logs_split_timing(
         )
 
     assert finalized is True
+    replay = store.get_gateway_authorization(auth.id)
+    assert replay is not None
+    assert replay.finalization_outcome == "settled"
+    assert replay.finalized_cost_microdollars == 900_000
+    assert replay.finalized_generation_id == generation.id
+    assert replay.finalized_provider == "openai"
     records = [
         record
         for record in caplog.records
@@ -1156,12 +1236,21 @@ def test_typed_idempotency_lookup_survives_gate_changes() -> None:
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
     res = store.authorize_gateway_typed(
-        workspace_id=ws, key_hash=key.hash, estimate=1_000_000,
-        has_credit_candidate=True, reservation_usage_type="Credits",
-        model_id="m", provider="openai", requested_model_id=None,
-        candidate_model_ids=["m"], region="us", endpoint_id="e",
-        candidate_endpoint_ids=["e"], idempotency_key="idem-1",
-        idempotency_fingerprint="fp1", expires_at="2026-01-01T00:00:00Z",
+        workspace_id=ws,
+        key_hash=key.hash,
+        estimate=1_000_000,
+        has_credit_candidate=True,
+        reservation_usage_type="Credits",
+        model_id="m",
+        provider="openai",
+        requested_model_id=None,
+        candidate_model_ids=["m"],
+        region="us",
+        endpoint_id="e",
+        candidate_endpoint_ids=["e"],
+        idempotency_key="idem-1",
+        idempotency_fingerprint="fp1",
+        expires_at="2026-01-01T00:00:00Z",
     )
     assert res[0] == AuthorizeOutcome.ACCEPTED
     found = store.get_typed_authorization_by_idempotency(ws, key.hash, "idem-1")

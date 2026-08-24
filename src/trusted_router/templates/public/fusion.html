@@ -18,7 +18,7 @@
       <li>Code-tuned presets are <code>trustedrouter/iris-code-1.0</code>, <code>trustedrouter/prometheus-code-1.0</code>, and <code>trustedrouter/zeus-code-1.0</code>.</li>
       <li>Unversioned aliases such as <code>trustedrouter/prometheus</code> track the latest preset.</li>
       <li><code>synthesize_non_refusals</code> is the default and removes panel refusals before synthesis.</li>
-      <li>TrustedRouter stores billing and route metadata, not prompt/output content by default.</li>
+      <li>TrustedRouter stores billing and route metadata, never prompt/output content.</li>
     </ul>
     <div class="hero-actions">
       <a class="btn primary" href="/chat">Try in chat</a>
@@ -248,7 +248,7 @@ console.log(result.choices[0].message.content);</code></pre>
       <p>
         The intermediate panel, judge, and final prompts live in enclave memory.
         Durable storage keeps request IDs, route metadata, usage, cost, and
-        status, not prompt or output text by default.
+        status, never prompt or output text.
       </p>
     </div>
   </div>

@@ -1,0 +1,376 @@
+{
+  "provider": "jina",
+  "models": [
+    {
+      "display_name": "Jina AI: Jina Clip v1",
+      "title": "jina-clip-v1",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "jina-ai/jina-clip-v1",
+      "upstream_id": "jina-clip-v1",
+      "context_length": 8192,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Jina AI: Jina Clip v2",
+      "title": "jina-clip-v2",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "jina-ai/jina-clip-v2",
+      "upstream_id": "jina-clip-v2",
+      "context_length": 8192,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Jina AI: Jina Code Embeddings 0.5b",
+      "title": "jina-code-embeddings-0.5b",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "jina-ai/jina-code-embeddings-0.5b",
+      "upstream_id": "jina-code-embeddings-0.5b",
+      "context_length": 32768,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Jina AI: Jina Code Embeddings 1.5b",
+      "title": "jina-code-embeddings-1.5b",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "jina-ai/jina-code-embeddings-1.5b",
+      "upstream_id": "jina-code-embeddings-1.5b",
+      "context_length": 32768,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Jina AI: Jina Colbert v2",
+      "title": "jina-colbert-v2",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "jina-ai/jina-colbert-v2",
+      "upstream_id": "jina-colbert-v2",
+      "context_length": 8192,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Jina AI: Jina Embedding B EN v1",
+      "title": "jina-embedding-b-en-v1",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "jina-ai/jina-embedding-b-en-v1",
+      "upstream_id": "jina-embedding-b-en-v1",
+      "context_length": 512,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Jina AI: Jina Embeddings v2 Base Code",
+      "title": "jina-embeddings-v2-base-code",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "jina-ai/jina-embeddings-v2-base-code",
+      "upstream_id": "jina-embeddings-v2-base-code",
+      "context_length": 8192,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Jina AI: Jina Embeddings v2 Base DE",
+      "title": "jina-embeddings-v2-base-de",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "jina-ai/jina-embeddings-v2-base-de",
+      "upstream_id": "jina-embeddings-v2-base-de",
+      "context_length": 8192,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Jina AI: Jina Embeddings v2 Base EN",
+      "title": "jina-embeddings-v2-base-en",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "jina-ai/jina-embeddings-v2-base-en",
+      "upstream_id": "jina-embeddings-v2-base-en",
+      "context_length": 8192,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Jina AI: Jina Embeddings v2 Base ES",
+      "title": "jina-embeddings-v2-base-es",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "jina-ai/jina-embeddings-v2-base-es",
+      "upstream_id": "jina-embeddings-v2-base-es",
+      "context_length": 8192,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Jina AI: Jina Embeddings v2 Base ZH",
+      "title": "jina-embeddings-v2-base-zh",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "jina-ai/jina-embeddings-v2-base-zh",
+      "upstream_id": "jina-embeddings-v2-base-zh",
+      "context_length": 8192,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Jina AI: Jina Embeddings v3",
+      "title": "jina-embeddings-v3",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "jina-ai/jina-embeddings-v3",
+      "upstream_id": "jina-embeddings-v3",
+      "context_length": 8192,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Jina AI: Jina Embeddings v4",
+      "title": "jina-embeddings-v4",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "jina-ai/jina-embeddings-v4",
+      "upstream_id": "jina-embeddings-v4",
+      "context_length": 32768,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Jina AI: Jina Embeddings v5 Omni Nano",
+      "title": "jina-embeddings-v5-omni-nano",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text",
+        "image",
+        "video",
+        "audio"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "jina-ai/jina-embeddings-v5-omni-nano",
+      "upstream_id": "jina-embeddings-v5-omni-nano",
+      "context_length": 8192,
+      "routable": true,
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Jina AI: Jina Embeddings v5 Omni Small",
+      "title": "jina-embeddings-v5-omni-small",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text",
+        "image",
+        "video",
+        "audio"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "jina-ai/jina-embeddings-v5-omni-small",
+      "upstream_id": "jina-embeddings-v5-omni-small",
+      "context_length": 32768,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Jina AI: Jina Embeddings v5 Text Nano",
+      "title": "jina-embeddings-v5-text-nano",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "jina-ai/jina-embeddings-v5-text-nano",
+      "upstream_id": "jina-embeddings-v5-text-nano",
+      "context_length": 8192,
+      "routable": true,
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Jina AI: Jina Embeddings v5 Text Small",
+      "title": "jina-embeddings-v5-text-small",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "jina-ai/jina-embeddings-v5-text-small",
+      "upstream_id": "jina-embeddings-v5-text-small",
+      "context_length": 32768,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    }
+  ],
+  "source": "https://api.jina.ai/v1/models",
+  "pricing_source": "https://api.jina.ai/v1/models",
+  "generated_at": "2026-08-24T10:39:58Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 17
+}

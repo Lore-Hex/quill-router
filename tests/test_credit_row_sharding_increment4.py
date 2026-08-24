@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
 import pytest
@@ -179,6 +180,29 @@ def test_reshard_refuses_any_undrained_hold(
     assert store.get_credit_account("ws-reshard").shard_count == 1
 
 
+def test_reshard_ignores_but_reports_retained_stale_legacy_holds() -> None:
+    store, _database = _seed(shard_credits=[100], shard_usage=[20])
+    store._write_entity(
+        "reservation",
+        "legacy-stale",
+        Reservation(
+            id="legacy-stale",
+            workspace_id="ws-reshard",
+            key_hash="key",
+            amount_microdollars=1,
+            created_at=(
+                dt.datetime.now(dt.UTC) - dt.timedelta(days=2)
+            ).isoformat(),
+        ),
+    )
+
+    result = reshard_credit_account(store, "ws-reshard", 4, apply=True)
+
+    assert result.ready and result.applied
+    assert result.legacy_open_reservations == 0
+    assert result.stale_legacy_reservations_ignored == 1
+
+
 def test_reshard_refuses_incomplete_rows_and_uses_typed_totals() -> None:
     store, database = _seed(
         shard_credits=[50, 50],
@@ -252,3 +276,125 @@ def test_transaction_rechecks_drain_after_preflight_race(
     assert "atomic reshard preconditions changed" in result.reasons[0]
     assert _rows(database) == before
     assert store.get_credit_account("ws-reshard").shard_count == 1
+
+
+def test_online_split_preserves_open_hold_on_original_shard() -> None:
+    store, database = _seed(
+        shard_credits=[100],
+        shard_usage=[20],
+        shard_reserved=[10],
+    )
+    database.reservations["live"] = {
+        "reservation_id": "live",
+        "workspace_id": "ws-reshard",
+        "credit_shard": 0,
+        "ws_shard": 0,
+        "credit_reserved_micro": 10,
+        "settled": False,
+    }
+
+    result = reshard_credit_account(
+        store,
+        "ws-reshard",
+        4,
+        apply=True,
+        preserve_open_holds=True,
+    )
+
+    assert result.ready and result.applied
+    rows = _rows(database)
+    assert [row["total_usage"] for row in rows] == [20, 0, 0, 0]
+    assert [row["reserved"] for row in rows] == [10, 0, 0, 0]
+    assert [row["total_credits"] for row in rows] == [49, 17, 17, 17]
+    assert sum(row["total_credits"] for row in rows) == 100
+
+
+def test_online_split_refuses_counter_hold_mismatch() -> None:
+    store, database = _seed(
+        shard_credits=[100],
+        shard_usage=[20],
+        shard_reserved=[10],
+    )
+    database.reservations["live"] = {
+        "reservation_id": "live",
+        "workspace_id": "ws-reshard",
+        "credit_shard": 0,
+        "ws_shard": 0,
+        "credit_reserved_micro": 9,
+        "settled": False,
+    }
+    before = [dict(row) for row in _rows(database)]
+
+    result = reshard_credit_account(
+        store,
+        "ws-reshard",
+        4,
+        apply=True,
+        preserve_open_holds=True,
+    )
+
+    assert not result.ready
+    assert not result.applied
+    assert any("reserved=10 but open holds=9" in reason for reason in result.reasons)
+    assert _rows(database) == before
+
+
+def test_online_split_rechecks_latest_reserved_counter_after_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, database = _seed(shard_credits=[100], shard_usage=[20])
+    original_run = store._run_in_transaction
+
+    def inject_atomic_hold(callback: Any, *, attempts: int = 8) -> Any:
+        database.typed[CREDIT_BALANCE_TABLE][("ws-reshard", 0)]["reserved"] = 10
+        database.reservations["arrived-after-preflight"] = {
+            "reservation_id": "arrived-after-preflight",
+            "workspace_id": "ws-reshard",
+            "credit_shard": 0,
+            "ws_shard": 0,
+            "credit_reserved_micro": 10,
+            "settled": False,
+        }
+        return original_run(callback, attempts=attempts)
+
+    monkeypatch.setattr(store, "_run_in_transaction", inject_atomic_hold)
+
+    result = reshard_credit_account(
+        store,
+        "ws-reshard",
+        4,
+        apply=True,
+        preserve_open_holds=True,
+    )
+
+    assert result.ready and result.applied
+    assert result.typed_open_reservations == 1
+    assert [row["reserved"] for row in _rows(database)] == [10, 0, 0, 0]
+
+
+def test_online_reshard_refuses_consolidation_even_with_matching_holds() -> None:
+    store, database = _seed(
+        shard_credits=[50, 50],
+        shard_usage=[10, 10],
+        shard_reserved=[0, 5],
+    )
+    database.reservations["live"] = {
+        "reservation_id": "live",
+        "workspace_id": "ws-reshard",
+        "credit_shard": 1,
+        "ws_shard": 1,
+        "credit_reserved_micro": 5,
+        "settled": False,
+    }
+
+    result = reshard_credit_account(
+        store,
+        "ws-reshard",
+        1,
+        apply=True,
+        preserve_open_holds=True,
+    )
+
+    assert not result.ready
+    assert not result.applied
+    assert any("only supports increasing" in reason for reason in result.reasons)

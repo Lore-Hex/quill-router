@@ -14,6 +14,13 @@ from trusted_router.errors import api_error
 from trusted_router.providers import ProviderError
 from trusted_router.types import ErrorType
 
+# Upstream statuses that mean "this request is malformed", i.e. the next
+# provider will reject it identically. Deliberately just these two rather than
+# "every unlisted 4xx": 408 and 425 are transient, and 402 can mean the
+# TrustedRouter account for THAT provider is out of capacity, all of which are
+# cases where another provider genuinely may succeed.
+_DETERMINISTIC_CLIENT_ERROR_STATUSES = frozenset({400, 422})
+
 
 def provider_http_error(exc: ProviderError) -> HTTPException:
     status = 502
@@ -24,6 +31,14 @@ def provider_http_error(exc: ProviderError) -> HTTPException:
     elif exc.status_code == 404:
         status = 400
         type_ = ErrorType.MODEL_NOT_SUPPORTED
+    elif exc.status_code in _DETERMINISTIC_CLIENT_ERROR_STATUSES:
+        # Previously these fell through to the default 502/PROVIDER_ERROR,
+        # which is_rollover_http_error treats as rollover-eligible — so a
+        # malformed body was re-sent to every remaining candidate, each
+        # rejecting it the same way, and the caller got a 502 blaming the
+        # provider for their own request. Surface the upstream status as-is.
+        status = exc.status_code
+        type_ = ErrorType.BAD_REQUEST
     elif exc.status_code == 429:
         status = 429
         type_ = ErrorType.PROVIDER_RATE_LIMITED
@@ -51,15 +66,26 @@ def default_provider_secret_ref(provider: str) -> str:
         "anthropic": "ANTHROPIC_API_KEY",
         "openai": "OPENAI_API_KEY",
         "gemini": "GEMINI_API_KEY",
+        "google-ai-studio": "GEMINI_API_KEY",
+        "google-vertex": "VERTEX_ACCESS_TOKEN",
         "cerebras": "CEREBRAS_API_KEY",
         "deepseek": "DEEPSEEK_API_KEY",
         "mistral": "MISTRAL_API_KEY",
         "kimi": "KIMI_API_KEY",
         "fireworks": "FIREWORKS_API_KEY",
         "thinkingmachines": "THINKING_MACHINES_API_KEY",
+        "engy": "ENGY_API_KEY",
+        "sail-research": "SAIL_RESEARCH_API_KEY",
+        "aion-labs": "AION_LABS_API_KEY",
+        "io-net": "IONET_API_KEY",
+        "scaleway": "SCALEWAY_SECRET_KEY",
+        "featherless": "FEATHERLESS_API_KEY",
+        "jina": "JINA_API_KEY",
+        "databricks": "DATABRICKS_TOKEN",
+        "zero-g": "ZERO_G_API_KEY",
         "vertex": "VERTEX_ACCESS_TOKEN",
     }
-    name = env_names.get(provider, f"{provider.upper()}_API_KEY")
+    name = env_names.get(provider, f"{provider.upper().replace('-', '_')}_API_KEY")
     return f"env://{name}"
 
 

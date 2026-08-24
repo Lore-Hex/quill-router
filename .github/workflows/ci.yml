@@ -10,8 +10,12 @@ on:
   # CI explicitly for the generated commit before dispatching deploy.yml.
   workflow_dispatch: {}
 
+# Independent jobs instead of one serial pipeline: wall time becomes the
+# slowest job, not the sum. deploy.yml's gate polls this WORKFLOW RUN's
+# conclusion for the SHA, and a run only concludes success when every job
+# succeeds, so the gate semantics are unchanged by the split.
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +28,11 @@ jobs:
         run: uv run ruff check .
       - name: Mypy
         run: uv run mypy
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -37,11 +46,214 @@ jobs:
         run: npx eslint frontend/src
       - name: Stylelint
         run: npx stylelint "src/trusted_router/static/*.css"
-      - name: Tests
-        run: uv run pytest -q
-      - name: Coverage
-        run: uv run pytest --cov=trusted_router --cov-report=term-missing --cov-fail-under=70
+
+  production-import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Sync production dependencies only
+        run: uv sync --frozen --no-dev
+      - name: Import the production application
+        run: uv run --no-sync python -c "import trusted_router.main"
+
+  test:
+    runs-on: ubuntu-latest
+    env:
+      TR_CONFORMANCE_POSTGRES_DSN: postgresql://postgres:tr@localhost:5432/postgres
+      # Spanner's PostgreSQL dialect, via PGAdapter + the Spanner emulator.
+      # Needs no GCP credentials, so it runs on every PR like any other
+      # service container.
+      TR_CONFORMANCE_SPANNER_PG_DSN: postgresql://localhost:5434/tr-conformance
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: tr
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      spanner-pg:
+        # Spanner PG is a SUBSET of PostgreSQL, so passing against postgres:17
+        # does not imply passing against Spanner. This is what keeps the single
+        # PostgresStore honest across all three clouds.
+        image: gcr.io/cloud-spanner-pg-adapter/pgadapter-emulator:latest
+        ports:
+          - 5434:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Sync
+        run: uv sync --frozen
+      # The coverage invocation executes the complete test suite. Running a
+      # separate plain pytest pass doubled CI time and delayed every guarded
+      # production rollout without checking any additional behavior.
+      # -n 4 (pytest-xdist) uses the runner's 4 vCPUs; pytest-cov combines
+      # worker coverage natively. --dist loadgroup is LOAD-BEARING: the
+      # server-backed conformance backends are xdist_group-marked (see
+      # tests/conformance/conftest.py) because the Spanner PG emulator rejects
+      # concurrent schema changes -- measured 14 setup errors under plain -n 4,
+      # 53/53 with grouping. Per-test id namespacing makes the shared DATABASE
+      # order-independent; grouping is what serializes the DDL.
+      - name: Tests and coverage
+        run: uv run pytest -q -n 4 --dist loadgroup --cov=trusted_router --cov-report=term-missing --cov-fail-under=70
+
+  # The same suite, run once with the provider-lifecycle clock pinned PAST every
+  # scheduled cutover.
+  #
+  # provider_lifecycle.py schedules effective-dated retirements and price
+  # changes. A test written on the near side of one passes right up to the
+  # announced minute and then turns main red for every open pull request with
+  # no code change -- Wafer's three routes at 2026-08-17 00:00 UTC did exactly
+  # that (CI run 31980690855), and the fix landed hours later in PR #628. This
+  # job moves that failure to the pull request that writes the test.
+  #
+  # Cheap: no service containers and no coverage, so the conformance backends
+  # skip and this is the plain suite once more. It is a separate job rather
+  # than a second step in `test` so the two clocks report separately -- a red
+  # here means "this will break on <date>", not "this is broken".
+  test-post-cutover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Sync
+        run: uv sync --frozen
+      # Computed from _RETIREMENTS rather than hard-coded, so adding a
+      # retirement moves this clock with it and no one has to remember. The
+      # max() with now() keeps the clock in the future once every announced
+      # cutover is in the past.
+      - name: Pin the lifecycle clock past the latest scheduled cutover
+        run: |
+          uv run python -c '
+          import os
+          from datetime import UTC, datetime, timedelta
+          from trusted_router.provider_lifecycle import latest_scheduled_cutover
+          clock = max(latest_scheduled_cutover(), datetime.now(UTC)) + timedelta(days=1)
+          stamp = clock.strftime("%Y-%m-%dT%H:%M:%SZ")
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"TR_LIFECYCLE_CLOCK_OVERRIDE={stamp}\n")
+          print(f"lifecycle clock pinned to {stamp}")
+          '
+      - name: Tests with every scheduled cutover already past
+        run: uv run pytest -q -n 4 --dist loadgroup
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Sync
+        run: uv sync --frozen
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install npm deps
+        run: npm ci
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
+      # playwright.config.js starts the app itself (uv run uvicorn, memory
+      # backend) and waits on /health — no DB service containers needed.
       - name: Browser smoke
         run: npm run test:browser
+
+  # The BYOK envelope ordering constraint, checked against the DIFF rather than
+  # against a deploy.
+  #
+  # The rule (docs/design/byok-aad-v2-migration.md section 4.1): a control plane
+  # may only write envelope formats every enclave serving its cloud already
+  # reads. Break it and every BYOK key in that cloud's database stops opening at
+  # the next inference request. The dangerous act is a code change to what gets
+  # written, which is exactly the thing a pull request contains, so this belongs
+  # here and NOT in deploy.yml. Being in ci.yml still reaches deploys the way
+  # every job here does -- deploy.yml's gate-on-ci refuses a commit whose CI is
+  # red -- but it runs once per push rather than on every deploy, and a refusal
+  # lands on the pull request that caused it before it can land on main.
+  #
+  # Cheap and offline on an ordinary pull request. The script compares what this
+  # tree writes against BASELINE_WRITTEN_FORMATS and, when they are equal, exits
+  # 0 without fetching a release record, contacting an attestation endpoint or
+  # reading the enclave repository. It reaches the network only when the written
+  # set has CHANGED, and then it fails closed. So no `continue-on-error` and no
+  # network-flake exemption: the path that can be flaky is the path a format
+  # change opted into. The offline half is kept true by
+  # tests/test_check_format_ordering.py, in
+  # test_an_unchanged_write_side_is_silent_and_reads_no_network, which drives
+  # the real main() with every network seam replaced by a function that raises.
+  byok-format-ordering:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Sync
+        run: uv sync --frozen
+      # `-m` rather than a path: the script imports scripts.verify_trust_
+      # measurements for the attestation samplers, so the repository root has to
+      # be on sys.path.
+      #
+      # No token is passed. On the loud path the enclave reads go to a different
+      # repository, which GITHUB_TOKEN does not cover, and the script reads
+      # GH_TOKEN only to raise the anonymous rate limit -- so anonymous is what
+      # it uses here. A rate-limited read is an HTTP error, and an HTTP error
+      # fails this check rather than being assumed away.
+      - name: BYOK written formats vs what every enclave accepts
+        run: uv run python -m scripts.check_format_ordering
+
+  # Model checking. The property tests in `tests/` run inside the `test` job
+  # like any other pytest file; this job is for the TLA+ specs in `proofs/`,
+  # which need a JVM and TLC and have nothing to do with the Python suite.
+  #
+  # These specs cover designs whose failure modes are concurrent or temporal —
+  # things a test cannot reach because the composition being checked does not
+  # exist in code yet. RegionalQuotaLease models multiple regional planes
+  # against one workspace escrow before the billing path delegates real spend
+  # to it; its first run produced a liveness counterexample in six states.
+  #
+  # Runtime, measured rather than guessed, and NOT measured on this runner:
+  # RegionalQuotaLease at the bounds in its .cfg took between 1m26s and 4m06s
+  # across four -workers auto runs on an 8-core Apple M2 (JDK 21), and 3m47s
+  # at -workers 2 (JDK 17) — 5,844,105 states every time, so the spread is
+  # load, not the search. A GitHub runner has fewer and slower cores than
+  # that — 2 vCPUs on a private repo, 4 on a public one, per GitHub's docs
+  # at the time of writing — so budget several minutes for this job, not the
+  # "minute or two" this comment used to claim, which was an eight-core figure
+  # wearing a two-vCPU label. timeout-minutes below is a runaway guard, set at several
+  # times the local figure rather than at a target. If a spec ever nears it,
+  # tighten that spec's constants rather than dropping the job — an unchecked
+  # spec is worse than no spec, because it reads as evidence.
+  proofs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Cache TLA+ tools
+        id: tla-cache
+        uses: actions/cache@v4
+        with:
+          path: proofs/tla2tools.jar
+          key: tla2tools-v1.8.0
+      - name: Fetch TLA+ tools
+        if: steps.tla-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o proofs/tla2tools.jar \
+            https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
+      - name: Model-check every spec
+        run: ./proofs/check.sh

@@ -39,10 +39,12 @@ for rollback. Finishing the migration deletes the machinery.
   from `CreditAccount` (and the memory twin models the single typed book).
 - Deleted code: legacy `_require_credit_tx`/JSON finalize path, the generic
   JSON-to-typed mirror, the typed-to-JSON helper, the old backfill/drift
-  comparison helpers, and their tests. `repair_typed_reserved` +
+  comparison/flip helpers, and their tests. `repair_typed_reserved` +
   `audit_typed_invariants` REMAIN (they audit the surviving book).
 - Money display/API reads use the live typed snapshot; `signup()`'s trial-credit report
-  follows the surviving credit book once JSON money fields are deleted.
+  follows the surviving credit book. A missing configured typed shard fails closed.
+- Stored JSON credit rows contain metadata only. The reviewed cleanup command
+  strips the three retired money keys only after typed-shard and invariant checks.
 
 ## Phases
 
@@ -150,8 +152,8 @@ Legend: [J] = Joseph's explicit go required · [C] = Claude runs autonomously (S
   emergency rollback means the previous deploy revision. The shard=0-only
   backsync was already unusable for sharded workspaces, which is part of why
   C1 landed.
-- [ ] Stale legacy-hold cleanup for workspace `ea7dd3d8` (JSON reserved=29373,
-  3 open legacy reservations; display-only impact, fold into Phase C or a small cleanup)
+- [x] Stale JSON money-field cleanup is handled by the C4 typed-validated scrubber;
+  it removes obsolete JSON-era reservation totals without touching the typed ledger.
 - [x] C2a deletions (2026-07-14): generic mirror hook, warm-keep, rollback helper,
   backfill, and drift compare removed together. New workspace/key typed-row
   seeds now happen only on entity create. Adversarial review caught + fixed a
@@ -169,19 +171,19 @@ Legend: [J] = Joseph's explicit go required · [C] = Claude runs autonomously (S
   `auto_refill` reads the unclamped `available` off the summary (byte-identical to the
   old inline `total − usage − reserved`) and metadata off `get_credit_account`, and the
   InMemory twin's single book moved to a `CreditMoney` sibling holder shared by
-  reference with the reservation engine. `SpannerBigtableStore.credit_money_snapshot`
-  reads the raw `credit` JSON entity so `live_credit_summary` keeps its pre-C2b
-  fallback when the typed snapshot is unavailable (mirror off / row not yet seeded);
-  `scripts/typed_flip.py` + the operator grant scripts read legacy money from the raw
-  entity dict. Clean break — passing a retired money kwarg now raises. Two adversarial
-  verification passes; production write path (typed-DML) unchanged.
+  reference with the reservation engine. Passing a retired money kwarg now raises.
+- [x] C4 code cleanup (2026-07-17): removed the production JSON-money read fallback,
+  missing-row seed during top-up, obsolete `reconcile_for_flip`/`typed_flip.py`, and
+  bespoke one-off grant scripts. Added a typed-shard-validated, dry-run-first stored-row
+  scrubber and one generic idempotent grant command. Production money reads and writes
+  now fail closed if an authoritative typed shard is missing.
 
-## Status: the JSON credit ledger is retired (C1 + C2a + C3 shipped 2026-07-14)
+## Status: the JSON credit ledger is retired
 Production money is single-book (typed Spanner). The dual-book machinery — mirror,
 backsync, backfill, drift-compare, warm-keep, rollback-to-legacy — is deleted, and
 the surviving tripwires (`audit_typed_invariants` daily, `repair_typed_reserved`
-on demand) are typed-internal. C2b (the `CreditAccount` field/twin cleanup above)
-is now shipped, so the model is metadata-only too.
+on demand) are typed-internal. The model and stored credit rows are metadata-only;
+there is no JSON-money read, write, seed, or operator path.
 
 ### Rollback
 Rollback-to-legacy is retired. Emergency rollback is the previous deploy revision.

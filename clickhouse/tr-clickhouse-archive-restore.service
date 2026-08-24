@@ -1,0 +1,25 @@
+[Unit]
+Description=TrustedRouter verified ClickHouse archive restore drill
+After=network-online.target tr-clickhouse-archive.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=tr-clickhouse-ingest
+Group=tr-clickhouse-ingest
+WorkingDirectory=/opt/tr-clickhouse
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/var/lib/tr-clickhouse-ingest
+Environment=GCP_PROJECT_ID=quill-cloud-proxy
+Environment=ARCHIVE_BUCKET=quill-cloud-proxy-tr-clickhouse-archive
+EnvironmentFile=/etc/tr-clickhouse-ingest.env
+ExecStart=/opt/tr-clickhouse/venv/bin/python -m clickhouse.verify_archive_restore
+TimeoutStartSec=6h
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/tr-clickhouse-ingest
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,88 @@
+{% extends "public/_base.html" %}
+
+{% block hero %}
+<section class="public-hero marketing-hero comparison-hero">
+  <div>
+    <div class="kicker">{{ comparison.category }} · Verified {{ verified_on_label }}</div>
+    <h1>TrustedRouter vs {{ comparison.name }}</h1>
+    <p class="lead">{{ comparison.summary }}</p>
+    <div class="hero-actions">
+      <button class="btn primary" type="button" data-action="open-signin">Try TrustedRouter</button>
+      <a class="btn" href="#comparison-matrix">Compare details <span aria-hidden="true">↓</span></a>
+    </div>
+  </div>
+  <div class="public-hero-metrics" aria-label="Comparison quick facts">
+    <div><strong>{{ comparison.rows|length }}</strong><span>decision dimensions</span></div>
+    <div><strong>{{ comparison.sources|length }}</strong><span>official sources</span></div>
+    <div><strong>1</strong><span>base URL to try TR</span></div>
+  </div>
+</section>
+{% endblock %}
+
+{% block body %}
+
+<section class="marketing-split comparison-decision" aria-label="Decision summary">
+  <div class="marketing-copy">
+    <span class="eyebrow">Choose {{ comparison.name }} when</span>
+    <h2>Its operating model is the feature.</h2>
+    <p>{{ comparison.competitor_fit }}</p>
+  </div>
+  <div class="marketing-copy">
+    <span class="eyebrow">Choose TrustedRouter when</span>
+    <h2>Privacy needs evidence.</h2>
+    <p>{{ comparison.trustedrouter_fit }}</p>
+  </div>
+</section>
+
+<section id="comparison-matrix" class="compare-matrix competitor-matrix" aria-label="{{ comparison.name }} and TrustedRouter comparison">
+  <div class="matrix-row matrix-head">
+    <span>Dimension</span><strong>{{ comparison.name }}</strong><strong>TrustedRouter</strong>
+  </div>
+  {% for dimension, competitor_value, trustedrouter_value in comparison.rows %}
+  <div class="matrix-row">
+    <span>{{ dimension }}</span><span data-label="{{ comparison.name }}">{{ competitor_value }}</span><span data-label="TrustedRouter">{{ trustedrouter_value }}</span>
+  </div>
+  {% endfor %}
+</section>
+
+{% if comparison.article_html %}
+<article class="panel comparison-article" aria-label="Detailed comparison">
+  <div class="panel-body">
+    {{ comparison.article_html|safe }}
+  </div>
+</article>
+{% endif %}
+
+<section class="marketing-split" aria-label="Migration guidance">
+  <div class="marketing-copy">
+    <span class="eyebrow">Migration shape</span>
+    <h2>Start with one real request.</h2>
+    <p>{{ comparison.migration }}</p>
+    <p>Keep the first test small, stream the response, and compare output, latency, provider selection, and billed usage before moving production traffic.</p>
+    <p>
+      <a class="btn primary" href="/docs/agent-setup">Agent setup</a>
+      <a class="btn" href="/docs/evals">Run a small eval</a>
+    </p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>TrustedRouter side</span><span>OpenAI SDK</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="sk-tr-v1-...",
+)
+
+with client.chat.completions.create(
+    model="trustedrouter/zdr",
+    messages=[{"role": "user", "content": "Reply PONG"}],
+    stream=True,
+) as response:
+    for chunk in response:
+        print(chunk.choices[0].delta.content or "", end="")</code></pre>
+  </div>
+</section>
+
+{% include "public/_competitor_evidence.html" %}
+
+{% endblock %}

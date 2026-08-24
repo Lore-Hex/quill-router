@@ -133,6 +133,7 @@ if table_exists tr_reservation; then log "tr_reservation exists, skip"; else
     idempotency_fingerprint STRING(64),
     created_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
     expires_at TIMESTAMP,
+    terminal_at TIMESTAMP,
   ) PRIMARY KEY (reservation_id)"
 fi
 
@@ -165,6 +166,44 @@ ensure_column() {
   else
     apply_ddl "ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}"
   fi
+}
+
+wait_generated_column_committed() {
+  local table="$1" col="$2" state=""
+  for _ in $(seq 1 360); do
+    state=$(gcloud spanner databases execute-sql "$DATABASE" \
+      --instance="$INSTANCE" "${PROJECT_ARG[@]}" \
+      --sql="SELECT SPANNER_STATE FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE table_name='${table}' AND column_name='${col}'" \
+      --format='value(rows[0])' 2>/dev/null || true)
+    if [ "$state" = "COMMITTED" ]; then
+      log "${table}.${col} is committed"
+      return 0
+    fi
+    log "waiting for ${table}.${col} backfill (state=${state:-unknown})"
+    sleep 5
+  done
+  log "timed out waiting for ${table}.${col} to become committed"
+  return 1
+}
+
+wait_index_read_write() {
+  local name="$1" state=""
+  for _ in $(seq 1 360); do
+    state=$(gcloud spanner databases execute-sql "$DATABASE" \
+      --instance="$INSTANCE" "${PROJECT_ARG[@]}" \
+      --sql="SELECT INDEX_STATE FROM INFORMATION_SCHEMA.INDEXES
+             WHERE index_name='${name}'" \
+      --format='value(rows[0])' 2>/dev/null || true)
+    if [ "$state" = "READ_WRITE" ]; then
+      log "${name} is read-write"
+      return 0
+    fi
+    log "waiting for ${name} backfill (state=${state:-unknown})"
+    sleep 5
+  done
+  log "timed out waiting for ${name} to become read-write"
+  return 1
 }
 
 # NOTE: Spanner forbids ADD COLUMN ... NOT NULL on an existing table, so the
@@ -217,13 +256,36 @@ if table_exists tr_settle_outbox; then log "tr_settle_outbox exists, skip"; else
     leased_until TIMESTAMP,
     created_at TIMESTAMP,
     updated_at TIMESTAMP,
+    terminal_at TIMESTAMP,
+    queue_shard INT64 NOT NULL AS (
+      MOD(
+        MOD(FARM_FINGERPRINT(CONCAT(authorization_id, '#', intent_kind)), 16) + 16,
+        16
+      )
+    ) STORED,
   ) PRIMARY KEY (authorization_id, intent_kind)"
 fi
 
-# Due-scan index: the drain reads pending rows whose next_attempt_at has passed.
-# Without it the whale-burst backlog the feature exists for would full-scan.
-if index_exists tr_settle_outbox_due; then log "tr_settle_outbox_due exists, skip"; else
-  apply_ddl "CREATE INDEX tr_settle_outbox_due ON tr_settle_outbox (status, next_attempt_at)"
+# Generate the queue shard from immutable PK columns. Old application revisions
+# omit this column on INSERT and are still rolling-safe because Spanner computes
+# it. Existing rows are backfilled by the schema operation before the new index
+# is created.
+ensure_column tr_settle_outbox queue_shard \
+  "INT64 NOT NULL AS (
+    MOD(
+      MOD(FARM_FINGERPRINT(CONCAT(authorization_id, '#', intent_kind)), 16) + 16,
+      16
+    )
+  ) STORED"
+wait_generated_column_committed tr_settle_outbox queue_shard
+
+# Sparse, write-distributed due index. Terminal rows have next_attempt_at=NULL,
+# so NULL_FILTERED keeps the completed history out of this index. The generated
+# shard precedes the monotonic timestamp to avoid a moving-edge write hotspot.
+if index_exists tr_settle_outbox_due_v2; then log "tr_settle_outbox_due_v2 exists, skip"; else
+  apply_ddl "CREATE NULL_FILTERED INDEX tr_settle_outbox_due_v2
+    ON tr_settle_outbox (queue_shard, next_attempt_at)"
 fi
+wait_index_read_write tr_settle_outbox_due_v2
 
 log "done"

@@ -1,0 +1,40 @@
+displayName: "TR Spanner: transaction contention"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    Production Spanner is spending excessive work on aborted transactions or
+    lock conflicts. Capacity alone does not fix hot-row contention. Inspect
+    transaction insights and billing shard distribution. Runbook:
+    docs/spanner-reliability.md.
+conditions:
+  - displayName: "More than 100 aborted commits per minute for 10 minutes"
+    conditionThreshold:
+      filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/transaction_stat/total/commit_attempt_count" AND metric.labels.status = "abort"'
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_RATE
+          crossSeriesReducer: REDUCE_SUM
+      comparison: COMPARISON_GT
+      thresholdValue: 1.666666667
+      duration: 600s
+      trigger:
+        count: 1
+  - displayName: "Lock wait exceeds two seconds per second for 10 minutes"
+    conditionThreshold:
+      filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/lock_stat/total/lock_wait_time"'
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_RATE
+          crossSeriesReducer: REDUCE_SUM
+      comparison: COMPARISON_GT
+      thresholdValue: 2
+      duration: 600s
+      trigger:
+        count: 1
+alertStrategy:
+  autoClose: 86400s
+  notificationPrompts:
+    - OPENED
+    - CLOSED

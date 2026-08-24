@@ -1,21 +1,22 @@
 :root {
-  --fusion-bg: #0d1117;
-  --fusion-panel: #111827;
-  --fusion-panel-2: #0f172a;
-  --fusion-border: #273244;
-  --fusion-ink: #e7edf7;
-  --fusion-muted: #8b9ab0;
-  --fusion-soft: #131d2e;
-  --fusion-accent: #22c55e;
-  --fusion-blue: #8aa7ff;
-  --fusion-warn: #f59e0b;
-  --fusion-error: #f87171;
-  --fusion-radius: 8px;
-  --fusion-font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --fusion-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  --fusion-bg: var(--surface-page);
+  --fusion-panel: var(--surface-card);
+  --fusion-panel-2: var(--surface-raised);
+  --fusion-border: var(--border-default);
+  --fusion-ink: var(--text-display);
+  --fusion-muted: var(--text-muted);
+  --fusion-soft: var(--surface-hover);
+  --fusion-accent: var(--sage);
+  --fusion-blue: var(--sage-bright);
+  --fusion-warn: var(--gold);
+  --fusion-error: var(--clay);
+  --fusion-radius: var(--r-control);
+  --fusion-font: var(--font-ui);
+  --fusion-mono: var(--font-mono);
 }
 
 .public-wrap {
+  width: 100%;
   max-width: none;
   padding: 0;
 }
@@ -31,7 +32,7 @@
 }
 
 .fusion-sidebar {
-  background: #080d14;
+  background: var(--surface-card);
   border-right: 1px solid var(--fusion-border);
   display: flex;
   flex-direction: column;
@@ -148,8 +149,8 @@
 .fusion-composer,
 .fusion-output {
   border: 1px solid var(--fusion-border);
-  border-radius: 10px;
-  background: linear-gradient(180deg, var(--fusion-panel), var(--fusion-panel-2));
+  border-radius: var(--fusion-radius);
+  background: var(--fusion-panel);
 }
 
 .fusion-composer {

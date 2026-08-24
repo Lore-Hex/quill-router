@@ -1,0 +1,892 @@
+{
+  "provider": "lightning",
+  "models": [
+    {
+      "display_name": "Claude Fable 5",
+      "title": "anthropic/claude-fable-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-fable-5",
+      "upstream_id": "anthropic/claude-fable-5",
+      "context_length": 1048576,
+      "input_token_price_per_m": 10000000,
+      "output_token_price_per_m": 50000000
+    },
+    {
+      "display_name": "Claude Haiku 4.5",
+      "title": "anthropic/claude-haiku-4-5-20251001",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-haiku-4-5-20251001",
+      "upstream_id": "anthropic/claude-haiku-4-5-20251001",
+      "context_length": 200000,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 5000000
+    },
+    {
+      "display_name": "Claude Opus 4.1",
+      "title": "anthropic/claude-opus-4-1-20250805",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4-1-20250805",
+      "upstream_id": "anthropic/claude-opus-4-1-20250805",
+      "context_length": 200000,
+      "input_token_price_per_m": 15000000,
+      "output_token_price_per_m": 75000000
+    },
+    {
+      "display_name": "Claude Opus 4.5",
+      "title": "anthropic/claude-opus-4-5-20251101",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4-5-20251101",
+      "upstream_id": "anthropic/claude-opus-4-5-20251101",
+      "context_length": 200000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000
+    },
+    {
+      "display_name": "Claude Opus 4.6",
+      "title": "anthropic/claude-opus-4-6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4-6",
+      "upstream_id": "anthropic/claude-opus-4-6",
+      "context_length": 200000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000
+    },
+    {
+      "display_name": "Claude Opus 4.7",
+      "title": "anthropic/claude-opus-4-7",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4-7",
+      "upstream_id": "anthropic/claude-opus-4-7",
+      "context_length": 1000000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000
+    },
+    {
+      "display_name": "Claude Opus 4.8",
+      "title": "anthropic/claude-opus-4-8",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4-8",
+      "upstream_id": "anthropic/claude-opus-4-8",
+      "context_length": 1000000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000
+    },
+    {
+      "display_name": "Claude Opus 5",
+      "title": "anthropic/claude-opus-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-5",
+      "upstream_id": "anthropic/claude-opus-5",
+      "context_length": 1048576,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000
+    },
+    {
+      "display_name": "Claude Sonnet 4.5",
+      "title": "anthropic/claude-sonnet-4-5-20250929",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-4-5-20250929",
+      "upstream_id": "anthropic/claude-sonnet-4-5-20250929",
+      "context_length": 200000,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000
+    },
+    {
+      "display_name": "Claude Sonnet 4.6",
+      "title": "anthropic/claude-sonnet-4-6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-4-6",
+      "upstream_id": "anthropic/claude-sonnet-4-6",
+      "context_length": 200000,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000
+    },
+    {
+      "display_name": "Claude Sonnet 5",
+      "title": "anthropic/claude-sonnet-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-5",
+      "upstream_id": "anthropic/claude-sonnet-5",
+      "context_length": 1048576,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 15000000
+    },
+    {
+      "display_name": "Gemini 2.5 Flash",
+      "title": "google/gemini-2.5-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-2.5-flash",
+      "upstream_id": "google/gemini-2.5-flash",
+      "context_length": 1048576,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 2500000
+    },
+    {
+      "display_name": "Gemini 2.5 Flash Lite",
+      "title": "google/gemini-2.5-flash-lite-preview-06-17",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-2.5-flash-lite-preview-06-17",
+      "upstream_id": "google/gemini-2.5-flash-lite-preview-06-17",
+      "context_length": 1048576,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 400000
+    },
+    {
+      "display_name": "Gemini 2.5 Pro",
+      "title": "google/gemini-2.5-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-2.5-pro",
+      "upstream_id": "google/gemini-2.5-pro",
+      "context_length": 1048576,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "Gemini 3 Flash",
+      "title": "google/gemini-3-flash-preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3-flash-preview",
+      "upstream_id": "google/gemini-3-flash-preview",
+      "context_length": 1048576,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 3000000
+    },
+    {
+      "display_name": "gemini-3.1-flash-lite-preview",
+      "title": "google/gemini-3.1-flash-lite-preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.1-flash-lite-preview",
+      "upstream_id": "google/gemini-3.1-flash-lite-preview",
+      "context_length": 1048576,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 1500000
+    },
+    {
+      "display_name": "Gemini 3.1 Pro",
+      "title": "google/gemini-3.1-pro-preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.1-pro-preview",
+      "upstream_id": "google/gemini-3.1-pro-preview",
+      "context_length": 1048576,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 12000000
+    },
+    {
+      "display_name": "Gemini 3.5 Flash",
+      "title": "google/gemini-3.5-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.5-flash",
+      "upstream_id": "google/gemini-3.5-flash",
+      "context_length": 1048576,
+      "input_token_price_per_m": 1500000,
+      "output_token_price_per_m": 9000000
+    },
+    {
+      "display_name": "gemma-4-31B-it",
+      "title": "lightning-ai/gemma-4-31B-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-31b-it",
+      "upstream_id": "lightning-ai/gemma-4-31B-it",
+      "context_length": 131072,
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 400000
+    },
+    {
+      "display_name": "deepseek-v4-pro",
+      "title": "lightning-ai/deepseek-v4-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "lightning-ai/deepseek-v4-pro",
+      "upstream_id": "lightning-ai/deepseek-v4-pro",
+      "context_length": 1048576,
+      "input_token_price_per_m": 890000,
+      "output_token_price_per_m": 3000000
+    },
+    {
+      "display_name": "gpt-oss-120b",
+      "title": "lightning-ai/gpt-oss-120b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "lightning-ai/gpt-oss-120b",
+      "upstream_id": "lightning-ai/gpt-oss-120b",
+      "context_length": 128000,
+      "input_token_price_per_m": 25000,
+      "output_token_price_per_m": 100000
+    },
+    {
+      "display_name": "gpt-oss-20b",
+      "title": "lightning-ai/gpt-oss-20b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "lightning-ai/gpt-oss-20b",
+      "upstream_id": "lightning-ai/gpt-oss-20b",
+      "context_length": 128000,
+      "input_token_price_per_m": 12500,
+      "output_token_price_per_m": 50000
+    },
+    {
+      "display_name": "nemotron-3-nano-omni-30b-a3b-reasoning",
+      "title": "lightning-ai/nemotron-3-nano-omni-30b-a3b-reasoning",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "lightning-ai/nemotron-3-nano-omni-30b-a3b-reasoning",
+      "upstream_id": "lightning-ai/nemotron-3-nano-omni-30b-a3b-reasoning",
+      "context_length": 256000,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 500000,
+      "missing_since": "2026-08-21",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
+    },
+    {
+      "display_name": "nemotron-3-ultra-550b-a55b",
+      "title": "lightning-ai/nemotron-3-ultra-550b-a55b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "lightning-ai/nemotron-3-ultra-550b-a55b",
+      "upstream_id": "lightning-ai/nemotron-3-ultra-550b-a55b",
+      "context_length": 262144,
+      "input_token_price_per_m": 410000,
+      "output_token_price_per_m": 1200000
+    },
+    {
+      "display_name": "GPT 3.5 turbo",
+      "title": "openai/gpt-3.5-turbo",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-3.5-turbo",
+      "upstream_id": "openai/gpt-3.5-turbo",
+      "context_length": 16385,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 1500000
+    },
+    {
+      "display_name": "GPT 4",
+      "title": "openai/gpt-4",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-4",
+      "upstream_id": "openai/gpt-4",
+      "context_length": 8192,
+      "input_token_price_per_m": 30000000,
+      "output_token_price_per_m": 60000000
+    },
+    {
+      "display_name": "GPT 4 turbo",
+      "title": "openai/gpt-4-turbo",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-4-turbo",
+      "upstream_id": "openai/gpt-4-turbo",
+      "context_length": 128000,
+      "input_token_price_per_m": 10000000,
+      "output_token_price_per_m": 30000000
+    },
+    {
+      "display_name": "LitLogger helper",
+      "title": "openai/gpt-4-turbo-preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-4-turbo-preview",
+      "upstream_id": "openai/gpt-4-turbo-preview",
+      "context_length": 128000,
+      "input_token_price_per_m": 10000000,
+      "output_token_price_per_m": 30000000
+    },
+    {
+      "display_name": "GPT 4.1",
+      "title": "openai/gpt-4.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-4.1",
+      "upstream_id": "openai/gpt-4.1",
+      "context_length": 1047576,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 8000000
+    },
+    {
+      "display_name": "GPT 4o",
+      "title": "openai/gpt-4o",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-4o",
+      "upstream_id": "openai/gpt-4o",
+      "context_length": 128000,
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "GPT 5",
+      "title": "openai/gpt-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5",
+      "upstream_id": "openai/gpt-5",
+      "context_length": 400000,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "GPT 5 mini",
+      "title": "openai/gpt-5-mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5-mini",
+      "upstream_id": "openai/gpt-5-mini",
+      "context_length": 400000,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 2000000
+    },
+    {
+      "display_name": "GPT 5 nano",
+      "title": "openai/gpt-5-nano",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5-nano",
+      "upstream_id": "openai/gpt-5-nano",
+      "context_length": 400000,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 400000
+    },
+    {
+      "display_name": "GPT 5.2",
+      "title": "openai/gpt-5.2-2025-12-11",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.2-2025-12-11",
+      "upstream_id": "openai/gpt-5.2-2025-12-11",
+      "context_length": 400000,
+      "input_token_price_per_m": 1750000,
+      "output_token_price_per_m": 14000000
+    },
+    {
+      "display_name": "GPT 5.4",
+      "title": "openai/gpt-5.4-2026-03-05",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.4-2026-03-05",
+      "upstream_id": "openai/gpt-5.4-2026-03-05",
+      "context_length": 1050000,
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 15000000
+    },
+    {
+      "display_name": "GPT 5.4 mini",
+      "title": "openai/gpt-5.4-mini-2026-03-17",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.4-mini-2026-03-17",
+      "upstream_id": "openai/gpt-5.4-mini-2026-03-17",
+      "context_length": 400000,
+      "input_token_price_per_m": 750000,
+      "output_token_price_per_m": 4500000
+    },
+    {
+      "display_name": "GPT 5.4 nano",
+      "title": "openai/gpt-5.4-nano-2026-03-17",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.4-nano-2026-03-17",
+      "upstream_id": "openai/gpt-5.4-nano-2026-03-17",
+      "context_length": 400000,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 1250000
+    },
+    {
+      "display_name": "GPT 5.5",
+      "title": "openai/gpt-5.5-2026-04-23",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.5-2026-04-23",
+      "upstream_id": "openai/gpt-5.5-2026-04-23",
+      "context_length": 1050000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 30000000
+    },
+    {
+      "display_name": "GPT 5.6 Luna",
+      "title": "openai/gpt-5.6-luna",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.6-luna",
+      "upstream_id": "openai/gpt-5.6-luna",
+      "context_length": 1050000,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 1200000
+    },
+    {
+      "display_name": "GPT 5.6 Sol",
+      "title": "openai/gpt-5.6-sol",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.6-sol",
+      "upstream_id": "openai/gpt-5.6-sol",
+      "context_length": 1050000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 30000000
+    },
+    {
+      "display_name": "GPT 5.6 Terra",
+      "title": "openai/gpt-5.6-terra",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.6-terra",
+      "upstream_id": "openai/gpt-5.6-terra",
+      "context_length": 1050000,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 12000000
+    },
+    {
+      "display_name": "o3",
+      "title": "openai/o3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/o3",
+      "upstream_id": "openai/o3",
+      "context_length": 200000,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 8000000
+    },
+    {
+      "display_name": "o3 mini",
+      "title": "openai/o3-mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/o3-mini",
+      "upstream_id": "openai/o3-mini",
+      "context_length": 200000,
+      "input_token_price_per_m": 1100000,
+      "output_token_price_per_m": 4400000
+    },
+    {
+      "display_name": "Qwen3.8-27B",
+      "title": "lightning-ai/Qwen3.8-27B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "lightning-ai/qwen3.8-27b",
+      "upstream_id": "lightning-ai/Qwen3.8-27B",
+      "context_length": 262144,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 3000000
+    }
+  ],
+  "source": "https://lightning.ai/api/v1/models",
+  "generated_at": "2026-08-24T10:39:58Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 44
+}

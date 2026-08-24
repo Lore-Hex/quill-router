@@ -1,36 +1,22 @@
-# LLM-MAINTAINED FILE — re-validated every hour by scripts/pricing/refresh.py.
-#
-# Parses docs.x.ai/developers/pricing (Jina-rendered markdown). The page
-# has a single chat-models table:
-#
-#   | [grok-4.5](https://docs.x.ai/developers/models/grok-4.5) | 500k | $2.00 | $0.50 | $6.00 |
-#   | [grok-4.3](https://docs.x.ai/developers/models/grok-4.3) | 1M | $1.25 | $0.20 | $2.50 |
-#   | [grok-4.20-multi-agent-0309](...) | 2M | $1.25 | $0.20 | $2.50 |
-#
-# Columns are: Model | Context | Input | Cached | Output. The model
-# cell is a markdown link — strip the [text](url) wrapper to extract
-# the slug. Image / video / TTS rows have only 3 cells and are skipped
-# because they don't have the Input + Output columns we need for cost.
-"""xAI Grok pricing parser (Jina-rendered markdown)."""
+"""Parse xAI's official text-model pricing table."""
+
 from __future__ import annotations
 
 import re
 
 _NAME_TO_OR_ID = {
-    "grok-4.5": "x-ai/grok-4.5",
-    "grok-4.3": "x-ai/grok-4.3",
     "grok-4.20-multi-agent-0309": "x-ai/grok-4.20-multi-agent",
     "grok-4.20-0309-reasoning": "x-ai/grok-4.20-reasoning",
     "grok-4.20-0309-non-reasoning": "x-ai/grok-4.20",
     "grok-4-1-fast-reasoning": "x-ai/grok-4-1-fast-reasoning",
     "grok-4-1-fast-non-reasoning": "x-ai/grok-4-1-fast",
 }
-
 _DOLLAR_RE = re.compile(r"\$([\d.]+)")
-# Markdown link wrapper [name](url) — extract just the name. Also tolerate
-# `**name**` or bare names so the parser keeps working if the page sheds
-# its link decoration in a future redesign.
 _MD_LINK_RE = re.compile(r"^\s*\**\s*\[([^\]]+)\]\([^)]+\)\s*\**\s*$")
+_CONTEXT_QUALIFIER_RE = re.compile(
+    r"\s*\((?P<operator><|&lt;|≥|>=|&gt;=)\s*200k\s+prompt\s+tokens\)\s*$",
+    re.I,
+)
 
 
 def _strip_link(cell: str) -> str:
@@ -50,41 +36,53 @@ def _to_micro(text: str) -> int | None:
         return None
 
 
-def parse(md: str) -> dict:
-    out: dict = {}
-    for line in md.splitlines():
-        if not line.startswith("|"):
+def _canonical_id(native_name: str) -> str | None:
+    if not native_name.casefold().startswith("grok-"):
+        return None
+    return _NAME_TO_OR_ID.get(native_name) or f"x-ai/{native_name.casefold()}"
+
+
+def parse(markdown: str) -> dict:
+    grouped: dict[str, dict[str, dict[str, int]]] = {}
+    for line in markdown.replace(r"\$", "$").splitlines():
+        if not line.lstrip().startswith("|"):
             continue
-        cells = [c.strip() for c in line.strip("|").split("|")]
-        # New layout has 5 cells: Model | Context | Input | Cached | Output.
-        # Pricing-only rows (image/video) have 2 cells and skip the check
-        # below. Old layout was 5 cells with cached last, so we detect the
-        # layout heuristically: if cells[3] looks like the output price
-        # (always > cached when both present) we treat it as old layout.
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         if len(cells) < 5:
             continue
-        name = _strip_link(cells[0])
-        or_id = _NAME_TO_OR_ID.get(name)
-        if or_id is None:
-            continue
-        if or_id in out:
+        decorated_name = _strip_link(cells[0])
+        qualifier = _CONTEXT_QUALIFIER_RE.search(decorated_name)
+        native_name = _CONTEXT_QUALIFIER_RE.sub("", decorated_name).strip()
+        model_id = _canonical_id(native_name)
+        if model_id is None:
             continue
         prompt = _to_micro(cells[2])
-        # New page: cells[3] is cached input, cells[4] is output.
-        # Old page: cells[3] was output, cells[4] was cached input.
-        # Pick the LARGER of cells[3] and cells[4] as completion — output
-        # is always strictly greater than the cached-input rate for the
-        # chat models in this table (cached rate is by definition a
-        # discount). Falls through correctly whichever column ordering
-        # the page is currently in.
-        cell3 = _to_micro(cells[3])
-        cell4 = _to_micro(cells[4]) if len(cells) >= 5 else None
-        candidates = [c for c in (cell3, cell4) if c is not None]
-        if prompt is None or not candidates:
+        cached = _to_micro(cells[3])
+        completion = _to_micro(cells[4])
+        # Compatibility with the older Input | Output | Cached layout.
+        if completion is None or (cached is not None and completion < cached):
+            cached, completion = completion, cached
+        if prompt is None or completion is None:
             continue
-        completion = max(candidates)
-        out[or_id] = {
+        row = {
             "prompt_micro_per_m": prompt,
             "completion_micro_per_m": completion,
         }
-    return out
+        if cached is not None:
+            row["prompt_cached_micro_per_m"] = cached
+        operator = qualifier.group("operator") if qualifier else ""
+        tier = "long" if operator in {"≥", ">=", "&gt;="} else "short"
+        grouped.setdefault(model_id, {}).setdefault(tier, row)
+
+    output: dict = {}
+    for model_id, rows in grouped.items():
+        if "short" in rows and "long" in rows:
+            output[model_id] = {
+                "tiers": [
+                    {"max_prompt_tokens": 200_000, **rows["short"]},
+                    {"max_prompt_tokens": None, **rows["long"]},
+                ]
+            }
+        else:
+            output[model_id] = rows.get("short") or rows["long"]
+    return output

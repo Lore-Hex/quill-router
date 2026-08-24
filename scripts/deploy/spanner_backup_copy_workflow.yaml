@@ -1,0 +1,54 @@
+main:
+  steps:
+    - list_latest_full_backup:
+        call: http.get
+        args:
+          url: https://spanner.googleapis.com/v1/projects/quill-cloud-proxy/instances/trusted-router-nam6/backups
+          auth:
+            type: OAuth2
+          query:
+            filter: state:READY AND backupSchedules:default_daily_full_backup_schedule
+            pageSize: 1
+        result: source_response
+    - require_ready_backup:
+        switch:
+          - condition: ${not("backups" in source_response.body) or len(source_response.body.backups) == 0}
+            raise: No READY production full backup is available to copy
+    - prepare_copy:
+        assign:
+          - source_backup: ${source_response.body.backups[0].name}
+          - source_id: ${text.split(source_backup, "/")[5]}
+          - destination_id: ${"copy-" + source_id}
+          - expire_time: ${time.format(sys.now() + 2592000)}
+    - copy_backup:
+        try:
+          call: http.post
+          args:
+            url: https://spanner.googleapis.com/v1/projects/trustedrouter-dr/instances/trusted-router-backups/backups:copy
+            auth:
+              type: OAuth2
+            body:
+              backupId: ${destination_id}
+              sourceBackup: ${source_backup}
+              expireTime: ${expire_time}
+              encryptionConfig:
+                encryptionType: GOOGLE_DEFAULT_ENCRYPTION
+          result: copy_response
+        except:
+          as: error
+          steps:
+            - return_if_already_copied:
+                switch:
+                  - condition: ${error.code == 409}
+                    return:
+                      status: already_copied
+                      sourceBackup: ${source_backup}
+                      destinationBackup: ${destination_id}
+            - propagate_copy_error:
+                raise: ${error}
+    - return_started:
+        return:
+          status: copy_started
+          sourceBackup: ${source_backup}
+          destinationBackup: ${destination_id}
+          operation: ${copy_response.body.name}

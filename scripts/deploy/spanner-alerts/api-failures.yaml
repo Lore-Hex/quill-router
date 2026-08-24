@@ -1,0 +1,31 @@
+displayName: "TR Spanner: API failures"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    Production Spanner returned non-expected API failures. ABORTED retries and
+    intentional ALREADY_EXISTS responses are tracked separately. Inspect the
+    status and method labels before changing capacity. Runbook:
+    docs/spanner-reliability.md.
+conditions:
+  - displayName: "Unexpected API failures exceed one per minute for 5 minutes"
+    conditionThreshold:
+      # Spanner currently emits both title-case and lowercase retry statuses.
+      # Exclude every observed spelling so expected transaction retries do not
+      # page as API failures.
+      filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/api/api_request_count" AND metric.labels.status != "OK" AND metric.labels.status != "Aborted" AND metric.labels.status != "aborted" AND metric.labels.status != "AlreadyExists" AND metric.labels.status != "already_exists"'
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_RATE
+          crossSeriesReducer: REDUCE_SUM
+      comparison: COMPARISON_GT
+      thresholdValue: 0.016666667
+      duration: 300s
+      trigger:
+        count: 1
+alertStrategy:
+  autoClose: 86400s
+  notificationPrompts:
+    - OPENED
+    - CLOSED

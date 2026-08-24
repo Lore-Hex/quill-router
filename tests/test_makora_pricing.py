@@ -60,8 +60,137 @@ Cache $0.1290/M tokens
 """
 
 
-def test_makora_fetches_first_party_pricing_page() -> None:
-    assert makora.URL == "https://www.makora.com/"
+def test_makora_fetches_authenticated_model_pricing_api() -> None:
+    assert makora.MODELS_URL == "https://inference.makora.com/v1/models"
+
+
+def test_makora_required_models_follow_august_2026_lineup() -> None:
+    assert "deepseek/deepseek-v4-pro" in makora.RETIRED_MODELS
+    assert "deepseek/deepseek-v4-pro" not in makora.EXPECTED_MODELS
+    assert "moonshotai/kimi-k3" in makora.EXPECTED_MODELS
+
+
+def test_makora_live_api_discovers_and_prices_new_models_without_parser_changes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    manifest = tmp_path / "makora.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "models": [
+                    {
+                        "id": "z-ai/glm-5.2",
+                        "upstream_id": "zai-org/GLM-5.2-FP8",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(makora, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(makora, "EXPECTED_MODELS", ["z-ai/glm-5.2"])
+    monkeypatch.setenv("MAKORA_API_KEY", "test-key")
+    monkeypatch.setattr(
+        makora,
+        "fetch_json",
+        lambda *_args, **_kwargs: {
+            "data": [
+                {
+                    "id": "zai-org/GLM-5.2-FP8",
+                    "context_length": 1_000_000,
+                    "pricing": {
+                        "prompt": "0.000001",
+                        "completion": "0.000002",
+                    },
+                },
+                {
+                    "id": "qwen/Qwen4-Next",
+                    "context_length": 1_000_000,
+                    "input_modalities": ["text", "image"],
+                    "pricing": {
+                        "prompt": "0.0000005",
+                        "completion": "0.0000015",
+                        "input_cache_read": "0.0000001",
+                    },
+                },
+            ]
+        },
+    )
+
+    result = makora.fetch()
+
+    assert set(result.prices) == {"z-ai/glm-5.2", "qwen/qwen4-next"}
+    assert result.prices["qwen/qwen4-next"] == ModelPrice(
+        500_000,
+        1_500_000,
+        prompt_cached_micro_per_m=100_000,
+    )
+    assert makora._DISCOVERED_MANIFEST_ROWS["qwen/qwen4-next"][  # noqa: SLF001
+        "input_modalities"
+    ] == ["text", "image"]
+
+
+def test_makora_live_api_keeps_retired_v4_pro_disabled_and_accepts_launch_updates(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    manifest = tmp_path / "makora.json"
+    manifest.write_text('{"models": []}', encoding="utf-8")
+    monkeypatch.setattr(makora, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(
+        makora,
+        "EXPECTED_MODELS",
+        [
+            "deepseek/deepseek-v4-flash-0731",
+            "moonshotai/kimi-k3",
+        ],
+    )
+    monkeypatch.setenv("MAKORA_API_KEY", "test-key")
+    monkeypatch.setattr(
+        makora,
+        "fetch_json",
+        lambda *_args, **_kwargs: {
+            "data": [
+                {
+                    "id": "deepseek-ai/DeepSeek-V4-Pro",
+                    "pricing": {
+                        "prompt": "0.00000139",
+                        "completion": "0.00000279",
+                    },
+                },
+                {
+                    "id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+                    "pricing": {
+                        "prompt": "0.00000009",
+                        "completion": "0.000000195",
+                    },
+                },
+                {
+                    "id": "moonshotai/Kimi-K3",
+                    "pricing": {
+                        "prompt": "0.00000255",
+                        "completion": "0.00001275",
+                        "input_cache_read": "0.000000255",
+                    },
+                },
+            ]
+        },
+    )
+
+    result = makora.fetch()
+
+    assert "deepseek/deepseek-v4-pro" not in result.prices
+    assert "deepseek/deepseek-v4-pro" not in makora._DISCOVERED_MANIFEST_ROWS  # noqa: SLF001
+    assert result.prices["deepseek/deepseek-v4-flash-0731"] == ModelPrice(
+        90_000,
+        195_000,
+    )
+    assert result.prices["moonshotai/kimi-k3"] == ModelPrice(
+        2_550_000,
+        12_750_000,
+        prompt_cached_micro_per_m=255_000,
+    )
 
 
 def test_makora_parser_extracts_public_lineup_prices() -> None:
@@ -94,8 +223,7 @@ def test_makora_parser_extracts_public_lineup_prices() -> None:
         "prompt_cached_micro_per_m": 150_000,
     }
     assert (
-        prices["amd/llama-3.3-70b-instruct-fp8-kv"]
-        == prices["meta-llama/llama-3.3-70b-instruct"]
+        prices["amd/llama-3.3-70b-instruct-fp8-kv"] == prices["meta-llama/llama-3.3-70b-instruct"]
     )
     assert prices["qwen/qwen3.6-35b-a3b"] == {
         "prompt_micro_per_m": 172_000,
@@ -104,9 +232,7 @@ def test_makora_parser_extracts_public_lineup_prices() -> None:
     }
 
 
-def test_makora_provider_updates_supplemental_manifest(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_makora_provider_updates_supplemental_manifest(tmp_path: Path, monkeypatch) -> None:
     manifest_path = tmp_path / "makora.json"
     manifest_path.write_text(
         json.dumps(
@@ -193,6 +319,12 @@ def test_makora_provider_updates_supplemental_manifest(
         encoding="utf-8",
     )
     monkeypatch.setattr(makora, "MANIFEST_PATH", manifest_path)
+    manifest_rows = json.loads(manifest_path.read_text(encoding="utf-8"))["models"]
+    monkeypatch.setattr(
+        makora,
+        "_DISCOVERED_MANIFEST_ROWS",
+        {row["id"]: dict(row) for row in manifest_rows},
+    )
 
     parsed = makora_parser.parse(MAKORA_LINEUP_HTML)
     notes = makora.write_provider_manifest(
@@ -222,18 +354,86 @@ def test_makora_provider_updates_supplemental_manifest(
     assert raw["generated_at"] != "2026-01-01T00:00:00Z"
 
 
+def test_makora_manifest_writer_allows_normal_upstream_retirement(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    current = "z-ai/glm-5.2"
+    retired = "qwen/qwen3.6-27b"
+    manifest_path = tmp_path / "makora.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "provider": "makora",
+                "models": [
+                    {
+                        "id": current,
+                        "upstream_id": "zai-org/GLM-5.2-FP8",
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 1,
+                    },
+                    {
+                        "id": retired,
+                        "upstream_id": "unsloth/Qwen3.6-27B-NVFP4",
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 1,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(makora, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(makora, "EXPECTED_MODELS", [current, retired])
+    monkeypatch.setattr(
+        makora,
+        "_DISCOVERED_MANIFEST_ROWS",
+        {
+            current: {
+                "id": current,
+                "upstream_id": "zai-org/GLM-5.2-FP8",
+                "status": 1,
+            }
+        },
+    )
+
+    notes = makora.write_provider_manifest(
+        ProviderPricingResult(
+            slug="makora",
+            prices={
+                current: ModelPrice(
+                    prompt_micro_per_m=1_000_000,
+                    completion_micro_per_m=2_000_000,
+                )
+            },
+            source="api",
+            fetched_url=makora.MODELS_URL,
+        )
+    )
+
+    assert notes == ["makora: refreshed provider_models/makora.json (1 priced rows)"]
+    rows = json.loads(manifest_path.read_text(encoding="utf-8"))["models"]
+    by_id = {row["id"]: row for row in rows}
+    assert by_id[current]["input_token_price_per_m"] == 1_000_000
+    assert retired in by_id
+
+
 def test_provider_model_manifests_have_hourly_refresh_path() -> None:
     legacy_manual: set[str] = set()
     manifest_slugs = {
-        path.stem
-        for path in (Path("src/trusted_router/data/provider_models")).glob("*.json")
+        path.stem for path in (Path("src/trusted_router/data/provider_models")).glob("*.json")
     }
-    provider_modules = {
-        path.stem for path in Path("scripts/pricing/providers").glob("*.py")
-    } - {"__init__"}
+    provider_modules = {path.stem for path in Path("scripts/pricing/providers").glob("*.py")} - {
+        "__init__"
+    }
+    aliased_manifest_slugs = {
+        alias for aliases in refresh._PRICING_RESULT_PROVIDER_ALIASES.values() for alias in aliases
+    }
     hourly = set(refresh.PROVIDER_SLUGS)
 
-    missing_modules = sorted(manifest_slugs - provider_modules - legacy_manual)
+    missing_modules = sorted(
+        manifest_slugs - provider_modules - aliased_manifest_slugs - legacy_manual
+    )
     missing_hourly = sorted((manifest_slugs & provider_modules) - hourly)
 
     assert not missing_modules

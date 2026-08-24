@@ -1,0 +1,425 @@
+from __future__ import annotations
+
+import datetime as dt
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from clickhouse.archive_daily import (
+    DATASETS,
+    ArchiveStore,
+    ExportedPart,
+    SourceFingerprint,
+    _combine_parts,
+    _days_to_archive,
+    _row_hash_expression,
+    archive_day,
+)
+from clickhouse.ingest_operational_outbox import ACTIVITY_COLUMNS
+from clickhouse.verify_archive_backfill import verify_archive_backfill
+from clickhouse.verify_archive_restore import verify_archived_day
+
+
+class FakeExporter:
+    def __init__(self, fingerprint: SourceFingerprint) -> None:
+        self.fingerprint = fingerprint
+        self.export_calls = 0
+        self.parity_delta = 0
+
+    def source_fingerprint(self, _day: dt.date) -> SourceFingerprint:
+        return self.fingerprint
+
+    def export_parts(
+        self,
+        _day: dt.date,
+        destination: Path,
+        *,
+        part_count: int,
+    ) -> list[Path]:
+        self.export_calls += 1
+        paths: list[Path] = []
+        rows_left = self.fingerprint.rows
+        hash_sum_left = self.fingerprint.hash_sum + self.parity_delta
+        hash_xor_left = self.fingerprint.hash_xor
+        for index in range(part_count):
+            remaining_parts = part_count - index
+            rows = rows_left // remaining_parts
+            hash_sum = hash_sum_left // remaining_parts
+            hash_xor = hash_xor_left if index == 0 else 0
+            path = destination / f"part-{index:05d}-of-{part_count:05d}.parquet"
+            path.write_text(json.dumps({"rows": rows, "hash_sum": hash_sum, "hash_xor": hash_xor}))
+            paths.append(path)
+            rows_left -= rows
+            hash_sum_left -= hash_sum
+        return paths
+
+    def verify_part(self, path: Path) -> ExportedPart:
+        value = json.loads(path.read_text())
+        return ExportedPart(
+            path=path,
+            rows=int(value["rows"]),
+            hash_sum=int(value["hash_sum"]),
+            hash_xor=int(value["hash_xor"]),
+        )
+
+
+class MemoryStore(ArchiveStore):
+    def __init__(self) -> None:
+        self.json: dict[str, dict[str, Any]] = {}
+        self.files: dict[str, bytes] = {}
+        self.pointer_writes = 0
+
+    def read_json(self, key: str) -> dict[str, Any] | None:
+        return self.json.get(key)
+
+    def put_file_if_absent(
+        self,
+        key: str,
+        path: Path,
+        *,
+        sha256: str,
+        metadata: dict[str, str],
+    ) -> None:
+        del sha256, metadata
+        value = path.read_bytes()
+        if key in self.files and self.files[key] != value:
+            raise RuntimeError("immutable file differs")
+        self.files[key] = value
+
+    def put_json_if_absent(self, key: str, value: dict[str, Any]) -> None:
+        if key in self.json and self.json[key] != value:
+            raise RuntimeError("immutable manifest differs")
+        self.json[key] = value
+
+    def put_json_pointer(self, key: str, value: dict[str, Any]) -> None:
+        self.pointer_writes += 1
+        self.json[key] = value
+
+    def download_file(self, key: str, destination: Path) -> None:
+        destination.write_bytes(self.files[key])
+
+
+def _fingerprint(*, rows: int = 7, hash_sum: int = 42, hash_xor: int = 17) -> SourceFingerprint:
+    return SourceFingerprint(
+        rows=rows,
+        hash_sum=hash_sum,
+        hash_xor=hash_xor,
+        min_created_at="2026-07-01 00:00:01.000",
+        max_created_at="2026-07-01 23:59:59.000",
+    )
+
+
+def test_archive_publishes_manifest_only_after_verified_parts() -> None:
+    exporter = FakeExporter(_fingerprint())
+    store = MemoryStore()
+
+    result = archive_day(
+        exporter,
+        store,
+        dt.date(2026, 7, 1),
+        rows_per_part=3,
+        now=dt.datetime(2026, 7, 3, tzinfo=dt.UTC),
+    )
+
+    assert result.skipped is False
+    assert exporter.export_calls == 1
+    assert len(store.files) == 3
+    manifest = store.json[result.manifest_key]
+    assert manifest["parquet_rows"] == 7
+    assert len(manifest["parts"]) == 3
+    assert all(len(part["sha256"]) == 64 for part in manifest["parts"])
+    pointer = store.json["raw/provider_benchmark_samples/day=2026-07-01/_latest.json"]
+    assert pointer["manifest"] == result.manifest_key
+    assert store.pointer_writes == 1
+
+
+def test_unchanged_source_skips_export_and_pointer_write() -> None:
+    exporter = FakeExporter(_fingerprint())
+    store = MemoryStore()
+    first = archive_day(exporter, store, dt.date(2026, 7, 1), rows_per_part=10)
+    second = archive_day(exporter, store, dt.date(2026, 7, 1), rows_per_part=10)
+
+    assert first.revision == second.revision
+    assert second.skipped is True
+    assert exporter.export_calls == 1
+    assert store.pointer_writes == 1
+
+
+def test_late_rows_create_new_revision_without_overwriting_old_one() -> None:
+    exporter = FakeExporter(_fingerprint())
+    store = MemoryStore()
+    first = archive_day(exporter, store, dt.date(2026, 7, 1), rows_per_part=10)
+    exporter.fingerprint = _fingerprint(rows=8, hash_sum=99, hash_xor=31)
+    second = archive_day(exporter, store, dt.date(2026, 7, 1), rows_per_part=10)
+
+    assert first.revision != second.revision
+    assert first.manifest_key in store.json
+    assert second.manifest_key in store.json
+    assert store.pointer_writes == 2
+
+
+def test_parity_failure_never_publishes_manifest_or_pointer() -> None:
+    exporter = FakeExporter(_fingerprint())
+    exporter.parity_delta = 1
+    store = MemoryStore()
+
+    with pytest.raises(RuntimeError, match="archive parity mismatch"):
+        archive_day(exporter, store, dt.date(2026, 7, 1), rows_per_part=10)
+
+    assert store.json == {}
+    assert store.files == {}
+
+
+def test_empty_day_publishes_a_zero_row_manifest_without_parts() -> None:
+    exporter = FakeExporter(_fingerprint(rows=0, hash_sum=0, hash_xor=0))
+    store = MemoryStore()
+    result = archive_day(exporter, store, dt.date(2026, 7, 1))
+
+    assert result.rows == 0
+    assert store.json[result.manifest_key]["parts"] == []
+    assert store.files == {}
+
+
+def test_combined_part_hash_uses_uint64_overflow_and_xor() -> None:
+    parts = [
+        ExportedPart(Path("a"), 2, (1 << 64) - 1, 0b1010),
+        ExportedPart(Path("b"), 3, 4, 0b1100),
+    ]
+    combined = _combine_parts(parts)
+    assert combined.rows == 5
+    assert combined.hash_sum == 3
+    assert combined.hash_xor == 0b0110
+
+
+def test_archive_date_selection_never_includes_open_current_day() -> None:
+    explicit = dt.date(2026, 7, 9)
+    assert _days_to_archive(date=explicit, lookback_days=0) == [explicit]
+    with pytest.raises(ValueError, match="positive"):
+        _days_to_archive(date=None, lookback_days=0)
+
+
+def test_backfill_date_selection_includes_every_closed_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FrozenDateTime(dt.datetime):
+        @classmethod
+        def now(cls, tz: dt.tzinfo | None = None) -> FrozenDateTime:
+            value = cls(2026, 7, 5, tzinfo=dt.UTC)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr("clickhouse.archive_daily.dt.datetime", FrozenDateTime)
+    assert _days_to_archive(
+        date=None,
+        lookback_days=0,
+        backfill_start=dt.date(2026, 7, 2),
+    ) == [dt.date(2026, 7, 2), dt.date(2026, 7, 3), dt.date(2026, 7, 4)]
+
+
+def test_every_bounded_analytics_dataset_has_an_archive_schema() -> None:
+    assert set(DATASETS) == {
+        "provider_benchmark_samples",
+        "activity_generations",
+        "synthetic_probe_samples",
+        "synthetic_status_rollups",
+    }
+    for spec in DATASETS.values():
+        assert spec.time_column in spec.columns
+        assert spec.shard_column in spec.columns
+        assert "ingest_version" not in spec.columns
+    assert "updated_at" not in DATASETS["synthetic_status_rollups"].columns
+    assert DATASETS["activity_generations"].columns == ACTIVITY_COLUMNS
+    assert "client_request_events" not in DATASETS
+    assert "client_minute_counters" not in DATASETS
+
+
+def test_rollup_archive_fingerprint_sorts_unordered_map_columns() -> None:
+    expression = _row_hash_expression(DATASETS["synthetic_status_rollups"].columns)
+
+    assert "mapSort(latency_histogram)" in expression
+    assert "mapSort(error_counts)" in expression
+    assert "mapSort(id)" not in expression
+    assert (
+        "toUnixTimestamp64Milli(toDateTime64(period_start, 3, 'UTC'))"
+        in expression
+    )
+
+
+def test_operational_dataset_archive_round_trips_through_restore_verifier() -> None:
+    exporter = FakeExporter(_fingerprint())
+    store = MemoryStore()
+    day = dt.date(2026, 7, 1)
+    result = archive_day(
+        exporter,
+        store,
+        day,
+        rows_per_part=3,
+        dataset="activity_generations",
+    )
+
+    def verify(path: Path) -> ExportedPart:
+        return exporter.verify_part(path)
+
+    restored = verify_archived_day(
+        store,
+        dataset="activity_generations",
+        day=day,
+        verifier=verify,
+    )
+
+    assert result.manifest_key.startswith("raw/activity_generations/")
+    assert restored.rows == 7
+    assert restored.parts == 3
+    assert restored.revision == result.revision
+
+
+def test_manifest_records_its_columns_and_the_verifier_fingerprints_over_them() -> None:
+    """A revision exported before a column was added stays verifiable.
+
+    activity_generations grew 18 client_* columns; the fingerprint expression
+    covers every column, so recomputing an OLD Parquet part against the CURRENT
+    column list reads columns the file does not have. The manifest therefore
+    records the exact columns it was exported with and the verifier uses them.
+    """
+    import clickhouse.verify_archive_restore as restore
+
+    exporter = FakeExporter(_fingerprint())
+    store = MemoryStore()
+    day = dt.date(2026, 7, 1)
+    result = archive_day(exporter, store, day, dataset="activity_generations")
+    manifest = store.json[result.manifest_key]
+    assert manifest["columns"] == list(ACTIVITY_COLUMNS)
+
+    # Simulate a manifest written by an older exporter (fewer columns) and pin
+    # that the default verifier passes THOSE columns to the Parquet fingerprint.
+    legacy_columns = list(ACTIVITY_COLUMNS[:29])
+    manifest["columns"] = legacy_columns
+    seen: list[tuple[str, tuple[str, ...] | None]] = []
+    original = restore.verify_parquet_part
+
+    def spy(path: Path, *, dataset: str, columns: Any = None) -> ExportedPart:
+        seen.append((dataset, tuple(columns) if columns else None))
+        return exporter.verify_part(path)
+
+    restore.verify_parquet_part = spy  # type: ignore[assignment]
+    try:
+        verify_archived_day(store, dataset="activity_generations", day=day)
+    finally:
+        restore.verify_parquet_part = original  # type: ignore[assignment]
+    assert seen and all(columns == tuple(legacy_columns) for _, columns in seen)
+
+    manifest["columns"] = []
+    with pytest.raises(RuntimeError, match="manifest columns"):
+        verify_archived_day(
+            store, dataset="activity_generations", day=day, verifier=exporter.verify_part
+        )
+
+
+def test_restore_drill_rejects_a_tampered_parquet_part() -> None:
+    exporter = FakeExporter(_fingerprint())
+    store = MemoryStore()
+    day = dt.date(2026, 7, 1)
+    archive_day(exporter, store, day, dataset="synthetic_probe_samples")
+    key = next(iter(store.files))
+    store.files[key] += b"tampered"
+
+    with pytest.raises(RuntimeError, match="SHA-256 mismatch"):
+        verify_archived_day(
+            store,
+            dataset="synthetic_probe_samples",
+            day=day,
+            verifier=exporter.verify_part,
+        )
+
+
+def test_restore_drill_rejects_pointer_manifest_identity_mismatch() -> None:
+    exporter = FakeExporter(_fingerprint())
+    store = MemoryStore()
+    day = dt.date(2026, 7, 1)
+    archive_day(exporter, store, day, dataset="synthetic_status_rollups")
+    pointer = store.json[f"raw/synthetic_status_rollups/day={day}/_latest.json"]
+    manifest = store.json[str(pointer["manifest"])]
+    manifest["dataset"] = "provider_benchmark_samples"
+
+    with pytest.raises(RuntimeError, match="manifest identity"):
+        verify_archived_day(
+            store,
+            dataset="synthetic_status_rollups",
+            day=day,
+            verifier=exporter.verify_part,
+        )
+
+
+class _BackfillExporter:
+    def __init__(self, first: dt.date, fingerprints: dict[dt.date, SourceFingerprint]) -> None:
+        self.first = first
+        self.fingerprints = fingerprints
+
+    def earliest_day(self) -> dt.date:
+        return self.first
+
+    def source_fingerprint(self, day: dt.date) -> SourceFingerprint:
+        return self.fingerprints[day]
+
+
+def _restore_result(path: Path, *, now: dt.datetime) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "checked_at": now.isoformat().replace("+00:00", "Z"),
+                "ok": True,
+                "datasets": [{"dataset": dataset} for dataset in DATASETS],
+            }
+        )
+    )
+
+
+def test_archive_backfill_marker_requires_current_pointer_and_manifest(
+    tmp_path: Path,
+) -> None:
+    now = dt.datetime(2026, 7, 3, tzinfo=dt.UTC)
+    day = dt.date(2026, 7, 2)
+    fingerprint = _fingerprint()
+    store = MemoryStore()
+    exporters: dict[str, _BackfillExporter] = {}
+    for dataset in DATASETS:
+        exporter = FakeExporter(fingerprint)
+        archive_day(exporter, store, day, dataset=dataset)
+        exporters[dataset] = _BackfillExporter(day, {day: fingerprint})
+    restore = tmp_path / "restore.json"
+    _restore_result(restore, now=now)
+
+    result = verify_archive_backfill(
+        exporters,
+        store,
+        now=now,
+        restore_result=restore,
+    )
+
+    assert result["ok"] is True
+    assert set(result["coverage"]) == set(DATASETS)
+    assert all(item["days"] == 1 for item in result["coverage"].values())
+
+
+def test_archive_backfill_marker_rejects_stale_pointer(tmp_path: Path) -> None:
+    now = dt.datetime(2026, 7, 3, tzinfo=dt.UTC)
+    day = dt.date(2026, 7, 2)
+    original = _fingerprint()
+    changed = _fingerprint(rows=8, hash_sum=99, hash_xor=31)
+    store = MemoryStore()
+    exporters: dict[str, _BackfillExporter] = {}
+    for dataset in DATASETS:
+        archive_day(FakeExporter(original), store, day, dataset=dataset)
+        fingerprints = {day: changed if dataset == "activity_generations" else original}
+        exporters[dataset] = _BackfillExporter(day, fingerprints)
+    restore = tmp_path / "restore.json"
+    _restore_result(restore, now=now)
+
+    with pytest.raises(RuntimeError, match="pointer is stale"):
+        verify_archive_backfill(
+            exporters,
+            store,
+            now=now,
+            restore_result=restore,
+        )

@@ -7,7 +7,7 @@ on:
         description: "Read status, pause/drain/split, or verify/unpause"
         type: choice
         required: true
-        options: [status, prepare, finish]
+        options: [status, prepare, finish, online-split]
         default: status
       workspace_id:
         description: "Exact workspace ID (preferred after initial lookup)"
@@ -27,6 +27,11 @@ on:
         description: "Type APPLY for prepare/finish; status is always read-only"
         type: string
         required: false
+      preserve_open_holds:
+        description: "Preserve typed open holds while increasing shard count"
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -62,6 +67,7 @@ jobs:
           OWNER_EMAIL: ${{ inputs.owner_email }}
           SHARDS: ${{ inputs.shards }}
           CONFIRMATION: ${{ inputs.confirmation }}
+          PRESERVE_OPEN_HOLDS: ${{ inputs.preserve_open_holds }}
         run: |
           set -euo pipefail
           if [ -n "${WORKSPACE_ID}" ] && [ -n "${OWNER_EMAIL}" ]; then
@@ -79,10 +85,13 @@ jobs:
           else
             args+=(--owner-email "${OWNER_EMAIL}")
           fi
+          if [ "${PRESERVE_OPEN_HOLDS}" = "true" ]; then
+            args+=(--preserve-open-holds)
+          fi
 
           case "${OPERATION}" in
             status) ;;
-            prepare|finish)
+            prepare|finish|online-split)
               if [ "${CONFIRMATION}" != "APPLY" ]; then
                 echo "Mutation refused: type APPLY in confirmation."
                 exit 2

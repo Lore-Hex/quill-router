@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 from typing import Any
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from tests.fakes.spanner import make_fake_store
 from trusted_router.spend_windows import utcnow, window_floors
@@ -11,6 +14,7 @@ from trusted_router.storage_gcp_authorize import (
     AuthorizeOutcome,
     SettleOutcome,
     authorize_atomic,
+    check_key_window_limits,
     settle_atomic,
 )
 from trusted_router.storage_gcp_counter_reconcile import (
@@ -20,12 +24,14 @@ from trusted_router.storage_gcp_counters import (
     CREDIT_BALANCE_TABLE,
     KEY_LIMIT_TABLE,
     key_usage_shard_count,
+    partition_key_limit,
 )
+from trusted_router.storage_gcp_credit_shard_admin import reshard_credit_account
 from trusted_router.storage_gcp_key_shard_admin import (
     inspect_key_usage_reshard,
     reshard_key_usage,
 )
-from trusted_router.storage_models import CreditAccount, Workspace
+from trusted_router.storage_models import CreditAccount, Reservation, Workspace
 
 
 def _seed(*, key_shards: int = 4) -> tuple[Any, Any, Any]:
@@ -97,21 +103,177 @@ def _auth_body(authorization_id: str, reservation_id: str) -> str:
     )
 
 
-def test_key_usage_shards_default_and_fail_closed_for_capped_keys() -> None:
+@st.composite
+def _key_limit_partition_cases(
+    draw: Any,
+) -> tuple[int, list[int], list[int], list[int], bool]:
+    shard_count = draw(st.integers(min_value=1, max_value=16))
+    counters = st.lists(
+        st.integers(min_value=0, max_value=1_000_000),
+        min_size=shard_count,
+        max_size=shard_count,
+    )
+    usage = draw(counters)
+    byok_usage = draw(counters)
+    reserved = draw(counters)
+    include_byok = draw(st.booleans())
+    consumed = sum(usage) + sum(reserved)
+    if include_byok:
+        consumed += sum(byok_usage)
+    limit = draw(st.integers(min_value=0, max_value=consumed + 1_000_000))
+    return limit, usage, byok_usage, reserved, include_byok
+
+
+@given(case=_key_limit_partition_cases())
+def test_key_limit_partition_preserves_global_cap_for_all_counter_shapes(
+    case: tuple[int, list[int], list[int], list[int], bool],
+) -> None:
+    limit, usage, byok_usage, reserved, include_byok = case
+    limits = partition_key_limit(
+        limit,
+        usage_parts=usage,
+        byok_usage_parts=byok_usage,
+        reserved_parts=reserved,
+        include_byok=include_byok,
+    )
+    consumed = [
+        current_usage
+        + (current_byok if include_byok else 0)
+        + current_reserved
+        for current_usage, current_byok, current_reserved in zip(
+            usage,
+            byok_usage,
+            reserved,
+            strict=True,
+        )
+    ]
+
+    assert len(limits) == len(usage)
+    assert all(value is not None and value >= 0 for value in limits)
+    assert sum(value for value in limits if value is not None) == limit
+    if limit >= sum(consumed):
+        assert all(
+            value >= current
+            for value, current in zip(limits, consumed, strict=True)
+            if value is not None
+        )
+        assert sum(
+            value - current
+            for value, current in zip(limits, consumed, strict=True)
+            if value is not None
+        ) == limit - sum(consumed)
+    else:
+        assert all(
+            value <= current
+            for value, current in zip(limits, consumed, strict=True)
+            if value is not None
+        )
+
+
+def test_key_usage_shards_default_and_accept_escrowed_lifetime_caps() -> None:
     assert key_usage_shard_count({}) == 1
     assert key_usage_shard_count({"usage_shard_count": 16}) == 16
     with pytest.raises(ValueError, match="positive integer"):
         key_usage_shard_count({"usage_shard_count": 0})
     with pytest.raises(ValueError, match="must not exceed"):
         key_usage_shard_count({"usage_shard_count": 65})
-    with pytest.raises(ValueError, match="only uncapped"):
+    assert (
         key_usage_shard_count(
             {"usage_shard_count": 2, "limit_microdollars": 1_000_000}
         )
-    with pytest.raises(ValueError, match="only uncapped"):
+        == 2
+    )
+    assert (
         key_usage_shard_count(
             {"usage_shard_count": 2, "limit_daily_microdollars": 1_000_000}
         )
+        == 2
+    )
+
+
+def test_new_uncapped_key_inherits_workspace_credit_shards() -> None:
+    store, database, _ = make_fake_store()
+    workspace_id = "ws-new-key-shards"
+    store._write_entity(
+        "credit",
+        workspace_id,
+        CreditAccount(workspace_id=workspace_id, shard_count=16),
+    )
+
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id,
+        name="inherits-workspace-scale",
+        creator_user_id=None,
+    )
+
+    assert key.usage_shard_count == 16
+    assert {
+        shard
+        for key_hash, shard in database.typed[KEY_LIMIT_TABLE]
+        if key_hash == key.hash
+    } == set(range(16))
+
+
+def test_new_lifetime_capped_key_inherits_workspace_shards_with_exact_escrow() -> None:
+    store, database, _ = make_fake_store()
+    workspace_id = "ws-new-capped-key"
+    store._write_entity(
+        "credit",
+        workspace_id,
+        CreditAccount(workspace_id=workspace_id, shard_count=16),
+    )
+
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id,
+        name="exact-cap",
+        creator_user_id=None,
+        limit_microdollars=1_000_000,
+    )
+
+    assert key.usage_shard_count == 16
+    rows = [
+        row
+        for (key_hash, _shard), row in database.typed[KEY_LIMIT_TABLE].items()
+        if key_hash == key.hash
+    ]
+    assert len(rows) == 16
+    assert sum(row["limit_micro"] for row in rows) == 1_000_000
+    assert {row["limit_micro"] for row in rows} == {62_500}
+
+
+def test_key_limit_partition_preserves_only_real_remaining_headroom() -> None:
+    limits = partition_key_limit(
+        20_000,
+        usage_parts=[10_000, 0, 0, 0],
+        byok_usage_parts=[0, 0, 0, 0],
+        reserved_parts=[2_000, 0, 0, 0],
+        include_byok=True,
+    )
+
+    assert sum(limit for limit in limits if limit is not None) == 20_000
+    assert limits == (14_000, 2_000, 2_000, 2_000)
+    assert sum(
+        limit - consumed
+        for limit, consumed in zip(limits, (12_000, 0, 0, 0), strict=True)
+        if limit is not None
+    ) == 8_000
+
+
+def test_key_limit_partition_below_current_spend_creates_no_headroom() -> None:
+    limits = partition_key_limit(
+        5_000,
+        usage_parts=[4_000, 3_000],
+        byok_usage_parts=[0, 0],
+        reserved_parts=[1_000, 0],
+        include_byok=True,
+    )
+
+    assert sum(limit for limit in limits if limit is not None) == 5_000
+    assert all(
+        limit <= consumed
+        for limit, consumed in zip(limits, (5_000, 3_000), strict=True)
+        if limit is not None
+    )
 
 
 def test_sharded_key_metadata_update_does_not_clobber_typed_counters() -> None:
@@ -127,9 +289,16 @@ def test_sharded_key_metadata_update_does_not_clobber_typed_counters() -> None:
         assert row["reserved"] == 0
 
     rows[(key.hash, 2)]["usage"] = 123
-    key.name = "renamed"
-    store._write_entity("api_key", key.hash, key)
+    capped = store.api_keys.update(key.hash, {"limit_microdollars": 1_000_000})
+    assert capped is not None
+    escrow_before = [rows[(key.hash, shard)]["limit_micro"] for shard in range(4)]
+
+    renamed = store.api_keys.update(key.hash, {"name": "renamed"})
+
+    assert renamed is not None
+    assert renamed.name == "renamed"
     assert rows[(key.hash, 2)]["usage"] == 123
+    assert [rows[(key.hash, shard)]["limit_micro"] for shard in range(4)] == escrow_before
 
 
 def test_authorize_records_key_shard_and_settle_spreads_exact_usage() -> None:
@@ -172,6 +341,96 @@ def test_authorize_records_key_shard_and_settle_spreads_exact_usage() -> None:
     assert [rows[(key.hash, shard)]["usage"] for shard in range(4)] == [9_000] * 4
     assert [rows[(key.hash, shard)]["reserved"] for shard in range(4)] == [0] * 4
     assert sum(row["total_usage"] for row in database.typed[CREDIT_BALANCE_TABLE].values()) == 36_000
+
+
+def test_sharded_lifetime_cap_cannot_be_overspent_across_candidates() -> None:
+    store, database, key = _seed(key_shards=4)
+    updated = store.api_keys.update(key.hash, {"limit_microdollars": 12_000})
+    assert updated is not None
+
+    outcomes: list[str] = []
+    for index in range(13):
+        first = index % 4
+        candidates = tuple((first + offset) % 4 for offset in range(4))
+        result = authorize_atomic(
+            store._database,
+            store._param_types,
+            workspace_id=key.workspace_id,
+            key_hash=key.hash,
+            estimate=1_000,
+            has_credit_candidate=True,
+            reservation_usage_type="Credits",
+            idempotency_scope=f"exact-cap-{index}",
+            idempotency_fingerprint="same-body",
+            expires_at="2026-12-01T00:00:00Z",
+            build_auth_body=_auth_body,
+            key_shard_candidates=candidates,
+        )
+        outcomes.append(result["outcome"])
+
+    assert outcomes == [AuthorizeOutcome.ACCEPTED] * 12 + [
+        AuthorizeOutcome.KEY_LIMIT_EXCEEDED
+    ]
+    rows = database.typed[KEY_LIMIT_TABLE]
+    assert sum(rows[(key.hash, shard)]["reserved"] for shard in range(4)) == 12_000
+    assert sum(rows[(key.hash, shard)]["limit_micro"] for shard in range(4)) == 12_000
+
+
+def test_large_affordable_hold_rebalances_fragmented_key_escrow_once() -> None:
+    store, database, key = _seed(key_shards=4)
+    updated = store.api_keys.update(key.hash, {"limit_microdollars": 20_000})
+    assert updated is not None
+    assert {
+        database.typed[KEY_LIMIT_TABLE][(key.hash, shard)]["limit_micro"]
+        for shard in range(4)
+    } == {5_000}
+
+    outcome, authorization = store.authorize_gateway_typed(
+        workspace_id=key.workspace_id,
+        key_hash=key.hash,
+        estimate=10_000,
+        has_credit_candidate=True,
+        reservation_usage_type="Credits",
+        model_id="test/model",
+        provider="test",
+        requested_model_id="test/model",
+        candidate_model_ids=["test/model"],
+        region="test",
+        endpoint_id="test-endpoint",
+        candidate_endpoint_ids=["test-endpoint"],
+        idempotency_key="large-escrow-hold",
+        idempotency_fingerprint="same-body",
+        key_usage_shards=4,
+    )
+
+    assert outcome == AuthorizeOutcome.ACCEPTED
+    assert authorization is not None
+    rows = database.typed[KEY_LIMIT_TABLE]
+    assert sum(rows[(key.hash, shard)]["limit_micro"] for shard in range(4)) == 20_000
+    assert sum(rows[(key.hash, shard)]["reserved"] for shard in range(4)) == 10_000
+
+    rejected, second_authorization = store.authorize_gateway_typed(
+        workspace_id=key.workspace_id,
+        key_hash=key.hash,
+        estimate=10_001,
+        has_credit_candidate=True,
+        reservation_usage_type="Credits",
+        model_id="test/model",
+        provider="test",
+        requested_model_id="test/model",
+        candidate_model_ids=["test/model"],
+        region="test",
+        endpoint_id="test-endpoint",
+        candidate_endpoint_ids=["test-endpoint"],
+        idempotency_key="too-large-after-escrow-hold",
+        idempotency_fingerprint="same-body",
+        key_usage_shards=4,
+    )
+
+    assert rejected == AuthorizeOutcome.KEY_LIMIT_EXCEEDED
+    assert second_authorization is None
+    assert sum(rows[(key.hash, shard)]["limit_micro"] for shard in range(4)) == 20_000
+    assert sum(rows[(key.hash, shard)]["reserved"] for shard in range(4)) == 10_000
 
 
 def test_idempotent_replay_keeps_original_key_shard() -> None:
@@ -243,20 +502,142 @@ def test_deleting_sharded_key_leaves_typed_usage_rows() -> None:
     assert {(key.hash, shard) for shard in range(4)} <= set(database.typed[KEY_LIMIT_TABLE])
 
 
-def test_adding_a_limit_to_sharded_key_is_rejected_atomically() -> None:
-    store, _database, key = _seed(key_shards=4)
+def test_adding_a_limit_to_sharded_key_partitions_exact_headroom_atomically() -> None:
+    store, database, key = _seed(key_shards=4)
+    rows = database.typed[KEY_LIMIT_TABLE]
+    rows[(key.hash, 0)]["usage"] = 100_000
+    rows[(key.hash, 1)]["reserved"] = 20_000
 
-    with pytest.raises(ValueError, match="consolidate API-key usage"):
-        store.api_keys.update(key.hash, {"limit_microdollars": 1_000_000})
+    updated = store.api_keys.update(key.hash, {"limit_microdollars": 1_000_000})
 
     persisted = store.api_keys.get_by_hash(key.hash)
     assert persisted is not None
-    assert persisted.limit_microdollars is None
+    assert updated is not None
+    assert persisted.limit_microdollars == 1_000_000
     assert persisted.usage_shard_count == 4
+    limits = [rows[(key.hash, shard)]["limit_micro"] for shard in range(4)]
+    assert sum(limits) == 1_000_000
+    assert sum(
+        limits[shard]
+        - rows[(key.hash, shard)]["usage"]
+        - rows[(key.hash, shard)]["reserved"]
+        for shard in range(4)
+    ) == 880_000
+
+
+def test_adding_window_limits_to_sharded_key_preserves_usage_rows() -> None:
+    store, database, key = _seed(key_shards=4)
+    rows = database.typed[KEY_LIMIT_TABLE]
+    rows[(key.hash, 2)]["usage"] = 123
+    rows[(key.hash, 2)]["day_usage"] = 45
+    rows[(key.hash, 2)]["day_start"] = window_floors(utcnow())["daily"]
+
+    updated = store.api_keys.update(
+        key.hash,
+        {
+            "limit_daily_microdollars": 1_000_000,
+            "limit_weekly_microdollars": 4_000_000,
+        },
+    )
+
+    assert updated is not None
+    assert updated.usage_shard_count == 4
+    for shard in range(4):
+        assert rows[(key.hash, shard)]["day_limit_micro"] == 1_000_000
+        assert rows[(key.hash, shard)]["week_limit_micro"] == 4_000_000
+    assert rows[(key.hash, 2)]["usage"] == 123
+    assert rows[(key.hash, 2)]["day_usage"] == 45
+
+
+def test_window_limit_check_sums_all_usage_shards_and_fails_closed() -> None:
+    store, database, key = _seed(key_shards=4)
+    floors = window_floors(utcnow())
+    rows = database.typed[KEY_LIMIT_TABLE]
+    for shard, usage in enumerate((200, 250, 300, 150)):
+        rows[(key.hash, shard)]["day_usage"] = usage
+        rows[(key.hash, shard)]["day_start"] = floors["daily"]
+
+    assert (
+        check_key_window_limits(
+            store._database,
+            store._param_types,
+            key_hash=key.hash,
+            estimate=101,
+            window_limits={"daily": 1_000},
+            shard_count=4,
+        )
+        == "daily"
+    )
+    assert (
+        check_key_window_limits(
+            store._database,
+            store._param_types,
+            key_hash=key.hash,
+            estimate=100,
+            window_limits={"daily": 1_000},
+            shard_count=4,
+        )
+        is None
+    )
+
+    rows.pop((key.hash, 3))
+    with pytest.raises(RuntimeError, match="usage shard set is incomplete"):
+        check_key_window_limits(
+            store._database,
+            store._param_types,
+            key_hash=key.hash,
+            estimate=1,
+            window_limits={"daily": 1_000},
+            shard_count=4,
+        )
+    with pytest.raises(ValueError, match="shard_count must be positive"):
+        check_key_window_limits(
+            store._database,
+            store._param_types,
+            key_hash=key.hash,
+            estimate=1,
+            window_limits={"daily": 1_000},
+            shard_count=0,
+        )
+
+
+def test_typed_gateway_authorize_applies_window_limit_across_shards() -> None:
+    store, database, key = _seed(key_shards=4)
+    floors = window_floors(utcnow())
+    rows = database.typed[KEY_LIMIT_TABLE]
+    for shard in range(4):
+        rows[(key.hash, shard)]["day_usage"] = 250
+        rows[(key.hash, shard)]["day_start"] = floors["daily"]
+
+    outcome, authorization = store.authorize_gateway_typed(
+        workspace_id=key.workspace_id,
+        key_hash=key.hash,
+        estimate=1,
+        has_credit_candidate=True,
+        reservation_usage_type="Credits",
+        model_id="test/model",
+        provider="test",
+        requested_model_id="test/model",
+        candidate_model_ids=["test/model"],
+        region="test",
+        endpoint_id="test-endpoint",
+        candidate_endpoint_ids=["test-endpoint"],
+        idempotency_key="window-shard-limit",
+        idempotency_fingerprint="same-body",
+        key_usage_shards=4,
+        window_limits={"daily": 1_000},
+    )
+
+    assert outcome == f"{AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED}:daily"
+    assert authorization is None
 
 
 def test_key_usage_operator_split_and_unshard_preserve_all_usage() -> None:
     store, database, key = _seed(key_shards=1)
+    key.limit_daily_microdollars = 1_000_000
+    key.limit_weekly_microdollars = 4_000_000
+    key.limit_monthly_microdollars = 10_000_000
+    store._write_entity("api_key", key.hash, key)
     floors = window_floors(utcnow())
     row = database.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
     row.update(
@@ -283,6 +664,9 @@ def test_key_usage_operator_split_and_unshard_preserve_all_usage() -> None:
     assert sum(row["week_usage"] for row in rows) == 23
     assert sum(row["month_usage"] for row in rows) == 29
     assert all(row["reserved"] == 0 for row in rows)
+    assert all(row["day_limit_micro"] == 1_000_000 for row in rows)
+    assert all(row["week_limit_micro"] == 4_000_000 for row in rows)
+    assert all(row["month_limit_micro"] == 10_000_000 for row in rows)
 
     unshard = reshard_key_usage(store, key.hash, 1, apply=True)
 
@@ -303,26 +687,274 @@ def test_key_usage_operator_split_and_unshard_preserve_all_usage() -> None:
     assert persisted.byok_usage_microdollars == 37
 
 
-def test_key_usage_operator_refuses_capped_or_undrained_key() -> None:
+def test_online_credit_and_key_split_preserve_then_settle_live_request() -> None:
+    store, database, key = _seed(key_shards=1)
+    authorized = authorize_atomic(
+        store._database,
+        store._param_types,
+        workspace_id=key.workspace_id,
+        key_hash=key.hash,
+        estimate=1_000,
+        has_credit_candidate=True,
+        reservation_usage_type="Credits",
+        idempotency_scope="online-reshard-live",
+        idempotency_fingerprint="same-body",
+        expires_at="2026-12-01T00:00:00Z",
+        build_auth_body=_auth_body,
+        credit_shard_candidates=(0,),
+        key_shard_candidates=(0,),
+    )
+    assert authorized["outcome"] == AuthorizeOutcome.ACCEPTED
+    reservation_id = authorized["reservation_id"]
+
+    credit_split = reshard_credit_account(
+        store,
+        key.workspace_id,
+        4,
+        apply=True,
+        preserve_open_holds=True,
+    )
+    key_split = reshard_key_usage(
+        store,
+        key.hash,
+        4,
+        apply=True,
+        preserve_open_holds=True,
+    )
+
+    assert credit_split.ready and credit_split.applied
+    assert key_split.ready and key_split.applied
+    credit_rows = database.typed[CREDIT_BALANCE_TABLE]
+    key_rows = database.typed[KEY_LIMIT_TABLE]
+    assert [credit_rows[(key.workspace_id, shard)]["reserved"] for shard in range(4)] == [
+        1_000,
+        0,
+        0,
+        0,
+    ]
+    assert [key_rows[(key.hash, shard)]["reserved"] for shard in range(4)] == [
+        0,
+        0,
+        0,
+        0,
+    ]
+
+    settled = settle_atomic(
+        store._database,
+        store._param_types,
+        reservation_id=reservation_id,
+        actual_micro=900,
+        settled_usage_type="Credits",
+        success=True,
+    )
+
+    assert settled["outcome"] == SettleOutcome.SETTLED
+    assert sum(row["reserved"] for row in credit_rows.values()) == 0
+    assert sum(row["total_usage"] for row in credit_rows.values()) == 900
+    assert sum(row["usage"] for row in key_rows.values()) == 900
+    assert database.reservations[reservation_id]["settled"] is True
+
+
+def test_online_capped_key_split_preserves_hold_without_minting_headroom() -> None:
+    store, database, key = _seed(key_shards=1)
+    key.limit_microdollars = 20_000
+    store._write_entity("api_key", key.hash, key)
+    row = database.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
+    row["limit_micro"] = 20_000
+    row["usage"] = 8_000
+    authorized = authorize_atomic(
+        store._database,
+        store._param_types,
+        workspace_id=key.workspace_id,
+        key_hash=key.hash,
+        estimate=2_000,
+        has_credit_candidate=True,
+        reservation_usage_type="Credits",
+        idempotency_scope="online-capped-split",
+        idempotency_fingerprint="same-body",
+        expires_at="2026-12-01T00:00:00Z",
+        build_auth_body=_auth_body,
+        key_shard_candidates=(0,),
+    )
+    assert authorized["outcome"] == AuthorizeOutcome.ACCEPTED
+
+    split = reshard_key_usage(
+        store,
+        key.hash,
+        4,
+        apply=True,
+        preserve_open_holds=True,
+    )
+
+    assert split.ready and split.applied
+    rows = [database.typed[KEY_LIMIT_TABLE][(key.hash, shard)] for shard in range(4)]
+    assert [current["usage"] for current in rows] == [8_000, 0, 0, 0]
+    assert [current["reserved"] for current in rows] == [2_000, 0, 0, 0]
+    assert sum(current["limit_micro"] for current in rows) == 20_000
+    assert sum(
+        current["limit_micro"] - current["usage"] - current["reserved"]
+        for current in rows
+    ) == 10_000
+
+    settled = settle_atomic(
+        store._database,
+        store._param_types,
+        reservation_id=authorized["reservation_id"],
+        actual_micro=1_500,
+        settled_usage_type="Credits",
+        success=True,
+    )
+    assert settled["outcome"] == SettleOutcome.SETTLED
+    rows = [database.typed[KEY_LIMIT_TABLE][(key.hash, shard)] for shard in range(4)]
+    assert sum(current["reserved"] for current in rows) == 0
+    assert sum(current["usage"] for current in rows) == 9_500
+    assert sum(
+        current["limit_micro"] - current["usage"] - current["reserved"]
+        for current in rows
+    ) == 10_500
+
+
+def test_online_key_split_keeps_history_and_windows_on_existing_shard() -> None:
+    store, database, key = _seed(key_shards=1)
+    floors = window_floors(utcnow())
+    row = database.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
+    row.update(
+        usage=101,
+        byok_usage=37,
+        day_usage=19,
+        day_start=floors["daily"],
+        week_usage=23,
+        week_start=floors["weekly"],
+        month_usage=29,
+        month_start=floors["monthly"],
+    )
+
+    split = reshard_key_usage(
+        store,
+        key.hash,
+        4,
+        apply=True,
+        preserve_open_holds=True,
+    )
+
+    assert split.ready and split.applied
+    rows = [database.typed[KEY_LIMIT_TABLE][(key.hash, shard)] for shard in range(4)]
+    assert [row["usage"] for row in rows] == [101, 0, 0, 0]
+    assert [row["byok_usage"] for row in rows] == [37, 0, 0, 0]
+    assert [row["day_usage"] for row in rows] == [19, 0, 0, 0]
+    assert [row["week_usage"] for row in rows] == [23, 0, 0, 0]
+    assert [row["month_usage"] for row in rows] == [29, 0, 0, 0]
+
+
+def test_key_reshard_derives_window_floors_inside_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, database, key = _seed(key_shards=1)
+    before_boundary = dt.datetime(2026, 7, 28, 23, 59, tzinfo=dt.UTC)
+    after_boundary = dt.datetime(2026, 7, 29, 0, 0, tzinfo=dt.UTC)
+    current_floors = window_floors(after_boundary)
+    key.limit_daily_microdollars = 19
+    store._write_entity("api_key", key.hash, key)
+    row = database.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
+    row.update(
+        day_usage=19,
+        day_start=current_floors["daily"],
+    )
+    transaction_started = False
+
+    def boundary_now() -> dt.datetime:
+        return after_boundary if transaction_started else before_boundary
+
+    original_run_in_transaction = store._run_in_transaction
+
+    def run_after_boundary(func: Any, *, attempts: int = 8) -> Any:
+        nonlocal transaction_started
+        transaction_started = True
+        return original_run_in_transaction(func, attempts=attempts)
+
+    monkeypatch.setattr(
+        "trusted_router.storage_gcp_key_shard_admin.utcnow",
+        boundary_now,
+    )
+    monkeypatch.setattr(
+        "trusted_router.storage_gcp_authorize.utcnow",
+        lambda: after_boundary,
+    )
+    monkeypatch.setattr(store, "_run_in_transaction", run_after_boundary)
+
+    split = reshard_key_usage(store, key.hash, 4, apply=True)
+
+    assert split.ready and split.applied
+    rows = [
+        database.typed[KEY_LIMIT_TABLE][(key.hash, shard)]
+        for shard in range(4)
+    ]
+    assert sum(current["day_usage"] for current in rows) == 19
+    assert all(
+        current["day_start"] == current_floors["daily"] for current in rows
+    )
+    assert (
+        check_key_window_limits(
+            store._database,
+            store._param_types,
+            key_hash=key.hash,
+            estimate=1,
+            window_limits={"daily": 19},
+            shard_count=4,
+        )
+        == "daily"
+    )
+
+
+def test_key_usage_operator_escrows_lifetime_cap_and_refuses_undrained_key() -> None:
     store, database, key = _seed(key_shards=1)
     key.limit_microdollars = 1_000_000
     store._write_entity("api_key", key.hash, key)
 
+    row = database.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
+    row["limit_micro"] = 1_000_000
+    row["usage"] = 100_000
     capped = reshard_key_usage(store, key.hash, 4, apply=True)
-    assert not capped.ready
-    assert "capped API key must remain on one usage shard" in capped.reasons
+    assert capped.ready and capped.applied
+    rows = [database.typed[KEY_LIMIT_TABLE][(key.hash, shard)] for shard in range(4)]
+    assert sum(current["limit_micro"] for current in rows) == 1_000_000
+    assert sum(
+        current["limit_micro"] - current["usage"] - current["reserved"]
+        for current in rows
+    ) == 900_000
 
-    key.limit_microdollars = None
-    store._write_entity("api_key", key.hash, key)
     database.reservations["open-key-request"] = {
         "reservation_id": "open-key-request",
         "workspace_id": key.workspace_id,
         "key_hash": key.hash,
         "settled": False,
     }
-    undrained = reshard_key_usage(store, key.hash, 4, apply=True)
+    undrained = reshard_key_usage(store, key.hash, 8, apply=True)
     assert not undrained.ready
     assert any("open typed reservations" in reason for reason in undrained.reasons)
+
+
+def test_key_reshard_ignores_but_reports_retained_stale_legacy_hold() -> None:
+    store, _database, key = _seed(key_shards=1)
+    store._write_entity(
+        "reservation",
+        "legacy-stale-key",
+        Reservation(
+            id="legacy-stale-key",
+            workspace_id=key.workspace_id,
+            key_hash=key.hash,
+            amount_microdollars=1,
+            created_at=(
+                dt.datetime.now(dt.UTC) - dt.timedelta(days=2)
+            ).isoformat(),
+        ),
+    )
+
+    result = reshard_key_usage(store, key.hash, 4, apply=True)
+
+    assert result.ready and result.applied
+    assert result.legacy_open_reservations == 0
+    assert result.stale_legacy_reservations_ignored == 1
 
 
 def test_key_usage_operator_status_is_idempotent_after_split() -> None:

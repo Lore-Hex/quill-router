@@ -15,19 +15,25 @@ REGION="${REGION:-us-central1}"
 # /v1/regions which the SDK's region= shortcut resolves against. Adding
 # a region without a backing gateway VM gives callers a TLS-broken
 # `api-<region>.quillrouter.com` and weakens the trust story.
-TR_REGIONS="${TR_REGIONS:-us-central1,us-east4,europe-west4}"
+TR_REGIONS="${TR_REGIONS:-us-central1,us-east4,europe-west4,southamerica-east1}"
 TR_PRIMARY_REGION="${TR_PRIMARY_REGION:-us-central1}"
 # Cloud Run control-plane regions behind trustedrouter.com. This is broader
 # than TR_REGIONS because cold control-plane regions can serve cached public
 # pages without advertising non-existent regional attested gateway hostnames.
 TR_CONTROL_PLANE_REGIONS="${TR_CONTROL_PLANE_REGIONS:-us-central1,us-east4,europe-west4,southamerica-east1}"
-# Comma-separated subset of TR_REGIONS that should run with min_scale=1
-# (always-on warm capacity). Anything in TR_REGIONS but NOT in
-# TR_WARM_REGIONS gets min_scale=0 (scale-to-zero — ~$0/mo idle, cold-
-# start tax on first request). Defaults to the regions where we run an
-# attested enclave MIG; the LATAM addition stays cold so it can show on
-# the homepage map without paying for always-on Cloud Run.
-TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4}"
+# Comma-separated subset of TR_REGIONS that should run with always-on warm
+# capacity. Anything outside TR_WARM_REGIONS gets min_scale=0 unless the
+# per-region map below says otherwise.
+TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4,southamerica-east1}"
+# Service-level minimums stay allocated across staged revision traffic shifts.
+# US East is deliberately larger: a 2026-08-22 customer burst exhausted the
+# old one-instance / concurrency-two ceiling before Cloud Run could scale.
+TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION="${TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION:-us-central1=2,us-east4=8,europe-west4=2,southamerica-east1=2}"
+# Billing handlers are small, synchronous Spanner operations dispatched to a
+# worker thread. Eight concurrent requests fit comfortably in 2 GiB and avoid
+# cold-starting dozens of instances for a short burst.
+TR_CLOUD_RUN_CONCURRENCY="${TR_CLOUD_RUN_CONCURRENCY:-8}"
+TR_SPANNER_POOL_SIZE="${TR_SPANNER_POOL_SIZE:-8}"
 # Cloud Run memory limit. 2Gi as of 2026-05-10.
 #
 # History of the bloat profile (RSS at idle, then under load):
@@ -38,14 +44,14 @@ TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4}"
 #   ~85 MB    google-cloud SDK imports (Spanner gRPC stubs, Bigtable,
 #             KMS, protobuf descriptors) — unavoidable floor
 #   ~50 MB    Spanner FixedSizePool(size=10) (SDK default) at first
-#             use, ~5 MB per gRPC session × 10 sessions; reduced to
-#             FixedSizePool(size=4) in storage_gcp.py → ~30 MB saved
+#             use, ~5 MB per gRPC session × 10 sessions; production pins
+#             eight sessions to match request concurrency without using 10
 #   ~20 MB    FastAPI + Pydantic + Starlette + uvicorn
 #   ~25 MB    create_app() route registration (244 routes worth of
 #             Pydantic dataclass shape metadata + dependency graphs)
-#   ~50-200 MB peak per in-flight request × concurrency
-#             (httpx connection pool + JSON parsing + gRPC streams).
-#             Halved by `--concurrency=2` in rollout.sh.
+#   Billing calls are small metadata payloads and mostly wait on Spanner. The
+#   browser proxy and public routes remain bounded by the 2 GiB container
+#   limit and are covered by staged traffic checks.
 #   ~10 MB    Sentry SDK breadcrumb + transport buffers
 #
 # Lazy-imported only when their first route is hit (not in startup):
@@ -55,20 +61,46 @@ TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4}"
 # 2Gi is kept (not lowered to 1Gi) because the per-request peak under
 # spiky bursts can still pin a single instance; the surplus is cheap.
 TR_CLOUD_RUN_MEMORY="${TR_CLOUD_RUN_MEMORY:-2Gi}"
+# The public service must only be reachable from the external Application Load
+# Balancer or from an explicitly private Google path. Authentication is a
+# separate control: public pages remain unauthenticated, but the run.app origin
+# is not an Internet bypass around Cloud Armor.
+TR_CLOUD_RUN_INGRESS="${TR_CLOUD_RUN_INGRESS:-internal-and-cloud-load-balancing}"
+# The legacy combined service has trusted regional synthetic jobs that use its
+# run.app URL through Private Google Access, so it keeps that URL by default.
+# Split public/control/billing services override this independently and disable
+# the URL when they have no trusted direct consumer.
+TR_CLOUD_RUN_DISABLE_DEFAULT_URL="${TR_CLOUD_RUN_DISABLE_DEFAULT_URL:-0}"
+# Service-level cost/saturation bulkhead. Split services set their own value;
+# 20 per region is the safe intermediate ceiling for the legacy combined
+# service. rollout.sh uses Cloud Run's mutable --max service cap, not the
+# per-revision --max-instances setting, so staged traffic cannot double it.
+TR_CLOUD_RUN_MAX_INSTANCES="${TR_CLOUD_RUN_MAX_INSTANCES:-20}"
 SERVICE="${SERVICE:-trusted-router}"
 REPO="${REPO:-trusted-router}"
 IMAGE="${IMAGE:-${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}:$(git rev-parse --short HEAD 2>/dev/null || echo local)}"
 KEY_FILE="${TR_LOCAL_KEYS_FILE:-${HOME}/.quill_cloud_keys.private}"
 SPANNER_INSTANCE_ID="${TR_SPANNER_INSTANCE_ID:-trusted-router-nam6}"
 SPANNER_DATABASE_ID="${TR_SPANNER_DATABASE_ID:-trusted-router}"
+SPANNER_CONFIG="${TR_SPANNER_CONFIG:-nam6}"
+SPANNER_EDITION="${TR_SPANNER_EDITION:-ENTERPRISE_PLUS}"
+SPANNER_PROCESSING_UNITS="${TR_SPANNER_PROCESSING_UNITS:-300}"
 BIGTABLE_INSTANCE_ID="${TR_BIGTABLE_INSTANCE_ID:-trusted-router-logs}"
 BIGTABLE_CLUSTER_ID="${TR_BIGTABLE_CLUSTER_ID:-trusted-router-logs-c1}"
 BIGTABLE_APP_PROFILE_ID="${TR_BIGTABLE_APP_PROFILE_ID:-}"
 BIGTABLE_GENERATION_TABLE="${TR_BIGTABLE_GENERATION_TABLE:-trustedrouter-generations}"
 BIGTABLE_INSTANCE_TYPE="${TR_BIGTABLE_INSTANCE_TYPE:-PRODUCTION}"
+# The first canary has one transactional writer. Bigtable rejects a second
+# transactional profile on another cluster unless its split-brain warning is
+# forcibly bypassed. EU and other gateways therefore use exact Spanner until
+# they receive isolated regional ledgers.
+TR_REGIONAL_QUOTA_CLUSTER_MAP="${TR_REGIONAL_QUOTA_CLUSTER_MAP:-us-central1=trusted-router-logs-c1}"
+TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES="${TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES:-us-central1=tr-quota-us-central1}"
 KMS_KEYRING_ID="${TR_KMS_KEYRING_ID:-trusted-router}"
 BYOK_KMS_KEY_ID="${TR_BYOK_KMS_KEY_ID:-byok-envelope}"
 BYOK_KMS_KEY_NAME="${TR_BYOK_KMS_KEY_NAME:-projects/${PROJECT_ID}/locations/${REGION}/keyRings/${KMS_KEYRING_ID}/cryptoKeys/${BYOK_KMS_KEY_ID}}"
+GOOGLE_ADS_KMS_KEY_ID="${TR_GOOGLE_DATA_MANAGER_KMS_KEY_ID:-google-ads-click-envelope}"
+GOOGLE_ADS_KMS_KEY_NAME="${TR_GOOGLE_DATA_MANAGER_KMS_KEY_NAME:-projects/${PROJECT_ID}/locations/${REGION}/keyRings/${KMS_KEYRING_ID}/cryptoKeys/${GOOGLE_ADS_KMS_KEY_ID}}"
 TRUST_FILE="${TRUST_FILE:-/Users/jperla/claude/quill-cloud-proxy/trust-page/gcp-release.json}"
 TRUST_FILE_URL="${TRUST_FILE_URL:-https://trust.trustedrouter.com/trust/gcp-release.json}"
 
@@ -77,6 +109,10 @@ gc() { gcloud --project "$PROJECT_ID" "$@"; }
 
 PROJECT_NUMBER="$(gc projects describe "$PROJECT_ID" --format='value(projectNumber)')"
 RUN_SERVICE_ACCOUNT="${RUN_SERVICE_ACCOUNT:-${PROJECT_NUMBER}-compute@developer.gserviceaccount.com}"
+# The regional control-plane services run under a dedicated identity. Keep it
+# separate from RUN_SERVICE_ACCOUNT, which still owns legacy jobs and
+# synthetics, so KMS grants follow the identity that actually handles signup.
+CONTROL_RUN_SERVICE_ACCOUNT="${TR_CONTROL_RUN_SERVICE_ACCOUNT:-trusted-router-control-run@${PROJECT_ID}.iam.gserviceaccount.com}"
 
 read_key_file_var() {
   local env_name="$1"
@@ -122,11 +158,18 @@ ensure_secret_value() {
 ensure_project_role() {
   local member="$1"
   local role="$2"
-  # Retry on the etag-conflict error gcloud's own message says to retry on.
-  # Concurrent IAM changes on a busy project — including the parallel
-  # Cloud Run deploys later in this script, which each provision their
-  # own service-account bindings — collide on add-iam-policy-binding's
-  # read-modify-write. Sleep + retry is the documented mitigation.
+  local bound_roles=""
+  if bound_roles="$(gc projects get-iam-policy "$PROJECT_ID" \
+      --flatten='bindings[].members' \
+      --filter="bindings.role=${role} AND bindings.members=${member}" \
+      --format='value(bindings.role)' 2>/dev/null)"; then
+    if grep -Fxq "$role" <<<"$bound_roles"; then
+      return 0
+    fi
+  fi
+
+  # Retry only etag conflicts. Retrying an authorization failure creates a
+  # burst of misleading ERROR audit entries and cannot make the call succeed.
   local attempt=0
   local max_attempts=6
   local last_stderr=""
@@ -138,24 +181,13 @@ ensure_project_role() {
       return 0
     fi
     attempt=$((attempt + 1))
+    if echo "$last_stderr" | grep -qE 'PERMISSION_DENIED|setIamPolicy|Policy update access denied'; then
+      break
+    fi
     if [ "$attempt" -lt "$max_attempts" ]; then
       sleep "$attempt"
     fi
   done
-  # PERMISSION_DENIED means the caller lacks
-  # resourcemanager.projects.setIamPolicy — typically the case in CI
-  # where the deploy service account has run.developer but not IAM
-  # admin. In that case the role binding is expected to already be in
-  # place from a prior local provisioning run; treat as soft-success
-  # and let the actual Cloud Run deploy fail loudly if the perm IS
-  # missing. Without this, every CI deploy of a job requiring
-  # ensure_project_role would silently no-op via continue-on-error
-  # AND leave the underlying Cloud Run Job unchanged — exactly the
-  # silent failure mode that hid the 2026-06-02 pong surge for 8h.
-  if echo "$last_stderr" | grep -qE 'PERMISSION_DENIED|setIamPolicy'; then
-    echo "WARN: caller lacks setIamPolicy on ${PROJECT_ID}; assuming ${role} for ${member} is already bound (provisioned in a prior local run). The Cloud Run deploy below will surface a clear error if the binding is actually missing." >&2
-    return 0
-  fi
-  echo "ERROR: failed to bind ${role} to ${member} after ${max_attempts} attempts. Last stderr: ${last_stderr}" >&2
+  echo "ERROR: failed to bind ${role} to ${member} after ${attempt} attempt(s). Last stderr: ${last_stderr}" >&2
   return 1
 }

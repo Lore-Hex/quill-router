@@ -1,4 +1,6 @@
 {% extends "public/_base.html" %}
+{% from "public/_provider_privacy_badges.html" import provider_privacy_badges %}
+{% from "public/_provider_identity.html" import provider_identity %}
 {% block body %}
 <section class="public-proof-strip">
   <div><strong>Public catalog</strong><span>No auth needed to inspect routes.</span></div>
@@ -6,6 +8,7 @@
   <div><strong>trustedrouter/eu</strong><span>EU-focused routing target.</span></div>
   <div><strong>trustedrouter/zdr</strong><span>Zero-retention routing target.</span></div>
   <div><strong>trustedrouter/e2e</strong><span>Confidential + E2EE routes. Alias: trustedrouter/confidential.</span></div>
+  <div><strong>Hard privacy floor</strong><span>Use provider.min_privacy = "confidential" with any selected model.</span></div>
   <div><strong>Synth presets</strong><span>Iris, Prometheus, Zeus, and code variants.</span></div>
   <div><strong>Streaming</strong><span>No buffering in the prompt path.</span></div>
   <div><strong>Hundreds of models</strong><span>More provider routes are added as keys and pricing are verified.</span></div>
@@ -17,7 +20,7 @@
       <span class="eyebrow">Models</span>
       <h2>Route by model, provider, price, or privacy posture.</h2>
     </div>
-    <p>API JSON remains at <span class="mono">{{ api_base_url }}/models</span> with an API key.</p>
+    <p>API JSON remains at <span class="mono">{{ api_base_url }}/models</span> with an API key. <a href="/compare/models">Compare models</a>. By jurisdiction: <a href="/us-ai-models">US AI models</a>, <a href="/eu-ai-models">EU AI models</a>, <a href="/china-ai-models">Chinese AI models</a>.</p>
   </div>
   <div class="model-filter-row" aria-label="Model filters">
     {% for item in model_filters %}
@@ -50,15 +53,15 @@
               {% if model.us_provider_available %}<span class="pill">US providers</span>{% endif %}
               {% if model.eu_focused_provider_available %}<span class="pill">EU-focused</span>{% endif %}
             </div>
-            {% if model.benchmarks_href %}
+            {% if model.benchmarks_href or model.providers_href or model.pricing_href %}
             <div class="mini-links">
-              <a href="{{ model.benchmarks_href }}">benchmarks</a>
-              <a href="{{ model.detail_href }}/providers">providers</a>
-              <a href="{{ model.detail_href }}/pricing">pricing</a>
+              {% if model.benchmarks_href %}<a href="{{ model.benchmarks_href }}">benchmarks</a>{% endif %}
+              {% if model.providers_href %}<a href="{{ model.providers_href }}">providers</a>{% endif %}
+              {% if model.pricing_href %}<a href="{{ model.pricing_href }}">pricing</a>{% endif %}
             </div>
             {% endif %}
           </td>
-          <td>{{ model.provider }}</td>
+          <td>{{ provider_identity(model.publisher_slug, model.provider, "/providers/" ~ model.publisher_slug) }}</td>
           <td>
             {% if model.ai_iq %}
             <a class="ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener">
@@ -73,15 +76,12 @@
           <td>
             <div class="provider-chip-list" aria-label="{{ model.provider_count }} provider{{ '' if model.provider_count == 1 else 's' }}">
               {% for provider in model.providers %}
-              <span class="pill" title="{{ provider.slug }}">{{ provider.name }}</span>
+              <a class="pill provider-chip" href="/providers/{{ provider.slug }}" title="{{ provider.slug }}"><img class="provider-logo" src="{{ provider.logo_url }}" alt="{{ provider.name }} logo" aria-hidden="true" width="22" height="22" loading="lazy" decoding="async"><span>{{ provider.name }}</span></a>
               {% endfor %}
             </div>
           </td>
           <td>
-            {% if model.provider_e2ee %}<span class="pill good">provider E2EE</span>{% endif %}
-            {% if model.provider_confidential_compute %}<span class="pill good">confidential</span>{% endif %}
-            {% if model.provider_zero_data_retention %}<span class="pill good">ZDR</span>{% endif %}
-            {% if not model.provider_e2ee and not model.provider_confidential_compute and not model.provider_zero_data_retention %}<span class="pill warn">upstream varies</span>{% endif %}
+            {{ provider_privacy_badges(model) }}
           </td>
           <td>{{ model.prompt_price }}</td>
           <td>{{ model.completion_price }}</td>

@@ -1,8 +1,8 @@
 {
   "provider": "nebius",
   "source": "https://api.tokenfactory.nebius.com/v1/models?verbose=true",
-  "generated_at": "2026-07-17T01:10:13Z",
-  "model_count": 38,
+  "generated_at": "2026-08-24T10:39:58Z",
+  "model_count": 42,
   "models": [
     {
       "id": "meta-llama/Meta-Llama-3.1-8B-Instruct",
@@ -952,6 +952,109 @@
       "max_output_tokens": 65536,
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 3000000,
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "moonshotai/Kimi-K3",
+      "display_name": "Kimi-K3",
+      "title": "moonshotai/Kimi-K3",
+      "created": 1785167039,
+      "context_length": 8000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash",
+      "upstream_id": "deepseek-ai/DeepSeek-V4-Flash",
+      "display_name": "DeepSeek-V4-Flash",
+      "title": "deepseek/deepseek-v4-flash",
+      "created": 1786143955,
+      "context_length": 8000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "nvidia/nemotron-3_5-lightning",
+      "upstream_id": "nvidia/Nemotron-3_5-Lightning",
+      "display_name": "Nemotron-3.5-Lightning",
+      "title": "nvidia/nemotron-3_5-lightning",
+      "created": 1786454551,
+      "context_length": 8000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 60000,
+      "output_token_price_per_m": 240000,
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "display_name": "DeepSeek-V4-Flash-0731",
+      "title": "deepseek/deepseek-v4-flash-0731",
+      "created": 1786581299,
+      "context_length": 8000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000,
       "model_type": "chat",
       "features": [
         "serverless",

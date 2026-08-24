@@ -19,6 +19,15 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from trusted_router.storage_gcp_counter_dml import (
+    clear_reservation_retention,
+    complete_reservation_retention,
+)
+from trusted_router.storage_gcp_io import run_in_transaction_with_retry
+from trusted_router.storage_gcp_request_records import (
+    clear_gateway_authorization_retention,
+    complete_gateway_authorization_retention,
+)
 from trusted_router.storage_models import SettleOutboxRow
 
 # Column order shared by INSERT and the row-tuple SELECTs (keep in sync with the
@@ -41,6 +50,7 @@ OUTBOX_COLUMNS = [
     "leased_until",
     "created_at",
     "updated_at",
+    "terminal_at",
 ]
 
 # Statuses that must FREEZE the hold — the reaper may not free-release a
@@ -60,12 +70,17 @@ GUARD_COUNT_SQL = (
     "SELECT COUNT(*) FROM tr_settle_outbox WHERE authorization_id=@aid "  # noqa: S608
     f"AND status IN ({_GUARD_STATUS_SQL})"
 )
+_SIBLING_GUARD_COUNT_SQL = (
+    "SELECT COUNT(*) FROM tr_settle_outbox WHERE authorization_id=@aid "  # noqa: S608
+    "AND intent_kind != @kind "
+    f"AND status IN ({_GUARD_STATUS_SQL})"
+)
 
 # Enqueue outcomes.
-ENQ_INSERTED = "inserted"          # new pending row
-ENQ_REFRESHED = "refreshed"        # existing pending row's frozen inputs updated
-ENQ_EXISTS_TERMINAL = "terminal"   # existing done/dead/release_approved row — left as is
-ENQ_LEASED = "leased"              # existing pending row is actively leased by a drain — deferred
+ENQ_INSERTED = "inserted"  # new pending row
+ENQ_REFRESHED = "refreshed"  # existing pending row's frozen inputs updated
+ENQ_EXISTS_TERMINAL = "terminal"  # existing done/dead/release_approved row — left as is
+ENQ_LEASED = "leased"  # existing pending row is actively leased by a drain — deferred
 
 
 def _iso_now() -> str:
@@ -104,6 +119,7 @@ def _row_from_tuple(values: Any) -> SettleOutboxRow:
         leased_until=_ts_str(d["leased_until"]),
         created_at=_ts_str(d["created_at"]) or "",
         updated_at=_ts_str(d["updated_at"]),
+        terminal_at=_ts_str(d["terminal_at"]),
     )
 
 
@@ -136,9 +152,7 @@ class SpannerSettleOutbox:
         pt = self._pt
         now = _iso_now()
         next_attempt_at = (
-            _iso_after_seconds(initial_delay_seconds)
-            if initial_delay_seconds > 0
-            else now
+            _iso_after_seconds(initial_delay_seconds) if initial_delay_seconds > 0 else now
         )
 
         def insert_txn(transaction: Any) -> None:
@@ -162,24 +176,40 @@ class SpannerSettleOutbox:
                 "leased_until": None,
                 "created_at": now,
                 "updated_at": now,
+                "terminal_at": None,
             }
             types = {
-                "authorization_id": pt.STRING, "intent_kind": pt.STRING,
-                "settle_origin": pt.STRING, "reservation_id": pt.STRING,
-                "actual_cost_micro": pt.INT64, "selected_endpoint_id": pt.STRING,
-                "model_id": pt.STRING, "selected_usage_type": pt.STRING,
-                "settle_body": pt.STRING, "status": pt.STRING, "attempts": pt.INT64,
-                "last_error": pt.STRING, "next_attempt_at": pt.TIMESTAMP,
-                "lease_owner": pt.STRING, "leased_until": pt.TIMESTAMP,
-                "created_at": pt.TIMESTAMP, "updated_at": pt.TIMESTAMP,
+                "authorization_id": pt.STRING,
+                "intent_kind": pt.STRING,
+                "settle_origin": pt.STRING,
+                "reservation_id": pt.STRING,
+                "actual_cost_micro": pt.INT64,
+                "selected_endpoint_id": pt.STRING,
+                "model_id": pt.STRING,
+                "selected_usage_type": pt.STRING,
+                "settle_body": pt.STRING,
+                "status": pt.STRING,
+                "attempts": pt.INT64,
+                "last_error": pt.STRING,
+                "next_attempt_at": pt.TIMESTAMP,
+                "lease_owner": pt.STRING,
+                "leased_until": pt.TIMESTAMP,
+                "created_at": pt.TIMESTAMP,
+                "updated_at": pt.TIMESTAMP,
+                "terminal_at": pt.TIMESTAMP,
             }
             transaction.execute_update(
                 f"INSERT INTO tr_settle_outbox ({cols}) VALUES ({binds})",  # noqa: S608 - fixed column list
-                params=values, param_types=types,
+                params=values,
+                param_types=types,
             )
+            # An outbox intent is durable repair work: keep both referenced
+            # records TTL-ineligible. This also re-disarms retention if a reaper
+            # armed it immediately before this enqueue committed.
+            self._defer_retention(transaction, row.authorization_id, row.reservation_id)
 
         try:
-            self._database.run_in_transaction(insert_txn)
+            run_in_transaction_with_retry(self._database, insert_txn)
             return ENQ_INSERTED
         except Exception as exc:  # ALREADY_EXISTS -> the intent is already recorded
             if not _is_already_exists(exc):
@@ -193,7 +223,7 @@ class SpannerSettleOutbox:
         # holds the row; once the lease lapses (or the drain fails back to
         # pending) a later enqueue can refresh again.
         def refresh_txn(transaction: Any) -> int:
-            return transaction.execute_update(
+            refreshed = transaction.execute_update(
                 "UPDATE tr_settle_outbox SET settle_origin=@settle_origin, "
                 "reservation_id=@reservation_id, actual_cost_micro=@actual_cost_micro, "
                 "selected_endpoint_id=@selected_endpoint_id, model_id=@model_id, "
@@ -214,15 +244,25 @@ class SpannerSettleOutbox:
                     "intent_kind": row.intent_kind,
                 },
                 param_types={
-                    "settle_origin": pt.STRING, "reservation_id": pt.STRING,
-                    "actual_cost_micro": pt.INT64, "selected_endpoint_id": pt.STRING,
-                    "model_id": pt.STRING, "selected_usage_type": pt.STRING,
-                    "settle_body": pt.STRING, "now": pt.TIMESTAMP,
-                    "authorization_id": pt.STRING, "intent_kind": pt.STRING,
+                    "settle_origin": pt.STRING,
+                    "reservation_id": pt.STRING,
+                    "actual_cost_micro": pt.INT64,
+                    "selected_endpoint_id": pt.STRING,
+                    "model_id": pt.STRING,
+                    "selected_usage_type": pt.STRING,
+                    "settle_body": pt.STRING,
+                    "now": pt.TIMESTAMP,
+                    "authorization_id": pt.STRING,
+                    "intent_kind": pt.STRING,
                 },
             )
+            if refreshed == 1:
+                # Refresh is an outstanding intent too, so its referenced
+                # records must remain ineligible for retention TTL.
+                self._defer_retention(transaction, row.authorization_id, row.reservation_id)
+            return refreshed
 
-        refreshed = self._database.run_in_transaction(refresh_txn)
+        refreshed = run_in_transaction_with_retry(self._database, refresh_txn)
         if refreshed == 1:
             return ENQ_REFRESHED
         # 0-row: classify for accurate observability (codex #113) — a still-pending
@@ -237,13 +277,19 @@ class SpannerSettleOutbox:
     def due(self, *, limit: int = 100) -> list[SettleOutboxRow]:
         now = _iso_now()
         with self._database.snapshot() as snapshot:
-            rows = list(snapshot.execute_sql(
-                f"SELECT {', '.join(OUTBOX_COLUMNS)} FROM tr_settle_outbox "  # noqa: S608 - fixed column list
-                "WHERE status='pending' AND next_attempt_at <= @now "
-                "ORDER BY next_attempt_at LIMIT @limit",
-                params={"now": now, "limit": int(limit)},
-                param_types={"now": self._pt.TIMESTAMP, "limit": self._pt.INT64},
-            ))
+            rows = list(
+                snapshot.execute_sql(
+                    f"SELECT {', '.join(OUTBOX_COLUMNS)} "  # noqa: S608 - fixed column list
+                    "FROM tr_settle_outbox"
+                    "@{FORCE_INDEX=tr_settle_outbox_due_v2} "
+                    "WHERE queue_shard IS NOT NULL "
+                    "AND next_attempt_at IS NOT NULL "
+                    "AND status='pending' AND next_attempt_at <= @now "
+                    "ORDER BY next_attempt_at LIMIT @limit",
+                    params={"now": now, "limit": int(limit)},
+                    param_types={"now": self._pt.TIMESTAMP, "limit": self._pt.INT64},
+                )
+            )
         return [_row_from_tuple(r) for r in rows]
 
     def claim(self, *, limit: int = 100, lease_seconds: int = 60) -> list[SettleOutboxRow]:
@@ -268,17 +314,22 @@ class SpannerSettleOutbox:
                 "updated_at=@now WHERE authorization_id=@aid AND intent_kind=@kind "
                 "AND status='pending' AND (leased_until IS NULL OR leased_until < @now)",
                 params={
-                    "owner": owner, "lease": lease_until, "now": now,
-                    "aid": row.authorization_id, "kind": row.intent_kind,
+                    "owner": owner,
+                    "lease": lease_until,
+                    "now": now,
+                    "aid": row.authorization_id,
+                    "kind": row.intent_kind,
                 },
                 param_types={
-                    "owner": self._pt.STRING, "lease": self._pt.TIMESTAMP,
-                    "now": self._pt.TIMESTAMP, "aid": self._pt.STRING,
+                    "owner": self._pt.STRING,
+                    "lease": self._pt.TIMESTAMP,
+                    "now": self._pt.TIMESTAMP,
+                    "aid": self._pt.STRING,
                     "kind": self._pt.STRING,
                 },
             )
 
-        return self._database.run_in_transaction(txn) == 1
+        return run_in_transaction_with_retry(self._database, txn) == 1
 
     def mark(
         self,
@@ -300,54 +351,158 @@ class SpannerSettleOutbox:
         still incrementing attempts for the audit trail. Dead FREEZES the hold
         (GUARD_STATUSES) until a human sets `release_approved`. Returns the new
         status, or None if the row was not claimable by this owner (lost lease /
-        already resolved). Only 'pending' rows are marked."""
+        already resolved). A worker that lost its lease cannot resolve the row;
+        the winner (or next claimant) re-runs the idempotent apply to re-derive
+        the outcome. Only 'pending' rows are marked."""
         now = _iso_now()
 
         def txn(transaction: Any) -> str | None:
-            rows = list(transaction.execute_sql(
-                "SELECT attempts, lease_owner FROM tr_settle_outbox "
-                "WHERE authorization_id=@aid AND intent_kind=@kind AND status='pending'",
-                params={"aid": authorization_id, "kind": intent_kind},
-                param_types={"aid": self._pt.STRING, "kind": self._pt.STRING},
-            ))
+            rows = list(
+                transaction.execute_sql(
+                    "SELECT attempts, lease_owner, reservation_id FROM tr_settle_outbox "
+                    "WHERE authorization_id=@aid AND intent_kind=@kind AND status='pending'",
+                    params={"aid": authorization_id, "kind": intent_kind},
+                    param_types={"aid": self._pt.STRING, "kind": self._pt.STRING},
+                )
+            )
             if not rows:
                 return None
-            attempts, cur_owner = int(rows[0][0] or 0), rows[0][1]
-            if lease_owner is not None and cur_owner not in (None, lease_owner):
-                return None  # lost the lease to another worker
+            attempts, cur_owner, reservation_id = (
+                int(rows[0][0] or 0),
+                rows[0][1],
+                rows[0][2],
+            )
+            # Issue #355: anonymous inline callers may touch only unleased rows,
+            # while drain workers may touch only rows they still own.
+            if cur_owner != lease_owner:
+                return None
             next_attempts = attempts + 1
             if done:
-                new_status, next_at, err = "done", None, None
+                new_status, next_at, err, terminal_at = "done", None, None, now
             elif force_dead:
-                new_status, next_at, err = "dead", None, (error or "drain failed")[:1000]
+                new_status, next_at, err, terminal_at = (
+                    "dead",
+                    None,
+                    (error or "drain failed")[:1000],
+                    None,
+                )
             elif next_attempts >= max_attempts:
-                new_status, next_at, err = "dead", None, (error or "drain failed")[:1000]
+                new_status, next_at, err, terminal_at = (
+                    "dead",
+                    None,
+                    (error or "drain failed")[:1000],
+                    None,
+                )
             else:
                 new_status = "pending"
                 next_at = _iso_after_seconds(_backoff_seconds(next_attempts))
                 err = (error or "drain failed")[:1000]
+                terminal_at = None
             updated = transaction.execute_update(
                 "UPDATE tr_settle_outbox SET status=@status, attempts=@attempts, "
                 "last_error=@err, next_attempt_at=@next_at, lease_owner=NULL, "
-                "leased_until=NULL, updated_at=@now WHERE authorization_id=@aid "
+                "leased_until=NULL, updated_at=@now, terminal_at=@terminal_at, "
+                "settle_body=IF(@done, CAST(NULL AS STRING), settle_body) "
+                "WHERE authorization_id=@aid "
                 "AND intent_kind=@kind AND status='pending' "
-                "AND (lease_owner IS NULL OR lease_owner=@lease_owner)",
+                "AND ((@lease_owner IS NULL AND lease_owner IS NULL) OR "
+                "(@lease_owner IS NOT NULL AND lease_owner=@lease_owner))",
                 params={
-                    "status": new_status, "attempts": next_attempts, "err": err,
-                    "next_at": next_at, "now": now,
-                    "aid": authorization_id, "kind": intent_kind,
+                    "status": new_status,
+                    "attempts": next_attempts,
+                    "err": err,
+                    "next_at": next_at,
+                    "now": now,
+                    "terminal_at": terminal_at,
+                    "done": done,
+                    "aid": authorization_id,
+                    "kind": intent_kind,
                     "lease_owner": lease_owner,
                 },
                 param_types={
-                    "status": self._pt.STRING, "attempts": self._pt.INT64,
-                    "err": self._pt.STRING, "next_at": self._pt.TIMESTAMP,
-                    "now": self._pt.TIMESTAMP, "aid": self._pt.STRING,
-                    "kind": self._pt.STRING, "lease_owner": self._pt.STRING,
+                    "status": self._pt.STRING,
+                    "attempts": self._pt.INT64,
+                    "err": self._pt.STRING,
+                    "next_at": self._pt.TIMESTAMP,
+                    "now": self._pt.TIMESTAMP,
+                    "aid": self._pt.STRING,
+                    "kind": self._pt.STRING,
+                    "lease_owner": self._pt.STRING,
+                    "terminal_at": self._pt.TIMESTAMP,
+                    "done": self._pt.BOOL,
                 },
             )
-            return new_status if updated == 1 else None
+            if updated != 1:
+                return None
+            if done:
+                sibling_rows = list(
+                    transaction.execute_sql(
+                        _SIBLING_GUARD_COUNT_SQL,
+                        params={"aid": authorization_id, "kind": intent_kind},
+                        param_types={
+                            "aid": self._pt.STRING,
+                            "kind": self._pt.STRING,
+                        },
+                    )
+                )
+                outstanding_siblings = int(sibling_rows[0][0]) if sibling_rows else 0
+                # The PK is (authorization_id, intent_kind): settle and refund
+                # coexist by design, so shared records must outlive the last
+                # pending/dead intent, not merely the first one to finish.
+                if outstanding_siblings == 0:
+                    complete_gateway_authorization_retention(
+                        transaction,
+                        self._pt,
+                        authorization_id,
+                        terminal_at=now,
+                        outbox_available=True,
+                    )
+                    if reservation_id:
+                        complete_reservation_retention(
+                            transaction,
+                            self._pt,
+                            str(reservation_id),
+                            terminal_at=now,
+                            outbox_available=True,
+                        )
+                else:
+                    # Skipping the arm is not enough: a winning claim (or a
+                    # rolling legacy finalize) may have ALREADY armed terminal_at
+                    # after this row was enqueued, so the shared records would
+                    # stay TTL-eligible while the sibling intent is outstanding.
+                    self._defer_retention(transaction, authorization_id, reservation_id)
+            else:
+                # Non-terminal outcome (backoff to pending, or dead awaiting a
+                # human): repair work is still outstanding, so the referenced
+                # records must stay TTL-ineligible. This also disarms retention
+                # that a WINNING claim armed earlier — settle_atomic sets
+                # terminal_at on the reservation at claim time, so a row that
+                # later goes dead would otherwise keep a 30-day fuse on the very
+                # records its freeze exists to preserve.
+                self._defer_retention(transaction, authorization_id, reservation_id)
+            return new_status
 
-        return self._database.run_in_transaction(txn)
+        return run_in_transaction_with_retry(self._database, txn)
+
+    def _defer_retention(
+        self,
+        transaction: Any,
+        authorization_id: str,
+        reservation_id: Any,
+    ) -> None:
+        """Keep both referenced records TTL-ineligible.
+
+        THE INVARIANT: an outstanding (pending/dead) outbox intent always implies
+        its reservation and gateway authorization are ineligible for the 30-day
+        row-deletion policy — otherwise the frozen row outlives the very evidence
+        its freeze exists to preserve. The three retention-arming DML sites now
+        enforce that invariant structurally; these clears remain belt-and-braces
+        defense-in-depth for already-armed state and every path that leaves or
+        keeps an intent outstanding.
+        """
+        clear_gateway_authorization_retention(transaction, self._pt, authorization_id)
+        if reservation_id:
+            clear_reservation_retention(transaction, self._pt, str(reservation_id))
 
     def park(
         self,
@@ -363,16 +518,21 @@ class SpannerSettleOutbox:
         next_at = _iso_after_seconds(retry_after_seconds)
 
         def txn(transaction: Any) -> bool:
-            rows = list(transaction.execute_sql(
-                "SELECT attempts, lease_owner FROM tr_settle_outbox "
-                "WHERE authorization_id=@aid AND intent_kind=@kind AND status='pending'",
-                params={"aid": authorization_id, "kind": intent_kind},
-                param_types={"aid": self._pt.STRING, "kind": self._pt.STRING},
-            ))
+            rows = list(
+                transaction.execute_sql(
+                    "SELECT attempts, lease_owner, reservation_id FROM tr_settle_outbox "
+                    "WHERE authorization_id=@aid AND intent_kind=@kind AND status='pending'",
+                    params={"aid": authorization_id, "kind": intent_kind},
+                    param_types={"aid": self._pt.STRING, "kind": self._pt.STRING},
+                )
+            )
             if not rows:
                 return False
             attempts, cur_owner = int(rows[0][0] or 0), rows[0][1]
-            if lease_owner is not None and cur_owner not in (None, lease_owner):
+            parked_reservation_id = rows[0][2]
+            # Issue #355: anonymous callers may park only unleased rows, while
+            # drain workers must still own the lease they are fencing with.
+            if cur_owner != lease_owner:
                 return False
             # §6: park != failure. A whole typed-backend outage must not walk
             # frozen rows toward dead; attempts stays unchanged and only the
@@ -382,23 +542,36 @@ class SpannerSettleOutbox:
                 "next_attempt_at=@next_at, lease_owner=NULL, leased_until=NULL, "
                 "updated_at=@now WHERE authorization_id=@aid AND intent_kind=@kind "
                 "AND status='pending' AND attempts=@attempts "
-                "AND (lease_owner IS NULL OR lease_owner=@lease_owner)",
+                "AND ((@lease_owner IS NULL AND lease_owner IS NULL) OR "
+                "(@lease_owner IS NOT NULL AND lease_owner=@lease_owner))",
                 params={
-                    "attempts": attempts, "err": note[:1000],
-                    "next_at": next_at, "now": now,
-                    "aid": authorization_id, "kind": intent_kind,
+                    "attempts": attempts,
+                    "err": note[:1000],
+                    "next_at": next_at,
+                    "now": now,
+                    "aid": authorization_id,
+                    "kind": intent_kind,
                     "lease_owner": lease_owner,
                 },
                 param_types={
-                    "attempts": self._pt.INT64, "err": self._pt.STRING,
-                    "next_at": self._pt.TIMESTAMP, "now": self._pt.TIMESTAMP,
-                    "aid": self._pt.STRING, "kind": self._pt.STRING,
+                    "attempts": self._pt.INT64,
+                    "err": self._pt.STRING,
+                    "next_at": self._pt.TIMESTAMP,
+                    "now": self._pt.TIMESTAMP,
+                    "aid": self._pt.STRING,
+                    "kind": self._pt.STRING,
                     "lease_owner": self._pt.STRING,
                 },
             )
-            return updated == 1
+            if updated != 1:
+                return False
+            # A parked row is still an outstanding intent, and park() is reached
+            # AFTER a winning claim may have armed retention (e.g. the settle
+            # committed but its activity index has not), so disarm here too.
+            self._defer_retention(transaction, authorization_id, parked_reservation_id)
+            return True
 
-        return bool(self._database.run_in_transaction(txn))
+        return bool(run_in_transaction_with_retry(self._database, txn))
 
     # ── reaper guard predicate ───────────────────────────────────────────────
     def has_intent(self, authorization_id: str) -> bool:
@@ -407,39 +580,36 @@ class SpannerSettleOutbox:
         reservation. Read on a snapshot for the advisory pre-scan; the reaper
         also re-checks in-transaction (Increment 2) for the real interlock."""
         with self._database.snapshot() as snapshot:
-            rows = list(snapshot.execute_sql(
-                GUARD_COUNT_SQL,
-                params={"aid": authorization_id},
-                param_types={"aid": self._pt.STRING},
-            ))
+            rows = list(
+                snapshot.execute_sql(
+                    GUARD_COUNT_SQL,
+                    params={"aid": authorization_id},
+                    param_types={"aid": self._pt.STRING},
+                )
+            )
         return bool(rows) and int(rows[0][0]) > 0
 
     def get(self, authorization_id: str, intent_kind: str) -> SettleOutboxRow | None:
         with self._database.snapshot() as snapshot:
-            rows = list(snapshot.execute_sql(
-                f"SELECT {', '.join(OUTBOX_COLUMNS)} FROM tr_settle_outbox "  # noqa: S608 - fixed column list
-                "WHERE authorization_id=@aid AND intent_kind=@kind",
-                params={"aid": authorization_id, "kind": intent_kind},
-                param_types={"aid": self._pt.STRING, "kind": self._pt.STRING},
-            ))
+            rows = list(
+                snapshot.execute_sql(
+                    f"SELECT {', '.join(OUTBOX_COLUMNS)} FROM tr_settle_outbox "  # noqa: S608 - fixed column list
+                    "WHERE authorization_id=@aid AND intent_kind=@kind",
+                    params={"aid": authorization_id, "kind": intent_kind},
+                    param_types={"aid": self._pt.STRING, "kind": self._pt.STRING},
+                )
+            )
         return _row_from_tuple(rows[0]) if rows else None
 
     def purge_done(self, *, older_than_days: int = 30) -> int:
-        cutoff = (
-            datetime.now(UTC).replace(microsecond=0) - timedelta(days=int(older_than_days))
-        ).isoformat().replace("+00:00", "Z")
+        """Compatibility no-op; Spanner TTL owns bounded terminal cleanup.
 
-        def txn(transaction: Any) -> int:
-            # Done is the only safe-to-delete status: pending/dead/release_approved
-            # guard or document holds, and release_approved cleanup stays manual.
-            return transaction.execute_update(
-                "DELETE FROM tr_settle_outbox WHERE status='done' "
-                "AND updated_at < @cutoff",
-                params={"cutoff": cutoff},
-                param_types={"cutoff": self._pt.TIMESTAMP},
-            )
-
-        return int(self._database.run_in_transaction(txn))
+        Existing production rows intentionally retain ``terminal_at=NULL`` and
+        are not deleted by this rollout. The argument remains to avoid breaking
+        older drain callers during the rolling deployment.
+        """
+        _ = older_than_days
+        return 0
 
 
 def _is_already_exists(exc: Exception) -> bool:

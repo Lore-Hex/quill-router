@@ -127,6 +127,22 @@ def test_fetch_case_variant_native_ids_map_to_one_model(monkeypatch) -> None:  #
     assert list(result.prices) == ["minimax/minimax-m3"]
 
 
+def test_fetch_skips_mistral_priced_on_page_but_missing_from_live_api(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    html = _page(_row("Mistral Small 3.2 24B", "0.09", "0.30", "0.05"))
+    _fake_clients(monkeypatch, html, {"data": []})
+
+    result = parasail.fetch()
+
+    assert "mistralai/mistral-small-3.2-24b-instruct" not in result.prices
+    assert any(
+        "mistralai/mistral-small-3.2-24b-instruct" in note
+        and "/v1/models doesn't list it" in note
+        for note in result.notes
+    )
+
+
 def test_write_provider_manifest_appends_new_models(tmp_path, monkeypatch) -> None:  # noqa: ANN001
     manifest = {
         "_about": "old",

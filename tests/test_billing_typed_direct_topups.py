@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.fakes.spanner import make_fake_store
-from trusted_router.storage import CreditAccount, InMemoryStore
+from trusted_router.storage import STORE, CreditAccount, InMemoryStore
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 
 
@@ -34,6 +35,14 @@ def _typed_credit(db, workspace_id: str) -> dict:
     return db.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)]
 
 
+def _typed_credit_total(db, workspace_id: str) -> int:
+    return sum(
+        int(row["total_credits"])
+        for (candidate, _shard), row in db.typed[CREDIT_BALANCE_TABLE].items()
+        if candidate == workspace_id
+    )
+
+
 def test_credit_workspace_typed_direct_applies_once_in_one_transaction() -> None:
     store, db, _ = make_fake_store()
     ws = "ws_b2_apply"
@@ -53,7 +62,7 @@ def test_credit_workspace_typed_direct_applies_once_in_one_transaction() -> None
     assert _typed_credit(db, ws)["total_credits"] == 1_500_000
 
 
-def test_credit_workspace_typed_direct_creates_missing_typed_row_from_json() -> None:
+def test_credit_workspace_typed_direct_refuses_missing_typed_row() -> None:
     store, db, _ = make_fake_store()
     ws = "ws_b2_missing_typed"
     store._write_entity(
@@ -63,14 +72,12 @@ def test_credit_workspace_typed_direct_creates_missing_typed_row_from_json() -> 
     )
     assert (ws, 0) not in db.typed.get(CREDIT_BALANCE_TABLE, {})
 
-    assert store.credit_workspace_typed_direct(ws, 750_000, "evt_b2_seed") is True
+    with pytest.raises(RuntimeError, match="missing authoritative tr_credit_balance"):
+        store.credit_workspace_typed_direct(ws, 750_000, "evt_b2_seed")
 
     assert _json_credit(db, ws)["total_credits_microdollars"] == 2_000_000
-    typed = _typed_credit(db, ws)
-    assert typed["total_credits"] == 2_750_000
-    assert typed["total_usage"] == 0
-    assert typed["reserved"] == 0
-    assert ("stripe_event", "evt_b2_seed") in db.rows
+    assert (ws, 0) not in db.typed.get(CREDIT_BALANCE_TABLE, {})
+    assert ("stripe_event", "evt_b2_seed") not in db.rows
 
 
 def test_credit_workspace_once_wrapper_cross_path_idempotency() -> None:
@@ -90,27 +97,24 @@ def test_credit_workspace_once_wrapper_cross_path_idempotency() -> None:
     assert _typed_credit(db, ws)["total_credits"] == 1_400_000
 
 
-def test_gcp_signup_reports_typed_trial_credit(monkeypatch) -> None:
+def test_gcp_signup_seeds_typed_starter_credit() -> None:
     store, db, _ = make_fake_store()
-    original_create_api_key = store.create_api_key
     grant_amount = 3_000_000
 
-    def create_api_key_and_grant(*args, **kwargs):
-        result = original_create_api_key(*args, **kwargs)
-        workspace_id = kwargs["workspace_id"]
-        assert store.credit_workspace_typed_direct(
-            workspace_id, grant_amount, f"trial:{workspace_id}"
-        )
-        return result
-
-    monkeypatch.setattr(store, "create_api_key", create_api_key_and_grant)
-
-    result = store.signup(email="typed-signup@example.com")
+    result = store.signup(
+        email="typed-signup@example.com",
+        trial_credit_microdollars=grant_amount,
+    )
 
     assert result is not None
     assert result.trial_credit_microdollars == grant_amount
     assert "total_credits_microdollars" not in _json_credit(db, result.workspace.id)
-    assert _typed_credit(db, result.workspace.id)["total_credits"] == grant_amount
+    assert _typed_credit_total(db, result.workspace.id) == grant_amount
+    assert store.signup(
+        email="typed-signup@example.com",
+        trial_credit_microdollars=grant_amount,
+    ) is None
+    assert _typed_credit_total(db, result.workspace.id) == grant_amount
 
 
 def test_stripe_checkout_webhook_routes_topup_through_typed_direct(
@@ -119,12 +123,19 @@ def test_stripe_checkout_webhook_routes_topup_through_typed_direct(
     monkeypatch,
 ) -> None:
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
-    calls: list[tuple[str, int, str]] = []
+    workspace = STORE.get_workspace(workspace_id)
+    assert workspace is not None
+    calls: list[tuple[str, int, str, str | None]] = []
 
     def typed_direct(
-        _store: InMemoryStore, workspace_id_arg: str, amount: int, event_id: str
+        _store: InMemoryStore,
+        workspace_id_arg: str,
+        amount: int,
+        event_id: str,
+        *,
+        lifetime_topup_user_id: str | None = None,
     ) -> bool:
-        calls.append((workspace_id_arg, amount, event_id))
+        calls.append((workspace_id_arg, amount, event_id, lifetime_topup_user_id))
         return True
 
     def old_path(_store: InMemoryStore, *_args, **_kwargs) -> bool:
@@ -143,6 +154,7 @@ def test_stripe_checkout_webhook_routes_topup_through_typed_direct(
                 "object": {
                     "mode": "payment",
                     "amount_total": 123,
+                    "payment_status": "paid",
                     "customer": "cus_test",
                     "metadata": {"workspace_id": workspace_id},
                 }
@@ -151,7 +163,9 @@ def test_stripe_checkout_webhook_routes_topup_through_typed_direct(
     )
 
     assert resp.status_code == 200, resp.text
-    assert calls == [(workspace_id, 1_230_000, "evt_checkout_typed_direct")]
+    assert calls == [
+        (workspace_id, 1_230_000, "evt_checkout_typed_direct", workspace.owner_user_id)
+    ]
 
 
 def test_stripe_auto_refill_webhook_routes_topup_through_typed_direct(
@@ -160,12 +174,19 @@ def test_stripe_auto_refill_webhook_routes_topup_through_typed_direct(
     monkeypatch,
 ) -> None:
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
-    calls: list[tuple[str, int, str]] = []
+    workspace = STORE.get_workspace(workspace_id)
+    assert workspace is not None
+    calls: list[tuple[str, int, str, str | None]] = []
 
     def typed_direct(
-        _store: InMemoryStore, workspace_id_arg: str, amount: int, event_id: str
+        _store: InMemoryStore,
+        workspace_id_arg: str,
+        amount: int,
+        event_id: str,
+        *,
+        lifetime_topup_user_id: str | None = None,
     ) -> bool:
-        calls.append((workspace_id_arg, amount, event_id))
+        calls.append((workspace_id_arg, amount, event_id, lifetime_topup_user_id))
         return True
 
     def old_path(_store: InMemoryStore, *_args, **_kwargs) -> bool:
@@ -194,4 +215,6 @@ def test_stripe_auto_refill_webhook_routes_topup_through_typed_direct(
     )
 
     assert resp.status_code == 200, resp.text
-    assert calls == [(workspace_id, 2_000_000, "evt_auto_refill_typed_direct")]
+    assert calls == [
+        (workspace_id, 2_000_000, "evt_auto_refill_typed_direct", workspace.owner_user_id)
+    ]

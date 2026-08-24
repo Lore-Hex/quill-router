@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.storage import STORE
 
 
 @pytest.fixture
@@ -45,6 +46,18 @@ def _install_upstream(
         return real_init(self, *args, **kwargs)
 
     monkeypatch.setattr(httpx.AsyncClient, "__init__", patched_init)
+
+
+def _authenticated_client(settings: Settings) -> tuple[TestClient, str]:
+    client = TestClient(create_app(settings))
+    user = STORE.ensure_user("chat-proxy@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    raw_key, _ = STORE.create_api_key(
+        workspace_id=workspace.id,
+        name="chat proxy test",
+        creator_user_id=user.id,
+    )
+    return client, raw_key
 
 
 class _AsyncStream(httpx.AsyncByteStream):
@@ -98,12 +111,12 @@ def test_chat_proxy_forwards_body_and_returns_response(
 
     _install_upstream(monkeypatch, handler)
 
-    client = TestClient(create_app(settings))
+    client, raw_key = _authenticated_client(settings)
     body = {"model": "anthropic/claude-sonnet-4.6", "messages": []}
     response = client.post(
         "/chat-proxy/v1/chat/completions",
         json=body,
-        headers={"Authorization": "Bearer sk-tr-test-fakekey"},
+        headers={"Authorization": f"Bearer {raw_key}"},
     )
 
     assert response.status_code == 200
@@ -114,7 +127,7 @@ def test_chat_proxy_forwards_body_and_returns_response(
     assert captured["url"] == "https://api.trustedrouter.com/v1/chat/completions"
     assert captured["method"] == "POST"
     # Authorization preserved verbatim
-    assert captured["authorization"] == "Bearer sk-tr-test-fakekey"
+    assert captured["authorization"] == f"Bearer {raw_key}"
     # Body forwarded byte-for-byte
     import json
 
@@ -142,12 +155,12 @@ def test_chat_proxy_forwards_streaming_sse(
 
     _install_upstream(monkeypatch, handler)
 
-    client = TestClient(create_app(settings))
+    client, raw_key = _authenticated_client(settings)
     with client.stream(
         "POST",
         "/chat-proxy/v1/chat/completions",
         json={"stream": True, "model": "x", "messages": []},
-        headers={"Authorization": "Bearer sk-tr-test"},
+        headers={"Authorization": f"Bearer {raw_key}"},
     ) as response:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
@@ -173,11 +186,11 @@ def test_chat_proxy_passes_through_non_200_status(
 
     _install_upstream(monkeypatch, handler)
 
-    client = TestClient(create_app(settings))
+    client, raw_key = _authenticated_client(settings)
     response = client.post(
         "/chat-proxy/v1/chat/completions",
         json={"model": "x", "messages": []},
-        headers={"Authorization": "Bearer sk-tr-test"},
+        headers={"Authorization": f"Bearer {raw_key}"},
     )
     assert response.status_code == 429
     assert response.headers["retry-after"] == "5"
@@ -192,11 +205,11 @@ def test_chat_proxy_returns_502_on_upstream_network_error(
 
     _install_upstream(monkeypatch, handler)
 
-    client = TestClient(create_app(settings))
+    client, raw_key = _authenticated_client(settings)
     response = client.post(
         "/chat-proxy/v1/chat/completions",
         json={"model": "x", "messages": []},
-        headers={"Authorization": "Bearer sk-tr-test"},
+        headers={"Authorization": f"Bearer {raw_key}"},
     )
     assert response.status_code == 502
     assert response.json()["error"]["type"] == "bad_gateway"
@@ -217,14 +230,51 @@ def test_chat_proxy_strips_hop_by_hop_request_headers(
 
     _install_upstream(monkeypatch, handler)
 
-    client = TestClient(create_app(settings))
+    client, raw_key = _authenticated_client(settings)
     client.post(
         "/chat-proxy/v1/chat/completions",
         json={"model": "x", "messages": []},
         headers={
-            "Authorization": "Bearer sk-tr-test",
+            "Authorization": f"Bearer {raw_key}",
             "Cookie": "tr_session=secret-session-cookie",
         },
     )
     assert "authorization" in seen_headers
     assert "cookie" not in seen_headers
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "headers"),
+    [
+        ("GET", "/chat-proxy/v1/chat/completions", {}),
+        ("POST", "/chat-proxy/v1/arbitrary/path", {}),
+        ("POST", "/chat-proxy/v1/chat/completions", {}),
+        (
+            "POST",
+            "/chat-proxy/v1/chat/completions",
+            {"Authorization": "Bearer sk-tr-invalid"},
+        ),
+    ],
+)
+def test_chat_proxy_rejects_invalid_traffic_before_network_work(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    path: str,
+    headers: dict[str, str],
+) -> None:
+    outbound_clients = 0
+    real_init = httpx.AsyncClient.__init__
+
+    def counted_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal outbound_clients
+        outbound_clients += 1
+        return real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "__init__", counted_init)
+    client = TestClient(create_app(settings))
+
+    response = client.request(method, path, headers=headers, json={})
+
+    assert response.status_code in {401, 404, 405}
+    assert outbound_clients == 0

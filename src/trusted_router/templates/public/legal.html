@@ -52,8 +52,8 @@
   </div>
   <div class="marketing-card">
     <span class="card-label">Prompt path</span>
-    <h3>Attested gateway, no content storage by default.</h3>
-    <p>The production API prompt path is designed so TLS terminates inside the attested gateway. Prompt and output content are not stored by default. Observability content export is opt-in per destination.</p>
+    <h3>Attested gateway. No prompt or output logs.</h3>
+    <p>The production API prompt path is designed so TLS terminates inside the attested gateway. {{ content_handling_claim }} A customer may explicitly send content to its own observability destination, but TrustedRouter does not retain it as a log.</p>
     <a class="btn" href="/security">Security details</a>
   </div>
   <div class="marketing-card">
@@ -85,6 +85,7 @@
   <span class="pill warn">Not yet certified</span>
   <div>
     <p>TrustedRouter does not yet have SOC 2, ISO 27001, HIPAA certification, or a third-party audit report. We plan to pursue SOC 2, HIPAA, and ISO 27001. Until then, this packet provides architecture, subprocessors, draft contractual terms, readiness documentation, and cryptographic attestation evidence.</p>
+    <p>The opt-in Batch API is not covered by the default zero-retention posture. Legal, regulated, or privileged workloads must not use Batch unless the customer has reviewed and approved its encrypted 30-day retention boundary in writing.</p>
     <p>References for counsel: <a href="https://eur-lex.europa.eu/legal-content/EN-FR/TXT/?uri=CELEX%3A32016R0679">GDPR Article 28</a>, <a href="https://www.hhs.gov/ocr/privacy/hipaa/understanding/coveredentities/contractprov.html">HHS business associate contract requirements</a>, and <a href="https://us.aicpa.org/content/dam/aicpa/interestareas/frc/assuranceadvisoryservices/downloadabledocuments/trust-services-criteria-redlined.pdf">AICPA Trust Services Criteria</a>.</p>
   </div>
 </section>

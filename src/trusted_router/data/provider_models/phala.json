@@ -1,9 +1,9 @@
 {
-  "_about": "Provider-native supplement for Phala Confidential AI routes live ahead of the shared OpenRouter snapshot. Verified against https://api.redpill.ai/v1/models with the confidential tier key on 2026-06-22. The enclave maps z-ai/glm-5.2 to phala/glm-5.2 for the TEE tier.",
+  "_about": "Provider-native supplement for Phala routes live ahead of the shared snapshot. phala/* upstream IDs select the Confidential AI tier. Kimi K3 currently uses the separately classified upstream-author pass-through route and must not inherit the confidential or ZDR posture of phala/* routes.",
   "provider": "phala",
   "source": "https://api.redpill.ai/v1/models",
-  "generated_at": "2026-06-22T00:00:00Z",
-  "model_count": 1,
+  "generated_at": "2026-07-30T00:02:56Z",
+  "model_count": 2,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -16,11 +16,73 @@
       "output_token_price_per_m": 4400000,
       "cached_input_token_price_per_m": 700000,
       "model_type": "chat",
-      "features": ["reasoning", "function-calling", "structured-outputs", "confidential-compute"],
-      "input_modalities": ["text"],
-      "output_modalities": ["text"],
-      "endpoints": ["chat/completions"],
-      "status": 1
+      "features": [
+        "reasoning",
+        "function-calling",
+        "structured-outputs",
+        "confidential-compute"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "missing_since": "2026-07-30"
+    },
+    {
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "moonshotai/kimi-k3",
+      "display_name": "MoonshotAI: Kimi K3",
+      "title": "moonshotai/kimi-k3",
+      "context_length": 1048576,
+      "max_output_tokens": 65535,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 1500000,
+      "model_type": "chat",
+      "features": [
+        "reasoning",
+        "function-calling",
+        "structured-outputs",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "supported_features": [
+        "json_mode",
+        "logprobs",
+        "reasoning",
+        "structured_outputs",
+        "tools"
+      ],
+      "supported_sampling_parameters": [
+        "frequency_penalty",
+        "logit_bias",
+        "max_tokens",
+        "min_p",
+        "presence_penalty",
+        "repetition_penalty",
+        "seed",
+        "stop",
+        "temperature",
+        "top_k",
+        "top_p"
+      ]
     }
-  ]
+  ],
+  "price_scale": "microdollars_per_million"
 }

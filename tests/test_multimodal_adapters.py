@@ -339,6 +339,10 @@ def test_gemini_payload_disables_thinking_for_flash_text_models() -> None:
         "model": "google/gemini-3-flash-preview",
         "messages": [{"role": "user", "content": "x"}],
     })
+    gemini_36 = gemini_payload({
+        "model": "google/gemini-3.6-flash",
+        "messages": [{"role": "user", "content": "x"}],
+    })
     image_model = gemini_payload({
         "model": "google/gemini-3.1-flash-image",
         "messages": [{"role": "user", "content": "x"}],
@@ -346,6 +350,7 @@ def test_gemini_payload_disables_thinking_for_flash_text_models() -> None:
 
     assert gemini_25["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 0}
     assert gemini_3["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "minimal"}
+    assert gemini_36["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "minimal"}
     assert "generationConfig" not in image_model
 
 

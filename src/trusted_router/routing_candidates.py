@@ -15,6 +15,7 @@ from trusted_router.catalog_data import (
     ADVISOR_CATALOG_MODEL_ORDERS,
     AUTO_MODEL_ID,
     CHEAP_MODEL_ID,
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
     DEFAULT_AUTO_MODEL_ORDER,
     E2E_MODEL_ID,
     EU_FOCUSED_PROVIDER_ORDER,
@@ -25,6 +26,7 @@ from trusted_router.catalog_data import (
     FUSION_MODEL_ID,
     IRIS_1_0_MODEL_ID,
     IRIS_2_0_MODEL_ID,
+    IRIS_3_0_MODEL_ID,
     IRIS_CODE_1_0_MODEL_ID,
     IRIS_CODE_MODEL_ID,
     IRIS_MODEL_ID,
@@ -38,12 +40,14 @@ from trusted_router.catalog_data import (
     MONITOR_MODEL_ID,
     OPEN_PATCHER_S1_MODEL_ID,
     OPEN_PATCHER_S2_MODEL_ID,
+    OPEN_PATCHER_S3_MODEL_ID,
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_STANDARD,
     PRIVACY_TIER_ZERO_RETENTION,
     PROMETHEUS_1_0_1M_MODEL_ID,
     PROMETHEUS_1_0_MODEL_ID,
     PROMETHEUS_2_0_MODEL_ID,
+    PROMETHEUS_3_0_MODEL_ID,
     PROMETHEUS_CODE_1_0_MODEL_ID,
     PROMETHEUS_CODE_MODEL_ID,
     PROMETHEUS_MODEL_ID,
@@ -53,21 +57,27 @@ from trusted_router.catalog_data import (
     SELECTOR_MODEL_ID,
     SOCRATES_CATALOG_MODEL_ORDER,
     SUBAGENT_MODEL_ID,
-    SYNTH_BUDGET_MODEL_ORDER,
+    SYNTH_CODE_BUDGET_1_MODEL_ORDER,
     SYNTH_CODE_BUDGET_MODEL_ORDER,
     SYNTH_CODE_FRONTIER_MODEL_ORDER,
     SYNTH_CODE_MODEL_ID,
+    SYNTH_CODE_QUALITY_1_MODEL_ORDER,
     SYNTH_CODE_QUALITY_MODEL_ORDER,
+    SYNTH_FRONTIER_1_MODEL_ORDER,
     SYNTH_FRONTIER_MINI_MODEL_ORDER,
     SYNTH_FRONTIER_MODEL_ORDER,
+    SYNTH_IRIS_1_MODEL_ORDER,
     SYNTH_IRIS_2_MODEL_ORDER,
+    SYNTH_IRIS_3_MODEL_ORDER,
     SYNTH_MODEL_ID,
+    SYNTH_PROMETHEUS_1_MODEL_ORDER,
     SYNTH_PROMETHEUS_2_MODEL_ORDER,
+    SYNTH_PROMETHEUS_3_MODEL_ORDER,
     SYNTH_QUALITY_1M_MODEL_ORDER,
-    SYNTH_QUALITY_MODEL_ORDER,
     ZDR_MODEL_ID,
     ZEUS_1_0_MINI_MODEL_ID,
     ZEUS_1_0_MODEL_ID,
+    ZEUS_2_0_MODEL_ID,
     ZEUS_CODE_1_0_MODEL_ID,
     ZEUS_CODE_MODEL_ID,
     ZEUS_MODEL_ID,
@@ -136,19 +146,22 @@ def cheap_candidate_models(limit: int = 8) -> list[Model]:
     return sorted(by_provider.values(), key=_price_sort_key)[:limit]
 
 
+FAST_MODEL_ORDER = (
+    "cerebras/gpt-oss-120b",
+    "xiaomi/mimo-v2.5-pro-ultraspeed",
+    "cerebras/zai-glm-4.7",
+)
+
+
 def fast_candidate_models(limit: int = 8) -> list[Model]:
     # Low-latency pool: Cerebras first, then Xiaomi MiMo's UltraSpeed tier.
     # Keep this as a small explicit pool so callers who choose
     # `trustedrouter/fast` do not accidentally get a cheap-but-slower model
-    # just because it has a lower token price.
-    preferred_ids = [
-        "cerebras/gpt-oss-120b",
-        "xiaomi/mimo-v2.5-pro-ultraspeed",
-        "cerebras/zai-glm-4.7",
-    ]
+    # just because it has a lower token price. Delisted provider-native aliases
+    # disappear from MODELS and are pruned here without blocking catalog refresh.
     candidates: list[Model] = []
     seen: set[str] = set()
-    for model_id in preferred_ids:
+    for model_id in FAST_MODEL_ORDER:
         model = MODELS.get(model_id)
         if model is not None and _is_regular_chat_model(model):
             candidates.append(model)
@@ -220,6 +233,8 @@ def _privacy_candidate_models(
     eligible: list[tuple[int, int, int, str, Model]] = []
     per_provider: dict[str, list[tuple[int, int, Model]]] = {}
     for endpoint in MODEL_ENDPOINTS.values():
+        if not endpoint.catalog_is_current():
+            continue
         provider = PROVIDERS.get(endpoint.provider)
         model = MODELS.get(endpoint.model_id)
         if (
@@ -281,7 +296,15 @@ def eu_candidate_models(limit: int = 12) -> list[Model]:
 def zdr_candidate_models(limit: int = 12) -> list[Model]:
     return _privacy_candidate_models(
         min_tier=PRIVACY_TIER_ZERO_RETENTION,
-        preferred_providers=("anthropic", "openai", "gemini", "tinfoil", "venice", "phala"),
+        preferred_providers=(
+            "anthropic",
+            "openai",
+            "google-vertex",
+            "google-ai-studio",
+            "tinfoil",
+            "venice",
+            "phala",
+        ),
         limit=limit,
     )
 
@@ -289,7 +312,7 @@ def zdr_candidate_models(limit: int = 12) -> list[Model]:
 def e2e_candidate_models(limit: int = 12) -> list[Model]:
     return _privacy_candidate_models(
         min_tier=PRIVACY_TIER_CONFIDENTIAL,
-        preferred_providers=("tinfoil", "venice", "phala", "gmi"),
+        preferred_providers=("tinfoil", "phala"),
         limit=limit,
     )
 
@@ -332,16 +355,22 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return _models_for_ids(advisor_order)
     if model_id == PROMETHEUS_1_0_1M_MODEL_ID:
         return _models_for_ids(SYNTH_QUALITY_1M_MODEL_ORDER)
-    if model_id in (PROMETHEUS_MODEL_ID, PROMETHEUS_2_0_MODEL_ID):
+    if model_id in (PROMETHEUS_MODEL_ID, PROMETHEUS_3_0_MODEL_ID):
+        return _models_for_ids(SYNTH_PROMETHEUS_3_MODEL_ORDER)
+    if model_id == PROMETHEUS_2_0_MODEL_ID:
         return _models_for_ids(SYNTH_PROMETHEUS_2_MODEL_ORDER)
     if model_id == PROMETHEUS_1_0_MODEL_ID:
-        return _models_for_ids(SYNTH_QUALITY_MODEL_ORDER)
-    if model_id in (IRIS_MODEL_ID, IRIS_2_0_MODEL_ID):
+        return _models_for_ids(SYNTH_PROMETHEUS_1_MODEL_ORDER)
+    if model_id in (IRIS_MODEL_ID, IRIS_3_0_MODEL_ID):
+        return _models_for_ids(SYNTH_IRIS_3_MODEL_ORDER)
+    if model_id == IRIS_2_0_MODEL_ID:
         return _models_for_ids(SYNTH_IRIS_2_MODEL_ORDER)
     if model_id == IRIS_1_0_MODEL_ID:
-        return _models_for_ids(SYNTH_BUDGET_MODEL_ORDER)
-    if model_id in (ZEUS_MODEL_ID, ZEUS_1_0_MODEL_ID):
+        return _models_for_ids(SYNTH_IRIS_1_MODEL_ORDER)
+    if model_id in (ZEUS_MODEL_ID, ZEUS_2_0_MODEL_ID):
         return _models_for_ids(SYNTH_FRONTIER_MODEL_ORDER)
+    if model_id == ZEUS_1_0_MODEL_ID:
+        return _models_for_ids(SYNTH_FRONTIER_1_MODEL_ORDER)
     if model_id == LIBERTY_1_0_MODEL_ID:
         return _models_for_ids(LIBERTY_1_0_MODEL_ORDER)
     if model_id == LIBERTY_1_0_1M_MODEL_ID:
@@ -357,13 +386,16 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         )
     if model_id == OPEN_PATCHER_S2_MODEL_ID:
         return _models_for_ids(("moonshotai/kimi-k3", "z-ai/glm-5.2"))
-    if model_id in (
-        PROMETHEUS_CODE_MODEL_ID,
-        PROMETHEUS_CODE_1_0_MODEL_ID,
-    ):
+    if model_id == OPEN_PATCHER_S3_MODEL_ID:
+        return _models_for_ids(("z-ai/glm-5.2", DEEPSEEK_V4_PRO_0813_MODEL_ID))
+    if model_id == PROMETHEUS_CODE_MODEL_ID:
         return _models_for_ids(SYNTH_CODE_QUALITY_MODEL_ORDER)
-    if model_id in (IRIS_CODE_MODEL_ID, IRIS_CODE_1_0_MODEL_ID):
+    if model_id == PROMETHEUS_CODE_1_0_MODEL_ID:
+        return _models_for_ids(SYNTH_CODE_QUALITY_1_MODEL_ORDER)
+    if model_id == IRIS_CODE_MODEL_ID:
         return _models_for_ids(SYNTH_CODE_BUDGET_MODEL_ORDER)
+    if model_id == IRIS_CODE_1_0_MODEL_ID:
+        return _models_for_ids(SYNTH_CODE_BUDGET_1_MODEL_ORDER)
     if model_id in (ZEUS_CODE_MODEL_ID, ZEUS_CODE_1_0_MODEL_ID):
         return _models_for_ids(SYNTH_CODE_FRONTIER_MODEL_ORDER)
     if model_id == SELECTOR_MODEL_ID:
@@ -397,16 +429,19 @@ def _meta_route_kind(model_id: str) -> str:
         SYNTH_MODEL_ID,
         IRIS_MODEL_ID,
         IRIS_2_0_MODEL_ID,
+        IRIS_3_0_MODEL_ID,
         PROMETHEUS_MODEL_ID,
         ZEUS_MODEL_ID,
         IRIS_1_0_MODEL_ID,
         PROMETHEUS_1_0_MODEL_ID,
         PROMETHEUS_1_0_1M_MODEL_ID,
         PROMETHEUS_2_0_MODEL_ID,
+        PROMETHEUS_3_0_MODEL_ID,
         LIBERTY_1_0_MODEL_ID,
         LIBERTY_1_0_1M_MODEL_ID,
         ZEUS_1_0_MODEL_ID,
         ZEUS_1_0_MINI_MODEL_ID,
+        ZEUS_2_0_MODEL_ID,
         SYNTH_CODE_MODEL_ID,
         IRIS_CODE_MODEL_ID,
         PROMETHEUS_CODE_MODEL_ID,
@@ -416,6 +451,7 @@ def _meta_route_kind(model_id: str) -> str:
         ZEUS_CODE_1_0_MODEL_ID,
         OPEN_PATCHER_S1_MODEL_ID,
         OPEN_PATCHER_S2_MODEL_ID,
+        OPEN_PATCHER_S3_MODEL_ID,
         FUSION_MODEL_ID,
         FUSION_CODE_MODEL_ID,
     ):

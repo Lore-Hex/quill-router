@@ -4,7 +4,11 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.routes.public import _status_page_html
+from trusted_router.routes.public import (
+    LEADERBOARD_RECENT_WINDOW_MINUTES,
+    LEADERBOARD_SAMPLE_LIMIT,
+    _status_page_html,
+)
 from trusted_router.storage import STORE, ProviderBenchmarkSample
 
 
@@ -24,10 +28,10 @@ def _settings() -> Settings:
 
 
 def _seed(provider: str, model: str, ttft: int, ttfb: int) -> None:
-    for _ in range(3):
+    for index in range(3):
         STORE.record_provider_benchmark(
             ProviderBenchmarkSample(
-                id=f"bench-page-{provider}-{model}-{ttft}",
+                id=f"bench-page-{provider}-{model}-{ttft}-{index}",
                 model=model,
                 provider=provider,
                 provider_name=provider.title(),
@@ -40,6 +44,21 @@ def _seed(provider: str, model: str, ttft: int, ttfb: int) -> None:
                 source="synthetic",
             )
         )
+    STORE.record_provider_benchmark(
+        ProviderBenchmarkSample(
+            id=f"bench-page-throughput-{provider}-{model}",
+            model=model,
+            provider=provider,
+            provider_name=provider.title(),
+            status="success",
+            usage_type="Credits",
+            streamed=True,
+            output_tokens=200,
+            elapsed_milliseconds=1000,
+            speed_tokens_per_second=9000.0,
+            source="synthetic_throughput",
+        )
+    )
 
 
 def _seed_excluded(provider: str, model: str) -> None:
@@ -68,8 +87,16 @@ def test_leaderboard_page_renders_measurements() -> None:
     assert resp.status_code == 200
     body = resp.text
     assert "Measured performance" in body  # hero eyebrow
-    assert "5,000-sample benchmark set" in body
+    assert "rolling benchmark set of up to 10,000 samples" in body
     assert "p50 TTFT" in body  # table header
+    assert "Effective throughput" in body
+    assert "200 tok/s" in body
+    assert "n=1" not in body
+    assert "Ranked by p50 time-to-first-token" in body
+    assert "Capacity accepted" in body
+    assert "Provider availability" in body
+    assert "TTFB" not in body
+    assert "time-to-first-byte" not in body.lower()
     assert "cerebras" in body  # seeded provider row
     assert "meta/llama-3.3-70b" in body  # seeded model row
 
@@ -94,6 +121,11 @@ def test_leaderboard_in_sitemap() -> None:
     assert "/leaderboard" in resp.text
 
 
+def test_leaderboard_uses_a_bounded_full_day_sample_window() -> None:
+    assert LEADERBOARD_SAMPLE_LIMIT == 10_000
+    assert LEADERBOARD_RECENT_WINDOW_MINUTES == 24 * 60
+
+
 def test_status_page_surfaces_upstream_provider_errors() -> None:
     # The rotation-probe error data feeds an informational provider-health
     # section on /status (separate from the router-core SLO). Render the page
@@ -113,7 +145,7 @@ def test_status_page_surfaces_upstream_provider_errors() -> None:
     )
     html = _status_page_html(_settings(), host="trustedrouter.com")
     assert "Upstream provider health" in html
-    assert "5,000-sample benchmark set" in html
+    assert "rolling benchmark set of up to 10,000 samples" in html
     assert "cerebras" in html
     assert "http_404" in html  # the captured error type is surfaced
 
@@ -127,3 +159,30 @@ def test_status_page_separates_config_exclusions_from_provider_errors() -> None:
     assert "Config excluded" in html
     assert "unsupported_route" in html
     assert "Unsupported route and probe-configuration rows" in html
+
+
+def test_status_page_sorts_healthiest_provider_first() -> None:
+    _seed("reliable", "reliable/model", ttft=500, ttfb=400)
+    _seed("flaky", "flaky/model", ttft=50, ttfb=40)
+    STORE.record_provider_benchmark(
+        ProviderBenchmarkSample(
+            id="bench-page-flaky-error",
+            model="flaky/model",
+            provider="flaky",
+            provider_name="Flaky",
+            status="error",
+            usage_type="Credits",
+            streamed=True,
+            error_type="ReadTimeout",
+            source="synthetic",
+        )
+    )
+
+    html = _status_page_html(_settings(), host="trustedrouter.com")
+
+    assert "Ranked by success rate, then p50 TTFT" in html
+    assert "<th>p50 TTFT</th>" in html
+    assert "500 ms" in html
+    assert html.index('href="/providers/reliable"') < html.index(
+        'href="/providers/flaky"'
+    )

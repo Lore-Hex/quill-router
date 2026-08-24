@@ -141,17 +141,24 @@ what the inline attempt already resolved:
 | `selected_endpoint_id` | STRING     | frozen (for the generation record)                 |
 | `model_id`           | STRING       | frozen                                             |
 | `selected_usage_type`| STRING       | frozen                                             |
-| `settle_body`        | STRING(MAX)  | raw `GatewaySettleRequest` JSON (audit/generation) |
+| `settle_body`        | STRING(MAX)  | allowlisted metadata needed to repair activity; never prompt/output/tool arguments |
 | `status`             | STRING       | `pending` / `done` / `dead` / `release_approved`   |
 | `attempts`           | INT64        |                                                    |
 | `next_attempt_at`    | TIMESTAMP    |                                                    |
 | `lease_owner` / `leased_until` | STRING / TIMESTAMP | drain lease                          |
 | `created_at` / `updated_at` | TIMESTAMP |                                                   |
+| `terminal_at`        | TIMESTAMP    | NULL until repair is complete; starts 30-day TTL   |
+| `queue_shard`        | INT64        | generated stable hash of the PK, range 0–15         |
 
-DDL: guarded `CREATE TABLE` **and** a `CREATE INDEX` on `(status, next_attempt_at)`
-for the due-scan (a full-table scan under a whale burst is the very load the
-feature targets) — using the same `table_exists`/`index_exists` guards the
-typed-counter migration actually uses (SF10), not a hand-wave.
+DDL: guarded `CREATE TABLE` plus a generated stored `queue_shard`, and a
+`NULL_FILTERED` due index on `(queue_shard, next_attempt_at)`. Terminal rows set
+`next_attempt_at=NULL`, so completed history is absent from the index. The shard
+must lead the monotonic timestamp: an index on `(status, next_attempt_at)` sends
+every pending insert and immediate done transition to the same moving key range
+and becomes a Spanner write hotspot. A full-table scan under a whale burst is
+also unacceptable, so the drain forces the sparse sharded index. All DDL uses
+the same `table_exists`/`column_exists`/`index_exists` guards the typed-counter
+migration actually uses (SF10).
 
 ### 5.4 Enqueue ordering
 
@@ -178,7 +185,7 @@ lease-claims due `pending` rows and for each:
   store is currently unavailable, **PARK** the row (retry later) — never reroute to
   legacy, never dead-letter.
 - Applies the **frozen `actual_cost_micro`** through a **narrow finalize primitive**
-  (counter claim + `gateway_authorization` finalize + generation write), NOT the
+  (counter claim + `gateway_authorization` finalize + activity index), NOT the
   full `_settle_gateway_authorization` HTTP handler — which would re-run pricing
   and re-fire non-idempotent side effects (budget alerts, auto-refill, metadata
   broadcast, provider-benchmark samples) on every replay (SF7).
@@ -187,9 +194,16 @@ lease-claims due `pending` rows and for each:
   row that intended a charge → **`dead` + alert** (the reaper beat us — invariant
   violation, do not report "recovered"); deterministic non-retryable errors →
   `dead` (no page); transient → backoff. After `max_attempts` → `dead` + alert.
-- Accepted SF7 loss: drained generations never reach metadata-broadcast
+- Drained generations never reach metadata-broadcast
   destinations.
-- Accepted SF7 loss: drained refunds record no provider-error benchmark sample.
+- Drained refunds record no provider-error benchmark sample.
+- A Bigtable activity failure parks the row without consuming retry attempts.
+  The generation ID and benchmark ID are deterministic, so replay is
+  idempotent. Only a confirmed activity write allows the outbox to become
+  `done`, clear `settle_body`, and set the reservation, authorization, and
+  outbox terminal retention timestamps in the same transaction. The
+  authorization keeps only its content-free replay record so a client
+  idempotency key remains valid for the full window.
 - Final `ApplyOutcome` contract for the drain:
   `settled_now` → done. `already_settled_with_charge` means done for settle
   intent; for refund intent with a charged reservation, done plus the same
@@ -227,7 +241,10 @@ lease-claims due `pending` rows and for each:
 
 ## 8. Rollout (default-off, Joseph-gated)
 
-1. Guarded additive DDL (table + `(status,next_attempt_at)` index) — safe pre-code.
+1. Guarded additive DDL (table + generated shard + sparse sharded due index) —
+   safe pre-code. Keep any legacy due index until every region has passed its
+   canary on code that forces the new index, then retire it after production
+   smoke succeeds.
 2. Merge the mechanism with `settle_outbox_enabled=False` **and the reaper guard
    active-but-inert** (an empty `tr_settle_outbox` makes `NOT EXISTS` always true,
    so the reaper is byte-identical to today). Dead code otherwise.
@@ -266,6 +283,29 @@ rate.
 - **Integration:** authorize → inline settle fails → reaper suppressed by the
   pending row → drain recovers the frozen charge → balance reflects real cost, not
   a free release; and the lost-to-reaper path alerts rather than silently "done".
+- **Index regression:** generated shards are non-null and bounded; done rows
+  clear `next_attempt_at`; due reads force the sparse sharded index; deployment
+  refuses to retire the legacy index before the generated column and replacement
+  index are fully readable.
+
+## 10.1 2026-07-30 production hotspot correction
+
+The first production schema used `(status, next_attempt_at)`. Synthetic monitor
+bursts exposed repeated settlement aborts, 10–16 second successful settle
+requests, and lock waits concentrated on the pending timestamp edge. At the
+time, 569,350 completed rows also remained in the non-null-filtered index.
+
+The correction is rolling-safe:
+
+1. Spanner generates `queue_shard` from immutable primary-key columns, so old
+   revisions need no write-path change.
+2. `tr_settle_outbox_due_v2` is null-filtered and begins with `queue_shard`.
+3. New code forces v2 for due scans.
+4. Regional canaries and production smoke run while both indexes exist.
+5. A guarded post-rollout script verifies v2 and drops the legacy index.
+
+Do not respond to this alert pattern by weakening billing latency thresholds or
+reducing synthetic coverage. The monitor exposed a real hot-path scaling defect.
 
 ## Appendix — review provenance
 
@@ -290,9 +330,9 @@ Read this first if you are continuing the outbox build.
 - **Increment 1 — native-table storage (dormant)** = PR #113 (branch
   `settle-outbox-storage`), codex **PASS** after 3 rounds, full suite 1216 green.
   Adds:
-  - `tr_settle_outbox` DDL (PK `(authorization_id, intent_kind)` + `(status,
-    next_attempt_at)` index) in `scripts/deploy/migrate_typed_counters.sh`
-    (idempotent/guarded; NOT auto-applied — an operator runs it).
+  - Historical v1 `tr_settle_outbox` DDL (PK `(authorization_id, intent_kind)` +
+    `(status, next_attempt_at)` index), superseded by the sharded sparse index in
+    §10.1.
   - `settle_outbox_enabled: bool = False` in `config.py`.
   - `SettleOutboxRow` in `storage_models.py` (frozen inputs: `actual_cost_micro`,
     `settle_origin`, `reservation_id`, `selected_endpoint_id`, `model_id`,

@@ -2,9 +2,9 @@
   "_about": "Provider-native supplement for Crusoe Managed Inference routes. Generated from https://api.inference.crusoecloud.com/v1/models; prices are provider cost in integer microdollars per million tokens and catalog applies markup.",
   "provider": "crusoe",
   "source": "https://api.inference.crusoecloud.com/v1/models",
-  "generated_at": "2026-06-27T01:44:37Z",
+  "generated_at": "2026-08-16T07:33:08Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 15,
+  "model_count": 16,
   "models": [
     {
       "id": "deepseek/deepseek-v3-0324",
@@ -51,7 +51,8 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "status": 1
     },
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -79,6 +80,7 @@
         "logprobs",
         "max_completion_tokens",
         "max_tokens",
+        "metadata",
         "min_p",
         "parallel_tool_calls",
         "presence_penalty",
@@ -98,14 +100,16 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "status": 1,
+      "routable": true
     },
     {
       "id": "deepseek/deepseek-v4-pro",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Pro",
       "display_name": "deepseek-ai/DeepSeek-V4-Pro",
       "title": "deepseek-ai/DeepSeek-V4-Pro",
-      "context_length": 1048576,
+      "context_length": 131072,
       "model_type": "chat",
       "endpoints": [
         "chat/completions"
@@ -145,7 +149,8 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "status": 1
     },
     {
       "id": "google/gemma-4-31b-it",
@@ -161,8 +166,7 @@
       "output_token_price_per_m": 400000,
       "cached_input_token_price_per_m": 140000,
       "input_modalities": [
-        "text",
-        "image"
+        "text"
       ],
       "output_modalities": [
         "text"
@@ -193,7 +197,8 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "status": 1
     },
     {
       "id": "meta-llama/llama-3.3-70b-instruct",
@@ -240,7 +245,8 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "status": 1
     },
     {
       "id": "moonshotai/kimi-k2.6",
@@ -256,8 +262,7 @@
       "output_token_price_per_m": 3500000,
       "cached_input_token_price_per_m": 350000,
       "input_modalities": [
-        "text",
-        "image"
+        "text"
       ],
       "output_modalities": [
         "text"
@@ -288,7 +293,8 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "status": 1
     },
     {
       "id": "nvidia/nemotron-3-nano-30b-a3b",
@@ -335,7 +341,8 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "status": 1
     },
     {
       "id": "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b",
@@ -351,8 +358,7 @@
       "output_token_price_per_m": 1830000,
       "cached_input_token_price_per_m": 300000,
       "input_modalities": [
-        "text",
-        "image"
+        "text"
       ],
       "output_modalities": [
         "text"
@@ -383,7 +389,8 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "status": 1
     },
     {
       "id": "nvidia/nemotron-3-super-120b-a12b",
@@ -430,7 +437,8 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "status": 1
     },
     {
       "id": "nvidia/nemotron-3-ultra-550b",
@@ -478,7 +486,11 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "status": 1,
+      "missing_since": "2026-07-28",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "openai/gpt-oss-120b",
@@ -525,7 +537,8 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "status": 1
     },
     {
       "id": "qwen/qwen3-235b-a22b-2507",
@@ -572,7 +585,8 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "status": 1
     },
     {
       "id": "yutori/n1.5",
@@ -588,8 +602,7 @@
       "output_token_price_per_m": 5000000,
       "cached_input_token_price_per_m": 1500000,
       "input_modalities": [
-        "text",
-        "image"
+        "text"
       ],
       "output_modalities": [
         "text"
@@ -620,7 +633,8 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "status": 1
     },
     {
       "id": "z-ai/glm-5.1",
@@ -667,14 +681,15 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "status": 1
     },
     {
       "id": "z-ai/glm-5.2",
       "upstream_id": "zai/GLM-5.2",
       "display_name": "zai/GLM-5.2",
       "title": "zai/GLM-5.2",
-      "context_length": 262144,
+      "context_length": 1048576,
       "model_type": "chat",
       "endpoints": [
         "chat/completions"
@@ -714,7 +729,61 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "status": 1
+    },
+    {
+      "display_name": "nvidia/Nemotron-3.5-Lightning-30B-A3B",
+      "title": "nvidia/Nemotron-3.5-Lightning-30B-A3B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "nvidia/nemotron-3.5-lightning-30b-a3b",
+      "upstream_id": "nvidia/Nemotron-3.5-Lightning-30B-A3B",
+      "context_length": 262144,
+      "supported_parameters": [
+        "chat_template",
+        "chat_template_kwargs",
+        "frequency_penalty",
+        "ignore_eos",
+        "include_stop_str_in_output",
+        "logit_bias",
+        "logprobs",
+        "max_completion_tokens",
+        "max_tokens",
+        "min_p",
+        "min_tokens",
+        "parallel_tool_calls",
+        "presence_penalty",
+        "prompt_cache_key",
+        "reasoning_effort",
+        "repetition_penalty",
+        "response_format",
+        "safety_identifier",
+        "seed",
+        "service_tier",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_logprobs",
+        "top_p",
+        "user",
+        "verbosity"
+      ],
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 200000,
+      "cached_input_token_price_per_m": 30000
     }
   ]
 }

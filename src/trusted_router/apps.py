@@ -7,6 +7,7 @@ entirely. We surface the app name + request/token counts only — never a
 workspace, key, or any prompt content. Built from the same recent benchmark
 sample set as the performance leaderboard (cached, no per-view live reads).
 """
+
 from __future__ import annotations
 
 from collections import defaultdict
@@ -30,7 +31,7 @@ def aggregate_apps(
     direct_tokens = 0
 
     for sample in samples:
-        if sample.source == "synthetic":
+        if sample.source != "organic":
             continue
         name = (sample.app or "").strip()
         folded = name.casefold()
@@ -53,8 +54,7 @@ def aggregate_apps(
         key=lambda name: (-requests[name], name),
     )
     apps = [
-        {"name": name, "requests": requests[name], "tokens": tokens[name]}
-        for name in ordered_names
+        {"name": name, "requests": requests[name], "tokens": tokens[name]} for name in ordered_names
     ]
 
     return {

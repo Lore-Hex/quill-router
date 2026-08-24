@@ -1,4 +1,5 @@
 {% extends "public/_base.html" %}
+{% from "public/_provider_identity.html" import provider_identity %}
 {% block body %}
 <section class="public-proof-strip">
   <div><strong>Model pages</strong><span>Every public model links to benchmarks, pricing, providers, uptime, and API quickstarts.</span></div>
@@ -32,7 +33,7 @@
         {% for model in models %}
         <tr>
           <td><a href="{{ model.detail_href }}"><code>{{ model.id }}</code></a><br>{{ model.name }}</td>
-          <td>{{ model.provider }}</td>
+        <td>{{ provider_identity(model.publisher_slug, model.provider, "/providers/" ~ model.publisher_slug) }}</td>
           <td>
             {% if model.ai_iq %}
             <a class="ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener"><strong>IQ {{ model.ai_iq.iq }}</strong><span>#{{ model.ai_iq.rank }}</span></a>
@@ -45,10 +46,9 @@
           <td>{{ model.completion_price }}</td>
           <td>
             <div class="mini-links">
-              <a href="{{ model.detail_href }}/benchmarks">benchmarks</a>
-              <a href="{{ model.detail_href }}/performance">performance</a>
-              <a href="{{ model.detail_href }}/pricing">pricing</a>
-              <a href="{{ model.detail_href }}/api">api</a>
+              {% if model.benchmarks_href %}<a href="{{ model.benchmarks_href }}">benchmarks</a>{% endif %}
+              {% if model.providers_href %}<a href="{{ model.providers_href }}">providers</a>{% endif %}
+              {% if model.pricing_href %}<a href="{{ model.pricing_href }}">pricing</a>{% endif %}
             </div>
           </td>
         </tr>
@@ -74,10 +74,18 @@
     <div class="panel-body">
       <ul class="link-list">
         {% for provider in providers %}
-        <li><a href="{{ provider.detail_href }}">{{ provider.name }}</a><span>{{ provider.privacy_tier }}</span></li>
+        <li>{{ provider_identity(provider.id, provider.name, provider.detail_href, subtitle=provider.privacy_tier) }}</li>
         {% endfor %}
       </ul>
     </div>
   </div>
 </section>
+{% if monthly_reports %}
+<section class="panel" aria-label="Monthly benchmark reports">
+  <div class="panel-head"><h2>Monthly benchmark reports</h2><a href="/benchmarks/reports">All reports</a></div>
+  <div class="panel-body"><ul class="link-list">
+    {% for report in monthly_reports %}<li><a href="/benchmarks/reports/{{ report.period }}">{{ report.period_label }}</a><span>{{ report.row_count_label }} rows · {{ report.provider_count_label }} providers · {{ report.model_count_label }} models</span></li>{% endfor %}
+  </ul></div>
+</section>
+{% endif %}
 {% endblock %}

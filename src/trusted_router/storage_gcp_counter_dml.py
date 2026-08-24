@@ -22,9 +22,39 @@ transaction (docs §5) — the authorize/settle transactions are DML-only.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from trusted_router.storage_gcp_counters import UNSHARDED
+
+# Importing GUARD_STATUSES would cycle because storage_gcp_settle_outbox imports
+# the retention helpers below. Keep this SQL list in sync with that tuple.
+_OUTBOX_GUARD_STATUS_SQL = "'pending', 'dead'"
+
+_CLAIM_RESERVATION_SQL = (
+    "UPDATE tr_reservation SET settled=true, actual_micro=@actual, "
+    "settled_usage_type=@sut, terminal_at=@terminal_at "
+    "WHERE reservation_id=@rid AND settled=false"
+)
+_CLAIM_RESERVATION_GUARDED_SQL = (
+    "UPDATE tr_reservation SET settled=true, actual_micro=@actual, "  # noqa: S608
+    "settled_usage_type=@sut, terminal_at = IF("
+    "EXISTS (SELECT 1 FROM tr_settle_outbox o "
+    "WHERE o.authorization_id = tr_reservation.authorization_id "
+    f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL})), NULL, @terminal_at) "
+    "WHERE reservation_id=@rid AND settled=false"
+)
+_COMPLETE_RESERVATION_RETENTION_SQL = (
+    "UPDATE tr_reservation SET terminal_at=@terminal_at "
+    "WHERE reservation_id=@rid AND settled=true AND terminal_at IS NULL"
+)
+_COMPLETE_RESERVATION_RETENTION_GUARDED_SQL = (
+    "UPDATE tr_reservation SET terminal_at=@terminal_at "  # noqa: S608
+    "WHERE reservation_id=@rid AND settled=true AND terminal_at IS NULL "
+    "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o "
+    "WHERE o.authorization_id = tr_reservation.authorization_id "
+    f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL}))"
+)
 
 # reserve_key outcomes (the per-key spend-cap counterpart of reserve_credit).
 KEY_ACCEPTED = "accepted"  # hold taken (row-count 1)
@@ -58,6 +88,120 @@ def reserve_credit(
     return count == 1
 
 
+def debit_workspace_credit(
+    transaction: Any,
+    param_types: Any,
+    workspace_id: str,
+    amount: int,
+    *,
+    now: Any,
+) -> bool:
+    """Atomically remove a grant from authoritative shard zero.
+
+    This is deliberately a negative grant (``total_credits`` down), never
+    booked usage. The conditional predicate keeps current usage and live holds
+    covered even under concurrent debits.
+    """
+    if amount <= 0:
+        raise ValueError("amount_must_be_positive")
+    count = transaction.execute_update(
+        "UPDATE tr_credit_balance "
+        "SET total_credits = total_credits - @amt, updated_at=@now "
+        "WHERE workspace_id=@ws AND shard=0 "
+        "AND (total_credits - total_usage - reserved) >= @amt",
+        params={"amt": int(amount), "now": now, "ws": workspace_id},
+        param_types={
+            "amt": param_types.INT64,
+            "now": param_types.TIMESTAMP,
+            "ws": param_types.STRING,
+        },
+    )
+    return count == 1
+
+
+def debit_credit_shard(
+    transaction: Any,
+    param_types: Any,
+    workspace_id: str,
+    amount: int,
+    *,
+    shard: int,
+) -> bool:
+    """Conditionally remove `amount` of idle sub-budget from ONE credit shard.
+
+    True = debited (row-count 1); False = that shard's headroom did not cover
+    it, and nothing changed.
+
+    The predicate ``(total_credits-total_usage-reserved)>=@move`` is what makes
+    this a CONDITIONAL debit rather than a blind decrement: the row write lock
+    is taken by the UPDATE itself and the predicate re-evaluates against
+    committed state, so two concurrent debits cannot both pass a check that
+    only one shard's headroom can satisfy.
+
+    It moves only headroom — never booked usage, never a live reservation — so
+    a debit can no more strand an in-flight hold than it can overdraw.
+
+    Extracted from `transfer_credit_budget`, whose donor half this is verbatim,
+    so cross-plane escrow debits the sharded balance through the SAME statement
+    the shard rebalancer has been running in production rather than a second
+    hand-written one that could drift from it.
+    """
+    if amount <= 0:
+        raise ValueError("credit shard debit amount must be positive")
+    count = transaction.execute_update(
+        "UPDATE tr_credit_balance SET total_credits=total_credits-@move "
+        "WHERE workspace_id=@ws AND shard=@donor "
+        "AND (total_credits-total_usage-reserved)>=@move",
+        params={
+            "move": int(amount),
+            "ws": workspace_id,
+            "donor": shard,
+        },
+        param_types={
+            "move": param_types.INT64,
+            "ws": param_types.STRING,
+            "donor": param_types.INT64,
+        },
+    )
+    return count == 1
+
+
+def credit_credit_shard(
+    transaction: Any,
+    param_types: Any,
+    workspace_id: str,
+    amount: int,
+    *,
+    shard: int,
+    now: Any,
+) -> int:
+    """Add `amount` to ONE credit shard. Returns the modified-row count.
+
+    Unconditional by design — a credit cannot fail a headroom test — so the
+    ONLY thing the row count reports is whether the shard row exists. Callers
+    must treat 0 as a hard error: it means the authoritative balance row is
+    missing, and silently continuing would book a credit nowhere.
+    """
+    return transaction.execute_update(
+        "UPDATE tr_credit_balance "
+        "SET total_credits = total_credits + @amount, "
+        "source_updated_at=@now, updated_at=@now "
+        "WHERE workspace_id=@ws AND shard=@shard",
+        params={
+            "amount": int(amount),
+            "now": now,
+            "ws": workspace_id,
+            "shard": shard,
+        },
+        param_types={
+            "amount": param_types.INT64,
+            "now": param_types.TIMESTAMP,
+            "ws": param_types.STRING,
+            "shard": param_types.INT64,
+        },
+    )
+
+
 def transfer_credit_budget(
     transaction: Any,
     param_types: Any,
@@ -78,22 +222,9 @@ def transfer_credit_budget(
         raise ValueError("credit budget transfer amount must be positive")
     if donor_shard == target_shard:
         raise ValueError("credit budget donor and target must differ")
-    donor_count = transaction.execute_update(
-        "UPDATE tr_credit_balance SET total_credits=total_credits-@move "
-        "WHERE workspace_id=@ws AND shard=@donor "
-        "AND (total_credits-total_usage-reserved)>=@move",
-        params={
-            "move": int(amount),
-            "ws": workspace_id,
-            "donor": donor_shard,
-        },
-        param_types={
-            "move": param_types.INT64,
-            "ws": param_types.STRING,
-            "donor": param_types.INT64,
-        },
-    )
-    if donor_count != 1:
+    if not debit_credit_shard(
+        transaction, param_types, workspace_id, amount, shard=donor_shard
+    ):
         return False
     target_count = transaction.execute_update(
         "UPDATE tr_credit_balance SET total_credits=total_credits+@move "
@@ -309,6 +440,7 @@ RESERVATION_COLUMNS = (
     "reservation_id", "workspace_id", "key_hash", "ws_shard", "credit_shard", "key_shard",
     "credit_reserved_micro", "key_reserved_micro", "hold_usage_type",
     "authorization_id", "idempotency_scope", "idempotency_fingerprint", "expires_at",
+    "created_at",
 )
 
 
@@ -385,7 +517,7 @@ def insert_reservation(transaction: Any, param_types: Any, **fields: Any) -> Non
         "credit_reserved_micro": pt.INT64, "key_reserved_micro": pt.INT64,
         "hold_usage_type": pt.STRING, "authorization_id": pt.STRING,
         "idempotency_scope": pt.STRING, "idempotency_fingerprint": pt.STRING,
-        "expires_at": pt.TIMESTAMP,
+        "expires_at": pt.TIMESTAMP, "created_at": pt.TIMESTAMP,
     }
     cols = ", ".join(RESERVATION_COLUMNS)
     binds = ", ".join(f"@{c}" for c in RESERVATION_COLUMNS)
@@ -407,6 +539,9 @@ def claim_reservation(
     *,
     actual_micro: int,
     settled_usage_type: str,
+    terminal_at: Any | None = None,
+    defer_retention: bool = False,
+    outbox_available: bool = True,
 ) -> bool:
     """Claim a reservation for settle/refund: first caller wins.
 
@@ -415,17 +550,65 @@ def claim_reservation(
     Persists `actual_micro` + `settled_usage_type` so the durable reservation
     records the exact settled amount for audit / reaper reconciliation.
     """
+    resolved_terminal_at = (
+        None if defer_retention else (terminal_at or datetime.now(UTC))
+    )
     count = transaction.execute_update(
-        "UPDATE tr_reservation SET settled=true, actual_micro=@actual, "
-        "settled_usage_type=@sut WHERE reservation_id=@rid AND settled=false",
-        params={"rid": reservation_id, "actual": int(actual_micro), "sut": settled_usage_type},
+        _CLAIM_RESERVATION_GUARDED_SQL
+        if outbox_available
+        else _CLAIM_RESERVATION_SQL,
+        params={
+            "rid": reservation_id,
+            "actual": int(actual_micro),
+            "sut": settled_usage_type,
+            "terminal_at": resolved_terminal_at,
+        },
         param_types={
             "rid": param_types.STRING,
             "actual": param_types.INT64,
             "sut": param_types.STRING,
+            "terminal_at": param_types.TIMESTAMP,
         },
     )
     return count == 1
+
+
+def complete_reservation_retention(
+    transaction: Any,
+    param_types: Any,
+    reservation_id: str,
+    *,
+    terminal_at: Any,
+    outbox_available: bool = True,
+) -> int:
+    """Start TTL only after all durable settlement repair work is complete."""
+    return transaction.execute_update(
+        _COMPLETE_RESERVATION_RETENTION_GUARDED_SQL
+        if outbox_available
+        else _COMPLETE_RESERVATION_RETENTION_SQL,
+        params={
+            "rid": reservation_id,
+            "terminal_at": terminal_at,
+        },
+        param_types={
+            "rid": param_types.STRING,
+            "terminal_at": param_types.TIMESTAMP,
+        },
+    )
+
+
+def clear_reservation_retention(
+    transaction: Any,
+    param_types: Any,
+    reservation_id: str,
+) -> int:
+    """Make a reservation TTL-ineligible while durable repair is outstanding."""
+    return transaction.execute_update(
+        "UPDATE tr_reservation SET terminal_at=NULL "
+        "WHERE reservation_id=@rid AND terminal_at IS NOT NULL",
+        params={"rid": reservation_id},
+        param_types={"rid": param_types.STRING},
+    )
 
 
 def insert_entity_dml(
@@ -462,6 +645,29 @@ def insert_entity_dml_at(
             "kind": param_types.STRING, "id": param_types.STRING,
             "body": param_types.STRING, "now": param_types.TIMESTAMP,
         },
+    )
+
+
+def delete_entity_dml(
+    transaction: Any, param_types: Any, kind: str, entity_id: str
+) -> int:
+    """DML DELETE of a tr_entities row. Returns the modified-row count.
+
+    The DML counterpart of the `transaction.delete(...)` MUTATION helper. It
+    exists because Spanner forbids mixing DML and mutations in one transaction
+    (docs §5): a transaction that has already run conditional balance DML — as
+    every credit-transfer resolution does — cannot then delete its recovery-queue
+    index row by mutation without faulting. Deleting by DML keeps the row's
+    removal in the SAME transaction as the balance change it accompanies, which
+    is what makes "left the queue" and "the verdict was applied" one fact.
+
+    A 0 count is not an error here: the caller is removing a row that may
+    legitimately be absent already.
+    """
+    return transaction.execute_update(
+        "DELETE FROM tr_entities WHERE kind=@kind AND id=@id",
+        params={"kind": kind, "id": entity_id},
+        param_types={"kind": param_types.STRING, "id": param_types.STRING},
     )
 
 
