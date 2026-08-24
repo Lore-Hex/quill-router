@@ -23,6 +23,7 @@ from trusted_router.operational_analytics_freshness import (
     REASON_NOT_CONFIGURED,
     OutboxFreshness,
 )
+from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage_attribution import InMemoryAcquisitionAttribution
 from trusted_router.storage_auth_context import build_session_auth_context
 from trusted_router.storage_auth_sessions import InMemoryAuthSessions
@@ -860,8 +861,8 @@ class InMemoryStore:
         amount_microdollars: int,
         *,
         usage_type: str,
-    ) -> None:
-        self.api_keys.reserve_limit(key_hash, amount_microdollars, usage_type=usage_type)
+    ) -> KeyWindowLimitDecision | None:
+        return self.api_keys.reserve_limit(key_hash, amount_microdollars, usage_type=usage_type)
 
     def settle_key_limit(
         self,

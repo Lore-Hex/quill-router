@@ -212,7 +212,7 @@
   ],
   "source": "https://www.recraft.ai/docs/api-reference/pricing",
   "pricing_source": "https://www.recraft.ai/docs/api-reference/pricing",
-  "generated_at": "2026-08-24T10:39:58Z",
+  "generated_at": "2026-08-24T16:40:13Z",
   "price_scale": "microdollars_per_million",
   "model_count": 8
 }

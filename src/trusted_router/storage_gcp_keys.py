@@ -24,6 +24,7 @@ from trusted_router.security import (
     new_key_id,
     verify_api_key,
 )
+from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage_gcp_codec import workspace_key_id as _workspace_key_id
 from trusted_router.storage_gcp_counters import (
     KEY_LIMIT_COLUMNS,
@@ -328,7 +329,7 @@ class SpannerApiKeys:
         amount_microdollars: int,
         *,
         usage_type: str,
-    ) -> None:
+    ) -> KeyWindowLimitDecision | None:
         def txn(transaction: Any) -> None:
             key = self._io.read_entity_tx(transaction, "api_key", key_hash, ApiKey)
             if key is None or key.limit_microdollars is None:
@@ -345,6 +346,10 @@ class SpannerApiKeys:
             self._io.write_entity_tx(transaction, "api_key", key.hash, key)
 
         run_in_transaction_with_retry(self._io.database, txn)
+        # This retired JSON-counter path has no authoritative spend-window
+        # counters. Production gateway authorization uses the typed path below;
+        # never fabricate window headers here from stale JSON mirrors.
+        return None
 
     def settle_limit(
         self,

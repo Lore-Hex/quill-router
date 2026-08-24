@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 from trusted_router.operational_analytics_freshness import OutboxFreshness
+from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage_models import (
     AcquisitionAttribution,
     ActivationReminderTask,
@@ -393,7 +394,7 @@ class Store(Protocol):
         amount_microdollars: int,
         *,
         usage_type: UsageType | str,
-    ) -> None: ...
+    ) -> KeyWindowLimitDecision | None: ...
     def settle_key_limit(
         self,
         key_hash: str,
