@@ -89,7 +89,12 @@ const r = await client.chat.completions.create({
   <div class="repo-grid">
     <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-py"><span class="mono">trusted-router-py</span><span class="repo-sub">Python SDK</span></a>
     <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-js"><span class="mono">trusted-router-js</span><span class="repo-sub">TypeScript SDK</span></a>
-    <a class="repo-card" href="https://github.com/jperla/trusted-router-swift"><span class="mono">trusted-router-swift</span><span class="repo-sub">Swift SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-go"><span class="mono">trusted-router-go</span><span class="repo-sub">Go SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-rust"><span class="mono">trusted-router-rust</span><span class="repo-sub">Rust SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-swift"><span class="mono">trusted-router-swift</span><span class="repo-sub">Swift SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-java"><span class="mono">trusted-router-java</span><span class="repo-sub">Java SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trustedrouter-ai-sdk-provider"><span class="mono">trustedrouter-ai-sdk-provider</span><span class="repo-sub">Vercel AI SDK provider</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trustedrouter-provider-check"><span class="mono">trustedrouter-provider-check</span><span class="repo-sub">Provider conformance suite</span></a>
     <a class="repo-card" href="https://github.com/Lore-Hex/quill-router"><span class="mono">quill-router</span><span class="repo-sub">Open-source router</span></a>
   </div>
   <div class="public-proof-strip" style="margin-top:18px">
@@ -136,6 +141,51 @@ const r = await client.chat.completions.create({
         <li><a href="/openai-compatible-llm-api">OpenAI-compatible API</a> — SDK migration surface</li>
         <li><a href="/llm-provider-latency-benchmarks">Latency benchmarks</a> — measured provider data</li>
       </ul>
+    </div>
+  </div>
+</section>
+
+<section style="margin-top:48px" id="rate-limit-headers">
+  <h2 class="section-center">Spend-window rate limits</h2>
+  <p>A key with a hard daily, weekly, or monthly spend limit gets the governing window on every response. Values are integer microdollars, the same unit used by the key-limit API. Keys without a hard spend window do not get fabricated rate-limit headers.</p>
+  <div class="marketing-grid two">
+    <div class="marketing-card">
+      <h3>Response headers</h3>
+      <ul class="check-list">
+        <li><code>RateLimit-Limit</code> — configured spend limit for the governing window</li>
+        <li><code>RateLimit-Remaining</code> — settled spend headroom observed by this request</li>
+        <li><code>RateLimit-Reset</code> — whole seconds until the fixed UTC window resets</li>
+        <li><code>Retry-After</code> — also present on <code>429</code>; the reset delay rounded up, with a minimum of one second</li>
+      </ul>
+      <p>Window checks are approximate by design: in-flight holds are not included. Use <code>RateLimit-Remaining</code> to slow down before rejection, and treat <code>Retry-After</code> as authoritative after a <code>429</code>.</p>
+    </div>
+    <div class="copy-terminal">
+      <div class="code-head"><span>Agent backoff loop</span><span>Python</span></div>
+      <pre><code>import math
+import time
+import httpx
+
+jobs = [{"model": "trustedrouter/auto", "messages": [...]}]
+next_budget_microdollars = 50_000
+
+with httpx.Client() as client:
+    while jobs:
+        response = client.post(API_URL, headers=AUTH, json=jobs[0])
+        reset = max(1, math.ceil(float(
+            response.headers.get("RateLimit-Reset", "1")
+        )))
+
+        if response.status_code == 429:
+            time.sleep(max(1, int(response.headers["Retry-After"])))
+            continue
+
+        response.raise_for_status()
+        jobs.pop(0)
+        remaining = int(response.headers.get(
+            "RateLimit-Remaining", next_budget_microdollars
+        ))
+        if jobs and remaining &lt; next_budget_microdollars:
+            time.sleep(reset)</code></pre>
     </div>
   </div>
 </section>

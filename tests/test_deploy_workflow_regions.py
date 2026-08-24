@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_every_load_balanced_control_plane_region_is_staged() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
-    start = workflow.index("- name: Roll secondary warm regions in parallel")
+    start = workflow.index("- name: Roll secondary warm regions sequentially")
     end = workflow.index("- name: Deploy synthetic monitor Cloud Run Job", start)
     rollout = workflow[start:end]
 
@@ -59,10 +59,10 @@ def test_public_snapshot_worker_swap_is_verified_and_rollbackable() -> None:
     assert r'mv \"\$previous_builder\" \"\$builder\"' in script
 
 
-def test_warm_secondary_regions_roll_in_parallel_after_primary_canary() -> None:
+def test_warm_secondary_regions_roll_sequentially_after_primary_canary() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     primary_canary = workflow.index("- name: Canary gate — watch us-central1 only")
-    start = workflow.index("- name: Roll secondary warm regions in parallel")
+    start = workflow.index("- name: Roll secondary warm regions sequentially")
     end = workflow.index("- name: Deploy synthetic monitor Cloud Run Job", start)
     rollout = workflow[start:end]
 
@@ -71,16 +71,43 @@ def test_warm_secondary_regions_roll_in_parallel_after_primary_canary() -> None:
     assert "PREV_SOUTHAMERICA_EAST1" in rollout
     assert "southamerica-east1)" in rollout
     assert 'for region in "${regions[@]}"; do' in rollout
-    assert '(deploy_secondary "${region}")' in rollout
+    assert 'if ! deploy_secondary "${region}"; then' in rollout
     assert 'if ! TR_DEPLOY_TARGET_REGIONS="${region}"' in rollout
     assert 'if ! bash scripts/deploy/staged_traffic.sh \\' in rollout
     assert 'active_traffic="$(gcloud run services describe' in rollout
     assert '[ "${active_traffic}" != "1" ]' in rollout
-    assert "pids=()" in rollout
-    assert 'pids+=("$!")' in rollout
-    assert 'if wait "${pids[$idx]}"; then' in rollout
+    assert "pids=()" not in rollout
+    assert 'pids+=("$!")' not in rollout
+    assert 'if wait "${pids[$idx]}"; then' not in rollout
     assert 'rollback_region "${region}"' in rollout
     assert 'TR_DEPLOY_RECONCILE_LB: "0"' in rollout
+    assert "assert_no_billing_5xx.sh" in rollout
+    assert "--slo-class router_core" in rollout
+
+
+def test_primary_rollout_gates_on_router_core_and_billing_path_errors() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    primary = workflow.index("- name: Deploy us-central1 (no-traffic)")
+    secondary = workflow.index("- name: Roll secondary warm regions sequentially")
+    rollout = workflow[primary:secondary]
+
+    assert "TR_WATCHDOG_SLO_CLASS: router_core" in rollout
+    assert "--slo-class router_core" in rollout
+    assert "- name: Billing-path gate + rollback (us-central1)" in rollout
+    assert "scripts/deploy/assert_no_billing_5xx.sh" in rollout
+    assert '"${{ steps.new_us.outputs.revision }}"' in rollout
+    assert '--to-revisions="${PREV_US}=100"' in rollout
+
+
+def test_billing_path_gate_only_attributes_errors_to_candidate_revision() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    script = (ROOT / "scripts/deploy/assert_no_billing_5xx.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'REVISION="${3:?usage:' in script
+    assert 'resource.labels.revision_name=\\"${REVISION}\\"' in script
+    assert '"${region}" "${rollout_started_at}" "${revision}"' in workflow
 
 
 def test_superseded_push_stops_before_production_mutation() -> None:
@@ -93,6 +120,20 @@ def test_superseded_push_stops_before_production_mutation() -> None:
     assert 'git/ref/heads/main" --jq' in workflow[confirm:deploy]
     assert 'echo "proceed=false" >> "$GITHUB_OUTPUT"' in workflow[confirm:deploy]
     assert "if: ${{ needs.confirm-current-main.outputs.proceed == 'true' }}" in workflow
+
+
+def test_rollback_capture_uses_the_sole_serving_revision() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    start = workflow.index("- name: Capture pre-deploy revisions")
+    end = workflow.index("- name: Detect optional deploy surfaces", start)
+    capture = workflow[start:end]
+
+    assert "set -euo pipefail" in capture
+    assert "--format=json" in capture
+    assert "scripts/deploy/resolve_active_revision.py" in capture
+    assert "status.traffic[0]" not in capture
+    assert "|| true" not in capture
+    assert "has no unambiguous 100%-traffic rollback revision" in capture
 
 
 def test_runtime_secret_validation_is_parallel_and_does_not_restore_stale_ses_keys() -> None:

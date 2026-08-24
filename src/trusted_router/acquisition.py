@@ -13,17 +13,21 @@ import hmac
 import json
 import logging
 import re
+import secrets
 import threading
 import time
 import uuid
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
 
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import Request, Response
 
 from trusted_router.config import Settings
+from trusted_router.google_ads_conversions import encrypt_google_ads_click_id
 from trusted_router.storage import STORE
 from trusted_router.storage_models import AcquisitionAttribution, iso_now
 
@@ -32,14 +36,14 @@ log = logging.getLogger(__name__)
 ATTRIBUTION_COOKIE_NAME = "tr_attribution"
 ATTRIBUTION_COOKIE_MAX_AGE = 60 * 60 * 24 * 90
 RETENTION_MILESTONE_SECONDS = 60 * 60 * 24 * 7
-_COOKIE_VERSION = 2
+_COOKIE_VERSION = 3
+_LEGACY_COOKIE_VERSION = 2
 _MAX_COOKIE_BYTES = 3_800
 _ANONYMOUS_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 _CLICK_ID_RE = re.compile(r"^[A-Za-z0-9._~-]{1,256}$")
 _RAW_CLICK_ID_FIELDS = ("gclid", "gbraid", "wbraid", "twclid")
-_CLICK_FINGERPRINT_FIELDS = tuple(
-    f"{name}_fingerprint" for name in _RAW_CLICK_ID_FIELDS
-)
+_GOOGLE_CLICK_ID_FIELDS = ("gclid", "gbraid", "wbraid")
+_CLICK_FINGERPRINT_FIELDS = tuple(f"{name}_fingerprint" for name in _RAW_CLICK_ID_FIELDS)
 _AUTOMATED_USER_AGENT_TOKENS = (
     "bot",
     "crawler",
@@ -80,6 +84,8 @@ class AttributionContext:
     first_touch: dict[str, str]
     last_touch: dict[str, str]
     created_at: str
+    google_click_id_kind: str | None = None
+    google_click_id: str | None = field(default=None, repr=False)
 
 
 def prepare_request_attribution(
@@ -99,6 +105,7 @@ def prepare_request_attribution(
         return context, False
 
     touch = _touch_from_request(request, settings)
+    google_click_id_kind, google_click_id = _google_click_from_request(request)
     now = iso_now()
     if context is None:
         context = AttributionContext(
@@ -106,6 +113,8 @@ def prepare_request_attribution(
             first_touch=touch,
             last_touch=touch,
             created_at=now,
+            google_click_id_kind=google_click_id_kind,
+            google_click_id=google_click_id,
         )
         changed = True
     elif _has_explicit_campaign_touch(request):
@@ -114,8 +123,15 @@ def prepare_request_attribution(
             first_touch=context.first_touch,
             last_touch=touch,
             created_at=context.created_at,
+            google_click_id_kind=google_click_id_kind,
+            google_click_id=google_click_id,
         )
-        changed = touch != request.state.acquisition_attribution.last_touch
+        previous = request.state.acquisition_attribution
+        changed = (
+            touch != previous.last_touch
+            or google_click_id_kind != previous.google_click_id_kind
+            or google_click_id != previous.google_click_id
+        )
     else:
         changed = False
     request.state.acquisition_attribution = context
@@ -132,7 +148,7 @@ def set_attribution_cookie(
         value=encode_attribution_cookie(context, settings),
         max_age=ATTRIBUTION_COOKIE_MAX_AGE,
         httponly=True,
-        secure=settings.environment.lower() == "production",
+        secure=settings.environment.lower() not in {"local", "test"},
         samesite="lax",
         path="/",
     )
@@ -145,11 +161,17 @@ def encode_attribution_cookie(context: AttributionContext, settings: Settings) -
         "first_touch": context.first_touch,
         "last_touch": context.last_touch,
         "created_at": context.created_at,
+        "google_click_id_kind": context.google_click_id_kind,
+        "google_click_id": context.google_click_id,
     }
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    encoded = base64.urlsafe_b64encode(raw).rstrip(b"=")
-    signature = hmac.new(_cookie_signing_key(settings), encoded, hashlib.sha256).digest()
-    return f"{encoded.decode('ascii')}.{_b64encode(signature)}"
+    nonce = secrets.token_bytes(12)
+    ciphertext = AESGCM(_cookie_encryption_key(settings)).encrypt(
+        nonce,
+        raw,
+        b"trustedrouter-attribution-cookie-v3",
+    )
+    return f"v3.{_b64encode(nonce)}.{_b64encode(ciphertext)}"
 
 
 def decode_attribution_cookie(
@@ -158,6 +180,49 @@ def decode_attribution_cookie(
 ) -> AttributionContext | None:
     if not value or len(value.encode("utf-8")) > _MAX_COOKIE_BYTES:
         return None
+    if not value.startswith("v3."):
+        return _decode_legacy_attribution_cookie(value, settings)
+    try:
+        prefix, encoded_nonce, encoded_ciphertext = value.split(".", 2)
+        if prefix != "v3":
+            return None
+        raw = AESGCM(_cookie_encryption_key(settings)).decrypt(
+            _b64decode(encoded_nonce),
+            _b64decode(encoded_ciphertext),
+            b"trustedrouter-attribution-cookie-v3",
+        )
+        payload = json.loads(raw)
+        if payload.get("v") != _COOKIE_VERSION:
+            return None
+        anonymous_id = str(payload.get("anonymous_id") or "")
+        created_at = str(payload.get("created_at") or "")
+        if not _ANONYMOUS_ID_RE.fullmatch(anonymous_id) or _cookie_expired(created_at):
+            return None
+        first_touch = _validated_touch(payload.get("first_touch"))
+        last_touch = _validated_touch(payload.get("last_touch"))
+        if not first_touch or not last_touch:
+            return None
+        google_click_id_kind, google_click_id = _validated_google_click(
+            payload.get("google_click_id_kind"),
+            payload.get("google_click_id"),
+        )
+        return AttributionContext(
+            anonymous_id=anonymous_id,
+            first_touch=first_touch,
+            last_touch=last_touch,
+            created_at=created_at,
+            google_click_id_kind=google_click_id_kind,
+            google_click_id=google_click_id,
+        )
+    except (InvalidTag, UnicodeDecodeError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
+def _decode_legacy_attribution_cookie(
+    value: str,
+    settings: Settings,
+) -> AttributionContext | None:
+    """Read version-two signed cookies during the 90-day migration window."""
     try:
         encoded, supplied_signature = value.split(".", 1)
         expected_signature = hmac.new(
@@ -168,7 +233,7 @@ def decode_attribution_cookie(
         if not hmac.compare_digest(_b64decode(supplied_signature), expected_signature):
             return None
         payload = json.loads(_b64decode(encoded))
-        if payload.get("v") != _COOKIE_VERSION:
+        if payload.get("v") != _LEGACY_COOKIE_VERSION:
             return None
         anonymous_id = str(payload.get("anonymous_id") or "")
         created_at = str(payload.get("created_at") or "")
@@ -202,6 +267,23 @@ def record_signup_attribution(
 ) -> None:
     context = request_attribution(request) or _direct_context(request)
     occurred_at = iso_now()
+    encrypted_google_click_id = None
+    if context.google_click_id_kind and context.google_click_id:
+        try:
+            encrypted_google_click_id = encrypt_google_ads_click_id(
+                context.google_click_id,
+                request.app.state.settings,
+                attribution_id=context.anonymous_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - attribution never blocks signup.
+            log.warning(
+                "acquisition.google_click_encrypt_failed",
+                extra={
+                    "event": "acquisition.google_click_encrypt_failed",
+                    "anonymous_fingerprint": _fingerprint(context.anonymous_id),
+                    "error": type(exc).__name__,
+                },
+            )
     record = AcquisitionAttribution(
         workspace_id=workspace_id,
         anonymous_id=context.anonymous_id,
@@ -210,6 +292,11 @@ def record_signup_attribution(
         signup_provider=signup_provider,
         starter_credit_microdollars=max(0, starter_credit_microdollars),
         signup_at=occurred_at,
+        google_click_id_kind=(context.google_click_id_kind if encrypted_google_click_id else None),
+        encrypted_google_click_id=encrypted_google_click_id,
+        google_click_expires_at=(
+            _google_click_expires_at(context) if encrypted_google_click_id else None
+        ),
         milestones={
             "signup_completed": occurred_at,
             "api_key_created": occurred_at,
@@ -476,6 +563,9 @@ def _log_conversion(
         "first_utm_medium": record.first_touch.get("utm_medium"),
         "first_utm_campaign": record.first_touch.get("utm_campaign"),
         "first_landing_path": record.first_touch.get("landing_path"),
+        "google_ads_click_persisted": bool(
+            record.google_click_id_kind and record.encrypted_google_click_id
+        ),
     }
     if extra:
         fields.update(extra)
@@ -531,6 +621,25 @@ def _touch_from_request(request: Request, settings: Settings) -> dict[str, str]:
             touch["utm_medium"] = "referral"
     touch["captured_at"] = iso_now()
     return touch
+
+
+def _google_click_from_request(request: Request) -> tuple[str | None, str | None]:
+    for name in _GOOGLE_CLICK_ID_FIELDS:
+        value = str(request.query_params.get(name) or "").strip()
+        if _CLICK_ID_RE.fullmatch(value):
+            return name, value
+    return None, None
+
+
+def _validated_google_click(
+    raw_kind: object,
+    raw_value: object,
+) -> tuple[str | None, str | None]:
+    if not isinstance(raw_kind, str) or raw_kind not in _GOOGLE_CLICK_ID_FIELDS:
+        return None, None
+    if not isinstance(raw_value, str) or not _CLICK_ID_RE.fullmatch(raw_value):
+        return None, None
+    return raw_kind, raw_value
 
 
 def _validated_touch(value: Any) -> dict[str, str]:
@@ -589,8 +698,7 @@ def acquisition_request_is_automated(request: Request) -> bool:
     if any(token in user_agent for token in _AUTOMATED_USER_AGENT_TOKENS):
         return True
     purpose = " ".join(
-        request.headers.get(name, "").lower()
-        for name in ("purpose", "sec-purpose", "x-purpose")
+        request.headers.get(name, "").lower() for name in ("purpose", "sec-purpose", "x-purpose")
     )
     return any(token in purpose for token in _AUTOMATED_PURPOSE_TOKENS)
 
@@ -633,10 +741,27 @@ def _safe_text(value: str | None, limit: int) -> str:
 
 
 def _cookie_signing_key(settings: Settings) -> bytes:
-    root = settings.internal_gateway_token or f"local:{settings.service_name}"
+    # The split public surface receives only the already-derived key, preserving
+    # legacy cookie compatibility without receiving the root gateway credential.
+    # Dedicated-root and local/legacy behavior below remains unchanged.
+    if settings.attribution_cookie_key:
+        return base64.b64decode(settings.attribution_cookie_key, validate=True)
+    root = (
+        settings.attribution_cookie_secret
+        or settings.internal_gateway_token
+        or f"local:{settings.service_name}"
+    )
     return hmac.new(
         root.encode("utf-8"),
         b"trustedrouter-attribution-cookie-v1",
+        hashlib.sha256,
+    ).digest()
+
+
+def _cookie_encryption_key(settings: Settings) -> bytes:
+    return hmac.new(
+        _cookie_signing_key(settings),
+        b"trustedrouter-attribution-cookie-encryption-v3",
         hashlib.sha256,
     ).digest()
 
@@ -655,11 +780,7 @@ def _click_id_fingerprint(name: str, value: str, settings: Settings) -> str:
 
 
 def _click_id_log_fields(touch: dict[str, str]) -> dict[str, str]:
-    return {
-        name: value
-        for name in _CLICK_FINGERPRINT_FIELDS
-        if (value := touch.get(name))
-    }
+    return {name: value for name in _CLICK_FINGERPRINT_FIELDS if (value := touch.get(name))}
 
 
 def _cookie_expired(created_at: str) -> bool:
@@ -671,6 +792,22 @@ def _cookie_expired(created_at: str) -> bool:
         created = created.replace(tzinfo=dt.UTC)
     age = (dt.datetime.now(dt.UTC) - created).total_seconds()
     return age < 0 or age > ATTRIBUTION_COOKIE_MAX_AGE
+
+
+def _google_click_expires_at(context: AttributionContext) -> str:
+    captured_at = context.last_touch.get("captured_at") or context.created_at
+    try:
+        captured = dt.datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+    except ValueError:
+        captured = dt.datetime.now(dt.UTC)
+    if captured.tzinfo is None:
+        captured = captured.replace(tzinfo=dt.UTC)
+    return (
+        (captured.astimezone(dt.UTC) + dt.timedelta(seconds=ATTRIBUTION_COOKIE_MAX_AGE))
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _age_seconds(earlier: str, later: str) -> float:

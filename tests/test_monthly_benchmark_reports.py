@@ -54,13 +54,24 @@ def test_monthly_report_json_contains_no_tenant_content_or_spend() -> None:
 
 
 def test_unknown_monthly_report_is_custom_404(client: TestClient) -> None:
-    page = client.get("/benchmarks/reports/2020-01")
+    page = client.get("/benchmarks/reports/2020-01", headers={"accept": "text/html"})
     download = client.get("/benchmarks/reports/2020-01.json")
 
     assert page.status_code == 404
     assert "Page Not Found" in page.text
     assert download.status_code == 404
     assert download.json()["error"]["type"] == "not_found"
+
+
+def test_unknown_monthly_report_gives_an_agent_markdown(client: TestClient) -> None:
+    """The report route raises now, so the central handler negotiates it. The
+    .json download is unaffected: it names its own format and keeps the error
+    envelope callers parse."""
+    page = client.get("/benchmarks/reports/2020-01", headers={"accept": "*/*"})
+
+    assert page.status_code == 404
+    assert page.headers["content-type"].startswith("text/markdown")
+    assert "/llms.txt" in page.text
 
 
 def test_monthly_reports_are_linked_from_high_intent_pages(client: TestClient) -> None:

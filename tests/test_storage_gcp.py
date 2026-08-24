@@ -100,9 +100,10 @@ def test_gcp_list_keys_uses_workspace_index() -> None:
 
 
 def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
-    from google.cloud import bigtable, spanner
+    from google.cloud import bigtable, spanner, spanner_v1
 
     spanner_calls: list[dict[str, Any]] = []
+    pool_sizes: list[int] = []
     monkeypatch.setattr(
         "trusted_router.storage_gcp.configure_spanner_rpc_deadlines",
         lambda _database: None,
@@ -120,6 +121,10 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
             # bound resident memory; accept-and-ignore here.
             return object()
 
+    class FakePool:
+        def __init__(self, *, size: int) -> None:
+            pool_sizes.append(size)
+
     class FakeBigtableClient:
         def __init__(self, **_kwargs: Any) -> None:
             pass
@@ -131,7 +136,9 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
             return object()
 
     monkeypatch.setattr(spanner, "Client", FakeSpannerClient)
+    monkeypatch.setattr(spanner_v1, "FixedSizePool", FakePool)
     monkeypatch.setattr(bigtable, "Client", FakeBigtableClient)
+    monkeypatch.delenv("TR_SPANNER_POOL_SIZE", raising=False)
 
     SpannerBigtableStore(
         project_id="project",
@@ -152,6 +159,57 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
             "disable_builtin_metrics": True,
         }
     ]
+    assert pool_sizes == [8]
+
+
+def test_gcp_store_opens_regional_ledger_when_local_issuance_is_disabled(
+    monkeypatch: Any,
+) -> None:
+    """Every control-plane region must settle leases issued by another region."""
+    from google.cloud import bigtable, spanner
+
+    monkeypatch.setattr(
+        "trusted_router.storage_gcp.configure_spanner_rpc_deadlines",
+        lambda _database: None,
+    )
+
+    class FakeSpannerClient:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def instance(self, _instance_id: str) -> FakeSpannerClient:
+            return self
+
+        def database(self, _database_id: str, **_kwargs: Any) -> object:
+            return object()
+
+    class FakeBigtableClient:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def instance(self, _instance_id: str) -> FakeBigtableClient:
+            return self
+
+        def table(self, _table_id: str, *, app_profile_id: str) -> object:
+            assert app_profile_id == "quota-us"
+            return object()
+
+    monkeypatch.setattr(spanner, "Client", FakeSpannerClient)
+    monkeypatch.setattr(bigtable, "Client", FakeBigtableClient)
+
+    store = SpannerBigtableStore(
+        project_id="project",
+        spanner_instance_id="spanner",
+        spanner_database_id="database",
+        bigtable_instance_id="bigtable",
+        bigtable_enabled=False,
+        analytics_read_mode="clickhouse-only",
+        regional_quota_leases_enabled=False,
+        regional_quota_bigtable_app_profiles={"us-central1": "quota-us"},
+    )
+
+    assert store._regional_quota_ledger is not None
+    assert store._regional_quota_ledger.supports_region("us-central1") is True
 
 
 def test_gcp_api_key_lookup_uses_index_and_never_stores_raw_key() -> None:
@@ -310,6 +368,37 @@ def test_gcp_wallet_challenge_is_one_time_and_hash_only() -> None:
     assert consumed.consumed_at is not None
     assert replay is None
     assert raw not in "\n".join(row.body for row in db.rows.values())
+
+
+def test_gcp_wallet_challenge_reuse_is_bounded_per_normalized_scope() -> None:
+    store, db, _ = make_fake_store()
+    address = "0x" + "a" * 40
+    nonces: list[str] = []
+    challenge_ids: list[str] = []
+
+    for index in range(128):
+        proposed_nonce = f"bounded-wallet-nonce-{index}"
+        nonce, challenge = store.create_wallet_challenge(
+            address=address.upper() if index % 2 else f"  {address}  ",
+            message=(
+                "trusted.example wants you to sign in with your Ethereum account:\n"
+                f"{address}\n\nNonce: {proposed_nonce}"
+            ),
+            ttl_seconds=60,
+            raw_nonce=proposed_nonce,
+        )
+        nonces.append(nonce)
+        challenge_ids.append(challenge.hash)
+
+    assert len([key for key in db.rows if key[0] == "wallet_challenge"]) == 1
+    assert len([key for key in db.rows if key[0] == "wallet_challenge_lookup"]) == 1
+    assert len([key for key in db.rows if key[0] == "wallet_challenge_by_scope"]) == 1
+    assert set(nonces) == {"bounded-wallet-nonce-0"}
+    assert len(set(challenge_ids)) == 1
+    assert store.consume_wallet_challenge("bounded-wallet-nonce-127") is None
+    active = store.consume_wallet_challenge(nonces[0])
+    assert active is not None
+    assert "Nonce: bounded-wallet-nonce-0" in active.message
 
 
 def test_gcp_rate_limit_counts_in_same_window_and_resets_later() -> None:

@@ -71,7 +71,7 @@ s  = 0|1 streaming
 fo = 0|1 candidate index advanced at least once during this logical request
 ```
 - First attempt: `v=1;a=0;s=1`. Retry after a connect timeout on the apex that moved to an alias:
-  `v=1;a=1;po=transport_error;pc=connect_timeout;ph=apex;pm=10012;sm=10530;s=1;fo=1`.
+  `v=1;a=1;po=timeout;pc=connect_timeout;ph=apex;pm=10012;sm=10530;s=1;fo=1`.
 - Static identity (SDK name/version/runtime/OS) rides the existing `User-Agent`, not this header.
 - **Not sent to custom base URLs** (a self-hosted gateway is not TrustedRouter's to measure) and **not sent
   on control-plane calls**. Not sent when telemetry is opted out (§6.4).
@@ -89,7 +89,7 @@ settlement token and are not joinable in ClickHouse).
 ```json
 "gateway_request_id": "rlog_…",
 "client": {"v":1,"source":"tr","sdk":"tr-py","sdk_version":"0.6.0","lang":"python","runtime":"cpython/3.12.1",
-           "os":"macos","arch":"arm64","timeout_ms":120000,"attempt":1,"prev_outcome":"transport_error",
+           "os":"macos","arch":"arm64","timeout_ms":120000,"attempt":1,"prev_outcome":"timeout",
            "prev_error_class":"connect_timeout","prev_host":"apex","prev_elapsed_ms":10012,"since_first_ms":10530,
            "stream":true,"failover_used":true}
 ```
@@ -299,6 +299,13 @@ after those lines only a message string remains. TTFT is only observable in the 
   recompute the trailing 6 h every 5 min (matching the late-arrival cap); `age_ms > 6 h` excluded from rollups.
 - Own id `client_observed`; never inside `router_core` or `SLO_DEFINITIONS`. Calibration gate: 14 clean days
   before any percentage is published.
+- **Calibration view (`client_observed.all_traffic` on `/status.json`; labelled on `/status`).** Beside the
+  published windows, the status page carries an explicitly labelled all-traffic view built from the `fleet_all`
+  rollup scope: every counter row **including synthetic canary traffic**, **no** 25 % per-tenant cap, **no**
+  ≥ 1 000-request / ≥ 3-tenant gate, so its `availability_percent` is shown whenever the denominator is
+  non-empty. It exists so the pipeline can be read end to end while real SDK traffic is scarce. It is **not the
+  published number**: `windows`, `state`, `by_host_24h`, and `canary` are computed exactly as above and never
+  read `fleet_all` rows. It is kept or removed by an explicit decision after calibration.
 
 ## 9. Rollout ordering (why it is not arbitrary)
 1. Enclave request ids (independent). 2. Control plane accepts settle context (extras reach customer broadcast

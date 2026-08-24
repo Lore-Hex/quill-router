@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep
 from trusted_router.errors import api_error
+from trusted_router.identity_guidance import guidance_for
 from trusted_router.money import (
     VERIFF_ATTEMPT_FEE_MICRODOLLARS,
     VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS,
@@ -24,7 +25,16 @@ def register_verification_status_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> dict[str, dict[str, Any]]:
         user = _principal_user(principal)
-        lifetime_topup = STORE.get_lifetime_topup_microdollars(user.id)
+        # Response progress only; `missing_identity_verification_requirements`
+        # below evaluates the gate with the strong default.
+        lifetime_topup = STORE.get_lifetime_topup_microdollars(
+            user.id,
+            allow_stale=True,
+        )
+        guidance = guidance_for(
+            user.identity_status,
+            reason_code=user.veriff_decision_reason_code,
+        )
         return {
             "data": {
                 "email": user.email,
@@ -35,6 +45,13 @@ def register_verification_status_routes(router: APIRouter) -> None:
                 "identity_status": user.identity_status,
                 "identity_verified_at": user.identity_verified_at,
                 "veriff_attempt_count": user.veriff_attempt_count,
+                # The same copy the console shows. Veriff's own decline reason
+                # is never in here: see trusted_router.identity_guidance.
+                "identity_message": (
+                    None
+                    if guidance is None
+                    else {"headline": guidance.headline, "detail": guidance.detail}
+                ),
                 **money_pair("verification_fee", VERIFF_ATTEMPT_FEE_MICRODOLLARS),
                 **money_pair(
                     "lifetime_topup_required",

@@ -26,7 +26,9 @@ def provider_og_facts(provider_slug: str) -> ProviderOgFacts:
     endpoints = tuple(
         endpoint
         for endpoint in MODEL_ENDPOINTS.values()
-        if endpoint.provider == provider_slug and endpoint.model_id not in META_MODEL_IDS
+        if endpoint.catalog_is_current()
+        and endpoint.provider == provider_slug
+        and endpoint.model_id not in META_MODEL_IDS
     )
     model_count = len({endpoint.model_id for endpoint in endpoints})
     has_byok = any(endpoint.is_byok for endpoint in endpoints)

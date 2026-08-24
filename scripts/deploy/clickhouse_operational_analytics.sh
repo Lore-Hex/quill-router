@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
+# shellcheck source=scripts/deploy/_clickhouse_bundle.sh
+source "${SCRIPT_DIR}/_clickhouse_bundle.sh"
 
 NAMES=(tr-clickhouse-1 tr-clickhouse-2 tr-clickhouse-3)
 ZONES=(us-central1-a us-central1-b us-central1-c)
@@ -91,8 +93,18 @@ for index in 0 1 2; do
 done
 
 archive="$(mktemp "${TMPDIR:-/tmp}/tr-clickhouse-operational.XXXXXX.tar.gz")"
-trap 'rm -f "$archive"' EXIT
-tar -C "$ROOT" -czf "$archive" clickhouse src/trusted_router
+ingester_stopped=0
+cleanup() {
+  local status="$?"
+  rm -f "$archive"
+  if [ "$ingester_stopped" -eq 1 ]; then
+    log "deployment exited during parser/schema cutover; restarting live ingest"
+    node_ssh 0 --command="sudo systemctl start tr-clickhouse-operational-ingest.service" || true
+  fi
+  return "$status"
+}
+trap cleanup EXIT
+build_clickhouse_bundle "$ROOT" "$archive"
 node_ssh 0 --command="sudo mkdir -p /opt/tr-clickhouse"
 node_ssh 0 --command="sudo tar -xzf - -C /opt/tr-clickhouse" <"$archive"
 
@@ -116,6 +128,10 @@ node_ssh 0 --command="sudo sh -c '
     /etc/systemd/system/tr-clickhouse-synthetic-rollup.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-synthetic-rollup.timer \
     /etc/systemd/system/tr-clickhouse-synthetic-rollup.timer
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-synthetic-reconcile.service \
+    /etc/systemd/system/tr-clickhouse-synthetic-reconcile.service
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-synthetic-reconcile.timer \
+    /etc/systemd/system/tr-clickhouse-synthetic-reconcile.timer
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-client-rollup.service \
     /etc/systemd/system/tr-clickhouse-client-rollup.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-client-rollup.timer \
@@ -137,17 +153,24 @@ node_ssh 0 --command="sudo sh -c '
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-spanner-delivery.timer \
     /etc/systemd/system/tr-clickhouse-spanner-delivery.timer
   systemctl daemon-reload
-  systemctl stop tr-clickhouse-operational-ingest.service 2>/dev/null || true
 '"
 
-# Deploy the parser before the additive column. The ingester is stopped while
-# these two versions move together, so rows queue durably in Spanner instead
-# of being written with the column default during a version-skew window.
+# The running process retains its loaded parser while the new files are copied.
+# Pause only for the additive schema cutover, then restart on the new parser
+# before any bounded replay, backfill, replica sync, or reader setup begins.
+log "pausing live operational ingest for parser/schema cutover"
+node_ssh 0 --command="sudo systemctl stop tr-clickhouse-operational-ingest.service"
+ingester_stopped=1
+
 log "adding workspace attribution to benchmark samples"
 benchmark_workspace_schema="$(cat "$BENCHMARK_WORKSPACE_SCHEMA")"
 for index in 0 1 2; do
   node_query "$index" "$benchmark_workspace_schema"
 done
+
+log "resuming live operational ingest after parser/schema cutover"
+node_ssh 0 --command="sudo systemctl start tr-clickhouse-operational-ingest.service"
+ingester_stopped=0
 
 log "replaying bounded benchmark history with workspace attribution"
 node_ssh 0 --command="sudo sh -c '
@@ -195,7 +218,7 @@ node_ssh 0 --command="sudo sh -c '
     /opt/tr-clickhouse/venv/bin/python -m clickhouse.rollup_synthetic
 '"
 
-node_ssh 0 --command="sudo systemctl enable tr-clickhouse-operational-ingest.service tr-clickhouse-synthetic-rollup.timer tr-clickhouse-client-rollup.timer tr-clickhouse-operational-parity.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer"
+node_ssh 0 --command="sudo systemctl enable tr-clickhouse-operational-ingest.service tr-clickhouse-synthetic-rollup.timer tr-clickhouse-synthetic-reconcile.timer tr-clickhouse-client-rollup.timer tr-clickhouse-operational-parity.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer"
 
 log "verifying exact replica identity after synchronization"
 for table in activity_generations synthetic_probe_samples synthetic_status_rollups public_analytics_snapshots client_request_events client_minute_counters client_availability_rollups operational_outbox_quarantine; do
@@ -238,8 +261,8 @@ for index in 0 1 2; do
     "${SCRIPT_DIR}/clickhouse_control_reader.sh"
 done
 
-node_ssh 0 --command="sudo systemctl start tr-clickhouse-operational-ingest.service"
-node_ssh 0 --command="sudo systemctl start tr-clickhouse-client-rollup.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-public-snapshots.service tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer tr-clickhouse-spanner-delivery.service"
+node_ssh 0 --command="sudo systemctl is-active --quiet tr-clickhouse-operational-ingest.service"
+node_ssh 0 --command="sudo systemctl start tr-clickhouse-synthetic-reconcile.timer tr-clickhouse-client-rollup.timer tr-clickhouse-public-snapshots.timer tr-clickhouse-public-snapshots.service tr-clickhouse-archive-restore.timer tr-clickhouse-spanner-delivery.timer tr-clickhouse-spanner-delivery.service"
 
 log "operational analytics infrastructure is ready; Bigtable is still authoritative"
 log "deploy the operational outbox producer, then run clickhouse_operational_analytics_finalize.sh --apply"

@@ -12,10 +12,14 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
+from trusted_router.operational_analytics_freshness import OutboxFreshness
+from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage_models import (
     AcquisitionAttribution,
     ActivationReminderTask,
     ApiKey,
+    ApiKeyAuthContext,
+    ApiKeyUsageSnapshot,
     AuthSession,
     BedrockGroupBuyAggregate,
     BedrockGroupBuyPledge,
@@ -31,12 +35,14 @@ from trusted_router.storage_models import (
     EncryptedSecretEnvelope,
     GatewayAuthorization,
     Generation,
+    GoogleAdsConversion,
     Member,
     OAuthAuthorizationCode,
     ProviderAccessGrant,
     ProviderBenchmarkSample,
     RateLimitHit,
     Reservation,
+    SessionAuthContext,
     SignupResult,
     SyntheticProbeSample,
     SyntheticRollup,
@@ -80,6 +86,8 @@ class Store(Protocol):
         session_id: str | None = ...,
         session_url: str | None = ...,
         decision_code: int | None = ...,
+        decision_reason: str | None = ...,
+        decision_reason_code: int | None = ...,
         verified_name: str | None = ...,
         increment_attempts: bool = ...,
     ) -> User | None: ...
@@ -116,6 +124,32 @@ class Store(Protocol):
         amount_microdollars: int,
         occurred_at: str,
     ) -> AcquisitionAttribution | None: ...
+    def repair_google_ads_delivery_queue(self, *, since: str, limit: int) -> int: ...
+    def purge_expired_google_ads_click_ids(self, *, before: str, limit: int) -> int: ...
+    def claim_google_ads_deliveries(
+        self,
+        *,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[GoogleAdsConversion]: ...
+    def mark_google_ads_delivery_submitted(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        request_id: str,
+    ) -> GoogleAdsConversion | None: ...
+    def mark_google_ads_delivery_failed(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        error: str,
+        retryable: bool,
+        max_attempts: int,
+    ) -> GoogleAdsConversion | None: ...
     def list_activation_reminders(self, *, limit: int = ...) -> list[ActivationReminderTask]: ...
     def delete_activation_reminders(self, reminder_ids: list[str]) -> None: ...
     def claim_activation_reminder(
@@ -185,6 +219,12 @@ class Store(Protocol):
     ) -> tuple[str, AuthSession]: ...
     def get_auth_session_by_raw(self, raw_token: str) -> AuthSession | None: ...
     def delete_auth_session_by_raw(self, raw_token: str) -> bool: ...
+    def session_auth_context(
+        self,
+        raw_token: str,
+        *,
+        requested_workspace_id: str | None = ...,
+    ) -> SessionAuthContext | None: ...
     def upgrade_auth_session(self, raw_token: str, *, state: str) -> AuthSession | None: ...
     def set_auth_session_workspace(
         self, raw_token: str, workspace_id: str
@@ -270,7 +310,12 @@ class Store(Protocol):
         tags: dict[str, str] | None = ...,
     ) -> tuple[str, ApiKey]: ...
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None: ...
-    def typed_key_usage(self, key_hash: str) -> dict[str, Any] | None: ...
+    def typed_key_usage(
+        self,
+        key_hash: str,
+        *,
+        allow_stale: bool = ...,
+    ) -> dict[str, Any] | None: ...
     def get_key_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None: ...
 
     def upsert_federated_api_key(self, record: dict[str, Any]) -> ApiKey:
@@ -338,7 +383,9 @@ class Store(Protocol):
         ...
 
     def get_key_by_raw(self, raw_key: str) -> ApiKey | None: ...
+    def api_key_auth_context(self, raw_key: str) -> ApiKeyAuthContext | None: ...
     def list_keys(self, workspace_id: str) -> list[ApiKey]: ...
+    def list_api_keys_with_usage(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]: ...
     def delete_key(self, key_hash: str) -> bool: ...
     def update_key(self, key_hash: str, patch: dict[str, Any]) -> ApiKey | None: ...
     def reserve_key_limit(
@@ -347,7 +394,7 @@ class Store(Protocol):
         amount_microdollars: int,
         *,
         usage_type: UsageType | str,
-    ) -> None: ...
+    ) -> KeyWindowLimitDecision | None: ...
     def settle_key_limit(
         self,
         key_hash: str,
@@ -429,6 +476,10 @@ class Store(Protocol):
     ) -> UserProvidedModel: ...
     def list_user_models_for_user(self, owner_user_id: str) -> list[UserProvidedModel]: ...
     def get_user_model(self, model_id: str) -> UserProvidedModel | None: ...
+    def get_user_models_by_ids(
+        self,
+        model_ids: list[str],
+    ) -> dict[str, UserProvidedModel]: ...
     def update_user_model(
         self,
         model_id: str,
@@ -605,7 +656,12 @@ class Store(Protocol):
         event_id: str,
     ) -> str: ...
     def ensure_earnings_account(self, user_id: str) -> None: ...
-    def earnings_summary(self, user_id: str) -> dict[str, int]: ...
+    def earnings_summary(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = ...,
+    ) -> dict[str, int]: ...
     def list_credit_movements(
         self,
         account_id: str,
@@ -626,7 +682,12 @@ class Store(Protocol):
         amount_microdollars: int,
         event_id: str,
     ) -> bool: ...
-    def get_lifetime_topup_microdollars(self, user_id: str) -> int: ...
+    def get_lifetime_topup_microdollars(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = ...,
+    ) -> int: ...
 
     def reserve(
         self,
@@ -744,6 +805,12 @@ class Store(Protocol):
         include_histograms: bool = ...,
         limit: int = ...,
     ) -> list[SyntheticRollup]: ...
+    # Operational-analytics drain freshness -----------------------------------
+    # Declared on the Protocol, not duck-typed off STORE, so a backend that
+    # forgets it is a mypy error rather than a cloud that quietly publishes no
+    # drain signal. That omission is the exact shape of the AWS-EU outage of
+    # 2026-08-02..17: the drain was absent and the only alarm was the drain's.
+    def operational_analytics_outbox_freshness(self) -> OutboxFreshness: ...
     def reconcile_generation_activity(
         self,
         workspace_id: str,

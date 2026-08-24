@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Together AI routes that are live ahead of the shared OpenRouter snapshot. Verified against https://api.together.xyz/v1/models on 2026-06-22.",
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
-  "generated_at": "2026-08-16T15:24:13Z",
+  "generated_at": "2026-08-24T16:40:13Z",
   "model_count": 22,
   "models": [
     {
@@ -10,7 +10,7 @@
       "upstream_id": "zai-org/GLM-5.2",
       "display_name": "GLM 5.2",
       "title": "zai-org/GLM-5.2",
-      "context_length": 512000,
+      "context_length": 1048575,
       "max_output_tokens": 131072,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
@@ -196,7 +196,10 @@
       "context_length": 262144,
       "input_token_price_per_m": 1200000,
       "output_token_price_per_m": 4500000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 200000,
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Kimi K2.7 Code",
@@ -360,7 +363,8 @@
       ],
       "context_length": 32768,
       "input_token_price_per_m": 300000,
-      "output_token_price_per_m": 300000
+      "output_token_price_per_m": 300000,
+      "missing_since": "2026-08-24"
     },
     {
       "display_name": "Qwen3.5 9B FP8",
@@ -455,7 +459,7 @@
       "features": [
         "serverless"
       ],
-      "context_length": 1000000,
+      "context_length": 1048576,
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 15000000,
       "cached_input_token_price_per_m": 300000

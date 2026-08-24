@@ -4,6 +4,7 @@ settings-driven values and renders the Jinja2 template."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
@@ -74,6 +75,8 @@ from trusted_router.content.legal import (
 from trusted_router.content_handling import CONTENT_HANDLING_CLAIM
 from trusted_router.domains import canonical_public_url
 from trusted_router.measured import measured_for_model, measured_for_provider
+from trusted_router.middleware import current_csp_nonce
+from trusted_router.model_regions import MODEL_REGION_SLUGS, model_region_evidence
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR, format_money_precise
 from trusted_router.og import OG_DESCRIPTION, OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, OG_TITLE
 from trusted_router.provider_branding import (
@@ -86,7 +89,6 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_EXAMPLE,
 )
 from trusted_router.provider_lifecycle import provider_pricing_schedule
-from trusted_router.regions import configured_regions, region_map_payload
 from trusted_router.seo_catalog import seo_catalog_evidence
 from trusted_router.seo_meta import (
     SEO_TITLE_MAX_LENGTH,
@@ -144,7 +146,13 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/latest-model-apis",
     "/eu-ai-act-llm-compliance",
     "/x402-llm-api",
+    "/confidential-cowork",
+    # Jurisdiction directories, one path each. MODEL_REGION_SLUGS is the single
+    # source, so adding a region adds its sitemap entry with it.
+    *(f"/{slug}" for slug in MODEL_REGION_SLUGS),
     "/",
+    "/about",
+    "/contact",
     "/choose",
     "/models",
     "/providers",
@@ -356,6 +364,32 @@ class PublicPage:
 
 
 @dataclass(frozen=True)
+class OpenRouterLandingVariant:
+    slug: str
+    title: str
+    description: str
+    kicker: str
+    headline: str
+    lead: str
+    cta: str
+    secondary_label: str
+    secondary_href: str
+    microcopy: str
+    terminal_label: str
+    model_id: str
+    proof_items: tuple[tuple[str, str], ...]
+    cards: tuple[tuple[str, str, str], ...]
+    left_eyebrow: str
+    left_headline: str
+    left_copy: str
+    right_eyebrow: str
+    right_headline: str
+    right_copy: str
+    final_headline: str
+    final_copy: str
+
+
+@dataclass(frozen=True)
 class BlogIndexPost:
     post: BlogPost
     image: str
@@ -374,6 +408,308 @@ OPENROUTER_ALTERNATIVE_ITEMS: tuple[tuple[str, str], ...] = (
     ("Google Vertex AI", "/compare/google-vertex-ai"),
     ("Direct provider APIs", "/providers"),
 )
+
+OPENROUTER_PAID_LANDING_VARIANTS: dict[str, OpenRouterLandingVariant] = {
+    "every-model": OpenRouterLandingVariant(
+        slug="every-model",
+        title="One API for Hundreds of AI Models",
+        description=(
+            "Keep one OpenAI-compatible interface while choosing among hundreds "
+            "of model routes, providers, prices, and privacy tiers."
+        ),
+        kicker="One API for the model market",
+        headline="One key for hundreds of AI models.",
+        lead=(
+            "Keep one OpenAI-compatible interface while models and providers "
+            "change underneath it. Pick an exact model or let TrustedRouter route."
+        ),
+        cta="Create my API key",
+        secondary_label="Browse models",
+        secondary_href="/models",
+        microcopy="Keep your SDK. Switch models with one string.",
+        terminal_label="One interface, any model",
+        model_id="trustedrouter/auto",
+        proof_items=(
+            ("Hundreds", "Model routes in one catalog."),
+            ("One", "OpenAI-compatible interface."),
+            ("Public", "Prices and provider routes."),
+            ("Flexible", "Exact models or router aliases."),
+        ),
+        cards=(
+            (
+                "Integrate once",
+                "Keep the client you already use.",
+                "Chat Completions, Responses, and streaming stay behind one base URL.",
+            ),
+            (
+                "Choose clearly",
+                "Compare the route before you call it.",
+                "Model pages publish providers, prices, context limits, and privacy posture.",
+            ),
+            (
+                "Change quickly",
+                "Try another model with one string.",
+                "Move from a frontier model to an open-weight route without opening another provider account.",
+            ),
+        ),
+        left_eyebrow="Model choice",
+        left_headline="The catalog stays current.",
+        left_copy=(
+            "Use exact model IDs when the model matters. Use trustedrouter/auto, "
+            "cheap, fast, zdr, or e2e when the routing objective matters more."
+        ),
+        right_eyebrow="Migration",
+        right_headline="Your application contract stays familiar.",
+        right_copy=(
+            "The OpenAI SDK, message shape, streaming contract, and base URL pattern "
+            "stay consistent while the selected route changes."
+        ),
+        final_headline="Try the model market through one key.",
+        final_copy="Create a key, run the sample, then change the model ID.",
+    ),
+    "provider-failover": OpenRouterLandingVariant(
+        slug="provider-failover",
+        title="Automatic LLM Provider Failover",
+        description=(
+            "Keep serving through provider errors and capacity limits with measured, "
+            "automatic fallback behind one OpenAI-compatible API."
+        ),
+        kicker="Reliability without retry trees",
+        headline="Keep serving through provider outages.",
+        lead=(
+            "TrustedRouter ranks eligible routes and moves to another provider when "
+            "a route fails. Your application keeps one API contract."
+        ),
+        cta="Test provider failover",
+        secondary_label="See live status",
+        secondary_href="/status",
+        microcopy="Start with trustedrouter/auto and keep your existing SDK.",
+        terminal_label="Automatic fallback",
+        model_id="trustedrouter/auto",
+        proof_items=(
+            ("Automatic", "Fallback across eligible routes."),
+            ("Measured", "Latency and availability data."),
+            ("Visible", "Public provider status."),
+            ("Consistent", "One client contract."),
+        ),
+        cards=(
+            (
+                "Route",
+                "Start with more than one candidate.",
+                "The gateway authorizes eligible routes before invoking the first provider.",
+            ),
+            (
+                "Recover",
+                "Move past retryable failures.",
+                "Rate limits, provider errors, and empty streams can advance to another authorized route.",
+            ),
+            (
+                "Measure",
+                "See how providers behave.",
+                "Public status and leaderboard pages publish metadata-only latency and success measurements.",
+            ),
+        ),
+        left_eyebrow="Application code",
+        left_headline="Keep one request path.",
+        left_copy=(
+            "The gateway owns candidate selection and provider rollover, so your app "
+            "does not need a separate retry tree for every vendor."
+        ),
+        right_eyebrow="Trust boundary",
+        right_headline="Every fallback remains attested.",
+        right_copy=(
+            "A provider failure can move traffic to another eligible route. It never "
+            "moves prompt traffic to a non-attested TrustedRouter gateway."
+        ),
+        final_headline="Run one request through the automatic route.",
+        final_copy="Create a key and test the same API contract your production code uses.",
+    ),
+    "privacy-with-proof": OpenRouterLandingVariant(
+        slug="privacy-with-proof",
+        title="Private LLM Routing With Live Attestation",
+        description=(
+            "Verify the open-source gateway handling your prompts, then restrict "
+            "downstream routing to documented zero-data-retention providers."
+        ),
+        kicker="Privacy with proof",
+        headline="Verify the prompt path before the first prompt.",
+        lead=(
+            "A fresh hardware attestation identifies the running gateway build. "
+            "Realtime inference never logs prompt or output content."
+        ),
+        cta="Create a private API key",
+        secondary_label="Verify the gateway",
+        secondary_href="https://trust.trustedrouter.com",
+        microcopy="Use trustedrouter/zdr to add a downstream retention requirement.",
+        terminal_label="Zero-retention route",
+        model_id="trustedrouter/zdr",
+        proof_items=(
+            ("Attested", "Live gateway evidence."),
+            ("Open", "Published prompt-path source."),
+            ("Realtime", "No prompt or output logs."),
+            ("ZDR", "Policy-filtered providers."),
+        ),
+        cards=(
+            (
+                "Challenge",
+                "Request fresh evidence.",
+                "Bind a nonce to the live gateway and inspect the signed attestation response.",
+            ),
+            (
+                "Compare",
+                "Match the build to published source.",
+                "The trust page links the release digest, source commit, and verification steps.",
+            ),
+            (
+                "Restrict",
+                "Choose the downstream posture.",
+                "The zdr and e2e routes apply distinct provider requirements and fail closed when no route qualifies.",
+            ),
+        ),
+        left_eyebrow="TrustedRouter gateway",
+        left_headline="Verify the code handling the request.",
+        left_copy=(
+            "Hardware attestation covers the running gateway build. The prompt path "
+            "is published and realtime inference does not retain prompt or output content."
+        ),
+        right_eyebrow="Downstream provider",
+        right_headline="Select the provider policy separately.",
+        right_copy=(
+            "Attestation of the router does not turn every model provider into a TEE. "
+            "Use route privacy filters and review the cited provider policy."
+        ),
+        final_headline="Verify first. Then make the request.",
+        final_copy="Create a key and call the ZDR route through the attested gateway.",
+    ),
+    "usage-pricing": OpenRouterLandingVariant(
+        slug="usage-pricing",
+        title="LLM Routing Without a Monthly Subscription",
+        description=(
+            "Pay the provider model cost plus 5.5% for prepaid text and embeddings, "
+            "with published per-model prices and no monthly router plan."
+        ),
+        kicker="Usage pricing",
+        headline="Spend your AI budget on tokens, not subscriptions.",
+        lead=(
+            "Prepaid text and embedding requests cost the provider price plus 5.5%. "
+            "Every model page publishes the rate before you call it."
+        ),
+        cta="Make a low-cost first call",
+        secondary_label="See pricing",
+        secondary_href="/pricing",
+        microcopy="No monthly router plan. Set a limit on each API key.",
+        terminal_label="Route by cost",
+        model_id="trustedrouter/cheap",
+        proof_items=(
+            ("5.5%", "Prepaid text and embedding markup."),
+            ("$0", "Monthly router subscription."),
+            ("Public", "Per-model customer prices."),
+            ("Bounded", "Per-key spend limits."),
+        ),
+        cards=(
+            (
+                "Choose",
+                "Route to the cheapest capable option.",
+                "Use trustedrouter/cheap or select an exact model with a published customer price.",
+            ),
+            (
+                "Limit",
+                "Put a ceiling on every key.",
+                "Create separate keys for applications and set their maximum spend before deployment.",
+            ),
+            (
+                "Inspect",
+                "See usage in microdollar precision.",
+                "Activity metadata records model, provider, token counts, latency, and integer cost.",
+            ),
+        ),
+        left_eyebrow="Cost control",
+        left_headline="Match the model to the job.",
+        left_copy=(
+            "Frontier models remain available when they earn their cost. Cheap and "
+            "fast aliases make lower-cost routes easy to test for the rest."
+        ),
+        right_eyebrow="Billing",
+        right_headline="Keep the ledger inspectable.",
+        right_copy=(
+            "Costs are computed as integer microdollars and displayed per request, "
+            "API key, and workspace instead of being hidden behind a seat plan."
+        ),
+        final_headline="Price one real request.",
+        final_copy="Create a key, call trustedrouter/cheap, and inspect the billed usage.",
+    ),
+    "production-controls": OpenRouterLandingVariant(
+        slug="production-controls",
+        title="Production LLM Gateway Controls",
+        description=(
+            "Ship scoped API keys, workspace budgets, provider policy, fallback, "
+            "and metadata-only activity through one model gateway."
+        ),
+        kicker="Production controls",
+        headline="Ship one model API your team can control.",
+        lead=(
+            "Separate keys by application, set spend limits, filter providers, and "
+            "review usage metadata without collecting prompt or output content."
+        ),
+        cta="Create a scoped API key",
+        secondary_label="Read the docs",
+        secondary_href="/docs",
+        microcopy="Start with one application key and one explicit spend limit.",
+        terminal_label="Production-ready request",
+        model_id="trustedrouter/auto",
+        proof_items=(
+            ("Scoped", "Keys by application."),
+            ("Limited", "Per-key spend ceilings."),
+            ("Filtered", "Provider and privacy policy."),
+            ("Measured", "Metadata-only activity."),
+        ),
+        cards=(
+            (
+                "Separate",
+                "Give each application its own key.",
+                "Disable, rotate, or limit one workload without touching every other integration.",
+            ),
+            (
+                "Constrain",
+                "Express routing policy in the request.",
+                "Choose providers, privacy tiers, regions, model candidates, and sorting objectives.",
+            ),
+            (
+                "Review",
+                "Keep operational evidence without content logs.",
+                "Activity rows include model, provider, status, tokens, latency, and cost rather than prompts or outputs.",
+            ),
+        ),
+        left_eyebrow="Developer workflow",
+        left_headline="Migration stays small.",
+        left_copy=(
+            "Keep the OpenAI client and request shape. Change the base URL, issue a "
+            "scoped key, and adopt routing controls incrementally."
+        ),
+        right_eyebrow="Operator workflow",
+        right_headline="Control the blast radius.",
+        right_copy=(
+            "Workspace and key boundaries make limits, revocation, provider policy, "
+            "and usage review explicit before production traffic grows."
+        ),
+        final_headline="Start with one bounded production key.",
+        final_copy="Create the key, set its limit, and make the first API call.",
+    ),
+}
+
+OPENROUTER_PAID_LANDING_PATHS: tuple[str, ...] = (
+    "/openrouter-alternative/quickstart",
+    *tuple(f"/openrouter-alternative/lp/{slug}" for slug in OPENROUTER_PAID_LANDING_VARIANTS),
+)
+
+
+def assigned_openrouter_landing_path(seed: str | None) -> str:
+    """Choose one stable experiment arm without retaining visitor identity."""
+    if not seed:
+        return OPENROUTER_PAID_LANDING_PATHS[0]
+    digest = hashlib.sha256(f"openrouter-lp-v1:{seed}".encode()).digest()
+    index = int.from_bytes(digest[:8], "big") % len(OPENROUTER_PAID_LANDING_PATHS)
+    return OPENROUTER_PAID_LANDING_PATHS[index]
 
 
 _NOT_FOUND_PAGE = PublicPage(
@@ -1017,10 +1353,10 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "docs/agent-setup": PublicPage(
         template="public/agent_setup.html",
-        title="AI Agent Router Base URL Setup",
+        title="Agent Router Base URL: Claude Code & Codex",
         description=(
-            "TrustedRouter base URLs, environment variables, smoke tests, and model "
-            "aliases for Claude Code, Codex, OpenAI SDK agents, and Anthropic SDK agents."
+            "Set the TrustedRouter base URL for Claude Code, Codex, Cursor, and OpenAI "
+            "or Anthropic SDK agents. Copy env vars, smoke tests, and model aliases."
         ),
         faq_items=(
             (
@@ -1097,10 +1433,10 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "eu": PublicPage(
         template="public/eu.html",
         og_card="eu.png",
-        title="EU LLM Gateway: Private AI Routing",
+        title="EU LLM Gateway Base URL & Data Residency",
         description=(
-            "Route OpenAI-compatible LLM requests through an attested Europe West "
-            "gateway, with EU-focused models, provider controls, and no prompt logs."
+            "Use the Europe West EU LLM gateway base URL with OpenAI-compatible APIs, "
+            "EU-focused routes, data-residency controls, and no prompt logs."
         ),
         faq_items=(
             (
@@ -1170,6 +1506,35 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
         ),
     ),
+    "confidential-cowork": PublicPage(
+        template="public/confidential_cowork.html",
+        title="Confidential Cowork",
+        description=(
+            "A native coding and knowledge-work agent that requires confidential "
+            "LLM routing, fails closed, and lets each team select US or EU processing."
+        ),
+        faq_items=(
+            (
+                "Can Confidential Cowork fall back to a normal model provider?",
+                "No. The confidential edition attaches a deny-data-collection, "
+                "minimum-confidentiality provider policy to every model request. "
+                "If no eligible provider is available, the request fails closed.",
+            ),
+            (
+                "Can we choose where requests are processed?",
+                "Yes. Each installation can require United States or European Union "
+                "processing. The same restriction covers the primary model, safety "
+                "review, summaries, and model-assisted search.",
+            ),
+            (
+                "Can an enterprise use its own models and token capacity?",
+                "Yes. The self-serve app starts on TrustedRouter. Enterprise deployments "
+                "can be designed around approved private capacity, internal model access, "
+                "identity controls, and organization policy.",
+            ),
+        ),
+        og_alt="Confidential Cowork desktop app with enforced confidential routing controls",
+    ),
     "security": PublicPage(
         template="public/security.html",
         title="Security",
@@ -1221,6 +1586,22 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "A private LLM API where privacy is cryptographically verifiable. "
             "Route to Claude, GPT, Gemini, DeepSeek through an attested gateway."
+        ),
+    ),
+    "openrouter-alternative/quickstart": PublicPage(
+        template="public/experiment_openrouter_quickstart.html",
+        title="Switch from OpenRouter in One Line",
+        description=(
+            "Keep your OpenAI SDK, create a TrustedRouter key, and make the first "
+            "request through a private, hardware-attested gateway."
+        ),
+    ),
+    "private-llm-api/quickstart": PublicPage(
+        template="public/experiment_private_llm_quickstart.html",
+        title="Private LLM API Quickstart",
+        description=(
+            "Make one OpenAI-compatible request through TrustedRouter's "
+            "zero-data-retention route and verify the live gateway."
         ),
     ),
     "latest-model-apis": PublicPage(
@@ -1410,8 +1791,8 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         og_card="llm-provider-latency-benchmarks.png",
         title="LLM Provider Latency Benchmarks",
         description=(
-            "Measured time-to-first-token, time-to-first-byte, throughput, and "
-            "success rate for LLM providers routed through TrustedRouter."
+            "Compare measured time-to-first-token, throughput, uptime, and success rates "
+            "across LLM providers routed continuously through TrustedRouter."
         ),
         faq_items=(
             (
@@ -1564,6 +1945,95 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "evaluations, billing, and infrastructure that developers and customers can verify."
         ),
     ),
+    # Jurisdiction directories. These answer the two questions "US/EU/Chinese AI
+    # models" searches conflate — which lab built the weights, and which company
+    # operates the endpoint a request reaches — from the two separate catalog
+    # tables that record them. Rendered by public_model_region_html, which adds
+    # the per-region lists to the usual SEO page context.
+    "us-ai-models": PublicPage(
+        template="public/seo_us_ai_models.html",
+        og_card="us-ai-models.png",
+        title="US AI Models & US-Operated Providers",
+        description=(
+            "Which AI models come from US labs, which providers are operated by US "
+            "companies, and how to require US-operated routes on a request. Both facts, kept apart."
+        ),
+        og_alt="US AI model origins and US-operated provider routes on TrustedRouter",
+        faq_items=(
+            (
+                "What counts as a US AI model?",
+                "Two different things, so TrustedRouter records them separately. A model's origin is the country of the lab that built the weights, read from that lab's own licence, terms, or regulatory filing. A route's jurisdiction is the country of the company operating the endpoint the request reaches, read from that company's own terms or filing. A model from a US lab is regularly served by providers registered outside the US, and open-weights models from other countries are regularly served by US providers, so neither fact implies the other.",
+            ),
+            (
+                "How do I make sure my prompts only reach US providers?",
+                'Set provider.jurisdiction to "us" on the request. The router then considers only providers whose recorded operator country is the United States and fails closed when none qualify, rather than falling back to a provider you did not approve. For an exact list rather than a country test, use provider.only with the provider slugs you approved.',
+            ),
+            (
+                "Does a US provider mean my data stays in the United States?",
+                "No, and this site does not claim it. The recorded country is the legal home of the company operating the endpoint, taken from its published terms, privacy policy, or regulatory filing. It says nothing about which datacentre answers a given request. Where processing location is a contractual requirement, it comes from an agreed provider allowlist and a signed agreement, not from a country code in a catalog.",
+            ),
+            (
+                "What is the Liberty model family?",
+                "Liberty is TrustedRouter's own set of panel routes: each id calls several component models and returns one answer. Every component model under every Liberty route resolves to a lab recorded as US-based in the catalog's model-origin table, and the US-AI-models page shows that as a count computed when the page renders rather than as a fixed claim. US-operated provider routes are available for each Liberty id; the default candidate pool also includes operators outside the US, so add provider.jurisdiction=\"us\" when US-operated serving is a requirement.",
+            ),
+        ),
+    ),
+    "eu-ai-models": PublicPage(
+        template="public/seo_eu_ai_models.html",
+        og_card="eu-ai-models.png",
+        title="EU AI Models & EU-Operated Providers",
+        description=(
+            "Models built by EU labs, providers operated from EU member states, and why "
+            "an EU-registered provider is not by itself EU data residency."
+        ),
+        og_alt="EU AI model origins and EU-operated provider routes on TrustedRouter",
+        faq_items=(
+            (
+                "Which AI models are made in the EU?",
+                "TrustedRouter groups catalog models by the lab that built them, using a country read from that lab's own legal notice or filing. The EU AI models page lists every lab registered in an EU member state alongside its models and the source the country came from. A vendor prefix earns an origin row once at least three of its models are in the catalog, so smaller prefixes appear on no region page rather than being assigned a country by guesswork.",
+            ),
+            (
+                "Does the trustedrouter/eu route guarantee EU data residency?",
+                "No. trustedrouter/eu is a routing preference: it narrows candidates to an EU-focused provider pool led by Mistral. Membership in that pool is based on EU-focused availability and privacy posture, and some of its providers are operated by companies registered outside the EU. For a hard requirement, set provider.only to the operators you approved, which fails closed instead of falling back, and put that allowlist in the contract.",
+            ),
+            (
+                "Can I require an EU provider the way I can require a US one?",
+                'Not with the jurisdiction preference. provider.jurisdiction accepts "us" and nothing else today, so an EU requirement is expressed with provider.only and the provider list on this page. Separately, the EU gateway region is chosen by base URL: https://api-europe-west4.quillrouter.com/v1 begins authentication, policy checks, provider selection, and streaming in Europe West inside the attested gateway.',
+            ),
+            (
+                "Is provider jurisdiction the same as provider privacy posture?",
+                "No, they are independent fields. A provider registered in an EU member state can have no recorded zero-retention or confidential-compute claim, and a provider registered elsewhere can have both. Jurisdiction is filtered with provider.only; retention and confidentiality are filtered with provider.min_privacy set to zdr or confidential.",
+            ),
+        ),
+    ),
+    "china-ai-models": PublicPage(
+        template="public/seo_china_ai_models.html",
+        og_card="china-ai-models.png",
+        title="Chinese AI Models: Labs, Routes & Where Prompts Go",
+        description=(
+            "Chinese-lab models in the catalog, the providers that serve each one, and how "
+            "to run those weights on a US-operated route instead of the vendor endpoint."
+        ),
+        og_alt="Chinese AI model origins and the operator jurisdiction of each route",
+        faq_items=(
+            (
+                "Does using a Chinese model send my prompts to China?",
+                "Only if you route it to a provider operated from China. The model's origin and the endpoint's operator are separate facts in the catalog. Most of these are open-weights models that US-registered providers also serve; a request routed to one of those reaches that provider's endpoint and is not sent on to the originating lab. A request to the vendor's own API does reach a China-registered operator, which is what the provider table on this page lists.",
+            ),
+            (
+                "How do I use a Chinese model without China-bound traffic?",
+                'Set provider.jurisdiction to "us" on the request. The router then considers only providers whose recorded operator country is the United States, and fails closed when none serve that model, rather than silently routing elsewhere. provider.only pins an exact operator allowlist when a country test is not specific enough.',
+            ),
+            (
+                "Which providers are operated from China?",
+                "The provider table on this page is generated from the catalog, listing every provider whose operator is a China-registered company according to that company's own privacy policy, terms, or regulatory filing. Some familiar Chinese AI brands are not on it: the api.z.ai and api.siliconflow.com services are operated by Singapore-registered companies under Singapore law per their own terms, so they are recorded under Singapore while the weights they serve stay grouped under the labs that built them.",
+            ),
+            (
+                "Are Chinese models worse or less safe?",
+                "That is not a question a jurisdiction directory can answer, and this page does not try to. Benchmark scores, prices, and measured latency per route are on each model page and the live leaderboard. What the catalog records is the origin country and the operator country, each with the source it was read from, so a procurement review can weigh them alongside measurements rather than instead of them.",
+            ),
+        ),
+    ),
 }
 
 
@@ -1618,6 +2088,9 @@ def _env() -> Environment:
     env.filters["seo_meta_description"] = seo_meta_description
     env.globals["provider_logo_url"] = provider_logo_url
     env.globals["content_handling_claim"] = CONTENT_HANDLING_CLAIM
+    # Callable, not a value: this env is lru_cached and shared across
+    # requests, so it must read the per-request ContextVar at render time.
+    env.globals["csp_nonce"] = current_csp_nonce
     return env
 
 
@@ -1651,19 +2124,18 @@ def dashboard_html(
     page_title = f"{brand_name} | Every model. Privacy with proof." if alternate_brand else OG_TITLE
     tr_config = {
         "environment": environment,
-        "defaultDevUser": "" if environment == "production" else DEV_USER_FALLBACK,
+        "defaultDevUser": "" if environment not in {"local", "test"} else DEV_USER_FALLBACK,
         "apiBaseUrl": resolved_api_base_url,
         "stablecoinCheckoutEnabled": settings.stablecoin_checkout_enabled,
         "paypalEnabled": settings.paypal_enabled,
         "googleEnabled": settings.google_oauth_enabled,
         "githubEnabled": settings.github_oauth_enabled,
     }
-    map_regions = region_map_payload(settings)
-    api_region_count = len(configured_regions(settings))
     return (
         _env()
         .get_template("dashboard.html")
         .render(
+            organization_json_ld=_json_ld_graph(settings),
             api_base_url=resolved_api_base_url,
             site_url=site_url,
             canonical_site_url=canonical_site_url,
@@ -1678,8 +2150,6 @@ def dashboard_html(
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
             paypal_enabled=settings.paypal_enabled,
-            map_regions=map_regions,
-            api_region_count=api_region_count,
             primary_region=settings.primary_region,
             static_version=_static_version(settings),
         )
@@ -1762,12 +2232,21 @@ def _blog_index_posts(settings: Settings) -> tuple[BlogIndexPost, ...]:
     )
 
 
-def _json_ld_graph(*nodes: dict[str, object] | None) -> str:
+def _json_ld_graph(settings: Settings, *nodes: dict[str, object] | None) -> str:
+    """Every page's graph, with the operating company always in it.
+
+    The Organization node is prepended here rather than added at each call
+    site. There are a dozen of those and adding it to each would be a dozen
+    places to forget it, which matters because an assistant asked "who runs
+    this and how do I contact them" has no reason to have landed on whichever
+    page somebody remembered to annotate.
+    """
     graph = [node for node in nodes if node]
     if len(graph) == 1:
         payload: dict[str, object] = {"@context": "https://schema.org", **graph[0]}
     else:
-        payload = {"@context": "https://schema.org", "@graph": graph}
+        graph = [_organization_node(settings), *graph]
+    payload = {"@context": "https://schema.org", "@graph": graph}
     return json.dumps(payload, separators=(",", ":"))
 
 
@@ -1804,6 +2283,7 @@ def _faq_node(faq_items: Sequence[tuple[str, str]]) -> dict[str, object] | None:
 
 def _blog_index_json_ld(settings: Settings) -> str:
     return _json_ld_graph(
+        settings,
         _breadcrumb_node(settings, (("Home", "/"), ("Blog", "/blog"))),
         {
             "@type": "Blog",
@@ -1825,6 +2305,7 @@ def _blog_index_json_ld(settings: Settings) -> str:
 
 def _blog_post_json_ld(settings: Settings, post: BlogPost) -> str:
     return _json_ld_graph(
+        settings,
         _breadcrumb_node(
             settings,
             (("Home", "/"), ("Blog", "/blog"), (post.title, post.href)),
@@ -1846,6 +2327,81 @@ def _blog_post_json_ld(settings: Settings, post: BlogPost) -> str:
             "isBasedOn": post.source_url,
         },
     )
+
+
+def _organization_node(settings: Settings) -> dict[str, object]:
+    """The operating company, in the form a verifier can actually check.
+
+    Every Organization node on the site until now was a two-field publisher
+    stub -- name and url -- attached to a blog post or a dataset. None of them
+    said who operates TrustedRouter, how to reach a human, or where the company
+    is, which is exactly what an assistant is asked when somebody wants to know
+    whether a vendor is real before sending it traffic.
+
+    The values come from the same settings the legal and procurement pages
+    render, so this cannot drift into being a second, prettier set of facts.
+    contactPoint is split by purpose because "who do I email about a
+    vulnerability" and "who do I email about an invoice" are different
+    questions with different answers.
+    """
+    domain = settings.trusted_domain
+    return {
+        "@type": "Organization",
+        "@id": f"https://{domain}/#organization",
+        "name": "TrustedRouter",
+        "legalName": settings.legal_entity_name,
+        "url": f"https://{domain}/",
+        "mainEntityOfPage": f"https://{domain}/about",
+        "logo": _absolute_url(settings, "/static/logo.png"),
+        # EIN and DUNS are already published on /legal for procurement. Repeating
+        # them here in the machine-readable node is the difference between a
+        # human being able to verify the company and an assistant being able to.
+        "taxID": settings.legal_entity_ein,
+        "duns": settings.legal_entity_duns,
+        "description": (
+            "An OpenAI-compatible AI router with an attested prompt path: one API "
+            "for hundreds of models across many providers, with provider fallback, "
+            "zero-retention routing, and a gateway whose running source commit and "
+            "image digest can be verified."
+        ),
+        "address": {
+            "@type": "PostalAddress",
+            "streetAddress": settings.legal_entity_street,
+            "addressLocality": settings.legal_entity_city,
+            "addressRegion": settings.legal_entity_region,
+            "postalCode": settings.legal_entity_postal_code,
+            "addressCountry": settings.legal_entity_country,
+        },
+        "contactPoint": [
+            {
+                "@type": "ContactPoint",
+                "contactType": "customer support",
+                "email": settings.support_email,
+                "telephone": settings.legal_entity_phone,
+                "url": f"https://{domain}/support",
+                "availableLanguage": ["en"],
+            },
+            {
+                "@type": "ContactPoint",
+                "contactType": "security",
+                "email": settings.security_contact_email,
+                "url": f"https://{domain}/security",
+                "availableLanguage": ["en"],
+            },
+            {
+                "@type": "ContactPoint",
+                "contactType": "sales",
+                "email": settings.support_email,
+                "telephone": settings.legal_entity_phone,
+                "url": f"https://{domain}/contact",
+                "availableLanguage": ["en"],
+            },
+        ],
+        "sameAs": [
+            "https://github.com/Lore-Hex",
+            f"https://{domain}/trust",
+        ],
+    }
 
 
 def _dataset_node(
@@ -1942,6 +2498,7 @@ def public_page_html(
     page_key: str,
     *,
     site_url: str | None = None,
+    canonical_path: str | None = None,
     robots_meta: str | None = None,
 ) -> str:
     page = PUBLIC_PAGES[page_key]
@@ -1952,7 +2509,96 @@ def public_page_html(
         path=path,
         page_key=page_key,
         site_url=site_url,
+        canonical_url_override=(
+            canonical_public_url(settings, canonical_path) if canonical_path is not None else None
+        ),
         robots_meta=robots_meta,
+    )
+
+
+def public_openrouter_experiment_html(settings: Settings, variant_slug: str) -> str:
+    variant = OPENROUTER_PAID_LANDING_VARIANTS[variant_slug]
+    path = f"/openrouter-alternative/lp/{variant.slug}"
+    page = PublicPage(
+        template="public/experiment_openrouter_variant.html",
+        title=variant.title,
+        description=variant.description,
+    )
+    return _render_public_page(
+        settings,
+        page,
+        path=path,
+        site_url=canonical_public_url(settings, path),
+        canonical_url_override=canonical_public_url(
+            settings,
+            "/openrouter-alternative",
+        ),
+        robots_meta="noindex,follow",
+        extra_context={"variant": variant},
+    )
+
+
+def _region_list_items(
+    settings: Settings,
+    rows: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Name/URL pairs for a schema.org ItemList, from directory rows that
+    already carry a display name and a site-relative href."""
+    return [
+        {
+            "name": str(row["name"]),
+            "url": f"https://{settings.trusted_domain}{row['detail_href']}",
+        }
+        for row in rows
+    ]
+
+
+def public_model_region_html(settings: Settings, slug: str) -> str:
+    """Render one jurisdiction directory: /us-ai-models, /eu-ai-models, or
+    /china-ai-models.
+
+    The provider and model lists are built from the catalog on every render, the
+    way /models is, so a route added to the catalog shows up here without a
+    second edit and a route removed stops being advertised. dateModified carries
+    the day the page was built, which is what the on-page "as of" stamp reports.
+    """
+    page = PUBLIC_PAGES[slug]
+    region = model_region_evidence(slug)
+    path = f"/{slug}"
+    canonical_url = canonical_public_url(settings, path)
+    provider_items = _region_list_items(
+        settings,
+        cast(list[Mapping[str, object]], region["provider_rows"]),
+    )
+    model_rows = [
+        model
+        for lab in cast(list[Mapping[str, object]], region["labs"])
+        for model in cast(list[Mapping[str, object]], lab["models"])
+    ]
+    model_items = _region_list_items(settings, model_rows[:200])
+    return _render_public_page(
+        settings,
+        page,
+        path=path,
+        page_key=slug,
+        extra_context={"region": region},
+        extra_json_ld=(
+            {
+                "@type": "WebPage",
+                "name": page.title,
+                "url": canonical_url,
+                "description": page.description,
+                "dateModified": datetime.now(UTC).date().isoformat(),
+            },
+            _item_list_node(
+                name=f"Providers operated from {region['country_label']}",
+                items=provider_items,
+            ),
+            _item_list_node(
+                name=f"Models built by labs in {region['country_label']}",
+                items=model_items,
+            ),
+        ),
     )
 
 
@@ -1987,13 +2633,12 @@ def public_competitor_compare_index_html(settings: Settings) -> str:
             ),
             comparison_count=len(COMPETITOR_COMPARISONS),
             category_count=len(grouped),
-            source_count=sum(
-                len(comparison.sources) for comparison in COMPETITOR_COMPARISONS
+            source_count=sum(len(comparison.sources) for comparison in COMPETITOR_COMPARISONS),
+            verified_on_label=datetime.fromisoformat(COMPETITOR_COMPARISONS_VERIFIED_ON).strftime(
+                "%B %-d, %Y"
             ),
-            verified_on_label=datetime.fromisoformat(
-                COMPETITOR_COMPARISONS_VERIFIED_ON
-            ).strftime("%B %-d, %Y"),
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(settings, (("Home", "/"), ("AI gateway comparisons", path))),
                 _item_list_node(name="TrustedRouter gateway comparisons", items=items),
             ),
@@ -2010,9 +2655,9 @@ def public_competitor_compare_html(settings: Settings, slug: str) -> str | None:
         return None
     path = comparison.href
     canonical_url = canonical_public_url(settings, path)
-    verified_on_label = datetime.fromisoformat(
-        COMPETITOR_COMPARISONS_VERIFIED_ON
-    ).strftime("%B %-d, %Y")
+    verified_on_label = datetime.fromisoformat(COMPETITOR_COMPARISONS_VERIFIED_ON).strftime(
+        "%B %-d, %Y"
+    )
     page_node: dict[str, object] = {
         "@type": "WebPage",
         "name": comparison.title,
@@ -2044,6 +2689,7 @@ def public_competitor_compare_html(settings: Settings, slug: str) -> str | None:
             verified_on_label=verified_on_label,
             faq_items=comparison.faq_items,
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(
                     settings,
                     (("Home", "/"), ("Comparisons", "/compare"), (comparison.name, path)),
@@ -2065,9 +2711,12 @@ def _render_public_page(
     path: str,
     page_key: str | None = None,
     site_url: str | None = None,
+    canonical_url_override: str | None = None,
     robots_meta: str | None = None,
+    extra_context: Mapping[str, object] | None = None,
+    extra_json_ld: Sequence[dict[str, object]] = (),
 ) -> str:
-    canonical_url = canonical_public_url(settings, path)
+    canonical_url = canonical_url_override or canonical_public_url(settings, path)
     resolved_site_url = site_url or canonical_url
     catalog_evidence = (
         seo_catalog_evidence(page_key, test_mode=settings.environment == "test")
@@ -2077,9 +2726,9 @@ def _render_public_page(
     verified_on_label: str | None = None
     page_specific_json_ld: tuple[dict[str, object], ...] = ()
     if page_key == "openrouter-alternative":
-        verified_on_label = datetime.fromisoformat(
-            OPENROUTER_ALTERNATIVES_VERIFIED_ON
-        ).strftime("%B %-d, %Y")
+        verified_on_label = datetime.fromisoformat(OPENROUTER_ALTERNATIVES_VERIFIED_ON).strftime(
+            "%B %-d, %Y"
+        )
         page_specific_json_ld = (
             {
                 "@type": "WebPage",
@@ -2122,8 +2771,11 @@ def _render_public_page(
             catalog_evidence=catalog_evidence,
             verified_on_label=verified_on_label,
             json_ld_blob=_json_ld_graph(
+                settings,
+                _organization_node(settings),
                 _breadcrumb_node(settings, (("Home", "/"), (page.title, path))),
                 *page_specific_json_ld,
+                *extra_json_ld,
                 _faq_node(page.faq_items),
                 _catalog_evidence_item_list_node(settings, catalog_evidence),
             ),
@@ -2138,6 +2790,7 @@ def _render_public_page(
                 PROVIDER_CATALOG_V2_EXAMPLE,
                 indent=2,
             ),
+            **dict(extra_context or {}),
         )
     )
 
@@ -2150,6 +2803,42 @@ def public_not_found_html(settings: Settings, requested_path: str) -> str:
         path=safe_path,
         site_url=f"https://{settings.trusted_domain}{safe_path}",
         robots_meta="noindex,follow",
+    )
+
+
+def public_not_found_markdown(settings: Settings, requested_path: str) -> str:
+    """A 404 body an agent can act on instead of a dead end.
+
+    A bare status line tells a crawler the path is wrong and nothing about
+    where the content it wanted actually lives, so the usual recovery is to
+    guess more paths. Naming the machine-readable indexes turns one 404 into
+    the start of a correct traversal: llms.txt is the curated entry point,
+    sitemap.xml is the exhaustive one, and openapi.json is the API surface.
+
+    Kept deliberately short. This is an error body, not a site map, and an
+    agent that has just been told "not here" should not have to read a page of
+    prose to find the index.
+    """
+    domain = settings.trusted_domain
+    safe_path = requested_path if requested_path.startswith("/") else f"/{requested_path}"
+    return "\n".join(
+        (
+            "# 404 Not Found",
+            "",
+            f"`{safe_path}` does not exist on {domain}.",
+            "",
+            "## Where to look instead",
+            "",
+            f"- Site index for agents: https://{domain}/llms.txt",
+            f"- Full URL list: https://{domain}/sitemap.xml",
+            f"- Documentation index: https://{domain}/docs",
+            f"- OpenAPI specification: https://{domain}/openapi.json",
+            f"- Model catalog (public, no API key): https://{domain}/v1/models",
+            f"- Status: https://status.{domain}/",
+            "",
+            "The API base URL is https://api." + domain + "/v1 and is OpenAI compatible.",
+            "",
+        )
     )
 
 
@@ -2207,6 +2896,10 @@ def public_legal_html(settings: Settings) -> str:
         _env()
         .get_template("public/legal.html")
         .render(
+            # /legal is the procurement page: the entity, EIN and DUNS are
+            # already rendered here for humans, and this is the machine-readable
+            # form of the same facts.
+            json_ld_blob=_json_ld_graph(settings),
             api_base_url=settings.api_base_url,
             site_url=f"https://{settings.trusted_domain}/legal",
             title="Legal And Procurement Packet | TrustedRouter",
@@ -2225,13 +2918,101 @@ def public_legal_html(settings: Settings) -> str:
     )
 
 
+def public_about_html(settings: Settings) -> str:
+    path = "/about"
+    page_url = f"https://{settings.trusted_domain}{path}"
+    return (
+        _env()
+        .get_template("public/about.html")
+        .render(
+            json_ld_blob=_json_ld_graph(
+                settings,
+                _breadcrumb_node(settings, (("Home", "/"), ("About", path))),
+                {
+                    "@type": "AboutPage",
+                    "name": "About TrustedRouter",
+                    "url": page_url,
+                    "description": (
+                        "TrustedRouter is operated by Lore Hex Corp and provides an "
+                        "OpenAI-compatible, attested AI routing service."
+                    ),
+                    "mainEntity": {"@id": f"https://{settings.trusted_domain}/#organization"},
+                },
+            ),
+            api_base_url=settings.api_base_url,
+            site_url=page_url,
+            title="About TrustedRouter | Company, Product & Trust",
+            heading="About TrustedRouter",
+            description=(
+                "Meet the company behind TrustedRouter, review its legal identity, product, "
+                "open-source infrastructure, customers, and independently checkable trust evidence."
+            ),
+            entity=legal_entity(settings),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
+    )
+
+
+def public_contact_html(settings: Settings) -> str:
+    path = "/contact"
+    page_url = f"https://{settings.trusted_domain}{path}"
+    return (
+        _env()
+        .get_template("public/contact.html")
+        .render(
+            json_ld_blob=_json_ld_graph(
+                settings,
+                _breadcrumb_node(settings, (("Home", "/"), ("Contact", path))),
+                {
+                    "@type": "ContactPage",
+                    "name": "Contact TrustedRouter",
+                    "url": page_url,
+                    "description": (
+                        "Direct product, business, support, security, privacy, legal, and "
+                        "procurement contact details for TrustedRouter and Lore Hex Corp."
+                    ),
+                    "mainEntity": {"@id": f"https://{settings.trusted_domain}/#organization"},
+                },
+            ),
+            api_base_url=settings.api_base_url,
+            site_url=page_url,
+            title="Contact TrustedRouter | Support, Security & Business",
+            heading="Contact TrustedRouter",
+            description=(
+                "Contact Lore Hex Corp for TrustedRouter product, business, support, security, "
+                "privacy, legal, procurement, billing, and account questions."
+            ),
+            entity=legal_entity(settings),
+            support_email=settings.support_email,
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
+    )
+
+
 def public_privacy_html(settings: Settings) -> str:
+    path = "/privacy"
+    page_url = f"https://{settings.trusted_domain}{path}"
     return (
         _env()
         .get_template("public/privacy.html")
         .render(
+            json_ld_blob=_json_ld_graph(
+                settings,
+                _breadcrumb_node(settings, (("Home", "/"), ("Privacy", path))),
+                {
+                    "@type": "WebPage",
+                    "name": "TrustedRouter Privacy Policy",
+                    "url": page_url,
+                    "dateModified": "2026-08-24",
+                    "about": {"@id": f"https://{settings.trusted_domain}/#organization"},
+                },
+            ),
             api_base_url=settings.api_base_url,
-            site_url=f"https://{settings.trusted_domain}/privacy",
+            site_url=page_url,
             title="Privacy Policy | TrustedRouter",
             heading="Privacy policy",
             description=(
@@ -2300,6 +3081,9 @@ def public_support_html(settings: Settings) -> str:
         _env()
         .get_template("public/support.html")
         .render(
+            # The page an assistant reaches for a contact query, so the
+            # contactPoint block belongs here more than anywhere.
+            json_ld_blob=_json_ld_graph(settings),
             api_base_url=settings.api_base_url,
             site_url=f"https://{settings.trusted_domain}/support",
             title="Support | TrustedRouter",
@@ -2345,6 +3129,7 @@ def public_bedrock_group_buy_html(
             og_image=(f"https://{settings.trusted_domain}/static/og/bedrock-group-buy.png"),
             og_image_alt=("TrustedRouter Bedrock Group Buy: $1 million per month and 10% savings"),
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(
                     settings,
                     (("Home", "/"), ("Bedrock Group Buy", "/bedrock-group-buy")),
@@ -2532,11 +3317,11 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
         .render(
             api_base_url=settings.api_base_url,
             site_url=f"https://{settings.trusted_domain}/models",
-            title="Models | TrustedRouter",
+            title="AI Models: Prices, Providers & API Routes | TrustedRouter",
             heading="Models",
             description=(
-                "Browse hundreds of AI models with current provider routes, token pricing, "
-                "privacy policies, regional availability, measured performance, and API support."
+                "Compare hundreds of AI models by price, context window, provider, "
+                "privacy policy, and live API routes. Filter open-weight, US, and EU options."
             ),
             models=models,
             active_filter=normalized_filter,
@@ -2547,6 +3332,7 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
                 {"id": "eu", "label": "EU-focused", "href": "/models?filter=eu"},
             ],
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(settings, (("Home", "/"), ("Models", "/models"))),
                 _item_list_node(
                     name="TrustedRouter model catalog",
@@ -2579,8 +3365,7 @@ def public_benchmarks_html(settings: Settings) -> str:
             providers=[_provider_view(provider) for provider in providers_for_display()],
             benchmark_links=list(_BENCHMARK_INDEX_LINKS),
             monthly_reports=[
-                monthly_benchmark_report_view(report)
-                for report in monthly_benchmark_reports()
+                monthly_benchmark_report_view(report) for report in monthly_benchmark_reports()
             ],
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
@@ -2590,9 +3375,7 @@ def public_benchmarks_html(settings: Settings) -> str:
 
 
 def public_benchmark_reports_index_html(settings: Settings) -> str:
-    reports = [
-        monthly_benchmark_report_view(report) for report in monthly_benchmark_reports()
-    ]
+    reports = [monthly_benchmark_report_view(report) for report in monthly_benchmark_reports()]
     return (
         _env()
         .get_template("public/benchmark_reports_index.html")
@@ -2607,6 +3390,7 @@ def public_benchmark_reports_index_html(settings: Settings) -> str:
             ),
             reports=reports,
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(
                     settings,
                     (
@@ -2702,18 +3486,19 @@ def public_leaderboard_html(settings: Settings, snapshot: dict[str, object]) -> 
             title="LLM Provider & Model Speed Leaderboard | TrustedRouter",
             heading="Provider & model performance",
             description=(
-                "Measured time-to-first-token, time-to-first-byte, effective throughput, and "
-                "uptime for every LLM provider and model TrustedRouter routes to — "
+                "Measured time-to-first-token, effective throughput, and uptime for every "
+                "LLM provider and model TrustedRouter routes to — "
                 "continuously sampled, not vendor-claimed."
             ),
             page_kind="leaderboard",
             snapshot=snapshot,
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(settings, (("Home", "/"), ("Leaderboard", "/leaderboard"))),
                 _dataset_node(
                     name="TrustedRouter LLM provider and model speed leaderboard",
                     description=(
-                        "Metadata-only measurements for provider TTFT, TTFB, effective throughput, "
+                        "Metadata-only measurements for provider TTFT, effective throughput, "
                         "success rate, and excluded probe configuration rows."
                     ),
                     url=f"https://{settings.trusted_domain}/leaderboard",
@@ -2743,6 +3528,7 @@ def public_video_leaderboard_html(settings: Settings, snapshot: dict[str, object
             page_kind="video-leaderboard",
             snapshot=snapshot,
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(
                     settings,
                     (
@@ -2888,6 +3674,7 @@ def public_providers_html(settings: Settings) -> str:
             ),
             providers=providers,
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(settings, (("Home", "/"), ("Providers", "/providers"))),
                 _item_list_node(
                     name="TrustedRouter provider catalog",
@@ -2933,6 +3720,7 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
             measured=measured_for_provider(provider.slug, test_mode=settings.environment == "test"),
             faq_items=provider_faq_items,
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(
                     settings,
                     (
@@ -2984,7 +3772,7 @@ def public_provider_performance_html(settings: Settings, provider_slug: str) -> 
             title=f"{provider.name} Speed, Uptime and Throughput | TrustedRouter",
             heading=f"{provider.name} performance",
             description=(
-                f"Review measured TTFT, TTFB, effective throughput, uptime, and sampled model routes "
+                f"Review measured TTFT, effective throughput, uptime, and sampled model routes "
                 f"for {provider.name} on TrustedRouter using metadata-only production probes."
             ),
             og_image=_absolute_url(settings, provider_og_image_url(provider.slug)),
@@ -2998,6 +3786,7 @@ def public_provider_performance_html(settings: Settings, provider_slug: str) -> 
             ),
             measured=measured,
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(
                     settings,
                     (
@@ -3114,6 +3903,7 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
             comparison_neighbors=_model_comparison_neighbor_rows(left.id, right.id),
             faq_items=faq_items,
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(
                     settings,
                     (
@@ -3179,6 +3969,7 @@ def public_model_compare_index_html(settings: Settings, *, page: int = 1) -> str
                 for number in range(1, page_count + 1)
             ],
             json_ld_blob=_json_ld_graph(
+                settings,
                 _breadcrumb_node(
                     settings,
                     (("Home", "/"), ("Models", "/models"), ("Compare models", site_path)),
@@ -3405,44 +4196,54 @@ def llms_txt(settings: Settings) -> str:
         ),
         "",
         "## Primary Links",
-        f"- Homepage: https://{domain}/",
-        f"- Models: https://{domain}/models",
-        f"- Providers: https://{domain}/providers",
-        f"- AI gateway comparisons: https://{domain}/compare",
-        f"- Provider marketplace: https://{domain}/providers/marketplace",
-        f"- EU routing: https://{domain}/eu",
-        f"- TrustedOS for AI clouds: https://{domain}/trustedos",
-        f"- Benchmarks: https://{domain}/benchmarks",
-        f"- Rankings: https://{domain}/rankings",
-        "- Status: https://status.trustedrouter.com/",
-        "- Trust: https://trust.trustedrouter.com/",
-        f"- Legal/procurement packet: https://{domain}/legal",
-        f"- SOC 2 readiness: https://{domain}/legal/soc2-readiness",
-        f"- HIPAA readiness: https://{domain}/legal/hipaa-readiness",
-        f"- Agent setup: https://{domain}/docs/agent-setup",
-        f"- Agent model-advisor skill/playbook: https://{domain}/docs/agent-setup#codex-skill",
+        f"- [Homepage](https://{domain}/)",
+        f"- [About TrustedRouter](https://{domain}/about)",
+        f"- [Contact TrustedRouter](https://{domain}/contact)",
+        f"- [Privacy policy](https://{domain}/privacy)",
+        f"- [Models](https://{domain}/models)",
+        f"- [Providers](https://{domain}/providers)",
+        f"- [AI gateway comparisons](https://{domain}/compare)",
+        f"- [Provider marketplace](https://{domain}/providers/marketplace)",
+        (
+            "- Model origin vs serving jurisdiction directories (the lab that built a "
+            "model and the company operating each route are separate): "
+            f"[US]({f'https://{domain}/us-ai-models'}), "
+            f"[EU]({f'https://{domain}/eu-ai-models'}), "
+            f"[China]({f'https://{domain}/china-ai-models'})"
+        ),
+        f"- [EU routing](https://{domain}/eu)",
+        f"- [TrustedOS for AI clouds](https://{domain}/trustedos)",
+        f"- [Benchmarks](https://{domain}/benchmarks)",
+        f"- [Rankings](https://{domain}/rankings)",
+        "- [Status](https://status.trustedrouter.com/)",
+        "- [Trust](https://trust.trustedrouter.com/)",
+        f"- [Legal/procurement packet](https://{domain}/legal)",
+        f"- [SOC 2 readiness](https://{domain}/legal/soc2-readiness)",
+        f"- [HIPAA readiness](https://{domain}/legal/hipaa-readiness)",
+        f"- [Agent setup](https://{domain}/docs/agent-setup)",
+        f"- [Agent model-advisor skill/playbook](https://{domain}/docs/agent-setup#codex-skill)",
         "- Agent skill name: trustedrouter-model-advisor",
-        "- Agent playbook source: https://github.com/Lore-Hex/LLM-advisor",
-        "- Raw agent playbook: https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md",
-        f"- MCP server: https://{domain}/docs/mcp",
-        f"- Evals guide: https://{domain}/docs/evals",
-        f"- Provider conformance suite: https://{domain}/docs/provider-conformance",
-        f"- Synth guide: https://{domain}/docs/synth",
-        f"- Responses web search: https://{domain}/docs/web-search",
-        f"- Prompt caching: https://{domain}/docs/prompt-caching",
-        f"- Batch API: https://{domain}/docs/batch",
-        f"- Video generation: https://{domain}/docs/video",
-        f"- Request tagging and cost allocation: https://{domain}/docs/tagging",
-        f"- Client reliability telemetry: https://{domain}/docs/telemetry",
-        f"- Blog: https://{domain}/blog",
-        f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
-        f"- Request tagging and cost allocation: https://{domain}/docs/tagging",
-        f"- Client reliability telemetry: https://{domain}/docs/telemetry",
+        "- [Agent playbook source](https://github.com/Lore-Hex/LLM-advisor)",
+        "- [Raw agent playbook](https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md)",
+        f"- [MCP server](https://{domain}/docs/mcp)",
+        f"- [Evals guide](https://{domain}/docs/evals)",
+        f"- [Provider conformance suite](https://{domain}/docs/provider-conformance)",
+        f"- [Synth guide](https://{domain}/docs/synth)",
+        f"- [Responses web search](https://{domain}/docs/web-search)",
+        f"- [Prompt caching](https://{domain}/docs/prompt-caching)",
+        f"- [Batch API](https://{domain}/docs/batch)",
+        f"- [Video generation](https://{domain}/docs/video)",
+        f"- [Request tagging and cost allocation](https://{domain}/docs/tagging)",
+        f"- [Client reliability telemetry](https://{domain}/docs/telemetry)",
+        f"- [Blog](https://{domain}/blog)",
+        f"- [Migration guide](https://{domain}/docs/migrate-from-openrouter)",
+        f"- [Request tagging and cost allocation](https://{domain}/docs/tagging)",
+        f"- [Client reliability telemetry](https://{domain}/docs/telemetry)",
         "",
         "## API",
-        "- OpenAI compatible base URL: https://api.trustedrouter.com/v1",
-        "- EU regional base URL: https://api-europe-west4.quillrouter.com/v1",
-        f"- Canonical live model catalog (public, no API key): https://{domain}/v1/models",
+        "- [OpenAI compatible base URL](https://api.trustedrouter.com/v1)",
+        "- [EU regional base URL](https://api-europe-west4.quillrouter.com/v1)",
+        f"- [Canonical live model catalog (public, no API key)](https://{domain}/v1/models)",
         (
             "- Read the live model catalog before naming current model IDs, prices, "
             "context windows, or provider availability. This concise llms.txt is a "
@@ -3461,6 +4262,37 @@ def llms_txt(settings: Settings) -> str:
         "- OpenPatcher G2: use trustedrouter/openpatcher-g2 for a Kimi K3 worker with parallel Gemma 4 and Prometheus 2.0 advisors.",
         "- Plato Pro 2.0: use trustedrouter/plato-pro-2.0 for GLM 5.2 advised by Prometheus 2.0.",
         "- Synth Code: use trustedrouter/synth-code, trustedrouter/iris-code-1.0, trustedrouter/prometheus-code-1.0, or trustedrouter/zeus-code-1.0 for code-tuned panel and synthesis prompts",
+        "",
+        "## Official CLI",
+        "- Command name: trustedrouter",
+        "- Python install: pipx install trusted-router-py",
+        "- npm install: npm install --global @lore-hex/trusted-router",
+        "- Run without installing: npx --yes @lore-hex/trusted-router models --json",
+        "- After a Python install: trustedrouter models --json",
+        "- Authentication: set TRUSTEDROUTER_API_KEY; never pass API keys as command arguments.",
+        "- [PyPI package](https://pypi.org/project/trusted-router-py/)",
+        "- [npm package](https://www.npmjs.com/package/@lore-hex/trusted-router)",
+        "- [Python CLI source](https://github.com/Lore-Hex/trusted-router-py)",
+        "- [JavaScript CLI source](https://github.com/Lore-Hex/trusted-router-js)",
+        "",
+        "## Developer Resources",
+        (
+            '- Named so an agent searching for "TrustedRouter API docs", "TrustedRouter '
+            'OpenAPI spec" or "TrustedRouter MCP server" finds the exact URL here '
+            "rather than having to guess paths."
+        ),
+        f"- [TrustedRouter API documentation](https://{domain}/docs)",
+        f"- [TrustedRouter OpenAPI specification (JSON)](https://{domain}/openapi.json)",
+        f"- [TrustedRouter interactive API reference](https://{domain}/docs)",
+        f"- [TrustedRouter authentication](https://{domain}/docs#authentication)",
+        f"- [TrustedRouter MCP server](https://{domain}/docs/mcp)",
+        f"- [TrustedRouter agent setup guide](https://{domain}/docs/agent-setup)",
+        f"- [TrustedRouter SDK quickstarts](https://{domain}/docs#sdks)",
+        f"- [TrustedRouter status page](https://status.{domain}/)",
+        f"- [TrustedRouter attestation and trust evidence](https://trust.{domain}/)",
+        f"- [This index](https://{domain}/llms.txt)",
+        f"- [Extended index with full page text](https://{domain}/llms-full.txt)",
+        f"- [Machine-readable URL list](https://{domain}/sitemap.xml)",
         "",
         "## Catalog",
         f"- Public model pages: {model_count}",
@@ -3517,6 +4349,15 @@ def docs_llms_txt(settings: Settings) -> str:
             "- Agent skill name: trustedrouter-model-advisor",
             "- Agent playbook source: https://github.com/Lore-Hex/LLM-advisor",
             "- Raw agent playbook: https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md",
+            "- [Official CLI on PyPI](https://pypi.org/project/trusted-router-py/)",
+            "- [Official CLI on npm](https://www.npmjs.com/package/@lore-hex/trusted-router)",
+            "- [Python CLI source](https://github.com/Lore-Hex/trusted-router-py)",
+            "- [JavaScript CLI source](https://github.com/Lore-Hex/trusted-router-js)",
+            "- Install with Python: pipx install trusted-router-py",
+            "- Install with npm: npm install --global @lore-hex/trusted-router",
+            "- Run without installing: npx --yes @lore-hex/trusted-router models --json",
+            "- After a Python install: trustedrouter models --json",
+            "- Authentication: set TRUSTEDROUTER_API_KEY; never pass API keys as command arguments.",
             f"- Evals guide: https://{domain}/docs/evals",
             f"- Provider conformance suite: https://{domain}/docs/provider-conformance",
             f"- Synth guide: https://{domain}/docs/synth",
@@ -3632,6 +4473,15 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- Agent skill name: trustedrouter-model-advisor",
         "- Agent playbook source: https://github.com/Lore-Hex/LLM-advisor",
         "- Raw agent playbook: https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md",
+        "- [Official CLI on PyPI](https://pypi.org/project/trusted-router-py/)",
+        "- [Official CLI on npm](https://www.npmjs.com/package/@lore-hex/trusted-router)",
+        "- [Python CLI source](https://github.com/Lore-Hex/trusted-router-py)",
+        "- [JavaScript CLI source](https://github.com/Lore-Hex/trusted-router-js)",
+        "- Install with Python: pipx install trusted-router-py",
+        "- Install with npm: npm install --global @lore-hex/trusted-router",
+        "- Run without installing: npx --yes @lore-hex/trusted-router models --json",
+        "- After a Python install: trustedrouter models --json",
+        "- Authentication: set TRUSTEDROUTER_API_KEY; never pass API keys as command arguments.",
         f"- Evals guide: https://{domain}/docs/evals",
         f"- Provider conformance suite: https://{domain}/docs/provider-conformance",
         f"- Synth guide: https://{domain}/docs/synth",
@@ -3678,6 +4528,14 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- Provider caches are provider and route scoped. Fallback can reduce cache hits, while provider.only improves locality at the cost of rollover.",
         "- TrustedRouter does not create a durable router-side prompt cache. Real-time inference remains content-stateless; Batch retention is separate and explicit.",
         "- prompt_cache_retention is not supported and returns a stable 501 error.",
+        "",
+        "## Spend-Window Rate Limits",
+        "- Requests governed by a hard per-key daily, weekly, or monthly spend window return RateLimit-Limit, RateLimit-Remaining, and RateLimit-Reset.",
+        "- Limit and remaining are integer microdollars. Reset is the number of whole seconds until the fixed UTC window resets.",
+        "- A 429 also returns Retry-After. Wait at least that many seconds before retrying; the value is at least 1.",
+        "- The headers come from the same verdict that admitted or rejected the request. In-flight holds are intentionally not counted.",
+        "- Keys without a hard spend window do not receive fabricated rate-limit headers.",
+        f"- Worked agent backoff loop: https://{domain}/docs#rate-limit-headers",
         "",
         "## Synth",
         "- Endpoint shape: POST /v1/chat/completions.",
@@ -3847,6 +4705,7 @@ def _endpoint_provider_views(
 
 
 def _provider_view(provider: Provider) -> dict[str, object]:
+    routing_status = "active" if provider.supports_prepaid or provider.supports_byok else "blocked"
     return {
         "id": provider.slug,
         "name": provider.name,
@@ -3854,6 +4713,8 @@ def _provider_view(provider: Provider) -> dict[str, object]:
         "homepage_url": provider_homepage_url(provider.slug),
         "supports_prepaid": provider.supports_prepaid,
         "supports_byok": provider.supports_byok,
+        "routing_status": routing_status,
+        "routing_status_label": "Active" if routing_status == "active" else "Not routable",
         "attested_gateway": provider.attested_gateway,
         "gateway_stores_content": provider.stores_content,
         "zero_data_retention": provider.provider_zero_data_retention,
@@ -4167,7 +5028,7 @@ def _model_section_description(model: Model, section: str) -> str:
         )
     if section == "performance":
         return (
-            f"Compare measured TTFT, TTFB, throughput, uptime, and route health for {name} across "
+            f"Compare measured TTFT, throughput, uptime, and route health for {name} across "
             "TrustedRouter providers using metadata-only production probes."
         )
     if section == "pricing":
@@ -4230,14 +5091,14 @@ def _model_section_json_ld(
             _dataset_node(
                 name=f"{model.name} TrustedRouter performance measurements",
                 description=(
-                    f"Measured TTFT, TTFB, throughput, and uptime for {model.name} "
+                    f"Measured TTFT, throughput, and uptime for {model.name} "
                     f"across TrustedRouter provider routes. Current sample count: {sample_count}."
                 ),
                 url=section_url,
                 keywords=("LLM latency", model.name, "provider performance"),
             )
         )
-    return _json_ld_graph(*nodes)
+    return _json_ld_graph(settings, *nodes)
 
 
 def _sample_count(row: Mapping[str, object]) -> int:
@@ -4820,6 +5681,7 @@ def _model_json_ld(
     as USD per million tokens, matching the unit the page itself displays.
     """
     return _json_ld_graph(
+        settings,
         _breadcrumb_node(
             settings,
             (("Home", "/"), ("Models", "/models"), (model.name, f"/models/{model.id}")),

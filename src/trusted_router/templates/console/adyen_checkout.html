@@ -4,8 +4,8 @@
 {% endblock %}
 {% block scripts %}
 <script src="{{ adyen_js_url }}" integrity="{{ adyen_js_sri }}" crossorigin="anonymous"></script>
-<script id="adyen-checkout-config" type="application/json">{{ checkout_config | tojson }}</script>
-<script>
+<script id="adyen-checkout-config" type="application/json" nonce="{{ csp_nonce() }}">{{ checkout_config | tojson }}</script>
+<script nonce="{{ csp_nonce() }}">
   document.addEventListener("DOMContentLoaded", async function () {
     const status = document.getElementById("adyen-checkout-status");
     const root = document.getElementById("adyen-dropin");

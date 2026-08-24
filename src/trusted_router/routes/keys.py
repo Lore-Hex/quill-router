@@ -20,7 +20,9 @@ def _enriched_key_shape(key: ApiKey) -> dict[str, Any]:
     """key_shape backed by the typed counters when available: live lifetime
     usage/reserved (the JSON copies froze at the typed flip) + real current-
     window spend. Falls back to the JSON values (typed off / row missing)."""
-    usage = STORE.typed_key_usage(key.hash)  # on the base Store protocol; None when typed off
+    # This GET shape cannot authorize spend; hard budget enforcement has its
+    # own strong authorize-path read.
+    usage = STORE.typed_key_usage(key.hash, allow_stale=True)
     if usage is None:
         return key_shape(key)
     key = replace(

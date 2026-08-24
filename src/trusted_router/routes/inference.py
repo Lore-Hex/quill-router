@@ -109,12 +109,15 @@ def register_inference_routes(router: APIRouter) -> None:
         if user_model is not None:
             if body.get("stream") is True:
                 return StreamingResponse(
-                    _stream_local_user_model(
-                        user_model,
-                        body,
-                        principal,
-                        settings,
-                        app_name=_app_name(request),
+                    await _prime_stream(
+                        _stream_local_user_model(
+                            user_model,
+                            body,
+                            principal,
+                            settings,
+                            app_name=_app_name(request),
+                            request=request,
+                        )
                     ),
                     media_type="text/event-stream",
                     headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
@@ -125,6 +128,7 @@ def register_inference_routes(router: APIRouter) -> None:
                 principal,
                 settings,
                 app_name=_app_name(request),
+                request=request,
             )
             return JSONResponse(result.body)
         provider_prefs = provider_route_preferences(body)
@@ -146,14 +150,17 @@ def register_inference_routes(router: APIRouter) -> None:
         if is_meta_route:
             if body.get("stream") is True:
                 return StreamingResponse(
-                    _candidate_stream_bytes(
-                        body,
-                        candidates,
-                        requested_model=requested_model,
-                        principal=principal,
-                        settings=settings,
-                        app_name=app_name,
-                        usage_type=usage_type,
+                    await _prime_stream(
+                        _candidate_stream_bytes(
+                            body,
+                            candidates,
+                            requested_model=requested_model,
+                            principal=principal,
+                            settings=settings,
+                            app_name=app_name,
+                            usage_type=usage_type,
+                            request=request,
+                        )
                     ),
                     media_type="text/event-stream",
                     headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
@@ -165,6 +172,7 @@ def register_inference_routes(router: APIRouter) -> None:
                 settings,
                 app_name=app_name,
                 usage_type=usage_type,
+                request=request,
             )
             return JSONResponse(
                 _chat_completion_envelope(
@@ -193,13 +201,16 @@ def register_inference_routes(router: APIRouter) -> None:
         }
         if body.get("stream") is True:
             return StreamingResponse(
-                run_chat_stream(
-                    body,
-                    model,
-                    principal,
-                    settings,
-                    app_name=app_name,
-                    usage_type=usage_type,
+                await _prime_stream(
+                    run_chat_stream(
+                        body,
+                        model,
+                        principal,
+                        settings,
+                        app_name=app_name,
+                        usage_type=usage_type,
+                        request=request,
+                    )
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -215,6 +226,7 @@ def register_inference_routes(router: APIRouter) -> None:
             settings,
             app_name=app_name,
             usage_type=usage_type,
+            request=request,
         )
         return JSONResponse(
             _chat_completion_envelope(
@@ -240,18 +252,26 @@ def register_inference_routes(router: APIRouter) -> None:
         app_name = _app_name(request)
         if body.get("stream") is True:
             return StreamingResponse(
-                run_messages_stream(
-                    chat_body,
-                    model,
-                    principal,
-                    settings,
-                    app_name=app_name,
+                await _prime_stream(
+                    run_messages_stream(
+                        chat_body,
+                        model,
+                        principal,
+                        settings,
+                        app_name=app_name,
+                        request=request,
+                    )
                 ),
                 media_type="text/event-stream",
                 headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
             )
         result, generation = await run_chat(
-            chat_body, model, principal, settings, app_name=app_name
+            chat_body,
+            model,
+            principal,
+            settings,
+            app_name=app_name,
+            request=request,
         )
         return JSONResponse(
             _anthropic_messages_envelope(
@@ -275,6 +295,7 @@ def register_inference_routes(router: APIRouter) -> None:
             principal,
             settings,
             app_name=_app_name(request),
+            request=request,
         )
         # The provider envelope is already OpenAI-shaped; attach the TR
         # provenance block (mirrors chat) and surface routing headers.
@@ -309,6 +330,7 @@ def register_inference_routes(router: APIRouter) -> None:
             principal,
             settings,
             app_name=_app_name(request),
+            request=request,
         )
         return JSONResponse(
             _responses_api_envelope(
@@ -478,6 +500,7 @@ async def _dispatch_local_user_model(
     settings: Settings,
     *,
     app_name: str,
+    request: Request | None = None,
 ) -> BufferedUserModelDispatch:
     assert principal.api_key is not None
     sentinel, _endpoint = _local_user_model_pair(model)
@@ -498,6 +521,7 @@ async def _dispatch_local_user_model(
         streamed=False,
         region=settings.primary_region,
         usage_type_override=UsageType.CREDITS,
+        request=request,
     ) as ticket:
         dispatch = await dispatch_user_model(model, body, settings)
         output_text = _owner_response_text(dispatch.body)
@@ -547,6 +571,7 @@ async def _stream_local_user_model(
     settings: Settings,
     *,
     app_name: str,
+    request: Request | None = None,
 ) -> AsyncIterator[bytes]:
     assert principal.api_key is not None
     sentinel, _endpoint = _local_user_model_pair(model)
@@ -567,6 +592,7 @@ async def _stream_local_user_model(
         streamed=True,
         region=settings.primary_region,
         usage_type_override=UsageType.CREDITS,
+        request=request,
     ) as ticket:
         started_at = time.monotonic()
         text_parts: list[str] = []
@@ -962,6 +988,37 @@ def _requests_monitor_model(body: dict[str, Any]) -> bool:
 # ---------------------------------------------------------------------------
 
 
+async def _prime_stream(stream: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+    """Run admission before response headers are committed.
+
+    Spend-window reservation normally happens at the top of the async
+    generator. Pulling one item here makes its verdict available to response
+    middleware and lets a 429 use the normal JSON error path instead of becoming
+    an error event after an HTTP 200 has already started.
+    """
+    try:
+        first = await anext(stream)
+    except StopAsyncIteration:
+        return _empty_stream()
+
+    async def primed() -> AsyncIterator[bytes]:
+        try:
+            yield first
+            async for chunk in stream:
+                yield chunk
+        finally:
+            close = getattr(stream, "aclose", None)
+            if close is not None:
+                await close()
+
+    return primed()
+
+
+async def _empty_stream() -> AsyncIterator[bytes]:
+    if False:  # pragma: no cover - establishes the async-iterator shape
+        yield b""
+
+
 async def _candidate_stream_bytes(
     body: dict[str, Any],
     candidates: list[Model],
@@ -971,6 +1028,7 @@ async def _candidate_stream_bytes(
     settings: Settings,
     app_name: str,
     usage_type: UsageType | None = None,
+    request: Request | None = None,
 ) -> AsyncIterator[bytes]:
     """Streams chat-completions chunks for the meta-router path. The
     first chunk includes a `trustedrouter.route` SSE event identifying
@@ -984,6 +1042,7 @@ async def _candidate_stream_bytes(
         settings,
         app_name=app_name,
         usage_type=usage_type,
+        request=request,
     ):
         if selected is None:
             selected = model.id

@@ -30,7 +30,12 @@ from typing import Any
 from google.api_core.exceptions import AlreadyExists
 
 from trusted_router.custom_model_billing import user_model_payout_event_id
-from trusted_router.spend_windows import utcnow, window_floors
+from trusted_router.spend_windows import (
+    KeyWindowLimitDecision,
+    decide_key_window_limits,
+    utcnow,
+    window_floors,
+)
 from trusted_router.storage_gcp_counter_dml import (
     KEY_ACCEPTED,
     KEY_INSUFFICIENT,
@@ -66,6 +71,22 @@ class AuthorizeOutcome:
     KEY_WINDOW_LIMIT_EXCEEDED = "key_window_limit_exceeded"  # a daily/weekly/monthly cap
 
 
+class AuthorizeVerdict(str):
+    """String-compatible typed-authorize outcome with its window decision."""
+
+    rate_limit: KeyWindowLimitDecision | None
+
+    def __new__(
+        cls,
+        outcome: str,
+        *,
+        rate_limit: KeyWindowLimitDecision | None = None,
+    ) -> AuthorizeVerdict:
+        verdict = super().__new__(cls, outcome)
+        verdict.rate_limit = rate_limit
+        return verdict
+
+
 class _Reject(Exception):
     """Roll the authorize transaction back with a terminal outcome (not retried)."""
 
@@ -73,7 +94,7 @@ class _Reject(Exception):
         self.outcome = outcome
 
 
-def check_key_window_limits(
+def key_window_limit_decision(
     database: Any,
     param_types: Any,
     *,
@@ -83,9 +104,8 @@ def check_key_window_limits(
     shard_count: int = 1,
     idempotency_scope: str | None = None,
     idempotency_fingerprint: str | None = None,
-) -> str | None:
-    """APPROXIMATE per-window key-cap check. Returns the blocking window name
-    ("daily"/"weekly"/"monthly") or None to proceed.
+) -> KeyWindowLimitDecision | None:
+    """Return the authoritative APPROXIMATE per-window key-cap decision.
 
     Runs on a lock-free SNAPSHOT, deliberately OUTSIDE the authorize read-write
     transaction: an in-txn shared read of tr_key_limit before reserve_key's
@@ -129,7 +149,8 @@ def check_key_window_limits(
         return None  # no typed row -> reserve_key fail-closes as KEY_MISSING
     if [int(row[0]) for row in rows] != list(range(shard_count)):
         raise RuntimeError("configured tr_key_limit usage shard set is incomplete")
-    floors = window_floors(utcnow())
+    decision_now = utcnow()
+    floors = window_floors(decision_now)
     # Pre-DDL rows read NULL usage; a NULL/stale start means the window rolled
     # over (or never started) = zero spend this window.
     current = {
@@ -149,11 +170,39 @@ def check_key_window_limits(
             if row[6] is not None and row[6] >= floors["monthly"]
         ),
     }
-    for window in ("daily", "weekly", "monthly"):
-        limit = window_limits.get(window)
-        if limit is not None and current[window] + estimate > limit:
-            return window
-    return None
+    return decide_key_window_limits(
+        window_limits,
+        current,
+        estimate,
+        now=decision_now,
+    )
+
+
+def check_key_window_limits(
+    database: Any,
+    param_types: Any,
+    *,
+    key_hash: str,
+    estimate: int,
+    window_limits: dict[str, int],
+    shard_count: int = 1,
+    idempotency_scope: str | None = None,
+    idempotency_fingerprint: str | None = None,
+) -> str | None:
+    """Backward-compatible blocking-window view of the richer verdict."""
+    decision = key_window_limit_decision(
+        database,
+        param_types,
+        key_hash=key_hash,
+        estimate=estimate,
+        window_limits=window_limits,
+        shard_count=shard_count,
+        idempotency_scope=idempotency_scope,
+        idempotency_fingerprint=idempotency_fingerprint,
+    )
+    if decision is None or decision.allowed:
+        return None
+    return decision.window
 
 
 def authorize_atomic(
@@ -485,6 +534,23 @@ def settle_atomic(
         )
         if not won:
             return {"outcome": SettleOutcome.ALREADY_SETTLED}  # replay, no double-apply
+
+        # A regional authorization spent from an already escrowed lease. The
+        # regional ledger is settled/refunded before this transaction and the
+        # lease reconciler imports aggregate spend later. Releasing counters
+        # here would double-release the grant and recreate the hot global row.
+        if res.get("hold_usage_type") == "RegionalCredits":
+            if mark_authorization_terminal and res.get("authorization_id"):
+                close_reaped_gateway_authorization(
+                    transaction,
+                    pt,
+                    str(res["authorization_id"]),
+                    terminal_at=terminal_at,
+                )
+            return {
+                "outcome": SettleOutcome.SETTLED,
+                "missing_key_releases": [],
+            }
 
         # key first, then credit (single lock order everywhere — codex#2 #2).
         key_actual = book_actual  # key usage counts under both Credits and BYOK

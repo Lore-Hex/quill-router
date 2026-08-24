@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 
 # Test-only clock override, e.g. TR_LIFECYCLE_CLOCK_OVERRIDE=2027-01-01T00:00:00Z.
 # Every effective-dated cutover below is a scheduled change of behaviour: a
@@ -33,9 +33,20 @@ FRIENDLI_K_EXAONE_236B_RETIREMENT_AT = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
 CRUSOE_NEMOTRON_3_ULTRA_RETIREMENT_AT = datetime(2026, 7, 28, 18, 0, tzinfo=UTC)
 WAFER_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 DEEPINFRA_TERMINUS_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
+DEEPINFRA_QWEN3_235B_THINKING_RETIREMENT_AT = datetime(
+    2026, 8, 24, 0, 0, tzinfo=UTC
+)
+NEBIUS_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 31, 0, 0, tzinfo=UTC)
+CEREBRAS_GEMMA4_SHARED_RETIREMENT_AT = datetime(2026, 9, 3, 0, 0, tzinfo=UTC)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
+DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT = datetime(
+    2026, 8, 22, 16, 0, tzinfo=UTC
+)
+FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT = datetime(
+    2026, 8, 22, 12, 0, tzinfo=UTC
+)
 
 # DeepSeek prices direct V4 traffic at twice the off-peak rate during these
 # half-open UTC windows. Keep them as seconds since midnight so boundary
@@ -44,6 +55,7 @@ DEEPSEEK_V4_PEAK_WINDOWS_UTC = (
     (1 * 60 * 60, 4 * 60 * 60),
     (6 * 60 * 60, 10 * 60 * 60),
 )
+_BEIJING_TIME = timezone(timedelta(hours=8), "Asia/Shanghai")
 
 
 @dataclass(frozen=True)
@@ -74,6 +86,12 @@ _DEEPSEEK_V4_PRICES = {
     },
 }
 
+_FIREWORKS_DSV4_FLASH_0731_MODEL_ID = "deepseek/deepseek-v4-flash-0731"
+_FIREWORKS_DSV4_FLASH_0731_PRICES = {
+    "legacy": ProviderPrice(140_000, 280_000, 28_000),
+    "new": ProviderPrice(220_000, 660_000, 7_000),
+}
+
 
 @dataclass(frozen=True)
 class _Retirement:
@@ -84,11 +102,70 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # Cerebras announced that Qwen 3.8 27B replaces Gemma 4 31B on its
+    # Shared Tier on 2026-09-03. The notice did not specify a time zone, so
+    # retire the shared route conservatively at 00:00 UTC. Gemma remains
+    # available through separately provisioned Cerebras dedicated endpoints;
+    # TrustedRouter's prepaid Cerebras route uses the Shared Tier.
+    _Retirement(
+        provider="cerebras",
+        model_ids=frozenset(
+            {
+                "google/gemma-4-31b-it",
+                "cerebras/gemma-4-31b",
+            }
+        ),
+        upstream_ids=frozenset({"gemma-4-31b"}),
+        effective_at=CEREBRAS_GEMMA4_SHARED_RETIREMENT_AT,
+    ),
+    # Nebius announced that these Token Factory Serverless routes retire on
+    # 2026-08-31. The notice did not specify a time zone, so use 00:00 UTC as
+    # the conservative cutover. Keep this provider-scoped: equivalent model
+    # checkpoints remain routable through other providers that still serve
+    # them. The announcement did not name replacements.
+    _Retirement(
+        provider="nebius",
+        model_ids=frozenset(
+            {
+                "nvidia/nemotron-3-ultra-550b-a55b",
+                "Qwen/Qwen3-32B",
+                "NousResearch/Hermes-4-70B",
+                "meta-llama/Llama-3.3-70B-Instruct",
+                "Qwen/Qwen2.5-VL-72B-Instruct",
+                "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+                "MiniMaxAI/MiniMax-M2.5",
+                "nvidia/Nemotron-3-Nano-Omni",
+                "deepseek/deepseek-v4-flash",
+                "nvidia/Cosmos3-Super-Reasoner",
+                "Qwen/Qwen3-Next-80B-A3B-Thinking",
+                "nvidia/Llama-3_1-Nemotron-Ultra-253B-v1",
+            }
+        ),
+        upstream_ids=frozenset(
+            {
+                "nvidia/Nemotron-3-Ultra-550b-a55b",
+                "Qwen/Qwen3-32B",
+                "NousResearch/Hermes-4-70B",
+                "meta-llama/Llama-3.3-70B-Instruct",
+                "Qwen/Qwen2.5-VL-72B-Instruct",
+                "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+                "MiniMaxAI/MiniMax-M2.5",
+                "nvidia/Nemotron-3-Nano-Omni",
+                "deepseek-ai/DeepSeek-V4-Flash",
+                "nvidia/Cosmos3-Super-Reasoner",
+                "Qwen/Qwen3-Next-80B-A3B-Thinking",
+                "nvidia/Llama-3_1-Nemotron-Ultra-253B-v1",
+            }
+        ),
+        effective_at=NEBIUS_AUGUST_2026_RETIREMENT_AT,
+    ),
     # Alibaba Cloud Model Studio is consolidating its previously announced
-    # retirements at 2026-10-10 00:00 UTC+08. Keep this provider-scoped: the
-    # same open-weight models remain routable through other healthy providers.
-    # Alibaba explicitly canceled retirement for qwen-vl-ocr, qwen-mt-image,
-    # and the named ASR/live-translation routes, so none appear here.
+    # retirements at 2026-10-10 00:00 UTC+08. The original DeepSeek V4 Flash
+    # preview aliases retire at the same instant in favor of the dated 0731 GA
+    # routes. Keep this provider-scoped: the same open-weight models remain
+    # routable through other healthy providers. Alibaba explicitly canceled
+    # retirement for qwen-vl-ocr, qwen-mt-image, and the named
+    # ASR/live-translation routes, so none appear here.
     _Retirement(
         provider="alibaba",
         model_ids=frozenset(
@@ -102,6 +179,8 @@ _RETIREMENTS = (
                 "deepseek/deepseek-v3.1",
                 "deepseek/deepseek-v3.2",
                 "deepseek/deepseek-v3.2-exp",
+                "deepseek/deepseek-v4-flash",
+                "deepseek/deepseek-v4-flash-us",
                 "minimax/minimax-m2.1",
                 "moonshotai/kimi-k2-instruct",
                 "moonshotai/kimi-k2-thinking",
@@ -154,6 +233,8 @@ _RETIREMENTS = (
                 "deepseek-v3.1",
                 "deepseek-v3.2",
                 "deepseek-v3.2-exp",
+                "deepseek-v4-flash",
+                "deepseek-v4-flash-us",
                 "MiniMax-M2.1",
                 "Moonshot-Kimi-K2-Instruct",
                 "kimi-k2-thinking",
@@ -215,6 +296,18 @@ _RETIREMENTS = (
         model_ids=frozenset({"deepseek/deepseek-v3.1-terminus"}),
         upstream_ids=frozenset({"deepseek-ai/DeepSeek-V3.1-Terminus"}),
         effective_at=DEEPINFRA_TERMINUS_RETIREMENT_AT,
+    ),
+    # DeepInfra announced that Qwen3-235B-A22B-Thinking-2507 retires on
+    # 2026-08-24 and that requests will subsequently redirect to
+    # Qwen3.6-35B-A3B. Do not accept that silent model substitution: retire
+    # only DeepInfra's old route while preserving the requested checkpoint on
+    # other providers. The notice did not specify a time zone, so use 00:00 UTC
+    # conservatively. The replacement remains independently routable.
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"qwen/qwen3-235b-a22b-thinking-2507"}),
+        upstream_ids=frozenset({"Qwen/Qwen3-235B-A22B-Thinking-2507"}),
+        effective_at=DEEPINFRA_QWEN3_235B_THINKING_RETIREMENT_AT,
     ),
     # Wafer announced that GLM 5.1, GLM 5.2 Fast, and Kimi K3 Fast retire on
     # 2026-08-17. Standard GLM 5.2 replaces both GLM routes, while Kimi K3
@@ -383,6 +476,7 @@ def latest_scheduled_cutover() -> datetime:
     """
     return max(
         DEEPSEEK_V4_PRICING_EFFECTIVE_AT,
+        FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT,
         PHALA_JULY_2026_EFFECTIVE_AT,
         *(retirement.effective_at for retirement in _RETIREMENTS),
     )
@@ -431,6 +525,13 @@ def _deepseek_v4_family(provider_slug: str, model_id: str) -> str | None:
 def _deepseek_v4_period(effective_at: datetime) -> str:
     if effective_at < DEEPSEEK_V4_PRICING_EFFECTIVE_AT:
         return "legacy"
+    # DeepSeek's published schedule applies the off-peak rate throughout
+    # Saturdays and Sundays in Beijing time from 2026-08-23 onward.
+    if (
+        effective_at >= DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT
+        and effective_at.astimezone(_BEIJING_TIME).weekday() >= 5
+    ):
+        return "off_peak"
     seconds_since_midnight = (
         effective_at.hour * 60 * 60 + effective_at.minute * 60 + effective_at.second
     )
@@ -449,9 +550,30 @@ def provider_pricing_schedule(
     at: datetime | str | None = None,
 ) -> dict[str, object] | None:
     """Public timing metadata for a provider's variable token pricing."""
+    effective_at = _effective_time(at)
+
+    if (
+        provider_slug == "fireworks"
+        and model_id == _FIREWORKS_DSV4_FLASH_0731_MODEL_ID
+    ):
+        return {
+            "kind": "fixed_cutover",
+            "timezone": "UTC",
+            "effective_at": (
+                FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT.isoformat().replace(
+                    "+00:00", "Z"
+                )
+            ),
+            "current_period": (
+                "legacy"
+                if effective_at < FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT
+                else "new"
+            ),
+            "rate_locked_at": "authorization",
+        }
+
     if _deepseek_v4_family(provider_slug, model_id) is None:
         return None
-    effective_at = _effective_time(at)
 
     def clock(seconds: int) -> str:
         return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}"
@@ -466,6 +588,13 @@ def provider_pricing_schedule(
             {"start": clock(start), "end": clock(end)}
             for start, end in DEEPSEEK_V4_PEAK_WINDOWS_UTC
         ],
+        "weekend_off_peak": {
+            "effective_at": DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT.isoformat().replace(
+                "+00:00", "Z"
+            ),
+            "timezone": "Asia/Shanghai",
+            "days": ["Saturday", "Sunday"],
+        },
         # Authorization time, not settlement time, selects the period so a
         # long stream cannot change price midway through the request.
         "rate_locked_at": "authorization",
@@ -487,6 +616,17 @@ def provider_price_microdollars(
     family = _deepseek_v4_family(provider_slug, model_id)
     if family is not None:
         return _DEEPSEEK_V4_PRICES[family][_deepseek_v4_period(effective_at)]
+
+    if (
+        provider_slug == "fireworks"
+        and model_id == _FIREWORKS_DSV4_FLASH_0731_MODEL_ID
+    ):
+        period = (
+            "legacy"
+            if effective_at < FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT
+            else "new"
+        )
+        return _FIREWORKS_DSV4_FLASH_0731_PRICES[period]
 
     if provider_slug == "phala" and model_id == "qwen/qwen-2.5-7b-instruct":
         if effective_at < PHALA_JULY_2026_EFFECTIVE_AT:

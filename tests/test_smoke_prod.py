@@ -135,6 +135,7 @@ def test_api_catalog_and_regions_are_publicly_reachable(
         "mistral",
         "kimi",
         "zai",
+        "azure",
     }.issubset({item["id"] for item in providers.json()["data"]})
     assert "europe-west4" in {item["id"] for item in regions.json()["data"]}
 
@@ -157,6 +158,38 @@ def test_embeddings_catalog_lists_embedding_models(client: httpx.Client) -> None
         assert row["architecture"]["modality"] == "text->embedding", row["id"]
 
 
+def test_image_catalog_is_live_on_control_and_attested_origins(
+    client: httpx.Client,
+    api_client: httpx.Client,
+) -> None:
+    """Discovery must ship on both documented origins before generation is live."""
+
+    for label, image_client in {
+        "control": client,
+        "attested": api_client,
+    }.items():
+        response = image_client.get("/images/models", timeout=20.0)
+        assert response.status_code == 200, f"{label}: {response.status_code} {response.text}"
+        rows = response.json()["data"]
+        ids = {row["id"] for row in rows}
+        assert "google/gemini-3.1-flash-image" in ids, (label, ids)
+        model = next(row for row in rows if row["id"] == "google/gemini-3.1-flash-image")
+        assert model["architecture"]["output_modalities"] == ["image"]
+        assert model["supported_parameters"]["resolution"]["values"] == [
+            "512",
+            "1K",
+            "2K",
+            "4K",
+        ]
+
+    endpoint = api_client.get(
+        "/images/models/google/gemini-3.1-flash-image/endpoints",
+        timeout=20.0,
+    )
+    assert endpoint.status_code == 200, endpoint.text
+    assert endpoint.json()["endpoints"], endpoint.text
+
+
 def test_attested_gateway_rejects_unauthenticated_embeddings(api_client: httpx.Client) -> None:
     """The attested gateway must never serve embeddings without a bearer —
     same billing/key-limit gate as chat. Tolerates 404 only in the window
@@ -168,6 +201,15 @@ def test_attested_gateway_rejects_unauthenticated_embeddings(api_client: httpx.C
         content=b'{"model":"openai/text-embedding-3-large","input":"x"}',
     )
     assert response.status_code in {401, 404}, response.text
+
+
+def test_attested_gateway_rejects_unauthenticated_images(api_client: httpx.Client) -> None:
+    response = api_client.post(
+        "/images",
+        headers={"content-type": "application/json"},
+        content=b'{"model":"google/gemini-3.1-flash-image","prompt":"x"}',
+    )
+    assert response.status_code == 401, response.text
 
 
 def test_status_pages_are_publicly_reachable(
@@ -264,15 +306,15 @@ def test_regions_list_covers_all_ten_gcp_regions(client: httpx.Client) -> None:
 def test_marketing_page_advertises_production_not_alpha(client: httpx.Client) -> None:
     """Belt-and-suspenders for the alpha-removal: if a future deploy
     accidentally restores 'Public Alpha' framing, this test fails. The
-    regions copy is also the smoke check that the regions panel
-    rendered (Jinja didn't error out on map_regions)."""
+    cloud copy also verifies that the multi-cloud reliability section rendered."""
     response = client.get("/")
     assert response.status_code == 200
     body = response.text
     assert "Public Alpha" not in body
-    assert "Live regions" in body
-    assert "regional routing" in body or "multi-region" in body
-    assert "world-map.svg" in body or "<svg" in body  # map renders
+    assert "3 clouds" in body
+    assert "GCP · AWS · Azure" in body
+    assert "GCP, AWS, and Azure" in body
+    assert "world-map.svg" not in body
 
 
 def test_oauth_login_redirects_to_provider(client: httpx.Client) -> None:
@@ -321,6 +363,63 @@ def test_console_pages_all_redirect_unauthenticated_to_signin(client: httpx.Clie
         assert response.status_code in {302, 303}, f"{path}: {response.status_code} {response.text[:200]}"
         location = response.headers["location"]
         assert location in {"/?reason=signin", "/console/api-keys"}, f"{path}: location={location}"
+
+
+def test_stripe_webhook_rejects_invalid_signature(client: httpx.Client) -> None:
+    """A garbage Stripe-Signature must 400. If this ever returns 200 the
+    endpoint has stopped verifying signatures (e.g. the webhook secret
+    went empty in the deploy env) and anyone can forge credit grants."""
+    response = client.post(
+        "/v1/internal/stripe/webhook",
+        content=b'{"id":"evt_smoke_bad_sig","object":"event","type":"trustedrouter.smoke"}',
+        headers={
+            "Content-Type": "application/json",
+            "Stripe-Signature": "t=1,v1=deadbeef",
+        },
+    )
+    assert response.status_code == 400, response.text
+
+
+def test_stripe_webhook_accepts_validly_signed_event(client: httpx.Client) -> None:
+    """A correctly signed no-op event must 200. This is the drift guard
+    for the 2026-06-07 outage: a stale signing secret was uploaded to
+    Secret Manager, every real Stripe delivery 400'd for three days, and
+    a customer's $100 purchase sat uncredited until manual replay. The
+    event type below matches no handler branch, so the endpoint just
+    verifies the signature and returns {"ignored": true} — no state is
+    touched. The payload must carry "object":"event" because Stripe's
+    construct_event builds a stripe.Event and rejects shapes that lack
+    it (a bare {id,type} 400s regardless of signature). Requires
+    TR_STRIPE_WEBHOOK_SECRET in the env (the GHA workflow injects it
+    from repo secrets); skipped when absent so local runs without prod
+    credentials still pass."""
+    secret = os.environ.get("TR_STRIPE_WEBHOOK_SECRET", "")
+    if not secret:
+        pytest.skip("TR_STRIPE_WEBHOOK_SECRET not set")
+    import hashlib
+    import hmac
+    import time
+
+    payload = b'{"id":"evt_smoke_sig_check","object":"event","type":"trustedrouter.smoke"}'
+    timestamp = int(time.time())
+    signature = hmac.new(
+        secret.encode(), f"{timestamp}.".encode() + payload, hashlib.sha256
+    ).hexdigest()
+    response = client.post(
+        "/v1/internal/stripe/webhook",
+        content=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Stripe-Signature": f"t={timestamp},v1={signature}",
+        },
+    )
+    assert response.status_code == 200, (
+        f"signed webhook rejected ({response.status_code}): the deployed "
+        f"TR_STRIPE_WEBHOOK_SECRET no longer matches the live Stripe "
+        f"endpoint's signing secret. Real deliveries are failing too — "
+        f"customer payments are NOT being credited. {response.text[:200]}"
+    )
+    assert response.json()["data"]["event_id"] == "evt_smoke_sig_check"
 
 
 def test_security_headers_include_hsts(client: httpx.Client) -> None:

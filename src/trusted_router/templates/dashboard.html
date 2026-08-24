@@ -5,7 +5,7 @@
   {% set meta_description = og_description|seo_meta_description %}
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script>
+  <script nonce="{{ csp_nonce() }}">
     (function () {
       try {
         if (localStorage.getItem("tr-theme") === "light") {
@@ -39,7 +39,10 @@
   <link rel="preload" href="/static/fonts/spectral-300-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
-  <script>window.__TR__ = {{ tr_config | safe }};</script>
+  {# The homepage carried no structured data at all, which is the page an
+     assistant is most likely to land on when asked who operates this. #}
+  {% if organization_json_ld %}<script type="application/ld+json" nonce="{{ csp_nonce() }}">{{ organization_json_ld|safe }}</script>{% endif %}
+  <script nonce="{{ csp_nonce() }}">window.__TR__ = {{ tr_config | safe }};</script>
   <script src="/static/dashboard.js?v={{ static_version|default('local') }}" defer></script>
 </head>
 <body>
@@ -49,8 +52,15 @@
     <section class="charter-home-hero">
       <div class="home-hero-copy">
         <div class="kicker">{% if alternate_brand %}Powered by TrustedRouter{% else %}Own your alpha{% endif %}</div>
-        <h1><span class="hero-line">Every model.</span><em class="hero-line">Privacy with proof.</em></h1>
-        <p class="lead">One OpenAI-compatible API for hundreds of open-weight and frontier models. Requests cross an attested gateway that does not log prompt or output content. Even our engineers cannot read your requests.</p>
+        <h1>
+          <span class="hero-line">600+ AI Models at your fingertips.</span>
+          <span class="hero-line">One Unified Interface.</span>
+          <em class="hero-line">Privacy with proof.</em>
+        </h1>
+        <p class="lead">
+          <strong class="lead-claim">Better privacy, better prices, better uptime, no subscriptions.</strong>
+          One OpenAI-compatible API for open-weight and frontier models. Requests cross an attested gateway that does not log prompt or output content. Even our engineers cannot read your requests.
+        </p>
         <div class="hero-actions">
           <button class="btn primary" type="button" data-action="open-signin">Get API key</button>
           <a class="btn" href="https://trust.trustedrouter.com">Verify trust <span aria-hidden="true">→</span></a>
@@ -86,10 +96,9 @@
     </section>
 
     <section class="charter-stat-band" aria-label="{{ brand_name }} facts">
-      <div class="charter-stat"><strong>{{ api_region_count }}</strong><span>Live regions</span></div>
-      <div class="charter-stat"><strong>Hundreds</strong><span>Models through one API</span></div>
-      <div class="charter-stat"><strong class="accent">Never</strong><span>Prompt logs</span></div>
-      <div class="charter-stat"><strong>Public</strong><span>Source and status</span></div>
+      <div class="charter-stat"><strong>600+</strong><span>AI models</span></div>
+      <div class="charter-stat"><strong>81+</strong><span>providers</span></div>
+      <div class="charter-stat"><strong>3 clouds</strong><span>GCP · AWS · Azure</span></div>
     </section>
 
     <section class="home-section" aria-label="How {{ brand_name }} works">
@@ -268,36 +277,19 @@ response = client.chat.completions.create(
     </section>
 
     <section class="home-section">
-      <div class="home-wrap charter-map-grid">
-        <div>
-          <div class="kicker">Regional reliability</div>
-          <h2>Routing that does not depend on one provider or one region.</h2>
-          <p class="section-sub">Regional gateways, provider health measurements, and explicit fallback keep failures visible and contained. The public status page separates router-core health from upstream model health.</p>
-          <ul class="check-list">
-            <li>{{ api_region_count }} live API regions</li>
-            <li>Provider and model health measured continuously</li>
-            <li>Public latency and availability history</li>
-            <li>No silent fallback to a non-attested prompt path</li>
-          </ul>
-          <a class="btn" href="/status">View public status</a>
+      <div class="home-wrap narrow">
+        <div class="section-lead">
+          <div class="kicker">Multi-cloud reliability</div>
+          <h2>Routing that does not depend on one provider or one cloud.</h2>
+          <p>TrustedRouter runs across GCP, AWS, and Azure. Provider health measurements and explicit fallback keep failures visible and contained.</p>
         </div>
-        <div class="region-map-card" aria-label="{{ brand_name }} regional footprint">
-          <div class="region-map-visual">
-            <img src="/static/world-map.svg?v={{ static_version }}" alt="TrustedRouter regional routing map" loading="lazy">
-            <svg viewBox="0 0 1000 500" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
-              {% for region in map_regions %}
-              <g class="region-dot {% if region.primary %}primary{% endif %} {% if region.serving %}live{% else %}edge{% endif %}" transform="translate({{ '%.1f'|format(region.x) }} {{ '%.1f'|format(region.y) }})">
-                <circle r="{% if region.primary %}9{% else %}7{% endif %}"></circle>
-                <text x="12" y="-8">{{ region.city }}{% if region.cloud == "aws" %} · AWS{% elif region.cloud == "azure" %} · Azure{% endif %}</text>
-              </g>
-              {% endfor %}
-            </svg>
-          </div>
-          <div class="region-map-copy">
-            <strong>Live routing on four continents</strong>
-            <span>{{ api_region_count }} live GCP regions, plus independent AWS and Azure deployments. Serving North America, South America, Europe, and Australia today.</span>
-          </div>
-        </div>
+        <ul class="check-list">
+          <li>GCP, AWS, and Azure</li>
+          <li>Provider and model health measured continuously</li>
+          <li>Public latency and availability history</li>
+          <li>No silent fallback to a non-attested prompt path</li>
+        </ul>
+        <a class="btn" href="/status">View public status</a>
       </div>
     </section>
 

@@ -51,6 +51,8 @@ from scripts.pricing.base import (
     configure_runtime_required_models,
     guard_manifest_prune,
     log,
+    read_stale_provider_manifest,
+    safe_exception_summary,
 )
 
 # Reuse the existing OR-ingest code so the cross-check runs against
@@ -59,6 +61,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ingest_openrouter_catalog import build_snapshot as build_openrouter_snapshot  # noqa: E402
 
 from trusted_router.provider_lifecycle import provider_model_retired  # noqa: E402
+from trusted_router.provider_manifest_policy import (  # noqa: E402
+    EXPIRING_PROVIDER_MANIFEST_SLUGS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT_PATH = REPO_ROOT / "src" / "trusted_router" / "data" / "openrouter_snapshot.json"
@@ -72,6 +77,9 @@ PROVIDER_SLUGS = [
     # Meta Muse is served through OpenRouter, so OpenRouter is the provider API
     # and billing source for this one explicitly labelled downstream route.
     "meta",
+    # Ox Alpha is an explicit one-model OpenRouter exception. The module name
+    # uses an underscore; its result is mapped to the hyphenated runtime slug.
+    "openrouter_exclusive",
     "anthropic",
     "openai",
     "gemini",
@@ -107,6 +115,7 @@ PROVIDER_SLUGS = [
     "nebius",
     "xiaomi",
     "alibaba",
+    "azure",
     "makora",
     "telnyx",
     "chutes",
@@ -119,7 +128,28 @@ PROVIDER_SLUGS = [
     "neurometric",
     "engy",
     "pearl",
+    "stepfun",
+    "relace",
+    "recraft",
+    "bfl",
+    "decart",
+    "nvidia_nim",
     "databricks",
+    "upstage",
+    "sail_research",
+    "reka",
+    "nextbit",
+    "akashml",
+    "mancer",
+    "aion_labs",
+    "sambanova",
+    "arcee",
+    "inception",
+    "io_net",
+    "scaleway",
+    "featherless",
+    "sakana",
+    "jina",
     # 0G Private Computer publishes exact per-route prices and trust metadata
     # in its public marketplace hydration data. The adapter admits only
     # healthy TeeML/private chat routes and keeps them dark until a keyed PONG.
@@ -139,6 +169,11 @@ _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
     "cloudflare_workers_ai": ("cloudflare-workers-ai",),
     "atlas_cloud": ("atlas-cloud",),
     "zero_g": ("zero-g",),
+    "nvidia_nim": ("nvidia-nim",),
+    "openrouter_exclusive": ("openrouter-exclusive",),
+    "sail_research": ("sail-research",),
+    "aion_labs": ("aion-labs",),
+    "io_net": ("io-net",),
 }
 
 # These providers run a pricing-page parser (Kimi has a custom multi-page
@@ -195,7 +230,7 @@ CROSS_CHECK_DISAGREE_THRESHOLD = 0.02  # 2%
 # OpenRouter is the actual serving and billing API for this deliberately
 # labelled downstream provider. Keep its provenance distinct from both direct
 # provider prices and emergency OpenRouter fallback prices.
-_OPENROUTER_BACKED_PROVIDER_SLUGS = frozenset({"meta"})
+_OPENROUTER_BACKED_PROVIDER_SLUGS = frozenset({"meta", "openrouter-exclusive"})
 
 
 def _endpoint_pricing_source(slug: str, healed_slugs: set[str]) -> str:
@@ -379,7 +414,7 @@ def _fetch_one(slug: str) -> tuple[str, ProviderPricingResult | None, str | None
         result = module.fetch()
         return slug, result, None
     except Exception as exc:  # noqa: BLE001 — we genuinely want to catch everything
-        return slug, None, f"{type(exc).__name__}: {exc}"
+        return slug, None, safe_exception_summary(exc)
 
 
 def _fetch_all_providers() -> tuple[
@@ -430,6 +465,8 @@ def _index_provider_prices(
     out: dict[str, dict[str, ModelPrice]] = {}
     upstream_id_maps: dict[str, dict[str, str]] = {}
     for slug, result in results.items():
+        if not result.include_in_price_index:
+            continue
         provider_slugs = _PRICING_RESULT_PROVIDER_ALIASES.get(slug, (slug,))
         for model_id, price in result.prices.items():
             for provider_slug in provider_slugs:
@@ -458,9 +495,15 @@ def _or_pricing_to_micro_per_m(pricing: dict[str, Any]) -> ModelPrice | None:
 
 
 def _micro_per_m_from_dollars_per_token(raw: object) -> int | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str) and not raw.strip():
+        return None
     try:
-        value = Decimal(str(raw or "0"))
+        value = Decimal(str(raw))
     except Exception:  # noqa: BLE001
+        return None
+    if not value.is_finite() or value < 0:
         return None
     return int((value * Decimal(1_000_000_000_000)).to_integral_value())
 
@@ -562,6 +605,13 @@ def _stale_results_from_snapshot(
             price = _or_pricing_to_micro_per_m(pricing)
             if price is None:
                 continue
+            if not _safe_stale_snapshot_price(price):
+                log.warning(
+                    "pricing.stale_snapshot_price_rejected slug=%s model=%s",
+                    slug,
+                    model_id,
+                )
+                continue
             prices_by_slug[slug][model_id] = price
 
     out: dict[str, ProviderPricingResult] = {}
@@ -578,6 +628,22 @@ def _stale_results_from_snapshot(
     return out
 
 
+def _safe_stale_snapshot_price(price: ModelPrice) -> bool:
+    """Reject malformed stale prices without outlawing genuine free rows."""
+
+    for tier in price.tiers:
+        prompt = tier.prompt_micro_per_m
+        completion = tier.completion_micro_per_m
+        cached = tier.prompt_cached_micro_per_m
+        if prompt < 0 or completion < 0 or (cached is not None and cached < 0):
+            return False
+        # A one-sided zero is almost always a parser/unit failure and can lose
+        # money. Both-zero rows remain valid for explicitly free routes.
+        if (prompt == 0) != (completion == 0):
+            return False
+    return True
+
+
 def _apply_stale_fallbacks(
     results: dict[str, ProviderPricingResult],
     failures: list[tuple[str, str]],
@@ -592,12 +658,72 @@ def _apply_stale_fallbacks(
     """
     if not failures:
         return []
+
+    manifest_modules: dict[str, Any] = {}
+    manifest_errors: dict[str, str] = {}
+    snapshot_failure_slugs: list[str] = []
+    for slug, _err in failures:
+        module_name = f"scripts.pricing.providers.{slug}"
+        try:
+            module = _import_provider(slug)
+        except ModuleNotFoundError as exc:
+            if exc.name != module_name:
+                raise
+            snapshot_failure_slugs.append(slug)
+            continue
+        if bool(getattr(module, "MANIFEST_STALE_FALLBACK", False)):
+            manifest_modules[slug] = module
+        else:
+            snapshot_failure_slugs.append(slug)
+
+    # Providers with an authenticated, provider-owned manifest must recover
+    # from that manifest. The merged global snapshot is rewritten every hour
+    # and therefore cannot prove when that provider last refreshed live.
     stale_results = _stale_results_from_snapshot(
         snapshot,
-        [slug for slug, _err in failures],
+        snapshot_failure_slugs,
     )
+    for slug, _err in failures:
+        module = manifest_modules.get(slug)
+        if module is None:
+            continue
+        manifest_value = getattr(module, "MANIFEST_PATH", None)
+        if manifest_value is None:
+            continue
+        include_in_price_index = bool(getattr(module, "INCLUDE_IN_PRICE_INDEX", True))
+        stale_result, manifest_error = read_stale_provider_manifest(
+            slug=slug,
+            manifest_path=Path(manifest_value),
+            include_in_price_index=include_in_price_index,
+        )
+        if manifest_error is not None:
+            manifest_errors[slug] = manifest_error
+            log.warning(
+                "pricing.stale_manifest_rejected slug=%s reason=%s",
+                slug,
+                manifest_error,
+            )
+            continue
+        assert stale_result is not None
+        stale_results[slug] = stale_result
     results.update(stale_results)
-    return [(slug, err) for slug, err in failures if slug not in stale_results]
+    unrecovered: list[tuple[str, str]] = []
+    for slug, err in failures:
+        if slug in stale_results:
+            continue
+        detail = f"{err}; {manifest_errors[slug]}" if slug in manifest_errors else err
+        if slug in EXPIRING_PROVIDER_MANIFEST_SLUGS:
+            # Catalog ingestion quarantines every endpoint for this provider
+            # when its manifest is missing or invalid. Do not let an already
+            # contained provider failure consume the global publication budget.
+            log.error(
+                "pricing.provider_manifest_quarantined slug=%s reason=%s",
+                slug,
+                detail,
+            )
+            continue
+        unrecovered.append((slug, detail))
+    return unrecovered
 
 
 def _cross_check(
@@ -975,7 +1101,7 @@ def _write_provider_manifests(results: dict[str, ProviderPricingResult]) -> list
         # A stale fallback represents the last known good catalog state. Do not
         # let provider-specific hooks rewrite that state without fresh discovery
         # data; destructive hooks may otherwise prune every currently live row.
-        if result.source == "stale_snapshot":
+        if result.source.startswith("stale_"):
             continue
         module = _import_provider(slug)
         hook = getattr(module, "write_provider_manifest", None)

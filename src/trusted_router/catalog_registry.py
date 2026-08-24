@@ -146,6 +146,7 @@ from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time 
     _INGEST_PATH,
     _PROVIDER_DEPRECATED_UPSTREAM_MODELS,
     _PROVIDER_MODELS_DIR,
+    _apply_provider_manifest_expiry,
     _author_provider,
     _build_endpoints,
     _embedding_models,
@@ -1112,6 +1113,42 @@ _VIDEO_MODELS: dict[str, Model] = {
         prepaid_available=True,
         byok_available=False,
     ),
+    "decart/lucy-2.5": Model(
+        id="decart/lucy-2.5",
+        name="Decart Lucy 2.5",
+        provider="decart",
+        context_length=10_000,
+        supports_chat=False,
+        supports_video=True,
+        input_modalities=("text", "image", "video"),
+        output_modalities=("video",),
+        prepaid_available=True,
+        byok_available=False,
+    ),
+    "decart/lucy-vton-3.5": Model(
+        id="decart/lucy-vton-3.5",
+        name="Decart Lucy VTON 3.5",
+        provider="decart",
+        context_length=10_000,
+        supports_chat=False,
+        supports_video=True,
+        input_modalities=("text", "image", "video"),
+        output_modalities=("video",),
+        prepaid_available=True,
+        byok_available=False,
+    ),
+    "decart/lucy-restyle-2": Model(
+        id="decart/lucy-restyle-2",
+        name="Decart Lucy Restyle 2",
+        provider="decart",
+        context_length=10_000,
+        supports_chat=False,
+        supports_video=True,
+        input_modalities=("text", "image", "video"),
+        output_modalities=("video",),
+        prepaid_available=True,
+        byok_available=False,
+    ),
 }
 MODELS.update(_VIDEO_MODELS)
 
@@ -1249,6 +1286,9 @@ _NATIVE_VIDEO_UPSTREAM_IDS = {
     "openai/sora-2-pro": (("openai", "sora-2-pro"),),
     "kling/v3-pro": (("kling", "kling-3.0"),),
     "kling/o3-pro": (("kling", "kling-3.0-omni"),),
+    "decart/lucy-2.5": (("decart", "lucy-2.5"),),
+    "decart/lucy-vton-3.5": (("decart", "lucy-vton-3.5"),),
+    "decart/lucy-restyle-2": (("decart", "lucy-restyle-2"),),
 }
 for _model_id, _native_routes in _NATIVE_VIDEO_UPSTREAM_IDS.items():
     for _provider_slug, _upstream_id in _native_routes:
@@ -1324,6 +1364,7 @@ for _model_id, _upstream_id in _VIDEO_UPSTREAM_IDS.items():
 #              DEFAULT routing for Gemma was 502ing — drop gemini's Gemma routes.
 
 
+MODEL_ENDPOINTS = _apply_provider_manifest_expiry(MODEL_ENDPOINTS)
 MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
     MODEL_ENDPOINTS,
     explicit_model_ids=frozenset(_VIDEO_MODELS),

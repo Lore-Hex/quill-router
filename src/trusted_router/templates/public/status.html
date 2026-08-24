@@ -62,17 +62,24 @@
     {% endfor %}
   </section>
 
+  {% if public_client_observed_enabled and snapshot.client_observed is defined %}
+  {% set client_observed = snapshot.client_observed %}
+  {% if client_observed.reason != 'insufficient_real_data' %}
   <section class="status-section" id="client-observed">
-    {% set client_observed = snapshot.client_observed %}
     {% if client_observed.available %}
     <div class="status-section-head">
       <div>
         <h2>Client-observed availability</h2>
+        {% if client_observed.gated_available %}
         <p>Logical requests reported from inside customer processes.</p>
+        {% else %}
+        <p>Calibration only; no customer traffic has been measured yet.</p>
+        {% endif %}
       </div>
       <span class="component-status status-{{ 'up' if client_observed.state == 'published' else 'degraded' }}">{{ client_observed.state }}</span>
     </div>
     <div class="component-list">
+      {% if client_observed.gated_available %}
       <div class="component-row">
         <div class="slo-grid" aria-label="Client-observed availability windows">
           {% for name in ["5m", "1h", "24h", "7d", "30d"] %}
@@ -96,6 +103,25 @@
           {% endfor %}
         </div>
       </div>
+      {% endif %}
+      {% if client_observed.all_traffic %}
+      {% set all_traffic_24h = client_observed.all_traffic.windows["24h"] %}
+      <div class="component-row" data-calibration-view>
+        <div class="component-main">
+          <div>
+            <h3>24h all traffic</h3>
+            <p>calibration view — includes synthetic canary traffic; not the published number</p>
+          </div>
+          <span class="component-status status-unknown">calibration</span>
+        </div>
+        <div class="slo-metrics" aria-label="Client-observed all-traffic calibration view, 24h">
+          <span>Availability <strong>{% if all_traffic_24h.availability_percent is not none %}{{ '%.4f'|format(all_traffic_24h.availability_percent) }}%{% else %}n/a{% endif %}</strong></span>
+          <span>Requests <strong>{{ all_traffic_24h.requests }}</strong></span>
+          <span>p50 total <strong>{% if all_traffic_24h.p50_total_ms is not none %}{{ all_traffic_24h.p50_total_ms }} ms{% else %}n/a{% endif %}</strong></span>
+          <span>p95 total <strong>{% if all_traffic_24h.p95_total_ms is not none %}{{ all_traffic_24h.p95_total_ms }} ms{% else %}n/a{% endif %}</strong></span>
+        </div>
+      </div>
+      {% endif %}
       {% if client_observed.by_host_24h %}
       <div class="component-row">
         <div class="component-main">
@@ -128,6 +154,8 @@
     </div>
     {% endif %}
   </section>
+  {% endif %}
+  {% endif %}
 
   {% if snapshot.headline_metrics.latency_anatomy %}
   <section class="status-section">

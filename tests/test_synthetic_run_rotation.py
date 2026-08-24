@@ -7,14 +7,15 @@ tests pin the two behaviors that deployment relies on:
   * rotation_count / rotation_models in the request body drive real
     provider-rotation probes (bounded by ROTATION_MAX_PER_RUN so a typo'd
     Input JSON can't become a spend firehose), and
-  * the billing probes' control plane resolves body > settings > canonical,
-    because the hardcoded canonical fallback is a wrong-cloud trap: an EU
-    monitor probing https://trustedrouter.com records the US plane's
-    health under an EU monitor region.
+  * an observer-authenticated request cannot select a destination or cause the
+    service to emit its higher-authority billing gateway credential. The exact
+    HTTPS canary origin resolves settings > canonical; only the private
+    in-process owner may add gateway authorize/settle probes.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -25,14 +26,21 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.storage_models import SyntheticProbeSample
 
-INTERNAL_TOKEN = "test-internal-secret"  # noqa: S105 - test fixture.
+GATEWAY_TOKEN = "test-billing-gateway-secret"  # noqa: S105 - test fixture.
+OBSERVER_TOKEN = "test-observer-secret"  # noqa: S105 - test fixture.
+
+
+@pytest.fixture(autouse=True)
+def _reset_synthetic_operation_limits() -> None:
+    synthetic_route._OPERATION_RATE_LIMITS.reset()  # noqa: SLF001
 
 
 def _settings(**overrides: Any) -> Settings:
     base: dict[str, Any] = dict(
         environment="test",
         sentry_dsn=None,
-        internal_gateway_token=INTERNAL_TOKEN,
+        internal_gateway_token=GATEWAY_TOKEN,
+        observer_internal_token=OBSERVER_TOKEN,
         stripe_secret_key=None,
         stripe_webhook_secret=None,
         google_client_id=None,
@@ -51,6 +59,7 @@ def no_network_probes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Stub every outbound probe the route can trigger; capture arguments."""
     captured: dict[str, Any] = {
         "billing_urls": [],
+        "gateway_tokens": [],
         "canary_urls": [],
         "rotation_calls": [],
     }
@@ -60,6 +69,7 @@ def no_network_probes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     async def fake_billing_probe(*_args: Any, **kwargs: Any) -> list[Any]:
         captured["billing_urls"].append(kwargs["control_plane_base_url"])
+        captured["gateway_tokens"].append(kwargs["internal_token"])
         return []
 
     async def fake_canary_probe(*_args: Any, **kwargs: Any) -> SyntheticProbeSample:
@@ -75,6 +85,7 @@ def no_network_probes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         )
 
     async def fake_fallback_probe(*_args: Any, **kwargs: Any) -> list[Any]:
+        captured["gateway_tokens"].append(kwargs["internal_token"])
         return []
 
     async def fake_rotation_pass(**kwargs: Any) -> list[Any]:
@@ -91,12 +102,20 @@ def no_network_probes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 def _post_run(settings: Settings, body: dict[str, Any]) -> Any:
-    client = TestClient(create_app(settings, init_observability=False))
-    return client.post(
-        "/v1/internal/synthetic/run",
-        json=body,
-        headers={"x-trustedrouter-internal-token": INTERNAL_TOKEN},
-    )
+    # detach=true dispatches the pass with asyncio.create_task (synthetic.py:420)
+    # and only tracks it in _BACKGROUND_RUNS. A bare TestClient does NOT drive
+    # that task to completion before .post() returns, so asserting its effects
+    # straight afterwards is a race: it wins on an idle machine and loses under
+    # a loaded CI run (-n 4 plus coverage), which is why
+    # test_eventbridge_tick_runs_one_bounded_remediator_pass intermittently saw
+    # events == []. Entering the client as a context manager runs lifespan and,
+    # on exit, drains the portal so detached tasks have actually completed.
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        return client.post(
+            "/v1/internal/synthetic/run",
+            json=body,
+            headers={"x-trustedrouter-internal-token": OBSERVER_TOKEN},
+        )
 
 
 class TestRotation:
@@ -145,28 +164,113 @@ class TestRotation:
 
 
 class TestControlPlaneResolution:
-    def test_settings_beat_canonical_default(self, no_network_probes: dict[str, Any]) -> None:
+    def test_observer_run_uses_only_configured_origin_without_gateway_authority(
+        self,
+        no_network_probes: dict[str, Any],
+    ) -> None:
         settings = _settings(
             synthetic_monitor_api_key="sk-test-monitor",
             synthetic_control_plane_base_url="https://aws.trustedrouter.com",
         )
         assert _post_run(settings, {}).status_code == 200
-        assert no_network_probes["billing_urls"] == ["https://aws.trustedrouter.com"]
+        assert no_network_probes["billing_urls"] == []
+        assert no_network_probes["gateway_tokens"] == []
         assert no_network_probes["canary_urls"] == ["https://aws.trustedrouter.com"]
 
-    def test_body_beats_settings(self, no_network_probes: dict[str, Any]) -> None:
+    def test_configured_origin_client_never_follows_redirects(
+        self,
+        no_network_probes: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        redirect_modes: list[bool] = []
+
+        class RecordingClient:
+            def __init__(self, *_args: Any, follow_redirects: bool, **_kwargs: Any) -> None:
+                redirect_modes.append(follow_redirects)
+
+            async def __aenter__(self) -> RecordingClient:
+                return self
+
+            async def __aexit__(self, *_args: Any) -> None:
+                return None
+
+        monkeypatch.setattr(synthetic_route.httpx, "AsyncClient", RecordingClient)
+
+        response = _post_run(
+            _settings(
+                synthetic_monitor_api_key="sk-test-monitor",
+                synthetic_control_plane_base_url="https://aws.trustedrouter.com",
+            ),
+            {},
+        )
+
+        assert response.status_code == 200
+        assert redirect_modes == [False]
+
+    def test_request_body_destination_is_rejected_before_any_outbound_work(
+        self,
+        no_network_probes: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        probe_calls = 0
+
+        async def forbidden_probe(*_args: Any, **_kwargs: Any) -> list[Any]:
+            nonlocal probe_calls
+            probe_calls += 1
+            return []
+
+        monkeypatch.setattr(synthetic_route, "run_synthetic_once", forbidden_probe)
         settings = _settings(
             synthetic_monitor_api_key="sk-test-monitor",
             synthetic_control_plane_base_url="https://aws.trustedrouter.com",
         )
         resp = _post_run(settings, {"control_plane_base_url": "https://override.example.com"})
-        assert resp.status_code == 200
-        assert no_network_probes["billing_urls"] == ["https://override.example.com"]
+        assert resp.status_code == 400
+        assert "deployment configuration" in resp.json()["error"]["message"]
+        assert probe_calls == 0
+        assert no_network_probes["billing_urls"] == []
+        assert no_network_probes["gateway_tokens"] == []
+        assert no_network_probes["canary_urls"] == []
+        assert no_network_probes["rotation_calls"] == []
 
     def test_canonical_fallback_unchanged_for_gcp(self, no_network_probes: dict[str, Any]) -> None:
         settings = _settings(synthetic_monitor_api_key="sk-test-monitor")
         assert _post_run(settings, {}).status_code == 200
+        assert no_network_probes["billing_urls"] == []
+        assert no_network_probes["gateway_tokens"] == []
+        assert no_network_probes["canary_urls"] == ["https://trustedrouter.com"]
+
+    def test_private_in_process_owner_keeps_explicit_gateway_probe_authority(
+        self,
+        no_network_probes: dict[str, Any],
+    ) -> None:
+        settings = _settings(
+            synthetic_monitor_api_key="sk-test-monitor",
+            synthetic_control_plane_base_url="https://trustedrouter.com",
+        )
+
+        response = asyncio.run(synthetic_route.run_synthetic_pass(settings))
+
+        assert response["data"]["recorded"] == 1
         assert no_network_probes["billing_urls"] == ["https://trustedrouter.com"]
+        assert no_network_probes["gateway_tokens"] == [GATEWAY_TOKEN, GATEWAY_TOKEN]
+
+
+@pytest.mark.parametrize(
+    "unsafe_origin",
+    [
+        "http://trustedrouter.com",
+        "https://trustedrouter.com/internal",
+        "https://user:password@trustedrouter.com",
+        "https://trustedrouter.com?redirect=https://attacker.example",
+        "//trustedrouter.com",
+    ],
+)
+def test_synthetic_control_plane_must_be_an_exact_https_origin(
+    unsafe_origin: str,
+) -> None:
+    with pytest.raises(ValueError, match="exact HTTPS origin"):
+        _settings(synthetic_control_plane_base_url=unsafe_origin)
 
 
 class TestDetachMode:
@@ -187,10 +291,62 @@ class TestDetachMode:
     def test_detach_still_runs_the_pass(self, no_network_probes: dict[str, Any]) -> None:
         settings = _settings(synthetic_monitor_api_key="sk-test-monitor")
         _post_run(settings, {"detach": True, "rotation_count": 2})
-        # TestClient drives the event loop to completion on exit, so the
-        # background task has run by the time the response is returned.
+        # _post_run enters the TestClient as a context manager, so the detached
+        # task has completed by the time the response is returned.
         assert no_network_probes["rotation_calls"], "detached pass never executed"
         assert no_network_probes["rotation_calls"][0]["count"] == 2
+
+    def test_eventbridge_tick_runs_one_bounded_remediator_pass(
+        self,
+        no_network_probes: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        events: list[str] = []
+
+        def heartbeat(name: str, *, settings: Settings) -> None:
+            assert name == "scheduler:remediator"
+            assert settings.environment == "test"
+            events.append("heartbeat")
+
+        def remediate(settings: Settings) -> list[object]:
+            assert settings.environment == "test"
+            events.append("remediate")
+            return [object()]
+
+        monkeypatch.setattr(synthetic_route, "record_heartbeat", heartbeat)
+        monkeypatch.setattr(synthetic_route, "run_remediator_pass", remediate)
+
+        response = _post_run(
+            _settings(synthetic_monitor_api_key="sk-test-monitor"),
+            {"detach": True, "rotation_count": 1, "run_remediator": True},
+        )
+
+        assert response.status_code == 202
+        assert events == ["heartbeat", "remediate", "heartbeat"]
+        assert len(no_network_probes["rotation_calls"]) == 1
+        assert no_network_probes["gateway_tokens"] == []
+
+    def test_synthetic_tick_does_not_remediate_without_explicit_scheduler_flag(
+        self,
+        no_network_probes: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls = 0
+
+        def forbidden(_settings: Settings) -> list[object]:
+            nonlocal calls
+            calls += 1
+            return []
+
+        monkeypatch.setattr(synthetic_route, "run_remediator_pass", forbidden)
+
+        response = _post_run(
+            _settings(synthetic_monitor_api_key="sk-test-monitor"),
+            {"detach": True, "rotation_count": 1},
+        )
+
+        assert response.status_code == 202
+        assert calls == 0
 
     def test_default_is_synchronous(self, no_network_probes: dict[str, Any]) -> None:
         settings = _settings(synthetic_monitor_api_key="sk-test-monitor")
@@ -265,7 +421,7 @@ def test_samples_ingest_runs_client_watch_and_swallows_its_exception(
         response = client.post(
             "/v1/internal/synthetic/samples",
             json={"samples": [sample.public_dict()]},
-            headers={"x-trustedrouter-internal-token": INTERNAL_TOKEN},
+            headers={"x-trustedrouter-internal-token": OBSERVER_TOKEN},
         )
 
     assert response.status_code == 200

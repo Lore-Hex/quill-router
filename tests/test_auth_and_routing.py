@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from trusted_router.catalog import MODELS
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.providers import ProviderClient, ProviderError, ProviderResult
-from trusted_router.routing_candidates import auto_candidate_models
+from trusted_router.routing_candidates import FAST_MODEL_ORDER, auto_candidate_models
 from trusted_router.storage import STORE
 
 
@@ -384,15 +385,15 @@ def test_gateway_authorize_expands_fast_router_pool() -> None:
     assert authorize.status_code == 200, authorize.text
     data = authorize.json()["data"]
     assert data["requested_model"] == "trustedrouter/fast"
-    assert data["model"] == "cerebras/gpt-oss-120b"
-    assert data["provider"] == "cerebras"
     route_candidates = data["route_candidates"]
-    assert [item["model"] for item in route_candidates] == [
-        "cerebras/gpt-oss-120b",
-        "xiaomi/mimo-v2.5-pro-ultraspeed",
-        "cerebras/zai-glm-4.7",
-    ]
-    assert {item["provider"] for item in route_candidates} == {"cerebras", "xiaomi"}
+    expected_models = [model_id for model_id in FAST_MODEL_ORDER if model_id in MODELS]
+    assert expected_models
+    assert data["model"] == expected_models[0]
+    assert data["provider"] == route_candidates[0]["provider"]
+    assert [item["model"] for item in route_candidates] == expected_models
+    assert {item["provider"] for item in route_candidates} == {
+        MODELS[model_id].provider for model_id in expected_models
+    }
 
 
 def test_default_regions_only_list_actual_attested_deployments(client: TestClient) -> None:

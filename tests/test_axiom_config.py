@@ -69,6 +69,31 @@ def clean_axiom_logging_state() -> Iterator[None]:
         logging.disable(original_disable)
 
 
+@pytest.fixture
+def captured_axiom_listeners(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[logging.handlers.QueueListener]:
+    listeners: list[logging.handlers.QueueListener] = []
+    original_build_pipeline = axiom_config.build_axiom_pipeline
+
+    def capture_pipeline(
+        raw_handler: object,
+        *,
+        resolved_level: int,
+        max_queued: int = 10_000,
+    ) -> tuple[axiom_config._DroppingQueueHandler, logging.handlers.QueueListener]:
+        pipeline = original_build_pipeline(
+            raw_handler,
+            resolved_level=resolved_level,
+            max_queued=max_queued,
+        )
+        listeners.append(pipeline[1])
+        return pipeline
+
+    monkeypatch.setattr(axiom_config, "build_axiom_pipeline", capture_pipeline)
+    return listeners
+
+
 class _ExplodingHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         raise RuntimeError("axiom dataset is not ingestible")
@@ -127,6 +152,7 @@ def _capture_lead_and_root_logs() -> Iterator[tuple[_CapturingHandler, _Capturin
 def _trustedos_client(settings: Settings) -> TestClient:
     with public_routes._INQUIRY_RATE_LOCK:
         public_routes._INQUIRY_HITS.clear()
+        public_routes._INQUIRY_GLOBAL_HITS.clear()
     return TestClient(create_app(settings, init_observability=False))
 
 
@@ -139,9 +165,17 @@ def _trustedos_payload(*, company: str, message: str) -> dict[str, str]:
     }
 
 
-def test_trustedos_inquiry_rate_state_has_a_hard_client_bound() -> None:
+def test_trustedos_inquiry_rate_state_has_a_hard_client_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        public_routes,
+        "_INQUIRY_GLOBAL_MAX_PER_WINDOW",
+        public_routes._INQUIRY_MAX_CLIENTS + 1,
+    )
     with public_routes._INQUIRY_RATE_LOCK:
         public_routes._INQUIRY_HITS.clear()
+        public_routes._INQUIRY_GLOBAL_HITS.clear()
     try:
         for index in range(public_routes._INQUIRY_MAX_CLIENTS + 1):
             client_ip = f"198.51.{index // 256}.{index % 256}"
@@ -153,6 +187,7 @@ def test_trustedos_inquiry_rate_state_has_a_hard_client_bound() -> None:
     finally:
         with public_routes._INQUIRY_RATE_LOCK:
             public_routes._INQUIRY_HITS.clear()
+            public_routes._INQUIRY_GLOBAL_HITS.clear()
 
 
 def _scrubbed_trustedos_messages(
@@ -259,6 +294,69 @@ def test_axiom_timer_flush_wrapper_success_delivers_buffer(capsys) -> None:
     assert captured.err == ""
     assert client.ingested == [("test-logs", [{"message": "ok"}])]
     assert raw_handler.buffer == []
+
+
+def test_real_axiom_handler_ingests_only_the_sanitized_queue_payload() -> None:
+    """Exercise axiom-py's actual ``record.__dict__`` serialization path."""
+    exception_canary = "AXIOM-SINK-ARBITRARY-NARRATIVE-41729"
+    email_canary = "axiom-sink-canary@example.com"
+    secret_canary = "sk-tr-v1-AXIOMSINKCANARY"  # noqa: S105 - redaction canary
+    authorization_canary = "Bearer opaque-axiom-sink-authorization"
+    try:
+        raise RuntimeError(exception_canary)
+    except RuntimeError as exc:
+        record = logging.LogRecord(
+            name="trusted_router.test",
+            level=logging.ERROR,
+            pathname=__file__,
+            lineno=1,
+            msg="provider request failed",
+            args=(),
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+    record.stack_info = f"raw stack {exception_canary}"
+    record.email = email_canary
+    record.authorization = authorization_canary
+    record._private = secret_canary
+    record.context = {"contacts": (email_canary,), "prompt": "patient narrative"}
+
+    client = _StubAxiomClient()
+    raw_handler = axiom_logging.AxiomHandler(client, "test-logs", interval=60)
+    queue_handler, listener = axiom_config.build_axiom_pipeline(
+        raw_handler,
+        resolved_level=logging.INFO,
+    )
+    shutdown = axiom_config._make_axiom_shutdown(listener, raw_handler)
+    client.before_shutdown(shutdown)
+    listener.start()
+    queue_handler.handle(record)
+
+    # axiom-py registered its own flush first. Execute the client's real FIFO
+    # callback order and require our later owner callback to drain then flush
+    # the record that the first callback could not yet see.
+    for callback in client.shutdown_callbacks:
+        callback()
+    shutdown()
+
+    assert len(client.ingested) == 1
+    dataset, events = client.ingested[0]
+    assert dataset == "test-logs"
+    assert len(events) == 1
+    payload = repr(events[0])
+    for canary in (
+        exception_canary,
+        email_canary,
+        secret_canary,
+        authorization_canary,
+    ):
+        assert canary not in payload
+    assert events[0]["email"] == "[Filtered-email]"
+    assert events[0]["authorization"] == "[Filtered]"
+    assert events[0]["_private"] == "[Filtered]"
+    assert events[0]["context"] == {
+        "contacts": ("[Filtered-email]",),
+        "prompt": "[Filtered]",
+    }
 
 
 def test_axiom_client_session_mounts_post_retry_adapter() -> None:
@@ -463,7 +561,9 @@ def test_trustedos_inquiry_delivery_failed_log_ships_lengths_not_free_text(
         def send(self, _message: EmailMessage) -> bool:
             return False
 
-    monkeypatch.setattr(public_routes, "get_email_service", lambda _settings: RefusingEmailService())
+    monkeypatch.setattr(
+        public_routes, "get_email_service", lambda _settings: RefusingEmailService()
+    )
     client = _trustedos_client(
         Settings(
             environment="test",
@@ -521,6 +621,7 @@ def test_axiom_client_kwargs_keep_standard_api_url_for_non_edge() -> None:
 def test_init_axiom_sets_package_logger_level_and_keeps_third_party_info_gated(
     monkeypatch: pytest.MonkeyPatch,
     clean_axiom_logging_state: None,
+    captured_axiom_listeners: list[logging.handlers.QueueListener],
 ) -> None:
     captured_records: list[logging.LogRecord] = []
 
@@ -558,9 +659,14 @@ def test_init_axiom_sets_package_logger_level_and_keeps_third_party_info_gated(
     logging.getLogger("trusted_router.anything").info("app info reaches axiom")
     logging.getLogger("thirdparty").info("third-party info stays gated")
 
+    assert len(captured_axiom_listeners) == 1
+    # QueueListener.stop() puts its sentinel behind every queued record and
+    # joins the monitor thread. That is a deterministic flush; sleeping here
+    # would merely make this assertion probabilistic on a busy CI worker.
+    captured_axiom_listeners[0].stop()
+
     assert any(
-        record.name == "trusted_router.anything"
-        and record.getMessage() == "app info reaches axiom"
+        record.name == "trusted_router.anything" and record.getMessage() == "app info reaches axiom"
         for record in captured_records
     )
     assert all(record.name != "thirdparty" for record in captured_records)
@@ -569,6 +675,7 @@ def test_init_axiom_sets_package_logger_level_and_keeps_third_party_info_gated(
 def test_init_axiom_caps_package_logger_level_at_warning_but_keeps_handler_level(
     monkeypatch: pytest.MonkeyPatch,
     clean_axiom_logging_state: None,
+    captured_axiom_listeners: list[logging.handlers.QueueListener],
 ) -> None:
     class FakeClient:
         def __init__(self, **kwargs: object) -> None:
@@ -598,9 +705,12 @@ def test_init_axiom_caps_package_logger_level_at_warning_but_keeps_handler_level
         )
     )
 
+    assert len(captured_axiom_listeners) == 1
+    listener = captured_axiom_listeners[0]
     installed_handlers = [
-        handler for handler in logging.getLogger().handlers if isinstance(handler, _SafeAxiomHandler)
+        handler for handler in listener.handlers if isinstance(handler, _SafeAxiomHandler)
     ]
+    listener.stop()
     assert len(installed_handlers) == 1
     assert logging.getLogger("trusted_router").level == logging.WARNING
     assert installed_handlers[0].level == logging.ERROR
@@ -608,8 +718,13 @@ def test_init_axiom_caps_package_logger_level_at_warning_but_keeps_handler_level
 
 def _record(logger_name: str) -> logging.LogRecord:
     return logging.LogRecord(
-        name=logger_name, level=logging.INFO, pathname=__file__,
-        lineno=1, msg="hello", args=(), exc_info=None,
+        name=logger_name,
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="hello",
+        args=(),
+        exc_info=None,
     )
 
 

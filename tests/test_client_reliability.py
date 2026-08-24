@@ -357,6 +357,12 @@ def _public_snapshot(**updates: Any) -> dict[str, Any]:
     [
         (None, {"available": False, "reason": "no_data"}),
         (
+            _public_snapshot(
+                windows={"24h": {"requests": 0, "distinct_tenants": 0}}
+            ),
+            {"available": False, "reason": "insufficient_real_data"},
+        ),
+        (
             _public_snapshot(freshness={"age_seconds": 901}),
             {"available": False, "reason": "stale"},
         ),
@@ -382,10 +388,38 @@ def test_client_observed_status_calibrates_then_passes_percentages() -> None:
     )
 
     assert calibrating["state"] == "calibrating"
+    assert calibrating["gated_available"] is True
     assert calibrating["windows"]["24h"]["availability_percent"] is None
     assert published["state"] == "published"
+    assert published["gated_available"] is True
     assert published["slo_id"] == "client_observed"
     assert published["windows"]["24h"]["availability_percent"] == 99.0
+
+
+def test_client_observed_status_exposes_calibration_without_gated_traffic() -> None:
+    section = client_observed_status_section(
+        _public_snapshot(
+            published=True,
+            windows={"24h": {"requests": 0, "distinct_tenants": 0}},
+            all_traffic={
+                "windows": {
+                    "24h": {
+                        "requests": 3_406,
+                        "successes": 3_405,
+                        "tr_fault": 1,
+                        "availability_percent": 99.9706,
+                    }
+                }
+            },
+        ),
+        now=dt.datetime(2026, 8, 17, 12, tzinfo=dt.UTC),
+    )
+
+    assert section["available"] is True
+    assert section["state"] == "calibrating"
+    assert section["gated_available"] is False
+    assert section["windows"]["24h"]["requests"] == 0
+    assert section["all_traffic"]["windows"]["24h"]["requests"] == 3_406
 
 
 def test_client_observed_status_whitelists_every_nested_field() -> None:
@@ -464,3 +498,158 @@ def test_tenant_summary_uses_one_rollup_granularity_and_exact_counts() -> None:
         "attempt_tr_fault": 3,
         "rate": 0.027273,
     }
+
+
+def _below_gates(**updates: Any) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "requests": 50,
+        "successes": 49,
+        "tr_fault_failures": 1,
+        "excluded_failures": 0,
+        "aborted": 0,
+        "distinct_tenants": 1,
+        "coverage_requests": 60,
+        "total_ms_hist": {"lt800": 50},
+        "first_event_ms_hist": {"lt400": 50},
+    }
+    value.update(updates)
+    return _rollup(**value)
+
+
+def test_all_traffic_window_is_ungated_while_the_official_window_stays_gated() -> None:
+    now = dt.datetime(2026, 8, 21, 12, tzinfo=dt.UTC)
+    official_rows = {"24h": [_below_gates()]}
+    all_traffic_rows = {
+        "24h": [
+            _below_gates(),
+            _below_gates(host="apex", requests=0, attempts=60, attempt_tr_fault=3),
+            _below_gates(sdk="tr-py"),
+        ]
+    }
+
+    official_only = build_client_reliability(official_rows, now)
+    snapshot = build_client_reliability(
+        official_rows,
+        now,
+        all_traffic_rows_by_window=all_traffic_rows,
+    )
+
+    assert "all_traffic" not in official_only
+    assert {key: value for key, value in snapshot.items() if key != "all_traffic"} == official_only
+    assert snapshot["published"] is False
+    assert snapshot["windows"]["24h"]["requests"] == 50
+    assert snapshot["windows"]["24h"]["availability_percent"] is None
+    all_traffic = snapshot["all_traffic"]
+    assert all_traffic["includes_synthetic"] is True
+    assert all_traffic["gated"] is False
+    window = all_traffic["windows"]["24h"]
+    assert window["requests"] == 50
+    assert window["distinct_tenants"] == 1
+    assert window["availability_percent"] == 98.0
+    assert window["coverage"] == 0.8167
+    assert window["p50_total_ms"] == 800
+    assert window["p50_ttft_ms"] == 400
+    assert all_traffic["windows"]["5m"]["availability_percent"] is None
+    assert all_traffic["by_host_24h"]["apex"] == {
+        "attempts": 60,
+        "attempt_tr_fault": 3,
+        "rate": 0.05,
+    }
+    assert all_traffic["by_sdk_24h"] == {"tr-py": 50}
+
+
+def test_client_observed_status_exposes_all_traffic_and_leaves_official_fields_unchanged() -> None:
+    now = dt.datetime(2026, 8, 17, 12, tzinfo=dt.UTC)
+    all_traffic = {
+        "includes_synthetic": True,
+        "gated": False,
+        "windows": {
+            "24h": {
+                "requests": 8_956,
+                "successes": 8_956,
+                "tr_fault": 0,
+                "excluded": 0,
+                "aborted": 0,
+                "distinct_tenants": 1,
+                "coverage": 1.0,
+                "p50_total_ms": 800,
+                "p95_total_ms": 1_600,
+                "p50_ttft_ms": 400,
+                "availability_percent": 100.0,
+                "tenant_id": "private-all-traffic-tenant",
+            }
+        },
+        "by_host_24h": {
+            "apex": {"attempts": 9_000, "attempt_tr_fault": 4, "tenant_id": "private-host"},
+            "private-tenant": {"attempts": 1, "attempt_tr_fault": 1},
+        },
+        "by_sdk_24h": {"tr-py": 8_956},
+    }
+
+    official = client_observed_status_section(_public_snapshot(), now=now)
+    section = client_observed_status_section(
+        _public_snapshot(all_traffic=all_traffic),
+        now=now,
+    )
+
+    assert official["all_traffic"] is None
+    assert {key: value for key, value in section.items() if key != "all_traffic"} == {
+        key: value for key, value in official.items() if key != "all_traffic"
+    }
+    assert section["state"] == "calibrating"
+    assert section["windows"]["24h"]["availability_percent"] is None
+    view = section["all_traffic"]
+    assert set(view) == {
+        "includes_synthetic",
+        "gated",
+        "note",
+        "windows",
+        "by_host_24h",
+        "by_sdk_24h",
+    }
+    assert view["includes_synthetic"] is True
+    assert view["gated"] is False
+    assert view["note"] == (
+        "Calibration view; includes synthetic canary traffic; uncapped; ungated; "
+        "not the published methodology."
+    )
+    assert view["windows"]["24h"]["availability_percent"] == 100.0
+    assert view["windows"]["24h"]["requests"] == 8_956
+    assert view["windows"]["24h"]["p95_total_ms"] == 1_600
+    assert view["windows"]["5m"]["requests"] == 0
+    assert view["windows"]["5m"]["availability_percent"] is None
+    assert view["by_host_24h"] == {
+        "apex": {"attempts": 9_000, "attempt_tr_fault": 4, "rate": 0.000444}
+    }
+    assert view["by_sdk_24h"] == {"tr-py": 8_956}
+    encoded = json.dumps(section, sort_keys=True)
+    assert "tenant_id" not in encoded
+    assert "private-" not in encoded
+
+
+@pytest.mark.parametrize(
+    ("updates", "expected"),
+    [
+        ({}, None),
+        ({"all_traffic": None}, None),
+        ({"all_traffic": "junk"}, None),
+        ({"all_traffic": {"windows": "junk"}}, 0),
+    ],
+)
+def test_client_observed_status_tolerates_a_snapshot_without_all_traffic(
+    updates: dict[str, Any],
+    expected: int | None,
+) -> None:
+    section = client_observed_status_section(
+        _public_snapshot(**updates),
+        now=dt.datetime(2026, 8, 17, 12, tzinfo=dt.UTC),
+    )
+
+    assert section["available"] is True
+    assert section["state"] == "calibrating"
+    assert section["windows"]["24h"]["requests"] == 1_000
+    if expected is None:
+        assert section["all_traffic"] is None
+    else:
+        assert section["all_traffic"]["windows"]["24h"]["requests"] == expected
+        assert section["all_traffic"]["windows"]["24h"]["availability_percent"] is None

@@ -36,7 +36,10 @@ from trusted_router.security import (
     verify_api_key,
 )
 from trusted_router.spend_windows import (
+    KeyLimitExceeded,
+    KeyWindowLimitDecision,
     KeyWindowLimitExceeded,
+    decide_key_window_limits,
     enforced_window_limits,
     utcnow,
     window_floors,
@@ -44,6 +47,7 @@ from trusted_router.spend_windows import (
 from trusted_router.storage_errors import DeferredSettlementCapReached
 from trusted_router.storage_models import (
     ApiKey,
+    ApiKeyUsageSnapshot,
     CreditAccount,
     CreditMoney,
     GatewayAuthorization,
@@ -172,6 +176,21 @@ class InMemoryApiKeys:
         with self._lock:
             return [key for key in self.keys.values() if key.workspace_id == workspace_id]
 
+    def list_with_usage_for_workspace(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]:
+        """Atomically snapshot every key and its display counters."""
+        with self._lock:
+            keys = [key for key in self.keys.values() if key.workspace_id == workspace_id]
+            return [
+                ApiKeyUsageSnapshot(
+                    api_key=key,
+                    usage_microdollars=key.usage_microdollars,
+                    byok_usage_microdollars=key.byok_usage_microdollars,
+                    reserved_microdollars=key.reserved_microdollars,
+                    windows=self.window_usage_snapshot(key.hash),
+                )
+                for key in keys
+            ]
+
     def delete(self, key_hash: str) -> bool:
         with self._lock:
             key = self.keys.pop(key_hash, None)
@@ -212,11 +231,16 @@ class InMemoryApiKeys:
             return key
 
     # ── Per-key spend-cap lifecycle ─────────────────────────────────────
-    def window_usage_snapshot(self, key_hash: str) -> dict[str, int]:
+    def window_usage_snapshot(
+        self,
+        key_hash: str,
+        *,
+        now: Any | None = None,
+    ) -> dict[str, int]:
         """Current-window usage per window (micro), lazily zeroing stale windows.
         Mirrors what the typed tr_key_limit row reports for a Spanner store."""
         with self._lock:
-            floors = window_floors(utcnow())
+            floors = window_floors(now or utcnow())
             state = self.window_usage.get(key_hash, {})
             out: dict[str, int] = {}
             for window in ("daily", "weekly", "monthly"):
@@ -233,29 +257,36 @@ class InMemoryApiKeys:
         amount_microdollars: int,
         *,
         usage_type: str,
-    ) -> None:
+    ) -> KeyWindowLimitDecision | None:
         with self._lock:
             key = self.keys[key_hash]
             if _is_byok(usage_type) and not key.include_byok_in_limit:
-                return  # BYOK excluded from this key's caps (lifetime AND windows)
+                return None  # BYOK excluded from this key's caps (lifetime AND windows)
             # Window limits are independent of the lifetime cap: check first,
             # approximately (in-flight reserved is deliberately not counted —
             # same semantics as the typed authorize check).
             window_limits = enforced_window_limits(key)  # {} in alert mode → never blocks
+            decision = None
             if window_limits:
-                used_by_window = self.window_usage_snapshot(key_hash)
-                for window, limit in window_limits.items():
-                    if used_by_window[window] + amount_microdollars > limit:
-                        raise KeyWindowLimitExceeded(window)
+                now = utcnow()
+                decision = decide_key_window_limits(
+                    window_limits,
+                    self.window_usage_snapshot(key_hash, now=now),
+                    amount_microdollars,
+                    now=now,
+                )
+                if decision is not None and not decision.allowed:
+                    raise KeyWindowLimitExceeded(decision)
             if key.limit_microdollars is None:
-                return
+                return decision
             used = key.usage_microdollars
             if key.include_byok_in_limit:
                 used += key.byok_usage_microdollars
             available = key.limit_microdollars - used - key.reserved_microdollars
             if amount_microdollars > available:
-                raise ValueError("key limit exceeded")
+                raise KeyLimitExceeded(decision)
             key.reserved_microdollars += amount_microdollars
+            return decision
 
     def settle_limit(
         self,

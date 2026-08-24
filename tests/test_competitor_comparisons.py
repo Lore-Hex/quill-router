@@ -10,7 +10,7 @@ from trusted_router.competitor_comparisons import COMPETITOR_COMPARISONS
 
 def _json_ld(response_text: str) -> dict[str, object]:
     match = re.search(
-        r'<script type="application/ld\+json">(.*?)</script>',
+        r'<script type="application/ld\+json"[^>]*>(.*?)</script>',
         response_text,
         flags=re.DOTALL,
     )
@@ -77,10 +77,21 @@ def test_each_gateway_comparison_has_unique_evidence_and_schema(client: TestClie
 
 
 def test_unknown_gateway_comparison_returns_real_404(client: TestClient) -> None:
-    response = client.get("/compare/not-a-real-router")
+    response = client.get("/compare/not-a-real-router", headers={"accept": "text/html"})
 
     assert response.status_code == 404
     assert "Page not found" in response.text
+
+
+def test_unknown_gateway_comparison_gives_an_agent_markdown(client: TestClient) -> None:
+    """The route now raises instead of returning HTML directly, so the central
+    handler picks the representation. A non-browser gets the recoverable body
+    naming llms.txt and the sitemap rather than a styled page to scrape."""
+    response = client.get("/compare/not-a-real-router", headers={"accept": "*/*"})
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("text/markdown")
+    assert "/llms.txt" in response.text
 
 
 def test_competitor_route_does_not_shadow_model_comparisons(client: TestClient) -> None:

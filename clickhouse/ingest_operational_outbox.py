@@ -25,6 +25,7 @@ ACTIVITY_COLUMNS = (
     "generation_id",
     "request_id",
     "tenant_id",
+    "workspace_id",
     "key_id",
     "model",
     "provider",
@@ -90,6 +91,13 @@ ACTIVITY_OPTIONAL_DEFAULTS: dict[str, Any] = {
     "client_stream": None,
     "client_failover_used": None,
 }
+ACTIVITY_BOOLEAN_COLUMNS = (
+    "streamed",
+    "usage_estimated",
+    "synthetic",
+    "client_stream",
+    "client_failover_used",
+)
 SYNTHETIC_COLUMNS = (
     "id",
     "probe_type",
@@ -631,9 +639,17 @@ def normalise_operational_event(
         raise ValueError(
             f"{row.event_kind} payload missing required fields: {', '.join(missing)}"
         )
-    canonical = {
-        column: raw.get(column, ACTIVITY_OPTIONAL_DEFAULTS.get(column)) for column in allowed
-    }
+    canonical: dict[str, Any] = {}
+    for column in allowed:
+        value = raw.get(column)
+        if row.event_kind == "activity" and value is None:
+            default = ACTIVITY_OPTIONAL_DEFAULTS.get(column)
+            if default is not None:
+                value = default
+        if row.event_kind == "activity" and column in ACTIVITY_BOOLEAN_COLUMNS:
+            if value is not None:
+                value = int(bool(value))
+        canonical[column] = value
     canonical["ingest_version"] = _utc(row.commit_ts).isoformat()
     return [CanonicalOperationalEvent(event_kind=row.event_kind, row=canonical)]
 

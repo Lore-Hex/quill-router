@@ -94,6 +94,26 @@ def require_federation_credit_peer(request: Request, settings: Any) -> None:
         raise api_error(401, "Invalid federation credit token", ErrorType.UNAUTHORIZED)
 
 
+def require_federation_settlement_peer(request: Request, settings: Any) -> str:
+    """Authenticate deferred usage and return the token-bound source plane."""
+    from trusted_router.config import parse_settlement_inbound_tokens
+
+    token_map = parse_settlement_inbound_tokens(
+        getattr(settings, "federation_settlement_inbound_tokens", "") or ""
+    )
+    if not token_map:
+        raise api_error(
+            403,
+            "This plane does not accept federated settlements",
+            ErrorType.FORBIDDEN,
+        )
+    supplied = request.headers.get("x-trustedrouter-federation-settlement-token") or ""
+    for token, plane in token_map.items():
+        if constant_time_equal(supplied, token):
+            return plane
+    raise api_error(401, "Invalid federation settlement token", ErrorType.UNAUTHORIZED)
+
+
 def register(router: APIRouter) -> None:
     @router.post("/internal/federation/resolve-key")
     async def federation_resolve_key(request: Request, settings: SettingsDep) -> dict[str, Any]:
@@ -174,27 +194,7 @@ def register(router: APIRouter) -> None:
         which is exactly what its classifier does with anything that lacks
         these codes.
         """
-        from trusted_router.config import parse_settlement_inbound_tokens
-
-        token_map = parse_settlement_inbound_tokens(
-            getattr(settings, "federation_settlement_inbound_tokens", "") or ""
-        )
-        if not token_map:
-            raise api_error(
-                403,
-                "This plane does not accept federated settlements",
-                ErrorType.FORBIDDEN,
-            )
-        supplied = request.headers.get("x-trustedrouter-federation-settlement-token") or ""
-        source_plane = ""
-        for token, plane in token_map.items():
-            if constant_time_equal(supplied, token):
-                source_plane = plane
-                break
-        if not source_plane:
-            raise api_error(
-                401, "Invalid federation settlement token", ErrorType.UNAUTHORIZED
-            )
+        source_plane = require_federation_settlement_peer(request, settings)
 
         apply = getattr(STORE, "apply_federated_usage", None)
         if apply is None:

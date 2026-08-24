@@ -28,6 +28,10 @@ from scripts.pricing.base import (
     validate,
 )
 from scripts.pricing.model_ids import remember_upstream_id
+from trusted_router.provider_lifecycle import (
+    ALIBABA_OCTOBER_2026_RETIREMENT_AT,
+    provider_model_retired,
+)
 
 SLUG = "alibaba"
 URL = (
@@ -46,12 +50,24 @@ MANIFEST_PATH = (
 EXPECTED_MODELS = [
     "z-ai/glm-5.2",
     "moonshotai/kimi-k2.7-code",
-    "deepseek/deepseek-v4-flash",
+    "deepseek/deepseek-v4-flash-0731",
     "deepseek/deepseek-v4-pro",
     "qwen/qwen3.7-flash",
     "qwen/qwen3.7-max",
     "qwen/qwen3.7-plus",
 ]
+
+_DEEPSEEK_V4_FLASH_REPLACEMENTS = {
+    "deepseek-v4-flash": "deepseek/deepseek-v4-flash-0731",
+    "deepseek-v4-flash-us": "deepseek/deepseek-v4-flash-0731-us",
+}
+_DEEPSEEK_V4_FLASH_FAMILY = frozenset(
+    {
+        *_DEEPSEEK_V4_FLASH_REPLACEMENTS,
+        "deepseek-v4-flash-0731",
+        "deepseek-v4-flash-0731-us",
+    }
+)
 
 
 def _micro(dollars_per_million: float) -> int:
@@ -132,8 +148,8 @@ def _price(native_id: str) -> ModelPrice | None:
         prompt, completion, cached = 0.894, 3.713, 0.18
     elif model.startswith("kimi-k2."):
         prompt, completion, cached = 0.574, 3.011, 0.115
-    elif model == "deepseek-v4-flash":
-        prompt, completion, cached = 0.20, 0.40, 0.02
+    elif model in _DEEPSEEK_V4_FLASH_FAMILY:
+        prompt, completion, cached = 0.138, 0.275, 0.028
     elif model == "deepseek-v4-pro":
         prompt, completion, cached = 2.40, 4.80, 0.24
     elif model.startswith("qwen3.7-max"):
@@ -233,6 +249,16 @@ def _manifest_row(
     if native_id.startswith("qwen3.7-flash"):
         row["input_modalities"] = ["text", "image"]
         row["output_modalities"] = ["text"]
+    if native_id.startswith("deepseek-v4-flash"):
+        row["context_length"] = 1_000_000
+        row["input_modalities"] = ["text"]
+        row["output_modalities"] = ["text"]
+    replacement = _DEEPSEEK_V4_FLASH_REPLACEMENTS.get(native_id.lower())
+    if replacement is not None:
+        row["retirement_at"] = (
+            ALIBABA_OCTOBER_2026_RETIREMENT_AT.isoformat().replace("+00:00", "Z")
+        )
+        row["replacement_model_id"] = replacement
     return row
 
 
@@ -272,6 +298,8 @@ def fetch() -> ProviderPricingResult:
             continue
         model_id = _canonical_model_id(native_id)
         if model_id is None:
+            continue
+        if provider_model_retired(SLUG, model_id, native_id):
             continue
         manifest_rows[model_id] = _manifest_row(
             model_id=model_id,

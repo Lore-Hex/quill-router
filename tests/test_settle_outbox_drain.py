@@ -14,8 +14,10 @@ from tests.fakes.spanner import _FakeTransaction, make_fake_store
 from trusted_router.config import Settings
 from trusted_router.custom_model_billing import user_model_payout_event_id
 from trusted_router.main import create_app
+from trusted_router.regional_quota_ledger import RegionalLeaseLedgerError
 from trusted_router.services import settle_outbox_apply as apply_mod
 from trusted_router.services import settle_outbox_drain as drain_mod
+from trusted_router.services.regional_quota_leases import LeaseSettlementError
 from trusted_router.services.settle_outbox_apply import ApplyOutcome
 from trusted_router.storage import InMemoryStore, configure_store
 from trusted_router.storage_gcp_authorize import (
@@ -1522,6 +1524,42 @@ def test_lost_charge_recovery_end_to_end(
     assert reap_expired_reservations(store._database, store._param_types, now=NOW) == 0
 
 
+@pytest.mark.parametrize(
+    "failure",
+    [
+        LeaseSettlementError("unknown regional reservation"),
+        RegionalLeaseLedgerError("regional ledger unavailable"),
+    ],
+)
+def test_regional_settlement_failure_is_retryable_after_outbox_enqueue(
+    fake_store: tuple[Any, Any, Any],
+    failure: Exception,
+) -> None:
+    store, db, _bt = fake_store
+    ws = "ws-regional-settle-retry"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+
+    def fail_finalize(*_args: Any, **_kwargs: Any) -> TypedFinalizeResult:
+        raise failure
+
+    store.typed_finalize_gateway_authorization_result = fail_finalize
+    client = _client(Settings(environment="test", settle_outbox_enabled=True))
+
+    response = client.post(
+        "/v1/internal/gateway/settle",
+        json=_settle_json(auth.id),
+    )
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "1"
+    assert response.json()["error"]["type"] == "service_unavailable"
+    row = _outbox(store).get(auth.id, "settle")
+    assert row is not None and row.status == "pending"
+    assert db.reservations[auth.credit_reservation_id]["settled"] is False
+
+
 def test_user_model_inline_finalize_loss_repairs_one_payout_from_frozen_outbox(
     fake_store: tuple[Any, Any, Any],
 ) -> None:
@@ -2082,4 +2120,3 @@ def test_user_model_settle_refuses_a_different_model_id(
         json=_typed_settle_body(auth, selected_model="trustedrouter/user-someone-else"),
     )
     assert other.status_code == 400, other.text
-

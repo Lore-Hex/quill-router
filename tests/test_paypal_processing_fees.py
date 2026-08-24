@@ -3,13 +3,17 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.services.paypal_billing import credit_paypal_capture
+from trusted_router.services.paypal_billing import (
+    credit_paypal_capture,
+    verify_paypal_webhook_signature,
+)
 from trusted_router.storage import STORE
 from trusted_router.typed_balance import live_credit_summary
 
@@ -23,6 +27,25 @@ def _paypal_settings() -> Settings:
         stripe_card_fee_basis_points=290,
         stripe_card_fee_fixed_cents=30,
     )
+
+
+def _verified_paypal_settings() -> Settings:
+    return Settings(
+        environment="test",
+        paypal_client_id="paypal-client",
+        paypal_client_secret="paypal-secret",  # noqa: S106
+        paypal_webhook_id="paypal-webhook",
+    )
+
+
+def _paypal_signature_headers() -> dict[str, str]:
+    return {
+        "paypal-transmission-id": "transmission-1",
+        "paypal-transmission-time": "2026-08-22T00:00:00Z",
+        "paypal-cert-url": "https://api-m.paypal.com/cert.pem",
+        "paypal-auth-algo": "SHA256withRSA",
+        "paypal-transmission-sig": "signature",
+    }
 
 
 def _completed_order(
@@ -212,6 +235,52 @@ def test_paypal_webhook_credits_principal_and_returns_fee_breakdown(
     assert data["amount_microdollars"] == 25_000_000
     assert data["processing_fee_microdollars"] == 1_060_000
     assert data["total_microdollars"] == 26_060_000
+
+
+@pytest.mark.parametrize(
+    ("paypal_status", "expected_status", "expected_message"),
+    [
+        (400, 400, "Invalid PayPal webhook"),
+        (500, 502, "PayPal request failed"),
+    ],
+)
+def test_paypal_webhook_classifies_paypal_verification_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    paypal_status: int,
+    expected_status: int,
+    expected_message: str,
+) -> None:
+    settings = _verified_paypal_settings()
+
+    def fake_access_token(_settings: Settings) -> str:
+        return "token"
+
+    def paypal_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            paypal_status,
+            request=request,
+            json={"name": "PAYPAL_TEST_FAILURE"},
+        )
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        "trusted_router.services.paypal_billing._access_token",
+        fake_access_token,
+    )
+    monkeypatch.setattr(
+        "trusted_router.services.paypal_billing.httpx.Client",
+        lambda **_kwargs: real_client(transport=httpx.MockTransport(paypal_handler)),
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        verify_paypal_webhook_signature(
+            headers=_paypal_signature_headers(),
+            event={"id": "WH-BAD"},
+            settings=settings,
+        )
+
+    assert raised.value.status_code == expected_status
+    assert raised.value.detail["error"]["message"] == expected_message
 
 
 def test_paypal_capture_rejects_subcent_amount(

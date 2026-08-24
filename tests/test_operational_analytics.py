@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import json
+import re
 import threading
 from typing import Any
 
@@ -40,6 +41,7 @@ from trusted_router.storage_models import (
 )
 from trusted_router.storage_operational_analytics import (
     CLIENT_EVENTS_EVENT_KIND,
+    OPERATIONAL_ANALYTICS_OUTBOX_SHARDS,
     build_client_events_payload,
 )
 from trusted_router.storage_postgres_operational_analytics_outbox import (
@@ -103,7 +105,12 @@ class _Database:
         callback(self.transaction)
 
 
-def test_activity_payload_uses_surrogates_and_omits_content_and_raw_ids() -> None:
+def test_activity_payload_names_its_workspace_but_never_keys_or_content() -> None:
+    """The 2026-08-19 boundary: workspace_id is pseudonymous and belongs in the
+    row (it is what makes rows joinable without a refreshed directory); key
+    hashes and generation content remain surrogate-only/absent. If this test
+    fails on the workspace_id line, someone is re-anonymising the private
+    table -- that decision was made deliberately, reverse it deliberately."""
     generation = _generation()
     payload = activity_payload(generation)
     encoded = json.dumps(payload, sort_keys=True)
@@ -111,8 +118,8 @@ def test_activity_payload_uses_surrogates_and_omits_content_and_raw_ids() -> Non
     assert payload["tenant_id"] == analytics_surrogate(
         "workspace", generation.workspace_id
     )
+    assert payload["workspace_id"] == generation.workspace_id
     assert payload["key_id"] == analytics_surrogate("api-key", generation.key_hash)
-    assert generation.workspace_id not in encoded
     assert generation.key_hash not in encoded
     assert "private model output" not in encoded
     assert "tool_calls" not in payload
@@ -957,3 +964,165 @@ def test_synthetic_rollup_rebuild_never_overwrites_partial_ttl_boundary() -> Non
     assert ("hour", "2026-07-17T12:00:00Z") not in starts
     assert ("day", "2026-07-17T00:00:00Z") not in starts
     assert ("day", "2026-07-18T00:00:00Z") in starts
+
+
+# ---------------------------------------------------------------------------
+# The published lag read: how old is the oldest row the drain has not moved?
+# ---------------------------------------------------------------------------
+
+
+class _SnapshotDatabase:
+    """A Spanner database whose snapshot answers the one-statement lag read.
+
+    The read is a single `SELECT MIN(commit_ts) FROM (<32 per-shard seeks>)`,
+    so this fake parses the shard literals back out of the SQL and answers the
+    minimum over the shards it was asked about. Parsing rather than ignoring
+    them is deliberate: it is what lets the tests below assert that all 32
+    heads really were consulted, which is the property the old 32-round-trip
+    form made obvious and this one does not.
+    """
+
+    def __init__(self, rows_by_shard: dict[int, list[dt.datetime]]) -> None:
+        self._rows_by_shard = rows_by_shard
+        self.queries: list[tuple[str, dict[str, Any]]] = []
+        self.multi_use: list[bool] = []
+        self.timeouts: list[float | None] = []
+
+    def snapshot(self, **kwargs: Any) -> Any:
+        self.multi_use.append(bool(kwargs.get("multi_use")))
+        outer = self
+
+        class _Snapshot:
+            def __enter__(self) -> Any:
+                return self
+
+            def __exit__(self, *_exc: Any) -> None:
+                return None
+
+            def execute_sql(self, sql: str, **kwargs: Any) -> list[list[Any]]:
+                outer.timeouts.append(kwargs.get("timeout"))
+                outer.queries.append((sql, kwargs.get("params") or {}))
+                shards = [int(value) for value in re.findall(r"WHERE shard=(\d+)", sql)]
+                stamps = sorted(
+                    stamp
+                    for shard in shards
+                    for stamp in outer._rows_by_shard.get(shard, [])
+                )
+                return [[stamps[0]]] if stamps else [[None]]
+
+        return _Snapshot()
+
+
+def _queried_shards(sql: str) -> set[int]:
+    return {int(value) for value in re.findall(r"WHERE shard=(\d+)", sql)}
+
+
+def test_spanner_oldest_enqueued_at_is_the_minimum_across_every_shard() -> None:
+    """The oldest row can sit in any shard, so all 32 heads are read.
+
+    A single global `ORDER BY commit_ts LIMIT 1` would be a table scan -- the
+    primary key leads with `shard` -- and would get more expensive exactly as
+    the backlog it measures grows.
+    """
+    oldest = dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)
+    database = _SnapshotDatabase(
+        {
+            0: [dt.datetime(2026, 8, 17, 11, 0, tzinfo=dt.UTC)],
+            7: [oldest, dt.datetime(2026, 8, 10, 0, 0, tzinfo=dt.UTC)],
+            31: [dt.datetime(2026, 8, 5, 0, 0, tzinfo=dt.UTC)],
+        }
+    )
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
+
+    assert outbox.oldest_enqueued_at() == oldest
+    [(sql, _)] = database.queries
+    assert _queried_shards(sql) == set(range(OPERATIONAL_ANALYTICS_OUTBOX_SHARDS))
+    assert sql.count("ORDER BY commit_ts LIMIT 1") == OPERATIONAL_ANALYTICS_OUTBOX_SHARDS
+    assert "count(" not in sql.lower()
+
+
+def test_spanner_lag_read_is_one_round_trip_not_one_per_shard() -> None:
+    """32 sequential round trips do not fit the budget that bounds this read.
+
+    Measured against production Spanner on 2026-08-17, the per-shard loop this
+    replaced took 9.76s (2.22s for the first shard, ~0.25s for each of the
+    rest) against a 3.0s budget, so it raised TimeoutError on EVERY call and
+    /status.json published `unreachable` for a cloud whose outbox was empty --
+    a healthy drain reported as a broken one, on the very page added to notice
+    broken drains. As one statement: 2.93s cold, 1.01s warm.
+
+    The count is the assertion. Anything that walks the shards in Python is
+    correct and unusably slow, and it would pass every other test here.
+    """
+    database = _SnapshotDatabase({5: [dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)]})
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
+
+    outbox.oldest_enqueued_at(timeout=3.0)
+
+    assert len(database.queries) == 1
+
+
+def test_spanner_lag_read_never_scans_the_whole_table() -> None:
+    """Every arm carries a shard predicate; a bare MIN() would scan.
+
+    One round trip is achievable the wrong way -- `SELECT MIN(commit_ts) FROM
+    tr_operational_analytics_outbox` is also one statement, and it degrades
+    precisely as the backlog grows, which is when this number matters most.
+    """
+    database = _SnapshotDatabase({0: [dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)]})
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
+
+    outbox.oldest_enqueued_at()
+
+    [(sql, _)] = database.queries
+    selects = sql.count("FROM tr_operational_analytics_outbox")
+    assert selects == OPERATIONAL_ANALYTICS_OUTBOX_SHARDS
+    assert selects == sql.count("WHERE shard=")
+
+
+def test_spanner_oldest_enqueued_at_is_none_when_every_shard_is_drained() -> None:
+    """Fully drained is the healthiest state, and it is not an absence of data."""
+    outbox = SpannerOperationalAnalyticsOutbox(_SnapshotDatabase({}), _ParamTypes())
+
+    assert outbox.oldest_enqueued_at() is None
+
+
+def test_spanner_oldest_enqueued_at_returns_utc_aware_timestamps() -> None:
+    """A naive value would compare against `now` as if it were local time."""
+    database = _SnapshotDatabase({3: [dt.datetime(2026, 8, 2, 3, 0)]})
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
+
+    result = outbox.oldest_enqueued_at()
+
+    assert result is not None
+    assert result.tzinfo is not None
+    assert result == dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)
+
+
+def test_spanner_oldest_enqueued_at_spends_one_budget_across_all_shards() -> None:
+    """The bound is on the CALL, not on each of the 32 statements.
+
+    This read runs on the public /status.json path inside an async handler, so
+    the number that matters is how long the whole thing can hold the event
+    loop. With one statement the two are the same thing by construction, which
+    is the second reason to prefer it: the earlier form had to subtract
+    elapsed time from a deadline to keep the promise this now keeps for free.
+    """
+    database = _SnapshotDatabase({0: [dt.datetime(2026, 8, 2, 3, 0, tzinfo=dt.UTC)]})
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
+
+    outbox.oldest_enqueued_at(timeout=5.0)
+
+    assert database.timeouts == [5.0]
+
+
+def test_activity_allowlist_carries_workspace_id_to_clickhouse() -> None:
+    """The drain projects payloads onto ACTIVITY_COLUMNS; a key missing from
+    the allowlist is dropped silently, which would ship this feature as a
+    column of empty strings."""
+    from clickhouse.ingest_operational_outbox import ACTIVITY_COLUMNS
+
+    assert "workspace_id" in ACTIVITY_COLUMNS
+    # Order stability: appended after tenant_id's group, never before
+    # generation_id -- the archive row hash is computed over this tuple.
+    assert ACTIVITY_COLUMNS.index("workspace_id") > ACTIVITY_COLUMNS.index("tenant_id")

@@ -10,6 +10,7 @@ from datetime import UTC, date, datetime
 import httpx
 
 from trusted_router.config import get_settings
+from trusted_router.synthetic.internal_auth import synthetic_observer_token
 from trusted_router.synthetic.probes import (
     SyntheticTarget,
     video_generation_probe,
@@ -56,12 +57,12 @@ def daily_video_profile(day: date) -> DailyVideoProfile:
 async def run() -> int:
     settings = get_settings()
     api_key = settings.synthetic_monitor_api_key
-    internal_token = settings.internal_gateway_token
+    internal_token = synthetic_observer_token(settings)
     if not api_key:
         print("TR_SYNTHETIC_MONITOR_API_KEY is required", file=sys.stderr)
         return 2
     if not internal_token:
-        print("TR_INTERNAL_GATEWAY_TOKEN is required", file=sys.stderr)
+        print("TR_OBSERVER_INTERNAL_TOKEN is required", file=sys.stderr)
         return 2
 
     monitor_region = os.environ.get("TR_SYNTHETIC_MONITOR_REGION", "us-central1")

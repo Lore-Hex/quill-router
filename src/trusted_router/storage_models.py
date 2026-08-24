@@ -110,6 +110,13 @@ class User:
     veriff_session_url: str | None = None
     veriff_session_created_at: str | None = None
     veriff_decision_code: int | None = None
+    #: Veriff's granular reason for the last decision, kept for OPERATORS.
+    #: Never rendered to the person being verified when the decision is a
+    #: decline: codes 503/504/505/515-518/526 name the exact fraud signal that
+    #: fired, and Veriff publishes no end-user guidance for them. Resubmission
+    #: reasons are different — Veriff asks integrators to show those.
+    veriff_decision_reason: str | None = None
+    veriff_decision_reason_code: int | None = None
     veriff_attempt_count: int = 0
 
     @property
@@ -209,9 +216,9 @@ class ApiKey:
     created_at: str = field(default_factory=iso_now)
     updated_at: str | None = None
     reserved_microdollars: int = 0
-    # Independent usage-counter rows for a high-throughput key. Keys with an
-    # exact lifetime spend limit remain at one shard. Fixed-window limits are
-    # approximate snapshot checks and may sum usage across shards.
+    # Independent usage-counter rows for a high-throughput key. Exact lifetime
+    # caps use escrowed per-shard sub-budgets; fixed-window limits are
+    # approximate snapshot checks and sum usage across shards.
     usage_shard_count: int = 1
     tags: dict[str, str] = field(default_factory=dict)
     # Non-empty marks a key learned from a home plane via federation. Such a
@@ -220,8 +227,37 @@ class ApiKey:
     federated_home: str = ""
 
 
+@dataclass(frozen=True)
+class ApiKeyUsageSnapshot:
+    """One API key plus the live counters needed by key-management pages.
+
+    Keeping this as a storage value (rather than making the route point-read
+    usage for every key) lets each backend fetch the whole page in one
+    strongly-consistent operation.  ``windows`` contains current-window
+    microdollar usage under the ``daily``/``weekly``/``monthly`` keys.
+    """
+
+    api_key: ApiKey
+    usage_microdollars: int
+    byok_usage_microdollars: int
+    reserved_microdollars: int
+    windows: dict[str, int]
+
+
 @dataclass
 class EncryptedSecretEnvelope:
+    algorithm: str
+    key_ref: str
+    encrypted_dek: str
+    dek_nonce: str
+    ciphertext: str
+    nonce: str
+
+
+@dataclass
+class EncryptedGoogleClickEnvelope:
+    """Dedicated-KMS envelope that is never part of the BYOK migration surface."""
+
     algorithm: str
     key_ref: str
     encrypted_dek: str
@@ -424,8 +460,9 @@ class SettleOutboxRow:
 class CreditAccount:
     workspace_id: str
     # Number of independent tr_credit_balance sub-ledgers owned by this
-    # workspace. The default preserves the original one-row behavior; only the
-    # pause/drain operator path may activate more shards for a hot workspace.
+    # workspace. The dataclass default must remain one so legacy JSON that
+    # predates this field keeps its original row interpretation. Production
+    # account creation explicitly chooses the current multi-shard default.
     shard_count: int = 1
     # Auto-refill: when available drops below threshold, charge the saved
     # Stripe payment method off-session for `auto_refill_amount_microdollars`.
@@ -522,6 +559,12 @@ class GatewayAuthorization:
     # authorization before this field existed); "deferred_home" records the
     # spend as debt to the home plane's ledger, forwarded asynchronously.
     settlement: str = "local"
+    # Present only when a bounded regional escrow authorized this request.
+    # These are content-free routing facts used to settle/refund the durable
+    # regional hold before the global request record becomes terminal.
+    regional_lease_id: str | None = None
+    regional_fencing_token: int | None = None
+    regional_hold_id: str | None = None
     # Only deferred authorizations carry an expiry: it is what lets the reaper
     # reclaim the outstanding-counter estimate when the enclave dies between
     # authorize and settle. Local authorizations keep their pre-existing
@@ -1282,10 +1325,10 @@ class SignupResult:
 class AcquisitionAttribution:
     """Privacy-bounded acquisition record for one workspace.
 
-    Raw click identifiers are converted to keyed, non-reversible fingerprints
-    before this record is created. Neither identifiers nor fingerprints are
-    uploaded to ad platforms or copied into public APIs, generation metadata,
-    or the prompt path.
+    Advertising click identifiers are retained only as envelope-encrypted
+    control-plane secrets. Fingerprints remain available for first-party
+    reporting. Neither form is copied into public APIs, generation metadata,
+    logs, or the prompt path.
     """
 
     workspace_id: str
@@ -1300,7 +1343,52 @@ class AcquisitionAttribution:
     purchase_microdollars: int = 0
     first_purchase_at: str | None = None
     last_purchase_at: str | None = None
+    google_click_id_kind: str | None = None
+    encrypted_google_click_id: EncryptedGoogleClickEnvelope | None = None
+    google_click_expires_at: str | None = None
     updated_at: str = field(default_factory=iso_now)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.encrypted_google_click_id, dict):
+            self.encrypted_google_click_id = EncryptedGoogleClickEnvelope(
+                **self.encrypted_google_click_id
+            )
+
+
+@dataclass
+class GoogleAdsConversion:
+    """Metadata-only, encrypted conversion queued for Google Ads.
+
+    The row has no user, email, workspace, API-key, prompt, output, model, or
+    provider identifier. ``attribution_id`` is a random value used only as the
+    encryption context and to derive an opaque transaction ID.
+    """
+
+    order_id: str
+    conversion_action: str
+    occurred_at: str
+    attribution_id: str
+    click_id_kind: str
+    encrypted_click_id: EncryptedGoogleClickEnvelope | None
+    click_expires_at: str | None = None
+    value_microdollars: int = 0
+    currency_code: str = "USD"
+    created_at: str = field(default_factory=iso_now)
+    delivery_status: str = "pending"
+    delivery_attempts: int = 0
+    next_attempt_at: str = field(default_factory=iso_now)
+    last_error: str | None = None
+    lease_owner: str | None = None
+    leased_until: str | None = None
+    google_request_id: str | None = None
+    submitted_at: str | None = None
+    updated_at: str = field(default_factory=iso_now)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.encrypted_click_id, dict):
+            self.encrypted_click_id = EncryptedGoogleClickEnvelope(
+                **self.encrypted_click_id
+            )
 
 
 ACTIVATION_REMINDER_DELAYS_SECONDS: tuple[tuple[str, int], ...] = (
@@ -1423,6 +1511,27 @@ class AuthSession:
     created_at: str = field(default_factory=iso_now)
     expires_at: str | None = None
     state: str = "active"  # "active" | "pending_email" (legacy wallet email attach)
+
+
+@dataclass(frozen=True)
+class SessionAuthContext:
+    """Strong, point-in-time view used to authenticate a browser session."""
+
+    session: AuthSession
+    user: User | None
+    workspace: Workspace | None
+    workspaces: tuple[Workspace, ...]
+    is_member: bool
+    is_management: bool
+    management_workspace_ids: frozenset[str]
+
+
+@dataclass(frozen=True)
+class ApiKeyAuthContext:
+    """Strong, point-in-time view used to authenticate an API key."""
+
+    api_key: ApiKey
+    workspace: Workspace | None
 
 
 @dataclass

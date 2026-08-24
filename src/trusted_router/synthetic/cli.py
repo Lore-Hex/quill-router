@@ -14,6 +14,10 @@ import httpx
 from trusted_router.config import Settings, get_settings
 from trusted_router.provider_reliability import model_deadlines
 from trusted_router.storage_models import ProviderBenchmarkSample, SyntheticProbeSample
+from trusted_router.synthetic.internal_auth import (
+    synthetic_observer_token,
+    synthetic_transaction_token,
+)
 from trusted_router.synthetic.probes import (
     DEFAULT_SYNTHETIC_BILLING_CONCURRENCY,
     SyntheticTarget,
@@ -77,6 +81,8 @@ async def _one_probe_pass(
             monitor_region=monitor_region,
             api_key=api_key,
             billing_semaphore=limiter,
+            # The inference probes' SDK sessions beacon to this plane.
+            control_plane_base_url=control_plane,
         )
     )
     if not api_key:
@@ -437,7 +443,8 @@ async def run() -> int:
         or settings.primary_region
     )
     control_plane = os.environ.get("TR_SYNTHETIC_CONTROL_PLANE_URL", "https://trustedrouter.com")
-    internal_token = settings.internal_gateway_token
+    observer_token = synthetic_observer_token(settings)
+    transaction_token = synthetic_transaction_token(settings)
     api_key = settings.synthetic_monitor_api_key
     timeout = httpx.Timeout(settings.synthetic_monitor_timeout_seconds)
     remediator_url = os.environ.get("TR_SYNTHETIC_REMEDIATOR_URL")
@@ -544,11 +551,11 @@ async def run() -> int:
         asyncio.create_task(
             _run_scheduled_remediator(
                 url=remediator_url,
-                internal_token=internal_token,
+                internal_token=observer_token,
                 timeout_seconds=remediator_timeout_seconds,
             )
         )
-        if remediator_url and internal_token and not throughput_only
+        if remediator_url and observer_token and not throughput_only
         else None
     )
     if throughput_only:
@@ -590,7 +597,11 @@ async def run() -> int:
                 settings=settings,
                 monitor_region=monitor_region,
                 control_plane=control_plane,
-                internal_token=internal_token,
+                # Split observer jobs never hold billing authority. The
+                # explicit combined migration bridge still does, so it must
+                # keep exercising authorize/settle/fallback until the
+                # internal service takes ownership.
+                internal_token=transaction_token,
                 api_key=api_key,
                 timeout=timeout,
                 rotation_enabled=rotation_enabled,
@@ -623,19 +634,19 @@ async def run() -> int:
         "TR_SYNTHETIC_INGEST_URL",
         f"{control_plane.rstrip('/')}/v1/internal/synthetic/samples",
     )
-    if not internal_token:
+    if not observer_token:
         for probe_sample in all_samples:
             print(probe_sample.public_dict())
         for benchmark_sample in benchmark_samples:
             print(asdict(benchmark_sample))
-        print("TR_INTERNAL_GATEWAY_TOKEN is required to ingest samples", file=sys.stderr)
+        print("TR_OBSERVER_INTERNAL_TOKEN is required to ingest samples", file=sys.stderr)
         return 2
     async with httpx.AsyncClient(timeout=timeout) as client:
         ok = True
         if all_samples:
             response = await client.post(
                 ingest_url,
-                headers={"x-trustedrouter-internal-token": internal_token},
+                headers={"x-trustedrouter-internal-token": observer_token},
                 json={"samples": [sample.public_dict() for sample in all_samples]},
             )
             print(response.text)
@@ -647,7 +658,7 @@ async def run() -> int:
             )
             bench_response = await client.post(
                 benchmark_url,
-                headers={"x-trustedrouter-internal-token": internal_token},
+                headers={"x-trustedrouter-internal-token": observer_token},
                 json={"samples": [asdict(sample) for sample in benchmark_samples]},
             )
             print(bench_response.text)
@@ -660,7 +671,7 @@ async def run() -> int:
                 await _post_route_health_if_due(
                     client,
                     url=route_health_url,
-                    internal_token=internal_token,
+                    internal_token=observer_token,
                 )
     if remediator_task is not None:
         ok = (await remediator_task) and ok

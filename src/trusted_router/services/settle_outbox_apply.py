@@ -17,7 +17,9 @@ from trusted_router.custom_model_billing import (
     user_model_payout_event_id,
 )
 from trusted_router.partner_billing import PARTNER_OPERATOR_COST_SETTLE_FIELD
+from trusted_router.regional_quota_ledger import RegionalLeaseLedgerError
 from trusted_router.schemas import GatewaySettleRequest
+from trusted_router.services.regional_quota_leases import LeaseSettlementError
 from trusted_router.storage import STORE, Generation, typed_billing_store
 from trusted_router.storage_errors import transient_store_error_types
 from trusted_router.storage_gcp_authorize import SettleOutcome
@@ -44,6 +46,11 @@ logger = logging.getLogger(__name__)
 # ResourceExhausted (session-pool and admission-control overload)/RetryError/
 # ServiceUnavailable, plus the backend-neutral StoreConflict/StoreUnavailable.
 _TRANSIENT_STORE_EXCS = transient_store_error_types()
+_REGIONAL_SETTLE_RETRY_EXCS: tuple[type[Exception], ...] = (
+    *_TRANSIENT_STORE_EXCS,
+    RegionalLeaseLedgerError,
+    LeaseSettlementError,
+)
 
 # Rolling legacy rows can still carry this historical marker. New typed rows
 # atomically enqueue ClickHouse delivery in the settlement transaction and do
@@ -318,6 +325,49 @@ def _apply_typed(
     if auth.credit_reservation_id is None:
         return ApplyOutcome.RESERVATION_MISSING
 
+    # A regional request must settle/refund its durable local hold before the
+    # typed Spanner request record becomes terminal. Calling the lower-level
+    # typed primitive directly would skip that step; the reconciler could then
+    # release the grant as unused and turn an outbox-recovered request into a
+    # free request. The wrapper is idempotent at both boundaries.
+    if auth.settlement == "regional_lease":
+        regional_finalize = getattr(
+            typed_store,
+            "typed_finalize_gateway_authorization_result",
+            None,
+        )
+        if not callable(regional_finalize):
+            return ApplyOutcome.PARK_TYPED_UNAVAILABLE
+        try:
+            existing_reservation = typed_store.read_typed_reservation(auth.credit_reservation_id)
+            if existing_reservation is not None and existing_reservation.get("settled"):
+                finalize_result = None
+            else:
+                finalize_result = regional_finalize(
+                    auth.id,
+                    success=success,
+                    actual_microdollars=row.actual_cost_micro,
+                    selected_usage_type=usage_type,
+                    generation=generation,
+                    user_model_payout=user_model_payout,
+                )
+        except _REGIONAL_SETTLE_RETRY_EXCS:
+            # An opposing settle/refund can win the local row just before its
+            # Spanner transaction. Park until that transaction commits, then
+            # the replay classifier below can report the exact terminal result.
+            return ApplyOutcome.PARK_TYPED_UNAVAILABLE
+        if finalize_result is not None and finalize_result.finalized:
+            return (
+                ApplyOutcome.SETTLED_NOW
+                if finalize_result.activity_indexed
+                else ApplyOutcome.ACTIVITY_PENDING
+            )
+        # The wrapper returns false for an already-terminal request. Continue
+        # through the existing exact replay classifier below.
+        result: dict[str, Any] = {"outcome": SettleOutcome.ALREADY_SETTLED}
+    else:
+        result = {}
+
     generation_writes: list[tuple[str, str, str]] = []
     if success and generation is not None:
         generation_writes = [
@@ -335,22 +385,23 @@ def _apply_typed(
         selected_usage_type=usage_type,
         generation=generation,
     )
-    try:
-        result = typed_store.typed_finalize_gateway(
-            reservation_id=auth.credit_reservation_id,
-            authorization_id=auth.id,
-            success=success,
-            actual_micro=row.actual_cost_micro,
-            settled_usage_type=str(usage_type),
-            now=dt.datetime.now(dt.UTC),
-            authorization=auth_settled,
-            auth_body_settled=_json_body(auth_settled),
-            generation_writes=generation_writes,
-            generation=generation,
-            user_model_payout=user_model_payout,
-        )
-    except _TRANSIENT_STORE_EXCS:
-        return ApplyOutcome.PARK_TYPED_UNAVAILABLE
+    if auth.settlement != "regional_lease":
+        try:
+            result = typed_store.typed_finalize_gateway(
+                reservation_id=auth.credit_reservation_id,
+                authorization_id=auth.id,
+                success=success,
+                actual_micro=row.actual_cost_micro,
+                settled_usage_type=str(usage_type),
+                now=dt.datetime.now(dt.UTC),
+                authorization=auth_settled,
+                auth_body_settled=_json_body(auth_settled),
+                generation_writes=generation_writes,
+                generation=generation,
+                user_model_payout=user_model_payout,
+            )
+        except _TRANSIENT_STORE_EXCS:
+            return ApplyOutcome.PARK_TYPED_UNAVAILABLE
     outcome = result.get("outcome")
     if outcome == SettleOutcome.SETTLED:
         # The typed transaction atomically persisted the bounded generation

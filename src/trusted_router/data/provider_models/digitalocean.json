@@ -2,7 +2,7 @@
   "_about": "Provider-native DigitalOcean Gradient AI serverless catalog. Availability comes from /v1/models and rates from DigitalOcean's official pricing documentation.",
   "provider": "digitalocean",
   "source": "https://inference.do-ai.run/v1/models",
-  "generated_at": "2026-08-16T15:24:13Z",
+  "generated_at": "2026-08-24T16:40:13Z",
   "price_scale": "microdollars_per_million",
   "model_count": 23,
   "models": [
@@ -25,7 +25,10 @@
       "context_length": 32678,
       "max_output_tokens": 8192,
       "input_token_price_per_m": 990000,
-      "output_token_price_per_m": 990000
+      "output_token_price_per_m": 990000,
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek V3.2",
@@ -134,7 +137,10 @@
       "context_length": 128000,
       "max_output_tokens": 4096,
       "input_token_price_per_m": 650000,
-      "output_token_price_per_m": 650000
+      "output_token_price_per_m": 650000,
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Llama 4 Maverick 17B 128E Instruct",
@@ -175,8 +181,8 @@
       "upstream_id": "minimax-m2.5",
       "context_length": 65536,
       "max_output_tokens": 65536,
-      "input_token_price_per_m": 225000,
-      "output_token_price_per_m": 900000,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
       "cached_input_token_price_per_m": 60000
     },
     {
@@ -217,8 +223,8 @@
       "upstream_id": "kimi-k2.5",
       "context_length": 262144,
       "max_output_tokens": 262144,
-      "input_token_price_per_m": 375000,
-      "output_token_price_per_m": 2025000,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 2700000,
       "cached_input_token_price_per_m": 203000
     },
     {
@@ -239,8 +245,8 @@
       "upstream_id": "kimi-k2.6",
       "context_length": 262144,
       "max_output_tokens": 262144,
-      "input_token_price_per_m": 760000,
-      "output_token_price_per_m": 3200000,
+      "input_token_price_per_m": 950000,
+      "output_token_price_per_m": 4000000,
       "cached_input_token_price_per_m": 190000
     },
     {
@@ -282,8 +288,8 @@
       "upstream_id": "nvidia-nemotron-3-super-120b",
       "context_length": 1000000,
       "max_output_tokens": 32768,
-      "input_token_price_per_m": 165000,
-      "output_token_price_per_m": 358000,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 650000,
       "cached_input_token_price_per_m": 60000
     },
     {
@@ -347,7 +353,10 @@
       "context_length": 32768,
       "max_output_tokens": 32768,
       "input_token_price_per_m": 250000,
-      "output_token_price_per_m": 550000
+      "output_token_price_per_m": 550000,
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen3 Coder Flash",
@@ -369,7 +378,10 @@
       "max_output_tokens": 262144,
       "input_token_price_per_m": 450000,
       "output_token_price_per_m": 1700000,
-      "cached_input_token_price_per_m": 90000
+      "cached_input_token_price_per_m": 90000,
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen 3.5 397B A17B",
@@ -389,8 +401,8 @@
       "upstream_id": "qwen3.5-397b-a17b",
       "context_length": 131072,
       "max_output_tokens": 131072,
-      "input_token_price_per_m": 302000,
-      "output_token_price_per_m": 1925000,
+      "input_token_price_per_m": 550000,
+      "output_token_price_per_m": 3500000,
       "cached_input_token_price_per_m": 111000
     },
     {
@@ -458,8 +470,8 @@
       "upstream_id": "glm-5",
       "context_length": 64000,
       "max_output_tokens": 64000,
-      "input_token_price_per_m": 750000,
-      "output_token_price_per_m": 2400000,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 3200000,
       "cached_input_token_price_per_m": 200000
     },
     {
@@ -480,7 +492,7 @@
       "upstream_id": "glm-5.1",
       "context_length": 163840,
       "max_output_tokens": 163840,
-      "input_token_price_per_m": 975000,
+      "input_token_price_per_m": 1300000,
       "output_token_price_per_m": 4300000,
       "cached_input_token_price_per_m": 260000
     },

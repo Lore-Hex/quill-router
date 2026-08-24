@@ -69,7 +69,9 @@ from trusted_router.partner_billing import (
 )
 from trusted_router.pricing import resolve_request_rates
 from trusted_router.provider_compat import byok_storage_provider_candidates
+from trusted_router.provider_contracts import SAKANA_FUGU_MODEL_ID
 from trusted_router.provider_types import estimate_tokens_from_text
+from trusted_router.regional_quota_ledger import RegionalLeaseLedgerError
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.request_attribution import (
     InvalidAttribution,
@@ -80,6 +82,7 @@ from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import (
     chat_route_endpoint_candidates,
     embeddings_route_endpoint_candidates,
+    image_route_endpoint_candidates,
     provider_route_preferences,
     resolved_route_preferences,
     video_route_endpoint_candidates,
@@ -99,6 +102,7 @@ from trusted_router.services.broadcast import (
     should_drain_inline,
 )
 from trusted_router.services.federation import FederationClient, FederationUnavailable
+from trusted_router.services.regional_quota_leases import LeaseSettlementError
 from trusted_router.services.settle_outbox_apply import normalized_prompt_accounting
 from trusted_router.services.settle_outbox_drain import (
     drain_settle_outbox,
@@ -247,7 +251,7 @@ def _authorize_gateway_sync(
     require_internal_gateway(request, settings)
     api_key = _api_key_for_gateway_authorization(body)
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
-        raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+        raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
@@ -357,15 +361,30 @@ def _authorize_gateway_sync(
         )
     requested_model = MODELS.get(route_model_id) if route_model_id else None
     is_video_request = body.route_type == "videos"
+    is_image_request = body.route_type == "images"
     is_embeddings_request = (
         requested_model is not None
         and requested_model.supports_embeddings
         and not requested_model.supports_chat
     )
     if user_model is not None:
+        if is_image_request:
+            raise api_error(
+                400,
+                "User-provided models do not support image generation",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
         endpoint_candidates = [_user_model_gateway_candidate(user_model)]
     elif is_video_request:
         endpoint_candidates = video_route_endpoint_candidates(body_dict, settings)
+    elif is_image_request:
+        if custom_model is not None:
+            raise api_error(
+                400,
+                "Custom models do not support image generation",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        endpoint_candidates = image_route_endpoint_candidates(body_dict, settings)
     elif is_embeddings_request:
         endpoint_candidates = embeddings_route_endpoint_candidates(body_dict, settings)
         if not endpoint_candidates:
@@ -388,10 +407,10 @@ def _authorize_gateway_sync(
     )
     additional_cost_reservation = body.additional_cost_reservation_microdollars
     if additional_cost_reservation:
-        if body.route_type not in {"responses.web_search.planner", "videos"}:
+        if body.route_type not in {"responses.web_search.planner", "images", "videos"}:
             raise api_error(
                 400,
-                "additional cost reservations are only available for hosted search or video",
+                "additional cost reservations are only available for hosted search, image, or video",
                 ErrorType.BAD_REQUEST,
             )
         # Hosted tools and asynchronous media are operator-funded, so their
@@ -458,9 +477,9 @@ def _authorize_gateway_sync(
         endpoint=endpoint,
     )
     fingerprint_body = dict(body_dict)
-    if is_video_request:
+    if is_video_request or is_image_request:
         # Provider quotes can change between retries. The enclave supplies a
-        # keyed content fingerprint, so video idempotency binds to the logical
+        # keyed content fingerprint, so media idempotency binds to the logical
         # request without storing content or coupling replay to a fresh quote.
         fingerprint_body.pop("additional_cost_reservation_microdollars", None)
     # Preserve the pre-tagging router's distinction between an absent tags
@@ -570,8 +589,9 @@ def _authorize_gateway_sync(
 
         from trusted_router.spend_windows import (
             enforced_window_limits,
-            utcnow,
-            window_resets_at,
+            remember_spend_window_decision,
+            spend_window_headers,
+            spend_window_limit_error_message,
         )
         from trusted_router.storage_gcp_authorize import AuthorizeOutcome
         from trusted_router.storage_gcp_counters import key_usage_shard_count
@@ -592,44 +612,99 @@ def _authorize_gateway_sync(
         )
         key_usage_shards = key_usage_shard_count(api_key)
         try:
-            outcome, authorization = _typed_store.authorize_gateway_typed(
-                workspace_id=workspace.id,
-                key_hash=api_key.hash,
-                authorization_id=authorization_id,
-                estimate=estimate,
-                has_credit_candidate=has_credit_candidate,
-                reservation_usage_type=reservation_usage_type,
-                model_id=model.id,
-                provider=endpoint.provider,
-                requested_model_id=requested_model_id,
-                candidate_model_ids=[m.id for m, _e in endpoint_candidates],
-                region=region,
-                endpoint_id=endpoint.id,
-                candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
-                idempotency_key=request_idempotency_key,
-                tags=effective_tags,
-                idempotency_fingerprint=request_fingerprint,
-                key_usage_shards=key_usage_shards,
-                custom_model_id=custom_model.id if custom_model else None,
-                custom_model_revision=custom_model.revision if custom_model else None,
-                user_provided_model_id=user_model.id if user_model else None,
-                user_provided_model_revision=user_model.revision if user_model else None,
-                user_model_prompt_price_microdollars_per_m=(
-                    user_model.prompt_price_microdollars_per_million_tokens
-                    if user_model
-                    else None
-                ),
-                user_model_completion_price_microdollars_per_m=(
-                    user_model.completion_price_microdollars_per_million_tokens
-                    if user_model
-                    else None
-                ),
-                user_model_owner_user_id=user_model.owner_user_id if user_model else None,
-                additional_cost_reservation_microdollars=additional_cost_reservation,
-                native_batch_eligible=native_batch_eligible,
-                expires_at=expires_at,
-                window_limits=window_limits or None,
+            regional_authorize = getattr(
+                _typed_store,
+                "authorize_gateway_regional",
+                None,
             )
+            regional_eligible = (
+                settings.regional_quota_leases_enabled
+                and settings.regional_quota_lease_issuance_enabled
+                and workspace.id in settings.regional_quota_lease_pilot_workspaces
+                and callable(regional_authorize)
+                and estimate > 0
+                and body.route_type in {None, "chat.completions", "responses"}
+                and all(
+                    UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
+                    for _candidate_model, candidate_endpoint in endpoint_candidates
+                )
+                and api_key.limit_microdollars is None
+                and api_key.limit_daily_microdollars is None
+                and api_key.limit_weekly_microdollars is None
+                and api_key.limit_monthly_microdollars is None
+                and custom_model is None
+                and user_model is None
+                and partner_mode is None
+                and additional_cost_reservation == 0
+                and not native_batch_eligible
+            )
+            outcome = "unavailable"
+            authorization = None
+            if regional_eligible:
+                assert callable(regional_authorize)
+                outcome, authorization = regional_authorize(
+                    authorization_id=authorization_id,
+                    workspace_id=workspace.id,
+                    key_hash=api_key.hash,
+                    key_usage_shards=key_usage_shards,
+                    estimate=estimate,
+                    model_id=model.id,
+                    provider=endpoint.provider,
+                    requested_model_id=requested_model_id,
+                    candidate_model_ids=[m.id for m, _e in endpoint_candidates],
+                    region=region,
+                    endpoint_id=endpoint.id,
+                    candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
+                    idempotency_key=request_idempotency_key,
+                    idempotency_fingerprint=request_fingerprint,
+                    tags=effective_tags,
+                    expires_at=expires_at,
+                    lease_ttl_seconds=settings.regional_quota_lease_ttl_seconds,
+                    lease_max_microdollars=settings.regional_quota_lease_max_microdollars,
+                    lease_max_available_basis_points=(
+                        settings.regional_quota_lease_max_available_basis_points
+                    ),
+                    lease_shard_count=settings.regional_quota_lease_shard_count,
+                )
+            if outcome == "unavailable":
+                outcome, authorization = _typed_store.authorize_gateway_typed(
+                    workspace_id=workspace.id,
+                    key_hash=api_key.hash,
+                    authorization_id=authorization_id,
+                    estimate=estimate,
+                    has_credit_candidate=has_credit_candidate,
+                    reservation_usage_type=reservation_usage_type,
+                    model_id=model.id,
+                    provider=endpoint.provider,
+                    requested_model_id=requested_model_id,
+                    candidate_model_ids=[m.id for m, _e in endpoint_candidates],
+                    region=region,
+                    endpoint_id=endpoint.id,
+                    candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
+                    idempotency_key=request_idempotency_key,
+                    tags=effective_tags,
+                    idempotency_fingerprint=request_fingerprint,
+                    key_usage_shards=key_usage_shards,
+                    custom_model_id=custom_model.id if custom_model else None,
+                    custom_model_revision=custom_model.revision if custom_model else None,
+                    user_provided_model_id=user_model.id if user_model else None,
+                    user_provided_model_revision=user_model.revision if user_model else None,
+                    user_model_prompt_price_microdollars_per_m=(
+                        user_model.prompt_price_microdollars_per_million_tokens
+                        if user_model
+                        else None
+                    ),
+                    user_model_completion_price_microdollars_per_m=(
+                        user_model.completion_price_microdollars_per_million_tokens
+                        if user_model
+                        else None
+                    ),
+                    user_model_owner_user_id=user_model.owner_user_id if user_model else None,
+                    additional_cost_reservation_microdollars=additional_cost_reservation,
+                    native_batch_eligible=native_batch_eligible,
+                    expires_at=expires_at,
+                    window_limits=window_limits or None,
+                )
         except conflict_store_error_types() as exc:
             release_user_model_slot_after_error()
             # The generic 503 request log cannot identify a tenant hot row.
@@ -651,22 +726,21 @@ def _authorize_gateway_sync(
         except BaseException:
             release_user_model_slot_after_error()
             raise
+        window_decision = getattr(outcome, "rate_limit", None)
+        remember_spend_window_decision(request, window_decision)
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
             release_user_model_slot_after_error()
             record_free_credit_exhausted_safely(workspace.id)
             raise _insufficient_credits_error(workspace)
         if outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED):
             release_user_model_slot_after_error()
-            _, _, window = outcome.partition(":")
-            window = window or "daily"
-            resets_at = window_resets_at(window, utcnow())
-            retry_after = max(1, int((resets_at - utcnow()).total_seconds()))
+            if window_decision is None:
+                raise RuntimeError("typed window rejection omitted its rate-limit verdict")
             raise api_error(
                 429,
-                f"API key {window} spend limit exceeded; resets at "
-                f"{resets_at.isoformat().replace('+00:00', 'Z')}",
+                spend_window_limit_error_message(window_decision),
                 ErrorType.KEY_WINDOW_LIMIT_EXCEEDED,
-                headers={"Retry-After": str(retry_after)},
+                headers=spend_window_headers(window_decision, retry_after=True),
             )
         if outcome in (AuthorizeOutcome.KEY_LIMIT_EXCEEDED, AuthorizeOutcome.KEY_MISSING):
             release_user_model_slot_after_error()
@@ -690,24 +764,35 @@ def _authorize_gateway_sync(
         credit_reservation_id = authorization.credit_reservation_id
     else:
         from trusted_router.spend_windows import (
+            KeyLimitExceeded,
             KeyWindowLimitExceeded,
-            utcnow,
-            window_resets_at,
+            remember_spend_window_decision,
+            spend_window_headers,
+            spend_window_limit_error_message,
         )
 
         try:
-            STORE.reserve_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
+            window_decision = STORE.reserve_key_limit(
+                api_key.hash,
+                estimate,
+                usage_type=reservation_usage_type,
+            )
+            remember_spend_window_decision(request, window_decision)
         except KeyWindowLimitExceeded as exc:
             release_user_model_slot_after_error()
+            remember_spend_window_decision(request, exc.decision)
             # InMemory twin of the typed window rejection (same 429 shape).
-            resets_at = window_resets_at(exc.window, utcnow())
-            retry_after = max(1, int((resets_at - utcnow()).total_seconds()))
             raise api_error(
                 429,
-                f"API key {exc.window} spend limit exceeded; resets at "
-                f"{resets_at.isoformat().replace('+00:00', 'Z')}",
+                spend_window_limit_error_message(exc.decision),
                 ErrorType.KEY_WINDOW_LIMIT_EXCEEDED,
-                headers={"Retry-After": str(retry_after)},
+                headers=spend_window_headers(exc.decision, retry_after=True),
+            ) from exc
+        except KeyLimitExceeded as exc:
+            release_user_model_slot_after_error()
+            remember_spend_window_decision(request, exc.decision)
+            raise api_error(
+                402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
             ) from exc
         except ValueError as exc:
             release_user_model_slot_after_error()
@@ -782,14 +867,10 @@ def _authorize_gateway_sync(
             user_provided_model_id=user_model.id if user_model else None,
             user_provided_model_revision=user_model.revision if user_model else None,
             user_model_prompt_price_microdollars_per_m=(
-                user_model.prompt_price_microdollars_per_million_tokens
-                if user_model
-                else None
+                user_model.prompt_price_microdollars_per_million_tokens if user_model else None
             ),
             user_model_completion_price_microdollars_per_m=(
-                user_model.completion_price_microdollars_per_million_tokens
-                if user_model
-                else None
+                user_model.completion_price_microdollars_per_million_tokens if user_model else None
             ),
             user_model_owner_user_id=user_model.owner_user_id if user_model else None,
             additional_cost_reservation_microdollars=additional_cost_reservation,
@@ -875,7 +956,7 @@ def _gateway_validate_sync(
         api_key_lookup_hash=body.api_key_lookup_hash,
     )
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
-        raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+        raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
@@ -907,7 +988,7 @@ def _gateway_key_info_sync(
         api_key_lookup_hash=body.api_key_lookup_hash,
     )
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
-        raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+        raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     from trusted_router.routes.keys import _enriched_key_shape
 
     return {"data": _enriched_key_shape(api_key)}
@@ -924,7 +1005,7 @@ def _gateway_resolve_custom_model_sync(
         api_key_lookup_hash=body.api_key_lookup_hash,
     )
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
-        raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+        raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
@@ -1088,6 +1169,39 @@ def register(router: APIRouter) -> None:
         # cadence visible on /fleet so a silently-dead scheduler is seen.
         await run_in_threadpool(record_heartbeat, "job:settle-outbox-drain", settings=settings)
         return result
+
+    @router.post("/internal/gateway/regional-quota/reconcile")
+    async def gateway_regional_quota_reconcile(
+        request: Request,
+        settings: SettingsDep,
+        limit: int = 100,
+    ) -> dict[str, int]:
+        require_internal_gateway(request, settings)
+        method = getattr(STORE, "reconcile_regional_quota_leases", None)
+        if not settings.regional_quota_leases_enabled or not callable(method):
+            return {"inspected": 0, "reconciled": 0, "closed": 0, "errors": 0}
+        result = await run_in_threadpool(method, limit=max(1, min(limit, 1000)))
+        if int(result.get("errors", 0)):
+            logger.error(
+                "regional_quota.reconcile_incomplete",
+                extra={
+                    "inspected": int(result.get("inspected", 0)),
+                    "reconciled": int(result.get("reconciled", 0)),
+                    "closed": int(result.get("closed", 0)),
+                    "errors": int(result.get("errors", 0)),
+                },
+            )
+            raise api_error(
+                503,
+                "Regional quota reconciliation is incomplete",
+                ErrorType.SERVICE_UNAVAILABLE,
+            )
+        await run_in_threadpool(
+            record_heartbeat,
+            "job:regional-quota-reconcile",
+            settings=settings,
+        )
+        return cast(dict[str, int], result)
 
     @router.post("/internal/gateway/home-settlement/drain")
     async def gateway_home_settlement_drain(
@@ -1630,8 +1744,10 @@ def _settle_gateway_authorization(
             "selected endpoint was not authorized for this gateway request",
             ErrorType.BAD_REQUEST,
         )
-    model = user_model_pair[0] if user_model_pair is not None else MODELS.get(
-        selected_endpoint.model_id
+    model = (
+        user_model_pair[0]
+        if user_model_pair is not None
+        else MODELS.get(selected_endpoint.model_id)
     )
     if model is None:
         raise api_error(500, "Authorized model is no longer configured", ErrorType.INTERNAL_ERROR)
@@ -1669,14 +1785,20 @@ def _settle_gateway_authorization(
             "Parasail Liberty does not support BYOK routes",
             ErrorType.MODEL_NOT_SUPPORTED,
         )
+    # Only Fugu defines this provider-private tier basis, and Fugu remains
+    # operator-held until its internal orchestration spend has a hard bound.
+    # Ignoring the field for every other model prevents a future provider
+    # extension from silently selecting a cheaper context tier.
+    price_tier_input_tokens = _provider_price_tier_input_tokens(
+        selected_endpoint,
+        body.price_tier_input_tokens,
+    )
     actual_cost = (
         custom_model_cost_microdollars(
             input_tokens=total_input,
             output_tokens=output_tokens,
             prompt_price=int(authorization.user_model_prompt_price_microdollars_per_m or 0),
-            completion_price=int(
-                authorization.user_model_completion_price_microdollars_per_m or 0
-            ),
+            completion_price=int(authorization.user_model_completion_price_microdollars_per_m or 0),
         )
         if user_model_pair is not None
         else partner_cost_microdollars(
@@ -1691,6 +1813,7 @@ def _settle_gateway_authorization(
             output_tokens,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
+            price_tier_input_tokens=price_tier_input_tokens,
             effective_at=authorization.created_at,
             service_tier=service_tier,
         )
@@ -1732,13 +1855,13 @@ def _settle_gateway_authorization(
     operator_cost = (
         owner_share_microdollars(actual_cost)
         if user_model_pair is not None
-        else
-        _endpoint_cost_microdollars(
+        else _endpoint_cost_microdollars(
             selected_endpoint,
             uncached_input,
             output_tokens,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
+            price_tier_input_tokens=price_tier_input_tokens,
             effective_at=authorization.created_at,
             service_tier=service_tier,
         )
@@ -1753,10 +1876,10 @@ def _settle_gateway_authorization(
             ErrorType.BAD_REQUEST,
         )
     if additional_cost:
-        if body.route_type not in {"responses.web_search.planner", "videos"}:
+        if body.route_type not in {"responses.web_search.planner", "images", "videos"}:
             raise api_error(
                 400,
-                "additional cost settlement is only available for hosted search or video",
+                "additional cost settlement is only available for hosted search, image, or video",
                 ErrorType.BAD_REQUEST,
             )
         if additional_cost > authorization.additional_cost_reservation_microdollars:
@@ -1774,6 +1897,22 @@ def _settle_gateway_authorization(
         actual_cost += additional_cost
     input_tokens = total_input
     selected_usage_type = UsageType.for_endpoint(selected_endpoint)
+    if (
+        success
+        and authorization.settlement == "regional_lease"
+        and actual_cost > authorization.estimated_microdollars
+    ):
+        logger.warning(
+            "billing.regional_settle_capped_to_escrow",
+            extra={
+                "authorization_id": authorization.id,
+                "workspace_id": authorization.workspace_id,
+                "estimated_microdollars": authorization.estimated_microdollars,
+                "actual_microdollars": actual_cost,
+                "overrun_microdollars": (actual_cost - authorization.estimated_microdollars),
+            },
+        )
+        actual_cost = authorization.estimated_microdollars
     if (
         success
         and selected_usage_type == UsageType.CREDITS
@@ -1825,9 +1964,7 @@ def _settle_gateway_authorization(
         user_model_payout = UserModelPayout(
             owner_user_id=owner_user_id,
             model_id=user_model_id,
-            amount_microdollars=(
-                owner_share_microdollars(actual_cost) if success else 0
-            ),
+            amount_microdollars=(owner_share_microdollars(actual_cost) if success else 0),
             payer_workspace_id=authorization.workspace_id,
         )
 
@@ -1848,9 +1985,7 @@ def _settle_gateway_authorization(
                 frozen_settle_body[USER_MODEL_PAYOUT_SETTLE_FIELD] = (
                     user_model_payout.amount_microdollars
                 )
-                frozen_settle_body[USER_MODEL_OWNER_SETTLE_FIELD] = (
-                    user_model_payout.owner_user_id
-                )
+                frozen_settle_body[USER_MODEL_OWNER_SETTLE_FIELD] = user_model_payout.owner_user_id
                 frozen_settle_body[USER_MODEL_ID_SETTLE_FIELD] = user_model_payout.model_id
             # §5.4 honest scope: durability starts only when this INSERT commits;
             # crashes before it still rely on enclave redelivery. MF4/MF5 freeze
@@ -1908,17 +2043,37 @@ def _settle_gateway_authorization(
             None,
         )
         if callable(result_method):
-            finalize_result = cast(
-                TypedFinalizeResult,
-                result_method(
+            try:
+                finalize_result = cast(
+                    TypedFinalizeResult,
+                    result_method(
+                        authorization.id,
+                        success=success,
+                        actual_microdollars=actual_cost,
+                        selected_usage_type=selected_usage_type,
+                        generation=generation,
+                        user_model_payout=user_model_payout,
+                    ),
+                )
+            except (RegionalLeaseLedgerError, LeaseSettlementError):
+                # The frozen outbox intent is already durable. A local ledger
+                # conflict must remain retryable so the enclave can replay and
+                # the drain can finish once the ledger is healthy; surfacing an
+                # unclassified 500 only turns a recoverable billing delay into
+                # a client-visible router failure.
+                logger.error(
+                    "regional quota settlement temporarily unavailable "
+                    "authorization_id=%s lease_id=%s",
                     authorization.id,
-                    success=success,
-                    actual_microdollars=actual_cost,
-                    selected_usage_type=selected_usage_type,
-                    generation=generation,
-                    user_model_payout=user_model_payout,
-                ),
-            )
+                    authorization.regional_lease_id,
+                    exc_info=True,
+                )
+                raise api_error(
+                    503,
+                    "Settlement is temporarily unavailable",
+                    ErrorType.SERVICE_UNAVAILABLE,
+                    headers={"Retry-After": "1"},
+                ) from None
         else:
             finalized_legacy_contract = _typed_store.typed_finalize_gateway_authorization(
                 authorization.id,
@@ -2035,6 +2190,7 @@ def _settle_gateway_authorization(
         # correlation id is useful to them, the client telemetry object is not.
         broadcast_settle_body = dict(settle_body)
         broadcast_settle_body.pop("client", None)
+        broadcast_settle_body.pop("price_tier_input_tokens", None)
         enqueue_metadata_broadcast(generation, settle_body=broadcast_settle_body)
         if should_drain_inline(settings) and background_tasks is not None:
             background_tasks.add_task(
@@ -2375,9 +2531,7 @@ def _user_model_gateway_candidate(
         model_id=user_model.id,
         name=user_model.name,
         revision=user_model.revision,
-        prompt_price_microdollars_per_m=(
-            user_model.prompt_price_microdollars_per_million_tokens
-        ),
+        prompt_price_microdollars_per_m=(user_model.prompt_price_microdollars_per_million_tokens),
         completion_price_microdollars_per_m=(
             user_model.completion_price_microdollars_per_million_tokens
         ),
@@ -2409,12 +2563,7 @@ def _authorized_user_model_pair(
     prompt_price = authorization.user_model_prompt_price_microdollars_per_m
     completion_price = authorization.user_model_completion_price_microdollars_per_m
     owner_user_id = authorization.user_model_owner_user_id
-    if (
-        revision is None
-        or prompt_price is None
-        or completion_price is None
-        or not owner_user_id
-    ):
+    if revision is None or prompt_price is None or completion_price is None or not owner_user_id:
         return None
     try:
         return user_model_gateway_pair(
@@ -2683,11 +2832,7 @@ def _require_native_batch_route_binding(
 
 
 def _authorization_ttl_seconds(route_type: str | None) -> int:
-    return (
-        26 * 60 * 60
-        if _is_native_batch_route(route_type)
-        else GATEWAY_RESERVATION_TTL_SECONDS
-    )
+    return 26 * 60 * 60 if _is_native_batch_route(route_type) else GATEWAY_RESERVATION_TTL_SECONDS
 
 
 def _native_batch_cost_or_error(
@@ -2734,6 +2879,20 @@ def _native_batch_cost_or_error(
     return max(1, (cost_microdollars * billed_fraction_bps + 9_999) // 10_000)
 
 
+def _provider_price_tier_input_tokens(
+    endpoint: ModelEndpoint,
+    reported_input_tokens: int | None,
+) -> int | None:
+    """Admit a provider-private tier basis only for its pinned model contract."""
+
+    if (
+        endpoint.provider == "sakana"
+        and endpoint.model_id == SAKANA_FUGU_MODEL_ID
+    ):
+        return reported_input_tokens
+    return None
+
+
 def _endpoint_cost_microdollars(
     endpoint: ModelEndpoint,
     input_tokens: int,
@@ -2741,6 +2900,7 @@ def _endpoint_cost_microdollars(
     *,
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
+    price_tier_input_tokens: int | None = None,
     effective_at: datetime | str | None = None,
     service_tier: str | None = None,
     reserve_auto: bool = False,
@@ -2760,11 +2920,22 @@ def _endpoint_cost_microdollars(
             cache_creation_tokens=cache_creation_tokens,
         )
     total_prompt = input_tokens + cache_read_tokens + cache_creation_tokens
+    # Some providers expose separately billable internal orchestration tokens
+    # while selecting their long-context tier from the initial request context.
+    # The attested gateway supplies that exact provider-metered count. Invalid
+    # values fall back to the larger aggregate, which is conservative for COGS.
+    tier_prompt = total_prompt
+    if (
+        price_tier_input_tokens is not None
+        and price_tier_input_tokens > 0
+        and price_tier_input_tokens <= total_prompt
+    ):
+        tier_prompt = price_tier_input_tokens
     rates = resolve_request_rates(
         getattr(endpoint, "price_tiers", ()) or (),
         headline_prompt_micro_per_m=endpoint.prompt_price_microdollars_per_million_tokens,
         headline_completion_micro_per_m=endpoint.completion_price_microdollars_per_million_tokens,
-        total_prompt_tokens=total_prompt,
+        total_prompt_tokens=tier_prompt,
     )
     prompt_price = rates.prompt_price_microdollars_per_million_tokens
 

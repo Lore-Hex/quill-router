@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.byok_crypto import decrypt_user_model_secret
 from trusted_router.config import Settings
@@ -39,70 +40,65 @@ async def probe_user_model(
     store: Any = STORE,
 ) -> ProbeResult:
     checked_at = datetime.now(UTC)
+
+    async def recorded_result(*, ok: bool, detail: str) -> ProbeResult:
+        return await run_in_threadpool(
+            _recorded_result,
+            model,
+            ok=ok,
+            detail=detail,
+            checked_at=checked_at,
+            store=store,
+        )
+
     try:
-        signing_secret = _decrypt_signing_secret(model, settings)
-        endpoint_api_key = _decrypt_endpoint_key(model, settings)
-        buffered = await _probe_once(
+        signing_secret, endpoint_api_key = await run_in_threadpool(
+            _decrypt_probe_secrets, model, settings
+        )
+        # Probe the transport DISPATCH will actually use, and only that one.
+        # `_owner_request` sends `stream: model.supports_streaming` on every
+        # real call, whatever the caller asked for, and adapts the answer at
+        # our end. Probing the other direction tests a request the endpoint
+        # will never receive in production, so a streaming-only endpoint —
+        # which is what the docs tell owners to build, and what a human
+        # harness naturally is — failed to clock in while being perfectly
+        # able to serve.
+        answer = await _probe_once(
             model,
             settings,
             signing_secret=signing_secret,
             endpoint_api_key=endpoint_api_key,
-            stream=False,
+            stream=model.supports_streaming,
         )
-        if not _valid_chat_completion(buffered):
-            return _recorded_result(
-                model,
-                ok=False,
-                detail="Endpoint response was not an OpenAI chat completion",
-                checked_at=checked_at,
-                store=store,
-            )
         if model.supports_streaming:
-            streamed = await _probe_once(
-                model,
-                settings,
-                signing_secret=signing_secret,
-                endpoint_api_key=endpoint_api_key,
-                stream=True,
-            )
-            if not _valid_stream(streamed):
-                return _recorded_result(
-                    model,
+            if not _valid_stream(answer):
+                return await recorded_result(
                     ok=False,
                     detail="Endpoint response was not a valid chat completion stream",
-                    checked_at=checked_at,
-                    store=store,
                 )
+        elif not _valid_chat_completion(answer):
+            return await recorded_result(
+                ok=False,
+                detail="Endpoint response was not an OpenAI chat completion",
+            )
     except httpx.TimeoutException:
-        return _recorded_result(
-            model,
+        return await recorded_result(
             ok=False,
             detail="Endpoint probe timed out",
-            checked_at=checked_at,
-            store=store,
         )
     except httpx.HTTPError:
-        return _recorded_result(
-            model,
+        return await recorded_result(
             ok=False,
             detail="Endpoint probe failed",
-            checked_at=checked_at,
-            store=store,
         )
     except Exception as exc:  # fail closed without echoing secret-bearing details
-        return _recorded_result(
-            model,
+        return await recorded_result(
             ok=False,
             detail=f"Endpoint probe failed ({type(exc).__name__})",
-            checked_at=checked_at,
-            store=store,
         )
-    return _recorded_result(
-        model,
+    return await recorded_result(
         ok=True,
         detail="Probe succeeded",
-        checked_at=checked_at,
-        store=store,
     )
 
 
@@ -239,6 +235,16 @@ def _decrypt_endpoint_key(
         settings,
         workspace_id=model.owner_workspace_id,
         purpose=USER_MODEL_ENDPOINT_KEY_PURPOSE,
+    )
+
+
+def _decrypt_probe_secrets(
+    model: UserProvidedModel,
+    settings: Settings,
+) -> tuple[str, str | None]:
+    return (
+        _decrypt_signing_secret(model, settings),
+        _decrypt_endpoint_key(model, settings),
     )
 
 

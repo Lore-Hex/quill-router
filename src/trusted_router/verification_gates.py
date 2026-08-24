@@ -20,15 +20,22 @@ def missing_phone_verification_requirements(user: User, settings: Settings) -> l
     return missing
 
 
-def missing_identity_verification_requirements(user: User, settings: Settings) -> list[str]:
+def missing_identity_verification_requirements(
+    user: User,
+    settings: Settings,
+    *,
+    lifetime_topup_microdollars: int | None = None,
+) -> list[str]:
     missing: list[str] = []
     if not user.email:
         missing.append("email")
     if not user.phone_verified:
         missing.append("phone_verified")
-    if (
+    lifetime_topup = (
         STORE.get_lifetime_topup_microdollars(user.id)
-        < VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS
-    ):
+        if lifetime_topup_microdollars is None
+        else lifetime_topup_microdollars
+    )
+    if lifetime_topup < VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS:
         missing.append("funding")
     return missing

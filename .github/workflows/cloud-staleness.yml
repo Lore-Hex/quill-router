@@ -1,0 +1,49 @@
+name: Cloud staleness
+
+# Alert when a cloud has been running the same code for too long.
+#
+# Staggered deploys are deliberate: one cloud at a time means a bad commit
+# rarely reaches all three the same day. The cost of that policy is a silent
+# failure mode -- a cloud that STOPS being deployable looks exactly like a
+# cloud nobody has needed to deploy. Azure sat in that state on a script that
+# could no longer address it, answering 200 the whole time.
+#
+# Daily, for the same reason the trust-drift check is daily: the watched value
+# changes on deploy boundaries, and the tolerance being enforced is measured in
+# days. Polling hourly would ask a 72-hour question 24 times a day.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      max_age_hours:
+        description: "Hours before a plane is considered stale"
+        type: string
+        default: "72"
+
+permissions:
+  contents: read
+
+jobs:
+  staleness:
+    name: how old is each cloud
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Ages are computed from each commit's own date, so the checkout has
+          # to contain the commits the planes report. A shallow clone resolves
+          # almost none of them and every plane reads as "not in this
+          # repository" -- a detector that fails for its own reasons rather
+          # than the fleet's.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - name: Sync
+        run: uv sync --frozen
+      - name: Check
+        # --strict so that "a plane could not be aged" is a red run. Losing the
+        # ability to tell must not look the same as everything being fine.
+        run: |
+          uv run python scripts/check_cloud_staleness.py \
+            --max-age-hours "${{ inputs.max_age_hours || '72' }}" \
+            --strict

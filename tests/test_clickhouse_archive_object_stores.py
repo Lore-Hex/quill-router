@@ -83,6 +83,12 @@ class FakeS3:
             raise _client_error("NotFound", 404)
         return self.objects[Key]
 
+    def download_file(self, bucket: str, key: str, filename: str) -> None:
+        del bucket
+        if key not in self.objects:
+            raise _client_error("NoSuchKey", 404)
+        Path(filename).write_bytes(self.objects[key]["Body"])
+
 
 class _Reader:
     def __init__(self, payload: bytes) -> None:
@@ -210,7 +216,11 @@ class FakeBlob:
     def download_blob(self) -> Any:
         if self._key not in self._container.blobs:
             raise _AzureResourceNotFound(self._key)
-        return types.SimpleNamespace(readall=lambda: self._container.blobs[self._key]["data"])
+        payload = self._container.blobs[self._key]["data"]
+        return types.SimpleNamespace(
+            readall=lambda: payload,
+            readinto=lambda stream: stream.write(payload),
+        )
 
     def get_blob_properties(self) -> Any:
         if self._key not in self._container.blobs:
@@ -404,3 +414,298 @@ def test_pointer_json_is_byte_identical_across_stores(
     encoded = s3.objects["m.json"]["Body"]
     assert encoded == azure_container.blobs["m.json"]["data"]
     assert json.loads(encoded) == value
+
+
+# --------------------------------------------------------------------------
+# Real-transport validation.
+#
+# Everything above runs against fakes I wrote, and a fake validates my
+# understanding of S3 rather than S3 itself -- if botocore rejected the
+# precondition parameters, or named them differently, every test above would
+# still pass and the archiver would fail on the node with ParamValidationError.
+#
+# botocore's Stubber applies the real service model and the real parameter
+# validator, so these tests fail if the argv the store builds is not a call
+# boto3 will actually make. No network and no credentials are involved.
+# --------------------------------------------------------------------------
+
+
+def _stubbed_client(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any]:
+    import boto3
+    from botocore.stub import Stubber
+
+    client = boto3.client(
+        "s3",
+        region_name="eu-west-1",
+        aws_access_key_id="testing",
+        aws_secret_access_key="testing",  # noqa: S106 - stubbed, never sent
+        aws_session_token="testing",  # noqa: S106 - stubbed, never sent
+    )
+    stubber = Stubber(client)
+    monkeypatch.setattr(boto3, "client", lambda *a, **k: client)
+    return client, stubber
+
+
+def test_real_botocore_accepts_the_immutable_file_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from botocore.stub import ANY
+
+    _, stubber = _stubbed_client(monkeypatch)
+    part = tmp_path / "part.parquet"
+    part.write_bytes(b"rows")
+
+    stubber.add_response(
+        "put_object",
+        {},
+        {
+            "Bucket": "tr-archive-eu",
+            "Key": "k",
+            "Body": ANY,
+            "ContentType": "application/vnd.apache.parquet",
+            "Metadata": {"day": "2026-08-16", "sha256": "abc"},
+            "IfNoneMatch": "*",
+        },
+    )
+    with stubber:
+        store = S3ArchiveStore(bucket="tr-archive-eu", region="eu-west-1")
+        store.put_file_if_absent("k", part, sha256="abc", metadata={"day": "2026-08-16"})
+    stubber.assert_no_pending_responses()
+
+
+def test_real_botocore_accepts_the_pointer_compare_and_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, stubber = _stubbed_client(monkeypatch)
+
+    stubber.add_response(
+        "head_object", {"ETag": '"abc123"'}, {"Bucket": "tr-archive-eu", "Key": "_latest.json"}
+    )
+    stubber.add_response(
+        "put_object",
+        {},
+        {
+            "Bucket": "tr-archive-eu",
+            "Key": "_latest.json",
+            "Body": _json_bytes_for_test({"day": "2026-08-16"}),
+            "ContentType": "application/json",
+            "IfMatch": '"abc123"',
+        },
+    )
+    with stubber:
+        store = S3ArchiveStore(bucket="tr-archive-eu", region="eu-west-1")
+        store.put_json_pointer("_latest.json", {"day": "2026-08-16"})
+    stubber.assert_no_pending_responses()
+
+
+def test_real_botocore_maps_a_missing_pointer_to_create_if_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """First run on a new cloud: no pointer exists yet, so the CAS degrades to
+    a create. A 404 here must not be mistaken for a precondition failure."""
+
+    _, stubber = _stubbed_client(monkeypatch)
+
+    stubber.add_client_error("head_object", service_error_code="404", http_status_code=404)
+    stubber.add_response(
+        "put_object",
+        {},
+        {
+            "Bucket": "tr-archive-eu",
+            "Key": "_latest.json",
+            "Body": _json_bytes_for_test({"day": "2026-08-16"}),
+            "ContentType": "application/json",
+            "IfNoneMatch": "*",
+        },
+    )
+    with stubber:
+        store = S3ArchiveStore(bucket="tr-archive-eu", region="eu-west-1")
+        store.put_json_pointer("_latest.json", {"day": "2026-08-16"})
+    stubber.assert_no_pending_responses()
+
+
+def test_real_botocore_412_is_classified_as_a_precondition_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The rerun path: a genuine S3 412 must route to the sha256 comparison,
+    not escape as an unhandled ClientError."""
+
+    _, stubber = _stubbed_client(monkeypatch)
+    part = tmp_path / "p"
+    part.write_bytes(b"rows")
+
+    stubber.add_client_error(
+        "put_object", service_error_code="PreconditionFailed", http_status_code=412
+    )
+    stubber.add_response(
+        "head_object",
+        {"Metadata": {"sha256": "abc"}},
+        {"Bucket": "tr-archive-eu", "Key": "k"},
+    )
+    with stubber:
+        store = S3ArchiveStore(bucket="tr-archive-eu", region="eu-west-1")
+        # Same content already archived -> silent no-op, not an error.
+        store.put_file_if_absent("k", part, sha256="abc", metadata={})
+    stubber.assert_no_pending_responses()
+
+
+def _json_bytes_for_test(value: dict[str, Any]) -> bytes:
+    from clickhouse.archive_daily import _json_bytes
+
+    return _json_bytes(value)
+
+
+# --------------------------------------------------------------------------
+# Running the exporter on a non-GCP node.
+#
+# The archiver shells out to clickhouse-client with an explicit --user. That
+# user was hardcoded to "tr", which only exists on the GCP cluster; the AWS-EU
+# node authenticates as "default" into database "default". An explicit --user
+# beats CLICKHOUSE_USER in the environment, so this could not be corrected
+# from the systemd unit -- the per-cloud object stores were necessary but not
+# sufficient to archive another cloud.
+# --------------------------------------------------------------------------
+
+
+def test_exporter_argv_carries_the_configured_user_and_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from clickhouse import archive_daily
+
+    seen: dict[str, Any] = {}
+
+    class _Result:
+        returncode = 0
+        stdout = b"{}"
+        stderr = b""
+
+    def _fake_run(argv: Any, **kwargs: Any) -> Any:
+        seen["argv"] = list(argv)
+        seen["env"] = kwargs.get("env") or {}
+        return _Result()
+
+    monkeypatch.setattr(archive_daily.subprocess, "run", _fake_run)
+    exporter = archive_daily.ClickHouseDailyExporter(
+        password="pw",  # noqa: S106 - test literal
+        database="default",
+        table="activity_generations",
+        user="default",
+    )
+    exporter._client("SELECT 1")
+
+    argv = seen["argv"]
+    assert argv[argv.index("--user") + 1] == "default"
+    assert argv[argv.index("--database") + 1] == "default"
+    # A leftover "tr" anywhere in argv means the AWS node authenticates as a
+    # user that does not exist there.
+    assert "tr" not in argv
+    assert seen["env"]["CLICKHOUSE_PASSWORD"] == "pw"  # noqa: S105 - test literal
+
+
+def test_exporter_still_defaults_to_the_gcp_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GCP's units pass no user, so the default must keep them byte-identical."""
+
+    from clickhouse import archive_daily
+
+    seen: dict[str, Any] = {}
+
+    class _Result:
+        returncode = 0
+        stdout = b"{}"
+        stderr = b""
+
+    monkeypatch.setattr(
+        archive_daily.subprocess,
+        "run",
+        lambda argv, **kw: (seen.__setitem__("argv", list(argv)), _Result())[1],
+    )
+    archive_daily.ClickHouseDailyExporter(
+        password="pw",  # noqa: S106 - test literal
+    )._client("SELECT 1")
+
+    argv = seen["argv"]
+    assert argv[argv.index("--user") + 1] == "tr"
+    assert argv[argv.index("--database") + 1] == "tr"
+
+
+def test_exporter_rejects_a_non_identifier_user() -> None:
+    """The user reaches an argv, so it gets the same allowlist as the database."""
+
+    from clickhouse import archive_daily
+
+    with pytest.raises(ValueError, match="user must be a ClickHouse identifier"):
+        archive_daily.ClickHouseDailyExporter(
+            password="pw",  # noqa: S106 - test literal
+            user="default; DROP",
+        )
+
+
+def test_completion_log_names_the_store_actually_written(
+    s3: FakeS3, azure_container: FakeContainer
+) -> None:
+    """The success line hardcoded gs:// for every store, so an operator reading
+    AWS logs would be told the object landed in GCS."""
+
+    from clickhouse.archive_daily import GCSArchiveStore
+
+    assert GCSArchiveStore.scheme == "gs"
+    assert S3ArchiveStore.scheme == "s3"
+    assert AzureBlobArchiveStore.scheme == "azure"
+    # Every store must expose it, since the log reads it off whichever is live.
+    for cls in (GCSArchiveStore, S3ArchiveStore, AzureBlobArchiveStore):
+        assert isinstance(getattr(cls, "scheme", None), str)
+
+
+# --------------------------------------------------------------------------
+# Reading the archive back.
+#
+# verify_archive_restore.py had its own GCS-only store, so a cloud could be
+# written but never drilled -- an archive nobody has proven restorable. The
+# restore drill now shares these stores, so download_file is part of the same
+# per-cloud contract as the writes.
+# --------------------------------------------------------------------------
+
+
+def test_s3_download_file_round_trips(s3: FakeS3, tmp_path: Path) -> None:
+    store = _store(s3)
+    source = tmp_path / "part.parquet"
+    source.write_bytes(b"parquet-bytes")
+    store.put_file_if_absent("k", source, sha256="abc", metadata={})
+
+    destination = tmp_path / "restored.parquet"
+    store.download_file("k", destination)
+    assert destination.read_bytes() == b"parquet-bytes"
+
+
+def test_azure_download_file_round_trips(
+    azure_container: FakeContainer, tmp_path: Path
+) -> None:
+    store = _azure_store()
+    source = tmp_path / "part.parquet"
+    source.write_bytes(b"parquet-bytes")
+    store.put_file_if_absent("k", source, sha256="abc", metadata={})
+
+    destination = tmp_path / "restored.parquet"
+    store.download_file("k", destination)
+    assert destination.read_bytes() == b"parquet-bytes"
+
+
+def test_every_store_can_be_read_back_not_only_written() -> None:
+    from clickhouse.archive_daily import ArchiveStore, GCSArchiveStore
+
+    assert "download_file" in dir(ArchiveStore)
+    for cls in (GCSArchiveStore, S3ArchiveStore, AzureBlobArchiveStore):
+        assert callable(getattr(cls, "download_file", None)), f"{cls.__name__} cannot be read back"
+
+
+def test_restore_drill_selects_the_same_per_cloud_stores() -> None:
+    """The drill must not carry its own GCS-only store, or 'the archive is
+    restorable' would only ever be true of one cloud."""
+
+    from clickhouse import verify_archive_restore
+
+    source = Path(verify_archive_restore.__file__).read_text()
+    assert "build_archive_store" in source
+    assert "--object-store" in source
+    # The near-duplicate is gone rather than merely unused.
+    assert "class GCSRestoreStore" not in source

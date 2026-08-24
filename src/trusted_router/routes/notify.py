@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from trusted_router import phone_verification as pv
@@ -37,6 +37,13 @@ from trusted_router.services.notify import (
     send_verification_code,
 )
 from trusted_router.services.telephony import branded, spoken_text
+from trusted_router.spend_windows import (
+    KeyLimitExceeded,
+    KeyWindowLimitExceeded,
+    remember_spend_window_decision,
+    spend_window_headers,
+    spend_window_limit_error_message,
+)
 from trusted_router.storage import STORE
 from trusted_router.storage_models import User
 from trusted_router.types import ErrorType, UsageType
@@ -48,9 +55,35 @@ MAX_BODY_CHARS = 1000
 MAX_SUBJECT_CHARS = 120
 
 
+def register_notify_public_routes(router: APIRouter) -> None:
+    @router.api_route("/notify/texml", methods=["GET", "POST"])
+    async def notify_texml(
+        text: str = Query(default="", max_length=MAX_BODY_CHARS),
+    ) -> Response:
+        """Call instructions, fetched by the carrier when a call connects.
+
+        Public and unauthenticated by necessity: a carrier fetches this from its
+        own infrastructure holding no credential of ours. It is safe because it
+        is a bounded pure function of the query string — it reads no state and
+        reveals nothing — and the most an attacker gets is their own sentence
+        read back. Keeping it on the public surface prevents carrier traffic or
+        an anonymous flood from consuming the logged-in control pool.
+        """
+        spoken = spoken_text(branded(text))
+        # XML metacharacters are already stripped by spoken_text; a document
+        # that fails to parse is a call that connects and says nothing, which is
+        # indistinguishable from a page that never arrived.
+        document = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f'<Response><Say voice="alice">{spoken}</Say></Response>'
+        )
+        return Response(content=document, media_type="application/xml")
+
+
 def register_notify_routes(router: APIRouter) -> None:
     @router.post("/notify")
     async def send_notification(
+        request: Request,
         payload: dict[str, Any],
         principal: InferencePrincipal,
         settings: SettingsDep,
@@ -73,7 +106,7 @@ def register_notify_routes(router: APIRouter) -> None:
         # Reserved BEFORE the send so a workspace cannot be pushed past its
         # limit by notifications in flight, and refunded in full when nothing
         # was delivered.
-        ticket = _Charge.reserve(principal, price)
+        ticket = _Charge.reserve(principal, price, request=request)
         try:
             outcome = get_notify_service(settings).send(
                 owner=owner,
@@ -178,26 +211,6 @@ def register_notify_routes(router: APIRouter) -> None:
         code = 400 if status == "mismatch" else 409
         return JSONResponse({"verified": False, "status": status}, status_code=code)
 
-    @router.api_route("/notify/texml", methods=["GET", "POST"])
-    async def notify_texml(text: str = "") -> Response:
-        """Call instructions, fetched by the carrier when a call connects.
-
-        Public and unauthenticated by necessity: a carrier fetches this from its
-        own infrastructure holding no credential of ours. It is safe because it
-        is a pure function of the query string — it reads no state and reveals
-        nothing — and the most an attacker gets is their own sentence read back.
-        """
-        spoken = spoken_text(branded(text))
-        # XML metacharacters are already stripped by spoken_text; a document
-        # that fails to parse is a call that connects and says nothing, which is
-        # indistinguishable from a page that never arrived.
-        document = (
-            '<?xml version="1.0" encoding="UTF-8"?>'
-            f'<Response><Say voice="alice">{spoken}</Say></Response>'
-        )
-        return Response(content=document, media_type="application/xml")
-
-
 def _owner_of(principal: Principal) -> User | None:
     """api_key -> workspace -> owner. The one place a destination is chosen."""
     workspace = principal.workspace
@@ -267,14 +280,38 @@ class _Charge:
         self.billable = billable
 
     @classmethod
-    def reserve(cls, principal: Principal, amount: int) -> _Charge:
+    def reserve(
+        cls,
+        principal: Principal,
+        amount: int,
+        *,
+        request: Request | None = None,
+    ) -> _Charge:
         if amount <= 0 or principal.api_key is None:
             # Push is free, so there is nothing to hold and nothing to release.
             return cls(None, None, 0)
 
         key_hash = principal.api_key.hash
         try:
-            STORE.reserve_key_limit(key_hash, amount, usage_type=UsageType.CREDITS)
+            window_decision = STORE.reserve_key_limit(
+                key_hash,
+                amount,
+                usage_type=UsageType.CREDITS,
+            )
+            remember_spend_window_decision(request, window_decision)
+        except KeyWindowLimitExceeded as exc:
+            remember_spend_window_decision(request, exc.decision)
+            raise api_error(
+                429,
+                spend_window_limit_error_message(exc.decision),
+                ErrorType.KEY_WINDOW_LIMIT_EXCEEDED,
+                headers=spend_window_headers(exc.decision, retry_after=True),
+            ) from exc
+        except KeyLimitExceeded as exc:
+            remember_spend_window_decision(request, exc.decision)
+            raise api_error(
+                402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
+            ) from exc
         except ValueError as exc:
             raise api_error(
                 402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED

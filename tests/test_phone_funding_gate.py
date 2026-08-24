@@ -72,7 +72,16 @@ def _console_client() -> tuple[TestClient, Any]:
 def test_phone_funding_default_is_off_in_test_and_local() -> None:
     assert Settings(environment="test").phone_verification_funding_enforced is False
     assert Settings(environment="local").phone_verification_funding_enforced is False
-    assert Settings(environment="staging").phone_verification_funding_enforced is True
+    assert (
+        Settings(
+            environment="staging",
+            service_surface="control",
+            attribution_cookie_secret="staging-attribution-" + "a" * 32,
+            stripe_webhook_secret="whsec_" + "staging",
+            stripe_secret_key="sk_" + "staging",
+        ).phone_verification_funding_enforced
+        is True
+    )
     assert (
         Settings(
             environment="test",
@@ -181,7 +190,7 @@ def test_console_start_works_after_any_funding(
 
     response = client.post(
         "/console/settings/phone/start",
-        data={"phone": "+13059511381", "channel": "voice"},
+        data={"phone": "+13059511381", "channel": "voice", "sms_consent": "yes"},
     )
 
     assert response.status_code == 303
@@ -266,6 +275,8 @@ def test_verification_status_reports_shape_and_next_step_progression(
         "identity_status": "none",
         "identity_verified_at": None,
         "veriff_attempt_count": 0,
+        # Nothing to say at `none` — guidance appears only after a decision.
+        "identity_message": None,
         "verification_fee": 5.0,
         "verification_fee_microdollars": 5_000_000,
         "lifetime_topup_required": 25.0,

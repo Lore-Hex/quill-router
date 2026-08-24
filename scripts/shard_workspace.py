@@ -16,10 +16,10 @@ silently resume billing:
   python scripts/shard_workspace.py online-split --workspace WS --shards 16 \
     --preserve-open-holds --apply
 
-Eligible API-key usage rows are split to the same count; keys with an exact
-lifetime cap remain on one row. Approximate daily/weekly/monthly windows sum
-usage across the configured rows. Reverse with the same commands and
-``--shards 1``.
+Every API-key usage row is split to the same count. Exact lifetime caps are
+partitioned into escrow sub-budgets whose sum remains the configured cap;
+approximate daily/weekly/monthly windows sum usage across the configured rows.
+Reverse with the same commands and ``--shards 1``.
 Without ``--apply`` every command is read-only. A failed prepare/finish always
 leaves the workspace paused.
 """
@@ -117,7 +117,8 @@ def _print_key_status(status: KeyUsageReshardResult) -> None:
 
 
 def _key_target(key: ApiKey, requested_shards: int) -> int:
-    return 1 if key.limit_microdollars is not None else requested_shards
+    _ = key
+    return requested_shards
 
 
 def _prepare_keys(
@@ -130,10 +131,6 @@ def _prepare_keys(
     clean = True
     for key in store.api_keys.list_for_workspace(workspace_id):
         target = _key_target(key, requested_shards)
-        if target != requested_shards:
-            print(
-                f"  key {key.hash}: exact lifetime cap; keeping usage_shards=1"
-            )
         status = reshard_key_usage(
             store,
             key.hash,

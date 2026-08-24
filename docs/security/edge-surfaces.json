@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "reviewed_against": "origin/main@93553d9b",
+  "live_state_verified": false,
+  "surfaces": [
+    {
+      "id": "gcp-control-domains",
+      "cloud": "gcp",
+      "plane": "public-actions-control-internal",
+      "hosts": [
+        "trustedrouter.com",
+        "www.trustedrouter.com",
+        "status.trustedrouter.com",
+        "trust.trustedrouter.com",
+        "eu.trustedrouter.com",
+        "status-us.trustedrouter.com",
+        "status-eu.trustedrouter.com",
+        "allyrouter.com",
+        "www.allyrouter.com",
+        "status.allyrouter.com",
+        "trust.allyrouter.com",
+        "uptimerouter.com",
+        "www.uptimerouter.com",
+        "status.uptimerouter.com",
+        "trust.uptimerouter.com"
+      ],
+      "front_door": "Google global external Application Load Balancer with serverless NEGs",
+      "tls_termination": "Google load balancer",
+      "required_protection": "Cloud Armor policies on public, actions, control, and internal backends; LB-only Cloud Run ingress; private run.app access to the internal service only for regional synthetic jobs; independent Cloud Run max caps",
+      "trusted_client_identity": "X-TrustedRouter-Client-IP overwritten by the load balancer from {client_ip_address}",
+      "code_status": "helpers_ready_rollout_integration_pending_explicit_approval",
+      "protection_state": "p0_integration",
+      "owner": "Lore-Hex/quill-router",
+      "verification": "scripts/deploy/rollout.sh reconciliation plus exact-host URL-map totality, .github/workflows/deploy.yml LB smoke, Admin API drift checks, and rejected external run.app probes"
+    },
+    {
+      "id": "gcp-attested-api-aliases",
+      "cloud": "gcp",
+      "plane": "attested-inference",
+      "hosts": [
+        "api.trustedrouter.com",
+        "api.allyrouter.com",
+        "api.uptimerouter.com"
+      ],
+      "host_patterns": [
+        "api-<region>.quillrouter.com"
+      ],
+      "front_door": "GCP regional L3/L4 gateway load balancers and attested Confidential Space workloads",
+      "tls_termination": "inside attested workload",
+      "required_protection": "provider-native L3/L4 DDoS controls and bounded gateway-local admission; no HTTP proxy that terminates TLS",
+      "trusted_client_identity": "socket/proxy-protocol identity owned by the gateway implementation, not the FastAPI edge header",
+      "code_status": "requires_external_p0",
+      "protection_state": "p0_external",
+      "owner": "Lore-Hex/quill-cloud-proxy",
+      "verification": "gateway deployment must prove native DDoS policy attachment, bounded admission, and unchanged live attestation for every alias"
+    },
+    {
+      "id": "aws-app-runner-monitor-plane",
+      "cloud": "aws",
+      "plane": "regional-synthetic-and-analytics-control",
+      "hosts": [],
+      "host_patterns": [
+        "tr-eu.<id>.<region>.awsapprunner.com"
+      ],
+      "front_door": "AWS App Runner public service resource",
+      "tls_termination": "AWS App Runner",
+      "required_protection": "regional AWS WAF associated directly with every App Runner service; high per-IP ceiling enforced, host/write/common rules previewed first",
+      "trusted_client_identity": "AWS WAF is source-IP authoritative; application deliberately uses its conservative untrusted-lb bucket because App Runner cannot inject the exact edge header",
+      "code_status": "implementation_ready_in_this_repo",
+      "protection_state": "p0_integration",
+      "owner": "Lore-Hex/quill-router",
+      "verification": "aws wafv2 get-web-acl-for-resource for every App Runner service ARN and rule-shape verification in scripts/deploy/_aws_waf.sh"
+    },
+    {
+      "id": "aws-public-control",
+      "cloud": "aws",
+      "plane": "public-control",
+      "hosts": [
+        "aws.trustedrouter.com"
+      ],
+      "front_door": "AWS Global Accelerator to NLB to regional Fargate services",
+      "tls_termination": "non-attested control service",
+      "required_protection": "WAF-capable HTTP edge with origin restriction, without changing the api-aws attested path",
+      "trusted_client_identity": "the new edge must overwrite X-TrustedRouter-Client-IP and the origin must reject direct traffic",
+      "code_status": "requires_external_p0",
+      "protection_state": "p0_external",
+      "owner": "Lore-Hex/quill-cloud-proxy",
+      "verification": "prove WAF attachment, direct GA/NLB origin rejection, and healthy aws.trustedrouter.com status and internal gateway dependencies"
+    },
+    {
+      "id": "aws-attested-api",
+      "cloud": "aws",
+      "plane": "attested-inference",
+      "hosts": [
+        "api-aws.trustedrouter.com"
+      ],
+      "front_door": "AWS Global Accelerator to NLB to Nitro Enclaves",
+      "tls_termination": "inside Nitro Enclave",
+      "required_protection": "Shield Standard/native Global Accelerator and NLB absorption plus bounded enclave-local admission; Shield Advanced is an explicit paid decision",
+      "trusted_client_identity": "L4 client identity owned by the enclave gateway; no HTTP edge header",
+      "code_status": "requires_external_p0",
+      "protection_state": "p0_external",
+      "owner": "Lore-Hex/quill-cloud-proxy",
+      "verification": "prove native protection and gateway limits without changing PCR0 or the attested certificate binding"
+    },
+    {
+      "id": "azure-public-control",
+      "cloud": "azure",
+      "plane": "public-control",
+      "hosts": [
+        "azure.trustedrouter.com"
+      ],
+      "front_door": "currently direct external Azure Container Apps ingress",
+      "tls_termination": "Azure Container Apps",
+      "required_protection": "Azure Front Door Premium WAF with Private Link to an internal workload-profile Container Apps environment, or an equivalent origin-locked WAF design",
+      "trusted_client_identity": "Front Door rule must overwrite X-TrustedRouter-Client-IP with {client_ip}",
+      "code_status": "requires_external_p0_and_paid_tier_approval",
+      "protection_state": "p0_external",
+      "owner": "Lore-Hex/quill-cloud-proxy",
+      "verification": "after explicit cost approval, prove WAF policy/route/private endpoint, raw Container Apps FQDN rejection, and healthy custom domain"
+    },
+    {
+      "id": "azure-attested-api",
+      "cloud": "azure",
+      "plane": "attested-inference",
+      "hosts": [
+        "api-azure.trustedrouter.com",
+        "api-azure-sea.trustedrouter.com"
+      ],
+      "front_door": "Azure regional public endpoints to SEV-SNP confidential workloads",
+      "tls_termination": "inside attested workload",
+      "required_protection": "Azure native L3/L4 DDoS tier selected explicitly plus bounded gateway-local admission; no Front Door TLS termination",
+      "trusted_client_identity": "network peer identity owned by the confidential gateway; no FastAPI edge header",
+      "code_status": "requires_external_p0",
+      "protection_state": "p0_external",
+      "owner": "Lore-Hex/quill-cloud-proxy",
+      "verification": "prove native DDoS policy and gateway limits while live MAA/SEV-SNP attestation and enclave TLS remain unchanged"
+    }
+  ]
+}

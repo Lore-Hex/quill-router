@@ -265,7 +265,7 @@ records rather than fixtures, and both fixed here:
     instead of from the record it was mirroring, so trustedrouter.com reported
     `not-configured` for AWS and Azure no matter what quill-cloud-proxy
     published. Publishing the field upstream alone would have changed nothing.
-  * the mirror dropped `regions`, making api-azure-sea.trustedrouter.com
+  * the mirror dropped `regions`, making api-azure-syd.trustedrouter.com
     undiscoverable from the surface published as the place to verify us.
 """
 

@@ -119,7 +119,14 @@ async def test_endpoint_url_requires_https_outside_local_test(
     )
     with pytest.raises(HTTPException, match="https"):
         await validate_endpoint_url(
-            "http://owner.example/base", Settings(environment="staging")
+            "http://owner.example/base",
+            Settings(
+                environment="staging",
+                service_surface="control",
+                attribution_cookie_secret="staging-attribution-" + "a" * 32,
+                stripe_webhook_secret="whsec_" + "staging",
+                stripe_secret_key="sk_" + "staging",
+            ),
         )
 
 

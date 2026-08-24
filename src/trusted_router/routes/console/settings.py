@@ -32,7 +32,7 @@ def _back(query: str) -> RedirectResponse:
 
 def register(app: FastAPI) -> None:
     @app.get("/console/settings")
-    async def console_settings(
+    def console_settings(
         ctx: ConsoleDep,
         settings: SettingsDep,
         saved: str = "",
@@ -41,10 +41,9 @@ def register(app: FastAPI) -> None:
         phone_saved: str = "",
         detail: str = "",
     ) -> Response:
-        # Read the user fresh. ctx.user is the session's snapshot, so a number
-        # verified moments ago on this same page would otherwise still render
-        # as unverified and invite the visitor to start over.
-        user = STORE.get_user(ctx.user.id) or ctx.user
+        # session_auth_context is one fresh strong read for every request, so
+        # ctx already contains the current user and selected membership role.
+        user = ctx.user
         phone_missing_requirements = missing_phone_verification_requirements(user, settings)
         _resend_allowed, resend_wait_seconds = pv.can_resend(user)
         return HTMLResponse(
@@ -55,7 +54,7 @@ def register(app: FastAPI) -> None:
                 active="settings",
                 page_title="Workspace settings",
                 page_subtitle="Names, content storage, integrations.",
-                can_manage=STORE.user_can_manage(ctx.user.id, ctx.workspace.id),
+                can_manage=ctx.can_manage,
                 saved=bool(saved),
                 error=error,
                 phone=user.phone,
@@ -76,11 +75,12 @@ def register(app: FastAPI) -> None:
         )
 
     @app.post("/console/settings/phone/start")
-    async def console_phone_start(
+    def console_phone_start(
         ctx: ConsoleDep,
         settings: SettingsDep,
         phone: str = Form(""),
         channel: str = Form("voice"),
+        sms_consent: str = Form(""),
     ) -> Response:
         """Send a verification code to a number the visitor claims."""
         # Fresh read, not the session snapshot: the floor must see the send
@@ -90,6 +90,20 @@ def register(app: FastAPI) -> None:
         missing_requirements = missing_phone_verification_requirements(current, settings)
         if missing_requirements:
             return _back(f"error={missing_requirements[0]}")
+
+        # Consent is a GATE, not a notice: a checkbox enforced only in the
+        # browser is decoration, since anyone can post this form without it, and
+        # the consent record we would then show a carrier would be a claim with
+        # nothing behind it. 10DLC campaign 30909 was rejected for a Call to
+        # Action that could not be verified, and the honest reason was that the
+        # checkbox described in the submission did not exist at all.
+        #
+        # Checked AFTER the funding and email requirements, matching the sibling
+        # /notify/phone/start route: those are eligibility, and an unfunded
+        # account is not even shown this form, so "you cannot do this yet" is
+        # the useful answer rather than "tick a box you never saw".
+        if sms_consent.strip().lower() not in {"yes", "on", "true", "1"}:
+            return _back("error=consent")
         allowed, wait = pv.can_resend(current)
         if not allowed:
             # Without a floor, this form is a way to ring someone else's phone
@@ -118,24 +132,24 @@ def register(app: FastAPI) -> None:
         return _back(f"sent={wanted}")
 
     @app.post("/console/settings/phone/confirm")
-    async def console_phone_confirm(ctx: ConsoleDep, code: str = Form("")) -> Response:
+    def console_phone_confirm(ctx: ConsoleDep, code: str = Form("")) -> Response:
         status, _user = STORE.confirm_phone_verification(ctx.user.id, code)
         if status == "ok":
             return _back("phone_saved=1")
         return _back(f"error={status}")
 
     @app.post("/console/settings/phone/cancel")
-    async def console_phone_cancel(ctx: ConsoleDep) -> Response:
+    def console_phone_cancel(ctx: ConsoleDep) -> Response:
         STORE.cancel_phone_verification(ctx.user.id)
         return _back("")
 
     @app.post("/console/settings/phone/remove")
-    async def console_phone_remove(ctx: ConsoleDep) -> Response:
+    def console_phone_remove(ctx: ConsoleDep) -> Response:
         STORE.clear_user_phone(ctx.user.id)
         return _back("")
 
     @app.post("/console/settings")
-    async def console_update_settings(
+    def console_update_settings(
         ctx: ConsoleDep,
         name: str = Form(""),
     ) -> Response:

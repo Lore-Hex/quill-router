@@ -146,19 +146,22 @@ def cheap_candidate_models(limit: int = 8) -> list[Model]:
     return sorted(by_provider.values(), key=_price_sort_key)[:limit]
 
 
+FAST_MODEL_ORDER = (
+    "cerebras/gpt-oss-120b",
+    "xiaomi/mimo-v2.5-pro-ultraspeed",
+    "cerebras/zai-glm-4.7",
+)
+
+
 def fast_candidate_models(limit: int = 8) -> list[Model]:
     # Low-latency pool: Cerebras first, then Xiaomi MiMo's UltraSpeed tier.
     # Keep this as a small explicit pool so callers who choose
     # `trustedrouter/fast` do not accidentally get a cheap-but-slower model
-    # just because it has a lower token price.
-    preferred_ids = [
-        "cerebras/gpt-oss-120b",
-        "xiaomi/mimo-v2.5-pro-ultraspeed",
-        "cerebras/zai-glm-4.7",
-    ]
+    # just because it has a lower token price. Delisted provider-native aliases
+    # disappear from MODELS and are pruned here without blocking catalog refresh.
     candidates: list[Model] = []
     seen: set[str] = set()
-    for model_id in preferred_ids:
+    for model_id in FAST_MODEL_ORDER:
         model = MODELS.get(model_id)
         if model is not None and _is_regular_chat_model(model):
             candidates.append(model)
@@ -230,6 +233,8 @@ def _privacy_candidate_models(
     eligible: list[tuple[int, int, int, str, Model]] = []
     per_provider: dict[str, list[tuple[int, int, Model]]] = {}
     for endpoint in MODEL_ENDPOINTS.values():
+        if not endpoint.catalog_is_current():
+            continue
         provider = PROVIDERS.get(endpoint.provider)
         model = MODELS.get(endpoint.model_id)
         if (

@@ -18,7 +18,14 @@ from trusted_router.custom_model_billing import (
     user_model_authorization_id_from_payout_event_id,
 )
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
+from trusted_router.operational_analytics_freshness import (
+    BACKEND_MEMORY,
+    REASON_NOT_CONFIGURED,
+    OutboxFreshness,
+)
+from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage_attribution import InMemoryAcquisitionAttribution
+from trusted_router.storage_auth_context import build_session_auth_context
 from trusted_router.storage_auth_sessions import InMemoryAuthSessions
 from trusted_router.storage_broadcast import InMemoryBroadcastDestinations
 from trusted_router.storage_byok import InMemoryByok
@@ -32,6 +39,8 @@ from trusted_router.storage_models import (
     AcquisitionAttribution,
     ActivationReminderTask,
     ApiKey,
+    ApiKeyAuthContext,
+    ApiKeyUsageSnapshot,
     AuthSession,
     BedrockGroupBuyAggregate,
     BedrockGroupBuyPledge,
@@ -48,12 +57,14 @@ from trusted_router.storage_models import (
     EncryptedSecretEnvelope,
     GatewayAuthorization,
     Generation,
+    GoogleAdsConversion,
     Member,
     OAuthAuthorizationCode,
     ProviderAccessGrant,
     ProviderBenchmarkSample,
     RateLimitHit,
     Reservation,
+    SessionAuthContext,
     SignupResult,
     SyntheticProbeSample,
     SyntheticRollup,
@@ -308,6 +319,63 @@ class InMemoryStore:
             occurred_at=occurred_at,
         )
 
+    def repair_google_ads_delivery_queue(self, *, since: str, limit: int) -> int:
+        return self.acquisition_store.repair_google_ads_delivery_queue(
+            since=since,
+            limit=limit,
+        )
+
+    def purge_expired_google_ads_click_ids(self, *, before: str, limit: int) -> int:
+        return self.acquisition_store.purge_expired_google_ads_click_ids(
+            before=before,
+            limit=limit,
+        )
+
+    def claim_google_ads_deliveries(
+        self,
+        *,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[GoogleAdsConversion]:
+        return self.acquisition_store.claim_google_ads_deliveries(
+            limit=limit,
+            lease_seconds=lease_seconds,
+        )
+
+    def mark_google_ads_delivery_submitted(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        request_id: str,
+    ) -> GoogleAdsConversion | None:
+        return self.acquisition_store.mark_google_ads_delivery_submitted(
+            order_id=order_id,
+            occurred_at=occurred_at,
+            lease_owner=lease_owner,
+            request_id=request_id,
+        )
+
+    def mark_google_ads_delivery_failed(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        error: str,
+        retryable: bool,
+        max_attempts: int,
+    ) -> GoogleAdsConversion | None:
+        return self.acquisition_store.mark_google_ads_delivery_failed(
+            order_id=order_id,
+            occurred_at=occurred_at,
+            lease_owner=lease_owner,
+            error=error,
+            retryable=retryable,
+            max_attempts=max_attempts,
+        )
+
     def list_activation_reminders(self, *, limit: int = 100) -> list[ActivationReminderTask]:
         return self.acquisition_store.list_reminders(limit=limit)
 
@@ -382,6 +450,39 @@ class InMemoryStore:
 
     def delete_auth_session_by_raw(self, raw_token: str) -> bool:
         return self.auth_session_store.delete_by_raw(raw_token)
+
+    def session_auth_context(
+        self,
+        raw_token: str,
+        *,
+        requested_workspace_id: str | None = None,
+    ) -> SessionAuthContext | None:
+        """Resolve a session principal under one lock.
+
+        Production backends implement the same contract with one strong SQL
+        statement.  Keeping the in-memory implementation atomic makes tests
+        model the same point-in-time membership decision instead of a sequence
+        of independently locked lookups.
+        """
+        with self._lock:
+            session = self.auth_session_store.get_by_raw(raw_token)
+            if session is None:
+                return None
+            user = self.users.get(session.user_id)
+            memberships: list[tuple[Member, Workspace]] = []
+            for (workspace_id, user_id), candidate_member in self.members.items():
+                if user_id != session.user_id:
+                    continue
+                candidate = self.workspaces.get(workspace_id)
+                if candidate is None:
+                    continue
+                memberships.append((candidate_member, candidate))
+            return build_session_auth_context(
+                session=session,
+                user=user,
+                memberships=memberships,
+                requested_workspace_id=requested_workspace_id,
+            )
 
     def create_workspace(
         self,
@@ -558,6 +659,8 @@ class InMemoryStore:
         session_id: str | None = None,
         session_url: str | None = None,
         decision_code: int | None = None,
+        decision_reason: str | None = None,
+        decision_reason_code: int | None = None,
         verified_name: str | None = None,
         increment_attempts: bool = False,
     ) -> User | None:
@@ -577,6 +680,10 @@ class InMemoryStore:
                 user.veriff_session_url = session_url
             if decision_code is not None:
                 user.veriff_decision_code = decision_code
+            if decision_reason is not None:
+                user.veriff_decision_reason = decision_reason
+            if decision_reason_code is not None:
+                user.veriff_decision_reason_code = decision_reason_code
             if verified_name is not None:
                 user.identity_verified_name = verified_name
             if increment_attempts:
@@ -663,7 +770,12 @@ class InMemoryStore:
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:
         return self.api_keys.get_by_hash(key_hash)
 
-    def typed_key_usage(self, key_hash: str) -> dict[str, Any] | None:
+    def typed_key_usage(
+        self,
+        key_hash: str,
+        *,
+        allow_stale: bool = False,
+    ) -> dict[str, Any] | None:
         """InMemory twin of the Spanner typed point-read: lifetime counters are
         already live on the ApiKey; windows come from the lazy snapshot."""
         key = self.api_keys.get_by_hash(key_hash)
@@ -723,8 +835,22 @@ class InMemoryStore:
     def get_key_by_raw(self, raw_key: str) -> ApiKey | None:
         return self.api_keys.get_by_raw(raw_key)
 
+    def api_key_auth_context(self, raw_key: str) -> ApiKeyAuthContext | None:
+        """Resolve the key and its workspace atomically, without a cache."""
+        with self._lock:
+            api_key = self.api_keys.get_by_raw(raw_key)
+            if api_key is None:
+                return None
+            workspace = self.workspaces.get(api_key.workspace_id)
+            if workspace is not None and workspace.deleted:
+                workspace = None
+            return ApiKeyAuthContext(api_key=api_key, workspace=workspace)
+
     def list_keys(self, workspace_id: str) -> list[ApiKey]:
         return self.api_keys.list_for_workspace(workspace_id)
+
+    def list_api_keys_with_usage(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]:
+        return self.api_keys.list_with_usage_for_workspace(workspace_id)
 
     def delete_key(self, key_hash: str) -> bool:
         return self.api_keys.delete(key_hash)
@@ -735,8 +861,8 @@ class InMemoryStore:
         amount_microdollars: int,
         *,
         usage_type: str,
-    ) -> None:
-        self.api_keys.reserve_limit(key_hash, amount_microdollars, usage_type=usage_type)
+    ) -> KeyWindowLimitDecision | None:
+        return self.api_keys.reserve_limit(key_hash, amount_microdollars, usage_type=usage_type)
 
     def settle_key_limit(
         self,
@@ -896,6 +1022,12 @@ class InMemoryStore:
 
     def get_user_model(self, model_id: str) -> UserProvidedModel | None:
         return self.user_model_store.get(model_id)
+
+    def get_user_models_by_ids(
+        self,
+        model_ids: list[str],
+    ) -> dict[str, UserProvidedModel]:
+        return self.user_model_store.get_many(model_ids)
 
     def update_user_model(
         self,
@@ -1345,7 +1477,12 @@ class InMemoryStore:
         with self._lock:
             self.earnings_money.setdefault(user_id, (0, 0))
 
-    def earnings_summary(self, user_id: str) -> dict[str, int]:
+    def earnings_summary(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = False,
+    ) -> dict[str, int]:
         with self._lock:
             earned, transferred = self.earnings_money.get(user_id, (0, 0))
             return {
@@ -1403,7 +1540,12 @@ class InMemoryStore:
                     )
         return totals
 
-    def get_lifetime_topup_microdollars(self, user_id: str) -> int:
+    def get_lifetime_topup_microdollars(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = False,
+    ) -> int:
         with self._lock:
             return self.lifetime_topups.get(user_id, 0)
 
@@ -1830,6 +1972,18 @@ class InMemoryStore:
 
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
         self.synthetic_store.record(sample)
+
+    def operational_analytics_outbox_freshness(self) -> OutboxFreshness:
+        """No outbox exists in memory, and this says so rather than returning 0.
+
+        The in-memory backend never enqueues an operational-analytics row and
+        has no drain behind it, so an empty queue here is not evidence that a
+        drain is keeping up -- it is evidence that there is nothing to keep up
+        with. Reporting `not_configured` keeps a dev or test deployment from
+        publishing the healthiest possible number for a pipeline it does not
+        run.
+        """
+        return OutboxFreshness.unavailable(BACKEND_MEMORY, REASON_NOT_CONFIGURED)
 
     def synthetic_probe_samples(
         self,
@@ -2285,6 +2439,19 @@ def create_store(settings: Any) -> Store:
             ),
             analytics_dual_read_grace_seconds=getattr(
                 settings, "analytics_dual_read_grace_seconds", 30
+            ),
+            regional_quota_leases_enabled=getattr(
+                settings, "regional_quota_leases_enabled", False
+            ),
+            regional_quota_bigtable_table=getattr(
+                settings,
+                "regional_quota_bigtable_table",
+                "trustedrouter-regional-quota",
+            ),
+            regional_quota_bigtable_app_profiles=getattr(
+                settings,
+                "regional_quota_bigtable_app_profile_map",
+                {},
             ),
         )
     raise ValueError(f"unsupported storage backend: {backend}")

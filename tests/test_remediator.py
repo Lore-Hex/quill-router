@@ -12,7 +12,7 @@ import datetime as dt
 import pytest
 
 from trusted_router.config import Settings
-from trusted_router.storage import STORE
+from trusted_router.storage import STORE, InMemoryStore
 from trusted_router.storage_models import SyntheticProbeSample, utcnow
 from trusted_router.synthetic import fleet, remediator
 from trusted_router.synthetic.remediator import (
@@ -124,6 +124,95 @@ def test_fresh_probes_produce_no_monitor_decision(sentry_events: list[str]) -> N
     assert not any(d.playbook == "monitor-stale" for d in decisions)
 
 
+def test_live_probe_fleet_pages_when_transaction_probes_disappear(
+    sentry_events: list[str],
+) -> None:
+    _record(
+        SyntheticProbeSample(
+            id="syn_tls_live_transaction_blind",
+            probe_type="tls_health",
+            target="canonical",
+            target_url="https://api.trustedrouter.com/v1",
+            monitor_region="test-1",
+            status="up",
+        )
+    )
+
+    decisions = run_remediator_pass(
+        _settings(
+            service_surface="internal",
+            synthetic_monitor_api_key="sk-tr-test",
+            internal_gateway_token="gateway-test",  # noqa: S106 - test fixture.
+        )
+    )
+
+    stale = [d for d in decisions if d.playbook == "transaction-monitor-stale"]
+    assert {d.subject for d in stale} == {
+        "gateway_authorize",
+        "gateway_settle",
+        "provider_fallback",
+    }
+    assert sum("transaction-monitor-stale" in event for event in sentry_events) == 3
+
+
+def test_fresh_transaction_probes_keep_dead_man_quiet(
+    sentry_events: list[str],
+) -> None:
+    for probe_type in (
+        "tls_health",
+        "gateway_authorize",
+        "gateway_settle",
+        "provider_fallback",
+    ):
+        _record(
+            SyntheticProbeSample(
+                id=f"syn_fresh_{probe_type}",
+                probe_type=probe_type,
+                target="canonical" if probe_type == "tls_health" else "control-plane",
+                target_url="https://trustedrouter.com",
+                monitor_region="test-1",
+                status="up",
+            )
+        )
+
+    decisions = run_remediator_pass(
+        _settings(
+            service_surface="internal",
+            synthetic_monitor_api_key="sk-tr-test",
+            internal_gateway_token="gateway-test",  # noqa: S106 - test fixture.
+        )
+    )
+
+    assert not any(d.playbook == "transaction-monitor-stale" for d in decisions)
+    assert not any("transaction-monitor-stale" in event for event in sentry_events)
+
+
+def test_observer_surface_never_claims_transaction_monitor_ownership(
+    sentry_events: list[str],
+) -> None:
+    _record(
+        SyntheticProbeSample(
+            id="syn_observer_tls_only",
+            probe_type="tls_health",
+            target="canonical",
+            target_url="https://api.trustedrouter.com/v1",
+            monitor_region="test-1",
+            status="up",
+        )
+    )
+
+    decisions = run_remediator_pass(
+        _settings(
+            service_surface="observer",
+            synthetic_monitor_api_key="sk-tr-test",
+            observer_internal_token="observer-test",  # noqa: S106 - test fixture.
+        )
+    )
+
+    assert not any(d.playbook == "transaction-monitor-stale" for d in decisions)
+    assert not any("transaction-monitor-stale" in event for event in sentry_events)
+
+
 def test_decision_rows_bucket_and_dedupe(sentry_events: list[str]) -> None:
     fleet.register_heartbeat_target("scheduler:bucketed")
     _record(
@@ -142,6 +231,88 @@ def test_decision_rows_bucket_and_dedupe(sentry_events: list[str]) -> None:
     run_remediator_pass(_settings())  # same bucket: no second row
     second = [r for r in recent_decisions() if "bucketed" in r["decision"]]
     assert len(first) == len(second) == 1
+
+
+def test_recent_decisions_frame_rows_as_point_in_time_observations() -> None:
+    recent_at = _old_iso(1)
+    old_at = _old_iso(180)
+    _record(
+        SyntheticProbeSample(
+            id="syn_rem_recent_observation",
+            probe_type="remediation",
+            target="heartbeat-stale:scheduler:recent",
+            target_url="",
+            monitor_region="test-1",
+            status="down",
+            error_type="recent detail",
+            created_at=recent_at,
+        )
+    )
+    _record(
+        SyntheticProbeSample(
+            id="syn_rem_old_observation",
+            probe_type="remediation",
+            target="heartbeat-stale:scheduler:old",
+            target_url="",
+            monitor_region="test-1",
+            status="down",
+            error_type="old detail",
+            created_at=old_at,
+        )
+    )
+
+    rows = {row["decision"]: row for row in recent_decisions()}
+    recent = rows["heartbeat-stale:scheduler:recent"]
+    old = rows["heartbeat-stale:scheduler:old"]
+
+    assert {key: recent[key] for key in ("at", "decision", "detail")} == {
+        "at": recent_at,
+        "decision": "heartbeat-stale:scheduler:recent",
+        "detail": "recent detail",
+    }
+    assert recent["point_in_time"] is True
+    assert 59 <= recent["observed_age_seconds"] <= 65
+    assert old["point_in_time"] is True
+    assert 10_799 <= old["observed_age_seconds"] <= 10_805
+
+
+def test_recent_decisions_reports_no_age_for_unparseable_timestamp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sample = SyntheticProbeSample(
+        id="syn_rem_bad_observation_time",
+        probe_type="remediation",
+        target="heartbeat-stale:scheduler:bad-time",
+        target_url="",
+        monitor_region="test-1",
+        status="down",
+        error_type="bad timestamp detail",
+        created_at="not-a-timestamp",
+    )
+
+    def samples(
+        self: InMemoryStore,
+        *,
+        date: str | None = None,
+        target: str | None = None,
+        probe_type: str | None = None,
+        monitor_region: str | None = None,
+        limit: int = 1000,
+    ) -> list[SyntheticProbeSample]:
+        return [sample]
+
+    monkeypatch.setattr(InMemoryStore, "synthetic_probe_samples", samples)
+
+    row = next(
+        row
+        for row in recent_decisions()
+        if row["decision"] == "heartbeat-stale:scheduler:bad-time"
+    )
+
+    assert row["at"] == "not-a-timestamp"
+    assert row["detail"] == "bad timestamp detail"
+    assert row["observed_age_seconds"] is None
+    assert row["point_in_time"] is True
 
 
 def test_broken_detector_never_kills_the_pass(monkeypatch: pytest.MonkeyPatch) -> None:

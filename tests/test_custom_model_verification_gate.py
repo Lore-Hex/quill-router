@@ -51,7 +51,16 @@ def _direct_model(user: Any) -> Any:
 def test_custom_model_verification_default_is_off_in_test() -> None:
     assert Settings(environment="test").custom_models_verification_enforced is False
     assert Settings(environment="local").custom_models_verification_enforced is False
-    assert Settings(environment="staging").custom_models_verification_enforced is True
+    assert (
+        Settings(
+            environment="staging",
+            service_surface="control",
+            attribution_cookie_secret="staging-attribution-" + "a" * 32,
+            stripe_webhook_secret="whsec_" + "staging",
+            stripe_secret_key="sk_" + "staging",
+        ).custom_models_verification_enforced
+        is True
+    )
 
 
 def test_enforced_api_post_and_patch_return_exact_verification_error() -> None:

@@ -60,13 +60,13 @@ def register(router: APIRouter) -> None:
             code = int(raw_code)
         except (TypeError, ValueError):
             return {"data": {"ignored": True}}
-        mapped_status = _mapped_status(provider_status, code)
+        decision_status = mapped_status(provider_status, code)
         if (
             not isinstance(session_id, str)
             or not session_id
             or not isinstance(vendor_data, str)
             or not vendor_data
-            or mapped_status is None
+            or decision_status is None
         ):
             return {"data": {"ignored": True}}
 
@@ -82,17 +82,26 @@ def register(router: APIRouter) -> None:
             log.info("veriff_webhook.ignored reason=stale_session")
             return {"data": {"ignored": True}}
 
-        verified_name = _verified_name(verification) if mapped_status == "approved" else None
+        approved_name = verified_name(verification) if decision_status == "approved" else None
+        reason, reason_code = decision_reason(verification)
         STORE.set_user_identity_status(
             user.id,
-            status=mapped_status,
+            status=decision_status,
             decision_code=code,
-            verified_name=verified_name,
+            decision_reason=reason,
+            decision_reason_code=reason_code,
+            verified_name=approved_name,
         )
-        return {"data": {"status": mapped_status}}
+        log.info(
+            "veriff_webhook.decision status=%s code=%s reason_code=%s",
+            decision_status,
+            code,
+            reason_code,
+        )
+        return {"data": {"status": decision_status}}
 
 
-def _mapped_status(provider_status: Any, code: int) -> str | None:
+def mapped_status(provider_status: Any, code: int) -> str | None:
     status = str(provider_status or "").strip().lower()
     if status == "approved" and code == 9001:
         return "approved"
@@ -105,7 +114,34 @@ def _mapped_status(provider_status: Any, code: int) -> str | None:
     return None
 
 
-def _verified_name(verification: dict[str, Any]) -> str | None:
+#: Veriff's `reason` is free text they author, so it is bounded before storage
+#: and never rendered to the person being verified — only to operators.
+MAX_REASON_LENGTH = 200
+
+
+def decision_reason(verification: dict[str, Any]) -> tuple[str | None, int | None]:
+    """Pull Veriff's granular reason off a decision webhook.
+
+    Kept for operators. Whether any of it reaches the end user is decided by
+    :mod:`trusted_router.identity_guidance`, not here.
+    """
+    raw_reason = verification.get("reason")
+    reason = str(raw_reason).strip()[:MAX_REASON_LENGTH] if isinstance(raw_reason, str) else None
+    raw_code = verification.get("reasonCode")
+    reason_code: int | None
+    if isinstance(raw_code, bool):
+        reason_code = None
+    elif isinstance(raw_code, (int, str)):
+        try:
+            reason_code = int(raw_code)
+        except (TypeError, ValueError):
+            reason_code = None
+    else:
+        reason_code = None
+    return (reason or None), reason_code
+
+
+def verified_name(verification: dict[str, Any]) -> str | None:
     person = verification.get("person")
     if not isinstance(person, dict):
         return None

@@ -882,7 +882,7 @@ def test_internal_gateway_rejects_disabled_key(user_headers: dict[str, str], cli
         },
     )
     assert resp.status_code == 401
-    assert resp.json()["error"]["type"] == "unauthorized"
+    assert resp.json()["error"]["type"] == "invalid_api_key"  # the enclave negative-cache wire contract
 
 
 def test_stripe_webhook_handles_stripe_object_from_construct_event(
@@ -1062,11 +1062,13 @@ def test_credits_page_renders_payment_history_section(monkeypatch) -> None:
     )
     client, _ = _console_client_for_test()
     resp = client.get("/console/credits")
+    details = client.get("/console/credits/stripe-details")
     assert resp.status_code == 200, resp.text[:300]
+    assert details.status_code == 200, details.text[:300]
     assert "Payment history" in resp.text
-    assert "No payments yet" in resp.text
+    assert "No payments yet" in details.text
     assert "Bank account (ACH)" in resp.text
-    assert "credits appear" in resp.text
+    assert "credits appear" in details.text
 
 
 def test_credits_page_renders_payment_rows_when_present(monkeypatch) -> None:
@@ -1129,27 +1131,29 @@ def test_credits_page_renders_payment_rows_when_present(monkeypatch) -> None:
 
     client, _ = _console_client_for_test()
     resp = client.get("/console/credits")
+    details = client.get("/console/credits/stripe-details")
     assert resp.status_code == 200, resp.text[:300]
+    assert details.status_code == 200, details.text[:300]
     assert "Payment history" in resp.text
     # Amount formatted as dollars
-    assert "$1.00" in resp.text
-    assert "$0.34 fee" in resp.text
-    assert "$1.34" in resp.text
-    assert "$5.00" in resp.text
+    assert "$1.00" in details.text
+    assert "$0.34 fee" in details.text
+    assert "$1.34" in details.text
+    assert "$5.00" in details.text
     # Card brand + last4 displayed
-    assert "visa" in resp.text.lower()
-    assert "4242" in resp.text
-    assert "mastercard" in resp.text.lower()
-    assert "8888" in resp.text
-    assert "Test Bank" in resp.text
-    assert "6789" in resp.text
-    assert ">processing<" in resp.text or 'pill warn">processing' in resp.text
+    assert "visa" in details.text.lower()
+    assert "4242" in details.text
+    assert "mastercard" in details.text.lower()
+    assert "8888" in details.text
+    assert "Test Bank" in details.text
+    assert "6789" in details.text
+    assert ">processing<" in details.text or 'pill warn">processing' in details.text
     # Receipt links rendered
-    assert "https://pay.stripe.com/receipts/test-receipt" in resp.text
+    assert "https://pay.stripe.com/receipts/test-receipt" in details.text
     # `paid` status pill
-    assert ">paid<" in resp.text or 'pill good">paid' in resp.text
+    assert ">paid<" in details.text or 'pill good">paid' in details.text
     # Date formatted (UTC)
-    assert "2026-05-24" in resp.text
-    assert "2026-05-23" in resp.text
+    assert "2026-05-24" in details.text
+    assert "2026-05-23" in details.text
     # Empty-state copy NOT shown when payments exist
-    assert "No payments yet" not in resp.text
+    assert "No payments yet" not in details.text

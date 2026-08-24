@@ -11,14 +11,22 @@ shape: sharded authorization completed, then unsharded settlement exhausted the
 fake Spanner retry budget on the one API-key row.
 
 The table and reservation schema already support `(key_hash, shard)` and
-`key_shard`. We use those fields to spread usage writes for high-throughput,
-keys without an exact lifetime cap.
+`key_shard`. We use those fields to spread both usage writes and exact-cap
+reservations for high-throughput keys.
 
 ## Scope and hard safety boundary
 
-`ApiKey.usage_shard_count` defaults to 1. A value above 1 is invalid when an
-exact lifetime spend limit is configured. That cap reserves headroom inside the
-same transaction and therefore remains byte-identical on shard zero.
+`ApiKey.usage_shard_count` defaults to 1. An exact lifetime limit is partitioned
+into escrow sub-budgets: each row receives its consumed amount plus a share of
+the remaining allowance, and all row limits sum to the configured global cap.
+Authorize reserves from one sub-budget in its existing atomic transaction. No
+distribution of requests can spend more than the global limit.
+
+An unusually large request can exceed every individual sub-budget while still
+fitting within the global remaining allowance. Only after all shards reject,
+the cold path atomically reads every shard and moves enough escrow to the first
+randomized candidate, then retries authorize once. Genuine exhaustion does not
+write or retry. Normal requests never pay this global coordination cost.
 
 Daily, weekly, and monthly limits are already approximate, lock-free snapshot
 checks. For sharded keys, the check reads the configured shard set and sums the
@@ -33,8 +41,9 @@ partitioned lifetime budget.
    typed authorize path. There is no extra hot-path database read.
 2. TrustedRouter randomizes all key usage shards outside the Spanner retry
    callback.
-3. A row without a lifetime cap returns `KEY_NO_HOLD`; authorize records the
-   selected `key_shard` on `tr_reservation`.
+3. An uncapped row returns `KEY_NO_HOLD`; a capped row conditionally reserves
+   from its escrow sub-budget. Authorize records the selected `key_shard` on
+   `tr_reservation` in both cases.
 4. Settle/refund books against exactly that recorded row.
 5. Idempotent replay returns the originally committed key shard.
 
@@ -54,9 +63,10 @@ python scripts/shard_workspace.py finish --workspace WS --shards 16 --apply
 Prepare pauses the workspace, refuses open typed or legacy requests, atomically
 partitions each ledger, verifies it, runs the invariant audit, and leaves the
 workspace paused. Finish re-verifies credit and key row sets before unpausing.
-Keys with an exact lifetime cap stay at one row. Reverse with `--shards 1`
-before any typed-to-JSON rollback or shard-zero repair; those older tools now
-refuse sharded state.
+Exact lifetime limits are repartitioned in the same transaction as the usage
+rows, including when open typed holds are preserved during an online split.
+Reverse with `--shards 1` before any typed-to-JSON rollback or shard-zero
+repair; those older tools refuse sharded state.
 
 The operator retains legacy reservation rows for audit but does not let
 pre-cutover debris block typed-ledger maintenance forever. Unsettled legacy

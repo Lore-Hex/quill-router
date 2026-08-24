@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from trusted_router.auth import SettingsDep
 from trusted_router.config import Settings
+from trusted_router.identity_guidance import guidance_for
 from trusted_router.money import (
     VERIFF_ATTEMPT_FEE_MICRODOLLARS,
     VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS,
@@ -20,17 +21,33 @@ from trusted_router.verification_gates import missing_identity_verification_requ
 
 def register(app: FastAPI) -> None:
     @app.get("/console/account/verification")
-    async def console_verification(
+    def console_verification(
         ctx: ConsoleDep,
         settings: SettingsDep,
         error: str = "",
         veriff: str = "",
         dev: str = "",
     ) -> Response:
-        user = STORE.get_user(ctx.user.id) or ctx.user
-        lifetime_topup = STORE.get_lifetime_topup_microdollars(user.id)
+        # The console dependency resolved this user in the same strong read as
+        # the session; fetching it again would only add another round trip.
+        user = ctx.user
+        # Page progress only. Reuse this bounded-stale total for the displayed
+        # checklist; the identity-start POST calls the same helper without an
+        # override and therefore retains its strong authorization read.
+        lifetime_topup = STORE.get_lifetime_topup_microdollars(
+            user.id,
+            allow_stale=True,
+        )
         required = VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS
-        missing = missing_identity_verification_requirements(user, settings)
+        missing = missing_identity_verification_requirements(
+            user,
+            settings,
+            lifetime_topup_microdollars=lifetime_topup,
+        )
+        guidance = guidance_for(
+            user.identity_status,
+            reason_code=user.veriff_decision_reason_code,
+        )
         identity_labels = {
             "none": "Not started",
             "pending": "Pending",
@@ -61,12 +78,16 @@ def register(app: FastAPI) -> None:
                     VERIFF_ATTEMPT_FEE_MICRODOLLARS
                 ),
                 identity_missing_requirements=missing,
+                identity_missing_labels=[
+                    _REQUIREMENT_LABELS.get(key, key) for key in missing
+                ],
                 identity_status=user.identity_status,
                 identity_status_label=identity_labels.get(
                     user.identity_status,
                     "Not started",
                 ),
                 identity_action_label=_identity_action_label(user.identity_status),
+                identity_guidance=guidance,
                 identity_action_enabled=(
                     not missing
                     and not user.identity_verified
@@ -77,7 +98,7 @@ def register(app: FastAPI) -> None:
         )
 
     @app.post("/console/account/verification/identity/start")
-    async def console_start_identity(
+    def console_start_identity(
         ctx: ConsoleDep,
         settings: SettingsDep,
     ) -> Response:
@@ -99,6 +120,15 @@ def register(app: FastAPI) -> None:
                 error = "veriff_unavailable"
             return _back(f"error={error}")
         return RedirectResponse(url=result.url, status_code=303)
+
+
+#: The API keeps the machine-readable keys; the page shows words. A person
+#: reading "phone_verified" is reading our schema, not an instruction.
+_REQUIREMENT_LABELS = {
+    "email": "a verified email address",
+    "phone_verified": "a verified phone number",
+    "funding": "the minimum lifetime top-up",
+}
 
 
 def _identity_action_label(status: str) -> str:

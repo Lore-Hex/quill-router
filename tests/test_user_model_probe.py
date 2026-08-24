@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import socket
 from typing import Any
 
+import httpx
 import pytest
 from pytest_httpx import HTTPXMock
 
@@ -57,24 +59,21 @@ def _stored_model(settings: Settings, *, supports_streaming: bool = True) -> Use
 
 
 @pytest.mark.asyncio
-async def test_probe_validates_buffered_and_streaming_shapes_and_signature(
+async def test_probe_uses_only_the_registered_transport_for_a_streaming_model(
     test_settings: Settings,
     httpx_mock: HTTPXMock,
 ) -> None:
+    """One leg, streamed, because that is the only shape dispatch ever sends.
+
+    `_owner_request` puts `stream: model.supports_streaming` on every real
+    call. A probe that also demanded a buffered `chat.completion` was testing
+    a request the endpoint never receives, and it rejected streaming-only
+    endpoints — which is exactly what the docs tell owners to build.
+    """
     model = _stored_model(test_settings)
-    url = "https://owner.example/v1/chat/completions"
     httpx_mock.add_response(
         method="POST",
-        url=url,
-        json={
-            "id": "chatcmpl-probe",
-            "object": "chat.completion",
-            "choices": [{"message": {"role": "assistant", "content": "pong"}}],
-        },
-    )
-    httpx_mock.add_response(
-        method="POST",
-        url=url,
+        url="https://owner.example/v1/chat/completions",
         content=(
             b'data: {"id":"chatcmpl-probe","object":"chat.completion.chunk",'
             b'"choices":[{"delta":{"content":"pong"}}]}\n\n'
@@ -89,15 +88,95 @@ async def test_probe_validates_buffered_and_streaming_shapes_and_signature(
     stored = STORE.get_user_model(model.id)
     assert stored is not None
     assert stored.probe_status == "ok"
+
     requests = httpx_mock.get_requests()
-    assert len(requests) == 2
-    for request in requests:
-        assert request.headers["authorization"] == "Bearer probe-endpoint-key"
-        signature = request.headers["tr-signature"]
-        timestamp = int(signature.split(",", 1)[0].removeprefix("t="))
-        assert signature == sign_request_body(
-            "probe-signing-secret", request.content, timestamp
+    assert len(requests) == 1
+    body = json.loads(requests[0].content)
+    assert body["stream"] is True
+    assert body["model"] == "upstream-probe"
+    assert requests[0].headers["authorization"] == "Bearer probe-endpoint-key"
+    signature = requests[0].headers["tr-signature"]
+    timestamp = int(signature.split(",", 1)[0].removeprefix("t="))
+    assert signature == sign_request_body(
+        "probe-signing-secret", requests[0].content, timestamp
+    )
+
+
+@pytest.mark.asyncio
+async def test_streaming_only_endpoint_that_refuses_buffered_still_clocks_in(
+    test_settings: Settings,
+    httpx_mock: HTTPXMock,
+) -> None:
+    """The regression. This endpoint 400s anything with stream=false.
+
+    Under the old two-leg probe it could never clock in, despite being able
+    to serve every request production would send it.
+    """
+    model = _stored_model(test_settings)
+
+    def _only_streams(request: Any) -> httpx.Response:
+        if not json.loads(request.content).get("stream"):
+            return httpx.Response(400, json={"error": "this endpoint streams"})
+        return httpx.Response(
+            200,
+            content=(
+                b'data: {"id":"c","object":"chat.completion.chunk",'
+                b'"choices":[{"delta":{"content":"pong"}}]}\n\n'
+                b"data: [DONE]\n\n"
+            ),
+            headers={"content-type": "text/event-stream"},
         )
+
+    httpx_mock.add_callback(_only_streams, method="POST")
+
+    assert (await probe_user_model(model, test_settings)).ok is True
+
+
+@pytest.mark.asyncio
+async def test_buffered_model_is_probed_buffered(
+    test_settings: Settings,
+    httpx_mock: HTTPXMock,
+) -> None:
+    model = _stored_model(test_settings, supports_streaming=False)
+    httpx_mock.add_response(
+        method="POST",
+        url="https://owner.example/v1/chat/completions",
+        json={
+            "id": "chatcmpl-probe",
+            "object": "chat.completion",
+            "choices": [{"message": {"role": "assistant", "content": "pong"}}],
+        },
+    )
+
+    assert (await probe_user_model(model, test_settings)).ok is True
+    requests = httpx_mock.get_requests()
+    assert len(requests) == 1
+    assert json.loads(requests[0].content)["stream"] is False
+
+
+@pytest.mark.asyncio
+async def test_streaming_model_answering_buffered_is_a_failed_probe(
+    test_settings: Settings,
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Adapting is our job in one direction only — the owner must honour the
+    transport they registered, or the aggregate step has nothing to read."""
+    model = _stored_model(test_settings)
+    httpx_mock.add_response(
+        method="POST",
+        url="https://owner.example/v1/chat/completions",
+        json={
+            "object": "chat.completion",
+            "choices": [{"message": {"role": "assistant", "content": "pong"}}],
+        },
+    )
+
+    result = await probe_user_model(model, test_settings)
+
+    assert result.ok is False
+    stored = STORE.get_user_model(model.id)
+    assert stored is not None
+    assert stored.probe_status == "failed"
 
 
 @pytest.mark.asyncio

@@ -702,7 +702,7 @@
       "cached_input_token_price_per_m": 40000
     },
     {
-      "display_name": "DeepSeek-V3.1",
+      "display_name": "DeepSeek V3.1",
       "title": "deepseek-ai/DeepSeek-V3.1",
       "model_type": "chat",
       "input_modalities": [
@@ -965,7 +965,10 @@
       "max_output_tokens": 8192,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000,
-      "cached_input_token_price_per_m": 25000
+      "cached_input_token_price_per_m": 25000,
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Gemini 2.0 Flash Lite",
@@ -987,7 +990,10 @@
       "max_output_tokens": 8192,
       "input_token_price_per_m": 75000,
       "output_token_price_per_m": 300000,
-      "cached_input_token_price_per_m": 75000
+      "cached_input_token_price_per_m": 75000,
+      "missing_since": "2026-08-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Gemini 2.5 Flash",
@@ -3410,8 +3416,8 @@
         "max_tokens",
         "logit_bias"
       ],
-      "input_token_price_per_m": 140000,
-      "output_token_price_per_m": 280000,
+      "input_token_price_per_m": 440000,
+      "output_token_price_per_m": 1320000,
       "cached_input_token_price_per_m": 28000
     },
     {
@@ -3708,8 +3714,89 @@
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 6000000,
       "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "DeepSeek V4 Pro 0813",
+      "title": "deepseek-ai/deepseek-v4-pro-0813",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-pro-0813",
+      "upstream_id": "deepseek-ai/deepseek-v4-pro-0813",
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 1320000,
+      "output_token_price_per_m": 3960000,
+      "cached_input_token_price_per_m": 132000
+    },
+    {
+      "display_name": "GLM 5.3",
+      "title": "zai-org/glm-5.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "zai-org/glm-5.3",
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 1638000,
+      "output_token_price_per_m": 5148000,
+      "cached_input_token_price_per_m": 304200
     }
   ],
-  "generated_at": "2026-08-16T15:24:13Z",
-  "model_count": 137
+  "generated_at": "2026-08-24T16:40:13Z",
+  "model_count": 139
 }

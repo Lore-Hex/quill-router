@@ -35,6 +35,14 @@ def _typed_credit(db, workspace_id: str) -> dict:
     return db.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)]
 
 
+def _typed_credit_total(db, workspace_id: str) -> int:
+    return sum(
+        int(row["total_credits"])
+        for (candidate, _shard), row in db.typed[CREDIT_BALANCE_TABLE].items()
+        if candidate == workspace_id
+    )
+
+
 def test_credit_workspace_typed_direct_applies_once_in_one_transaction() -> None:
     store, db, _ = make_fake_store()
     ws = "ws_b2_apply"
@@ -101,12 +109,12 @@ def test_gcp_signup_seeds_typed_starter_credit() -> None:
     assert result is not None
     assert result.trial_credit_microdollars == grant_amount
     assert "total_credits_microdollars" not in _json_credit(db, result.workspace.id)
-    assert _typed_credit(db, result.workspace.id)["total_credits"] == grant_amount
+    assert _typed_credit_total(db, result.workspace.id) == grant_amount
     assert store.signup(
         email="typed-signup@example.com",
         trial_credit_microdollars=grant_amount,
     ) is None
-    assert _typed_credit(db, result.workspace.id)["total_credits"] == grant_amount
+    assert _typed_credit_total(db, result.workspace.id) == grant_amount
 
 
 def test_stripe_checkout_webhook_routes_topup_through_typed_direct(

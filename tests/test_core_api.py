@@ -5,7 +5,7 @@ from dataclasses import asdict
 import pytest
 from fastapi.testclient import TestClient
 
-from trusted_router.catalog import PROVIDER_JURISDICTION_US, PROVIDERS
+from trusted_router.catalog import FAST_MODEL_ORDER, MODELS, PROVIDER_JURISDICTION_US, PROVIDERS
 from trusted_router.spend_windows import KeyWindowLimitExceeded
 from trusted_router.storage import STORE
 
@@ -592,7 +592,10 @@ def test_embeddings_and_model_endpoints(
         "Credits",
         "BYOK",
     ]
-    assert {item["provider"] for item in kimi.json()["data"]} >= {"kimi", "together"}
+    # The first-party Moonshot route is the stable contract. Secondary
+    # providers are discovered from their live serverless catalogs and may
+    # legitimately add or remove Kimi K2.6 without a code change.
+    assert "kimi" in {item["provider"] for item in kimi.json()["data"]}
 
     # gpt-5.5 is OpenAI's served flagship (Credits + BYOK on the openai
     # provider). NB: the GPT-5.4 line and the "-pro" tiers are dropped from
@@ -861,10 +864,9 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     models_by_id = {model["id"]: model for model in models}
     fast_meta = models_by_id["trustedrouter/fast"]["trustedrouter"]
     assert fast_meta["route_kind"] == "fast_pool"
+    assert fast_meta["auto_candidates"]
     assert fast_meta["auto_candidates"] == [
-        "cerebras/gpt-oss-120b",
-        "xiaomi/mimo-v2.5-pro-ultraspeed",
-        "cerebras/zai-glm-4.7",
+        model_id for model_id in FAST_MODEL_ORDER if model_id in MODELS
     ]
     plato_meta = models_by_id["trustedrouter/plato"]["trustedrouter"]
     plato_3_meta = models_by_id["trustedrouter/plato-3.0"]["trustedrouter"]
@@ -1110,7 +1112,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         not provider["provider_zero_data_retention"] or provider["stores_content"] is False
         for provider in providers
     )
-    assert [provider["id"] for provider in providers[:2]] == ["tinfoil", "trustedrouter"]
+    assert [provider["id"] for provider in providers[:2]] == ["trustedrouter", "tinfoil"]
     assert {
         "anthropic",
         "openai",

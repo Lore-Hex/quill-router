@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import SettingsDep
 from trusted_router.custom_model_billing import (
@@ -33,7 +34,7 @@ from trusted_router.user_model_rules import (
 
 def register(app: FastAPI) -> None:
     @app.get("/console/user-models")
-    async def console_user_models(
+    def console_user_models(
         request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
@@ -72,7 +73,8 @@ def register(app: FastAPI) -> None:
         normalized_display_name = validate_user_model_display_name(display_name)
         normalized_endpoint = await validate_endpoint_url(endpoint_url, settings)
         signing_secret = secrets.token_urlsafe(32)
-        try:
+
+        def create_and_render() -> Response:
             STORE.create_user_model(
                 owner_user_id=ctx.user.id,
                 owner_workspace_id=ctx.workspace.id,
@@ -110,18 +112,21 @@ def register(app: FastAPI) -> None:
                 human_verified=kind == "human",
                 slug=normalized_slug,
             )
+            return HTMLResponse(
+                _render_page(
+                    ctx,
+                    settings,
+                    request=request,
+                    one_time_secret=signing_secret,
+                    one_time_reason="created",
+                ),
+                status_code=201,
+            )
+
+        try:
+            return await run_in_threadpool(create_and_render)
         except ValueError as exc:
             return _store_error_redirect(exc)
-        return HTMLResponse(
-            _render_page(
-                ctx,
-                settings,
-                request=request,
-                one_time_secret=signing_secret,
-                one_time_reason="created",
-            ),
-            status_code=201,
-        )
 
     @app.post("/console/user-models/{model_id:path}/edit")
     async def console_update_user_model(
@@ -145,7 +150,7 @@ def register(app: FastAPI) -> None:
     ) -> Response:
         if missing_custom_model_requirements(ctx.user, settings):
             return _redirect("error=verification")
-        model = _require_owner_model(model_id, ctx.user.id)
+        model = await run_in_threadpool(_require_owner_model, model_id, ctx.user.id)
         _validate_form_values(
             kind=kind,
             display_identity=display_identity,
@@ -172,19 +177,23 @@ def register(app: FastAPI) -> None:
             ),
             "human_verified": kind == "human",
         }
-        if endpoint_api_key:
-            patch["encrypted_endpoint_api_key"] = encrypt_user_model_endpoint_key(
-                endpoint_api_key,
-                settings,
-                workspace_id=model.owner_workspace_id,
-            )
-            patch["endpoint_key_hint"] = _secret_hint(endpoint_api_key)
-        try:
+
+        def update_model() -> None:
+            if endpoint_api_key:
+                patch["encrypted_endpoint_api_key"] = encrypt_user_model_endpoint_key(
+                    endpoint_api_key,
+                    settings,
+                    workspace_id=model.owner_workspace_id,
+                )
+                patch["endpoint_key_hint"] = _secret_hint(endpoint_api_key)
             STORE.update_user_model(
                 model.id,
                 owner_user_id=ctx.user.id,
                 patch=patch,
             )
+
+        try:
+            await run_in_threadpool(update_model)
         except ValueError as exc:
             return _store_error_redirect(exc)
         return _redirect("saved=updated")
@@ -195,24 +204,32 @@ def register(app: FastAPI) -> None:
         settings: SettingsDep,
         model_id: str,
     ) -> Response:
-        model = _require_owner_model(model_id, ctx.user.id)
+        model = await run_in_threadpool(_require_owner_model, model_id, ctx.user.id)
         result = await probe_user_model(model, settings)
         if not result.ok:
-            STORE.set_user_model_online(
-                model.id, owner_user_id=ctx.user.id, online=False
+            await run_in_threadpool(
+                STORE.set_user_model_online,
+                model.id,
+                owner_user_id=ctx.user.id,
+                online=False,
             )
             return _redirect("error=probe")
-        STORE.set_user_model_online(model.id, owner_user_id=ctx.user.id, online=True)
+        await run_in_threadpool(
+            STORE.set_user_model_online,
+            model.id,
+            owner_user_id=ctx.user.id,
+            online=True,
+        )
         return _redirect("saved=clocked-in")
 
     @app.post("/console/user-models/{model_id:path}/clock-out")
-    async def console_clock_out_user_model(ctx: ConsoleDep, model_id: str) -> Response:
+    def console_clock_out_user_model(ctx: ConsoleDep, model_id: str) -> Response:
         model = _require_owner_model(model_id, ctx.user.id)
         STORE.set_user_model_online(model.id, owner_user_id=ctx.user.id, online=False)
         return _redirect("saved=clocked-out")
 
     @app.post("/console/user-models/{model_id:path}/rotate-secrets")
-    async def console_rotate_user_model_secret(
+    def console_rotate_user_model_secret(
         request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
@@ -242,7 +259,7 @@ def register(app: FastAPI) -> None:
         )
 
     @app.post("/console/user-models/{model_id:path}/delete")
-    async def console_delete_user_model(ctx: ConsoleDep, model_id: str) -> Response:
+    def console_delete_user_model(ctx: ConsoleDep, model_id: str) -> Response:
         model = _require_owner_model(model_id, ctx.user.id)
         STORE.delete_user_model(model.id, owner_user_id=ctx.user.id)
         return _redirect("saved=deleted")
@@ -258,7 +275,7 @@ def _render_page(
 ) -> str:
     missing = missing_custom_model_requirements(ctx.user, settings)
     models = [
-        user_model_owner_shape(model)
+        user_model_owner_shape(model, owner=ctx.user)
         for model in STORE.list_user_models_for_user(ctx.user.id)
     ]
     return render(

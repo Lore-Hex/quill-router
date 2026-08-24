@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, Query, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import (
     FileResponse,
@@ -49,7 +49,9 @@ from trusted_router.client_reliability import client_observed_status_section
 from trusted_router.config import Settings
 from trusted_router.dashboard import (
     MODEL_SEO_SECTIONS,
+    OPENROUTER_PAID_LANDING_VARIANTS,
     STATIC_DIR,
+    assigned_openrouter_landing_path,
     canonical_model_comparison_path,
     dashboard_html,
     docs_llms_full_txt,
@@ -57,6 +59,7 @@ from trusted_router.dashboard import (
     hipaa_readiness_json,
     llms_txt,
     procurement_json,
+    public_about_html,
     public_apps_html,
     public_baa_html,
     public_benchmark_report_html,
@@ -67,6 +70,7 @@ from trusted_router.dashboard import (
     public_chat_html,
     public_competitor_compare_html,
     public_competitor_compare_index_html,
+    public_contact_html,
     public_dpa_html,
     public_fusion_html,
     public_hipaa_readiness_html,
@@ -76,9 +80,10 @@ from trusted_router.dashboard import (
     public_model_compare_index_html,
     public_model_detail_html,
     public_model_not_found_html,
+    public_model_region_html,
     public_model_section_html,
     public_models_html,
-    public_not_found_html,
+    public_openrouter_experiment_html,
     public_page_html,
     public_privacy_html,
     public_provider_detail_html,
@@ -111,11 +116,25 @@ from trusted_router.domains import (
     status_hostname_for_domain,
 )
 from trusted_router.og import OG_PNG_PATH
+from trusted_router.operational_analytics_freshness import (
+    ANALYTICS_STATUS_KEY,
+    REASON_UNREACHABLE,
+    OutboxFreshness,
+    analytics_status_from_reading,
+    analytics_status_unavailable,
+)
 from trusted_router.provider_contract import (
     PROVIDER_CATALOG_SCHEMA,
     PROVIDER_CATALOG_V2_SCHEMA,
 )
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
+from trusted_router.request_limits import normalized_client_identity
+from trusted_router.routes.mcp import MCP_PROTOCOL_VERSION
+from trusted_router.routes.oauth_keys import (
+    OAUTH_AUTHORIZATION_ENDPOINT_PATH,
+    OAUTH_KEY_EXCHANGE_ENDPOINT_PATH,
+    PKCE_METHODS,
+)
 from trusted_router.serialization import user_model_public_shape
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.ops_chat import OpsChatSupportMessage, fanout_support_message
@@ -175,7 +194,18 @@ CHOOSE_PAGE_CACHE_SECONDS = 300
 CHOOSE_PAGE_STALE_SECONDS = 86_400
 CHOOSE_CATALOG_CACHE_SECONDS = 300
 CHOOSE_CATALOG_STALE_SECONDS = 86_400
+# Jurisdiction directories walk every model's endpoints on each build, so they
+# cache on the same terms as /choose: fresh for five minutes, servable stale for
+# a day while a background rebuild runs.
+MODEL_REGION_PAGE_CACHE_SECONDS = 300
+MODEL_REGION_PAGE_STALE_SECONDS = 86_400
 INDEXNOW_KEY = "360a02e48445d297f9612a4c3fef878b"
+OPENROUTER_LANDING_EXPERIMENT_CAMPAIGNS = frozenset(
+    {
+        "openrouter_alternative_exact",
+        "openrouter_lp_multi_20260822",
+    }
+)
 _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
 # /fleet fans out to every peer's status.json, so its cache TTL is what keeps
 # a page-refresh storm from turning into a cross-cloud fetch storm.
@@ -240,8 +270,10 @@ if not _leads_log.handlers:
 _INQUIRY_RATE_LOCK = threading.Lock()
 _INQUIRY_MAX_CLIENTS = 4096
 _INQUIRY_HITS: OrderedDict[str, list[float]] = OrderedDict()
+_INQUIRY_GLOBAL_HITS: list[float] = []
 _INQUIRY_WINDOW_SECONDS = 3600.0
 _INQUIRY_MAX_PER_WINDOW = 5
+_INQUIRY_GLOBAL_MAX_PER_WINDOW = 60
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _SUPPORT_CATEGORIES = {
     "api": "API and routing",
@@ -256,6 +288,9 @@ def _inquiry_rate_ok(client_ip: str, *, now: float | None = None) -> bool:
     now = time.time() if now is None else now
     cutoff = now - _INQUIRY_WINDOW_SECONDS
     with _INQUIRY_RATE_LOCK:
+        _INQUIRY_GLOBAL_HITS[:] = [hit for hit in _INQUIRY_GLOBAL_HITS if hit > cutoff]
+        if len(_INQUIRY_GLOBAL_HITS) >= _INQUIRY_GLOBAL_MAX_PER_WINDOW:
+            return False
         hits = [t for t in _INQUIRY_HITS.get(client_ip, ()) if t > cutoff]
         if len(hits) >= _INQUIRY_MAX_PER_WINDOW:
             _INQUIRY_HITS[client_ip] = hits
@@ -263,6 +298,7 @@ def _inquiry_rate_ok(client_ip: str, *, now: float | None = None) -> bool:
             _bound_inquiry_clients(cutoff)
             return False
         hits.append(now)
+        _INQUIRY_GLOBAL_HITS.append(now)
         _INQUIRY_HITS[client_ip] = hits
         _INQUIRY_HITS.move_to_end(client_ip)
         _bound_inquiry_clients(cutoff)
@@ -277,6 +313,20 @@ def _bound_inquiry_clients(cutoff: float) -> None:
         _INQUIRY_HITS.pop(key, None)
     while len(_INQUIRY_HITS) > _INQUIRY_MAX_CLIENTS:
         _INQUIRY_HITS.popitem(last=False)
+
+
+def _inquiry_client_identity(request: Request, settings: Settings) -> str:
+    """Select the bounded form limiter's client identity.
+
+    The explicit combined bridge preserves the pre-#714 socket identity until
+    #712 moves these actions behind an edge that overwrites the dedicated
+    client-IP header. Split surfaces retain the fail-closed edge identity
+    contract and never trust forwarding headers or an arbitrary socket peer.
+    """
+
+    if settings.service_surface == "combined" and settings.allow_deployed_combined_surface:
+        return request.client.host if request.client else "unknown"
+    return normalized_client_identity(request, settings)
 
 
 async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSONResponse:
@@ -305,7 +355,7 @@ async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSO
     if not name or not message or not _EMAIL_RE.match(email):
         return JSONResponse({"ok": False, "error": "missing_fields"}, status_code=422)
 
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _inquiry_client_identity(request, settings)
     if not _inquiry_rate_ok(client_ip):
         return JSONResponse({"ok": False, "error": "rate_limited"}, status_code=429)
 
@@ -425,7 +475,7 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
     ):
         return JSONResponse({"ok": False, "error": "missing_fields"}, status_code=422)
 
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _inquiry_client_identity(request, settings)
     if not _inquiry_rate_ok(f"support:{client_ip}"):
         return JSONResponse({"ok": False, "error": "rate_limited"}, status_code=429)
 
@@ -513,6 +563,18 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
     return JSONResponse({"ok": True})
 
 
+def register_public_action_routes(app: FastAPI, settings: Settings) -> None:
+    """Register the two anonymous actions on their credential-minimal bulkhead."""
+
+    @app.post("/trustedos/inquiry", include_in_schema=False)
+    async def trustedos_inquiry(request: Request) -> JSONResponse:
+        return await _handle_trustedos_inquiry(settings, request)
+
+    @app.post("/support/inquiry", include_in_schema=False)
+    async def support_inquiry(request: Request) -> JSONResponse:
+        return await _handle_support_inquiry(settings, request)
+
+
 def register_public_routes(app: FastAPI, settings: Settings) -> None:
     app.mount("/static", _CachedStaticFiles(directory=STATIC_DIR), name="static")
     trust_release_resolver = TrustReleaseResolver(settings)
@@ -597,13 +659,19 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         response_class=HTMLResponse,
         include_in_schema=False,
     )
-    async def api_reference() -> HTMLResponse:
+    async def api_reference() -> Response:
+        canonical_url = f"https://{settings.trusted_domain}/api/reference"
+        if settings.service_surface == "observer":
+            # Regional status/catalog observers intentionally expose no local
+            # schema. Send readers to the CDN-backed public documentation
+            # service instead of presenting a Swagger shell that fetches 404.
+            return RedirectResponse(url=canonical_url, status_code=307)
         response = get_swagger_ui_html(
             openapi_url=app.openapi_url or "/openapi.json",
             title=f"{app.title} API reference",
         )
         canonical = html.escape(
-            f"https://{settings.trusted_domain}/api/reference",
+            canonical_url,
             quote=True,
         )
         title = "TrustedRouter API Reference: Endpoints and Schemas"
@@ -824,9 +892,9 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def trustedos() -> str:
         return public_page_html(settings, "trustedos")
 
-    @app.post("/trustedos/inquiry", include_in_schema=False)
-    async def trustedos_inquiry(request: Request) -> JSONResponse:
-        return await _handle_trustedos_inquiry(settings, request)
+    @public_html_route("/confidential-cowork")
+    async def confidential_cowork() -> str:
+        return public_page_html(settings, "confidential-cowork")
 
     # ── SEO landing pages ────────────────────────────────────────────
     # Top-level slugs targeting high-intent buyer queries. Each is a
@@ -852,6 +920,21 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/chinese-ai-models-us-hosted")
     async def seo_chinese_ai_models_us_hosted() -> str:
         return public_page_html(settings, "chinese-ai-models-us-hosted")
+
+    # Jurisdiction directories. Their provider and model lists are rebuilt from
+    # the catalog on each render, so they are cached like the other
+    # catalog-derived pages rather than recomputed per request.
+    @public_html_route("/us-ai-models")
+    async def seo_us_ai_models(background_tasks: BackgroundTasks) -> Response:
+        return _model_region_response(settings, "us-ai-models", background_tasks)
+
+    @public_html_route("/eu-ai-models")
+    async def seo_eu_ai_models(background_tasks: BackgroundTasks) -> Response:
+        return _model_region_response(settings, "eu-ai-models", background_tasks)
+
+    @public_html_route("/china-ai-models")
+    async def seo_china_ai_models(background_tasks: BackgroundTasks) -> Response:
+        return _model_region_response(settings, "china-ai-models", background_tasks)
 
     @public_html_route("/minimax-m3-api")
     async def seo_minimax_m3_api() -> str:
@@ -925,13 +1008,71 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def seo_x402_llm_api() -> str:
         return public_page_html(settings, "x402-llm-api")
 
+    def openrouter_landing_experiment_redirect(request: Request) -> RedirectResponse:
+        attribution = getattr(request.state, "acquisition_attribution", None)
+        seed = getattr(attribution, "anonymous_id", None)
+        selected_path = assigned_openrouter_landing_path(seed)
+        query = request.url.query
+        location = f"{selected_path}?{query}" if query else selected_path
+        return RedirectResponse(
+            url=location,
+            status_code=307,
+            headers={
+                "cache-control": "private, no-store",
+                "vary": "cookie",
+            },
+        )
+
     @public_html_route("/openrouter-alternative")
-    async def seo_openrouter_alternative() -> str:
-        return public_page_html(settings, "openrouter-alternative")
+    async def seo_openrouter_alternative(
+        request: Request,
+    ) -> Response:
+        if request.query_params.get("utm_campaign") in OPENROUTER_LANDING_EXPERIMENT_CAMPAIGNS:
+            return openrouter_landing_experiment_redirect(request)
+        return HTMLResponse(public_page_html(settings, "openrouter-alternative"))
 
     @public_html_route("/private-llm-api")
     async def seo_private_llm_api() -> str:
         return public_page_html(settings, "private-llm-api")
+
+    @public_html_route("/openrouter-alternative/quickstart")
+    async def experiment_openrouter_quickstart() -> str:
+        return public_page_html(
+            settings,
+            "openrouter-alternative/quickstart",
+            canonical_path="/openrouter-alternative",
+            robots_meta="noindex,follow",
+        )
+
+    @public_html_route("/openrouter-alternative/experiment")
+    async def experiment_openrouter_landing_router(
+        request: Request,
+    ) -> RedirectResponse:
+        return openrouter_landing_experiment_redirect(request)
+
+    @public_html_route(
+        "/openrouter-alternative/lp/{variant_slug}",
+        include_slash=False,
+    )
+    async def experiment_openrouter_landing_variant(
+        variant_slug: str,
+    ) -> Response:
+        if variant_slug not in OPENROUTER_PAID_LANDING_VARIANTS:
+            # Raise rather than return HTML: the central 404 handler picks the
+            # representation from Accept, so an agent gets the markdown body
+            # with the site indexes and a browser gets the same styled page as
+            # before. Returning HTML here would hand every client HTML.
+            raise HTTPException(status_code=404)
+        return HTMLResponse(public_openrouter_experiment_html(settings, variant_slug))
+
+    @public_html_route("/private-llm-api/quickstart")
+    async def experiment_private_llm_quickstart() -> str:
+        return public_page_html(
+            settings,
+            "private-llm-api/quickstart",
+            canonical_path="/private-llm-api",
+            robots_meta="noindex,follow",
+        )
 
     @public_html_route("/hipaa-llm-api")
     async def seo_hipaa_llm_api() -> str:
@@ -1120,15 +1261,20 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             )
         html = public_blog_post_html(settings, slug)
         if html is None:
-            return HTMLResponse(
-                public_not_found_html(settings, f"/blog/{slug}"),
-                status_code=404,
-            )
+            raise HTTPException(status_code=404)
         return html
 
     @public_html_route("/security")
     async def security() -> str:
         return public_page_html(settings, "security")
+
+    @public_html_route("/about")
+    async def about() -> str:
+        return public_about_html(settings)
+
+    @public_html_route("/contact")
+    async def contact() -> str:
+        return public_contact_html(settings)
 
     @public_html_route("/legal")
     async def legal() -> str:
@@ -1149,10 +1295,6 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/support")
     async def support() -> str:
         return public_support_html(settings)
-
-    @app.post("/support/inquiry", include_in_schema=False)
-    async def support_inquiry(request: Request) -> JSONResponse:
-        return await _handle_support_inquiry(settings, request)
 
     @public_html_route("/legal/dpa")
     async def legal_dpa() -> str:
@@ -1247,7 +1389,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def benchmark_report(period: str) -> HTMLResponse:
         body = public_benchmark_report_html(settings, period)
         if body is None:
-            return HTMLResponse(public_not_found_html(settings, "/benchmarks/reports"), 404)
+            raise HTTPException(status_code=404)
         return HTMLResponse(body)
 
     @public_html_route("/rankings")
@@ -1313,6 +1455,72 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             headers={"cache-control": "public, max-age=300, s-maxage=3600"},
         )
 
+    @app.get("/.well-known/mcp.json", include_in_schema=False)
+    async def mcp_discovery() -> JSONResponse:
+        """Where the MCP server is, for a client that has only the domain.
+
+        Lives with the public documents rather than beside the MCP endpoint
+        itself: /mcp is authenticated and mounted on the control surface, while
+        discovery has to be reachable by anyone holding only the hostname. The
+        surface-routing contract caught the first version of this, which was
+        registered next to the server and so was absent from the public app the
+        URL map points at.
+
+        Everything needed to connect was published in prose on /docs/mcp: the
+        URL, the transport, that it wants a Bearer key. An agent handed
+        "trustedrouter.com" and asked to use its MCP server had to read a
+        marketing page to find them, which is the same discoverability gap that
+        made openapi.json unfindable.
+
+        This mirrors the values the server itself reports at `initialize`
+        rather than restating them, so the document cannot describe a server
+        different from the one that answers.
+        """
+        domain = settings.trusted_domain
+        return JSONResponse(
+            {
+                "name": "trustedrouter",
+                "description": (
+                    "Model catalog, provider metadata, routing advice and inference "
+                    "across hundreds of models through one OpenAI-compatible gateway."
+                ),
+                "version": settings.release,
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "transport": "http",
+                "url": f"https://{domain}/mcp",
+                "authentication": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "description": "A TrustedRouter API key: Authorization: Bearer sk-tr-...",
+                    "tokenUrl": f"https://{domain}/console/keys",
+                },
+                "capabilities": {"tools": {}},
+                "documentation": f"https://{domain}/docs/mcp",
+            },
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
+    @app.get("/.well-known/oauth-authorization-server", include_in_schema=False)
+    async def oauth_authorization_server_metadata(request: Request) -> JSONResponse:
+        """Describe the delegated API-key authorization flow to public clients."""
+        origin = f"https://{request_control_domain(request, settings)}"
+        return JSONResponse(
+            {
+                "issuer": origin,
+                "authorization_endpoint": f"{origin}{OAUTH_AUTHORIZATION_ENDPOINT_PATH}",
+                "token_endpoint": f"{origin}{OAUTH_KEY_EXCHANGE_ENDPOINT_PATH}",
+                "response_types_supported": ["code"],
+                "grant_types_supported": ["authorization_code"],
+                "code_challenge_methods_supported": sorted(PKCE_METHODS),
+                "token_endpoint_auth_methods_supported": ["none"],
+                "service_documentation": f"{origin}/sign-in-with-trustedrouter",
+                # scopes_supported is deliberately absent. API keys have no scope or
+                # permission concept, so advertising scopes would falsely imply that
+                # a requested narrow scope produces anything but a full-access key.
+            },
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
     @app.api_route("/llms.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
     async def llms() -> PlainTextResponse:
         return PlainTextResponse(
@@ -1337,6 +1545,32 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             docs_llms_full_txt(settings),
             headers=public_document_headers("/docs/llms-full.txt"),
         )
+
+    # Root-level aliases for the paths an agent tries by convention before it
+    # tries anything else. /llms-full.txt and /.well-known/llms.txt are where
+    # the llms.txt convention says to look; both used to 404 while the real
+    # documents sat under /docs, which is discoverable only after you have
+    # already found the index you were looking for.
+    @app.api_route("/llms-full.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
+    async def llms_full() -> PlainTextResponse:
+        return PlainTextResponse(
+            docs_llms_full_txt(settings),
+            headers=public_document_headers("/llms-full.txt"),
+        )
+
+    @app.api_route(
+        "/.well-known/llms.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse
+    )
+    async def well_known_llms() -> PlainTextResponse:
+        return PlainTextResponse(
+            llms_txt(settings),
+            headers=public_document_headers("/llms.txt"),
+        )
+
+    @app.api_route("/api", methods=["GET", "HEAD"], include_in_schema=False)
+    async def api_alias() -> RedirectResponse:
+        """/api is the first URL an agent guesses for API docs. It 404'd."""
+        return RedirectResponse(url="/docs", status_code=308)
 
     @public_html_route("/status")
     async def status_page(request: Request, background_tasks: BackgroundTasks) -> Response:
@@ -1408,12 +1642,15 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def status_json(background_tasks: BackgroundTasks) -> Response:
         return _cached_public_response(
             settings,
-            key="status:json",
+            key=f"status:json:{int(settings.public_client_observed_enabled)}",
             media_type="application/json",
             ttl_seconds=STATUS_RESPONSE_CACHE_SECONDS,
             stale_seconds=STATUS_RESPONSE_STALE_SECONDS,
             background_tasks=background_tasks,
-            build=lambda: _json_body({"data": _compact_status_json(_status_snapshot(settings))}),
+            cache_control_override=_status_cache_control(settings),
+            build=lambda: _json_body(
+                {"data": _compact_status_json(_status_snapshot(settings), settings=settings)}
+            ),
         )
 
     @app.get("/status/history")
@@ -1539,10 +1776,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def competitor_compare(competitor_slug: str) -> HTMLResponse:
         body = public_competitor_compare_html(settings, competitor_slug.strip())
         if body is None:
-            return HTMLResponse(
-                public_not_found_html(settings, f"/compare/{competitor_slug}"),
-                status_code=404,
-            )
+            raise HTTPException(status_code=404)
         return HTMLResponse(body)
 
     @public_html_route("/chat")
@@ -1600,18 +1834,12 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         body = public_model_detail_html(settings, cleaned)
         if body is None:
             user_model = STORE.get_user_model(normalize_custom_model_id(cleaned))
-            if (
-                user_model is not None
-                and user_model.enabled
-                and user_model.status == "active"
-            ):
+            if user_model is not None and user_model.enabled and user_model.status == "active":
                 shape = user_model_public_shape(user_model)
                 body = render_template(
                     "public/user_model_detail.html",
                     api_base_url=settings.api_base_url,
-                    site_url=(
-                        f"https://{settings.trusted_domain}/models/{user_model.id}"
-                    ),
+                    site_url=(f"https://{settings.trusted_domain}/models/{user_model.id}"),
                     title=f"{user_model.name} | User-provided model",
                     heading=user_model.name,
                     description=shape["privacy_notice"],
@@ -1643,6 +1871,35 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             path=STATIC_DIR / "favicon.ico",
             media_type="image/x-icon",
             headers={"cache-control": "max-age=86400, public"},
+        )
+
+    @app.get("/trust/control-plane.json")
+    async def trust_control_plane() -> JSONResponse:
+        """What commit THIS control plane is running.
+
+        The enclave release records answer "which gateway build is serving".
+        Nothing answered the same question about the control plane, and two of
+        the three planes did not even record it: AWS shipped TR_RELEASE="eu"
+        and Azure "azure", both constants, so every deploy reported the same
+        string and a fresh plane was indistinguishable from a stale one. That
+        is why Azure ran for an unknown length of time on a deploy script that
+        could no longer deploy it, with nothing able to notice.
+
+        Deliberately per-plane and unauthenticated: the staleness check reads
+        this from outside, the same way the trust-drift check reads
+        attestations, so it measures what is SERVING rather than what some
+        deploy job believed it shipped.
+        """
+        return JSONResponse(
+            {
+                # trusted_domain is what already differs per plane
+                # (trustedrouter.com / aws. / azure.), so it identifies the
+                # plane without adding a setting that could be set wrong.
+                "plane": settings.trusted_domain,
+                "release": settings.release,
+                "api_base_url": settings.api_base_url,
+            },
+            headers=public_document_headers("/trust/control-plane.json"),
         )
 
     @app.get("/trust/gcp-release.json")
@@ -1731,11 +1988,12 @@ def _cached_status_page_response(
     render_host = _status_render_host(settings, host)
     return _cached_public_response(
         settings,
-        key=f"status:page:{render_host}",
+        key=f"status:page:{render_host}:{int(settings.public_client_observed_enabled)}",
         media_type="text/html",
         ttl_seconds=STATUS_RESPONSE_CACHE_SECONDS,
         stale_seconds=STATUS_RESPONSE_STALE_SECONDS,
         background_tasks=background_tasks,
+        cache_control_override=_status_cache_control(settings),
         build=lambda: _status_page_html(settings, host=render_host).encode(),
     )
 
@@ -1748,6 +2006,22 @@ def _status_render_host(settings: Settings, host: str) -> str:
     return settings.trusted_domain
 
 
+def _model_region_response(
+    settings: Settings,
+    slug: str,
+    background_tasks: BackgroundTasks,
+) -> Response:
+    return _cached_public_response(
+        settings,
+        key=f"model-region:{slug}:{settings.release}",
+        media_type="text/html",
+        ttl_seconds=MODEL_REGION_PAGE_CACHE_SECONDS,
+        stale_seconds=MODEL_REGION_PAGE_STALE_SECONDS,
+        background_tasks=background_tasks,
+        build=lambda: public_model_region_html(settings, slug).encode(),
+    )
+
+
 def _cached_public_response(
     settings: Settings,
     *,
@@ -1757,8 +2031,11 @@ def _cached_public_response(
     stale_seconds: int,
     background_tasks: BackgroundTasks,
     build: Callable[[], bytes],
+    cache_control_override: str | None = None,
 ) -> Response:
-    cache_control = _public_cache_control(ttl_seconds=ttl_seconds, stale_seconds=stale_seconds)
+    cache_control = cache_control_override or _public_cache_control(
+        ttl_seconds=ttl_seconds, stale_seconds=stale_seconds
+    )
     if settings.environment == "test":
         return Response(
             content=build(),
@@ -1871,6 +2148,15 @@ def _public_cache_control(*, ttl_seconds: int, stale_seconds: int) -> str:
     return (
         f"public, max-age={browser_ttl}, s-maxage={ttl_seconds}, "
         f"stale-while-revalidate={stale_seconds}"
+    )
+
+
+def _status_cache_control(settings: Settings) -> str:
+    if settings.public_client_observed_enabled:
+        return "no-store"
+    return _public_cache_control(
+        ttl_seconds=STATUS_RESPONSE_CACHE_SECONDS,
+        stale_seconds=STATUS_RESPONSE_STALE_SECONDS,
     )
 
 
@@ -2101,17 +2387,145 @@ def _merge_client_observed_status(
     *,
     settings: Settings,
 ) -> dict[str, Any]:
+    result = dict(payload)
     snapshot = None
     if settings.environment != "test":
         try:
             snapshot = _precomputed_public_analytics_snapshot("client_reliability")
         except Exception:
             log.exception("public_analytics_snapshot_read_failed name=client_reliability")
-    result = dict(payload)
     result["client_observed"] = client_observed_status_section(
         snapshot,
         now=dt.datetime.now(dt.UTC),
     )
+    return _apply_public_client_observed_policy(result, settings=settings)
+
+
+def _client_observed_liveness(section: Any) -> dict[str, Any]:
+    source = section if isinstance(section, Mapping) else {}
+    raw_canary = source.get("canary")
+    canary = raw_canary if isinstance(raw_canary, Mapping) else {}
+    # Liveness may be public; reliability statistics may not. Keep this an
+    # explicit allowlist so every future snapshot field stays private by default.
+    result = {
+        "available": source.get("available", False),
+        "generated_at": source.get("generated_at"),
+        "canary": {
+            "last_seen_age_seconds": canary.get("last_seen_age_seconds"),
+            "last_24h_count": canary.get("last_24h_count"),
+        },
+    }
+    if "reason" in source:
+        result["reason"] = source["reason"]
+    elif not source:
+        result["reason"] = "no_data"
+    return result
+
+
+def _apply_public_client_observed_policy(
+    payload: dict[str, Any],
+    *,
+    settings: Settings,
+) -> dict[str, Any]:
+    result = dict(payload)
+    if not settings.public_client_observed_enabled:
+        result["client_observed"] = _client_observed_liveness(result.get("client_observed"))
+    return result
+
+
+#: Wall-clock bound this module puts on the outbox-lag read, independently of
+#: whatever the storage driver promises. Above the drivers' own 3s caps on
+#: purpose: their cap is the one that should normally fire (it can cancel the
+#: statement, which this cannot), and this one exists for the case where theirs
+#: does not -- a driver that ignores a timeout, a backend added later that
+#: never had one, a wait that happens before any SQL is issued. A bound that
+#: lives entirely inside the thing being bounded is a bound you cannot test.
+STATUS_ANALYTICS_READ_TIMEOUT_SECONDS = 5.0
+
+
+def _read_outbox_freshness_bounded(timeout: float) -> OutboxFreshness | None:
+    """One drain-lag reading, or ``None`` if the store did not answer in time.
+
+    The read runs on a daemon thread and the caller waits at most ``timeout``.
+    Why the wait belongs HERE and not only in the drivers: this runs on the
+    async /status.json build path, so a blocking read that overruns does not
+    occupy one worker thread, it stops the EVENT LOOP -- every request this
+    process is serving. The store side caps its pool wait and its statement,
+    but those caps are the callee's promise about itself; this is the caller's
+    own guarantee, and it holds for a backend that has not made that promise.
+
+    The thread is a daemon and is deliberately not joined after the timeout:
+    the point is that this function returns while the database is still not
+    answering. It cannot be cancelled -- Python has no way to interrupt a
+    blocking driver call -- so the abandoned read finishes into a result nobody
+    reads, under the driver's own cap, and process exit never waits on it.
+    """
+    result: list[OutboxFreshness] = []
+
+    def read() -> None:
+        try:
+            result.append(STORE.operational_analytics_outbox_freshness())
+        except Exception:
+            log.exception("operational_analytics_outbox_freshness_read_failed")
+
+    worker = threading.Thread(target=read, name="status-analytics-lag", daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        log.warning(
+            "operational_analytics_outbox_freshness_timed_out",
+            extra={"timeout_seconds": timeout},
+        )
+        return None
+    return result[0] if result else None
+
+
+def _merge_analytics_status(payload: dict[str, Any]) -> dict[str, Any]:
+    """Publish this cloud's operational-analytics drain lag.
+
+    One wiring covers every deployment because every deployment runs this
+    codebase; that is the property the fleet check in
+    :mod:`clickhouse.check_fleet_analytics_freshness` relies on, and the reason
+    the registry can insist that no cloud is missing the section.
+
+    The key is written unconditionally. Omitting it on failure would be the
+    original bug in a new place: the checker reads a missing section as "this
+    deployment does not publish drain lag", and a section that disappears
+    whenever the database is unhappy is a signal that is quietest exactly when
+    it matters. A read failure publishes `available: false` with a reason
+    instead, and never the last good number -- a stale-but-plausible lag is
+    indistinguishable from a healthy one. That claim is why `_status_snapshot`
+    calls this function on its stale-cache fallback paths TOO: those re-serve
+    the previous payload wholesale, and without a re-read they would re-serve
+    the previous drain lag with it, which is precisely the last good number.
+
+    Runs inside `_status_snapshot`, so it is behind `STATUS_SNAPSHOT_CACHE_SECONDS`
+    and costs one bounded index seek per cache miss rather than one per request.
+    Two bounds apply, and neither is the other's substitute: the store caps its
+    own pool wait and statement (3s, as `readiness_check` does), and
+    `_read_outbox_freshness_bounded` caps how long THIS function is willing to
+    wait for any of that to happen. A read that overruns publishes
+    `unavailable` and the page is served.
+
+    Nothing in here may raise. The section is written unconditionally, and an
+    exception escaping would drop the key -- which the fleet checker reads as
+    "this deployment runs code too old to publish drain lag" and answers by
+    sending somebody to redeploy a healthy service.
+    """
+    try:
+        # Called through the declared `Store` surface rather than a getattr
+        # probe, so a backend that stops implementing it fails mypy instead of
+        # silently degrading every cloud's status page to "unreachable".
+        reading = _read_outbox_freshness_bounded(STATUS_ANALYTICS_READ_TIMEOUT_SECONDS)
+        section = analytics_status_from_reading(reading, now=dt.datetime.now(dt.UTC))
+    except Exception:
+        # The projection too, not just the read: it handles a value some
+        # backend produced, and the clamps it runs are the last thing standing
+        # between that value and an uncredentialed page.
+        log.exception("operational_analytics_status_section_failed")
+        section = analytics_status_unavailable(REASON_UNREACHABLE)
+    result = dict(payload)
+    result[ANALYTICS_STATUS_KEY] = section
     return result
 
 
@@ -2121,14 +2535,22 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
     if settings.environment != "test" and _STATUS_CACHE is not None:
         cached_at, payload = _STATUS_CACHE
         if now - cached_at < STATUS_SNAPSHOT_CACHE_SECONDS:
-            return payload
+            return _apply_public_client_observed_policy(payload, settings=settings)
     if settings.environment != "test":
         try:
             precomputed = _precomputed_public_analytics_snapshot("status_inputs")
         except Exception:
             log.exception("public_analytics_snapshot_read_failed name=status_inputs")
             if _STATUS_CACHE is not None:
-                return _STATUS_CACHE[1]
+                # The rest of the payload may be served stale; the analytics
+                # section may NOT. Re-read it, so this path publishes the drain
+                # lag as of now (or `unavailable`) rather than whatever the
+                # last successful build happened to see. A stale lag is the one
+                # value here that is worse than no value: it is a plausible
+                # small number that ages into a lie while the outbox grows.
+                return _apply_public_client_observed_policy(
+                    _merge_analytics_status(_STATUS_CACHE[1]), settings=settings
+                )
         else:
             if precomputed is not None:
                 try:
@@ -2147,6 +2569,7 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
                     log.exception("public_analytics_snapshot_invalid name=status_inputs")
                 else:
                     payload = _merge_client_observed_status(payload, settings=settings)
+                    payload = _merge_analytics_status(payload)
                     _STATUS_CACHE = (now, payload)
                     return payload
     # Keep the fallback bounded. Current state and headline latency come from
@@ -2160,9 +2583,14 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
     except Exception:
         if settings.environment != "test" and _STATUS_CACHE is not None:
             log.exception("status_live_fallback_failed_serving_stale")
-            return _STATUS_CACHE[1]
+            # Same rule as the precomputed path above: everything else may be
+            # stale, the drain lag may not.
+            return _apply_public_client_observed_policy(
+                _merge_analytics_status(_STATUS_CACHE[1]), settings=settings
+            )
         raise
     payload = _merge_client_observed_status(payload, settings=settings)
+    payload = _merge_analytics_status(payload)
     if settings.environment != "test":
         _STATUS_CACHE = (now, payload)
     return payload
@@ -2297,9 +2725,13 @@ h1{{font-size:20px;margin:0 0 4px}} h2{{font-size:16px;color:#8a8f98;margin:28px
 </body></html>"""
 
 
-def _compact_status_json(snapshot: dict[str, Any]) -> dict[str, Any]:
+def _compact_status_json(
+    snapshot: dict[str, Any],
+    *,
+    settings: Settings,
+) -> dict[str, Any]:
     """Remove tooltip-only duplication from the machine-readable status feed."""
-    payload = dict(snapshot)
+    payload = _apply_public_client_observed_policy(snapshot, settings=settings)
     compact_components: list[dict[str, Any]] = []
     for component in snapshot.get("components", []):
         compact_component = dict(component)
@@ -2309,8 +2741,12 @@ def _compact_status_json(snapshot: dict[str, Any]) -> dict[str, Any]:
         ]
         compact_components.append(compact_component)
     payload["components"] = compact_components
-    if "client_observed" in snapshot:
-        payload["client_observed"] = snapshot["client_observed"]
+    # Carried through explicitly. This function is what /status.json actually
+    # serves, and the fleet freshness check fails a cloud whose payload has no
+    # `analytics` key -- so dropping it here would look exactly like a cloud
+    # running code too old to publish drain lag.
+    if ANALYTICS_STATUS_KEY in snapshot:
+        payload[ANALYTICS_STATUS_KEY] = snapshot[ANALYTICS_STATUS_KEY]
     return payload
 
 
@@ -2402,7 +2838,7 @@ def _status_page_html(settings: Settings, *, host: str) -> str:
         if is_status_hostname(settings, hostname)
         else f"https://{settings.trusted_domain}/status"
     )
-    snapshot = _status_snapshot(settings)
+    snapshot = _apply_public_client_observed_policy(_status_snapshot(settings), settings=settings)
     # Measured upstream-provider health from the rotation-probe / organic
     # benchmark samples. Informational provider watch — intentionally NOT part
     # of the router-core paging SLO above (a flaky upstream model must not page
@@ -2440,6 +2876,7 @@ def _status_page_html(settings: Settings, *, host: str) -> str:
         github_enabled=settings.github_oauth_enabled,
         static_version=settings.release,
         snapshot=snapshot,
+        public_client_observed_enabled=settings.public_client_observed_enabled,
         provider_health=provider_health,
         provider_health_window=leaderboard.get("window_label"),
     )

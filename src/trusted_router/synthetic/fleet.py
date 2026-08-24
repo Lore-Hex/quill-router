@@ -65,6 +65,7 @@ HEARTBEAT_STALE_SECONDS = 11 * 60
 BUILTIN_HEARTBEAT_TARGETS = frozenset(
     {
         "job:settle-outbox-drain",
+        "job:regional-quota-reconcile",
         "scheduler:home-settlement",
         "scheduler:remediator",
         "scheduler:synthetic",
@@ -72,10 +73,18 @@ BUILTIN_HEARTBEAT_TARGETS = frozenset(
 )
 
 
-def fleet_peers(settings: Settings) -> list[tuple[str, str]]:
-    """Parse ``synthetic_fleet_peers`` ("name=base_url,...") into pairs."""
+def parse_fleet_peers(raw: str | None) -> list[tuple[str, str]]:
+    """Parse a ``synthetic_fleet_peers`` STRING ("name=base_url,...") into pairs.
+
+    Split out from :func:`fleet_peers` so that
+    :mod:`trusted_router.operational_analytics_fleet` can read the same setting
+    as a deployment source without building a ``Settings``: the peer list is a
+    cloud-name-keyed table of deployments, so it binds drain-freshness coverage
+    the same way the region tables do, and it must not do so through a second,
+    subtly different parser.
+    """
     peers: list[tuple[str, str]] = []
-    for entry in (settings.synthetic_fleet_peers or "").split(","):
+    for entry in (raw or "").split(","):
         entry = entry.strip()
         if not entry or "=" not in entry:
             continue
@@ -85,6 +94,11 @@ def fleet_peers(settings: Settings) -> list[tuple[str, str]]:
         if name and base_url:
             peers.append((name, base_url))
     return peers
+
+
+def fleet_peers(settings: Settings) -> list[tuple[str, str]]:
+    """Parse ``synthetic_fleet_peers`` ("name=base_url,...") into pairs."""
+    return parse_fleet_peers(settings.synthetic_fleet_peers)
 
 
 def _peer_sample(

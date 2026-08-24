@@ -16,16 +16,18 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from trusted_router.catalog import MODELS
-from trusted_router.client_events_schema import ClientEventsBatch
 from trusted_router.client_reliability import (
     METHODOLOGY_VERSION,
     classify_tr_fault,
     timeout_floor_met,
 )
 from trusted_router.storage_models import Generation, SyntheticProbeSample
+
+if TYPE_CHECKING:
+    from trusted_router.client_events_schema import ClientEventsBatch
 
 OPERATIONAL_ANALYTICS_OUTBOX_SHARDS = 32
 ACTIVITY_EVENT_KIND = "activity"
@@ -170,6 +172,11 @@ def activity_payload(generation: Generation) -> dict[str, Any]:
         "generation_id": generation.id,
         "request_id": generation.request_id,
         "tenant_id": analytics_surrogate("workspace", generation.workspace_id),
+        # The raw id, alongside the surrogate. The surrogate stays because it
+        # is the ClickHouse sort key; the raw id is deliberate (2026-08-19):
+        # workspace ids are pseudonymous, ClickHouse holds no emails, and rows
+        # that name their workspace need no directory refresh to be joinable.
+        "workspace_id": generation.workspace_id,
         "key_id": analytics_surrogate("api-key", generation.key_hash),
         "model": generation.model,
         "provider": generation.provider or "",

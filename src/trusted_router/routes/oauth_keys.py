@@ -30,6 +30,8 @@ from trusted_router.types import ErrorType
 from trusted_router.views import render_template
 
 PKCE_METHODS = {"S256", "plain"}
+OAUTH_AUTHORIZATION_ENDPOINT_PATH = "/auth"
+OAUTH_KEY_EXCHANGE_ENDPOINT_PATH = "/auth/keys"
 RESET_INTERVALS = {"daily", "weekly", "monthly"}
 OAUTH_FUNDING_AMOUNTS = {"5", "20", "100"}
 OAUTH_DEFAULT_FUNDING_AMOUNT = "20"
@@ -50,12 +52,14 @@ OAUTH_AUTHORIZATION_FIELDS = (
 
 
 def register_oauth_key_routes(router: APIRouter) -> None:
-    @router.get("/auth")
+    @router.get(OAUTH_AUTHORIZATION_ENDPOINT_PATH)
     async def oauth_authorize_page(request: Request, settings: SettingsDep) -> Response:
         params = _oauth_params_from_query(request)
         try:
             principal = principal_from_request(request, settings)
-        except HTTPException:
+        except HTTPException as exc:
+            if exc.status_code != 401:
+                raise
             return HTMLResponse(_signin_html(request, settings, params), status_code=401)
         if not principal.is_management:
             raise api_error(403, "Only management users can delegate credits", ErrorType.FORBIDDEN)
@@ -75,6 +79,8 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         try:
             principal = principal_from_request(request, settings)
         except HTTPException as exc:
+            if exc.status_code != 401:
+                raise
             raise api_error(401, "Sign in is required", ErrorType.UNAUTHORIZED) from exc
         if not principal.is_management:
             raise api_error(403, "Only management users can fund credits", ErrorType.FORBIDDEN)
@@ -119,6 +125,8 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         try:
             principal = principal_from_request(request, settings)
         except HTTPException as exc:
+            if exc.status_code != 401:
+                raise
             raise api_error(401, "Sign in is required", ErrorType.UNAUTHORIZED) from exc
         if not principal.is_management:
             raise api_error(403, "Only management users can delegate credits", ErrorType.FORBIDDEN)
@@ -145,7 +153,7 @@ def register_oauth_key_routes(router: APIRouter) -> None:
             }
         )
 
-    @router.post("/auth/keys")
+    @router.post(OAUTH_KEY_EXCHANGE_ENDPOINT_PATH)
     async def auth_keys(request: Request) -> JSONResponse:
         body = await json_body(request)
         raw_code = str(body.get("code") or "")

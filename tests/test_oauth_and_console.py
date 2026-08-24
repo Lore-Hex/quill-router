@@ -1455,9 +1455,10 @@ def test_console_add_payment_method_mock_saves_method(
     assert account.stripe_customer_id
     assert account.stripe_payment_method_id
     page = client.get("/console/credits")
+    details = client.get("/console/credits/stripe-details")
     assert "Replace card" in page.text
     assert "Manage in Stripe" in page.text
-    assert "Test card" in page.text
+    assert "Test card" in details.text
     assert "Remove" in page.text
 
 
@@ -1600,12 +1601,15 @@ def test_console_credits_lists_saved_stripe_card(monkeypatch) -> None:
     )
 
     page = client.get("/console/credits")
+    details = client.get("/console/credits/stripe-details")
 
     assert page.status_code == 200
-    assert "Visa card" in page.text
-    assert "ending in 4242" in page.text
-    assert "expires 12/2031" in page.text
-    assert "id ...e_card" in page.text
+    assert details.status_code == 200
+    assert "Stripe card details are temporarily unavailable" in page.text
+    assert "Visa card" in details.text
+    assert "ending in 4242" in details.text
+    assert "expires 12/2031" in details.text
+    assert "id ...e_card" in details.text
     assert "Remove" in page.text
 
 

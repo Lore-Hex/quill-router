@@ -11,6 +11,7 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.provider_lifecycle import (
     DEEPSEEK_V4_PRICING_EFFECTIVE_AT,
+    DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT,
     ProviderPrice,
     provider_price_microdollars,
     provider_pricing_schedule,
@@ -114,6 +115,48 @@ def test_deepseek_v4_flash_uses_half_open_utc_peak_windows(
 
 
 @pytest.mark.parametrize(
+    ("at", "expected"),
+    [
+        # The new rule starts at Sunday midnight in Beijing. A Sunday instant
+        # inside an otherwise-peak UTC window must use the off-peak rate.
+        (
+            datetime(2026, 8, 23, 2, 0, tzinfo=UTC),
+            ProviderPrice(220_000, 660_000, 7_000),
+        ),
+        # Every later Saturday is off-peak all day in Beijing too.
+        (
+            datetime(2026, 8, 29, 2, 0, tzinfo=UTC),
+            ProviderPrice(220_000, 660_000, 7_000),
+        ),
+        # The weekday peak schedule remains unchanged.
+        (
+            datetime(2026, 8, 24, 2, 0, tzinfo=UTC),
+            ProviderPrice(440_000, 1_320_000, 14_000),
+        ),
+    ],
+)
+def test_deepseek_weekends_are_always_off_peak_in_beijing(
+    at: datetime,
+    expected: ProviderPrice,
+) -> None:
+    assert provider_price_microdollars("deepseek", _FLASH, at=at) == expected
+
+
+def test_deepseek_weekend_rule_does_not_apply_before_announced_cutover() -> None:
+    # Saturday morning in Beijing was still governed by the old time-of-day
+    # schedule because the notice takes effect Sunday at 00:00 Beijing time.
+    assert provider_price_microdollars(
+        "deepseek",
+        _FLASH,
+        at=datetime(2026, 8, 22, 2, 0, tzinfo=UTC),
+    ) == ProviderPrice(440_000, 1_320_000, 14_000)
+
+    assert DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT == datetime(
+        2026, 8, 22, 16, 0, tzinfo=UTC
+    )
+
+
+@pytest.mark.parametrize(
     ("model_id", "off_peak", "peak"),
     [
         (
@@ -156,6 +199,11 @@ def test_deepseek_schedule_metadata_is_explicit_and_authorization_scoped() -> No
             {"start": "01:00", "end": "04:00"},
             {"start": "06:00", "end": "10:00"},
         ],
+        "weekend_off_peak": {
+            "effective_at": "2026-08-22T16:00:00Z",
+            "timezone": "Asia/Shanghai",
+            "days": ["Saturday", "Sunday"],
+        },
         "rate_locked_at": "authorization",
     }
     assert provider_pricing_schedule(
@@ -208,6 +256,7 @@ def test_deepseek_pricing_page_explains_variable_direct_rate(
     assert "authorization-time pricing" in response.text
     assert "01:00–04:00 UTC" in response.text
     assert "06:00–10:00 UTC" in response.text
+    assert "Weekends are off-peak all day in Beijing time" in response.text
 
 
 @pytest.mark.parametrize(

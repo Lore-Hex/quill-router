@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Google AI Studio chat and image models that are available from the Gemini API before the OpenRouter snapshot catches up. Verified against Google Gemini /v1beta/models and direct countTokens/generateContent smoke.",
   "provider": "google-ai-studio",
   "source": "https://generativelanguage.googleapis.com/v1beta/models",
-  "generated_at": "2026-08-16T15:24:13Z",
+  "generated_at": "2026-08-24T16:40:13Z",
   "model_count": 35,
   "models": [
     {
@@ -76,7 +76,8 @@
         "image"
       ],
       "endpoints": [
-        "chat/completions"
+        "chat/completions",
+        "images"
       ],
       "status": 1
     },
@@ -441,23 +442,28 @@
       "display_name": "Nano Banana 2",
       "title": "google/gemini-3.1-flash-image",
       "model_type": "chat",
-      "features": [],
+      "features": [
+        "reasoning",
+        "image-generation"
+      ],
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
+        "image",
         "text"
       ],
       "endpoints": [
-        "chat/completions"
+        "images"
       ],
       "status": 1,
       "id": "google/gemini-3.1-flash-image",
       "upstream_id": "gemini-3.1-flash-image",
       "context_length": 65536,
       "max_output_tokens": 65536,
-      "routable": false,
-      "routable_reason": "awaiting-price"
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 60000000
     },
     {
       "display_name": "Gemini 3.1 Flash Lite",
@@ -809,7 +815,7 @@
       "upstream_id": "gemini-3.7-flash",
       "context_length": 1048576,
       "max_output_tokens": 65536,
-      "routable": true,
+      "routable": false,
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 750000,
       "output_token_price_per_m": 3750000,

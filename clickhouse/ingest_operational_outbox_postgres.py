@@ -34,6 +34,19 @@ delivery for all 32 shards.  Non-retryable errors drop the connection so the
 next pass reconnects; DSQL expires long-lived connections, so that path is
 ordinary rather than exceptional.
 
+**That silence has one bound this module cannot provide.**  ``backlog_alarm``
+below is emitted BY this process, so it says nothing when the process does not
+exist, which is what happened on AWS-EU for fifteen days (2026-08-02..17: no
+unit, no env file, 470,370 rows).  The out-of-band answer is the same number
+read from the outside: the control plane publishes ``SELECT_OLDEST_SQL``'s
+result as ``analytics.drain_lag_seconds`` in ``/status.json``
+(:mod:`trusted_router.operational_analytics_freshness`), and
+:mod:`clickhouse.check_fleet_analytics_freshness` checks every cloud's with no
+credentials.  This module's lag and that published lag are the same statement
+by construction — ``SELECT_OLDEST_SQL`` is imported from the control-plane
+outbox rather than retyped — because the alarm and the monitor meaning
+different things is a defect nothing would report.
+
 Durability: two independent nodes, no quorum
 --------------------------------------------
 
@@ -197,6 +210,12 @@ from trusted_router.storage_operational_analytics import (
     OPERATIONAL_ANALYTICS_OUTBOX_SHARDS as OUTBOX_SHARDS,
 )
 
+# Same argument, applied to the lag statement: the control plane's outbox owns
+# the definition, and this daemon reads it rather than restating it.
+from trusted_router.storage_postgres_operational_analytics_outbox import (
+    SELECT_OLDEST_ENQUEUED_AT_SQL,
+)
+
 #: Aurora DSQL surfaces every OCC abort here; stock Postgres uses it for
 #: serialization failures. Both mean "rolled back whole, try again".
 SERIALIZATION_FAILURE = "40001"
@@ -245,9 +264,14 @@ DELETE_BY_KEY_SQL = (
 # One statement for the whole table, not one per shard: the lag metric used to
 # cost 32 transactions per poll even when the queue was empty. Backed by
 # tr_operational_analytics_outbox_enqueued_at_idx, so this is an index seek.
-SELECT_OLDEST_SQL = (
-    "SELECT enqueued_at FROM tr_operational_analytics_outbox ORDER BY enqueued_at LIMIT 1"
-)
+#
+# IMPORTED, not retyped. The control plane publishes this same statement's
+# result as `analytics.drain_lag_seconds`, and the whole value of that field is
+# that an outside observer's number and this daemon's `backlog_alarm` are the
+# same measurement. Two literals kept equal by a comment is a drift waiting to
+# happen, and the drift would be invisible: both sides would keep returning a
+# number, and only their meanings would part company.
+SELECT_OLDEST_SQL = SELECT_OLDEST_ENQUEUED_AT_SQL
 
 log = logging.getLogger("trusted_router.operational_analytics_ingest_postgres")
 

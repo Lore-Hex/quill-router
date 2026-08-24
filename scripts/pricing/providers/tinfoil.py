@@ -11,6 +11,7 @@ adapter) and translate native ids → OR-canonical inline.
 
 OpenAI-compatible chat completions at inference.tinfoil.sh/v1.
 """
+
 from __future__ import annotations
 
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -40,6 +41,7 @@ MANIFEST_PATH = (
 
 EXPECTED_MODELS = [
     "deepseek/deepseek-v4-flash",
+    "moonshotai/kimi-k3",
     "z-ai/glm-5.2",
     "google/gemma-4-31b-it",
 ]
@@ -51,9 +53,9 @@ EXPECTED_MODELS = [
 _NATIVE_TO_OR_ID = {
     "kimi-k2-6": "moonshotai/kimi-k2.6",
     "kimi-k2-7-code": "moonshotai/kimi-k2.7-code",
-    # Kimi K3 is announced but not live on Tinfoil yet. Mapping its expected
-    # native ID makes the hourly feed discover it automatically without
-    # treating it as required or advertising it before the provider does.
+    # Kimi K3 launched on Tinfoil's public API on 2026-08-20. Keeping the
+    # native ID explicit prevents a future generic-id normalization change
+    # from silently dropping this confidential route.
     "kimi-k3": "moonshotai/kimi-k3",
     "glm-5-1": "z-ai/glm-5.1",
     "glm-5-2": "z-ai/glm-5.2",
@@ -93,9 +95,7 @@ def _chat_manifest_row(
         return None
     raw_endpoints = source.get("endpoints")
     endpoint_names = (
-        {str(endpoint) for endpoint in raw_endpoints}
-        if isinstance(raw_endpoints, list)
-        else set()
+        {str(endpoint) for endpoint in raw_endpoints} if isinstance(raw_endpoints, list) else set()
     )
     if endpoint_names and "/v1/chat/completions" not in endpoint_names:
         return None

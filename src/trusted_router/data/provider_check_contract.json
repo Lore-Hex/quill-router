@@ -195,7 +195,7 @@
     "model_id_pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$",
     "owner_pattern": "^[a-z0-9][a-z0-9._-]*$"
   },
-  "contract_version": "973e380e5ab7e6303576dd7555c186244649befdc2da5c64017611abe9918769",
+  "contract_version": "9b6b5aba71fb7ffc62bb0de07dd9055c343f781358c69daf54af32de620e0026",
   "decision_tables": [
     {
       "max_tokens": 512,
@@ -2857,7 +2857,7 @@
         "provider": "alpha",
         "provider_availability": 1.0,
         "provider_sample_count": 4,
-        "rank": 1,
+        "rank": 3,
         "rank_eligible": true,
         "sample_count": 4,
         "throughput_sample_count": 0,
@@ -2896,7 +2896,7 @@
         "provider": "alpha",
         "provider_availability": 0.75,
         "provider_sample_count": 4,
-        "rank": 2,
+        "rank": 1,
         "rank_eligible": true,
         "sample_count": 4,
         "throughput_sample_count": 2,
@@ -3003,7 +3003,7 @@
         "provider": "beta",
         "provider_availability": 0.75,
         "provider_sample_count": 4,
-        "rank": 3,
+        "rank": 2,
         "rank_eligible": true,
         "sample_count": 4,
         "throughput_sample_count": 0,
@@ -3064,11 +3064,11 @@
       }
     ],
     "models_order": [
-      "alpha/alpha/challenger",
       "alpha/alpha/steady",
       "beta/beta/stable",
-      "alpha/alpha/thin",
+      "alpha/alpha/challenger",
       "beta/beta/thin",
+      "alpha/alpha/thin",
       "alpha/alpha/throughput-only"
     ],
     "provider_count": 2,
@@ -4289,12 +4289,12 @@
   "source_hashes": {
     "catalog._decimal": "2c1bf5587a4d60d56b65cdece79937608e43a35661df24b4d1f087de5abfb4ce",
     "components.is_router_origin_error": "ce3a226b41f03957f4ef43d2bdb51a1d5750db7ae2ad96b5b7c5fb1efee6f134",
-    "leaderboard._aggregate_providers": "a02a591b9c8460990849003126532c0fbdd3ae30779e6e17b24565c6aa58dc4d",
+    "leaderboard._aggregate_providers": "f7db7e28ddb6b00be1c58e421e209317765eb8baa8d93ababf5d85f0d80c5c19",
     "leaderboard._effective_throughput": "8d2a0df175cb0a7b986b0900f44f75fbe42e6b604e45127a2bdb0007d2b5e020",
     "leaderboard._excluded_from_uptime": "6e673fe96aa8f6e317a2db774aa9f46de1a3c38ba958245e3d4e1527f2eb61a5",
     "leaderboard._percentile": "f400388aa9334b49eef0e7005a79478c39c5c7868c2b0a6a3909b1f443f95742",
     "leaderboard._sort_key": "ce505ca4b7d577416f080b19c67feb6791f7f3e446374677e402f5f8a10891b4",
-    "leaderboard.aggregate_leaderboard": "1ae336252e85afbe0181b55ed8c37288c8f144d01ad8c6db4888eb739bf20601",
+    "leaderboard.aggregate_leaderboard": "773c03374c2209a5bd971650658ca2deb722236969e79d51489ecd3330a5f0dd",
     "probes._chat_text": "d93e2345277c7fc9f2f201a308768f3cc42b2d53a9715a5cfe7801e3a0f2a3bb",
     "probes._elapsed_ms_with_clock": "ffe5c0dcede88715e77c5e15672aee78b2b3eb40731a98cbce277642d82a22a4",
     "probes._first_int": "29a2c84649a74c53afb4bfe4d017f9b799908bcd08704a26d1e4d2b7ac46c64a",
@@ -4311,7 +4311,7 @@
     "probes._sse_line_payload": "b1c471040fa210f1fafb8653c207989707ae0cdd014e9e31ed03cbc931d70e6e",
     "probes._sse_line_usage": "03d596eaae4e6875f2e58789d477987617c72f87ba23120503c101374d4063bc",
     "provider_reliability.classify_provider_failure": "f8e1b14099827858028ec415bf78272616bc81f3aeafc04a0b83117efd2c9e37",
-    "provider_reliability.model_deadlines": "61436cfe1e43f1aeb34ada0539a284de2a1c9ea4f871118db1ea80e6039dee08",
+    "provider_reliability.model_deadlines": "7ba97c1b11a564e48c8b0029619fa42a5b3f0fe017fca1d552d4847e45adab45",
     "routes._classify": "e28308b685513256d3d6441d429e1896796f68cc1d131bb78832fad4633bf7f0"
   }
 }

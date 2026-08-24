@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from trusted_router.catalog import endpoints_for_model
 from trusted_router.dashboard import PUBLIC_PAGES
 from trusted_router.storage import STORE
 
@@ -74,6 +75,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/gpt-oss-120b-api": "gpt-oss-120b, served fast on Cerebras and attested down to the image digest.",
         "/eu-ai-act-llm-compliance": "Your EU AI Act compliance file depends on facts from your LLM API vendor, and attestation makes those facts checkable.",
         "/x402-llm-api": "Your agent gets a 402, signs a payment, retries the call, and reads the completion.",
+        "/confidential-cowork": "Confidentiality cannot be clicked away",
     }
 
     for path, marker in markers.items():
@@ -219,6 +221,24 @@ def test_confidential_ai_badge_is_embeddable_and_scoped(client: TestClient) -> N
         assert badge.status_code == 200, asset
         assert "public" in badge.headers["cache-control"]
 
+
+def test_confidential_cowork_is_self_serve_and_fail_closed(client: TestClient) -> None:
+    response = client.get("/confidential-cowork")
+
+    assert response.status_code == 200
+    assert "Confidential Cowork by TrustedRouter" in response.text
+    assert "Confidential-Cowork-macOS-universal.dmg" in response.text
+    assert "trustedrouter/confidential" in response.text
+    assert "searchable catalog of specific models and providers" in response.text
+    assert "Default route</span><strong>trustedrouter/confidential" in response.text
+    assert "Data collection</span><strong>deny" in response.text
+    assert "United States or European Union" in response.text
+    assert "No eligible confidential provider means no model request" in response.text
+    assert "Plan an enterprise deployment" in response.text
+    screenshot = client.get("/static/confidential-cowork-desktop.png")
+    assert screenshot.status_code == 200
+    assert screenshot.headers["content-type"] == "image/png"
+
     canonical_mark = 'd="M1.4 7.5H6.5L11 12M1.4 16.5H4L8.5 12M1.4 12H15.5"'
     for asset in (
         "/static/badges/confidential-ai-light.svg",
@@ -346,8 +366,11 @@ def test_choose_page_embeds_the_triangle_app(client: TestClient) -> None:
     assert "Trusted Execution Environment" in response.text
     assert "Tinfoil first" not in response.text
     assert "providers such as" not in response.text
-    assert "trustedrouter/e2e" in response.text
+    assert "trustedrouter/confidential" in response.text
+    assert "trustedrouter/fast" in response.text
+    assert "trustedrouter/eu" in response.text
     assert "trustedrouter/synth" in response.text
+    assert "trustedrouter/advisor" in response.text
     # Must unfurl with the tailored triangle social card (the PNG is checked
     # into static/og/, so _og_image_url resolves it rather than the default).
     assert 'property="og:title"' in response.text
@@ -361,10 +384,13 @@ def test_choose_app_static_asset_is_served(client: TestClient) -> None:
     response = client.get("/static/choose-app.html")
 
     assert response.status_code == 200
+    assert '<meta name="robots" content="noindex,follow">' in response.text
+    assert '<link rel="canonical" href="https://trustedrouter.com/choose">' in response.text
     assert "Choose with route-level facts." in response.text
     assert "Upstream privacy floor" in response.text
+    assert 'id="providerCount"' in response.text
     assert "/static/choose-app.css?v=2" in response.text
-    assert "/static/choose-app.js?v=2" in response.text
+    assert "/static/choose-app.js?v=3" in response.text
     assert "fonts.googleapis.com" not in response.text
     # Privacy floor defaults to Open (any provider), not ZDR.
     assert '<option value="0" selected>' in response.text
@@ -461,14 +487,17 @@ def test_public_models_page_does_not_require_api_key(client: TestClient) -> None
 
 
 def test_public_model_detail_lists_distinct_serving_providers(client: TestClient) -> None:
-    response = client.get("/models/moonshotai/kimi-k2.6")
+    model_id = "moonshotai/kimi-k2.6"
+    response = client.get(f"/models/{model_id}")
 
     assert response.status_code == 200
     assert "Providers serving this model" in response.text
     assert "Endpoints</th>" in response.text
     assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
     assert "IQ 116" in response.text
-    for provider in ["kimi", "parasail", "together", "novita"]:
+    expected_providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
+    assert "kimi" in expected_providers
+    for provider in expected_providers:
         assert f'title="{provider}"' in response.text
 
 
@@ -620,7 +649,7 @@ def test_public_model_detail_uses_service_structured_data(client: TestClient) ->
 
     assert response.status_code == 200
     match = re.search(
-        r'<script type="application/ld\+json">(?P<payload>.*?)</script>',
+        r'<script type="application/ld\+json"[^>]*>(?P<payload>.*?)</script>',
         response.text,
     )
     assert match is not None
@@ -647,8 +676,13 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     # Redesigned homepage (2026-06): a static routing-diagram hero replaces the
     # animated orbital scene, on the friend-provided modern layout. Assert the
     # new conversion surface rather than the old orbital-scene markup.
-    assert "Every model." in response.text  # homepage tagline
+    assert "600+ AI Models at your fingertips." in response.text
+    assert "One Unified Interface." in response.text
     assert "Privacy with proof." in response.text
+    assert "Better privacy, better prices, better uptime, no subscriptions." in response.text
+    assert '<strong>81+</strong><span>providers</span>' in response.text
+    assert '<strong>3 clouds</strong><span>GCP · AWS · Azure</span>' in response.text
+    assert 'class="region-map-card"' not in response.text
     assert "Provable privacy." not in response.text
     assert "ATTESTED GATEWAY" in response.text  # attestation record
     assert "Get API key" in response.text  # primary CTA

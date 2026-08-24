@@ -19,7 +19,7 @@ from trusted_router.storage import STORE
 
 def register(app: FastAPI) -> None:
     @app.get("/console/byok")
-    async def console_byok(ctx: ConsoleDep, settings: SettingsDep) -> Response:
+    def console_byok(ctx: ConsoleDep, settings: SettingsDep) -> Response:
         providers = [
             {
                 "provider": p.provider,
@@ -41,7 +41,7 @@ def register(app: FastAPI) -> None:
         ))
 
     @app.post("/console/byok")
-    async def console_save_byok(
+    def console_save_byok(
         ctx: ConsoleDep,
         settings: SettingsDep,
         provider: str = Form(..., min_length=1, max_length=64),

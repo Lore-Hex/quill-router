@@ -560,6 +560,98 @@ def test_wallet_challenge_is_single_use(store: Store) -> None:
     assert store.consume_wallet_challenge(raw_nonce) is None
 
 
+def test_reissuing_active_wallet_challenge_reuses_same_nonce(
+    store: Store,
+    unique: str,
+) -> None:
+    """Reissuing for a known wallet cannot invalidate its displayed prompt.
+
+    Challenge issuance is unauthenticated, so replacement-on-request lets an
+    attacker race a legitimate wallet forever. The same address/domain slot
+    must instead return its still-live nonce without another durable record.
+    """
+    address = f"wallet-{unique}"
+    first_raw = f"old-{unique}"
+    first_message = (
+        "trusted.example wants you to sign in with your Ethereum account:\n"
+        f"{address}\n\nNonce: {first_raw}"
+    )
+    first_nonce, first = store.create_wallet_challenge(
+        address=address,
+        message=first_message,
+        ttl_seconds=300,
+        raw_nonce=first_raw,
+    )
+    proposed_raw = f"new-{unique}"
+    proposed_message = (
+        "trusted.example wants you to sign in with your Ethereum account:\n"
+        f"{address}\n\nNonce: {proposed_raw}"
+    )
+    returned_nonce, returned = store.create_wallet_challenge(
+        address=f"  {address.upper()}  ",
+        message=proposed_message,
+        ttl_seconds=300,
+        raw_nonce=proposed_raw,
+    )
+
+    assert first_nonce == first_raw
+    assert returned_nonce == first_raw
+    assert returned.hash == first.hash
+    assert returned.message == first_message
+    assert store.consume_wallet_challenge(proposed_raw) is None
+    consumed = store.consume_wallet_challenge(first_nonce)
+    assert consumed is not None
+    assert consumed.hash == first.hash
+    assert consumed.address == address
+
+    fresh_raw = f"after-consume-{unique}"
+    fresh_nonce, fresh = store.create_wallet_challenge(
+        address=address,
+        message=(
+            "trusted.example wants you to sign in with your Ethereum account:\n"
+            f"{address}\n\nNonce: {fresh_raw}"
+        ),
+        ttl_seconds=300,
+        raw_nonce=fresh_raw,
+    )
+    assert fresh_nonce == fresh_raw
+    assert fresh.hash != first.hash
+    assert store.consume_wallet_challenge(fresh_nonce) is not None
+
+
+def test_wallet_challenge_scope_isolated_by_siwe_domain(
+    store: Store,
+    unique: str,
+) -> None:
+    address = f"wallet-domain-{unique}"
+    first_nonce = f"first-domain-{unique}"
+    second_nonce = f"second-domain-{unique}"
+    first_returned, first = store.create_wallet_challenge(
+        address=address,
+        message=(
+            "trusted.example wants you to sign in with your Ethereum account:\n"
+            f"{address}\n\nNonce: {first_nonce}"
+        ),
+        ttl_seconds=300,
+        raw_nonce=first_nonce,
+    )
+    second_returned, second = store.create_wallet_challenge(
+        address=address,
+        message=(
+            "ally.example wants you to sign in with your Ethereum account:\n"
+            f"{address}\n\nNonce: {second_nonce}"
+        ),
+        ttl_seconds=300,
+        raw_nonce=second_nonce,
+    )
+
+    assert first_returned == first_nonce
+    assert second_returned == second_nonce
+    assert first.hash != second.hash
+    assert store.consume_wallet_challenge(first_nonce) is not None
+    assert store.consume_wallet_challenge(second_nonce) is not None
+
+
 def test_unknown_wallet_challenge_returns_none(store: Store, unique: str) -> None:
     """An unissued nonce must not authenticate anything."""
     assert store.consume_wallet_challenge(f"never-issued-{unique}") is None
@@ -645,6 +737,31 @@ def test_api_key_lookups_agree_and_delete_revokes(store: Store, workspace_id: st
     assert store.get_key_by_raw(raw_key) is None
     assert store.get_key_by_hash(created.hash) is None
     assert store.get_key_by_lookup_hash(created.lookup_hash) is None
+
+
+def test_api_key_usage_projection_is_immediate_and_scoped(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+    unique: str,
+) -> None:
+    """The console projection is a portable read-your-write Store contract."""
+    _raw_key, created = store.create_api_key(
+        workspace_id=workspace_id,
+        name=f"projection-{unique}",
+        creator_user_id=user_id,
+        limit_daily_microdollars=1_000,
+    )
+
+    projected = store.list_api_keys_with_usage(workspace_id)
+
+    assert len(projected) == 1
+    assert projected[0].api_key.hash == created.hash
+    assert projected[0].usage_microdollars == 0
+    assert projected[0].windows == {"daily": 0, "weekly": 0, "monthly": 0}
+    assert store.list_api_keys_with_usage(f"other-{unique}") == []
+    assert store.delete_key(created.hash) is True
+    assert store.list_api_keys_with_usage(workspace_id) == []
 
 
 def test_auth_session_lifecycle(store: Store, user_id: str) -> None:
@@ -1066,8 +1183,17 @@ def test_reserve_key_limit_window_blocks_before_lifetime(store: Store, unique: s
     with pytest.raises(KeyWindowLimitExceeded) as excinfo:
         store.reserve_key_limit(kh, 10, usage_type="Credits")
     assert excinfo.value.window == "daily"
+    assert excinfo.value.decision.limit == 100
+    assert excinfo.value.decision.remaining == 5
+    assert excinfo.value.decision.allowed is False
+    assert excinfo.value.decision.reset_seconds >= 1
     # Under the window cap still succeeds against the same row.
-    store.reserve_key_limit(kh, 5, usage_type="Credits")
+    decision = store.reserve_key_limit(kh, 5, usage_type="Credits")
+    assert decision is not None
+    assert decision.window == "daily"
+    assert decision.limit == 100
+    assert decision.remaining == 5
+    assert decision.allowed is True
 
 
 def test_stale_window_start_reads_as_zero(store: Store, unique: str) -> None:

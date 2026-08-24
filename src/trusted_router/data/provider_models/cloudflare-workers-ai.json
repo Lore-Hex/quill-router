@@ -1,9 +1,9 @@
 {
   "provider": "cloudflare-workers-ai",
   "source": "https://api.cloudflare.com/client/v4/accounts/2698c706fd4793c818af14adad4e1a39/ai/models/search?per_page=100",
-  "generated_at": "2026-08-16T15:24:13Z",
+  "generated_at": "2026-08-24T16:40:13Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 29,
+  "model_count": 30,
   "models": [
     {
       "display_name": "@cf/aisingapore/gemma-sea-lion-v4-27b-it",
@@ -595,7 +595,7 @@
       "status": 1,
       "id": "deepseek/deepseek-v4-flash-0731",
       "upstream_id": "@cf/deepseek-ai/deepseek-v4-flash-0731",
-      "context_length": 1048576,
+      "context_length": 1310720,
       "routable": true,
       "input_token_price_per_m": 440000,
       "output_token_price_per_m": 1320000,
@@ -622,6 +622,28 @@
       "input_token_price_per_m": 1320000,
       "output_token_price_per_m": 3960000,
       "cached_input_token_price_per_m": 44000
+    },
+    {
+      "display_name": "@cf/qwen/qwen3.8-27b",
+      "title": "@cf/qwen/qwen3.8-27b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-27b",
+      "upstream_id": "@cf/qwen/qwen3.8-27b",
+      "context_length": 262144,
+      "routable": true,
+      "input_token_price_per_m": 450000,
+      "output_token_price_per_m": 3200000,
+      "cached_input_token_price_per_m": 50000
     }
   ]
 }

@@ -188,6 +188,16 @@ class FakeSpannerDatabase:
         self.aborts = 0
         self.commits = 0
         self.last_timeout_secs: float | None = None
+        # Preserve the exact consistency options passed by production code so
+        # tests can distinguish a deliberate stale display read from a strong
+        # money / authorization read.  The fake does not model historical row
+        # versions; this records the contract without pretending that it does.
+        self.snapshot_calls: list[dict[str, Any]] = []
+        # Read-RPC instrumentation for fan-out tests.  Count the statement
+        # handed to a snapshot, not helper calls, so a hidden fallback lookup
+        # cannot masquerade as one logical Store operation.
+        self.snapshot_execute_sql_calls = 0
+        self.snapshot_sql: list[str] = []
 
     def run_in_transaction(self, fn: Any, *, timeout_secs: float | None = None) -> Any:
         # timeout_secs mirrors google-cloud-spanner's Database.run_in_transaction
@@ -323,11 +333,15 @@ class FakeSpannerDatabase:
                     self.entity_kind_versions[kind] = new_version
             return True
 
-    def snapshot(self, *, multi_use: bool = False, **_kwargs: Any) -> _FakeSnapshot:
+    def snapshot(self, *, multi_use: bool = False, **kwargs: Any) -> _FakeSnapshot:
         # Models real Spanner: a single-use snapshot (the default) permits exactly
         # ONE read; a second read on it raises. Only multi_use=True allows many.
         # Prod bug fa9f5d4 was a single-use snapshot that grew a second read and
         # faulted live — the old fake "allowed repeated reads regardless" and hid it.
+        call = dict(kwargs)
+        if multi_use:
+            call["multi_use"] = True
+        self.snapshot_calls.append(call)
         return _FakeSnapshot(self, multi_use=multi_use)
 
     def batch(self) -> _FakeBatch:
@@ -1263,6 +1277,8 @@ class _FakeSnapshot:
                 "database.snapshot(multi_use=True) for multiple reads "
                 "(models real Spanner — see prod fix fa9f5d4)"
             )
+        self.db.snapshot_execute_sql_calls += 1
+        self.db.snapshot_sql.append(sql)
         return _execute_sql(self.db, None, sql, params or {})
 
 
@@ -1481,6 +1497,292 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+    if "/* nonclosed_regional_quota_leases_for_repair */" in sql:
+        workspace_id = str(params["ws"])
+        count = 0
+        for (row_kind, _entity_id), row in db.rows.items():
+            if row_kind != "regional_quota_lease":
+                continue
+            try:
+                body = json.loads(row.body)
+            except (TypeError, ValueError):
+                continue
+            if body.get("workspace_id") == workspace_id and body.get("state") != "closed":
+                count += 1
+        return [[count]]
+    if "/* open_regional_quota_escrow */" in sql:
+        _require_pred(
+            sql,
+            "open_index.kind='regional_quota_lease_open'",
+            "regional quota open-index kind",
+        )
+        _require_pred(
+            sql,
+            "lease_record.kind='regional_quota_lease'",
+            "regional quota canonical kind",
+        )
+        _require_pred(
+            sql,
+            "lease_record.id=JSON_VALUE(open_index.body, '$.lease_entity_id')",
+            "regional quota canonical pointer",
+        )
+        _require_pred(sql, "LEFT JOIN", "regional quota missing-target detection")
+        output: list[list[Any]] = []
+        for (row_kind, index_id), index_row in db.rows.items():
+            if row_kind != "regional_quota_lease_open":
+                continue
+            try:
+                open_body = json.loads(index_row.body)
+                lease_entity_id = open_body.get("lease_entity_id")
+            except (AttributeError, TypeError, ValueError):
+                lease_entity_id = None
+            lease_row = (
+                db.rows.get(("regional_quota_lease", lease_entity_id))
+                if isinstance(lease_entity_id, str)
+                else None
+            )
+            output.append(
+                [
+                    index_id,
+                    index_row.body,
+                    lease_entity_id if lease_row is not None else None,
+                    lease_row.body if lease_row is not None else None,
+                ]
+            )
+        output.sort(key=lambda row: str(row[0]))
+        return output
+    if "/* console_api_keys */" in sql:
+        _require_pred(
+            sql,
+            "key_index.kind='api_key_by_workspace'",
+            "console-api-keys index kind",
+        )
+        _require_pred(
+            sql,
+            "key_record.id=JSON_VALUE(key_index.body, '$.key_id')",
+            "console-api-keys index target",
+        )
+        _require_pred(
+            sql,
+            "JSON_VALUE(key_record.body, '$.hash')=key_record.id",
+            "console-api-keys canonical key id",
+        )
+        _require_pred(
+            sql,
+            "STARTS_WITH(key_index.id, @prefix)",
+            "console-api-keys workspace prefix",
+        )
+        _require_pred(
+            sql,
+            "key_index.id=CONCAT(@workspace_id, '#', key_record.id)",
+            "console-api-keys canonical workspace index",
+        )
+        _require_pred(
+            sql,
+            "JSON_VALUE(key_record.body, '$.workspace_id')=@workspace_id",
+            "console-api-keys ownership boundary",
+        )
+        _require_pred(
+            sql,
+            "key_limit.shard<COALESCE(",
+            "console-api-keys configured shard bound",
+        )
+        _require_pred(
+            sql,
+            "ORDER BY JSON_VALUE(key_record.body, '$.created_at') DESC",
+            "console-api-keys newest-first ordering",
+        )
+
+        workspace_id = str(params["workspace_id"])
+        prefix = str(params["prefix"])
+        keys: list[tuple[str, str, dict[str, Any]]] = []
+        for (row_kind, index_id), index_row in db.rows.items():
+            if row_kind != "api_key_by_workspace" or not index_id.startswith(prefix):
+                continue
+            key_id = str(json.loads(index_row.body).get("key_id", ""))
+            key_row = db.rows.get(("api_key", key_id))
+            if key_row is None:
+                continue
+            key_body = json.loads(key_row.body)
+            if (
+                index_id != f"{workspace_id}#{key_id}"
+                or key_body.get("hash") != key_id
+                or key_body.get("workspace_id") != workspace_id
+            ):
+                continue
+            keys.append((str(key_body.get("created_at", "")), key_id, key_body))
+        keys.sort(key=lambda item: item[1])
+        keys.sort(key=lambda item: item[0], reverse=True)
+
+        output: list[list[Any]] = []
+        usage_columns = (
+            "shard",
+            "usage",
+            "byok_usage",
+            "reserved",
+            "day_usage",
+            "day_start",
+            "week_usage",
+            "week_start",
+            "month_usage",
+            "month_start",
+        )
+        for _created_at, key_id, key_body in keys:
+            shard_count = int(key_body.get("usage_shard_count", 1))
+            usage_rows = [
+                record
+                for record in db.typed.get("tr_key_limit", {}).values()
+                if record.get("key_hash") == key_id
+                and 0 <= int(record.get("shard", 0)) < shard_count
+            ]
+            usage_rows.sort(key=lambda record: int(record.get("shard", 0)))
+            if not usage_rows:
+                output.append([json.dumps(key_body), *([None] * len(usage_columns))])
+                continue
+            output.extend(
+                [json.dumps(key_body), *(record.get(column) for column in usage_columns)]
+                for record in usage_rows
+            )
+        return output
+    if "/* custom_model_list_for_user */" in sql:
+        return _execute_owner_model_list(
+            db,
+            sql,
+            params,
+            index_kind="custom_model_by_user",
+            model_kind="custom_model",
+        )
+    if "/* user_model_list_for_user */" in sql:
+        return _execute_owner_model_list(
+            db,
+            sql,
+            params,
+            index_kind="user_provided_model_by_user",
+            model_kind="user_provided_model",
+        )
+    if "/* user_models_by_id */" in sql:
+        _require_pred(
+            sql,
+            "WHERE kind='user_provided_model' AND id IN UNNEST(@model_ids)",
+            "user-model batch IDs",
+        )
+        return [
+            [model_id, row.body]
+            for model_id in params["model_ids"]
+            if (row := db.rows.get(("user_provided_model", str(model_id)))) is not None
+        ]
+    if "/* auth_session_context */" in sql:
+        _require_pred(
+            sql,
+            "lookup_record.kind='auth_session_lookup'",
+            "session-auth-context lookup kind",
+        )
+        _require_pred(
+            sql,
+            "session_record.id=JSON_VALUE(lookup_record.body, '$.session_id')",
+            "session-auth-context lookup join",
+        )
+        _require_pred(
+            sql,
+            "user_record.kind='user' AND user_record.id=resolved.user_id",
+            "session-auth-context user join",
+        )
+        _require_pred(
+            sql,
+            "member_record.kind='member'",
+            "session-auth-context membership kind",
+        )
+        _require_pred(
+            sql,
+            "JSON_VALUE(member_record.body, '$.user_id')=resolved.user_id",
+            "session-auth-context membership boundary",
+        )
+        _require_pred(
+            sql,
+            "member_record.id=CONCAT(JSON_VALUE(member_record.body, '$.workspace_id'), '#', resolved.user_id)",
+            "session-auth-context canonical membership key",
+        )
+        _require_pred(
+            sql,
+            "workspace_record.id=JSON_VALUE(member_record.body, '$.workspace_id')",
+            "session-auth-context workspace join",
+        )
+        _require_pred(
+            sql,
+            "ORDER BY member_record.id",
+            "session-auth-context deterministic workspace order",
+        )
+        lookup = db.rows.get(("auth_session_lookup", str(params["lookup_hash"])))
+        if lookup is None:
+            return []
+        session_id = str(json.loads(lookup.body)["session_id"])
+        session = db.rows.get(("auth_session", session_id))
+        if session is None:
+            return []
+        user_id = str(json.loads(session.body)["user_id"])
+        user = db.rows.get(("user", user_id))
+        members = sorted(
+            (
+                (entity_id, row)
+                for (row_kind, entity_id), row in db.rows.items()
+                if row_kind == "member"
+                and str(json.loads(row.body).get("user_id")) == user_id
+                and entity_id
+                == f"{json.loads(row.body).get('workspace_id')}#{user_id}"
+            ),
+            key=lambda item: item[0],
+        )
+        if not members:
+            return [[session.body, user.body if user is not None else None, None, None]]
+        rows: list[list[Any]] = []
+        for _member_id, member in members:
+            workspace_id = str(json.loads(member.body)["workspace_id"])
+            workspace = db.rows.get(("workspace", workspace_id))
+            rows.append(
+                [
+                    session.body,
+                    user.body if user is not None else None,
+                    workspace.body if workspace is not None else None,
+                    member.body,
+                ]
+            )
+        return rows
+    if "/* api_key_auth_context */" in sql:
+        _require_pred(
+            sql,
+            "lookup_record.kind='api_key_lookup'",
+            "API-key-auth-context lookup kind",
+        )
+        _require_pred(
+            sql,
+            "key_record.kind='api_key'",
+            "API-key-auth-context key kind",
+        )
+        _require_pred(
+            sql,
+            "key_record.id=JSON_VALUE(lookup_record.body, '$.key_id')",
+            "API-key-auth-context lookup join",
+        )
+        _require_pred(
+            sql,
+            "workspace_record.id=JSON_VALUE(key_record.body, '$.workspace_id')",
+            "API-key-auth-context workspace join",
+        )
+        lookup = db.rows.get(("api_key_lookup", str(params["lookup_hash"])))
+        if lookup is None:
+            return []
+        key_id = str(json.loads(lookup.body)["key_id"])
+        api_key = db.rows.get(("api_key", key_id))
+        if api_key is None:
+            return []
+        workspace_id = str(json.loads(api_key.body)["workspace_id"])
+        workspace = db.rows.get(("workspace", workspace_id))
+        return [
+            [
+                api_key.body,
+                workspace.body if workspace is not None else None,
+            ]
+        ]
     if (
         "FROM tr_credit_movement " in sql
         and "WHERE kind='custom_model_payout' AND created_at>=@since" in sql
@@ -2105,6 +2407,60 @@ def _execute_sql(
     raise NotImplementedError(sql)
 
 
+def _execute_owner_model_list(
+    db: FakeSpannerDatabase,
+    sql: str,
+    params: dict[str, Any],
+    *,
+    index_kind: str,
+    model_kind: str,
+) -> list[list[str]]:
+    """Model the one-statement owner-index hydration queries exactly."""
+    marker = f"{model_kind}-owner-list"
+    _require_pred(sql, f"model_ref.kind='{index_kind}'", f"{marker} index kind")
+    _require_pred(sql, f"model_record.kind='{model_kind}'", f"{marker} model kind")
+    _require_pred(
+        sql,
+        "model_record.id=JSON_VALUE(model_ref.body, '$.model_id')",
+        f"{marker} pointer join",
+    )
+    _require_pred(sql, "STARTS_WITH(model_ref.id, @prefix)", f"{marker} owner index")
+    _require_pred(
+        sql,
+        "model_ref.id=CONCAT(@owner_user_id, '#', "
+        "JSON_VALUE(model_ref.body, '$.model_id'))",
+        f"{marker} canonical index id",
+    )
+    _require_pred(
+        sql,
+        "JSON_VALUE(model_record.body, '$.owner_user_id')=@owner_user_id",
+        f"{marker} body owner boundary",
+    )
+    _require_pred(
+        sql,
+        "ORDER BY JSON_VALUE(model_record.body, '$.created_at'), model_ref.id",
+        f"{marker} deterministic order",
+    )
+    prefix = str(params["prefix"])
+    owner_user_id = str(params["owner_user_id"])
+    hydrated: list[tuple[str, str, str]] = []
+    for (row_kind, ref_id), ref_row in db.rows.items():
+        if row_kind != index_kind or not ref_id.startswith(prefix):
+            continue
+        model_id = str(json.loads(ref_row.body).get("model_id") or "")
+        if ref_id != f"{owner_user_id}#{model_id}":
+            continue
+        model_row = db.rows.get((model_kind, model_id))
+        if model_row is None:
+            continue
+        body = json.loads(model_row.body)
+        if str(body.get("owner_user_id")) != owner_user_id:
+            continue
+        hydrated.append((str(body.get("created_at") or ""), ref_id, model_row.body))
+    hydrated.sort(key=lambda item: (item[0], item[1]))
+    return [[body] for _created_at, _ref_id, body in hydrated]
+
+
 class FakeBigtableTable:
     def __init__(self) -> None:
         self.committed: list[bytes] = []
@@ -2215,6 +2571,9 @@ def make_fake_store(
     store._analytics_read_mode = "bigtable"
     store._analytics_dual_read_grace_seconds = 0
     store._operational_analytics = None
+    store._regional_quota_ledger = None
+    store._regional_quota_lease_cache = {}
+    store._regional_quota_lease_cache_lock = threading.Lock()
     from trusted_router.storage_gcp_credit_shards import CreditShardCountCache
 
     store._credit_shard_counts = CreditShardCountCache()

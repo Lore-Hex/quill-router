@@ -41,6 +41,7 @@ from trusted_router.wafer_policy import wafer_zdr_support
 
 OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "meta": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
+    "openrouter-exclusive": (("OPENROUTER_API_KEY",), "https://openrouter.ai/api/v1"),
     "openai": (("OPENAI_API_KEY",), "https://api.openai.com/v1"),
     "cerebras": (("CEREBRAS_API_KEY",), "https://api.cerebras.ai/v1"),
     "deepseek": (("DEEPSEEK_API_KEY",), "https://api.deepseek.com"),
@@ -109,6 +110,7 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
         ("ALIBABA_API_KEY", "DASHSCOPE_API_KEY", "ALIYUN_API_KEY"),
         "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/compatible-mode/v1",
     ),
+    "sakana": (("SAKANA_API_KEY",), "https://api.sakana.ai/v1"),
 }
 
 __all__ = [

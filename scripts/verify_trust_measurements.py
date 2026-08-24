@@ -54,7 +54,7 @@ against a fixture plane and against production:
      published but compared against nothing. Both are fixed below.
   3. It contacted ONE Azure region. AZURE_ATTESTATION_URL was hardcoded to UAE
      North while the plane also serves Southeast Asia from
-     api-azure-sea.trustedrouter.com with its own CCE policy and therefore its
+     api-azure-syd.trustedrouter.com with its own CCE policy and therefore its
      own hostdata (f3a0b4ed…d712d81c). That region was never contacted, and its
      measurement was never compared to anything. Demonstrated: with Southeast
      Asia serving a hostdata published nowhere, the old file fetched only the

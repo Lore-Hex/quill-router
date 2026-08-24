@@ -39,7 +39,7 @@ LOCATION="${LOCATION:-northeurope}"          # Postgres
 APP_LOCATION="${APP_LOCATION:-swedencentral}"  # ACR + Container Apps
 # CANARY drives every resource name, so a second canary in another geography is
 # one env var, not a forked script:
-#   CANARY=tr-canary-apac LOCATION=southeastasia APP_LOCATION=southeastasia \
+#   CANARY=tr-canary-apac LOCATION=australiaeast APP_LOCATION=australiaeast \
 #     bash scripts/deploy/azure_canary.sh
 #
 # See docs/storage-portability/coverage-map.md for which geographies are worth

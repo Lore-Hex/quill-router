@@ -84,36 +84,9 @@
       {% endif %}
       {% endif %}
     </p>
-    {% if saved_payment_method %}
-    <div class="payment-method-card">
-      <div>
-        <strong>
-          {% if saved_payment_method.brand %}
-            {{ saved_payment_method.brand|capitalize }} card
-          {% else %}
-            Stripe card
-          {% endif %}
-        </strong>
-        <span>
-          {% if saved_payment_method.last4 %}
-            ending in {{ saved_payment_method.last4 }}
-          {% else %}
-            saved payment method
-          {% endif %}
-          {% if saved_payment_method.exp_month and saved_payment_method.exp_year %}
-            · expires {{ saved_payment_method.exp_month }}/{{ saved_payment_method.exp_year }}
-          {% endif %}
-          · id ...{{ saved_payment_method.id_tail }}
-        </span>
-        {% if not saved_payment_method.details_available %}
-        <span>Stripe card details are temporarily unavailable. Removal still uses the saved Stripe id.</span>
-        {% endif %}
-      </div>
-      <form method="post" action="/console/credits/payment-methods/remove">
-        <button class="btn danger" type="submit">Remove</button>
-      </form>
+    <div data-credits-saved-payment-method aria-live="polite">
+      {% include "console/_credits_saved_payment_method.html" %}
     </div>
-    {% endif %}
     {% if not wallet_only_billing %}
     <div class="button-row">
       <form method="post" action="/console/credits/payment-methods/add">
@@ -174,89 +147,29 @@
 </section>
 {% endif %}
 
-<section class="panel">
+<section
+  class="panel"
+  data-credits-stripe-details-url="/console/credits/stripe-details"
+>
   <div class="panel-head">
     <h2>Payment history</h2>
-    <span class="pill">{{ payments|length }} recent</span>
+    <span class="pill" data-credits-payment-history-count>loading</span>
   </div>
-  <div class="panel-body">
-    {% if payments %}
-    <table class="data-table" style="width:100%;border-collapse:collapse">
-      <thead>
-        <tr style="text-align:left;border-bottom:1px solid var(--border)">
-          <th style="padding:8px 6px;font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em">Date</th>
-          <th style="padding:8px 6px;font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em">Amount</th>
-          <th style="padding:8px 6px;font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em">Payment</th>
-          <th style="padding:8px 6px;font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em">Status</th>
-          <th style="padding:8px 6px;font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em">Receipt</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for p in payments %}
-        <tr style="border-bottom:1px solid var(--border)">
-          <td style="padding:10px 6px;color:var(--muted);font-variant-numeric:tabular-nums">
-            {{ p.created_at | datetime_iso if p.created_at else 'none' }}
-          </td>
-          <td style="padding:10px 6px;font-variant-numeric:tabular-nums">
-            ${{ '%.2f'|format((p.amount_cents or 0) / 100) }}
-            <span style="color:var(--muted);font-size:11px">{{ (p.currency or 'usd')|upper }}</span>
-            {% if p.get('credit_amount_cents') is not none and p.get('processing_fee_cents') is not none %}
-            <span style="display:block;color:var(--muted);font-size:11px">
-              ${{ '%.2f'|format(p.credit_amount_cents / 100) }} credits
-              + ${{ '%.2f'|format(p.processing_fee_cents / 100) }} fee
-            </span>
-            {% endif %}
-          </td>
-          <td style="padding:10px 6px">
-            {% if p.bank_last4 %}
-              <span>{{ p.bank_name or 'Bank account' }}</span> ····{{ p.bank_last4 }}
-            {% elif p.card_brand and p.card_last4 %}
-              <span style="text-transform:capitalize">{{ p.card_brand }}</span> ····{{ p.card_last4 }}
-            {% elif p.payment_method_type == 'ach' %}
-              <span>Bank account (ACH)</span>
-            {% elif p.payment_method_type == 'stablecoin' %}
-              <span>Stablecoin</span>
-            {% else %}
-              <span style="color:var(--muted)">none</span>
-            {% endif %}
-          </td>
-          <td style="padding:10px 6px">
-            {% if p.payment_status == 'paid' %}
-              <span class="pill good">paid</span>
-            {% elif p.payment_status == 'processing' %}
-              <span class="pill warn">processing</span>
-            {% elif p.payment_status == 'unpaid' %}
-              <span class="pill warn">unpaid</span>
-            {% elif p.status == 'expired' %}
-              <span class="pill">expired</span>
-            {% else %}
-              <span class="pill">{{ p.payment_status or p.status or 'none' }}</span>
-            {% endif %}
-          </td>
-          <td style="padding:10px 6px">
-            {% if p.receipt_url %}
-              <a href="{{ p.receipt_url }}" target="_blank" rel="noopener">Receipt ↗</a>
-            {% else %}
-              <span style="color:var(--muted)">none</span>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    <p style="color:var(--muted);font-size:12px;margin-top:12px">
-      Source: Stripe. Showing up to the 20 most recent checkout sessions tagged with this workspace. Hosted receipts open in Stripe.
-    </p>
-    {% else %}
+  <div
+    class="panel-body"
+    data-credits-payment-history
+    aria-busy="true"
+    aria-live="polite"
+  >
     <p style="color:var(--muted);font-size:14px;margin:0">
-      {% if wallet_only_billing %}
-      No payments yet. Stablecoin payments appear after confirmation.
-      {% else %}
-      No payments yet. Card payments appear after completion; ACH credits appear
-      after Stripe confirms bank settlement.
-      {% endif %}
+      Loading recent payments…
     </p>
-    {% endif %}
+    <noscript>
+      <p style="color:var(--muted);font-size:14px;margin-top:12px">
+        <a href="/console/credits/stripe-details">Open Stripe payment details</a>.
+        Your live balance above is unaffected.
+      </p>
+    </noscript>
   </div>
 </section>
 {% endblock %}

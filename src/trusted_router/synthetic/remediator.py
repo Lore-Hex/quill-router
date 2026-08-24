@@ -20,11 +20,18 @@ MODES (settings.remediator_mode):
 
 DECISIONS ARE SAMPLES. Each decision is recorded as a synthetic sample
 (probe_type="remediation", target="<playbook>:<subject>") — the same store,
-retention, and /fleet rendering path as every other ops signal, and one row
-per (playbook, subject, 30-minute bucket) so a persistent condition reads as
-a timeline, not a firehose. status="down" means "condition present" so the
-timeline semantics match every other probe. remediation rows are in
-OPS_PROBE_TYPES: never a component, never an SLO, never the freshness clock.
+retention, and /fleet rendering path as every other ops signal. A row records
+a condition OBSERVED AT ITS TIMESTAMP, not current state; a condition ending
+is recorded as the ABSENCE of later rows, never an explicit marker, so readers
+must check the underlying signal (for heartbeat-stale, that subject's heartbeat
+rows) before concluding it is still live. Deduplication is best effort: each
+control-plane instance TRIES to record at most one row per (target, 30-minute
+bucket), but the mark is checked and set without synchronisation, so the
+background loop and the internal endpoint can both write within one process,
+and every instance keeps its own marks. Duplicates are expected; readers must
+deduplicate by (target, bucket) rather than counting rows. status="down" means "condition present". remediation rows
+are in OPS_PROBE_TYPES: never a component, never an SLO, never the freshness
+clock.
 
 DETECTORS (v1, all T0 blast radius — detection and paging only):
   * stale heartbeats     — a scheduler this deployment expected to beat has
@@ -38,6 +45,8 @@ DETECTORS (v1, all T0 blast radius — detection and paging only):
   * monitor freshness    — this deployment's own probe fleet has stopped
                            reporting (peers will also catch this within
                            three cadences; local detection is faster).
+  * transaction probes  — the general probe fleet is alive but authorize,
+                           settle, or fallback coverage has gone silent.
 
 Every detector is exception-isolated: a broken detector loses its own
 signal, never the loop, and the loop itself heartbeats so /fleet shows the
@@ -59,9 +68,13 @@ from trusted_router.synthetic.alerts import ops_alert
 logger = logging.getLogger(__name__)
 
 REMEDIATION_PROBE = "remediation"
-# One decision row per (playbook, subject, bucket): a condition that persists
-# for six hours should read as ~12 rows on a timeline, not 180.
+# Best effort: one decision row per (playbook, subject, bucket) per process.
+# The check and set are unsynchronised, so duplicates are possible.
 DECISION_BUCKET_SECONDS = 30 * 60
+# Regional monitor jobs run every three minutes. Five missed cadences is long
+# enough to absorb rollout/cold-start jitter without allowing a billing or
+# fallback blind spot to survive unnoticed for hours.
+TRANSACTION_PROBE_STALE_SECONDS = 15 * 60
 _DECISION_MARKS: dict[str, int] = {}
 
 
@@ -184,10 +197,77 @@ def _detect_monitor_stale(settings: Settings) -> list[Decision]:
     ]
 
 
+def _detect_transaction_probe_stale(settings: Settings) -> list[Decision]:
+    """Page when privileged transaction coverage disappears by itself."""
+
+    import datetime as dt
+
+    from trusted_router.storage import STORE
+    from trusted_router.storage_models import utcnow
+    from trusted_router.synthetic.components import OPS_PROBE_TYPES
+
+    if not (
+        settings.service_surface in {"combined", "internal"}
+        and settings.synthetic_monitor_api_key
+        and settings.internal_gateway_token
+    ):
+        return []
+
+    # Absence before any monitor sample exists is provisioning, not an outage.
+    # Once sibling probes are flowing, each privileged probe becomes required.
+    recent = STORE.synthetic_probe_samples(limit=50)
+    if not any(sample.probe_type not in OPS_PROBE_TYPES for sample in recent):
+        return []
+
+    now = utcnow()
+    required: dict[str, tuple[str, ...]] = {
+        "gateway_authorize": ("gateway_authorize", "gateway_authorize_settle"),
+        "gateway_settle": ("gateway_settle", "gateway_authorize_settle"),
+        "provider_fallback": ("provider_fallback",),
+    }
+    decisions: list[Decision] = []
+    for subject, probe_types in required.items():
+        candidates = [
+            sample
+            for probe_type in probe_types
+            for sample in STORE.synthetic_probe_samples(probe_type=probe_type, limit=1)
+        ]
+        ages: list[tuple[float, str]] = []
+        for sample in candidates:
+            try:
+                created = dt.datetime.fromisoformat(sample.created_at.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            ages.append(((now - created).total_seconds(), sample.created_at))
+        if ages:
+            age, last_sample_at = min(ages, key=lambda item: item[0])
+            if age <= TRANSACTION_PROBE_STALE_SECONDS:
+                continue
+            detail = (
+                f"no {subject} sample for {int(age)}s (last {last_sample_at}); "
+                "the general probe fleet is alive but transaction effectiveness is unobserved"
+            )
+        else:
+            detail = (
+                f"no {subject} sample exists while the general probe fleet is alive; "
+                "transaction effectiveness is unobserved"
+            )
+        decisions.append(
+            Decision(
+                playbook="transaction-monitor-stale",
+                subject=subject,
+                detail=detail,
+                page=True,
+            )
+        )
+    return decisions
+
+
 DETECTORS = (
     _detect_stale_heartbeats,
     _detect_route_quarantine,
     _detect_monitor_stale,
+    _detect_transaction_probe_stale,
 )
 
 
@@ -210,6 +290,7 @@ def run_remediator_pass(settings: Settings) -> list[Decision]:
 def recent_decisions(limit: int = 20) -> list[dict[str, Any]]:
     """Latest decision rows for /fleet — the automation's visible memory."""
     from trusted_router.storage import STORE
+    from trusted_router.synthetic.fleet import _age_seconds
 
     samples = STORE.synthetic_probe_samples(probe_type=REMEDIATION_PROBE, limit=limit)
     rows = sorted(samples, key=lambda s: s.created_at, reverse=True)[:limit]
@@ -218,6 +299,8 @@ def recent_decisions(limit: int = 20) -> list[dict[str, Any]]:
             "at": row.created_at,
             "decision": row.target,
             "detail": row.error_type,
+            "observed_age_seconds": _age_seconds(row.created_at),
+            "point_in_time": True,
         }
         for row in rows
     ]

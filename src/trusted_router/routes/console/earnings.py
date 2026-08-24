@@ -17,7 +17,7 @@ from trusted_router.storage import STORE
 
 def register(app: FastAPI) -> None:
     @app.get("/console/earnings")
-    async def console_earnings(
+    def console_earnings(
         request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
@@ -25,7 +25,7 @@ def register(app: FastAPI) -> None:
         return HTMLResponse(_render_page(request, ctx, settings))
 
     @app.post("/console/earnings/transfer")
-    async def console_transfer_earnings(
+    def console_transfer_earnings(
         ctx: ConsoleDep,
         workspace_id: str = Form(...),
         amount: str = Form(...),
@@ -59,14 +59,17 @@ def register(app: FastAPI) -> None:
 
 def _render_page(request: Request, ctx: ConsoleDep, settings: SettingsDep) -> str:
     since = (datetime.now(UTC) - timedelta(days=30)).isoformat().replace("+00:00", "Z")
-    summary = STORE.earnings_summary(ctx.user.id)
+    # Page rendering only; transfer POSTs use the strong default for their
+    # operation result.
+    summary = STORE.earnings_summary(ctx.user.id, allow_stale=True)
     model_totals = STORE.custom_model_earnings_by_model(ctx.user.id, since=since)
+    models_by_id = STORE.get_user_models_by_ids(list(model_totals))
     by_model: list[dict[str, Any]] = []
     for model_id, amount in sorted(
         model_totals.items(),
         key=lambda item: (-item[1], item[0]),
     ):
-        model = STORE.get_user_model(model_id)
+        model = models_by_id.get(model_id)
         by_model.append(
             {
                 "model_id": model_id,
