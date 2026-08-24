@@ -13,7 +13,11 @@ from trusted_router.catalog import (
     PriceTier,
     select_price_tier,
 )
-from trusted_router.pricing import RequestRates, resolve_request_rates
+from trusted_router.pricing import (
+    RequestRates,
+    _optional_customer_price_from_dollars_per_token,
+    resolve_request_rates,
+)
 from trusted_router.routes.helpers import cost_microdollars
 
 # ----------------------------------------------------------------------
@@ -89,6 +93,15 @@ def test_resolve_request_rates_empty_tiers_uses_headline_rates() -> None:
         completion_price_microdollars_per_million_tokens=456,
         prompt_cached_price_microdollars_per_million_tokens=None,
     )
+
+
+def test_optional_cached_price_distinguishes_zero_from_missing_or_malformed() -> None:
+    assert _optional_customer_price_from_dollars_per_token(None) is None
+    assert _optional_customer_price_from_dollars_per_token("") is None
+    assert _optional_customer_price_from_dollars_per_token("not-a-price") is None
+    assert _optional_customer_price_from_dollars_per_token("NaN") is None
+    assert _optional_customer_price_from_dollars_per_token("-0.1") is None
+    assert _optional_customer_price_from_dollars_per_token("0") == 10_000
 
 
 def test_resolve_request_rates_single_tier() -> None:

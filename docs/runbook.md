@@ -15,6 +15,7 @@ Index:
 - [GCP enclave deploy keeps auto-rolling back europe-west4](#eu-rollback)
 - [GCP enclave deploy fails with "unrecognized arguments: --min-ready"](#min-ready)
 - [Hourly price bot commits but TR catalog stays stale](#bot-doesnt-deploy)
+- [Production deployment mutex](#deployment-mutex)
 - [Status page shows a region "down" but the region is actually healthy](#stale-status)
 - [`refresh.py` reports "too_many_failures" locally](#local-refresh-fails)
 - [A provider serves a model but TR's `/v1/models` doesn't list it](#missing-model)
@@ -283,6 +284,34 @@ we exploit.
 
 ---
 
+## <a id="deployment-mutex"></a>Production deployment mutex
+
+The control-plane deploy workflow, direct `rollout.sh` runs, and manual
+`staged_traffic.sh` traffic shifts share a generation-fenced lock in GCS. It
+prevents two operators or automation paths from changing production Cloud Run
+revisions or traffic at the same time. Inspect the current metadata-only holder
+record without changing it:
+
+```bash
+bash scripts/deploy/deploy_mutex.sh status
+```
+
+Break glass only after running `status`, checking that the recorded owner is no
+longer active, and confirming that no GitHub Actions or manual production deploy
+is still running. Use the generation printed by `status`; the precondition keeps
+this command from deleting a replacement lock acquired after the inspection:
+
+```bash
+gcloud storage rm \
+  gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production.json \
+  --if-generation-match=GENERATION
+```
+
+Normal recovery does not require manual removal: locks expire after 90 minutes,
+and the next acquirer can take over an expired generation safely.
+
+---
+
 ## <a id="stale-status"></a>Status page shows a region "down" but the region is actually healthy
 
 `https://trustedrouter.com/status.json` shows `effective_status: down`
@@ -499,6 +528,22 @@ gcloud spanner databases execute-sql trusted-router \
 
 Spot-check settle latency is unchanged in `httpRequest.latency` for
 `/internal/gateway/settle`.
+
+Do not locate a canary authorization by scanning `tr_gateway_authorization.payload`.
+The payload JSON is intentionally not indexed; a production scan can consume millions
+of row reads and compete with customer billing traffic. Use the bounded verifier, which
+resolves the existing idempotency index and then uses primary-key reads:
+
+```bash
+uv run python scripts/verify_gateway_authorization.py \
+  --workspace-id <workspace-id> \
+  --key-hash <key-hash> \
+  --idempotency-key <canary-idempotency-key>
+```
+
+When the authorization ID is already available, prefer
+`--authorization-id <gwa-id>`; that path is primary-key-only. The verifier emits only
+billing and routing metadata. It never emits prompt or response content.
 
 Resume the drain after the flip. The job already exists and is paused:
 

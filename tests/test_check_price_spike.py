@@ -715,6 +715,84 @@ def test_different_atlas_v4_flash_0731_transition_still_blocks(
     assert "PRICE SPIKE FAILURES" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("endpoint_tag", ["novita", "novita/fp8"])
+def test_confirmed_novita_v4_flash_0731_transition_is_allowed(
+    tmp_path: Path, capsys, endpoint_tag: str
+) -> None:
+    from scripts.check_price_spike import main
+
+    before_payload = _make_endpoint_snapshot(
+        ("0.00000008", "0.00000018"),
+        [
+            (
+                "novita",
+                "deepseek/deepseek-v4-flash-0731",
+                "0.00000014",
+                "0.00000028",
+            )
+        ],
+        model_id="deepseek/deepseek-v4-flash-0731",
+    )
+    before_payload["models"][0]["endpoints"][0]["tag"] = endpoint_tag
+    before = _write(tmp_path, "before.json", before_payload)
+    after_payload = _make_endpoint_snapshot(
+        ("0.00000008", "0.00000018"),
+        [
+            (
+                "novita",
+                "deepseek/deepseek-v4-flash-0731",
+                "0.00000044",
+                "0.00000132",
+            )
+        ],
+        model_id="deepseek/deepseek-v4-flash-0731",
+    )
+    after_payload["models"][0]["endpoints"][0]["tag"] = endpoint_tag
+    after = _write(tmp_path, "after.json", after_payload)
+
+    assert main([str(before), str(after), "--summary"]) == 0
+    assert "PRICE SPIKE FAILURES" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("endpoint_tag", ["novita", "novita/fp8"])
+def test_different_novita_v4_flash_0731_transition_still_blocks(
+    tmp_path: Path, capsys, endpoint_tag: str
+) -> None:
+    from scripts.check_price_spike import main
+
+    before_payload = _make_endpoint_snapshot(
+        ("0.00000008", "0.00000018"),
+        [
+            (
+                "novita",
+                "deepseek/deepseek-v4-flash-0731",
+                "0.00000014",
+                "0.00000028",
+            )
+        ],
+        model_id="deepseek/deepseek-v4-flash-0731",
+    )
+    before_payload["models"][0]["endpoints"][0]["tag"] = endpoint_tag
+    before = _write(tmp_path, "before.json", before_payload)
+    after_payload = _make_endpoint_snapshot(
+        ("0.00000008", "0.00000018"),
+        [
+            (
+                "novita",
+                "deepseek/deepseek-v4-flash-0731",
+                "0.00000045",
+                "0.00000132",
+            )
+        ],
+        model_id="deepseek/deepseek-v4-flash-0731",
+    )
+    after_payload["models"][0]["endpoints"][0]["tag"] = endpoint_tag
+    after = _write(tmp_path, "after.json", after_payload)
+
+    assert main([str(before), str(after), "--summary"]) == 1
+    assert "PRICE SPIKE FAILURES" in capsys.readouterr().out
+
+
 def test_confirmed_fireworks_v4_flash_0731_transition_is_allowed(
     tmp_path: Path, capsys
 ) -> None:

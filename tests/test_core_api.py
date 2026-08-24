@@ -1112,7 +1112,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         not provider["provider_zero_data_retention"] or provider["stores_content"] is False
         for provider in providers
     )
-    assert [provider["id"] for provider in providers[:2]] == ["tinfoil", "trustedrouter"]
+    assert [provider["id"] for provider in providers[:2]] == ["trustedrouter", "tinfoil"]
     assert {
         "anthropic",
         "openai",

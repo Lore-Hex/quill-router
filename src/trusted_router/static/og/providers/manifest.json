@@ -1,4 +1,22 @@
 {
+  "aion-labs": {
+    "card_version": 2,
+    "model_count": 4,
+    "name": "Aion Labs",
+    "privacy": "Policy documented",
+    "route_count": 4,
+    "route_mode": "Prepaid",
+    "slug": "aion-labs"
+  },
+  "akashml": {
+    "card_version": 2,
+    "model_count": 6,
+    "name": "AkashML",
+    "privacy": "Policy documented",
+    "route_count": 6,
+    "route_mode": "Prepaid",
+    "slug": "akashml"
+  },
   "alibaba": {
     "card_version": 2,
     "model_count": 77,
@@ -16,6 +34,15 @@
     "route_count": 20,
     "route_mode": "Prepaid + BYOK",
     "slug": "anthropic"
+  },
+  "arcee": {
+    "card_version": 2,
+    "model_count": 6,
+    "name": "Arcee AI",
+    "privacy": "Policy documented",
+    "route_count": 6,
+    "route_mode": "Prepaid",
+    "slug": "arcee"
   },
   "atlas-cloud": {
     "card_version": 2,
@@ -52,6 +79,15 @@
     "route_count": 5,
     "route_mode": "Prepaid",
     "slug": "bfl"
+  },
+  "byteplus": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "BytePlus ModelArk",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "byteplus"
   },
   "cerebras": {
     "card_version": 2,
@@ -152,6 +188,15 @@
     "route_mode": "Prepaid",
     "slug": "engy"
   },
+  "featherless": {
+    "card_version": 2,
+    "model_count": 3,
+    "name": "Featherless AI",
+    "privacy": "Policy documented",
+    "route_count": 3,
+    "route_mode": "Prepaid",
+    "slug": "featherless"
+  },
   "fireworks": {
     "card_version": 2,
     "model_count": 12,
@@ -172,10 +217,10 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 61,
+    "model_count": 60,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 66,
+    "route_count": 65,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
@@ -206,6 +251,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "grok"
   },
+  "inception": {
+    "card_version": 2,
+    "model_count": 1,
+    "name": "Inception Labs",
+    "privacy": "Policy documented",
+    "route_count": 1,
+    "route_mode": "Prepaid",
+    "slug": "inception"
+  },
   "inceptron": {
     "card_version": 2,
     "model_count": 5,
@@ -214,6 +268,24 @@
     "route_count": 5,
     "route_mode": "Prepaid",
     "slug": "inceptron"
+  },
+  "io-net": {
+    "card_version": 2,
+    "model_count": 32,
+    "name": "IO Intelligence",
+    "privacy": "Policy documented",
+    "route_count": 32,
+    "route_mode": "Prepaid",
+    "slug": "io-net"
+  },
+  "jina": {
+    "card_version": 2,
+    "model_count": 17,
+    "name": "Jina AI",
+    "privacy": "Policy documented",
+    "route_count": 17,
+    "route_mode": "Prepaid",
+    "slug": "jina"
   },
   "kimi": {
     "card_version": 2,
@@ -233,6 +305,15 @@
     "route_mode": "Prepaid",
     "slug": "kling"
   },
+  "krea": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Krea",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "krea"
+  },
   "lightning": {
     "card_version": 2,
     "model_count": 36,
@@ -241,6 +322,15 @@
     "route_count": 61,
     "route_mode": "Prepaid + BYOK",
     "slug": "lightning"
+  },
+  "liquid": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Liquid AI",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "liquid"
   },
   "ltx": {
     "card_version": 2,
@@ -259,6 +349,15 @@
     "route_count": 10,
     "route_mode": "Prepaid + BYOK",
     "slug": "makora"
+  },
+  "mancer": {
+    "card_version": 2,
+    "model_count": 7,
+    "name": "Mancer",
+    "privacy": "Policy documented",
+    "route_count": 7,
+    "route_mode": "Prepaid",
+    "slug": "mancer"
   },
   "meta": {
     "card_version": 2,
@@ -287,6 +386,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "mistral"
   },
+  "modal": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Modal",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "modal"
+  },
   "morph": {
     "card_version": 2,
     "model_count": 8,
@@ -314,12 +422,21 @@
     "route_mode": "Prepaid",
     "slug": "neurometric"
   },
+  "nextbit": {
+    "card_version": 2,
+    "model_count": 8,
+    "name": "NextBit",
+    "privacy": "Policy documented",
+    "route_count": 8,
+    "route_mode": "Prepaid",
+    "slug": "nextbit"
+  },
   "novita": {
     "card_version": 2,
-    "model_count": 111,
+    "model_count": 112,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 204,
+    "route_count": 206,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -350,6 +467,15 @@
     "route_mode": "Prepaid",
     "slug": "openrouter-exclusive"
   },
+  "ovhcloud": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "OVHcloud",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "ovhcloud"
+  },
   "parasail": {
     "card_version": 2,
     "model_count": 27,
@@ -361,12 +487,30 @@
   },
   "pearl": {
     "card_version": 2,
-    "model_count": 2,
+    "model_count": 3,
     "name": "Pearl Research Labs",
     "privacy": "Policy documented",
-    "route_count": 2,
+    "route_count": 3,
     "route_mode": "Prepaid",
     "slug": "pearl"
+  },
+  "perceptron": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Perceptron",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "perceptron"
+  },
+  "perplexity": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Perplexity",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "perplexity"
   },
   "phala": {
     "card_version": 2,
@@ -386,6 +530,15 @@
     "route_mode": "Prepaid",
     "slug": "recraft"
   },
+  "reka": {
+    "card_version": 2,
+    "model_count": 1,
+    "name": "Reka AI",
+    "privacy": "Policy documented",
+    "route_count": 1,
+    "route_mode": "Prepaid",
+    "slug": "reka"
+  },
   "relace": {
     "card_version": 2,
     "model_count": 2,
@@ -395,6 +548,15 @@
     "route_mode": "Prepaid",
     "slug": "relace"
   },
+  "riverflow": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Riverflow",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "riverflow"
+  },
   "runway": {
     "card_version": 2,
     "model_count": 1,
@@ -403,6 +565,42 @@
     "route_count": 1,
     "route_mode": "Prepaid",
     "slug": "runway"
+  },
+  "sail-research": {
+    "card_version": 2,
+    "model_count": 6,
+    "name": "Sail Research",
+    "privacy": "Policy documented",
+    "route_count": 6,
+    "route_mode": "Prepaid",
+    "slug": "sail-research"
+  },
+  "sakana": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Sakana AI",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "sakana"
+  },
+  "sambanova": {
+    "card_version": 2,
+    "model_count": 6,
+    "name": "SambaNova",
+    "privacy": "Policy documented",
+    "route_count": 6,
+    "route_mode": "Prepaid",
+    "slug": "sambanova"
+  },
+  "scaleway": {
+    "card_version": 2,
+    "model_count": 12,
+    "name": "Scaleway",
+    "privacy": "Policy documented",
+    "route_count": 12,
+    "route_mode": "Prepaid",
+    "slug": "scaleway"
   },
   "siliconflow": {
     "card_version": 2,
@@ -476,6 +674,15 @@
     "route_mode": "Catalog profile",
     "slug": "trustedrouter"
   },
+  "upstage": {
+    "card_version": 2,
+    "model_count": 3,
+    "name": "Upstage",
+    "privacy": "Policy documented",
+    "route_count": 3,
+    "route_mode": "Prepaid",
+    "slug": "upstage"
+  },
   "venice": {
     "card_version": 2,
     "model_count": 57,
@@ -493,6 +700,15 @@
     "route_count": 2,
     "route_mode": "Prepaid + BYOK",
     "slug": "voyage"
+  },
+  "vultr": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Vultr",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "vultr"
   },
   "wafer": {
     "card_version": 2,

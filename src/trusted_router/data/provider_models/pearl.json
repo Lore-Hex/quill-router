@@ -63,7 +63,7 @@
       ],
       "status": 1,
       "id": "deepseek/deepseek-v4-flash-0731",
-      "upstream_id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
       "context_length": 1048576,
       "max_output_tokens": 1048576,
       "supported_features": [
@@ -79,19 +79,16 @@
         "temperature",
         "top_p",
         "top_k",
-        "min_p",
         "frequency_penalty",
         "presence_penalty",
         "stop",
         "seed",
         "max_tokens"
       ],
-      "routable": false,
-      "input_token_price_per_m": 140000,
-      "output_token_price_per_m": 280000,
-      "cached_input_token_price_per_m": 28000,
-      "missing_since": "2026-08-15",
-      "routable_reason": "delisted-upstream"
+      "routable": true,
+      "input_token_price_per_m": 126000,
+      "output_token_price_per_m": 250000,
+      "cached_input_token_price_per_m": 27000
     },
     {
       "display_name": "DeepSeek: V4 Pro",
@@ -221,8 +218,51 @@
       "input_token_price_per_m": 1200000,
       "output_token_price_per_m": 4100000,
       "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "DeepSeek: DeepSeek V4 Pro 0813",
+      "title": "deepseek-ai/DeepSeek-V4-Pro-0813",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-pro-0813",
+      "upstream_id": "deepseek-ai/DeepSeek-V4-Pro-0813",
+      "context_length": 1048576,
+      "max_output_tokens": 1048576,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "reasoning",
+        "structured_outputs",
+        "prompt_caching"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 1188000,
+      "output_token_price_per_m": 3564000,
+      "cached_input_token_price_per_m": 117000
     }
   ],
-  "generated_at": "2026-08-22T06:42:31Z",
-  "model_count": 5
+  "generated_at": "2026-08-24T16:40:13Z",
+  "model_count": 6
 }

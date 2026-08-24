@@ -35,6 +35,11 @@ ACCOUNT="${ACCOUNT:-330422590279}"
 CLUSTER_ID="${CLUSTER_ID:-tnt642i3ofzpn5z62msacutpuu}"
 ECR="${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/trusted-router"
 TAG="${TAG:-eu}"
+# TR_RELEASE was TAG, a constant ("eu"), so this plane reported the same
+# release string forever and nothing could tell a fresh deploy from a
+# six-month-old one. GCP has always published the commit; AWS and Azure did
+# not, which is why drift here was invisible until somebody went looking.
+RELEASE_COMMIT="${RELEASE_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
 SVC="${SVC:-tr-eu}"
 # DSQL endpoint region is INDEPENDENT of the App Runner region.
 #
@@ -218,7 +223,7 @@ CONFIG=$(cat <<JSON
         "TR_ENVIRONMENT": "canary",
         "TR_SERVICE_SURFACE": "observer",
         "TR_NEW_SIGNUPS_ENABLED": "false",
-        "TR_RELEASE": "${TAG}",
+        "TR_RELEASE": "${RELEASE_COMMIT}",
         "TR_STORAGE_BACKEND": "postgres",
         "TR_POSTGRES_DSN": "host=${DSQL_HOST} port=5432 user=admin dbname=postgres sslmode=require",
         "TR_POSTGRES_IAM_AUTH": "aws-dsql",

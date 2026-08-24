@@ -46,6 +46,7 @@ from trusted_router.domains import (
     request_hostname,
 )
 from trusted_router.errors import error_response
+from trusted_router.markdown_negotiation import MarkdownNegotiationMiddleware
 from trusted_router.request_body_limit import (
     RequestBodyLimitMiddleware,
     UnreadRequestBodyCloseMiddleware,
@@ -57,6 +58,11 @@ from trusted_router.request_limits import (
     rate_limit_headers,
 )
 from trusted_router.security import constant_time_equal
+from trusted_router.spend_windows import (
+    SPEND_WINDOW_DECISION_STATE,
+    KeyWindowLimitDecision,
+    spend_window_headers,
+)
 from trusted_router.storage_rate_limits import InMemoryRateLimits
 from trusted_router.types import ErrorType
 
@@ -105,6 +111,18 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
     registration is the outermost wrapper.
     """
 
+    # Registered BEFORE GZipMiddleware on purpose. Starlette prepends, so the
+    # later registration is the outer wrapper: gzip ends up outside this, sees
+    # the markdown body, and compresses that. Register it after gzip and this
+    # would be handed already-compressed bytes.
+    #
+    # It is a raw ASGI class rather than an @app.middleware("http") function.
+    # BaseHTTPMiddleware, which that decorator uses, converts every response
+    # into a streaming one -- including the ones this passes through untouched
+    # -- which pushed GZipMiddleware onto its chunked branch and dropped
+    # Content-Length from every static asset. See the class docstring.
+    app.add_middleware(MarkdownNegotiationMiddleware)
+
     app.add_middleware(GZipMiddleware, minimum_size=1_000, compresslevel=6)
     app.add_middleware(
         RequestBodyLimitMiddleware,
@@ -135,6 +153,20 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         if denied is not None:
             return denied
         return await call_next(request)
+
+    @app.middleware("http")
+    async def spend_window_headers_middleware(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Publish only the verdict produced by an applied spend limiter."""
+        response = await call_next(request)
+        decision = getattr(request.state, SPEND_WINDOW_DECISION_STATE, None)
+        if isinstance(decision, KeyWindowLimitDecision):
+            response.headers.update(
+                spend_window_headers(decision, retry_after=response.status_code == 429)
+            )
+        return response
 
     @app.middleware("http")
     async def request_id_middleware(
@@ -601,9 +633,7 @@ def _trusted_internal_credential(
             return "federation_peer", supplied
         return None
     if route_path == "/internal/federation/apply-usage":
-        supplied = (
-            request.headers.get("x-trustedrouter-federation-settlement-token") or ""
-        )
+        supplied = request.headers.get("x-trustedrouter-federation-settlement-token") or ""
         matched = False
         for expected in federation_settlement_tokens:
             matched |= constant_time_equal(supplied, expected)

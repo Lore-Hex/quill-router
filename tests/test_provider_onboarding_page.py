@@ -132,9 +132,7 @@ def test_provider_reliability_contract_v2_is_public_and_complete(
     provider_schema = schema["properties"]["provider"]
     assert "error_contract" in provider_schema["required"]
     assert (
-        provider_schema["properties"]["error_contract"]["properties"][
-            "overload_status"
-        ]["const"]
+        provider_schema["properties"]["error_contract"]["properties"]["overload_status"]["const"]
         == 503
     )
 
@@ -145,11 +143,19 @@ def test_provider_onboarding_page_is_discoverable(client: TestClient) -> None:
     sitemap = client.get("/sitemap-core.xml")
     llms = client.get("/llms.txt")
 
-    assert providers.status_code == footer.status_code == sitemap.status_code == llms.status_code == 200
+    assert (
+        providers.status_code
+        == footer.status_code
+        == sitemap.status_code
+        == llms.status_code
+        == 200
+    )
     assert 'href="/providers/marketplace"' in providers.text
     assert 'href="/providers/marketplace"' in footer.text
     assert "<loc>https://trustedrouter.com/providers/marketplace</loc>" in sitemap.text
-    assert "Provider marketplace: https://trustedrouter.com/providers/marketplace" in llms.text
+    # llms.txt is a markdown navigation index now, so entries are links rather
+    # than "Label: url" text.
+    assert "[Provider marketplace](https://trustedrouter.com/providers/marketplace)" in llms.text
     assert "https://trustedrouter.com/providers/apply" not in sitemap.text
     assert "https://trustedrouter.com/providers/apply" not in llms.text
 

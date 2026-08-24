@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import datetime as dt
+import hashlib
 import hmac
 import json
 import logging
@@ -93,6 +95,39 @@ def test_cookie_round_trip_and_tamper_rejection() -> None:
     )
 
 
+def test_derived_cookie_key_matches_legacy_gateway_root_bidirectionally() -> None:
+    token = "pretend-gateway-token-value-1234567890"  # noqa: S105 - fixed test vector.
+    derived = hmac.new(
+        token.encode(),
+        b"trustedrouter-attribution-cookie-v1",
+        hashlib.sha256,
+    ).digest()
+    encoded_key = base64.b64encode(derived).decode("ascii")
+    assert encoded_key == "aDMnBV9nDwwAD1tr4MpooFMj7i8Kv6lB5Q9LTmrjTfc="
+
+    legacy = Settings(
+        environment="test",
+        service_surface="combined",
+        internal_gateway_token=token,
+    )
+    public = Settings(
+        environment="test",
+        service_surface="public",
+        attribution_cookie_key=encoded_key,
+    )
+    assert acquisition_module._cookie_signing_key(legacy) == derived  # noqa: SLF001
+    assert acquisition_module._cookie_signing_key(public) == derived  # noqa: SLF001
+
+    now = dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    touch = {"utm_source": "compatibility", "landing_path": "/", "captured_at": now}
+    context = AttributionContext("e" * 32, touch, touch, now)
+
+    public_cookie = encode_attribution_cookie(context, public)
+    legacy_cookie = encode_attribution_cookie(context, legacy)
+    assert decode_attribution_cookie(public_cookie, legacy) == context
+    assert decode_attribution_cookie(legacy_cookie, public) == context
+
+
 def test_expired_cookie_is_rejected() -> None:
     settings = Settings(
         internal_gateway_token="cookie-signing-root"  # noqa: S106 - test fixture secret.
@@ -142,9 +177,9 @@ def test_legacy_v2_fingerprint_cookie_remains_readable() -> None:
     }
     context = AttributionContext("d" * 32, touch, touch, now)
 
-    assert decode_attribution_cookie(
-        _legacy_cookie(context, settings, version=2), settings
-    ) == context
+    assert (
+        decode_attribution_cookie(_legacy_cookie(context, settings, version=2), settings) == context
+    )
 
 
 def test_paid_landing_sets_signed_httponly_cookie(client: TestClient) -> None:
@@ -236,6 +271,33 @@ def test_paid_experiment_preserves_exact_landing_path(client: TestClient) -> Non
     assert context is not None
     assert context.last_touch["landing_path"] == "/openrouter-alternative/quickstart"
     assert context.last_touch["utm_content"] == "or_quickstart_v1"
+
+
+def test_multiarm_landing_redirect_attributes_the_selected_page(
+    client: TestClient,
+) -> None:
+    query = (
+        "utm_source=google&utm_medium=paid_search&"
+        "utm_campaign=openrouter_lp_multi_20260822&"
+        "utm_content=openrouter_exact_control&gclid=multiarm-click-123"
+    )
+    assigned = client.get(
+        f"/openrouter-alternative/experiment?{query}",
+        follow_redirects=False,
+    )
+    assert assigned.status_code == 307
+
+    landing = client.get(assigned.headers["location"])
+    assert landing.status_code == 200
+    context = decode_attribution_cookie(
+        client.cookies.get(ATTRIBUTION_COOKIE_NAME), client.app.state.settings
+    )
+    assert context is not None
+    assert context.last_touch["landing_path"] == assigned.headers["location"].split("?", 1)[0]
+    assert context.last_touch["utm_campaign"] == "openrouter_lp_multi_20260822"
+    assert context.last_touch["utm_content"] == "openrouter_exact_control"
+    assert context.last_touch["gclid_fingerprint"]
+    assert "gclid" not in context.last_touch
 
 
 @pytest.mark.parametrize("header", ["sec-gpc", "dnt"])
@@ -377,8 +439,48 @@ def test_signup_persists_attribution_and_emits_no_raw_click_id(
     assert set(record.milestones) == {"signup_completed", "api_key_created"}
     assert "acquisition.signup_completed" in caplog.text
     assert "acquisition.api_key_created" in caplog.text
+    signup_log = next(
+        item for item in caplog.records if item.getMessage() == "acquisition.signup_completed"
+    )
+    assert signup_log.google_ads_click_persisted is True
     assert raw_click_id not in caplog.text
     assert str(payload["key"]) not in caplog.text
+
+
+def test_google_click_encryption_failure_is_visible_and_does_not_block_signup(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    raw_click_id = "gclid-encryption-failure-123"
+    _campaign_landing(client, click_id=raw_click_id)
+
+    def fail_encrypt(*_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("kms permission denied")
+
+    monkeypatch.setattr(acquisition_module, "encrypt_google_ads_click_id", fail_encrypt)
+    caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
+
+    payload = _signup(client, "click-encryption-failure@example.com")
+
+    record = STORE.get_acquisition_attribution(str(payload["workspace_id"]))
+    assert record is not None
+    assert record.google_click_id_kind is None
+    assert record.encrypted_google_click_id is None
+    failure_log = next(
+        item
+        for item in caplog.records
+        if item.getMessage() == "acquisition.google_click_encrypt_failed"
+    )
+    assert failure_log.event == "acquisition.google_click_encrypt_failed"
+    assert failure_log.error == "RuntimeError"
+    signup_log = next(
+        item for item in caplog.records if item.getMessage() == "acquisition.signup_completed"
+    )
+    assert signup_log.has_gclid is True
+    assert signup_log.google_ads_click_persisted is False
+    assert raw_click_id not in caplog.text
+    assert "kms permission denied" not in caplog.text
 
 
 def test_attribution_failure_never_blocks_signup(

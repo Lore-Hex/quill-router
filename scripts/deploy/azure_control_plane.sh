@@ -47,13 +47,20 @@ set -euo pipefail
 STACK="${STACK:-tr-azure}"
 RG="${RG:-$STACK}"
 LOCATION="${LOCATION:-uaenorth}"
-APP="${APP:-$STACK}"
-APP_ENV="${APP_ENV:-$STACK-env}"
+# The live app and environment carry a -vnet suffix; the pre-vnet names have
+# not existed since the VNet migration. These defaults were still $STACK and
+# $STACK-env, which meant this script targeted a container app and a managed
+# environment that do not exist -- see the preflight below for what that cost.
+APP="${APP:-$STACK-vnet}"
+APP_ENV="${APP_ENV:-$STACK-env-vnet}"
 PG_NAME="${PG_NAME:-$STACK-pg}"
 PG_ADMIN="${PG_ADMIN:-tradmin}"
 PG_DB="${PG_DB:-trustedrouter}"
 ACR="${ACR:-$(echo "${STACK}${LOCATION}acr" | tr -cd "[:alnum:]")}"
 IMAGE_TAG="${IMAGE_TAG:-azure}"
+# TR_RELEASE was IMAGE_TAG, the constant "azure", so this plane reported the
+# same release string on every deploy and staleness could not be measured.
+RELEASE_COMMIT="${RELEASE_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
 STATE_DIR="${STATE_DIR:-$HOME/.config/$STACK}"
 PW_FILE="${PW_FILE:-$STATE_DIR/pgpw}"
 
@@ -167,6 +174,55 @@ else
 fi
 DSN="postgresql://${PG_ADMIN}:${PG_PASSWORD}@${PG_HOST}:5432/${PG_DB}?sslmode=require"
 
+# PREFLIGHT. Runs before the ACR build because the build takes minutes and this
+# takes seconds, and the whole point is to fail while the operator still has
+# options.
+#
+# MEASURED 2026-08-23: with the pre-vnet defaults this script targeted
+# containerapp "tr-azure" in environment "tr-azure-env". Neither exists. The
+# live control plane -- the one azure.trustedrouter.com resolves to and which
+# answers 200 -- is "tr-azure-vnet" in "tr-azure-env-vnet", and that name
+# appears nowhere in this repository. So an Azure deploy failed at the
+# `containerapp create` step, AFTER the image build, having changed nothing.
+# In an emergency that is minutes spent to arrive at a confusing error.
+preflight() {
+  local problems=0
+  if ! exists az group show -n "$RG"; then
+    echo "resource group ${RG} not found" >&2
+    problems=1
+  fi
+  if ! exists az containerapp env show -g "$RG" -n "$APP_ENV"; then
+    echo "managed environment ${APP_ENV} not found in ${RG}. Available:" >&2
+    az containerapp env list -g "$RG" --query "[].name" -o tsv 2>/dev/null | sed 's/^/  /' >&2
+    problems=1
+  fi
+  if ! exists az containerapp show -g "$RG" -n "$APP"; then
+    # Not fatal on its own: first-run genuinely creates the app. It IS fatal
+    # when something is already serving the public hostname, because then this
+    # run would build a second app beside the real one and report success.
+    echo "container app ${APP} not found in ${RG}. Available:" >&2
+    az containerapp list -g "$RG" --query "[].name" -o tsv 2>/dev/null | sed 's/^/  /' >&2
+    # Distinguish a genuine first run from drift WITHOUT a network call. The
+    # first version curled the public hostname, which is wrong twice over: a
+    # deploy preflight that needs the public internet fails for its own reasons
+    # offline, and it made an ordinary unit test reach production. The resource
+    # group already knows. Empty means first run and creating is correct.
+    # Non-empty means something here is already the deployment, and creating
+    # would stand up a second app beside it.
+    local existing
+    existing="$(az containerapp list -g "$RG" --query "[].name" -o tsv 2>/dev/null | tr "\n" " ")"
+    if [ -n "${existing// /}" ]; then
+      echo "refusing: ${RG} already contains container app(s): ${existing}" >&2
+      echo "Creating ${APP} would stand up a second app beside one of those." >&2
+      echo "Set APP= and APP_ENV= to the deployment that is actually serving." >&2
+      problems=1
+    fi
+  fi
+  [ "$problems" -eq 0 ] || die "preflight failed; nothing was built or changed"
+  log "preflight ok: ${APP} in ${APP_ENV} (${RG})"
+}
+preflight
+
 log "building linux/amd64 image in ACR ${ACR}"
 az acr build --registry "$ACR" --platform linux/amd64 \
   --image "trusted-router:${IMAGE_TAG}" . >/dev/null
@@ -196,7 +252,7 @@ ENV_VARS=(
   "TR_MAX_IN_FLIGHT_REQUEST_BODY_BYTES=8388608"
   "TR_MAX_CONCURRENT_REQUEST_BODIES=2"
   "TR_REQUEST_BODY_READ_TIMEOUT_SECONDS=10"
-  "TR_RELEASE=${IMAGE_TAG}"
+  "TR_RELEASE=${RELEASE_COMMIT}"
   "TR_STORAGE_BACKEND=postgres"
   "TR_POSTGRES_DSN=secretref:pg-dsn"
   "TR_ENABLE_LIVE_PROVIDERS=false"

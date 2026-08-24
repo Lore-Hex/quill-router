@@ -1,0 +1,60 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<article data-substantive-content="about">
+  <section class="public-proof-strip" aria-label="TrustedRouter company facts">
+    <div><strong>Operator</strong><span>{{ entity.name }}</span></div>
+    <div><strong>Entity</strong><span>{{ entity.type }}</span></div>
+    <div><strong>Founder</strong><span>{{ entity.signatory_name }}</span></div>
+    <div><strong>Headquarters</strong><span>{{ entity.address }}</span></div>
+  </section>
+
+  <section class="marketing-split">
+    <div class="marketing-copy">
+      <span class="eyebrow">The company</span>
+      <h2>One inspectable route to the models developers actually use.</h2>
+      <p>TrustedRouter is an AI routing company operated by {{ entity.name }}, a {{ entity.type }}. We give developers and businesses one OpenAI-compatible API for models served across multiple providers, with routing controls for price, reliability, region, and privacy posture.</p>
+      <p>Founder {{ entity.signatory_name }} started TrustedRouter around a simple problem: a model gateway should not become a new place that quietly collects every prompt. The service separates the public website and account control plane from the prompt path, publishes the gateway source, and exposes live hardware-attestation evidence so customers can check which code is running.</p>
+      <p>We build the router, provider integrations, confidential-compute gateway, model evaluations, and operational tooling in public repositories. Product claims are paired with pages a customer can inspect: live model and provider catalogs, current status, legal and procurement records, security architecture, and reproducible trust evidence.</p>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>Company record</h2></div>
+      <div class="panel-body">
+        <p><strong>Legal name:</strong> {{ entity.name }}</p>
+        <p><strong>Structure:</strong> {{ entity.type }}</p>
+        <p><strong>Address:</strong> {{ entity.address }}</p>
+        <p><strong>Telephone:</strong> <a href="tel:{{ entity.phone }}">{{ entity.phone }}</a></p>
+        <p><strong>EIN:</strong> {{ entity.ein }}<br><strong>DUNS:</strong> {{ entity.duns }}</p>
+        <p>The complete procurement packet, including current contract and compliance checkpoints, is published at <a href="/legal">/legal</a>.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="marketing-grid three" aria-label="How TrustedRouter operates">
+    <div class="marketing-card">
+      <span class="card-label">Product</span>
+      <h3>Compatible by design</h3>
+      <p>Applications can move to TrustedRouter by changing an OpenAI SDK base URL. The live catalog lists model IDs, prices, providers, context limits, privacy labels, and route availability instead of asking customers to rely on a static sales list.</p>
+      <a class="btn" href="/models">Browse live models</a>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Trust</span>
+      <h3>Evidence over promises</h3>
+      <p>The hosted prompt path runs through an attested gateway. Customers can inspect the source commit, container image digest, and attestation instructions, then compare that evidence with the public code and current security documentation.</p>
+      <a class="btn" href="https://trust.trustedrouter.com">Verify the gateway</a>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Customers</span>
+      <h3>Built for production workloads</h3>
+      <p>Teams use the service for coding agents, document workflows, research, evaluations, and applications that need access to more than one model provider. Our customer story shows how Robot, Robot &amp; Human uses one private API for legal-document work.</p>
+      <a class="btn" href="/customers/robot-robot-human">Read the customer story</a>
+    </div>
+  </section>
+
+  <section class="limitation-band">
+    <span class="pill">Verify us</span>
+    <div>
+      <p>Do not take this page as the only evidence that TrustedRouter is a real business. Check the <a href="/legal">legal and procurement packet</a>, <a href="https://github.com/Lore-Hex/quill-router">open-source router</a>, <a href="https://status.trustedrouter.com">service status</a>, <a href="https://trust.trustedrouter.com">live trust evidence</a>, and the direct channels on our <a href="/contact">contact page</a>. These records are deliberately public so a customer, auditor, or software agent can verify the operator and reach a person.</p>
+    </div>
+  </section>
+</article>
+{% endblock %}

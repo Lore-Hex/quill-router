@@ -2,8 +2,8 @@
   "_about": "Provider-native GMI Cloud catalog. Account-visible models are intersected with GMI's official billing feed; explicitly approved routes omitted from /v1/models remain current only after an exact visible-content PONG canary succeeds.",
   "provider": "gmi",
   "source": "https://console.gmicloud.ai/api/v1/billing/model_prices",
-  "generated_at": "2026-08-22T06:42:31Z",
-  "model_count": 87,
+  "generated_at": "2026-08-24T16:40:13Z",
+  "model_count": 89,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -452,7 +452,7 @@
       "cached_input_token_price_per_m": 28000
     },
     {
-      "display_name": "DeepSeek-V4-Flash-0731",
+      "display_name": "DeepSeek-V4-Flash-0731-dev",
       "title": "deepseek-ai/DeepSeek-V4-Flash-0731",
       "model_type": "chat",
       "input_modalities": [
@@ -467,7 +467,7 @@
       "status": 1,
       "id": "deepseek/deepseek-v4-flash-0731",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
-      "context_length": 1048575,
+      "context_length": 1048576,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
       "cached_input_token_price_per_m": 28000
@@ -1405,7 +1405,10 @@
       "upstream_id": "openai/gpt-oss-120b",
       "context_length": 131072,
       "input_token_price_per_m": 50000,
-      "output_token_price_per_m": 250000
+      "output_token_price_per_m": 250000,
+      "missing_since": "2026-08-23",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",
@@ -1871,7 +1874,10 @@
       "context_length": 1050000,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
-      "cached_input_token_price_per_m": 2800
+      "cached_input_token_price_per_m": 2800,
+      "missing_since": "2026-08-24",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "MiMo-V2.5-Pro",
@@ -1892,7 +1898,10 @@
       "context_length": 1050000,
       "input_token_price_per_m": 435000,
       "output_token_price_per_m": 870000,
-      "cached_input_token_price_per_m": 3600
+      "cached_input_token_price_per_m": 3600,
+      "missing_since": "2026-08-24",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Proxy: zai-org/GLM-4.7",
@@ -2075,6 +2084,48 @@
       "input_token_price_per_m": 450000,
       "output_token_price_per_m": 3200000,
       "cached_input_token_price_per_m": 250000
+    },
+    {
+      "display_name": "MiMo-V2.5",
+      "title": "XiaomiMiMo/MiMo-V2.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "xiaomi/mimo-v2.5",
+      "upstream_id": "XiaomiMiMo/MiMo-V2.5",
+      "context_length": 1050000,
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 2800
+    },
+    {
+      "display_name": "MiMo-V2.5-Pro",
+      "title": "XiaomiMiMo/MiMo-V2.5-Pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "xiaomi/mimo-v2.5-pro",
+      "upstream_id": "XiaomiMiMo/MiMo-V2.5-Pro",
+      "context_length": 1050000,
+      "input_token_price_per_m": 435000,
+      "output_token_price_per_m": 870000,
+      "cached_input_token_price_per_m": 3600
     }
   ],
   "price_scale": "microdollars_per_million"

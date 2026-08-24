@@ -16,6 +16,7 @@ gc services enable \
   datamanager.googleapis.com \
   spanner.googleapis.com \
   bigtableadmin.googleapis.com \
+  storage.googleapis.com \
   cloudbuild.googleapis.com
 
 log "ensuring Spanner instance/database"
@@ -83,6 +84,34 @@ for service_account in "$DEPLOY_SERVICE_ACCOUNT" "$OPS_SERVICE_ACCOUNT"; do
     --quiet >/dev/null
 done
 
+log "ensuring production deployment mutex bucket"
+DEPLOY_MUTEX_BUCKET="${TR_DEPLOY_MUTEX_BUCKET:-tr-deploy-mutex-quill-cloud-proxy}"
+DEPLOY_MUTEX_LOCATION="${TR_DEPLOY_MUTEX_LOCATION:-us-central1}"
+DEPLOY_MUTEX_LIFECYCLE_FILE="$(mktemp "${TMPDIR:-/tmp}/tr-deploy-mutex-lifecycle-XXXXXX.json")"
+printf '%s\n' \
+  '{"rule":[{"action":{"type":"Delete"},"condition":{"age":1}}]}' \
+  >"$DEPLOY_MUTEX_LIFECYCLE_FILE"
+if ! gc storage buckets describe "gs://${DEPLOY_MUTEX_BUCKET}" >/dev/null 2>&1; then
+  gc storage buckets create "gs://${DEPLOY_MUTEX_BUCKET}" \
+    --location="$DEPLOY_MUTEX_LOCATION" \
+    --uniform-bucket-level-access \
+    --public-access-prevention \
+    --lifecycle-file="$DEPLOY_MUTEX_LIFECYCLE_FILE" \
+    --quiet
+fi
+# Reassert the safety controls on existing buckets as well as newly created
+# ones so a later manual setting change is repaired by the idempotent script.
+gc storage buckets update "gs://${DEPLOY_MUTEX_BUCKET}" \
+  --uniform-bucket-level-access \
+  --public-access-prevention \
+  --lifecycle-file="$DEPLOY_MUTEX_LIFECYCLE_FILE" \
+  --quiet
+rm -f "$DEPLOY_MUTEX_LIFECYCLE_FILE"
+gc storage buckets add-iam-policy-binding "gs://${DEPLOY_MUTEX_BUCKET}" \
+  --member="serviceAccount:${DEPLOY_SERVICE_ACCOUNT}" \
+  --role="roles/storage.objectAdmin" \
+  --quiet >/dev/null
+
 log "ensuring BYOK envelope KMS key"
 if ! gc kms keyrings describe "$KMS_KEYRING_ID" --location "$REGION" >/dev/null 2>&1; then
   gc kms keyrings create "$KMS_KEYRING_ID" --location "$REGION"
@@ -114,6 +143,17 @@ gc kms keys add-iam-policy-binding "$GOOGLE_ADS_KMS_KEY_ID" \
   --keyring "$KMS_KEYRING_ID" \
   --location "$REGION" \
   --member="serviceAccount:${RUN_SERVICE_ACCOUNT}" \
+  --role="roles/cloudkms.cryptoKeyEncrypter" \
+  --quiet >/dev/null
+if ! gc iam service-accounts describe \
+  "$CONTROL_RUN_SERVICE_ACCOUNT" >/dev/null 2>&1; then
+  echo "ERROR: control-plane service account ${CONTROL_RUN_SERVICE_ACCOUNT} is missing" >&2
+  exit 1
+fi
+gc kms keys add-iam-policy-binding "$GOOGLE_ADS_KMS_KEY_ID" \
+  --keyring "$KMS_KEYRING_ID" \
+  --location "$REGION" \
+  --member="serviceAccount:${CONTROL_RUN_SERVICE_ACCOUNT}" \
   --role="roles/cloudkms.cryptoKeyEncrypter" \
   --quiet >/dev/null
 

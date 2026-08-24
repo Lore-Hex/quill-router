@@ -18,8 +18,29 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
+# shellcheck source=scripts/deploy/deploy_mutex.sh
+source "${SCRIPT_DIR}/deploy_mutex.sh"
 # shellcheck source=scripts/deploy/regional_quota_rollout.sh
 source "${SCRIPT_DIR}/regional_quota_rollout.sh"
+
+release_rollout_deploy_mutex() {
+  local rollout_status=$?
+  # Finish the release uninterrupted; a signal here would leak the mutex
+  # until its TTL.
+  trap '' INT TERM
+  trap - EXIT
+  if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
+    deploy_mutex_release
+  fi
+  exit "$rollout_status"
+}
+trap release_rollout_deploy_mutex EXIT
+
+# The workflow exports its outer lock through GITHUB_ENV. A direct operator
+# invocation has no such operation and owns this script-level scope instead.
+if [ -z "${TR_DEPLOY_MUTEX_OPERATION:-}" ]; then
+  deploy_mutex_acquire
+fi
 
 TRUST_SOURCE_COMMIT=""
 TRUST_IMAGE_REFERENCE=""
@@ -704,6 +725,11 @@ deploy_one_region() {
     log "deploying Cloud Run service ${SERVICE} to ${target} with --no-traffic (staged shift to follow)"
   else
     log "deploying Cloud Run service ${SERVICE} to ${target}"
+  fi
+  if [ "${TR_DEPLOY_NO_TRAFFIC:-0}" = "1" ]; then
+    SERVICE="$SERVICE" PROJECT_ID="$PROJECT_ID" \
+      bash "${SCRIPT_DIR}/normalize_staged_traffic.sh" "$target" \
+      >>"$logfile" 2>&1
   fi
   prune_failed_revisions "$target" >>"$logfile" 2>&1 || true
   # A global override wins. Otherwise use the per-region service minimum;

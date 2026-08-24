@@ -164,24 +164,13 @@ ANALYTICS_FRESHNESS_FLEET: tuple[FleetAnalyticsEndpoint, ...] = (
         cloud="azure",
         status_url="https://azure.trustedrouter.com/status.json",
         expected_backend=BACKEND_POSTGRES,
-        expects_outbox=True,
         note=(
             "The Azure control plane's own hostname, set as STATUS_HOST by "
             "scripts/deploy/azure_control_plane.sh and pointed at the container app "
-            "by that script's Cloud DNS step. It runs PostgresStore against "
-            "tr-azure-pg, and as of 2026-08-22 it has an outbox AND something "
-            "draining it: TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true pointed at a "
-            "private single-node ClickHouse in the same VNet "
-            "(scripts/deploy/azure_clickhouse.sh), with the drain installed on that "
-            "node (scripts/deploy/azure_clickhouse_drain_install.sh). "
-            "This entry read expects_outbox=False for as long as that was untrue, "
-            "and the flip is the whole point of having written it that way: the "
-            "assertion was 'there is no drain here to be missing', and it stopped "
-            "describing Azure honestly the moment the plane published a real lag. "
-            "Verified on the wire rather than inferred -- the section reports "
-            "available=true with drain_lag_seconds=0.0, and the node answers "
-            "SELECT count() FROM activity_generations with rows that arrived "
-            "through this path."
+            "by that script's Cloud DNS step. Production now publishes a live "
+            "Postgres operational-analytics outbox lag from this endpoint. Keep "
+            "expects_outbox=True so a stalled or removed Azure drain fails the "
+            "same fleet-wide freshness gate as AWS and GCP."
         ),
     ),
     FleetAnalyticsEndpoint(

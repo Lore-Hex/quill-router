@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hmac
 import json
 import os
@@ -232,9 +234,10 @@ SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     "operational_analytics_clickhouse_password": frozenset(
         {"public", "control", "internal", "observer"}
     ),
-    "sentry_dsn": frozenset({"control", "internal", "observer"}),
+    "sentry_dsn": frozenset({"public", "control", "internal", "observer"}),
     "google_data_manager_enabled": frozenset({"control"}),
     "google_data_manager_kms_key_name": frozenset({"control"}),
+    "attribution_cookie_key": frozenset({"public", "control"}),
     "attribution_cookie_secret": frozenset({"public", "control"}),
     "internal_gateway_token": frozenset({"internal"}),
     # Internal owns this only for synthetic/Sentry routes; its billing routes
@@ -325,6 +328,15 @@ class Settings(BaseSettings):
     legal_entity_name: str = "Lore Hex Corp"
     legal_entity_type: str = "Delaware C Corporation"
     legal_entity_address: str = "1111 Brickell Ave, Floor 10, Miami, FL 33131"
+    # Structured components of the same address. schema.org PostalAddress wants
+    # them separately, and splitting the display string at runtime would be a
+    # parser guessing at commas -- wrong the first time somebody adds a suite
+    # number. Kept beside the display string so the two are edited together.
+    legal_entity_street: str = "1111 Brickell Ave, Floor 10"
+    legal_entity_city: str = "Miami"
+    legal_entity_region: str = "FL"
+    legal_entity_postal_code: str = "33131"
+    legal_entity_country: str = "US"
     legal_entity_phone: str = "+1-305-239-7350"
     legal_entity_ein: str = "41-5339728"
     legal_entity_duns: str = "144992055"
@@ -544,10 +556,10 @@ class Settings(BaseSettings):
     # on the safe default and aggregate into the untrusted_lb bucket.
     rate_limit_client_ip_mode: str = "untrusted"
 
-    # Shared only by the anonymous public surface and the account/control
-    # surface so an attribution cookie survives the LB hand-off between them.
-    # This must never reuse the internal gateway credential: compromise of the
-    # public renderer must not disclose a token accepted by billing routes.
+    # Split public/control services may hold the base64-encoded, already-derived
+    # cookie key without receiving the legacy root that also authorizes gateway
+    # calls. A dedicated secret remains supported for independent deployments.
+    attribution_cookie_key: str | None = None
     attribution_cookie_secret: str | None = None
     internal_gateway_token: str | None = None
     # Dedicated to the externally reachable observer/status processes.  It
@@ -1080,6 +1092,21 @@ class Settings(BaseSettings):
     def production_is_fail_closed(self) -> Settings:
         environment = self.environment.lower()
         surface = self.service_surface
+        if self.attribution_cookie_key and self.attribution_cookie_secret:
+            raise ValueError(
+                "TR_ATTRIBUTION_COOKIE_KEY and TR_ATTRIBUTION_COOKIE_SECRET must not both be set"
+            )
+        attribution_cookie_key_bytes: bytes | None = None
+        if self.attribution_cookie_key:
+            try:
+                attribution_cookie_key_bytes = base64.b64decode(
+                    self.attribution_cookie_key,
+                    validate=True,
+                )
+            except (binascii.Error, ValueError) as exc:
+                raise ValueError("TR_ATTRIBUTION_COOKIE_KEY must be valid base64") from exc
+            if len(attribution_cookie_key_bytes) != 32:
+                raise ValueError("TR_ATTRIBUTION_COOKIE_KEY must decode to exactly 32 bytes")
         deployed_combined_bridge = (
             surface == "combined"
             and environment not in {"local", "test"}
@@ -1124,15 +1151,12 @@ class Settings(BaseSettings):
             raise ValueError("TR_MAX_REQUEST_BODY_BYTES must be positive")
         if self.max_in_flight_request_body_bytes < self.max_request_body_bytes:
             raise ValueError(
-                "TR_MAX_IN_FLIGHT_REQUEST_BODY_BYTES must be at least "
-                "TR_MAX_REQUEST_BODY_BYTES"
+                "TR_MAX_IN_FLIGHT_REQUEST_BODY_BYTES must be at least TR_MAX_REQUEST_BODY_BYTES"
             )
         if self.max_concurrent_request_bodies <= 0:
             raise ValueError("TR_MAX_CONCURRENT_REQUEST_BODIES must be positive")
         if not 0 < self.request_body_read_timeout_seconds <= 300:
-            raise ValueError(
-                "TR_REQUEST_BODY_READ_TIMEOUT_SECONDS must be between 0 and 300"
-            )
+            raise ValueError("TR_REQUEST_BODY_READ_TIMEOUT_SECONDS must be between 0 and 300")
         if self.rate_limit_window_seconds <= 0:
             raise ValueError("TR_RATE_LIMIT_WINDOW_SECONDS must be positive")
         for name, value in (
@@ -1143,9 +1167,7 @@ class Settings(BaseSettings):
             if value <= 0:
                 raise ValueError(f"{name} must be positive")
         if self.rate_limit_client_ip_mode not in {"untrusted", "edge_header"}:
-            raise ValueError(
-                "TR_RATE_LIMIT_CLIENT_IP_MODE must be 'untrusted' or 'edge_header'"
-            )
+            raise ValueError("TR_RATE_LIMIT_CLIENT_IP_MODE must be 'untrusted' or 'edge_header'")
         if self.signup_trial_credit_microdollars < 0:
             raise ValueError("TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS cannot be negative")
         for name, value in (
@@ -1202,13 +1224,9 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TR_REGIONAL_QUOTA_RECONCILER_WORKER is valid only in worker processes"
             )
-        if (
-            self.regional_quota_lease_issuance_enabled
-            and not self.regional_quota_leases_enabled
-        ):
+        if self.regional_quota_lease_issuance_enabled and not self.regional_quota_leases_enabled:
             raise ValueError(
-                "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED requires "
-                "TR_REGIONAL_QUOTA_LEASES_ENABLED"
+                "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED requires TR_REGIONAL_QUOTA_LEASES_ENABLED"
             )
         if self.regional_quota_lease_issuance_enabled:
             if not self.regional_quota_lease_pilot_workspace_ids.strip():
@@ -1230,9 +1248,7 @@ class Settings(BaseSettings):
                         "TR_REGIONAL_QUOTA_LEASES_ENABLED requires typed request records"
                     )
                 if not self.settle_outbox_enabled:
-                    raise ValueError(
-                        "TR_REGIONAL_QUOTA_LEASES_ENABLED requires the settle outbox"
-                    )
+                    raise ValueError("TR_REGIONAL_QUOTA_LEASES_ENABLED requires the settle outbox")
                 if not self.bigtable_instance_id:
                     raise ValueError(
                         "TR_REGIONAL_QUOTA_LEASES_ENABLED requires a Bigtable instance"
@@ -1302,9 +1318,7 @@ class Settings(BaseSettings):
         if environment not in {"local", "test"} and any(
             not url.startswith("https://") for url in ops_chat_urls
         ):
-            raise ValueError(
-                "TR_OPS_CHAT_WEBHOOK_URLS must contain only HTTPS URLs when deployed"
-            )
+            raise ValueError("TR_OPS_CHAT_WEBHOOK_URLS must contain only HTTPS URLs when deployed")
         if not 1 <= self.google_data_manager_batch_size <= 2_000:
             raise ValueError("TR_GOOGLE_DATA_MANAGER_BATCH_SIZE must be between 1 and 2000")
         if self.google_data_manager_lease_seconds < 30:
@@ -1312,17 +1326,11 @@ class Settings(BaseSettings):
         if not 1 <= self.google_data_manager_max_attempts <= 20:
             raise ValueError("TR_GOOGLE_DATA_MANAGER_MAX_ATTEMPTS must be between 1 and 20")
         if not 1.0 <= self.google_data_manager_timeout_seconds <= 120.0:
-            raise ValueError(
-                "TR_GOOGLE_DATA_MANAGER_TIMEOUT_SECONDS must be between 1 and 120"
-            )
+            raise ValueError("TR_GOOGLE_DATA_MANAGER_TIMEOUT_SECONDS must be between 1 and 120")
         if not 1 <= self.google_data_manager_repair_lookback_days <= 90:
-            raise ValueError(
-                "TR_GOOGLE_DATA_MANAGER_REPAIR_LOOKBACK_DAYS must be between 1 and 90"
-            )
+            raise ValueError("TR_GOOGLE_DATA_MANAGER_REPAIR_LOOKBACK_DAYS must be between 1 and 90")
         if not 1 <= self.google_data_manager_status_poll_attempts <= 30:
-            raise ValueError(
-                "TR_GOOGLE_DATA_MANAGER_STATUS_POLL_ATTEMPTS must be between 1 and 30"
-            )
+            raise ValueError("TR_GOOGLE_DATA_MANAGER_STATUS_POLL_ATTEMPTS must be between 1 and 30")
         if not 0.1 <= self.google_data_manager_status_poll_seconds <= 30.0:
             raise ValueError(
                 "TR_GOOGLE_DATA_MANAGER_STATUS_POLL_SECONDS must be between 0.1 and 30"
@@ -1347,10 +1355,7 @@ class Settings(BaseSettings):
                 )
                 if not value
             ]
-            if (
-                environment not in {"local", "test"}
-                and not self.google_data_manager_kms_key_name
-            ):
+            if environment not in {"local", "test"} and not self.google_data_manager_kms_key_name:
                 missing_google_data_manager.append("TR_GOOGLE_DATA_MANAGER_KMS_KEY_NAME")
             if missing_google_data_manager:
                 raise ValueError(
@@ -1421,9 +1426,12 @@ class Settings(BaseSettings):
         production = environment == "production"
         missing = []
         if environment != "worker" and surface in {"control", "public"}:
-            if not self.attribution_cookie_secret:
-                missing.append("TR_ATTRIBUTION_COOKIE_SECRET")
-            elif len(self.attribution_cookie_secret.encode("utf-8")) < 32:
+            if not self.attribution_cookie_key and not self.attribution_cookie_secret:
+                missing.append("TR_ATTRIBUTION_COOKIE_KEY or TR_ATTRIBUTION_COOKIE_SECRET")
+            elif (
+                self.attribution_cookie_secret
+                and len(self.attribution_cookie_secret.encode("utf-8")) < 32
+            ):
                 missing.append("TR_ATTRIBUTION_COOKIE_SECRET (at least 32 bytes)")
         if environment != "worker" and surface == "public":
             if self.google_oauth_login_available is None:
@@ -1460,6 +1468,15 @@ class Settings(BaseSettings):
                 "TR_ATTRIBUTION_COOKIE_SECRET must differ from TR_INTERNAL_GATEWAY_TOKEN"
             )
         if (
+            attribution_cookie_key_bytes
+            and self.internal_gateway_token
+            and hmac.compare_digest(
+                attribution_cookie_key_bytes,
+                self.internal_gateway_token.encode("utf-8"),
+            )
+        ):
+            missing.append("TR_ATTRIBUTION_COOKIE_KEY must differ from TR_INTERNAL_GATEWAY_TOKEN")
+        if (
             self.observer_internal_token
             and self.internal_gateway_token
             and hmac.compare_digest(
@@ -1467,9 +1484,7 @@ class Settings(BaseSettings):
                 self.internal_gateway_token.encode("utf-8"),
             )
         ):
-            missing.append(
-                "TR_OBSERVER_INTERNAL_TOKEN must differ from TR_INTERNAL_GATEWAY_TOKEN"
-            )
+            missing.append("TR_OBSERVER_INTERNAL_TOKEN must differ from TR_INTERNAL_GATEWAY_TOKEN")
         if (
             self.observer_internal_token
             and self.synthetic_monitor_api_key
@@ -1479,8 +1494,7 @@ class Settings(BaseSettings):
             )
         ):
             missing.append(
-                "TR_OBSERVER_INTERNAL_TOKEN must differ from "
-                "TR_SYNTHETIC_MONITOR_API_KEY"
+                "TR_OBSERVER_INTERNAL_TOKEN must differ from TR_SYNTHETIC_MONITOR_API_KEY"
             )
 
         # #712 removes the temporary combined bridge.  Until then it retains
@@ -1529,9 +1543,7 @@ class Settings(BaseSettings):
                 and _sensitive_setting_is_configured(field_name, configured_value)
             ):
                 environment_name = f"TR_{field_name.upper()}"
-                missing.append(
-                    f"unset {environment_name} for TR_SERVICE_SURFACE={surface}"
-                )
+                missing.append(f"unset {environment_name} for TR_SERVICE_SURFACE={surface}")
         if self.bootstrap_management_key:
             missing.append("unset TR_BOOTSTRAP_MANAGEMENT_KEY")
         storage_required = surface != "actions"
@@ -1780,8 +1792,7 @@ class Settings(BaseSettings):
             profile = profile.strip()
             if not separator or not region or not profile:
                 raise ValueError(
-                    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES entries must be "
-                    "region=app-profile"
+                    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES entries must be region=app-profile"
                 )
             if region in profiles:
                 raise ValueError(
@@ -1843,6 +1854,7 @@ _LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
     "ses_alert_from_email",
     "ses_alert_from_name",
     "ses_alert_configuration_set",
+    "attribution_cookie_key",
     "attribution_cookie_secret",
     "internal_gateway_token",
     "stripe_webhook_secret",

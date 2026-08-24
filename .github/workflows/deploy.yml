@@ -285,6 +285,8 @@ jobs:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v2
+      - name: Verify deploy isolation from runtime-only provider keys
+        run: bash scripts/deploy/revoke_runtime_only_secret_access.sh
       - name: Validate required SES credentials
         run: |
           set -euo pipefail
@@ -343,6 +345,11 @@ jobs:
     needs: [build-image, migrate-schema, sync-runtime-secrets, confirm-current-main]
     if: ${{ needs.confirm-current-main.outputs.proceed == 'true' }}
     runs-on: ubuntu-latest
+    # Must stay UNDER the deployment mutex TTL (deploy_mutex.sh, 5400s): a job
+    # that outlives the lease invites a legal expired-lock takeover while this
+    # run is still shifting traffic — the exact overlap the mutex exists to
+    # prevent. GitHub's default 360-minute bound is four TTLs too generous.
+    timeout-minutes: 85
     env:
       PROJECT_ID: quill-cloud-proxy
       REGION: us-central1
@@ -369,6 +376,12 @@ jobs:
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
+
+      - name: Acquire production deployment mutex
+        env:
+          TR_DEPLOY_MUTEX_OWNER: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TR_DEPLOY_MUTEX_TOOL: workflow
+        run: bash scripts/deploy/deploy_mutex.sh acquire >> "$GITHUB_ENV"
 
       # Staged regional deploy. Deploy us-central1 first, gate on a
       # 3-min single-region synthetic watch; only proceed to the
@@ -536,6 +549,11 @@ jobs:
         run: |
           set -euo pipefail
 
+          watchdog_extra=()
+          if [ -n "${WD_EXTRA}" ]; then
+            read -ra watchdog_extra <<<"${WD_EXTRA}"
+          fi
+
           previous_revision() {
             case "$1" in
               europe-west4) printf '%s\n' "${PREV_EU}" ;;
@@ -611,7 +629,7 @@ jobs:
               --duration-min 3 \
               --rollback-after 2 \
               --slo-class router_core \
-              ${WD_EXTRA}; then
+              "${watchdog_extra[@]}"; then
               rollback_region "${region}"
               return 1
             fi
@@ -829,6 +847,87 @@ jobs:
           SPANNER_INSTANCE_ID: trusted-router-nam6
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/retire_settle_outbox_hot_index.sh
+
+      - name: Release production deployment mutex
+        if: always()
+        run: bash scripts/deploy/deploy_mutex.sh release
+
+  public-surface-companion:
+    # This job creates/updates the isolated T1 service only after the legacy
+    # rollout is healthy. It never prepares or imports a URL map. Before the
+    # owner cutover it deploys the smokeable run.app companion; after cutover
+    # it detects the public backend in the live map and preserves routed-mode
+    # ingress/header trust on every later automatic deploy.
+    needs: [deploy]
+    continue-on-error: false
+    runs-on: ubuntu-latest
+    # Four sequential regional Cloud Run deploys normally finish in 12-20
+    # minutes. Thirty allows cold image pulls and bounded smoke retries.
+    # NOTE: this job runs AFTER the deploy job has released the production
+    # deployment mutex, and does not hold it. That is deliberate scope: the
+    # mutex fences trusted-router revisions/traffic, which manual rollout
+    # scripts also mutate; the T1 companion touches only its own service and
+    # is serialized against other workflow runs by the concurrency group. If
+    # manual T1 tooling ever appears, give it the same mutex first.
+    timeout-minutes: 30
+    env:
+      PROJECT_ID: quill-cloud-proxy
+      REGION: us-central1
+      SERVICE: trusted-router
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve fail-closed public deployment stage
+        id: public_stage
+        run: |
+          set -euo pipefail
+          public_self_link="$(gcloud compute backend-services describe \
+            trusted-router-public-backend --project="${PROJECT_ID}" --global \
+            --format='value(selfLink)' 2>/dev/null || true)"
+          live_map="$(gcloud compute url-maps describe trusted-router-control-map \
+            --project="${PROJECT_ID}" --global --format=json)"
+          if [ -n "${public_self_link}" ] && \
+             jq -e --arg backend "${public_self_link}" \
+               '.. | strings | select(. == $backend)' <<<"${live_map}" >/dev/null; then
+            echo "stage=routed" >> "$GITHUB_OUTPUT"
+            echo "public backend is live; preserving routed-only ingress"
+          else
+            echo "stage=companion" >> "$GITHUB_OUTPUT"
+            echo "public backend is not live; deploying smokeable companion only"
+          fi
+
+      - name: Deploy isolated T1 public service
+        run: bash scripts/deploy/public_surface.sh "${{ steps.public_stage.outputs.stage }}"
+
+      - name: Smoke isolated T1 public service
+        env:
+          PUBLIC_STAGE: ${{ steps.public_stage.outputs.stage }}
+        run: |
+          set -euo pipefail
+          if [ "${PUBLIC_STAGE}" = "routed" ]; then
+            base_url="https://trustedrouter.com"
+            for path in / /health /ready /status.json /v1/models /static/charter.css; do
+              curl -fsS --max-time 20 -o /dev/null "${base_url}${path}"
+            done
+            exit 0
+          fi
+          for region in us-central1 us-east4 europe-west4 southamerica-east1; do
+            base_url="$(gcloud run services describe trusted-router-public \
+              --project="${PROJECT_ID}" --region="${region}" \
+              --format='value(status.url)')"
+            for path in /health /ready /status.json /v1/models /static/charter.css; do
+              curl -fsS --max-time 20 -o /dev/null "${base_url}${path}"
+            done
+          done
 
   # ---------------------------------------------------------------------------
   # Did the CLOUD end up working, or did only the deploy finish?

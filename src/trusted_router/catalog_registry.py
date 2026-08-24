@@ -146,6 +146,7 @@ from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time 
     _INGEST_PATH,
     _PROVIDER_DEPRECATED_UPSTREAM_MODELS,
     _PROVIDER_MODELS_DIR,
+    _apply_provider_manifest_expiry,
     _author_provider,
     _build_endpoints,
     _embedding_models,
@@ -1363,6 +1364,7 @@ for _model_id, _upstream_id in _VIDEO_UPSTREAM_IDS.items():
 #              DEFAULT routing for Gemma was 502ing — drop gemini's Gemma routes.
 
 
+MODEL_ENDPOINTS = _apply_provider_manifest_expiry(MODEL_ENDPOINTS)
 MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(
     MODEL_ENDPOINTS,
     explicit_model_ids=frozenset(_VIDEO_MODELS),

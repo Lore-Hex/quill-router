@@ -14,6 +14,7 @@ from trusted_router.regional_quota_ledger import (
 from trusted_router.services.settle_outbox_apply import ApplyOutcome, apply_frozen_settle
 from trusted_router.storage import configure_store
 from trusted_router.storage_gcp_authorize import settle_atomic
+from trusted_router.storage_gcp_counter_reconcile import audit_typed_invariants
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
 from trusted_router.storage_gcp_regional_quota import (
     GlobalRegionalQuotaLease,
@@ -79,6 +80,14 @@ def test_global_grant_and_reconcile_preserve_exact_credit_and_key_totals() -> No
         0,
         6_250_000,
     )
+    assert audit_typed_invariants(store).clean
+
+    # Lease escrow is authoritative, but an additional unmatched reserved unit
+    # must still trip the invariant rather than being hidden by the lease.
+    credit_row = database.typed[CREDIT_BALANCE_TABLE][(workspace.id, global_lease.credit_shard)]
+    credit_row["reserved"] += 1
+    assert not audit_typed_invariants(store).clean
+    credit_row["reserved"] -= 1
 
     global_lease = activate_regional_quota_lease(store, global_lease, now=NOW)
     ledger = InMemoryRegionalQuotaLedger()
@@ -102,6 +111,23 @@ def test_global_grant_and_reconcile_preserve_exact_credit_and_key_totals() -> No
         actual_microdollars=3_250,
         fencing_token=local.fencing_token,
     )
+
+    partial = reconcile_regional_quota_lease(
+        store,
+        global_lease,
+        local,
+        close=False,
+        now=NOW + timedelta(minutes=1),
+    )
+    assert partial.spent_delta_microdollars == 3_250
+    assert partial.unused_released_microdollars == 0
+    assert _credit_totals(database, workspace.id) == (
+        100_000_000,
+        3_250,
+        6_246_750,
+    )
+    assert audit_typed_invariants(store).clean
+
     local = ledger.begin_drain(
         local.lease_id,
         region=local.region,
@@ -115,7 +141,7 @@ def test_global_grant_and_reconcile_preserve_exact_credit_and_key_totals() -> No
         close=True,
         now=NOW + timedelta(minutes=2),
     )
-    assert result.spent_delta_microdollars == 3_250
+    assert result.spent_delta_microdollars == 0
     assert result.unused_released_microdollars == 6_246_750
     assert _credit_totals(database, workspace.id) == (
         100_000_000,
@@ -130,6 +156,7 @@ def test_global_grant_and_reconcile_preserve_exact_credit_and_key_totals() -> No
         )
         == []
     )
+    assert audit_typed_invariants(store).clean
 
     replay = reconcile_regional_quota_lease(
         store,
@@ -748,6 +775,8 @@ def test_reconciler_lock_is_single_owner_and_fenced_after_expiry() -> None:
     )
     assert replacement is not None
     assert replacement.fencing_token == first.fencing_token + 1
+    assert replacement.previous_owner == "worker-a"
+    assert replacement.previous_fencing_token == first.fencing_token
     assert (
         store.release_regional_quota_reconciler_lock(
             owner="worker-a",

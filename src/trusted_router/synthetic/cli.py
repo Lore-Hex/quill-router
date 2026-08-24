@@ -14,7 +14,10 @@ import httpx
 from trusted_router.config import Settings, get_settings
 from trusted_router.provider_reliability import model_deadlines
 from trusted_router.storage_models import ProviderBenchmarkSample, SyntheticProbeSample
-from trusted_router.synthetic.internal_auth import synthetic_observer_token
+from trusted_router.synthetic.internal_auth import (
+    synthetic_observer_token,
+    synthetic_transaction_token,
+)
 from trusted_router.synthetic.probes import (
     DEFAULT_SYNTHETIC_BILLING_CONCURRENCY,
     SyntheticTarget,
@@ -441,6 +444,7 @@ async def run() -> int:
     )
     control_plane = os.environ.get("TR_SYNTHETIC_CONTROL_PLANE_URL", "https://trustedrouter.com")
     observer_token = synthetic_observer_token(settings)
+    transaction_token = synthetic_transaction_token(settings)
     api_key = settings.synthetic_monitor_api_key
     timeout = httpx.Timeout(settings.synthetic_monitor_timeout_seconds)
     remediator_url = os.environ.get("TR_SYNTHETIC_REMEDIATOR_URL")
@@ -593,10 +597,11 @@ async def run() -> int:
                 settings=settings,
                 monitor_region=monitor_region,
                 control_plane=control_plane,
-                # Provider-facing jobs never hold the billing-gateway
-                # credential. Ledger authorize/settle/fallback probes remain
-                # inside the internal service that owns that capability.
-                internal_token=None,
+                # Split observer jobs never hold billing authority. The
+                # explicit combined migration bridge still does, so it must
+                # keep exercising authorize/settle/fallback until the
+                # internal service takes ownership.
+                internal_token=transaction_token,
                 api_key=api_key,
                 timeout=timeout,
                 rotation_enabled=rotation_enabled,

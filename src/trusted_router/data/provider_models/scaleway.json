@@ -1,0 +1,263 @@
+{
+  "provider": "scaleway",
+  "models": [
+    {
+      "display_name": "deepseek-v4-flash-0731",
+      "title": "deepseek-v4-flash-0731",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek-v4-flash-0731",
+      "created": 1786376637,
+      "routable": true,
+      "input_token_price_per_m": 489888,
+      "output_token_price_per_m": 979776,
+      "cached_input_token_price_per_m": 97978
+    },
+    {
+      "display_name": "gemma-4-26b-a4b-it",
+      "title": "gemma-4-26b-a4b-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-26b-a4b-it",
+      "upstream_id": "gemma-4-26b-a4b-it",
+      "created": 1777469299,
+      "routable": true,
+      "input_token_price_per_m": 306180,
+      "output_token_price_per_m": 612360
+    },
+    {
+      "display_name": "llama-3.3-70b-instruct",
+      "title": "llama-3.3-70b-instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.3-70b-instruct",
+      "upstream_id": "llama-3.3-70b-instruct",
+      "created": 1736258559,
+      "routable": true,
+      "input_token_price_per_m": 1102248,
+      "output_token_price_per_m": 1102248
+    },
+    {
+      "display_name": "mistral-medium-3.5-128b",
+      "title": "mistral-medium-3.5-128b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/mistral-medium-3.5-128b",
+      "upstream_id": "mistral-medium-3.5-128b",
+      "created": 1778158991,
+      "routable": true,
+      "input_token_price_per_m": 1837080,
+      "output_token_price_per_m": 9185400
+    },
+    {
+      "display_name": "mistral-small-3.2-24b-instruct-2506",
+      "title": "mistral-small-3.2-24b-instruct-2506",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/mistral-small-3.2-24b-instruct-2506",
+      "upstream_id": "mistral-small-3.2-24b-instruct-2506",
+      "created": 1755006551,
+      "routable": true,
+      "input_token_price_per_m": 183708,
+      "output_token_price_per_m": 428652
+    },
+    {
+      "display_name": "pixtral-12b-2409",
+      "title": "pixtral-12b-2409",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/pixtral-12b-2409",
+      "upstream_id": "pixtral-12b-2409",
+      "created": 1730385501,
+      "routable": true,
+      "input_token_price_per_m": 244944,
+      "output_token_price_per_m": 244944
+    },
+    {
+      "display_name": "gpt-oss-120b",
+      "title": "gpt-oss-120b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-120b",
+      "upstream_id": "gpt-oss-120b",
+      "created": 1755093042,
+      "routable": true,
+      "input_token_price_per_m": 183708,
+      "output_token_price_per_m": 734832
+    },
+    {
+      "display_name": "qwen3-235b-a22b-instruct-2507",
+      "title": "qwen3-235b-a22b-instruct-2507",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-235b-a22b-instruct-2507",
+      "upstream_id": "qwen3-235b-a22b-instruct-2507",
+      "created": 1754049528,
+      "routable": true,
+      "input_token_price_per_m": 918540,
+      "output_token_price_per_m": 2755620
+    },
+    {
+      "display_name": "qwen3-coder-30b-a3b-instruct",
+      "title": "qwen3-coder-30b-a3b-instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-coder-30b-a3b-instruct",
+      "upstream_id": "qwen3-coder-30b-a3b-instruct",
+      "created": 1755006551,
+      "routable": true,
+      "input_token_price_per_m": 244944,
+      "output_token_price_per_m": 979776
+    },
+    {
+      "display_name": "qwen3.5-397b-a17b",
+      "title": "qwen3.5-397b-a17b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-397b-a17b",
+      "upstream_id": "qwen3.5-397b-a17b",
+      "created": 1773394870,
+      "routable": true,
+      "input_token_price_per_m": 734832,
+      "output_token_price_per_m": 4408992
+    },
+    {
+      "display_name": "qwen3.6-35b-a3b",
+      "title": "qwen3.6-35b-a3b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.6-35b-a3b",
+      "upstream_id": "qwen3.6-35b-a3b",
+      "created": 1778158991,
+      "routable": true,
+      "input_token_price_per_m": 306180,
+      "output_token_price_per_m": 1837080
+    },
+    {
+      "display_name": "glm-5.2",
+      "title": "glm-5.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "glm-5.2",
+      "created": 1782376549,
+      "routable": true,
+      "input_token_price_per_m": 2204496,
+      "output_token_price_per_m": 6735960
+    }
+  ],
+  "source": "https://api.scaleway.ai/v1/models",
+  "pricing_source": "https://www.scaleway.com/en/pricing/model-as-a-service/",
+  "generated_at": "2026-08-24T16:40:13Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 12
+}

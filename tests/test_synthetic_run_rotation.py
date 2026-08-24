@@ -102,12 +102,20 @@ def no_network_probes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 def _post_run(settings: Settings, body: dict[str, Any]) -> Any:
-    client = TestClient(create_app(settings, init_observability=False))
-    return client.post(
-        "/v1/internal/synthetic/run",
-        json=body,
-        headers={"x-trustedrouter-internal-token": OBSERVER_TOKEN},
-    )
+    # detach=true dispatches the pass with asyncio.create_task (synthetic.py:420)
+    # and only tracks it in _BACKGROUND_RUNS. A bare TestClient does NOT drive
+    # that task to completion before .post() returns, so asserting its effects
+    # straight afterwards is a race: it wins on an idle machine and loses under
+    # a loaded CI run (-n 4 plus coverage), which is why
+    # test_eventbridge_tick_runs_one_bounded_remediator_pass intermittently saw
+    # events == []. Entering the client as a context manager runs lifespan and,
+    # on exit, drains the portal so detached tasks have actually completed.
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        return client.post(
+            "/v1/internal/synthetic/run",
+            json=body,
+            headers={"x-trustedrouter-internal-token": OBSERVER_TOKEN},
+        )
 
 
 class TestRotation:
@@ -283,8 +291,8 @@ class TestDetachMode:
     def test_detach_still_runs_the_pass(self, no_network_probes: dict[str, Any]) -> None:
         settings = _settings(synthetic_monitor_api_key="sk-test-monitor")
         _post_run(settings, {"detach": True, "rotation_count": 2})
-        # TestClient drives the event loop to completion on exit, so the
-        # background task has run by the time the response is returned.
+        # _post_run enters the TestClient as a context manager, so the detached
+        # task has completed by the time the response is returned.
         assert no_network_probes["rotation_calls"], "detached pass never executed"
         assert no_network_probes["rotation_calls"][0]["count"] == 2
 

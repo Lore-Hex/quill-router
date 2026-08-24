@@ -21,6 +21,7 @@ from trusted_router.catalog import (
 from trusted_router.config import Settings
 from trusted_router.dashboard import docs_llms_full_txt
 from trusted_router.errors import error_response
+from trusted_router.mcp_metadata import MCP_SERVER_NAME, MCP_SERVER_TITLE
 from trusted_router.request_limits import enforce_authenticated_rate_limit
 from trusted_router.storage import STORE, ApiKey
 from trusted_router.typed_balance import live_credit_summary
@@ -40,9 +41,7 @@ MAX_MCP_BATCH_ITEMS = 32
 MAX_MCP_CHAT_BATCH_ITEMS = 1
 MAX_MCP_EXPENSIVE_BATCH_ITEMS = 4
 MAX_MCP_STORAGE_BATCH_ITEMS = 4
-_EXPENSIVE_TOOLS = frozenset(
-    {"models-list", "model-endpoints", "providers-list", "docs-search"}
-)
+_EXPENSIVE_TOOLS = frozenset({"models-list", "model-endpoints", "providers-list", "docs-search"})
 _STORAGE_TOOLS = frozenset({"credits-get", "generation-get"})
 _MCP_AUTH_STATE_KEY = "trusted_router_mcp_auth"
 _API_KEY_BEARER_PREFIX = "sk-tr-"
@@ -162,7 +161,8 @@ class TrustedRouterMCP:
                     "protocolVersion": MCP_PROTOCOL_VERSION,
                     "capabilities": {"tools": {}},
                     "serverInfo": {
-                        "name": "trustedrouter",
+                        "name": MCP_SERVER_NAME,
+                        "title": MCP_SERVER_TITLE,
                         "version": self.settings.release,
                     },
                 },
@@ -289,9 +289,7 @@ class TrustedRouterMCP:
             }
         )
 
-    async def _tool_generation_get(
-        self, args: dict[str, Any], request: Request
-    ) -> dict[str, Any]:
+    async def _tool_generation_get(self, args: dict[str, Any], request: Request) -> dict[str, Any]:
         api_key = self._require_api_key(request).api_key
         generation_id = _bounded_string(
             args,
@@ -431,11 +429,7 @@ class TrustedRouterMCP:
             setattr(request.state, _MCP_AUTH_STATE_KEY, error)
             raise error
         api_key = context.api_key
-        if (
-            api_key.disabled
-            or is_api_key_expired(api_key.expires_at)
-            or context.workspace is None
-        ):
+        if api_key.disabled or is_api_key_expired(api_key.expires_at) or context.workspace is None:
             error = MCPToolError(
                 "Invalid TrustedRouter API key",
                 status_code=401,
@@ -540,7 +534,11 @@ def _tool_schema(
     read_only: bool = True,
 ) -> dict[str, Any]:
     clean_properties = {
-        key: {inner_key: inner_value for inner_key, inner_value in value.items() if inner_key != "optional"}
+        key: {
+            inner_key: inner_value
+            for inner_key, inner_value in value.items()
+            if inner_key != "optional"
+        }
         for key, value in properties.items()
     }
     return {
@@ -576,9 +574,7 @@ def _tool_json(payload: Any) -> dict[str, Any]:
 
 def _is_internal_model_shape(shape: dict[str, Any]) -> bool:
     trustedrouter = shape.get("trustedrouter")
-    return bool(
-        isinstance(trustedrouter, dict) and trustedrouter.get("internal_only")
-    )
+    return bool(isinstance(trustedrouter, dict) and trustedrouter.get("internal_only"))
 
 
 def _tool_text(text: str, *, is_error: bool = False) -> dict[str, Any]:
@@ -594,9 +590,7 @@ def _bearer_token(request: Request) -> str:
 
 def _is_api_key_bearer(bearer: str) -> bool:
     """Recognize the same versioned API-key family used by normal auth."""
-    return bearer.startswith(_API_KEY_BEARER_PREFIX) and len(bearer) > len(
-        _API_KEY_BEARER_PREFIX
-    )
+    return bearer.startswith(_API_KEY_BEARER_PREFIX) and len(bearer) > len(_API_KEY_BEARER_PREFIX)
 
 
 def _top_level_tool_names(payload: Any) -> list[str]:

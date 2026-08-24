@@ -366,8 +366,11 @@ def test_choose_page_embeds_the_triangle_app(client: TestClient) -> None:
     assert "Trusted Execution Environment" in response.text
     assert "Tinfoil first" not in response.text
     assert "providers such as" not in response.text
-    assert "trustedrouter/e2e" in response.text
+    assert "trustedrouter/confidential" in response.text
+    assert "trustedrouter/fast" in response.text
+    assert "trustedrouter/eu" in response.text
     assert "trustedrouter/synth" in response.text
+    assert "trustedrouter/advisor" in response.text
     # Must unfurl with the tailored triangle social card (the PNG is checked
     # into static/og/, so _og_image_url resolves it rather than the default).
     assert 'property="og:title"' in response.text
@@ -381,10 +384,13 @@ def test_choose_app_static_asset_is_served(client: TestClient) -> None:
     response = client.get("/static/choose-app.html")
 
     assert response.status_code == 200
+    assert '<meta name="robots" content="noindex,follow">' in response.text
+    assert '<link rel="canonical" href="https://trustedrouter.com/choose">' in response.text
     assert "Choose with route-level facts." in response.text
     assert "Upstream privacy floor" in response.text
+    assert 'id="providerCount"' in response.text
     assert "/static/choose-app.css?v=2" in response.text
-    assert "/static/choose-app.js?v=2" in response.text
+    assert "/static/choose-app.js?v=3" in response.text
     assert "fonts.googleapis.com" not in response.text
     # Privacy floor defaults to Open (any provider), not ZDR.
     assert '<option value="0" selected>' in response.text
@@ -670,10 +676,11 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     # Redesigned homepage (2026-06): a static routing-diagram hero replaces the
     # animated orbital scene, on the friend-provided modern layout. Assert the
     # new conversion surface rather than the old orbital-scene markup.
-    assert "550+ AI Models at your fingertips." in response.text
+    assert "600+ AI Models at your fingertips." in response.text
     assert "One Unified Interface." in response.text
     assert "Privacy with proof." in response.text
     assert "Better privacy, better prices, better uptime, no subscriptions." in response.text
+    assert '<strong>81+</strong><span>providers</span>' in response.text
     assert '<strong>3 clouds</strong><span>GCP · AWS · Azure</span>' in response.text
     assert 'class="region-map-card"' not in response.text
     assert "Provable privacy." not in response.text

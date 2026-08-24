@@ -106,6 +106,11 @@ class RegionalQuotaReconcilerLock:
     fencing_token: int
     expires_at: str
     updated_at: str
+    # Acquisition-only metadata. These defaults keep older persisted lock rows
+    # readable, and the transaction below deliberately does not persist the
+    # previous holder on the new lock row.
+    previous_owner: str | None = None
+    previous_fencing_token: int | None = None
 
     @property
     def expires_datetime(self) -> datetime:
@@ -151,6 +156,12 @@ def acquire_regional_quota_reconciler_lock(
             _RECONCILER_LOCK_ID,
             lock,
         )
+        if current is not None and current.owner is not None:
+            return dataclasses.replace(
+                lock,
+                previous_owner=current.owner,
+                previous_fencing_token=current.fencing_token,
+            )
         return lock
 
     return store._run_in_transaction(txn)

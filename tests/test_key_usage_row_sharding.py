@@ -629,6 +629,12 @@ def test_typed_gateway_authorize_applies_window_limit_across_shards() -> None:
     )
 
     assert outcome == f"{AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED}:daily"
+    decision = getattr(outcome, "rate_limit", None)
+    assert decision is not None
+    assert decision.window == "daily"
+    assert decision.limit == 1_000
+    assert decision.remaining == 0
+    assert decision.allowed is False
     assert authorization is None
 
 

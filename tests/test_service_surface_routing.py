@@ -6,7 +6,6 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-from fastapi.routing import APIRoute
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
@@ -25,22 +24,118 @@ def _load_url_map_module() -> ModuleType:
 
 URL_MAP = _load_url_map_module()
 
+PUBLIC_BACKEND = "public-backend"
+LEGACY_BACKEND = "legacy-backend"
+
+
+def _emitted_map() -> dict[str, object]:
+    return URL_MAP.rewrite_url_map(
+        {"name": "trusted-router-control-map", "defaultService": LEGACY_BACKEND},
+        PUBLIC_BACKEND,
+        LEGACY_BACKEND,
+        LEGACY_BACKEND,
+        LEGACY_BACKEND,
+        ["trustedrouter.com"],
+    )
+
+
+def _emitted_backend(url_map: dict[str, object], path: str) -> str:
+    """Select a pathRule using Google URL-map matching, not the simulator."""
+    matchers = url_map["pathMatchers"]
+    assert isinstance(matchers, list)
+    matcher = next(
+        item
+        for item in matchers
+        if item["name"] == "trusted-router-service-surfaces"
+    )
+    exact: list[tuple[int, str]] = []
+    wildcard: list[tuple[int, str]] = []
+    for rule in matcher["pathRules"]:
+        service = rule["service"]
+        for pattern in rule["paths"]:
+            if pattern.endswith("/*"):
+                prefix = pattern.removesuffix("/*")
+                if path.startswith(f"{prefix}/"):
+                    wildcard.append((len(prefix), service))
+            elif path == pattern:
+                exact.append((len(pattern), service))
+    if exact:
+        return max(exact)[1]
+    if wildcard:
+        return max(wildcard)[1]
+    return matcher["defaultService"]
+
 
 def _concrete(path: str) -> str:
     return re.sub(r"\{[^}]+\}", "sample", path)
 
 
-@pytest.mark.parametrize("surface", ["public", "actions", "control", "internal"])
-def test_every_registered_route_maps_to_its_service_surface(surface: str) -> None:
-    app = create_app(
-        Settings(environment="test", service_surface=surface),
+def test_every_combined_route_sent_to_public_is_mounted_by_public() -> None:
+    """The T1 URL map must never send public traffic to a missing handler.
+
+    This supersedes the parked four-process contract that every route mounted
+    by a surface had to route back to that same surface.  The production split
+    has only public and legacy processes: T2--T4 routes may still be mounted by
+    the public app, but the availability-tier contract deliberately keeps them
+    on the combined legacy service.  The reverse dependency remains forbidden,
+    so every combined route selected for public must exist on the public app.
+    """
+    combined = create_app(
+        Settings(environment="test", service_surface="combined"),
         configure_store_arg=False,
         init_observability=False,
     )
-    shared = {"/health", "/v1/health", "/ready", "/v1/ready"}
-    for route in app.routes:
-        if isinstance(route, APIRoute) and route.path not in shared:
-            assert URL_MAP.route_surface(_concrete(route.path)) == surface, route.path
+    public = create_app(
+        Settings(environment="test", service_surface="public"),
+        configure_store_arg=False,
+        init_observability=False,
+    )
+    public_paths = {route.path for route in public.routes}
+    emitted = _emitted_map()
+    violations = {
+        route.path
+        for route in combined.routes
+        if _emitted_backend(emitted, _concrete(route.path)) == PUBLIC_BACKEND
+        and route.path not in public_paths
+    }
+    assert violations == set()
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/",
+        "/pricing",
+        "/blog",
+        "/status",
+        "/status.json",
+        "/catalog",
+        "/leaderboard",
+        "/static/charter.css",
+        "/robots.txt",
+        "/.well-known/oauth-authorization-server",
+        "/health",
+        "/ready",
+    ],
+)
+def test_t1_marketing_static_status_and_catalog_paths_are_public(path: str) -> None:
+    assert URL_MAP.route_surface(path) == "public"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/console",
+        "/auth/session",
+        "/signup",
+        "/billing/checkout",
+        "/internal/stripe/webhook",
+        "/internal/gateway/authorize",
+        "/v1/chat/completions",
+    ],
+)
+def test_t2_through_t4_and_legacy_alias_paths_are_not_public(path: str) -> None:
+    assert URL_MAP.route_surface(path) != "public"
 
 
 @pytest.mark.parametrize("prefix", ["", "/v1"])
@@ -78,15 +173,93 @@ def test_anonymous_actions_leave_the_public_renderer(path: str) -> None:
     assert URL_MAP.route_surface(path.removesuffix("/inquiry")) == "public"
 
 
-def test_group_buy_public_reads_and_private_state_have_distinct_owners() -> None:
-    assert URL_MAP.route_surface("/bedrock-group-buy") == "public"
-    assert URL_MAP.route_surface("/bedrock-group-buy/") == "public"
-    assert URL_MAP.route_surface("/v1/bedrock-group-buy") == "public"
+def test_entire_group_buy_stays_on_the_t2_legacy_control_slot() -> None:
+    assert URL_MAP.route_surface("/bedrock-group-buy") == "control"
+    assert URL_MAP.route_surface("/bedrock-group-buy/") == "control"
+    assert URL_MAP.route_surface("/v1/bedrock-group-buy") == "control"
     assert URL_MAP.route_surface("/bedrock-group-buy/manage") == "control"
     assert URL_MAP.route_surface("/bedrock-group-buy/pledge") == "control"
     assert URL_MAP.route_surface("/bedrock-group-buy/withdraw") == "control"
     assert URL_MAP.route_surface("/v1/bedrock-group-buy/me") == "control"
     assert URL_MAP.route_surface("/v1/bedrock-group-buy/pledge") == "control"
+
+
+def test_every_emitted_nonpublic_wildcard_has_an_exact_bare_twin() -> None:
+    emitted = _emitted_map()
+    matchers = emitted["pathMatchers"]
+    matcher = next(
+        item
+        for item in matchers
+        if item["name"] == "trusted-router-service-surfaces"
+    )
+    owners = {
+        pattern: rule["service"]
+        for rule in matcher["pathRules"]
+        for pattern in rule["paths"]
+    }
+    missing_or_wrong = {
+        pattern: owners.get(pattern.removesuffix("/*"))
+        for pattern, service in owners.items()
+        if pattern.endswith("/*")
+        and service != PUBLIC_BACKEND
+        and owners.get(pattern.removesuffix("/*")) != service
+    }
+    assert missing_or_wrong == {}
+
+
+@pytest.mark.parametrize(
+    ("path", "backend"),
+    (
+        ("/bedrock-group-buy", LEGACY_BACKEND),
+        ("/bedrock-group-buy/", LEGACY_BACKEND),
+        ("/bedrock-group-buy/manage", LEGACY_BACKEND),
+        ("/v1/bedrock-group-buy", LEGACY_BACKEND),
+        ("/console", LEGACY_BACKEND),
+        ("/auth/session", LEGACY_BACKEND),
+        ("/signup", LEGACY_BACKEND),
+        ("/internal/gateway/settle", LEGACY_BACKEND),
+        ("/v1/chat/completions", LEGACY_BACKEND),
+        ("/google_oauth_callback", LEGACY_BACKEND),
+        ("/internal/stripe/webhook", LEGACY_BACKEND),
+        ("/", PUBLIC_BACKEND),
+        ("/status.json", PUBLIC_BACKEND),
+        ("/static/app.css", PUBLIC_BACKEND),
+        ("/og.png", PUBLIC_BACKEND),
+        ("/robots.txt", PUBLIC_BACKEND),
+        ("/sitemap.xml", PUBLIC_BACKEND),
+        ("/.well-known/mcp/server-card.json", PUBLIC_BACKEND),
+        ("/leaderboard", PUBLIC_BACKEND),
+        ("/trust", PUBLIC_BACKEND),
+        ("/health", PUBLIC_BACKEND),
+        ("/v1/health", PUBLIC_BACKEND),
+    ),
+)
+def test_emitted_map_routes_representative_paths(path: str, backend: str) -> None:
+    assert _emitted_backend(_emitted_map(), path) == backend
+
+
+@pytest.mark.parametrize(
+    ("path", "surface"),
+    (
+        ("/", "public"),
+        ("/status.json", "public"),
+        ("/static/a.css", "public"),
+        ("/.well-known/mcp/server-card.json", "public"),
+        ("/console", "control"),
+        ("/signup", "control"),
+        ("/internal/gateway/settle", "internal"),
+        ("/v1/chat/completions", "control"),
+        ("/bedrock-group-buy", "control"),
+        ("/bedrock-group-buy/manage", "control"),
+        ("/google_oauth_callback", "control"),
+        ("/internal/stripe/webhook", "control"),
+    ),
+)
+def test_representative_concrete_path_ownership_is_unchanged(
+    path: str,
+    surface: str,
+) -> None:
+    assert URL_MAP.route_surface(path) == surface
 
 
 @pytest.mark.parametrize("prefix", ["", "/v1"])
@@ -191,6 +364,31 @@ def test_rewrite_preserves_explicit_unrelated_hosts_but_defaults_unknown_to_publ
     }
     assert result["tests"][0]["service"] == "public-backend"
     assert result["tests"][1]["service"] == "other-backend"
+
+
+def test_one_service_cutover_keeps_every_nonpublic_pattern_on_legacy() -> None:
+    legacy = "projects/p/global/backendServices/trusted-router-control-backend"
+    public = "projects/p/global/backendServices/trusted-router-public-backend"
+    result = URL_MAP.rewrite_url_map(
+        {"defaultService": legacy},
+        public,
+        legacy,
+        legacy,
+        legacy,
+        ["trustedrouter.com", "allyrouter.com", "uptimerouter.com"],
+    )
+    matcher = next(
+        item
+        for item in result["pathMatchers"]
+        if item["name"] == "trusted-router-service-surfaces"
+    )
+    rule_by_paths = {tuple(rule["paths"]): rule["service"] for rule in matcher["pathRules"]}
+    for patterns in (
+        URL_MAP.ACTIONS_PATH_PATTERNS,
+        URL_MAP.CONTROL_PATH_PATTERNS,
+        URL_MAP.INTERNAL_PATH_PATTERNS,
+    ):
+        assert rule_by_paths[patterns] == legacy
 
 
 def test_rewrite_refuses_an_existing_catch_all_host_rule() -> None:

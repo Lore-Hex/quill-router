@@ -124,6 +124,95 @@ def test_fresh_probes_produce_no_monitor_decision(sentry_events: list[str]) -> N
     assert not any(d.playbook == "monitor-stale" for d in decisions)
 
 
+def test_live_probe_fleet_pages_when_transaction_probes_disappear(
+    sentry_events: list[str],
+) -> None:
+    _record(
+        SyntheticProbeSample(
+            id="syn_tls_live_transaction_blind",
+            probe_type="tls_health",
+            target="canonical",
+            target_url="https://api.trustedrouter.com/v1",
+            monitor_region="test-1",
+            status="up",
+        )
+    )
+
+    decisions = run_remediator_pass(
+        _settings(
+            service_surface="internal",
+            synthetic_monitor_api_key="sk-tr-test",
+            internal_gateway_token="gateway-test",  # noqa: S106 - test fixture.
+        )
+    )
+
+    stale = [d for d in decisions if d.playbook == "transaction-monitor-stale"]
+    assert {d.subject for d in stale} == {
+        "gateway_authorize",
+        "gateway_settle",
+        "provider_fallback",
+    }
+    assert sum("transaction-monitor-stale" in event for event in sentry_events) == 3
+
+
+def test_fresh_transaction_probes_keep_dead_man_quiet(
+    sentry_events: list[str],
+) -> None:
+    for probe_type in (
+        "tls_health",
+        "gateway_authorize",
+        "gateway_settle",
+        "provider_fallback",
+    ):
+        _record(
+            SyntheticProbeSample(
+                id=f"syn_fresh_{probe_type}",
+                probe_type=probe_type,
+                target="canonical" if probe_type == "tls_health" else "control-plane",
+                target_url="https://trustedrouter.com",
+                monitor_region="test-1",
+                status="up",
+            )
+        )
+
+    decisions = run_remediator_pass(
+        _settings(
+            service_surface="internal",
+            synthetic_monitor_api_key="sk-tr-test",
+            internal_gateway_token="gateway-test",  # noqa: S106 - test fixture.
+        )
+    )
+
+    assert not any(d.playbook == "transaction-monitor-stale" for d in decisions)
+    assert not any("transaction-monitor-stale" in event for event in sentry_events)
+
+
+def test_observer_surface_never_claims_transaction_monitor_ownership(
+    sentry_events: list[str],
+) -> None:
+    _record(
+        SyntheticProbeSample(
+            id="syn_observer_tls_only",
+            probe_type="tls_health",
+            target="canonical",
+            target_url="https://api.trustedrouter.com/v1",
+            monitor_region="test-1",
+            status="up",
+        )
+    )
+
+    decisions = run_remediator_pass(
+        _settings(
+            service_surface="observer",
+            synthetic_monitor_api_key="sk-tr-test",
+            observer_internal_token="observer-test",  # noqa: S106 - test fixture.
+        )
+    )
+
+    assert not any(d.playbook == "transaction-monitor-stale" for d in decisions)
+    assert not any("transaction-monitor-stale" in event for event in sentry_events)
+
+
 def test_decision_rows_bucket_and_dedupe(sentry_events: list[str]) -> None:
     fleet.register_heartbeat_target("scheduler:bucketed")
     _record(

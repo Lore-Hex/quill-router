@@ -39,6 +39,9 @@
   <link rel="preload" href="/static/fonts/spectral-300-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
+  {# The homepage carried no structured data at all, which is the page an
+     assistant is most likely to land on when asked who operates this. #}
+  {% if organization_json_ld %}<script type="application/ld+json" nonce="{{ csp_nonce() }}">{{ organization_json_ld|safe }}</script>{% endif %}
   <script nonce="{{ csp_nonce() }}">window.__TR__ = {{ tr_config | safe }};</script>
   <script src="/static/dashboard.js?v={{ static_version|default('local') }}" defer></script>
 </head>
@@ -50,7 +53,7 @@
       <div class="home-hero-copy">
         <div class="kicker">{% if alternate_brand %}Powered by TrustedRouter{% else %}Own your alpha{% endif %}</div>
         <h1>
-          <span class="hero-line">550+ AI Models at your fingertips.</span>
+          <span class="hero-line">600+ AI Models at your fingertips.</span>
           <span class="hero-line">One Unified Interface.</span>
           <em class="hero-line">Privacy with proof.</em>
         </h1>
@@ -93,7 +96,8 @@
     </section>
 
     <section class="charter-stat-band" aria-label="{{ brand_name }} facts">
-      <div class="charter-stat"><strong>550+</strong><span>AI models</span></div>
+      <div class="charter-stat"><strong>600+</strong><span>AI models</span></div>
+      <div class="charter-stat"><strong>81+</strong><span>providers</span></div>
       <div class="charter-stat"><strong>3 clouds</strong><span>GCP · AWS · Azure</span></div>
     </section>
 

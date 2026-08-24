@@ -1,13 +1,16 @@
 {% extends "public/_base.html" %}
 {% block body %}
 <section class="public-proof-strip">
-  <div><strong>Effective</strong><span>August 18, 2026</span></div>
+  <div><strong>Effective</strong><span>August 24, 2026</span></div>
   <div><strong>Controller</strong><span>{{ entity.name }}</span></div>
   <div><strong>Prompt and output logs</strong><span>Never</span></div>
   <div><strong>Contact</strong><span><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a></span></div>
 </section>
 
-<section class="model-catalog legal-copy">
+<section class="model-catalog legal-copy" data-substantive-content="privacy">
+  <div class="model-catalog-head"><div><span class="eyebrow">Plain-language summary</span><h2>The privacy boundary, in brief</h2></div></div>
+  <p>TrustedRouter is operated by {{ entity.name }}. Ordinary inference requests are designed to pass through the attested gateway without becoming prompt or output logs. We retain the account, billing, security, and usage metadata needed to provide the service, and downstream model providers process requests according to the route you select. Batch is a separate, opt-in mode with encrypted temporary retention. This summary is not a replacement for the complete policy below.</p>
+
   <div class="model-catalog-head"><div><span class="eyebrow">Scope</span><h2>What this policy covers</h2></div></div>
   <p>This Privacy Policy explains how {{ entity.name }}, a {{ entity.type }}, collects, uses, discloses, and protects information when you use TrustedRouter websites, dashboards, APIs, SDKs, plugins, and related services.</p>
 
@@ -54,6 +57,6 @@
   <p>We may update this policy as the service changes. We will post the updated policy here and change the effective date. Material changes may also be communicated through the service or account email.</p>
 
   <h2>Contact</h2>
-  <p>{{ entity.name }}<br>{{ entity.address }}<br>{{ entity.phone }}<br><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a></p>
+  <p>{{ entity.name }}<br>{{ entity.address }}<br>{{ entity.phone }}<br><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a><br>Additional business and support channels are published at <a href="/contact">/contact</a>.</p>
 </section>
 {% endblock %}

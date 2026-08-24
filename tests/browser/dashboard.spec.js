@@ -4,7 +4,7 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
   await page.goto("/");
 
   await expect(page.getByRole("heading", {
-    name: "550+ AI Models at your fingertips. One Unified Interface. Privacy with proof.",
+    name: "600+ AI Models at your fingertips. One Unified Interface. Privacy with proof.",
   })).toBeVisible();
   const headlineLines = page.locator(".charter-home-hero h1 .hero-line");
   await expect(headlineLines).toHaveCount(3);
@@ -14,8 +14,9 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
     "Better privacy, better prices, better uptime, no subscriptions.",
   );
   const homepageStats = page.locator(".charter-stat-band .charter-stat");
-  await expect(homepageStats).toHaveCount(2);
-  await expect(homepageStats.first()).toContainText("550+AI models");
+  await expect(homepageStats).toHaveCount(3);
+  await expect(homepageStats.nth(0)).toContainText("600+AI models");
+  await expect(homepageStats.nth(1)).toContainText("81+providers");
   await expect(homepageStats.last()).toContainText("3 cloudsGCP · AWS · Azure");
   await expect(page.locator(".region-map-card")).toHaveCount(0);
   await expect(page.locator("body")).toHaveCSS("font-size", "15.5px");
@@ -406,7 +407,7 @@ test("homepage and console redirect are usable on mobile width", async ({ page }
   await page.goto("/");
 
   await expect(page.getByRole("heading", {
-    name: "550+ AI Models at your fingertips. One Unified Interface. Privacy with proof.",
+    name: "600+ AI Models at your fingertips. One Unified Interface. Privacy with proof.",
   })).toBeVisible();
   let overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(2);
@@ -532,13 +533,14 @@ test("model picker applies privacy to exact provider routes", async ({ page }) =
   const picker = page.frameLocator("#tr-choose-frame");
 
   await expect(picker.locator("#loadState")).toContainText("independently scored models");
+  await expect(picker.locator("#providerCount")).not.toHaveText("...");
   await picker.getByRole("button", { name: /Simple/ }).click();
   await picker.getByRole("button", { name: /Any/ }).click();
   await picker.locator("#privacy").selectOption("3");
 
   await expect(picker.locator(".model-card").first()).toBeVisible();
   await expect(picker.locator(".route-recommendation code").first()).toHaveText(
-    "trustedrouter/e2e",
+    "trustedrouter/confidential",
   );
   await expect(picker.locator(".model-card", { hasText: "DeepSeek V4 Pro" })).toHaveCount(0);
   const routeLabels = await picker.locator(".provider-route").allTextContents();

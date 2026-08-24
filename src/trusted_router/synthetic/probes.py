@@ -1989,6 +1989,8 @@ def rotation_candidates() -> dict[str, list[str]]:
 
     pool: dict[str, list[str]] = {}
     for endpoint in MODEL_ENDPOINTS.values():
+        if not endpoint.catalog_is_current():
+            continue
         if endpoint.usage_type != "Credits":
             continue
         if provider_model_retired(

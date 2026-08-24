@@ -233,6 +233,8 @@ def _privacy_candidate_models(
     eligible: list[tuple[int, int, int, str, Model]] = []
     per_provider: dict[str, list[tuple[int, int, Model]]] = {}
     for endpoint in MODEL_ENDPOINTS.values():
+        if not endpoint.catalog_is_current():
+            continue
         provider = PROVIDERS.get(endpoint.provider)
         model = MODELS.get(endpoint.model_id)
         if (

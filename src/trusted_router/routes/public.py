@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, Query, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import (
     FileResponse,
@@ -49,7 +49,9 @@ from trusted_router.client_reliability import client_observed_status_section
 from trusted_router.config import Settings
 from trusted_router.dashboard import (
     MODEL_SEO_SECTIONS,
+    OPENROUTER_PAID_LANDING_VARIANTS,
     STATIC_DIR,
+    assigned_openrouter_landing_path,
     canonical_model_comparison_path,
     dashboard_html,
     docs_llms_full_txt,
@@ -57,6 +59,7 @@ from trusted_router.dashboard import (
     hipaa_readiness_json,
     llms_txt,
     procurement_json,
+    public_about_html,
     public_apps_html,
     public_baa_html,
     public_benchmark_report_html,
@@ -67,6 +70,7 @@ from trusted_router.dashboard import (
     public_chat_html,
     public_competitor_compare_html,
     public_competitor_compare_index_html,
+    public_contact_html,
     public_dpa_html,
     public_fusion_html,
     public_hipaa_readiness_html,
@@ -79,7 +83,7 @@ from trusted_router.dashboard import (
     public_model_region_html,
     public_model_section_html,
     public_models_html,
-    public_not_found_html,
+    public_openrouter_experiment_html,
     public_page_html,
     public_privacy_html,
     public_provider_detail_html,
@@ -111,6 +115,11 @@ from trusted_router.domains import (
     request_hostname,
     status_hostname_for_domain,
 )
+from trusted_router.mcp_metadata import (
+    MCP_SERVER_DESCRIPTION,
+    MCP_SERVER_NAME,
+    MCP_SERVER_TITLE,
+)
 from trusted_router.og import OG_PNG_PATH
 from trusted_router.operational_analytics_freshness import (
     ANALYTICS_STATUS_KEY,
@@ -125,6 +134,12 @@ from trusted_router.provider_contract import (
 )
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
 from trusted_router.request_limits import normalized_client_identity
+from trusted_router.routes.mcp import MCP_PROTOCOL_VERSION
+from trusted_router.routes.oauth_keys import (
+    OAUTH_AUTHORIZATION_ENDPOINT_PATH,
+    OAUTH_KEY_EXCHANGE_ENDPOINT_PATH,
+    PKCE_METHODS,
+)
 from trusted_router.serialization import user_model_public_shape
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.ops_chat import OpsChatSupportMessage, fanout_support_message
@@ -190,6 +205,12 @@ CHOOSE_CATALOG_STALE_SECONDS = 86_400
 MODEL_REGION_PAGE_CACHE_SECONDS = 300
 MODEL_REGION_PAGE_STALE_SECONDS = 86_400
 INDEXNOW_KEY = "360a02e48445d297f9612a4c3fef878b"
+OPENROUTER_LANDING_EXPERIMENT_CAMPAIGNS = frozenset(
+    {
+        "openrouter_alternative_exact",
+        "openrouter_lp_multi_20260822",
+    }
+)
 _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
 # /fleet fans out to every peer's status.json, so its cache TTL is what keeps
 # a page-refresh storm from turning into a cross-cloud fetch storm.
@@ -308,10 +329,7 @@ def _inquiry_client_identity(request: Request, settings: Settings) -> str:
     contract and never trust forwarding headers or an arbitrary socket peer.
     """
 
-    if (
-        settings.service_surface == "combined"
-        and settings.allow_deployed_combined_surface
-    ):
+    if settings.service_surface == "combined" and settings.allow_deployed_combined_surface:
         return request.client.host if request.client else "unknown"
     return normalized_client_identity(request, settings)
 
@@ -995,9 +1013,28 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def seo_x402_llm_api() -> str:
         return public_page_html(settings, "x402-llm-api")
 
+    def openrouter_landing_experiment_redirect(request: Request) -> RedirectResponse:
+        attribution = getattr(request.state, "acquisition_attribution", None)
+        seed = getattr(attribution, "anonymous_id", None)
+        selected_path = assigned_openrouter_landing_path(seed)
+        query = request.url.query
+        location = f"{selected_path}?{query}" if query else selected_path
+        return RedirectResponse(
+            url=location,
+            status_code=307,
+            headers={
+                "cache-control": "private, no-store",
+                "vary": "cookie",
+            },
+        )
+
     @public_html_route("/openrouter-alternative")
-    async def seo_openrouter_alternative() -> str:
-        return public_page_html(settings, "openrouter-alternative")
+    async def seo_openrouter_alternative(
+        request: Request,
+    ) -> Response:
+        if request.query_params.get("utm_campaign") in OPENROUTER_LANDING_EXPERIMENT_CAMPAIGNS:
+            return openrouter_landing_experiment_redirect(request)
+        return HTMLResponse(public_page_html(settings, "openrouter-alternative"))
 
     @public_html_route("/private-llm-api")
     async def seo_private_llm_api() -> str:
@@ -1011,6 +1048,27 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             canonical_path="/openrouter-alternative",
             robots_meta="noindex,follow",
         )
+
+    @public_html_route("/openrouter-alternative/experiment")
+    async def experiment_openrouter_landing_router(
+        request: Request,
+    ) -> RedirectResponse:
+        return openrouter_landing_experiment_redirect(request)
+
+    @public_html_route(
+        "/openrouter-alternative/lp/{variant_slug}",
+        include_slash=False,
+    )
+    async def experiment_openrouter_landing_variant(
+        variant_slug: str,
+    ) -> Response:
+        if variant_slug not in OPENROUTER_PAID_LANDING_VARIANTS:
+            # Raise rather than return HTML: the central 404 handler picks the
+            # representation from Accept, so an agent gets the markdown body
+            # with the site indexes and a browser gets the same styled page as
+            # before. Returning HTML here would hand every client HTML.
+            raise HTTPException(status_code=404)
+        return HTMLResponse(public_openrouter_experiment_html(settings, variant_slug))
 
     @public_html_route("/private-llm-api/quickstart")
     async def experiment_private_llm_quickstart() -> str:
@@ -1208,15 +1266,20 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             )
         html = public_blog_post_html(settings, slug)
         if html is None:
-            return HTMLResponse(
-                public_not_found_html(settings, f"/blog/{slug}"),
-                status_code=404,
-            )
+            raise HTTPException(status_code=404)
         return html
 
     @public_html_route("/security")
     async def security() -> str:
         return public_page_html(settings, "security")
+
+    @public_html_route("/about")
+    async def about() -> str:
+        return public_about_html(settings)
+
+    @public_html_route("/contact")
+    async def contact() -> str:
+        return public_contact_html(settings)
 
     @public_html_route("/legal")
     async def legal() -> str:
@@ -1331,7 +1394,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def benchmark_report(period: str) -> HTMLResponse:
         body = public_benchmark_report_html(settings, period)
         if body is None:
-            return HTMLResponse(public_not_found_html(settings, "/benchmarks/reports"), 404)
+            raise HTTPException(status_code=404)
         return HTMLResponse(body)
 
     @public_html_route("/rankings")
@@ -1397,6 +1460,72 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             headers={"cache-control": "public, max-age=300, s-maxage=3600"},
         )
 
+    @app.get("/.well-known/mcp/server-card.json", include_in_schema=False)
+    @app.get("/.well-known/mcp.json", include_in_schema=False)
+    async def mcp_discovery(request: Request) -> JSONResponse:
+        """Where the MCP server is, for a client that has only the domain.
+
+        Lives with the public documents rather than beside the MCP endpoint
+        itself: /mcp is authenticated and mounted on the control surface, while
+        discovery has to be reachable by anyone holding only the hostname. The
+        surface-routing contract caught the first version of this, which was
+        registered next to the server and so was absent from the public app the
+        URL map points at.
+
+        Everything needed to connect was published in prose on /docs/mcp: the
+        URL, the transport, that it wants a Bearer key. An agent handed
+        "trustedrouter.com" and asked to use its MCP server had to read a
+        marketing page to find them, which is the same discoverability gap that
+        made openapi.json unfindable.
+
+        This mirrors the values the server itself reports at `initialize`
+        rather than restating them, so the document cannot describe a server
+        different from the one that answers.
+        """
+        domain = request_control_domain(request, settings)
+        return JSONResponse(
+            {
+                "name": MCP_SERVER_NAME,
+                "title": MCP_SERVER_TITLE,
+                "description": MCP_SERVER_DESCRIPTION,
+                "iconUrl": f"https://{domain}/static/favicon.svg",
+                "version": settings.release,
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "transport": "http",
+                "url": f"https://{domain}/mcp",
+                "authentication": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "description": "A TrustedRouter API key: Authorization: Bearer sk-tr-...",
+                    "tokenUrl": f"https://{domain}/console/keys",
+                },
+                "capabilities": {"tools": {}},
+                "documentation": f"https://{domain}/docs/mcp",
+            },
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
+    @app.get("/.well-known/oauth-authorization-server", include_in_schema=False)
+    async def oauth_authorization_server_metadata(request: Request) -> JSONResponse:
+        """Describe the delegated API-key authorization flow to public clients."""
+        origin = f"https://{request_control_domain(request, settings)}"
+        return JSONResponse(
+            {
+                "issuer": origin,
+                "authorization_endpoint": f"{origin}{OAUTH_AUTHORIZATION_ENDPOINT_PATH}",
+                "token_endpoint": f"{origin}{OAUTH_KEY_EXCHANGE_ENDPOINT_PATH}",
+                "response_types_supported": ["code"],
+                "grant_types_supported": ["authorization_code"],
+                "code_challenge_methods_supported": sorted(PKCE_METHODS),
+                "token_endpoint_auth_methods_supported": ["none"],
+                "service_documentation": f"{origin}/sign-in-with-trustedrouter",
+                # scopes_supported is deliberately absent. API keys have no scope or
+                # permission concept, so advertising scopes would falsely imply that
+                # a requested narrow scope produces anything but a full-access key.
+            },
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
     @app.api_route("/llms.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
     async def llms() -> PlainTextResponse:
         return PlainTextResponse(
@@ -1421,6 +1550,32 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             docs_llms_full_txt(settings),
             headers=public_document_headers("/docs/llms-full.txt"),
         )
+
+    # Root-level aliases for the paths an agent tries by convention before it
+    # tries anything else. /llms-full.txt and /.well-known/llms.txt are where
+    # the llms.txt convention says to look; both used to 404 while the real
+    # documents sat under /docs, which is discoverable only after you have
+    # already found the index you were looking for.
+    @app.api_route("/llms-full.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
+    async def llms_full() -> PlainTextResponse:
+        return PlainTextResponse(
+            docs_llms_full_txt(settings),
+            headers=public_document_headers("/llms-full.txt"),
+        )
+
+    @app.api_route(
+        "/.well-known/llms.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse
+    )
+    async def well_known_llms() -> PlainTextResponse:
+        return PlainTextResponse(
+            llms_txt(settings),
+            headers=public_document_headers("/llms.txt"),
+        )
+
+    @app.api_route("/api", methods=["GET", "HEAD"], include_in_schema=False)
+    async def api_alias() -> RedirectResponse:
+        """/api is the first URL an agent guesses for API docs. It 404'd."""
+        return RedirectResponse(url="/docs", status_code=308)
 
     @public_html_route("/status")
     async def status_page(request: Request, background_tasks: BackgroundTasks) -> Response:
@@ -1626,10 +1781,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def competitor_compare(competitor_slug: str) -> HTMLResponse:
         body = public_competitor_compare_html(settings, competitor_slug.strip())
         if body is None:
-            return HTMLResponse(
-                public_not_found_html(settings, f"/compare/{competitor_slug}"),
-                status_code=404,
-            )
+            raise HTTPException(status_code=404)
         return HTMLResponse(body)
 
     @public_html_route("/chat")
@@ -1687,18 +1839,12 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         body = public_model_detail_html(settings, cleaned)
         if body is None:
             user_model = STORE.get_user_model(normalize_custom_model_id(cleaned))
-            if (
-                user_model is not None
-                and user_model.enabled
-                and user_model.status == "active"
-            ):
+            if user_model is not None and user_model.enabled and user_model.status == "active":
                 shape = user_model_public_shape(user_model)
                 body = render_template(
                     "public/user_model_detail.html",
                     api_base_url=settings.api_base_url,
-                    site_url=(
-                        f"https://{settings.trusted_domain}/models/{user_model.id}"
-                    ),
+                    site_url=(f"https://{settings.trusted_domain}/models/{user_model.id}"),
                     title=f"{user_model.name} | User-provided model",
                     heading=user_model.name,
                     description=shape["privacy_notice"],
@@ -1730,6 +1876,35 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             path=STATIC_DIR / "favicon.ico",
             media_type="image/x-icon",
             headers={"cache-control": "max-age=86400, public"},
+        )
+
+    @app.get("/trust/control-plane.json")
+    async def trust_control_plane() -> JSONResponse:
+        """What commit THIS control plane is running.
+
+        The enclave release records answer "which gateway build is serving".
+        Nothing answered the same question about the control plane, and two of
+        the three planes did not even record it: AWS shipped TR_RELEASE="eu"
+        and Azure "azure", both constants, so every deploy reported the same
+        string and a fresh plane was indistinguishable from a stale one. That
+        is why Azure ran for an unknown length of time on a deploy script that
+        could no longer deploy it, with nothing able to notice.
+
+        Deliberately per-plane and unauthenticated: the staleness check reads
+        this from outside, the same way the trust-drift check reads
+        attestations, so it measures what is SERVING rather than what some
+        deploy job believed it shipped.
+        """
+        return JSONResponse(
+            {
+                # trusted_domain is what already differs per plane
+                # (trustedrouter.com / aws. / azure.), so it identifies the
+                # plane without adding a setting that could be set wrong.
+                "plane": settings.trusted_domain,
+                "release": settings.release,
+                "api_base_url": settings.api_base_url,
+            },
+            headers=public_document_headers("/trust/control-plane.json"),
         )
 
     @app.get("/trust/gcp-release.json")
@@ -2259,9 +2434,7 @@ def _apply_public_client_observed_policy(
 ) -> dict[str, Any]:
     result = dict(payload)
     if not settings.public_client_observed_enabled:
-        result["client_observed"] = _client_observed_liveness(
-            result.get("client_observed")
-        )
+        result["client_observed"] = _client_observed_liveness(result.get("client_observed"))
     return result
 
 

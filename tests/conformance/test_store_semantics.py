@@ -1183,8 +1183,17 @@ def test_reserve_key_limit_window_blocks_before_lifetime(store: Store, unique: s
     with pytest.raises(KeyWindowLimitExceeded) as excinfo:
         store.reserve_key_limit(kh, 10, usage_type="Credits")
     assert excinfo.value.window == "daily"
+    assert excinfo.value.decision.limit == 100
+    assert excinfo.value.decision.remaining == 5
+    assert excinfo.value.decision.allowed is False
+    assert excinfo.value.decision.reset_seconds >= 1
     # Under the window cap still succeeds against the same row.
-    store.reserve_key_limit(kh, 5, usage_type="Credits")
+    decision = store.reserve_key_limit(kh, 5, usage_type="Credits")
+    assert decision is not None
+    assert decision.window == "daily"
+    assert decision.limit == 100
+    assert decision.remaining == 5
+    assert decision.allowed is True
 
 
 def test_stale_window_start_reads_as_zero(store: Store, unique: str) -> None:

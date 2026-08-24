@@ -114,6 +114,43 @@ def write_embedding_provider_manifest(
     ]
 
 
+def write_discovered_embedding_manifest(
+    result: ProviderPricingResult,
+    *,
+    manifest_path: Path,
+    discovered_rows: dict[str, dict[str, Any]],
+    source_url: str,
+) -> list[str]:
+    """Rebuild a dynamic input-only embedding manifest through the shared writer."""
+
+    normalized: dict[str, dict[str, Any]] = {}
+    for model_id, source in discovered_rows.items():
+        price = result.prices.get(model_id)
+        if price is None:
+            continue
+        if len(price.tiers) != 1 or price.completion_micro_per_m != 0:
+            raise RuntimeError(
+                f"{result.slug} embedding price for {model_id} must be single-tier and input-only"
+            )
+        row = dict(source)
+        row.update(
+            {
+                "id": model_id,
+                "model_type": "embedding",
+                "endpoints": ["embeddings"],
+                "output_modalities": ["embeddings"],
+            }
+        )
+        normalized[model_id] = row
+    return write_discovered_chat_manifest(
+        result,
+        manifest_path=manifest_path,
+        discovered_rows=normalized,
+        source_url=source_url,
+        pricing_source_url=source_url,
+    )
+
+
 def write_discovered_chat_manifest(
     result: ProviderPricingResult,
     *,
@@ -121,6 +158,7 @@ def write_discovered_chat_manifest(
     discovered_rows: dict[str, dict[str, Any]],
     source_url: str,
     pricing_source_url: str | None = None,
+    operator_hold_reasons: dict[str, str] | None = None,
 ) -> list[str]:
     """Rebuild a chat-provider manifest from a fresh provider catalog.
 
@@ -224,9 +262,22 @@ def write_discovered_chat_manifest(
         priced_ids=set(result.prices),
         source=result.source,
     )
+    # Discovery and tombstone recovery never have authority to clear an
+    # operator safety hold. Apply these at the final manifest boundary so a
+    # delist/relist cycle cannot accidentally publish a held route.
+    _apply_operator_holds(rebuilt, operator_hold_reasons)
     guarded = guard_manifest_prune(rows, rebuilt, provider_slug=result.slug)
+    operator_hold_only = False
+    operator_hold_changes = 0
     if guarded is rows:
-        return [f"{result.slug}: kept old manifest (mass-prune guard)"]
+        # A prune guard protects availability, but must never veto a deliberate
+        # safety hold. Apply only the holds to the old manifest and discard all
+        # other discovered changes from this refresh.
+        rebuilt = [dict(row) if isinstance(row, dict) else row for row in rows]
+        operator_hold_changes = _apply_operator_holds(rebuilt, operator_hold_reasons)
+        if operator_hold_changes == 0:
+            return [f"{result.slug}: kept old manifest (mass-prune guard)"]
+        operator_hold_only = True
 
     rebuilt_by_id = {
         row["id"]: row
@@ -244,15 +295,22 @@ def write_discovered_chat_manifest(
     raw["source"] = source_url
     if pricing_source_url is not None:
         raw["pricing_source"] = pricing_source_url
-    raw["generated_at"] = (
-        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    )
+    if not operator_hold_only:
+        raw["generated_at"] = (
+            datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        )
     raw["price_scale"] = "microdollars_per_million"
     raw["model_count"] = len(rebuilt)
     manifest_path.write_text(
         json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+
+    if operator_hold_only:
+        return [
+            f"{result.slug}: applied {operator_hold_changes} operator hold(s); "
+            "kept all other old rows (mass-prune guard)"
+        ]
 
     changes: list[str] = []
     if appended:
@@ -264,6 +322,25 @@ def write_discovered_chat_manifest(
         f"{result.slug}: refreshed provider_models/{manifest_path.name} "
         f"({len(updated)} priced rows{suffix})"
     ]
+
+
+def _apply_operator_holds(
+    rows: list[Any],
+    operator_hold_reasons: dict[str, str] | None,
+) -> int:
+    changes = 0
+    reasons = operator_hold_reasons or {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        reason = reasons.get(row.get("id"))
+        if reason is None:
+            continue
+        if row.get("routable") is not False or row.get("routable_reason") != reason:
+            changes += 1
+        row["routable"] = False
+        row["routable_reason"] = reason
+    return changes
 
 
 def models_requiring_canary(

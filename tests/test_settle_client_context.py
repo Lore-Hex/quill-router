@@ -279,6 +279,7 @@ def test_repair_metadata_keeps_validated_client_context_and_request_id(
             "authorization_id": authorization.id,
             "request_id": "provider-request-id",
             "elapsed_seconds": 0.5,
+            "price_tier_input_tokens": 6,
             "client": dict(VALID_CLIENT_CONTEXT),
             "gateway_request_id": GATEWAY_REQUEST_ID,
         },
@@ -289,6 +290,7 @@ def test_repair_metadata_keeps_validated_client_context_and_request_id(
 
     assert frozen["client"] == VALID_CLIENT_CONTEXT
     assert frozen["gateway_request_id"] == GATEWAY_REQUEST_ID
+    assert "price_tier_input_tokens" not in frozen
     original_generation = _generation_from_body(authorization, settle_body)
     repaired_generation = _generation_from_body(authorization, frozen)
     for field_name in ("gateway_request_id", *CLIENT_GENERATION_FIELDS):
