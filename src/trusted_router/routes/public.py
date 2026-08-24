@@ -59,6 +59,7 @@ from trusted_router.dashboard import (
     hipaa_readiness_json,
     llms_txt,
     procurement_json,
+    public_about_html,
     public_apps_html,
     public_baa_html,
     public_benchmark_report_html,
@@ -69,6 +70,7 @@ from trusted_router.dashboard import (
     public_chat_html,
     public_competitor_compare_html,
     public_competitor_compare_index_html,
+    public_contact_html,
     public_dpa_html,
     public_fusion_html,
     public_hipaa_readiness_html,
@@ -1260,6 +1262,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/security")
     async def security() -> str:
         return public_page_html(settings, "security")
+
+    @public_html_route("/about")
+    async def about() -> str:
+        return public_about_html(settings)
+
+    @public_html_route("/contact")
+    async def contact() -> str:
+        return public_contact_html(settings)
 
     @public_html_route("/legal")
     async def legal() -> str:

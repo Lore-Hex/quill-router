@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html as html_lib
 import json
 import logging
 import re
@@ -42,6 +43,9 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert core.status_code == 200
     assert "<urlset" in core.text
     assert "<loc>https://trustedrouter.com/eu</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/about</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/contact</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/privacy</loc>" in core.text
     assert "<loc>https://trustedrouter.com/trust</loc>" in core.text
     assert "<loc>https://trustedrouter.com/api/reference</loc>" in core.text
     assert "<loc>https://trustedrouter.com/docs/x402</loc>" in core.text
@@ -807,6 +811,68 @@ def _json_ld(html: str) -> dict[str, object]:
     return payload
 
 
+def _substantive_page_text(page_html: str, page_name: str) -> str:
+    match = re.search(
+        rf'<(?P<tag>article|section)[^>]*data-substantive-content="{page_name}"[^>]*>'
+        r"(?P<content>.*?)</(?P=tag)>",
+        page_html,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    without_tags = re.sub(r"<[^>]+>", " ", match.group("content"))
+    return re.sub(r"\s+", " ", html_lib.unescape(without_tags)).strip()
+
+
+def test_company_verification_pages_are_substantive_and_machine_readable(
+    client: TestClient,
+) -> None:
+    pages = {
+        "about": client.get("/about"),
+        "contact": client.get("/contact"),
+        "privacy": client.get("/privacy"),
+    }
+    for page_name, response in pages.items():
+        assert response.status_code == 200
+        assert len(_substantive_page_text(response.text, page_name)) >= 500
+        assert f'<link rel="canonical" href="https://trustedrouter.com/{page_name}">' in (
+            response.text
+        )
+
+    about = pages["about"]
+    assert "About TrustedRouter | Company, Product &amp; Trust" in about.text
+    assert "Lore Hex Corp" in about.text
+    assert "Delaware C Corporation" in about.text
+    assert "Joseph Perla" in about.text
+    assert "41-5339728" in about.text
+    assert "144992055" in about.text
+
+    contact = pages["contact"]
+    assert "Contact TrustedRouter | Support, Security &amp; Business" in contact.text
+    assert "help@trustedrouter.com" in contact.text
+    assert "security@trustedrouter.com" in contact.text
+    assert "+1-305-239-7350" in contact.text
+    assert "1111 Brickell Ave" in contact.text
+
+    for response, page_type in ((about, "AboutPage"), (contact, "ContactPage")):
+        payload = _json_ld(response.text)
+        graph = payload.get("@graph")
+        assert isinstance(graph, list)
+        organization = next(node for node in graph if node.get("@type") == "Organization")
+        assert organization["legalName"] == "Lore Hex Corp"
+        assert organization["mainEntityOfPage"] == "https://trustedrouter.com/about"
+        assert any(node.get("@type") == page_type for node in graph)
+
+    privacy_payload = _json_ld(pages["privacy"].text)
+    privacy_graph = privacy_payload.get("@graph")
+    assert isinstance(privacy_graph, list)
+    assert any(node.get("name") == "TrustedRouter Privacy Policy" for node in privacy_graph)
+
+    llms = client.get("/llms.txt")
+    assert "https://trustedrouter.com/about" in llms.text
+    assert "https://trustedrouter.com/contact" in llms.text
+    assert "https://trustedrouter.com/privacy" in llms.text
+
+
 def test_public_legal_packet_exposes_procurement_checkpoint(client: TestClient) -> None:
     page = client.get("/legal")
     assert page.status_code == 200
@@ -1369,6 +1435,8 @@ def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> 
         assert f'href="{path}"' in response.text, path
 
     footer = client.get("/")
+    assert 'href="/about"' in footer.text
+    assert 'href="/contact"' in footer.text
     assert 'href="/resources"' in footer.text
     assert 'href="/customers/robot-robot-human"' in footer.text
     assert 'href="/careers"' in footer.text
