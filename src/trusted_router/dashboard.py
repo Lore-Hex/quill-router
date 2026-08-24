@@ -151,6 +151,8 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     # source, so adding a region adds its sitemap entry with it.
     *(f"/{slug}" for slug in MODEL_REGION_SLUGS),
     "/",
+    "/about",
+    "/contact",
     "/choose",
     "/models",
     "/providers",
@@ -2349,6 +2351,7 @@ def _organization_node(settings: Settings) -> dict[str, object]:
         "name": "TrustedRouter",
         "legalName": settings.legal_entity_name,
         "url": f"https://{domain}/",
+        "mainEntityOfPage": f"https://{domain}/about",
         "logo": _absolute_url(settings, "/static/logo.png"),
         # EIN and DUNS are already published on /legal for procurement. Repeating
         # them here in the machine-readable node is the difference between a
@@ -2390,7 +2393,7 @@ def _organization_node(settings: Settings) -> dict[str, object]:
                 "contactType": "sales",
                 "email": settings.support_email,
                 "telephone": settings.legal_entity_phone,
-                "url": f"https://{domain}/legal",
+                "url": f"https://{domain}/contact",
                 "availableLanguage": ["en"],
             },
         ],
@@ -2915,13 +2918,101 @@ def public_legal_html(settings: Settings) -> str:
     )
 
 
+def public_about_html(settings: Settings) -> str:
+    path = "/about"
+    page_url = f"https://{settings.trusted_domain}{path}"
+    return (
+        _env()
+        .get_template("public/about.html")
+        .render(
+            json_ld_blob=_json_ld_graph(
+                settings,
+                _breadcrumb_node(settings, (("Home", "/"), ("About", path))),
+                {
+                    "@type": "AboutPage",
+                    "name": "About TrustedRouter",
+                    "url": page_url,
+                    "description": (
+                        "TrustedRouter is operated by Lore Hex Corp and provides an "
+                        "OpenAI-compatible, attested AI routing service."
+                    ),
+                    "mainEntity": {"@id": f"https://{settings.trusted_domain}/#organization"},
+                },
+            ),
+            api_base_url=settings.api_base_url,
+            site_url=page_url,
+            title="About TrustedRouter | Company, Product & Trust",
+            heading="About TrustedRouter",
+            description=(
+                "Meet the company behind TrustedRouter, review its legal identity, product, "
+                "open-source infrastructure, customers, and independently checkable trust evidence."
+            ),
+            entity=legal_entity(settings),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
+    )
+
+
+def public_contact_html(settings: Settings) -> str:
+    path = "/contact"
+    page_url = f"https://{settings.trusted_domain}{path}"
+    return (
+        _env()
+        .get_template("public/contact.html")
+        .render(
+            json_ld_blob=_json_ld_graph(
+                settings,
+                _breadcrumb_node(settings, (("Home", "/"), ("Contact", path))),
+                {
+                    "@type": "ContactPage",
+                    "name": "Contact TrustedRouter",
+                    "url": page_url,
+                    "description": (
+                        "Direct product, business, support, security, privacy, legal, and "
+                        "procurement contact details for TrustedRouter and Lore Hex Corp."
+                    ),
+                    "mainEntity": {"@id": f"https://{settings.trusted_domain}/#organization"},
+                },
+            ),
+            api_base_url=settings.api_base_url,
+            site_url=page_url,
+            title="Contact TrustedRouter | Support, Security & Business",
+            heading="Contact TrustedRouter",
+            description=(
+                "Contact Lore Hex Corp for TrustedRouter product, business, support, security, "
+                "privacy, legal, procurement, billing, and account questions."
+            ),
+            entity=legal_entity(settings),
+            support_email=settings.support_email,
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
+    )
+
+
 def public_privacy_html(settings: Settings) -> str:
+    path = "/privacy"
+    page_url = f"https://{settings.trusted_domain}{path}"
     return (
         _env()
         .get_template("public/privacy.html")
         .render(
+            json_ld_blob=_json_ld_graph(
+                settings,
+                _breadcrumb_node(settings, (("Home", "/"), ("Privacy", path))),
+                {
+                    "@type": "WebPage",
+                    "name": "TrustedRouter Privacy Policy",
+                    "url": page_url,
+                    "dateModified": "2026-08-24",
+                    "about": {"@id": f"https://{settings.trusted_domain}/#organization"},
+                },
+            ),
             api_base_url=settings.api_base_url,
-            site_url=f"https://{settings.trusted_domain}/privacy",
+            site_url=page_url,
             title="Privacy Policy | TrustedRouter",
             heading="Privacy policy",
             description=(
@@ -4106,6 +4197,9 @@ def llms_txt(settings: Settings) -> str:
         "",
         "## Primary Links",
         f"- [Homepage](https://{domain}/)",
+        f"- [About TrustedRouter](https://{domain}/about)",
+        f"- [Contact TrustedRouter](https://{domain}/contact)",
+        f"- [Privacy policy](https://{domain}/privacy)",
         f"- [Models](https://{domain}/models)",
         f"- [Providers](https://{domain}/providers)",
         f"- [AI gateway comparisons](https://{domain}/compare)",
