@@ -1,0 +1,24 @@
+displayName: "TR ClickHouse: node availability"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    The production ClickHouse node stopped publishing VM uptime. Provider
+    analytics may be unavailable even though inference remains unaffected.
+    Runbook: docs/clickhouse-reliability.md.
+conditions:
+  - displayName: "ClickHouse VM uptime absent for 3 minutes"
+    conditionAbsent:
+      filter: 'resource.type = "gce_instance" AND (__INSTANCE_FILTER__) AND metric.type = "compute.googleapis.com/instance/uptime"'
+      aggregations:
+        - alignmentPeriod: 60s
+          perSeriesAligner: ALIGN_MEAN
+      duration: 180s
+      trigger:
+        count: 1
+alertStrategy:
+  autoClose: 86400s
+  notificationPrompts:
+    - OPENED
+    - CLOSED

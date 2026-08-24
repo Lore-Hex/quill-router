@@ -20,6 +20,7 @@ def _sample(
     elapsed_milliseconds: int | None = None,
     error_type: str | None = None,
     error_status: int | None = None,
+    error_message: str | None = None,
     source: str = "organic",
     created_at: str = "2026-06-04T00:00:00Z",
 ) -> ProviderBenchmarkSample:
@@ -38,6 +39,7 @@ def _sample(
         elapsed_milliseconds=elapsed_milliseconds,
         error_type=error_type,
         error_status=error_status,
+        error_message=error_message,
         source=source,
         created_at=created_at,
     )
@@ -64,6 +66,99 @@ def test_aggregate_computes_per_model_metrics() -> None:
     assert result["total_samples"] == 4
 
 
+def test_public_metrics_separate_completion_provider_and_capacity_ownership() -> None:
+    samples = [
+        _sample(provider="p", model="p/model", ttft=100),
+        _sample(
+            provider="p",
+            model="p/model",
+            status="error",
+            error_type="rate_limit_error",
+            error_status=429,
+            created_at="2026-06-04T00:00:01Z",
+        ),
+        _sample(
+            provider="p",
+            model="p/model",
+            status="error",
+            error_type="router_error",
+            error_status=503,
+            created_at="2026-06-04T00:00:02Z",
+        ),
+    ]
+
+    model = aggregate_leaderboard(samples)["models"][0]
+
+    assert model["completion_rate"] == round(1 / 3, 4)
+    assert model["provider_availability"] == 0.5
+    assert model["capacity_acceptance_rate"] == 0.5
+    assert model["availability_within_deadline"] == 0.5
+    assert model["failure_owners"] == {"provider": 1, "trustedrouter": 1}
+    assert model["failure_classes"] == {
+        "provider_capacity": 1,
+        "router_fault": 1,
+    }
+
+
+def test_account_quota_does_not_lower_provider_availability() -> None:
+    samples = [
+        _sample(provider="p", model="p/model", ttft=100),
+        _sample(
+            provider="p",
+            model="p/model",
+            status="error",
+            error_type="rate_limit_error",
+            error_status=429,
+            error_message="account quota exceeded",
+            created_at="2026-06-04T00:00:01Z",
+        ),
+    ]
+
+    model = aggregate_leaderboard(samples)["models"][0]
+
+    assert model["completion_rate"] == 0.5
+    assert model["provider_availability"] == 1
+    assert model["failure_owners"] == {"trustedrouter": 1}
+
+
+def test_failed_partial_stream_counts_once_against_first_token_deadline() -> None:
+    samples = [
+        _sample(provider="p", model="p/model", ttft=100),
+        _sample(
+            provider="p",
+            model="p/model",
+            status="error",
+            ttft=200,
+            error_type="stream_interrupted",
+            error_status=502,
+            created_at="2026-06-04T00:00:01Z",
+        ),
+    ]
+
+    model = aggregate_leaderboard(samples)["models"][0]
+
+    assert model["deadline_sample_count"] == 2
+    assert model["availability_within_deadline"] == 0.5
+
+
+def test_success_without_ttft_is_not_counted_as_missed_deadline() -> None:
+    samples = [
+        _sample(provider="p", model="p/model", ttft=100),
+        _sample(
+            provider="p",
+            model="p/model",
+            ttft=None,
+            created_at="2026-06-04T00:00:01Z",
+        ),
+    ]
+
+    model = aggregate_leaderboard(samples)["models"][0]
+
+    assert model["provider_availability"] == 1
+    assert model["deadline_sample_count"] == 1
+    assert model["availability_within_deadline"] == 1
+
+
 def test_models_sorted_fastest_first_unmeasured_last() -> None:
     samples = [
         _sample(provider="slow", model="slow/m", ttft=500),
@@ -78,7 +173,7 @@ def test_models_sorted_fastest_first_unmeasured_last() -> None:
     assert ordered[2] == "unknown/m"  # un-measured at the bottom
 
 
-def test_models_and_providers_rank_reliability_before_latency() -> None:
+def test_models_and_providers_rank_ttft_before_reliability() -> None:
     samples = [
         _sample(provider="reliable", model="reliable/m", ttft=500),
         _sample(
@@ -100,15 +195,17 @@ def test_models_and_providers_rank_reliability_before_latency() -> None:
     result = aggregate_leaderboard(samples)
 
     assert [row["model"] for row in result["models"]] == [
-        "reliable/m",
         "flaky/m",
+        "reliable/m",
     ]
     assert [row["provider"] for row in result["providers"]] == [
-        "reliable",
         "flaky",
+        "reliable",
     ]
-    assert result["models"][0]["uptime"] == 1.0
-    assert result["models"][1]["uptime"] == 0.5
+    assert result["models"][0]["p50_ttft_ms"] == 50
+    assert result["models"][0]["provider_availability"] == 0.5
+    assert result["models"][1]["p50_ttft_ms"] == 500
+    assert result["models"][1]["provider_availability"] == 1.0
 
 
 def test_min_samples_filters_thin_models() -> None:
@@ -271,9 +368,7 @@ def test_thin_rows_stay_visible_but_do_not_receive_ranks() -> None:
 
 
 def test_legacy_short_request_speed_never_creates_zero_sample_throughput() -> None:
-    result = aggregate_leaderboard(
-        [_sample(provider="p", model="p/m", ttft=50, tps=9999.0)]
-    )
+    result = aggregate_leaderboard([_sample(provider="p", model="p/m", ttft=50, tps=9999.0)])
 
     model = result["models"][0]
     provider = result["providers"][0]
@@ -320,6 +415,45 @@ def test_public_benchmark_samples_reads_each_provider(monkeypatch) -> None:
     }
     assert ("deepseek", 2) in calls
     assert ("openai", 2) in calls
+
+
+def test_public_benchmark_samples_uses_single_balanced_store_read(monkeypatch) -> None:
+    row = _sample(
+        provider="openai",
+        model="openai/gpt-5.4-nano",
+        ttft=120,
+        created_at="2026-06-05T19:10:00Z",
+    )
+    calls: list[dict[str, object]] = []
+
+    def balanced(**kwargs: object) -> list[ProviderBenchmarkSample]:
+        calls.append(kwargs)
+        return [row]
+
+    monkeypatch.setattr(
+        "trusted_router.benchmark_samples.providers_for_display",
+        lambda: (SimpleNamespace(slug="openai"), SimpleNamespace(slug="anthropic")),
+    )
+    monkeypatch.setattr(
+        "trusted_router.benchmark_samples.STORE",
+        SimpleNamespace(provider_balanced_benchmark_samples=balanced),
+    )
+
+    rows = public_benchmark_samples(
+        limit=5000,
+        per_provider_limit=25,
+        recent_minutes=180,
+        now=dt.datetime(2026, 6, 5, 20, 0, tzinfo=dt.UTC),
+    )
+
+    assert rows == [row]
+    assert calls == [
+        {
+            "cutoff": "2026-06-05T17:00:00Z",
+            "per_provider_limit": 25,
+            "limit": 5000,
+        }
+    ]
 
 
 def test_public_benchmark_samples_filters_to_recent_window(monkeypatch) -> None:

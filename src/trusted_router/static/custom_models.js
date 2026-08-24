@@ -55,7 +55,10 @@
     const idEl = root.querySelector("[data-base-model-id]");
     if (!(input instanceof HTMLInputElement) || !(button instanceof HTMLButtonElement)) return;
     const value = input.value || root.dataset.currentModel || "";
-    if (nameEl) nameEl.textContent = displayName(value);
+    // The server already rendered the authoritative catalog name. Preserve it
+    // while the deferred projection has not been fetched; only synthesize a
+    // fallback for an otherwise-empty custom integration.
+    if (nameEl && !nameEl.textContent.trim()) nameEl.textContent = displayName(value);
     if (idEl) idEl.textContent = value;
     button.addEventListener("click", async () => {
       button.disabled = true;
@@ -80,5 +83,4 @@
   }
 
   hydrateAll();
-  load();
 })();

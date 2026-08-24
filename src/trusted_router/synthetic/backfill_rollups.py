@@ -20,9 +20,13 @@ from trusted_router.synthetic.rollups import (
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Backfill synthetic status rollups from raw samples.")
+    parser = argparse.ArgumentParser(
+        description="Backfill synthetic status rollups from raw samples."
+    )
     parser.add_argument("--date", action="append", dest="dates", help="UTC date YYYY-MM-DD.")
-    parser.add_argument("--days", type=int, default=14, help="Recent UTC days to backfill when --date is omitted.")
+    parser.add_argument(
+        "--days", type=int, default=14, help="Recent UTC days to backfill when --date is omitted."
+    )
     parser.add_argument("--limit-per-day", type=int, default=35_000)
     args = parser.parse_args(argv)
 
@@ -43,7 +47,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(f"{date}: read {len(samples)} raw samples", flush=True)
         all_samples.extend(samples)
     rollups = _recompute_rollups(all_samples)
-    print(f"writing {len(rollups)} recomputed rollup rows from {len(all_samples)} samples", flush=True)
+    print(
+        f"writing {len(rollups)} recomputed rollup rows from {len(all_samples)} samples", flush=True
+    )
     for index, rollup in enumerate(rollups, 1):
         _write_rollup(table, "m", rollup)
         if index % 500 == 0:
@@ -93,8 +99,7 @@ def _write_rollup(table: Any, family: str, rollup: SyntheticRollup) -> None:
 def _recent_dates(days: int) -> list[str]:
     today = dt.datetime.now(dt.UTC).date()
     return [
-        (today - dt.timedelta(days=offset)).isoformat()
-        for offset in reversed(range(max(days, 1)))
+        (today - dt.timedelta(days=offset)).isoformat() for offset in reversed(range(max(days, 1)))
     ]
 
 

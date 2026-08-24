@@ -61,7 +61,7 @@
 
   async function loadModels(catalogBase) {
     const base = catalogBase || "/v1";
-    const resp = await fetch(base + "/models");
+    const resp = await fetch(base + "/models/picker");
     if (!resp.ok) throw new Error("models fetch " + resp.status);
     const json = await resp.json();
     const data = Array.isArray(json.data) ? json.data : [];

@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
 
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import baseten, wafer
+from trusted_router import provider_lifecycle
+
+# Wafer retires GLM 5.1 / GLM 5.2 Fast / Kimi K3 Fast at 2026-08-17 00:00 UTC
+# (provider_lifecycle.WAFER_AUGUST_2026_RETIREMENT_AT). These tests exercise
+# discovery MECHANICS with fixture rows that include those ids, so they pin the
+# lifecycle clock just before the cutover instead of drifting with the wall clock.
+_BEFORE_WAFER_AUGUST_RETIREMENT = provider_lifecycle.WAFER_AUGUST_2026_RETIREMENT_AT - timedelta(seconds=1)
 
 
 class FakeResponse:
@@ -21,6 +29,22 @@ class FakeResponse:
 def test_baseten_fetch_discovers_prices_without_float_drift(monkeypatch) -> None:  # noqa: ANN001
     payload = {
         "data": [
+            {
+                "id": "deepseek-ai/DeepSeek-V4-Pro-0813",
+                "context_length": 1_048_576,
+                "max_completion_tokens": 262_144,
+                "pricing": {
+                    "prompt": "0.00000132",
+                    "completion": "0.00000396",
+                    "input_cache_read": "0.000000132",
+                },
+                "supported_features": [
+                    "tools",
+                    "json_mode",
+                    "structured_outputs",
+                    "reasoning",
+                ],
+            },
             {
                 "id": "zai-org/GLM-5.2",
                 "context_length": 524288,
@@ -74,11 +98,15 @@ def test_baseten_fetch_discovers_prices_without_float_drift(monkeypatch) -> None
     monkeypatch.setattr(baseten.httpx, "Client", FakeClient)
 
     result = baseten.fetch()
+    deepseek = result.prices["deepseek/deepseek-v4-pro-0813"]
     glm = result.prices["z-ai/glm-5.2"]
     glm_fast = result.prices["z-ai/glm-5.2-fast"]
     kimi = result.prices["moonshotai/kimi-k2.7-code"]
     inkling = result.prices["thinkingmachines/inkling-1m"]
 
+    assert deepseek.prompt_micro_per_m == 1_320_000
+    assert deepseek.completion_micro_per_m == 3_960_000
+    assert deepseek.tiers[0].prompt_cached_micro_per_m == 132_000
     assert glm.prompt_micro_per_m == 1_400_000
     assert glm.completion_micro_per_m == 4_400_000
     assert glm.tiers[0].prompt_cached_micro_per_m == 140_000
@@ -93,6 +121,152 @@ def test_baseten_fetch_discovers_prices_without_float_drift(monkeypatch) -> None
     assert baseten.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "zai-org/GLM-5.2"
     assert baseten.UPSTREAM_ID_MAP["z-ai/glm-5.2-fast"] == "zai-org/GLM-5.2-Fast"
     assert baseten.UPSTREAM_ID_MAP["thinkingmachines/inkling-1m"] == "thinkingmachines/inkling"
+    assert (
+        baseten.UPSTREAM_ID_MAP["deepseek/deepseek-v4-pro-0813"]
+        == "deepseek-ai/DeepSeek-V4-Pro-0813"
+    )
+    discovered = baseten._DISCOVERED_MANIFEST_ROWS[
+        "deepseek/deepseek-v4-pro-0813"
+    ]
+    assert discovered["context_length"] == 1_048_576
+    assert discovered["max_output_tokens"] == 262_144
+    assert "reasoning" in discovered["supported_features"]
+
+
+def test_baseten_zero_price_discovery_is_immediately_disabled(
+    tmp_path: Path, monkeypatch
+) -> None:  # noqa: ANN001
+    payload = {
+        "data": [
+            {
+                "id": "deepseek-ai/DeepSeek-V4-Pro-0813",
+                "pricing": {
+                    "prompt": "0.00000132",
+                    "completion": "0.00000396",
+                    "input_cache_read": "0.000000132",
+                },
+            },
+            {
+                "id": "thinkingmachines/inkling-small",
+                "context_length": 1_048_576,
+                "pricing": {"prompt": "0", "completion": "0"},
+            },
+            {
+                "id": "zai-org/GLM-5.2",
+                "pricing": {
+                    "prompt": "0.0000014",
+                    "completion": "0.0000044",
+                },
+            },
+            {
+                "id": "zai-org/GLM-5.2-Fast",
+                "pricing": {
+                    "prompt": "0.0000021",
+                    "completion": "0.0000066",
+                },
+            },
+            {
+                "id": "moonshotai/Kimi-K2.7-Code",
+                "pricing": {
+                    "prompt": "0.00000095",
+                    "completion": "0.000004",
+                },
+            },
+            {
+                "id": "thinkingmachines/inkling",
+                "pricing": {
+                    "prompt": "0.000001",
+                    "completion": "0.00000405",
+                },
+            },
+        ]
+    }
+
+    class FakeClient:
+        def __init__(self, **_kwargs) -> None:  # noqa: ANN003
+            return None
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def get(self, *_args, **_kwargs) -> FakeResponse:  # noqa: ANN002, ANN003
+            return FakeResponse(payload)
+
+    manifest_path = tmp_path / "baseten.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "provider": "baseten",
+                "models": [
+                    {
+                        "id": "thinkingmachines/inkling-small",
+                        "upstream_id": "thinkingmachines/inkling-small",
+                        "input_token_price_per_m": 10_000,
+                        "output_token_price_per_m": 10_000,
+                    },
+                    {
+                        "id": "z-ai/glm-5.2",
+                        "upstream_id": "zai-org/GLM-5.2",
+                    },
+                    {
+                        "id": "z-ai/glm-5.2-fast",
+                        "upstream_id": "zai-org/GLM-5.2-Fast",
+                    },
+                    {
+                        "id": "moonshotai/kimi-k2.7-code",
+                        "upstream_id": "moonshotai/Kimi-K2.7-Code",
+                    },
+                    {
+                        "id": "thinkingmachines/inkling-1m",
+                        "upstream_id": "thinkingmachines/inkling",
+                    },
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(baseten.httpx, "Client", FakeClient)
+    monkeypatch.setattr(baseten, "MANIFEST_PATH", manifest_path)
+
+    result = baseten.fetch()
+    assert "thinkingmachines/inkling-small" not in result.prices
+    assert "thinkingmachines/inkling-small" in baseten._DISCOVERED_MANIFEST_ROWS
+
+    baseten.write_provider_manifest(result)
+    rows = {
+        row["id"]: row
+        for row in json.loads(manifest_path.read_text(encoding="utf-8"))["models"]
+    }
+    assert rows["thinkingmachines/inkling-small"]["routable"] is False
+    assert (
+        rows["thinkingmachines/inkling-small"]["routable_reason"]
+        == "price-unavailable"
+    )
+
+    inkling_small = next(
+        row
+        for row in payload["data"]
+        if row["id"] == "thinkingmachines/inkling-small"
+    )
+    inkling_small["pricing"] = {
+        "prompt": "0.0000003",
+        "completion": "0.0000012",
+    }
+    recovered = baseten.fetch()
+    baseten.write_provider_manifest(recovered)
+    recovered_rows = {
+        row["id"]: row
+        for row in json.loads(manifest_path.read_text(encoding="utf-8"))["models"]
+    }
+    recovered_small = recovered_rows["thinkingmachines/inkling-small"]
+    assert "routable" not in recovered_small
+    assert "routable_reason" not in recovered_small
+    assert recovered_small["input_token_price_per_m"] == 300_000
+    assert recovered_small["output_token_price_per_m"] == 1_200_000
 
 
 def test_baseten_provider_appends_new_priced_models_to_manifest(
@@ -187,6 +361,7 @@ def test_baseten_provider_appends_new_priced_models_to_manifest(
 
 
 def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _BEFORE_WAFER_AUGUST_RETIREMENT)
     payload = {
         "data": [
             {
@@ -256,6 +431,40 @@ def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # no
                     }
                 },
             },
+            {
+                "id": "Kimi-K3",
+                "max_model_len": 262144,
+                "supports_vision": True,
+                "zdr_supported": True,
+                "wafer": {
+                    "pricing": {
+                        "input_cents_per_million": 300,
+                        "output_cents_per_million": 1500,
+                    }
+                },
+            },
+            {
+                "id": "kimi-k3-fast",
+                "max_model_len": 262144,
+                "zdr_supported": True,
+                "wafer": {
+                    "pricing": {
+                        "input_cents_per_million": 450,
+                        "output_cents_per_million": 2250,
+                    }
+                },
+            },
+            {
+                "id": "DeepSeek-V4-Flash-0731-Fast",
+                "max_model_len": 131072,
+                "zdr_supported": True,
+                "wafer": {
+                    "pricing": {
+                        "input_cents_per_million": 28,
+                        "output_cents_per_million": 56,
+                    }
+                },
+            },
         ]
     }
 
@@ -279,6 +488,9 @@ def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # no
     fast = result.prices["z-ai/glm-5.2-fast"]
     kimi = result.prices["moonshotai/kimi-k2.6"]
     minimax = result.prices["minimax/minimax-m3"]
+    kimi_k3 = result.prices["moonshotai/kimi-k3"]
+    kimi_k3_fast = result.prices["moonshotai/kimi-k3-fast"]
+    deepseek_fast = result.prices["deepseek/deepseek-v4-flash-0731-fast"]
 
     assert glm.prompt_micro_per_m == 1_200_000
     assert glm.completion_micro_per_m == 4_100_000
@@ -288,12 +500,27 @@ def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # no
     assert fast.tiers[0].prompt_cached_micro_per_m == 500_000
     assert kimi.prompt_micro_per_m == 1_140_000
     assert minimax.completion_micro_per_m == 1_320_000
+    assert kimi_k3.prompt_micro_per_m == 3_000_000
+    assert kimi_k3_fast.completion_micro_per_m == 22_500_000
+    assert deepseek_fast.prompt_micro_per_m == 280_000
+    assert deepseek_fast.completion_micro_per_m == 560_000
     assert wafer.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "GLM-5.2"
     assert wafer.UPSTREAM_ID_MAP["z-ai/glm-5.2-fast"] == "glm5.2-fast"
     assert wafer.UPSTREAM_ID_MAP["moonshotai/kimi-k2.6"] == "Kimi-K2.6"
+    assert wafer.UPSTREAM_ID_MAP["moonshotai/kimi-k3"] == "Kimi-K3"
+    assert wafer.UPSTREAM_ID_MAP["moonshotai/kimi-k3-fast"] == "kimi-k3-fast"
+    assert (
+        wafer.UPSTREAM_ID_MAP["deepseek/deepseek-v4-flash-0731-fast"]
+        == "DeepSeek-V4-Flash-0731-Fast"
+    )
+    kimi_manifest = wafer._DISCOVERED_MANIFEST_ROWS["moonshotai/kimi-k3"]
+    assert kimi_manifest["context_length"] == 262_144
+    assert kimi_manifest["zdr_supported"] is True
+    assert kimi_manifest["input_modalities"] == ["text", "image"]
 
 
 def test_wafer_provider_appends_new_priced_models_to_manifest(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _BEFORE_WAFER_AUGUST_RETIREMENT)
     manifest_path = tmp_path / "wafer.json"
     manifest_path.write_text(
         json.dumps(
@@ -407,6 +634,40 @@ def test_wafer_provider_appends_new_priced_models_to_manifest(tmp_path: Path, mo
                     }
                 },
             },
+            {
+                "id": "Kimi-K3",
+                "max_model_len": 262144,
+                "supports_vision": True,
+                "zdr_supported": True,
+                "wafer": {
+                    "pricing": {
+                        "input_cents_per_million": 300,
+                        "output_cents_per_million": 1500,
+                    }
+                },
+            },
+            {
+                "id": "kimi-k3-fast",
+                "max_model_len": 262144,
+                "zdr_supported": True,
+                "wafer": {
+                    "pricing": {
+                        "input_cents_per_million": 450,
+                        "output_cents_per_million": 2250,
+                    }
+                },
+            },
+            {
+                "id": "DeepSeek-V4-Flash-0731-Fast",
+                "max_model_len": 131072,
+                "zdr_supported": True,
+                "wafer": {
+                    "pricing": {
+                        "input_cents_per_million": 28,
+                        "output_cents_per_million": 56,
+                    }
+                },
+            },
         ]
     }
 
@@ -430,11 +691,11 @@ def test_wafer_provider_appends_new_priced_models_to_manifest(tmp_path: Path, mo
 
     assert notes == [
         "wafer: refreshed provider_models/wafer.json "
-        "(5 priced rows, appended 3)"
+        "(8 priced rows, appended 6)"
     ]
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     by_id = {row["id"]: row for row in raw["models"]}
-    assert raw["model_count"] == 6
+    assert raw["model_count"] == 9
     assert by_id["moonshotai/kimi-k2.7-code"]["missing_since"]
     assert by_id["moonshotai/kimi-k2.7-code"].get("routable") is not False
     assert by_id["z-ai/glm-5.2"]["input_token_price_per_m"] == 1_200_000
@@ -444,6 +705,13 @@ def test_wafer_provider_appends_new_priced_models_to_manifest(tmp_path: Path, mo
     assert by_id["z-ai/glm-5.2-fast"]["cached_input_token_price_per_m"] == 500_000
     assert by_id["z-ai/glm-5.2-fast"]["zdr_supported"] is True
     assert by_id["moonshotai/kimi-k2.6"]["input_modalities"] == ["text", "image"]
+    assert by_id["moonshotai/kimi-k3"]["upstream_id"] == "Kimi-K3"
+    assert by_id["moonshotai/kimi-k3"]["zdr_supported"] is True
+    assert by_id["moonshotai/kimi-k3-fast"]["upstream_id"] == "kimi-k3-fast"
+    assert (
+        by_id["deepseek/deepseek-v4-flash-0731-fast"]["input_token_price_per_m"]
+        == 280_000
+    )
 
 
 def test_wafer_delisted_expected_model_reaches_manifest_prune(

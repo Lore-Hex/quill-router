@@ -228,6 +228,7 @@ def _row_from_sample(sample: Any) -> dict[str, Any]:
         "status": str(raw.get("status") or ""),
         "usage_type": str(raw.get("usage_type") or ""),
         "source": str(raw.get("source") or ""),
+        "workspace_id": str(raw.get("workspace_id") or ""),
         "streamed": 1 if raw.get("streamed") else 0,
         "input_tokens": int(raw.get("input_tokens") or 0),
         "output_tokens": int(raw.get("output_tokens") or 0),

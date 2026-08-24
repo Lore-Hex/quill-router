@@ -5,7 +5,7 @@
     <span class="eyebrow">LLM API for financial services</span>
     <h2>An LLM API a bank risk committee can verify with one curl command.</h2>
     <p>Your compliance team blocked the public LLM APIs. GLBA, MNPI, and PCI-scope concerns did the work, and a DORA register now wants specifics about where prompts go. The options left on the table look like a stalled project or an on-prem build. There is a third path. TrustedRouter is an LLM API for banks, insurers, and fintechs that runs the prompt path inside a hardware-attested confidential-compute gateway. The gateway source is open, the image digest is published, and attestation is checkable live, signed by the CPU vendor's root key and bound to the TLS session so it cannot be replayed.</p>
-    <p>TrustedRouter never logs or stores prompt or output content. Every route carries a privacy tier: Zero-Data-Retention providers contractually keep nothing; TEE routes keep the prompt sealed end to end, so even the serving provider cannot read it. The API is OpenAI-compatible, so migration is a base_url change. Keep your SDK, your model ids, your code. Privacy you can check beats privacy you're promised.</p>
+    <p>{{ content_handling_claim }} Every route carries a privacy tier: Zero-Data-Retention providers contractually keep nothing; TEE routes keep the prompt sealed end to end, so even the serving provider cannot read it. The API is OpenAI-compatible, so migration is a base_url change. Keep your SDK, your model ids, your code. Privacy you can check beats privacy you're promised.</p>
     <p><a class="btn primary" href="/security">Check the attestation</a> <a class="btn" href="/pricing">See per-model pricing</a></p>
   </div>
   <div class="copy-terminal">

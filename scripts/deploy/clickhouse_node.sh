@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Provision the analytics ClickHouse node.
 #
-# Stage 0 of docs/storage-portability/analytics-ingestion.md: a single
-# internal-only node. Deliberately small — today's volume is ~280 rows/hour and
-# the row rate at scale is unknown within 450x, so sizing now would be guessing.
-# Stage 3 revisits this with measured numbers.
+# The default 500 GB disk preserves comfortable headroom at the measured row
+# density while immutable Parquet remains the long-term raw source of truth.
 #
 # NETWORKING: no public IP. Under the Bigtable-replay ingestion design only the
 # ingester talks to ClickHouse, and the ingester runs on this same host, so
@@ -19,9 +17,11 @@ PROJECT="${PROJECT:-quill-cloud-proxy}"
 ZONE="${ZONE:-us-central1-a}"          # colocated with Bigtable/Spanner to keep the ingest scan local
 NAME="${NAME:-tr-clickhouse-1}"
 MACHINE="${MACHINE:-e2-standard-4}"    # 4 vCPU / 16 GB
-DISK_GB="${DISK_GB:-200}"
+DISK_GB="${DISK_GB:-500}"
 DISK_TYPE="${DISK_TYPE:-pd-ssd}"
 SECRET="${SECRET:-trustedrouter-clickhouse-password}"
+SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-}"
+SNAPSHOT_POLICY="${SNAPSHOT_POLICY:-tr-clickhouse-daily-snapshots}"
 
 log() { printf '\n=== %s\n' "$*"; }
 
@@ -83,17 +83,44 @@ if gcloud compute instances describe "$NAME" --zone "$ZONE" --project "$PROJECT"
   log "instance $NAME already exists — skipping create"
 else
   log "creating instance (no external IP)"
-  PASSWORD=$(gcloud secrets versions access latest --secret "$SECRET" --project "$PROJECT")
+  service_account_args=()
+  if [ -n "$SERVICE_ACCOUNT" ]; then
+    service_account_args=(--service-account "$SERVICE_ACCOUNT")
+  fi
   gcloud compute instances create "$NAME" \
     --project "$PROJECT" --zone "$ZONE" \
     --machine-type "$MACHINE" \
     --image-family debian-12 --image-project debian-cloud \
     --boot-disk-size "${DISK_GB}GB" --boot-disk-type "$DISK_TYPE" \
+    --no-boot-disk-auto-delete \
+    --deletion-protection \
     --tags tr-clickhouse \
     --no-address \
+    "${service_account_args[@]}" \
     --scopes https://www.googleapis.com/auth/cloud-platform \
     --metadata-from-file startup-script="$STARTUP_FILE" \
-    --metadata ch-password="$PASSWORD"
+    --metadata clickhouse-password-secret="$SECRET"
+fi
+
+# Keep the analytics volume if an existing VM is accidentally deleted. The
+# explicit update also repairs nodes created before these flags were added.
+gcloud compute instances set-disk-auto-delete "$NAME" \
+  --project "$PROJECT" --zone "$ZONE" \
+  --disk "$NAME" --no-auto-delete
+gcloud compute instances update "$NAME" \
+  --project "$PROJECT" --zone "$ZONE" \
+  --deletion-protection
+
+if gcloud compute resource-policies describe "$SNAPSHOT_POLICY" \
+    --project "$PROJECT" --region "${ZONE%-*}" >/dev/null 2>&1; then
+  attached_policies="$(gcloud compute disks describe "$NAME" \
+    --project "$PROJECT" --zone "$ZONE" \
+    --format='value(resourcePolicies.basename())')"
+  if ! grep -Fxq "$SNAPSHOT_POLICY" <<<"$attached_policies"; then
+    gcloud compute disks add-resource-policies "$NAME" \
+      --project "$PROJECT" --zone "$ZONE" \
+      --resource-policies="$SNAPSHOT_POLICY"
+  fi
 fi
 
 log "done. tail provisioning with:"

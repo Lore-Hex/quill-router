@@ -1,4 +1,4 @@
-"""Integer-only Stripe processing-fee calculation and line-item shaping."""
+"""Integer-only payment processing-fee calculation and line-item shaping."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ PROCESSING_FEE_LINE_ITEM_NAME = "Payment processing fee"
 
 
 @dataclass(frozen=True)
-class StripeProcessingFee:
+class ProcessingFee:
     """A charge whose net principal remains the requested credit amount."""
 
     credit_amount_cents: int
@@ -20,6 +20,7 @@ class StripeProcessingFee:
     charge_amount_cents: int
     variable_basis_points: int
     fixed_fee_cents: int
+    minimum_fee_cents: int = 0
     max_fee_cents: int | None = None
 
     @property
@@ -91,6 +92,7 @@ class StripeProcessingFee:
         *,
         workspace_id: str,
         payment_method: str,
+        initiating_user_id: str | None = None,
     ) -> dict[str, str]:
         metadata = {
             "workspace_id": workspace_id,
@@ -100,19 +102,23 @@ class StripeProcessingFee:
             "charge_amount_cents": str(self.charge_amount_cents),
             "fee_variable_basis_points": str(self.variable_basis_points),
             "fee_fixed_cents": str(self.fixed_fee_cents),
+            "fee_minimum_cents": str(self.minimum_fee_cents),
         }
         if self.max_fee_cents is not None:
             metadata["fee_max_cents"] = str(self.max_fee_cents)
+        if initiating_user_id is not None:
+            metadata["initiating_user_id"] = initiating_user_id
         return metadata
 
 
-def stripe_processing_fee(
+def processing_fee(
     *,
     credit_amount_cents: int,
     variable_basis_points: int,
     fixed_fee_cents: int,
+    minimum_fee_cents: int = 0,
     max_fee_cents: int | None = None,
-) -> StripeProcessingFee:
+) -> ProcessingFee:
     """Gross up a USD-cent principal so it survives the configured fee.
 
     If the processor charges ``rate * total + fixed``, the total required
@@ -126,8 +132,12 @@ def stripe_processing_fee(
         raise ValueError("variable_basis_points must be between 0 and 9999")
     if fixed_fee_cents < 0:
         raise ValueError("fixed_fee_cents cannot be negative")
+    if minimum_fee_cents < 0:
+        raise ValueError("minimum_fee_cents cannot be negative")
     if max_fee_cents is not None and max_fee_cents < 0:
         raise ValueError("max_fee_cents cannot be negative")
+    if max_fee_cents is not None and minimum_fee_cents > max_fee_cents:
+        raise ValueError("minimum_fee_cents cannot exceed max_fee_cents")
 
     denominator = 10_000 - variable_basis_points
     uncapped_charge_amount_cents = _ceil_div(
@@ -141,16 +151,26 @@ def stripe_processing_fee(
         charge_amount_cents = credit_amount_cents + max_fee_cents
     else:
         charge_amount_cents = uncapped_charge_amount_cents
-    processing_fee_cents = charge_amount_cents - credit_amount_cents
-    return StripeProcessingFee(
+    processing_fee_cents = max(
+        charge_amount_cents - credit_amount_cents,
+        minimum_fee_cents,
+    )
+    charge_amount_cents = credit_amount_cents + processing_fee_cents
+    return ProcessingFee(
         credit_amount_cents=credit_amount_cents,
         processing_fee_cents=processing_fee_cents,
         charge_amount_cents=charge_amount_cents,
         variable_basis_points=variable_basis_points,
         fixed_fee_cents=fixed_fee_cents,
+        minimum_fee_cents=minimum_fee_cents,
         max_fee_cents=max_fee_cents,
     )
 
 
 def _ceil_div(numerator: int, denominator: int) -> int:
     return (numerator + denominator - 1) // denominator
+
+
+# Compatibility names for the existing Stripe billing adapter and SDK tests.
+StripeProcessingFee = ProcessingFee
+stripe_processing_fee = processing_fee

@@ -1,0 +1,69 @@
+{% extends "public/_base.html" %}
+
+{% block hero %}
+<section class="public-hero marketing-hero" aria-label="{{ variant.kicker }}">
+  <div>
+    <div class="kicker">{{ variant.kicker }}</div>
+    <h1>{{ variant.headline }}</h1>
+    <p class="lead">{{ variant.lead }}</p>
+    <div class="hero-actions">
+      <button class="btn primary" type="button" data-action="open-signin">{{ variant.cta }}</button>
+      <a class="btn" href="{{ variant.secondary_href }}">{{ variant.secondary_label }} <span aria-hidden="true">→</span></a>
+    </div>
+    <p class="microcopy">{{ variant.microcopy }}</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>{{ variant.terminal_label }}</span><button class="code-copy" type="button" data-action="copy-code" data-copy-target="openrouter-variant-call">Copy</button></div>
+    <pre><code id="openrouter-variant-call">import os
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+    base_url="{{ api_base_url }}",
+)
+
+response = client.chat.completions.create(
+    model="{{ variant.model_id }}",
+    messages=[{
+        "role": "user",
+        "content": "Reply PONG",
+    }],
+)
+
+print(response.choices[0].message.content)</code></pre>
+  </div>
+</section>
+{% endblock %}
+
+{% block body %}
+<section class="public-proof-strip" aria-label="{{ variant.kicker }} facts">
+  {% for value, label in variant.proof_items %}
+  <div><strong>{{ value }}</strong><span>{{ label }}</span></div>
+  {% endfor %}
+</section>
+
+<section class="marketing-grid three" aria-label="{{ variant.kicker }} details">
+  {% for label, heading, copy in variant.cards %}
+  <div class="marketing-card"><span class="card-label">{{ label }}</span><h3>{{ heading }}</h3><p>{{ copy }}</p></div>
+  {% endfor %}
+</section>
+
+<section class="marketing-split" aria-label="{{ variant.kicker }} explanation">
+  <div class="marketing-copy">
+    <span class="eyebrow">{{ variant.left_eyebrow }}</span>
+    <h2>{{ variant.left_headline }}</h2>
+    <p>{{ variant.left_copy }}</p>
+  </div>
+  <div class="marketing-copy">
+    <span class="eyebrow">{{ variant.right_eyebrow }}</span>
+    <h2>{{ variant.right_headline }}</h2>
+    <p>{{ variant.right_copy }}</p>
+  </div>
+</section>
+
+<section class="cta-band" aria-label="Create a TrustedRouter key">
+  <div><strong>{{ variant.final_headline }}</strong><span>{{ variant.final_copy }}</span></div>
+  <div class="cta-band-actions"><button class="btn primary" type="button" data-action="open-signin">{{ variant.cta }}</button></div>
+  <span class="microcopy">No card required.</span>
+</section>
+{% endblock %}

@@ -10,7 +10,7 @@
      doesn't flash light. Dark is the default; only a stored "light"
      preference adds the attribute. See public/_base.html for the matching
      marketing-chrome script + the toggle that writes localStorage. #}
-  <script>
+  <script nonce="{{ csp_nonce() }}">
     (function () {
       try {
         if (localStorage.getItem("tr-theme") === "light") {
@@ -20,17 +20,17 @@
     })();
   </script>
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
-  <link rel="stylesheet" href="/static/console.css?v={{ static_version|default('local') }}">
   <link rel="preload" href="/static/fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/static/fonts/spectral-300-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
+  <link rel="stylesheet" href="/static/console.css?v={{ static_version|default('local') }}">
   {% block head_extra %}{% endblock %}
   <script defer src="/static/console.js?v={{ static_version|default('local') }}"></script>
   {% block scripts %}{% endblock %}
 </head>
 <body class="console">
   <header class="console-topbar">
-    <a class="brand" href="/console/api-keys">{% include "_brand.html" %}</a>
+    <a class="brand" href="{{ '/provider/' ~ selected_provider if provider_mode else '/console/api-keys' }}">{% include "_brand.html" %}</a>
     <nav class="console-topnav">
       <a href="/models">Models</a>
       <a href="https://trust.trustedrouter.com">Trust</a>
@@ -64,11 +64,21 @@
   </header>
   <div class="console-shell">
     <aside class="console-sidebar" aria-label="Workspace navigation">
+      {% if provider_mode %}
+      <div class="sidebar-group">
+        <div class="sidebar-label">Provider operations</div>
+        <a href="/provider/{{ selected_provider }}" class="sidebar-link active">Overview</a>
+        <a href="#request-export" class="sidebar-link">Request export</a>
+        <a href="/providers/marketplace" class="sidebar-link">Reliability contract</a>
+      </div>
+      {% else %}
       <div class="sidebar-group">
         <div class="sidebar-label">Workspace</div>
         <a href="/console/api-keys" class="sidebar-link {{ 'active' if active == 'api-keys' else '' }}">API Keys</a>
         <a href="/console/byok" class="sidebar-link {{ 'active' if active == 'byok' else '' }}">BYOK</a>
         <a href="/console/custom-models" class="sidebar-link {{ 'active' if active == 'custom-models' else '' }}">Custom Models</a>
+        <a href="/console/user-models" class="sidebar-link {{ 'active' if active == 'user-models' else '' }}">User-provided Models</a>
+        <a href="/console/earnings" class="sidebar-link {{ 'active' if active == 'earnings' else '' }}">Earnings</a>
         <a href="/console/routing" class="sidebar-link {{ 'active' if active == 'routing' else '' }}">Routing</a>
         <a href="/console/activity" class="sidebar-link {{ 'active' if active == 'activity' else '' }}">Observability</a>
         <a href="/console/broadcast" class="sidebar-link {{ 'active' if active == 'broadcast' else '' }}">Broadcast</a>
@@ -77,11 +87,13 @@
       <div class="sidebar-group">
         <div class="sidebar-label">Account</div>
         <a href="/console/credits" class="sidebar-link {{ 'active' if active == 'credits' else '' }}">Credits</a>
+        <a href="/console/account/verification" class="sidebar-link {{ 'active' if active == 'verification' else '' }}">Verification</a>
         <a href="/console/account/preferences" class="sidebar-link {{ 'active' if active == 'preferences' else '' }}">Preferences</a>
         <form class="sidebar-link sidebar-signout" method="post" action="/auth/logout">
           <button type="submit">Sign out</button>
         </form>
       </div>
+      {% endif %}
     </aside>
     <main class="console-main">
       <header class="console-page-head">

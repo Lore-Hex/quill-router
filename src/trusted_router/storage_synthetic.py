@@ -89,7 +89,15 @@ class InMemorySyntheticChecks:
         rows.sort(key=lambda rollup: rollup.period_start, reverse=True)
         if not include_histograms:
             rows = [
-                replace(rollup, latency_histogram={}, ttfb_histogram={})
+                replace(
+                    rollup,
+                    latency_histogram={},
+                    ttfb_histogram={},
+                    dns_histogram={},
+                    tcp_connect_histogram={},
+                    tls_handshake_histogram={},
+                    gateway_processing_histogram={},
+                )
                 for rollup in rows
             ]
         return rows[:limit]

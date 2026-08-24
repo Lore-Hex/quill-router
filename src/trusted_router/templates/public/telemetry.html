@@ -1,0 +1,245 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Client reliability telemetry contract">
+  <div class="marketing-copy">
+    <span class="eyebrow">Content-free reliability signals</span>
+    <h2>Measure uptime as your process sees it.</h2>
+    <p>TrustedRouter can measure requests that reach its infrastructure. An SDK can also see DNS, TLS, connection, timeout, and broken-stream failures that never arrive. Client reliability telemetry joins those views without sending prompt or response content.</p>
+    <p>Exact per-minute counters measure logical requests after retries. Sampled events provide bounded diagnostics. Client-observed availability has its own methodology and is never part of the 99.99 % Router Core SLO.</p>
+  </div>
+  <div class="marketing-grid two">
+    <div class="marketing-card">
+      <span class="card-label">Attempt channel</span>
+      <h3><code>x-tr-client</code></h3>
+      <p>A compact header travels with each attempt to a known TrustedRouter inference host. It describes retry state, timing, streaming, and failover.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Beacon channel</span>
+      <h3><code>trustedrouter.com/v1/client-events</code></h3>
+      <p>A fire-and-forget batch reports exact counters and sampled diagnostics. It runs outside the request retry engine and never blocks your request.</p>
+    </div>
+  </div>
+</section>
+
+<section class="status-section" style="margin-top:48px" id="attempt-header">
+  <div class="status-section-head">
+    <div>
+      <h2>The per-attempt <code>x-tr-client</code> header</h2>
+      <p>Version 1 is at most 160 bytes. Keys are unique; every value comes from a closed vocabulary or bounded integer.</p>
+    </div>
+  </div>
+  <div class="leaderboard-table-wrap">
+    <table class="activity-table status-table">
+      <thead><tr><th>Key</th><th>Meaning</th><th>Allowed value</th></tr></thead>
+      <tbody>
+        <tr><td><code>v</code></td><td>Schema version</td><td><code>1</code></td></tr>
+        <tr><td><code>a</code></td><td>Attempt index; zero is the first attempt</td><td>Integer 0–99</td></tr>
+        <tr><td><code>po</code></td><td>Previous attempt outcome</td><td><code>none</code>, <code>http_error</code>, <code>transport_error</code>, <code>timeout</code>, or <code>stream_broken</code></td></tr>
+        <tr><td><code>pc</code></td><td>Previous error class</td><td>A closed error class listed below, or <code>none</code></td></tr>
+        <tr><td><code>ph</code></td><td>Previous TrustedRouter host path</td><td><code>apex</code>, <code>ally</code>, <code>uptime</code>, <code>us_central1</code>, <code>us_east4</code>, <code>europe_west4</code>, <code>control</code>, <code>custom</code>, or <code>none</code></td></tr>
+        <tr><td><code>pm</code></td><td>Previous attempt elapsed time</td><td>Milliseconds, 0–3,600,000</td></tr>
+        <tr><td><code>sm</code></td><td>Time since the first attempt started</td><td>Milliseconds, 0–3,600,000</td></tr>
+        <tr><td><code>s</code></td><td>Streaming request</td><td><code>0</code> or <code>1</code></td></tr>
+        <tr><td><code>fo</code></td><td>Candidate index advanced during this logical request</td><td><code>0</code> or <code>1</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section style="margin-top:48px" id="beacon-fields">
+  <h2 class="section-center">The batched beacon field list</h2>
+  <div class="marketing-grid two">
+    <div class="marketing-card">
+      <span class="card-label">Batch</span>
+      <h3>One bounded process batch.</h3>
+      <table>
+        <tbody>
+          <tr><th><code>schema_version</code></th><td><code>1</code></td></tr>
+          <tr><th><code>batch_id</code></th><td>32 lowercase hex characters</td></tr>
+          <tr><th><code>instance_id</code></th><td>16 lowercase hex characters</td></tr>
+          <tr><th><code>seq</code></th><td>Per-process batch sequence</td></tr>
+          <tr><th><code>sdk.name</code></th><td><code>tr-py</code>, <code>tr-js</code>, <code>tr-go</code>, <code>tr-rust</code>, <code>tr-java</code>, or <code>tr-swift</code></td></tr>
+          <tr><th><code>sdk.version</code></th><td>SDK semantic version</td></tr>
+          <tr><th><code>sdk.lang</code></th><td><code>python</code>, <code>js</code>, <code>go</code>, <code>rust</code>, <code>java</code>, or <code>swift</code></td></tr>
+          <tr><th><code>sdk.runtime</code></th><td>Bounded runtime family and version</td></tr>
+          <tr><th><code>sdk.os</code></th><td><code>linux</code>, <code>macos</code>, <code>windows</code>, <code>ios</code>, <code>android</code>, <code>freebsd</code>, or <code>other</code></td></tr>
+          <tr><th><code>sdk.arch</code></th><td><code>x64</code>, <code>x32</code>, <code>arm</code>, <code>arm64</code>, <code>wasm</code>, or <code>other</code></td></tr>
+          <tr><th><code>synthetic</code></th><td>Whether requests carried TrustedRouter synthetic metadata</td></tr>
+          <tr><th><code>dropped_since_last</code></th><td>Locally dropped records since the prior batch</td></tr>
+          <tr><th><code>events</code></th><td>Up to 100 sampled request events</td></tr>
+          <tr><th><code>counters</code></th><td>Up to 200 exact minute counters</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Request event</span>
+      <h3>A sampled logical request.</h3>
+      <table>
+        <tbody>
+          <tr><th><code>age_ms</code></th><td>Completion-to-flush age, up to 24 hours</td></tr>
+          <tr><th><code>plane</code></th><td><code>inference</code> or <code>control</code></td></tr>
+          <tr><th><code>endpoint</code></th><td>Closed endpoint enum</td></tr>
+          <tr><th><code>method</code></th><td><code>GET</code>, <code>POST</code>, <code>PUT</code>, <code>PATCH</code>, or <code>DELETE</code></td></tr>
+          <tr><th><code>streaming</code></th><td>Boolean</td></tr>
+          <tr><th><code>provider_pinned</code></th><td>Whether provider candidates were pinned</td></tr>
+          <tr><th><code>model</code></th><td>Catalog-safe model id or null</td></tr>
+          <tr><th><code>attempts</code></th><td>One to 16 attempt objects</td></tr>
+          <tr><th><code>final_outcome</code></th><td>Closed final outcome enum</td></tr>
+          <tr><th><code>final_http_status</code></th><td>HTTP status 100–599 or null</td></tr>
+          <tr><th><code>total_ms</code></th><td>Total logical request duration</td></tr>
+          <tr><th><code>ttft_ms</code></th><td>First event or first body byte, or null</td></tr>
+          <tr><th><code>failover_used</code></th><td>Boolean</td></tr>
+          <tr><th><code>timeout_phase</code></th><td><code>none</code>, <code>connect</code>, <code>first_byte</code>, <code>idle</code>, or <code>total</code></td></tr>
+          <tr><th><code>configured_timeout_ms</code></th><td>Configured timeout or null</td></tr>
+          <tr><th><code>sample_rate</code></th><td>Sampling probability in (0, 1]</td></tr>
+          <tr><th><code>sample_reason</code></th><td><code>failure</code>, <code>retried</code>, <code>slow</code>, or <code>random</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Attempt</span>
+      <h3>One network attempt.</h3>
+      <table>
+        <tbody>
+          <tr><th><code>index</code></th><td>Attempt index 0–99</td></tr>
+          <tr><th><code>host</code></th><td>Closed host enum</td></tr>
+          <tr><th><code>outcome</code></th><td>Closed attempt outcome enum</td></tr>
+          <tr><th><code>http_status</code></th><td>HTTP status or null</td></tr>
+          <tr><th><code>error_class</code></th><td>Closed error class or null</td></tr>
+          <tr><th><code>error_source</code></th><td><code>router</code>, <code>provider</code>, <code>unknown</code>, or null</td></tr>
+          <tr><th><code>should_retry</code></th><td>Observed retry hint: true, false, or absent</td></tr>
+          <tr><th><code>retry_after_ms</code></th><td>Observed retry delay or null</td></tr>
+          <tr><th><code>elapsed_ms</code></th><td>Attempt duration</td></tr>
+          <tr><th><code>ttfb_ms</code></th><td>Headers received duration or null</td></tr>
+          <tr><th><code>request_id</code></th><td>TrustedRouter <code>rlog_…</code> response id or null</td></tr>
+          <tr><th><code>moved</code></th><td>Whether the candidate index advanced</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Minute counter</span>
+      <h3>Exact availability inputs.</h3>
+      <table>
+        <tbody>
+          <tr><th><code>window_start_age_ms</code></th><td>Minute start as an age before flush</td></tr>
+          <tr><th><code>level</code></th><td><code>attempt</code> or <code>request</code></td></tr>
+          <tr><th><code>endpoint</code></th><td>Closed endpoint enum</td></tr>
+          <tr><th><code>streaming</code></th><td>Boolean</td></tr>
+          <tr><th><code>host</code></th><td>Closed host enum</td></tr>
+          <tr><th><code>outcome</code></th><td>Closed final outcome enum</td></tr>
+          <tr><th><code>error_class</code></th><td>Closed error class or null</td></tr>
+          <tr><th><code>http_status_class</code></th><td><code>none</code>, <code>2xx</code>, <code>4xx</code>, <code>429</code>, or <code>5xx</code></td></tr>
+          <tr><th><code>timeout_phase</code></th><td>Closed timeout phase enum</td></tr>
+          <tr><th><code>timeout_floor_met</code></th><td>Whether the disclosed timeout floor was met</td></tr>
+          <tr><th><code>provider_pinned</code></th><td>Boolean</td></tr>
+          <tr><th><code>requests</code></th><td>Exact request count</td></tr>
+          <tr><th><code>attempts</code></th><td>Exact attempt count</td></tr>
+          <tr><th><code>failover_used</code></th><td>Exact failover count</td></tr>
+          <tr><th><code>first_attempt_success</code></th><td>Exact first-attempt success count</td></tr>
+          <tr><th><code>total_ms_hist</code></th><td>Bounded latency histogram</td></tr>
+          <tr><th><code>first_event_ms_hist</code></th><td>Bounded first-event histogram</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <p class="section-center">Closed endpoint values: <code>chat_completions</code>, <code>messages</code>, <code>responses</code>, <code>embeddings</code>, <code>images</code>, <code>videos</code>, <code>models</code>, <code>fusion</code>, <code>control_other</code>, and <code>inference_other</code>. Error classes: <code>dns</code>, <code>tls</code>, <code>connect_refused</code>, <code>connect_timeout</code>, <code>connect_error</code>, <code>read_timeout</code>, <code>write_timeout</code>, <code>pool_timeout</code>, <code>protocol_error</code>, <code>reset</code>, <code>io_error</code>, <code>proxy_error</code>, <code>stream_stalled</code>, and <code>unknown</code>.</p>
+</section>
+
+<section style="margin-top:48px" id="never-sent">
+  <h2 class="section-center">What is never sent</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <span class="card-label">Content</span>
+      <h3>No request or response text.</h3>
+      <ul class="check-list">
+        <li>Prompts</li>
+        <li>Completions</li>
+        <li>Message text</li>
+        <li>Tool inputs or outputs</li>
+      </ul>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Identity</span>
+      <h3>No application identity fields.</h3>
+      <ul class="check-list">
+        <li>Workspace ids</li>
+        <li>Key ids</li>
+        <li>User ids</li>
+        <li>Session ids</li>
+        <li>IPs (IP addresses)</li>
+      </ul>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Infrastructure</span>
+      <h3>No secret routing identifiers.</h3>
+      <ul class="check-list">
+        <li>Hostnames of custom endpoints</li>
+        <li>Idempotency keys</li>
+      </ul>
+    </div>
+  </div>
+  <p class="section-center">Your API key identifies the batch; it is stored as a salted hash surrogate. Raw workspace and key ids do not enter the analytics store.</p>
+</section>
+
+<section class="marketing-split" style="margin-top:48px" id="controls">
+  <div class="marketing-copy">
+    <span class="eyebrow">Your control</span>
+    <h2>Default on for known TrustedRouter hosts. Easy to turn off.</h2>
+    <p>Pass <code>telemetry=False</code> to the SDK, set <code>TRUSTEDROUTER_TELEMETRY=0</code>, or set <code>DO_NOT_TRACK=1</code>. Opting out disables both the <code>x-tr-client</code> header and beacon. Custom inference or control hosts default off.</p>
+    <p>Set <code>TRUSTEDROUTER_TELEMETRY_DEBUG=1</code> to echo each batch JSON to stderr before it is sent.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Opt out or inspect</span><span>environment</span></div>
+    <pre><code># Disable telemetry
+TRUSTEDROUTER_TELEMETRY=0
+
+# Universal opt-out
+DO_NOT_TRACK=1
+
+# Inspect each batch before send
+TRUSTEDROUTER_TELEMETRY_DEBUG=1</code></pre>
+  </div>
+</section>
+
+<section style="margin-top:48px" id="retention">
+  <h2 class="section-center">Retention</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card"><span class="card-label">Sampled events</span><h3>90 days</h3><p>Raw content-free diagnostic events expire after 90 days.</p></div>
+    <div class="marketing-card"><span class="card-label">Exact counters</span><h3>180 days</h3><p>Per-minute counters expire after 180 days.</p></div>
+    <div class="marketing-card"><span class="card-label">Reliability rollups</span><h3>24 months</h3><p>Aggregated client availability rollups expire after 24 months.</p></div>
+  </div>
+</section>
+
+<section class="status-section" style="margin-top:48px" id="methodology">
+  <div class="status-section-head">
+    <div>
+      <h2>Client-observed availability methodology v1</h2>
+      <p>One unit is one logical SDK call. Retries never count twice, and a request rescued by failover is a success.</p>
+    </div>
+  </div>
+  <div class="component-list">
+    <div class="component-row">
+      <div class="component-main"><div><h3>TrustedRouter faults</h3><p>Counted faults include DNS, TLS, connection refused, connection timeout, connection error, reset, I/O, and protocol errors on known hosts; HTTP 5xx unless the request is provider-pinned and the error source is the provider; connect timeouts configured for at least 10 seconds; first-byte timeouts configured for at least 60 seconds; broken streams; stalled streams meeting the 30-second idle floor; and unknown failures conservatively.</p></div></div>
+    </div>
+    <div class="component-row">
+      <div class="component-main"><div><h3>Disclosed exclusions</h3><p>Caller aborts, HTTP 4xx and 429, pool and proxy errors, custom hosts, timeouts below the floor, total-phase timeouts, and provider 5xx responses for provider-pinned requests are counted separately and excluded from the denominator.</p></div></div>
+    </div>
+    <div class="component-row">
+      <div class="component-main"><div><h3>Publication gate</h3><p>Availability is successes ÷ (successes + TrustedRouter faults). Fleet percentages require at least 1,000 requests from at least three distinct tenants and a 14-day clean calibration period. Live figures remain internal by default because they include upstream provider-caused failures; public disclosure can be explicitly enabled after per-provider attribution makes the number fair.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="quote-feature" style="margin-top:48px">
+  <div>
+    <span class="eyebrow">SDK rollout</span>
+    <h2>Python 0.6.0 implements the full contract first.</h2>
+  </div>
+  <div>
+    <p>TrustedRouter Python SDK 0.6.0 is the first release with default-on beacons for known TrustedRouter hosts. JavaScript, Go, Rust, Java, and Swift SDKs remain header-only until their release notes explicitly say they implement the beacon contract.</p>
+    <p><a class="btn" href="/status">View public service status</a></p>
+  </div>
+</section>
+
+{% endblock %}

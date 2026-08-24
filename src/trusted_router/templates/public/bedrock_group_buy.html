@@ -1,0 +1,214 @@
+{% extends "public/_base.html" %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="/static/bedrock-group-buy.css?v={{ static_version }}">
+{% endblock %}
+
+{% block hero %}
+<section class="bgb-hero" aria-labelledby="bgb-title">
+  <div class="bgb-hero-copy">
+    <div class="kicker">The Bedrock Group Buy</div>
+    <h1 id="bgb-title">Buy Bedrock together.<br><em>Keep 10%.</em></h1>
+    <p class="lead">TrustedRouter is combining 12-month Amazon Bedrock commitments into one large purchasing agreement. The group negotiates as one buyer, and every participant shares the savings.</p>
+    <div class="bgb-actions">
+      {% if signed_in %}
+      <a class="btn primary" href="#pledge">Set your commitment</a>
+      {% else %}
+      <a class="btn primary" href="/bedrock-group-buy?reason=signin&amp;next=%2Fbedrock-group-buy%2Fmanage">Join the group buy</a>
+      {% endif %}
+      <button class="btn" type="button" data-bgb-share>Share this campaign</button>
+    </div>
+    <p class="bgb-fine">No charge today. Every participant receives final contract terms before spending begins.</p>
+  </div>
+
+  <div class="bgb-meter" aria-label="Group buy progress">
+    <div class="bgb-meter-topline">
+      <span>Committed each month</span>
+      <strong>{{ progress_percent }}%</strong>
+    </div>
+    <div class="bgb-total">{{ monthly_minimum }}</div>
+    <div class="bgb-goal-line"><span>toward</span> $1,000,000 per month</div>
+    <div class="bgb-progress-track" role="progressbar" aria-label="Campaign progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ 100 if snapshot.progress_basis_points >= 10000 else progress_percent }}">
+      <span style="width: {{ progress_width }}%"></span>
+    </div>
+    <div class="bgb-progress-labels">
+      <span>{{ snapshot.buyer_count }} buyers</span>
+      {% if snapshot.goal_remaining_microdollars > 0 %}
+      <span>{{ goal_remaining }} to unlock the agreement</span>
+      {% else %}
+      <span>Goal reached. The group can keep growing.</span>
+      {% endif %}
+    </div>
+    <div class="bgb-flow" aria-hidden="true">
+      <div class="bgb-flow-buyers">
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
+      <div class="bgb-flow-rail"><span></span></div>
+      <div class="bgb-flow-contract">One group<br>agreement</div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block body %}
+{% if share_after_commit %}
+<section class="bgb-share-success" id="share" aria-labelledby="bgb-share-heading">
+  <div>
+    <span class="eyebrow">Commitment saved</span>
+    <h2 id="bgb-share-heading">You are in. Bring one more buyer.</h2>
+    <p>The first target is 10% savings at $1 million per month. Every additional commitment strengthens the group's negotiating position and may unlock a deeper final discount for everyone.</p>
+  </div>
+  <div class="bgb-share-actions">
+    <button class="btn primary" type="button" data-bgb-share>Share now</button>
+    <a class="btn" href="https://twitter.com/intent/tweet?text=I%20joined%20the%20TrustedRouter%20Bedrock%20Group%20Buy.%20Founders%20are%20combining%20commitments%20to%20negotiate%20as%20one%20buyer%20and%20keep%2010%25.&amp;url=https%3A%2F%2Ftrustedrouter.com%2Fbedrock-group-buy" target="_blank" rel="noopener noreferrer">Post on X</a>
+    <a class="btn" href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Ftrustedrouter.com%2Fbedrock-group-buy" target="_blank" rel="noopener noreferrer">Share on LinkedIn</a>
+    <a class="btn" href="mailto:?subject=Join%20the%20Bedrock%20Group%20Buy&amp;body=I%20joined%20a%20group%20of%20founders%20combining%20Amazon%20Bedrock%20commitments%20through%20TrustedRouter.%20At%20%241M%20per%20month%2C%20the%20group%20targets%2010%25%20savings.%20More%20volume%20can%20improve%20the%20discount.%0A%0Ahttps%3A%2F%2Ftrustedrouter.com%2Fbedrock-group-buy">Email a founder</a>
+  </div>
+</section>
+{% endif %}
+
+<section class="bgb-stat-band" aria-label="Campaign totals">
+  <div><span>Annual commitment represented</span><strong>{{ annual_minimum }}</strong></div>
+  <div><span>Expected monthly Bedrock volume</span><strong>{{ expected_bedrock }}</strong></div>
+  <div><span>Expected annual group savings</span><strong>{{ annual_savings }}</strong></div>
+  <div><span>Expected monthly LLM spend represented</span><strong>{{ expected_all_llm }}</strong></div>
+</section>
+
+<section class="bgb-explainer" aria-labelledby="bgb-how-heading">
+  <div class="bgb-section-copy">
+    <span class="eyebrow">Group purchasing</span>
+    <h2 id="bgb-how-heading">Small buyers become one big buyer.</h2>
+    <p>Cloud discounts favor scale. Most startups and independent teams cannot negotiate like a company spending a million dollars every month. TrustedRouter collects the commitments, signs the large Bedrock agreement, and passes the group pricing through to participants. The first target is 10% savings at $1 million per month. More committed volume can support a deeper negotiated discount.</p>
+  </div>
+  <ol class="bgb-steps">
+    <li><span>01</span><div><strong>Pledge privately</strong><p>Tell TrustedRouter what your team can commit for 12 months. Nothing identifying is published.</p></div></li>
+    <li><span>02</span><div><strong>Reach $1M per month</strong><p>The public counter combines the founding commitments and new online pledges. It can grow beyond the goal.</p></div></li>
+    <li><span>03</span><div><strong>Review final terms</strong><p>TrustedRouter negotiates the agreement. Participants receive final terms before signing or spending.</p></div></li>
+    <li><span>04</span><div><strong>Keep 10%</strong><p>Once the group agreement closes, eligible Bedrock usage receives the group savings through TrustedRouter.</p></div></li>
+  </ol>
+</section>
+
+<section class="bgb-privacy-band" aria-label="Pledge privacy">
+  <div class="bgb-lock" aria-hidden="true">PRIVATE</div>
+  <div>
+    <span class="eyebrow">Private by construction</span>
+    <h2>Your company stays off the public page.</h2>
+    <p>Names, titles, companies, URLs, individual commitments, actual or expected spend, vendor mix, user IDs, and workspace IDs are never included in the public page or API. Public visitors see aggregate totals only. Totals are rounded down to $25,000 buckets so a new pledge cannot be recovered by subtraction. You may separately publish one anonymous note with no attribution.</p>
+  </div>
+</section>
+
+<section class="bgb-pledge-layout" id="pledge" aria-labelledby="pledge-heading">
+  <div class="bgb-pledge-intro">
+    <span class="eyebrow">Join the buying group</span>
+    <h2 id="pledge-heading">Set the amount your team can stand behind.</h2>
+    <p>This is an indicative purchasing commitment for the final group agreement. You can edit it at any time. Set the monthly minimum to $0, or use Remove pledge, to withdraw completely.</p>
+    <dl>
+      <div><dt>Term</dt><dd>12 months</dd></div>
+      <div><dt>Target</dt><dd>$1M each month</dd></div>
+      <div><dt>Participant savings</dt><dd>10% on eligible Bedrock spend</dd></div>
+      <div><dt>Public identity</dt><dd>Never shown</dd></div>
+    </dl>
+  </div>
+
+  <div class="bgb-form-shell">
+    {% if notice %}<div class="bgb-alert success" role="status">{{ notice }}</div>{% endif %}
+    {% if error %}<div class="bgb-alert error" role="alert">{{ error }}</div>{% endif %}
+    {% if signed_in %}
+    <form method="post" action="/bedrock-group-buy/pledge" class="bgb-form" data-bgb-form>
+      <div class="bgb-form-section">
+        <div class="bgb-form-heading">
+          <span>Private contact</span>
+          <small>Visible only to TrustedRouter operators</small>
+        </div>
+        <div class="bgb-field-grid">
+          <label>Full name<input name="full_name" autocomplete="name" maxlength="120" value="{{ form_values.full_name }}" required></label>
+          <label>Title<input name="title" autocomplete="organization-title" maxlength="120" value="{{ form_values.title }}" required></label>
+          <label>Company<input name="company_name" autocomplete="organization" maxlength="160" value="{{ form_values.company_name }}" required></label>
+          <label>Company URL<input name="company_url" type="url" autocomplete="url" maxlength="2048" placeholder="https://company.com" value="{{ form_values.company_url }}" required></label>
+        </div>
+      </div>
+
+      <div class="bgb-form-section">
+        <div class="bgb-form-heading">
+          <span>Monthly purchasing plan</span>
+          <small>USD, stored as integer microdollars</small>
+        </div>
+        <div class="bgb-money-grid">
+          <label><span>Minimum 12-month commitment</span><div class="bgb-money-input"><b>$</b><input name="monthly_minimum" type="number" min="0" max="100000000" step="0.000001" inputmode="decimal" value="{{ form_values.monthly_minimum }}" required></div><small>Set this to 0 to remove your pledge.</small></label>
+          <label><span>Expected Bedrock spend</span><div class="bgb-money-input"><b>$</b><input name="expected_bedrock_monthly" type="number" min="0" max="100000000" step="0.000001" inputmode="decimal" value="{{ form_values.expected_bedrock_monthly }}" required></div><small>Your likely monthly Bedrock volume.</small></label>
+          <label><span>Expected spend across all LLMs</span><div class="bgb-money-input"><b>$</b><input name="expected_all_llm_monthly" type="number" min="0" max="1000000000" step="0.000001" inputmode="decimal" value="{{ form_values.expected_all_llm_monthly }}" required></div><small>Helps plan future group purchases. It stays private.</small></label>
+        </div>
+        <div class="bgb-live-math" aria-live="polite">
+          <span>12-month commitment</span><strong data-bgb-annual>$0</strong>
+          <span>Estimated 12-month savings</span><strong data-bgb-savings>$0</strong>
+        </div>
+      </div>
+
+      <div class="bgb-form-section">
+        <div class="bgb-form-heading">
+          <span>Last month's actual spend</span>
+          <small>Private and never included in the public campaign data</small>
+        </div>
+        <div class="bgb-history-grid">
+          <label><span>Actual LLM spend last month</span><div class="bgb-money-input"><b>$</b><input name="last_month_llm_spend" type="number" min="0" max="1000000000" step="0.000001" inputmode="decimal" value="{{ form_values.last_month_llm_spend }}" required></div><small>Use actual paid usage across every provider. Enter 0 if there was none.</small></label>
+          <fieldset class="bgb-source-fieldset">
+            <legend>Where was it spent?</legend>
+            <div class="bgb-source-grid">
+              {% for source_id, source_label in spend_sources %}<label class="bgb-source-option"><input type="checkbox" name="last_month_spend_source_{{ source_id }}" value="1" {% if source_id in form_values.last_month_spend_sources %}checked{% endif %}><span>{{ source_label }}</span></label>{% endfor %}
+            </div>
+            <small>Select every source that applies. Required when last month's spend is above $0.</small>
+          </fieldset>
+        </div>
+      </div>
+
+      <div class="bgb-form-section bgb-message-section">
+        <label class="bgb-check"><input type="checkbox" name="publish_message" value="1" {% if form_values.publish_message %}checked{% endif %} data-bgb-message-toggle><span><strong>Publish an anonymous note</strong><small>Optional. No name, company, amount, or attribution will appear.</small></span></label>
+        <div class="bgb-message-fields" data-bgb-message-fields {% if not form_values.publish_message %}hidden{% endif %}>
+          <label>Why should this group buy happen?<textarea name="public_message" rows="3" maxlength="280" placeholder="Founders should be able to buy cloud capacity on the same terms as much larger companies.">{{ form_values.public_message }}</textarea></label>
+          <label class="bgb-check compact"><input type="checkbox" name="public_message_confirmed" value="1"><span>I confirm this public note contains no name, company, URL, email, phone number, or social handle.</span></label>
+        </div>
+      </div>
+
+      <div class="bgb-consents">
+        <label class="bgb-check compact"><input type="checkbox" name="authorized" value="1" required><span>I am authorized to submit this purchasing plan for my company.</span></label>
+        <label class="bgb-check compact"><input type="checkbox" name="terms_accepted" value="1" required><span>I intend to commit the stated monthly minimum for 12 months if I accept the final group agreement.</span></label>
+      </div>
+
+      <div class="bgb-form-actions">
+        <button class="btn primary" type="submit">{{ "Update commitment" if has_pledge else "Join the group buy" }}</button>
+        {% if has_pledge %}<button class="btn danger" type="submit" formaction="/bedrock-group-buy/withdraw" formnovalidate data-bgb-remove>Remove pledge</button>{% endif %}
+      </div>
+    </form>
+    {% else %}
+    <div class="bgb-signed-out">
+      <div class="bgb-signin-mark" aria-hidden="true">TR</div>
+      <h3>Sign in to make a private commitment.</h3>
+      <p>Your account owns the pledge so you can change or remove it later. The public campaign receives only aggregate totals.</p>
+      <a class="btn primary" href="/bedrock-group-buy?reason=signin&amp;next=%2Fbedrock-group-buy%2Fmanage">Sign in or create an account</a>
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+{% if snapshot.messages %}
+<section class="bgb-messages" aria-labelledby="message-heading">
+  <div class="bgb-section-copy">
+    <span class="eyebrow">Anonymous support</span>
+    <h2 id="message-heading">Why buyers want this.</h2>
+    <p>These notes were explicitly published by participants. They carry no attribution and reveal no individual commitment.</p>
+  </div>
+  <div class="bgb-message-list">
+    {% for message in snapshot.messages %}<blockquote>{{ message }}</blockquote>{% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="bgb-close" aria-label="Group buy disclaimer">
+  <strong>Built for a real purchase, not a vanity counter.</strong>
+  <p>Commitments are indicative until final agreements are signed. The 10% participant savings applies only if TrustedRouter closes the contemplated group agreement on qualifying Amazon Bedrock spend. TrustedRouter is not affiliated with or sponsored by Amazon Web Services. Amazon Bedrock and AWS are trademarks of Amazon.com, Inc. or its affiliates.</p>
+</section>
+{% endblock %}
+
+{% block body_scripts %}
+<script src="/static/bedrock-group-buy.js?v={{ static_version }}"></script>
+{% endblock %}

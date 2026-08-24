@@ -129,9 +129,10 @@ def report_route_health(flags: list[RouteHealthFlag]) -> None:
         return
 
     for flag in flags:
-        latest = " ".join(
-            part for part in (flag.newest_error_type, flag.newest_error_message) if part
-        ) or "unknown error"
+        latest = (
+            " ".join(part for part in (flag.newest_error_type, flag.newest_error_message) if part)
+            or "unknown error"
+        )
         message = (
             f"route-health: {flag.provider}/{flag.model} {flag.failure_rate:.0%} failure "
             f"over {flag.samples} samples (latest: {latest})"
@@ -145,11 +146,49 @@ def report_route_health(flags: list[RouteHealthFlag]) -> None:
 
 
 def report_image_generation_failures(samples: list[SyntheticProbeSample]) -> None:
-    """Report image-route failures without carrying generated content."""
+    """Report only image routes whose full confirmation batch failed."""
+    grouped: dict[tuple[str, str], list[SyntheticProbeSample]] = {}
+    for sample in samples:
+        if sample.probe_type != "image_generation":
+            continue
+        provider = sample.selected_provider or sample.provider or "unknown"
+        model = sample.selected_model or sample.model or "unknown"
+        grouped.setdefault((provider, model), []).append(sample)
+
+    confirmed_failures = [
+        route_samples[-1]
+        for route_samples in grouped.values()
+        if route_samples and all(sample.status != "up" for sample in route_samples)
+    ]
+    if not confirmed_failures:
+        return
+    try:
+        import sentry_sdk
+    except ImportError:
+        return
+
+    for sample in confirmed_failures:
+        provider = sample.selected_provider or sample.provider or "unknown"
+        model = sample.selected_model or sample.model or "unknown"
+        error_type = sample.error_type or "unknown"
+        message = (
+            f"image-generation-canary: {provider}/{model} failed "
+            f"({error_type}, HTTP {sample.http_status or 'none'})"
+        )
+        with sentry_sdk.push_scope() as scope:
+            scope.fingerprint = ["image-generation-canary", provider, model]
+            scope.set_tag("route_provider", provider)
+            scope.set_tag("route_model", model)
+            scope.set_tag("probe_error_type", error_type)
+            sentry_sdk.capture_message(message, level="error")
+
+
+def report_video_generation_failures(samples: list[SyntheticProbeSample]) -> None:
+    """Emit at most one grouped alert for each failed daily video canary."""
     failures = [
         sample
         for sample in samples
-        if sample.probe_type == "image_generation" and sample.status != "up"
+        if sample.probe_type == "video_generation" and sample.status != "up"
     ]
     if not failures:
         return
@@ -163,11 +202,11 @@ def report_image_generation_failures(samples: list[SyntheticProbeSample]) -> Non
         model = sample.selected_model or sample.model or "unknown"
         error_type = sample.error_type or "unknown"
         message = (
-            f"image-generation-canary: {provider}/{model} failed "
+            f"video-generation-canary: {provider}/{model} failed "
             f"({error_type}, HTTP {sample.http_status or 'none'})"
         )
         with sentry_sdk.push_scope() as scope:
-            scope.fingerprint = ["image-generation-canary", provider, model]
+            scope.fingerprint = ["video-generation-canary", provider, model]
             scope.set_tag("route_provider", provider)
             scope.set_tag("route_model", model)
             scope.set_tag("probe_error_type", error_type)

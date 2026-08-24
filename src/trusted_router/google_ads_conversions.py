@@ -1,46 +1,100 @@
-"""Privacy-bounded Google Ads conversion records and CSV formatting.
+"""Privacy-bounded Google Ads conversion records.
 
-Google Ads receives only its own click identifier plus an event name, time,
-integer-derived value, currency, and an opaque order ID. Prompt/output data,
-emails, API keys, workspace IDs, and request bodies never enter this module.
+The durable rows carry an envelope-encrypted Google click identifier, event
+time, exact integer money, and an opaque transaction ID. They never carry an
+email, user, workspace, API key, model, provider, prompt, or output.
 """
 
 from __future__ import annotations
 
-import csv
 import datetime as dt
 import hashlib
-import io
-from decimal import Decimal
+from dataclasses import dataclass
+from typing import Protocol, cast
 
-from trusted_router.money import MICRODOLLARS_PER_DOLLAR
-from trusted_router.storage_models import AcquisitionAttribution, GoogleAdsConversion
+from trusted_router.byok_crypto import decrypt_control_secret, encrypt_control_secret
+from trusted_router.key_management import KeyWrapperSettings
+from trusted_router.storage_models import (
+    AcquisitionAttribution,
+    EncryptedGoogleClickEnvelope,
+    EncryptedSecretEnvelope,
+    GoogleAdsConversion,
+)
 
 GOOGLE_ADS_SIGNUP_ACTION = "TrustedRouter Signup"
 GOOGLE_ADS_ACTIVATED_ACTION = "TrustedRouter Activated API User"
-GOOGLE_ADS_RETAINED_ACTION = "TrustedRouter Retained API User 7d"
 GOOGLE_ADS_PURCHASE_ACTION = "TrustedRouter Credit Purchase"
 
 GOOGLE_ADS_ACTION_BY_EVENT = {
     "signup_completed": GOOGLE_ADS_SIGNUP_ACTION,
     "first_successful_api_call": GOOGLE_ADS_ACTIVATED_ACTION,
-    "retained_api_usage_7d": GOOGLE_ADS_RETAINED_ACTION,
     "credit_purchase_completed": GOOGLE_ADS_PURCHASE_ACTION,
 }
 
-GOOGLE_ADS_CSV_COLUMNS = (
-    "conversion_action",
-    "gclid",
-    "gbraid",
-    "wbraid",
-    "conversion_datetime",
-    "conversion_value",
-    "currency_code",
-    "order_id",
-)
+# Version the durable boundary. A retired uploader used the unversioned prefix
+# with plaintext click-ID fields, so reusing it would make the new worker decode
+# an incompatible row shape and could revive data from the retired pipeline.
+_ENTITY_KIND_PREFIX = "google_ads_conversion_v2_"
+_CLICK_ID_KINDS = frozenset({"gclid", "gbraid", "wbraid"})
 
-_CLICK_ID_FIELDS = ("gclid", "gbraid", "wbraid")
-_ENTITY_KIND_PREFIX = "google_ads_conversion_"
+
+class GoogleAdsKeySettings(Protocol):
+    environment: str
+    google_data_manager_kms_key_name: str | None
+
+
+@dataclass
+class _GoogleAdsKeyWrapperConfig:
+    environment: str
+    byok_kms_key_name: str | None
+    byok_envelope_key_b64: str | None = None
+    byok_envelope_key_ref: str = "trustedrouter/google-ads-click-envelope/v1"
+
+
+def google_ads_key_wrapper_config(
+    settings: GoogleAdsKeySettings,
+) -> KeyWrapperSettings:
+    """Use a KMS boundary that cannot unwrap customer BYOK provider keys."""
+    return _GoogleAdsKeyWrapperConfig(
+        environment=settings.environment,
+        byok_kms_key_name=settings.google_data_manager_kms_key_name,
+    )
+
+
+def encrypt_google_ads_click_id(
+    raw_click_id: str,
+    settings: GoogleAdsKeySettings,
+    *,
+    attribution_id: str,
+) -> EncryptedGoogleClickEnvelope:
+    envelope = encrypt_control_secret(
+        raw_click_id,
+        google_ads_key_wrapper_config(settings),
+        workspace_id=attribution_id,
+        purpose="google_ads_click_id",
+    )
+    return EncryptedGoogleClickEnvelope(
+        algorithm=envelope.algorithm,
+        key_ref=envelope.key_ref,
+        encrypted_dek=envelope.encrypted_dek,
+        dek_nonce=envelope.dek_nonce,
+        ciphertext=envelope.ciphertext,
+        nonce=envelope.nonce,
+    )
+
+
+def decrypt_google_ads_click_id(
+    envelope: EncryptedGoogleClickEnvelope,
+    settings: GoogleAdsKeySettings,
+    *,
+    attribution_id: str,
+) -> str:
+    return decrypt_control_secret(
+        cast(EncryptedSecretEnvelope, envelope),
+        google_ads_key_wrapper_config(settings),
+        workspace_id=attribution_id,
+        purpose="google_ads_click_id",
+    )
 
 
 def build_google_ads_conversion(
@@ -51,38 +105,39 @@ def build_google_ads_conversion(
     value_microdollars: int = 0,
     ordinal: int = 0,
 ) -> GoogleAdsConversion | None:
-    """Create a deterministic conversion for a Google-attributed account."""
     action = GOOGLE_ADS_ACTION_BY_EVENT.get(event)
-    if action is None:
-        return None
-    touch = _google_touch(record)
-    if touch is None:
+    if (
+        action is None
+        or record.google_click_id_kind not in _CLICK_ID_KINDS
+        or record.encrypted_google_click_id is None
+        or (
+            record.google_click_expires_at is not None
+            and parse_utc_timestamp(occurred_at)
+            >= parse_utc_timestamp(record.google_click_expires_at)
+        )
+    ):
         return None
     if value_microdollars < 0:
         raise ValueError("Google Ads conversion value cannot be negative")
-    seed = "\0".join(
-        (
-            record.anonymous_id,
-            event,
-            occurred_at,
-            str(ordinal),
-        )
-    )
-    order_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    order_id = hashlib.sha256(
+        "\0".join(
+            (record.anonymous_id, event, occurred_at, str(ordinal))
+        ).encode("utf-8")
+    ).hexdigest()
     return GoogleAdsConversion(
         order_id=order_id,
         conversion_action=action,
         occurred_at=occurred_at,
-        gclid=touch.get("gclid"),
-        gbraid=touch.get("gbraid"),
-        wbraid=touch.get("wbraid"),
+        attribution_id=record.anonymous_id,
+        click_id_kind=record.google_click_id_kind,
+        encrypted_click_id=record.encrypted_google_click_id,
+        click_expires_at=record.google_click_expires_at,
         value_microdollars=value_microdollars,
     )
 
 
 def google_ads_conversion_kind(occurred_at: str) -> str:
-    timestamp = parse_utc_timestamp(occurred_at)
-    return f"{_ENTITY_KIND_PREFIX}{timestamp:%Y%m}"
+    return f"{_ENTITY_KIND_PREFIX}{parse_utc_timestamp(occurred_at):%Y%m}"
 
 
 def google_ads_conversion_entity_id(conversion: GoogleAdsConversion) -> str:
@@ -95,7 +150,6 @@ def google_ads_conversion_kinds_since(
     *,
     now: dt.datetime | None = None,
 ) -> list[str]:
-    """Return month-partitioned entity kinds covering ``since`` through now."""
     start = _as_utc(since).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     end = _as_utc(now or dt.datetime.now(dt.UTC)).replace(
         day=1,
@@ -108,40 +162,16 @@ def google_ads_conversion_kinds_since(
     cursor = start
     while cursor <= end:
         kinds.append(f"{_ENTITY_KIND_PREFIX}{cursor:%Y%m}")
-        if cursor.month == 12:
-            cursor = cursor.replace(year=cursor.year + 1, month=1)
-        else:
-            cursor = cursor.replace(month=cursor.month + 1)
+        cursor = (
+            cursor.replace(year=cursor.year + 1, month=1)
+            if cursor.month == 12
+            else cursor.replace(month=cursor.month + 1)
+        )
     return kinds
 
 
-def google_ads_conversions_csv(conversions: list[GoogleAdsConversion]) -> str:
-    output = io.StringIO(newline="")
-    writer = csv.DictWriter(
-        output,
-        fieldnames=GOOGLE_ADS_CSV_COLUMNS,
-        lineterminator="\n",
-    )
-    writer.writeheader()
-    for conversion in conversions:
-        writer.writerow(
-            {
-                "conversion_action": conversion.conversion_action,
-                "gclid": conversion.gclid or "",
-                "gbraid": conversion.gbraid or "",
-                "wbraid": conversion.wbraid or "",
-                "conversion_datetime": conversion.occurred_at,
-                "conversion_value": _microdollars_decimal(conversion.value_microdollars),
-                "currency_code": conversion.currency_code,
-                "order_id": conversion.order_id,
-            }
-        )
-    return output.getvalue()
-
-
 def parse_utc_timestamp(value: str) -> dt.datetime:
-    parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
-    return _as_utc(parsed)
+    return _as_utc(dt.datetime.fromisoformat(value.replace("Z", "+00:00")))
 
 
 def _as_utc(value: dt.datetime) -> dt.datetime:
@@ -150,13 +180,16 @@ def _as_utc(value: dt.datetime) -> dt.datetime:
     return value.astimezone(dt.UTC)
 
 
-def _google_touch(record: AcquisitionAttribution) -> dict[str, str] | None:
-    for touch in (record.last_touch, record.first_touch):
-        if any(touch.get(field) for field in _CLICK_ID_FIELDS):
-            return touch
-    return None
-
-
-def _microdollars_decimal(value: int) -> str:
-    amount = Decimal(value) / Decimal(MICRODOLLARS_PER_DOLLAR)
-    return f"{amount:.6f}"
+__all__ = [
+    "GOOGLE_ADS_ACTIVATED_ACTION",
+    "GOOGLE_ADS_PURCHASE_ACTION",
+    "GOOGLE_ADS_SIGNUP_ACTION",
+    "build_google_ads_conversion",
+    "decrypt_google_ads_click_id",
+    "encrypt_google_ads_click_id",
+    "google_ads_key_wrapper_config",
+    "google_ads_conversion_entity_id",
+    "google_ads_conversion_kind",
+    "google_ads_conversion_kinds_since",
+    "parse_utc_timestamp",
+]

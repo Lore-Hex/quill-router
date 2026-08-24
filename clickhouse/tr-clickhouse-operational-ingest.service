@@ -1,0 +1,22 @@
+[Unit]
+Description=TrustedRouter operational analytics ClickHouse ingester
+After=network-online.target clickhouse-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tr-clickhouse-ingest
+Group=tr-clickhouse-ingest
+WorkingDirectory=/opt/tr-clickhouse
+EnvironmentFile=/etc/tr-clickhouse-ingest.env
+ExecStart=/opt/tr-clickhouse/venv/bin/python -m clickhouse.ingest_operational_outbox
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/tr-clickhouse-ingest
+
+[Install]
+WantedBy=multi-user.target

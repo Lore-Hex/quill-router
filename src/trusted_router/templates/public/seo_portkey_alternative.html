@@ -6,7 +6,7 @@
     <span class="eyebrow">Portkey alternative</span>
     <h2>Portkey logs every request. TrustedRouter logs none of them — and proves it.</h2>
     <p>Portkey is built around observability: it captures every request, response, and trace so you can monitor and govern AI usage. That's exactly what you want for some workloads — and exactly what you can't have for sensitive ones.</p>
-    <p>TrustedRouter takes the opposite stance. Prompt and output bodies are never persisted, the gateway is hardware-attested, and the whole thing is open source. You get routing, fallback, and usage metering without a copy of every prompt sitting in a logging backend.</p>
+    <p>TrustedRouter takes the opposite stance. Ordinary synchronous and streaming prompt and output bodies are not persisted, the gateway is hardware-attested, and the whole thing is open source. Batch retention is separate, encrypted, and opt-in. You get routing, fallback, and usage metering without a copy of every prompt sitting in a logging backend.</p>
     <p>
       <a class="btn primary" href="/chat">Try the playground</a>
       <a class="btn" href="/security">Trust surface</a>
@@ -53,7 +53,7 @@
     <span>Core stance</span><span>Log everything for control</span><span>Log nothing, prove it</span>
   </div>
   <div class="matrix-row">
-    <span>Prompt content</span><span>Captured + stored</span><span>Never persisted</span>
+    <span>Prompt content</span><span>Captured + stored</span><span>Content-stateless real-time path; explicit encrypted Batch retention</span>
   </div>
   <div class="matrix-row">
     <span>Source</span><span>Closed</span><span>Open</span>

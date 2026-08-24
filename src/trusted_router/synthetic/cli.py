@@ -12,11 +12,18 @@ from typing import Any
 import httpx
 
 from trusted_router.config import Settings, get_settings
+from trusted_router.provider_reliability import model_deadlines
 from trusted_router.storage_models import ProviderBenchmarkSample, SyntheticProbeSample
+from trusted_router.synthetic.internal_auth import (
+    synthetic_observer_token,
+    synthetic_transaction_token,
+)
 from trusted_router.synthetic.probes import (
     DEFAULT_SYNTHETIC_BILLING_CONCURRENCY,
     SyntheticTarget,
+    _attested_ssl_context,
     choose_rotation_target,
+    client_telemetry_canary_probe,
     gateway_billing_probe,
     gateway_fallback_probe,
     provider_rotation_probe,
@@ -45,7 +52,9 @@ _DEFAULT_THROUGHPUT_ROUTE_LIMIT = 200
 _DEFAULT_THROUGHPUT_MAX_TOKENS = 512
 _DEFAULT_THROUGHPUT_MINIMUM_OUTPUT_TOKENS = 128
 _DEFAULT_THROUGHPUT_TIMEOUT_SECONDS = 90.0
+_DEFAULT_THROUGHPUT_TIMEOUT_CEILING_SECONDS = 210.0
 _DEFAULT_THROUGHPUT_INTERVAL_SECONDS = THROUGHPUT_INTERVAL_SECONDS
+_DEFAULT_REMEDIATOR_TIMEOUT_SECONDS = 90.0
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:
@@ -72,10 +81,29 @@ async def _one_probe_pass(
             monitor_region=monitor_region,
             api_key=api_key,
             billing_semaphore=limiter,
+            # The inference probes' SDK sessions beacon to this plane.
+            control_plane_base_url=control_plane,
         )
     )
-    if not (api_key and internal_token):
+    if not api_key:
         return await synthetic_task
+    canary_samples: list[SyntheticProbeSample] = []
+    if not internal_token:
+        # No internal token means no ledger probes, but the client-telemetry
+        # canary needs only the monitor key: it is the positive control that
+        # proves the beacon path (route -> outbox -> ClickHouse) is alive on
+        # every cloud, and the GCP monitor is THIS job, not the in-process
+        # scheduler behind /internal/synthetic/run.
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            canary_samples.append(
+                await client_telemetry_canary_probe(
+                    client,
+                    control_plane_base_url=control_plane,
+                    monitor_region=monitor_region,
+                    api_key=api_key,
+                )
+            )
+        return [*(await synthetic_task), *canary_samples]
     # Keep ledger-style probes ordered. They reserve, settle, and refund
     # against the same synthetic key; running them concurrently turns the
     # monitor into a Spanner/key-row contention test and can create false
@@ -104,6 +132,17 @@ async def _one_probe_pass(
                     model=settings.synthetic_monitor_model,
                 )
             )
+        # Client-telemetry canary: one schema-valid synthetic batch per pass
+        # through the public beacon route with the monitor key. Not a ledger
+        # probe (no reserve/settle), so it needs no limiter slot.
+        gateway_samples.append(
+            await client_telemetry_canary_probe(
+                client,
+                control_plane_base_url=control_plane,
+                monitor_region=monitor_region,
+                api_key=api_key,
+            )
+        )
     synthetic_samples = await synthetic_task
     return [*synthetic_samples, *gateway_samples]
 
@@ -125,6 +164,7 @@ async def _probe_and_rotation_pass(
     throughput_max_tokens: int = _DEFAULT_THROUGHPUT_MAX_TOKENS,
     throughput_minimum_output_tokens: int = _DEFAULT_THROUGHPUT_MINIMUM_OUTPUT_TOKENS,
     throughput_timeout_seconds: float = _DEFAULT_THROUGHPUT_TIMEOUT_SECONDS,
+    throughput_timeout_ceiling_seconds: float = _DEFAULT_THROUGHPUT_TIMEOUT_CEILING_SECONDS,
     throughput_interval_seconds: int = _DEFAULT_THROUGHPUT_INTERVAL_SECONDS,
     billing_concurrency: int = DEFAULT_SYNTHETIC_BILLING_CONCURRENCY,
 ) -> tuple[list[SyntheticProbeSample], list[ProviderBenchmarkSample]]:
@@ -144,7 +184,7 @@ async def _probe_and_rotation_pass(
     if rotation_enabled and api_key:
         benchmark_tasks.append(
             asyncio.create_task(
-                _rotation_pass(
+                rotation_pass(
                     settings=settings,
                     monitor_region=monitor_region,
                     api_key=api_key,
@@ -166,6 +206,7 @@ async def _probe_and_rotation_pass(
                     max_tokens=throughput_max_tokens,
                     minimum_output_tokens=throughput_minimum_output_tokens,
                     timeout_seconds=throughput_timeout_seconds,
+                    timeout_ceiling_seconds=throughput_timeout_ceiling_seconds,
                     interval_seconds=throughput_interval_seconds,
                 )
             )
@@ -180,7 +221,7 @@ async def _probe_and_rotation_pass(
     return probe_samples, benchmark_samples
 
 
-async def _rotation_pass(
+async def rotation_pass(
     *,
     settings: Settings,
     monitor_region: str,
@@ -189,12 +230,52 @@ async def _rotation_pass(
     count: int,
     rng: random.Random,
     billing_semaphore: asyncio.Semaphore | None = None,
+    models: frozenset[str] | None = None,
 ) -> list[ProviderBenchmarkSample]:
+    """One rotation pass: `count` random provider+model picks, probed live.
+
+    Public because /internal/synthetic/run also drives it — deployments
+    without a monitor-pool CLI (the standalone EU cloud, where cadence
+    comes from an EventBridge rule) get provider rotation through the
+    route. `models` narrows the candidate pool to specific model ids so a
+    caller can pin rotation to a family (e.g. the DSv4 models) without
+    losing the equal-airtime-per-provider pick.
+    """
     pool = rotation_candidates()
-    target = SyntheticTarget("rotation", settings.api_base_url, monitor_region)
+    if models is not None:
+        pool = {
+            provider: [model for model in candidates if model in models]
+            for provider, candidates in pool.items()
+        }
+        pool = {provider: candidates for provider, candidates in pool.items() if candidates}
+    # The rotation target must inherit the canonical target's TRANSPORT, not
+    # just its URL.
+    #
+    # This probe had NEVER once succeeded on the AWS plane: 10,993 error
+    # samples against 10 successes, and all 10 of those were test fixtures.
+    # Every real attempt returned ConnectError, because the AWS gateway serves
+    # a SELF-SIGNED certificate minted inside the enclave — trust comes from
+    # the attestation binding the cert, not from a CA — and this function
+    # built a plain httpx.AsyncClient whose default verification rejects it
+    # before a byte of the request is sent.
+    #
+    # The failure was invisible for two reasons. The EventBridge Input pinned
+    # rotation to two DeepSeek ids, so it looked like a narrow gap rather than
+    # a dead path; and a benchmark sample that records status="error" is
+    # indistinguishable, on a leaderboard, from a provider that is genuinely
+    # down. The board was not reporting bad providers — it was reporting a
+    # monitor that could not reach its own gateway.
+    target = SyntheticTarget(
+        "rotation",
+        settings.api_base_url,
+        monitor_region,
+        attested=settings.synthetic_canonical_attested,
+        expected_pcr0=settings.attestation_expected_pcr0,
+    )
+    verify: Any = _attested_ssl_context() if target.attested else True
     limiter = billing_semaphore or asyncio.Semaphore(DEFAULT_SYNTHETIC_BILLING_CONCURRENCY)
     probes = []
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, verify=verify) as client:
         for _ in range(max(0, count)):
             picked = choose_rotation_target(pool, rng)
             if picked is None:
@@ -209,6 +290,7 @@ async def _rotation_pass(
                     api_key=api_key,
                     provider=provider,
                     model=model,
+                    default_timeout_seconds=settings.synthetic_monitor_timeout_seconds,
                 )
             )
         if not probes:
@@ -235,6 +317,7 @@ async def _throughput_pass(
     max_tokens: int,
     minimum_output_tokens: int,
     timeout_seconds: float,
+    timeout_ceiling_seconds: float,
     interval_seconds: int,
 ) -> list[ProviderBenchmarkSample]:
     candidates = throughput_candidates(limit=route_limit)
@@ -245,8 +328,20 @@ async def _throughput_pass(
     if picked is None:
         return []
     provider, model = picked
+    model_timeout_seconds = max(
+        timeout_seconds,
+        model_deadlines(
+            model,
+            provider=provider,
+            default_first_token_seconds=settings.synthetic_monitor_timeout_seconds,
+        ).completion_seconds,
+    )
+    effective_timeout_seconds = min(
+        model_timeout_seconds,
+        max(timeout_ceiling_seconds, 1.0),
+    )
     target = SyntheticTarget("throughput", settings.api_base_url, monitor_region)
-    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(effective_timeout_seconds)) as client:
         return [
             await provider_throughput_probe(
                 client,
@@ -257,7 +352,7 @@ async def _throughput_pass(
                 model=model,
                 max_tokens=max_tokens,
                 minimum_output_tokens=minimum_output_tokens,
-                total_timeout_seconds=timeout_seconds,
+                total_timeout_seconds=effective_timeout_seconds,
             )
         ]
 
@@ -298,6 +393,48 @@ async def _post_route_health_if_due(
     await _post_route_health(client, url=url, internal_token=internal_token)
 
 
+async def _post_remediator(
+    client: httpx.AsyncClient,
+    *,
+    url: str,
+    internal_token: str,
+    timeout_seconds: float = _DEFAULT_REMEDIATOR_TIMEOUT_SECONDS,
+) -> bool:
+    """Run the control-plane remediator and make scheduler failures visible."""
+    try:
+        response = await client.post(
+            url,
+            headers={"x-trustedrouter-internal-token": internal_token},
+            timeout=httpx.Timeout(timeout_seconds),
+        )
+        response.raise_for_status()
+        payload = response.json()
+        decisions = payload.get("data", {}).get("decisions") if isinstance(payload, dict) else None
+        if not isinstance(decisions, int):
+            raise ValueError("remediator response did not contain a decision count")
+        print(f"remediator decisions: {decisions}")
+        return True
+    except Exception as exc:
+        print(f"remediator check failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return False
+
+
+async def _run_scheduled_remediator(
+    *,
+    url: str,
+    internal_token: str,
+    timeout_seconds: float,
+) -> bool:
+    """Own the HTTP client so remediation can overlap independent probes."""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds)) as client:
+        return await _post_remediator(
+            client,
+            url=url,
+            internal_token=internal_token,
+            timeout_seconds=timeout_seconds,
+        )
+
+
 async def run() -> int:
     settings = get_settings()
     monitor_region = (
@@ -306,9 +443,20 @@ async def run() -> int:
         or settings.primary_region
     )
     control_plane = os.environ.get("TR_SYNTHETIC_CONTROL_PLANE_URL", "https://trustedrouter.com")
-    internal_token = settings.internal_gateway_token
+    observer_token = synthetic_observer_token(settings)
+    transaction_token = synthetic_transaction_token(settings)
     api_key = settings.synthetic_monitor_api_key
     timeout = httpx.Timeout(settings.synthetic_monitor_timeout_seconds)
+    remediator_url = os.environ.get("TR_SYNTHETIC_REMEDIATOR_URL")
+    remediator_timeout_seconds = max(
+        30.0,
+        float(
+            os.environ.get(
+                "TR_SYNTHETIC_REMEDIATOR_TIMEOUT_SECONDS",
+                str(_DEFAULT_REMEDIATOR_TIMEOUT_SECONDS),
+            )
+        ),
+    )
     runs_per_invocation = max(
         1,
         int(
@@ -366,6 +514,12 @@ async def run() -> int:
             str(_DEFAULT_THROUGHPUT_TIMEOUT_SECONDS),
         )
     )
+    throughput_timeout_ceiling_seconds = float(
+        os.environ.get(
+            "TR_SYNTHETIC_THROUGHPUT_TIMEOUT_CEILING_SECONDS",
+            str(_DEFAULT_THROUGHPUT_TIMEOUT_CEILING_SECONDS),
+        )
+    )
     throughput_interval_seconds = max(
         1,
         int(
@@ -393,6 +547,17 @@ async def run() -> int:
     benchmark_samples: list[ProviderBenchmarkSample] = []
     if start_delay_seconds:
         await asyncio.sleep(start_delay_seconds)
+    remediator_task = (
+        asyncio.create_task(
+            _run_scheduled_remediator(
+                url=remediator_url,
+                internal_token=observer_token,
+                timeout_seconds=remediator_timeout_seconds,
+            )
+        )
+        if remediator_url and observer_token and not throughput_only
+        else None
+    )
     if throughput_only:
         if not throughput_enabled:
             print(
@@ -421,6 +586,7 @@ async def run() -> int:
                 max_tokens=throughput_max_tokens,
                 minimum_output_tokens=throughput_minimum_output_tokens,
                 timeout_seconds=throughput_timeout_seconds,
+                timeout_ceiling_seconds=throughput_timeout_ceiling_seconds,
                 interval_seconds=throughput_interval_seconds,
             )
         )
@@ -431,7 +597,11 @@ async def run() -> int:
                 settings=settings,
                 monitor_region=monitor_region,
                 control_plane=control_plane,
-                internal_token=internal_token,
+                # Split observer jobs never hold billing authority. The
+                # explicit combined migration bridge still does, so it must
+                # keep exercising authorize/settle/fallback until the
+                # internal service takes ownership.
+                internal_token=transaction_token,
                 api_key=api_key,
                 timeout=timeout,
                 rotation_enabled=rotation_enabled,
@@ -443,6 +613,7 @@ async def run() -> int:
                 throughput_max_tokens=throughput_max_tokens,
                 throughput_minimum_output_tokens=throughput_minimum_output_tokens,
                 throughput_timeout_seconds=throughput_timeout_seconds,
+                throughput_timeout_ceiling_seconds=throughput_timeout_ceiling_seconds,
                 throughput_interval_seconds=throughput_interval_seconds,
                 billing_concurrency=billing_concurrency,
             )
@@ -463,19 +634,19 @@ async def run() -> int:
         "TR_SYNTHETIC_INGEST_URL",
         f"{control_plane.rstrip('/')}/v1/internal/synthetic/samples",
     )
-    if not internal_token:
+    if not observer_token:
         for probe_sample in all_samples:
             print(probe_sample.public_dict())
         for benchmark_sample in benchmark_samples:
             print(asdict(benchmark_sample))
-        print("TR_INTERNAL_GATEWAY_TOKEN is required to ingest samples", file=sys.stderr)
+        print("TR_OBSERVER_INTERNAL_TOKEN is required to ingest samples", file=sys.stderr)
         return 2
     async with httpx.AsyncClient(timeout=timeout) as client:
         ok = True
         if all_samples:
             response = await client.post(
                 ingest_url,
-                headers={"x-trustedrouter-internal-token": internal_token},
+                headers={"x-trustedrouter-internal-token": observer_token},
                 json={"samples": [sample.public_dict() for sample in all_samples]},
             )
             print(response.text)
@@ -487,7 +658,7 @@ async def run() -> int:
             )
             bench_response = await client.post(
                 benchmark_url,
-                headers={"x-trustedrouter-internal-token": internal_token},
+                headers={"x-trustedrouter-internal-token": observer_token},
                 json={"samples": [asdict(sample) for sample in benchmark_samples]},
             )
             print(bench_response.text)
@@ -500,8 +671,10 @@ async def run() -> int:
                 await _post_route_health_if_due(
                     client,
                     url=route_health_url,
-                    internal_token=internal_token,
+                    internal_token=observer_token,
                 )
+    if remediator_task is not None:
+        ok = (await remediator_task) and ok
     return 0 if ok else 1
 
 

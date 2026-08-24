@@ -1,4 +1,5 @@
 {% extends "public/_base.html" %}
+{% from "public/_provider_identity.html" import provider_identity %}
 {% block body %}
 <section class="public-proof-strip">
   <div><strong>Compare routes</strong><span>Providers, price, context, and policy posture in one view.</span></div>
@@ -7,15 +8,16 @@
 </section>
 
 <section class="panel">
-  <div class="panel-head"><h2>Practical read</h2></div>
+  <div class="panel-head"><h2>Practical read</h2><a href="/benchmarks/reports">Monthly evidence</a></div>
   <div class="panel-body">
     <p class="lead">{{ comparison.summary }}</p>
     <div class="public-proof-strip">
       <div><strong>{{ comparison.left_price }}</strong><span>{{ left.name }} cheapest route</span></div>
       <div><strong>{{ comparison.right_price }}</strong><span>{{ right.name }} cheapest route</span></div>
-      <div><strong>{{ comparison.left_ttft }}</strong><span>{{ left.name }} measured p50 TTFT</span></div>
-      <div><strong>{{ comparison.right_ttft }}</strong><span>{{ right.name }} measured p50 TTFT</span></div>
+      <div><strong>{{ comparison.left_ttft }}</strong><span>{{ left.name }} fastest measured p50 TTFT{% if comparison.left_ttft_provider %} via {{ comparison.left_ttft_provider }}{% endif %}</span></div>
+      <div><strong>{{ comparison.right_ttft }}</strong><span>{{ right.name }} fastest measured p50 TTFT{% if comparison.right_ttft_provider %} via {{ comparison.right_ttft_provider }}{% endif %}</span></div>
     </div>
+    <p class="muted">Prices and live route measurements can change. Use the <a href="/benchmarks/reports">monthly reports</a> when you need a stable evidence window, then run a small <a href="/docs/evals">task-specific eval</a> before choosing a production default.</p>
   </div>
 </section>
 
@@ -27,7 +29,7 @@
     <span>Model id</span><span><code>{{ left.id }}</code></span><span><code>{{ right.id }}</code></span>
   </div>
   <div class="matrix-row">
-    <span>Publisher</span><span>{{ left.provider }}</span><span>{{ right.provider }}</span>
+    <span>Publisher</span><span>{{ provider_identity(left.publisher_slug, left.provider, "/providers/" ~ left.publisher_slug) }}</span><span>{{ provider_identity(right.publisher_slug, right.provider, "/providers/" ~ right.publisher_slug) }}</span>
   </div>
   <div class="matrix-row">
     <span>AI IQ</span>
@@ -53,6 +55,15 @@
   </div>
   <div class="matrix-row">
     <span>Privacy posture</span><span>{{ comparison.left_privacy }}</span><span>{{ comparison.right_privacy }}</span>
+  </div>
+  <div class="matrix-row">
+    <span>Fastest measured p50 TTFT</span><span>{{ comparison.left_ttft }}{% if comparison.left_ttft_provider %} via <a href="/providers/{{ comparison.left_ttft_provider }}">{{ comparison.left_ttft_provider }}</a>{% endif %}</span><span>{{ comparison.right_ttft }}{% if comparison.right_ttft_provider %} via <a href="/providers/{{ comparison.right_ttft_provider }}">{{ comparison.right_ttft_provider }}</a>{% endif %}</span>
+  </div>
+  <div class="matrix-row">
+    <span>Highest measured throughput</span><span>{{ comparison.left_throughput }}{% if comparison.left_throughput_provider %} via <a href="/providers/{{ comparison.left_throughput_provider }}">{{ comparison.left_throughput_provider }}</a>{% endif %}</span><span>{{ comparison.right_throughput }}{% if comparison.right_throughput_provider %} via <a href="/providers/{{ comparison.right_throughput_provider }}">{{ comparison.right_throughput_provider }}</a>{% endif %}</span>
+  </div>
+  <div class="matrix-row">
+    <span>Recent route uptime range</span><span>{{ comparison.left_uptime }}</span><span>{{ comparison.right_uptime }}</span>
   </div>
   <div class="matrix-row">
     <span>Modes</span>
@@ -93,6 +104,32 @@
     </div>
   </div>
 </section>
+
+{% if related_comparisons %}
+<section class="panel" aria-label="Related model comparisons">
+  <div class="panel-head"><h2>Related comparisons</h2><a href="/compare/models">Browse every comparison</a></div>
+  <div class="panel-body">
+    <ul class="link-list">
+      {% for related in related_comparisons %}
+      <li><a href="{{ related.href }}">{{ related.label }}</a><span>{{ related.route_count }} combined provider routes</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>
+{% endif %}
+
+{% if comparison_neighbors %}
+<nav class="panel" aria-label="Browse adjacent model comparisons">
+  <div class="panel-head"><h2>Keep comparing</h2><a href="/compare/models">Comparison directory</a></div>
+  <div class="panel-body">
+    <ul class="link-list">
+      {% for neighbor in comparison_neighbors %}
+      <li><a href="{{ neighbor.href }}">{{ neighbor.label }}</a><span>{{ neighbor.relation }} comparison</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+</nav>
+{% endif %}
 
 <section class="marketing-split">
   <div class="marketing-copy">

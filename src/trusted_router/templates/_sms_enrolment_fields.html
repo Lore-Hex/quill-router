@@ -1,0 +1,48 @@
+{#- The number field, the Call to Action checkbox and the submit button, defined ONCE.
+
+  Rendered in two places that a 10DLC vetter will compare:
+
+    * the console at Settings -> Notifications, live and interactive, where a
+      number is actually collected;
+    * the public /sms page, as a non-interactive PREVIEW, because the console is
+      behind a login and a CTA a vetter cannot see is a CTA that does not count.
+
+  The consent SENTENCE was already shared via _sms_consent.html. The fields
+  around it were not, so the public page could still describe a form that did not
+  match — the same failure as campaign 30909, one level out. Sharing the markup
+  makes "the public page shows the real form" true by construction rather than by
+  someone remembering to update both.
+
+  Set `preview = true` to render the disabled copy. Nothing else changes: same
+  labels, same order, same default-unticked checkbox.
+-#}
+<label>Mobile number<input name="phone" placeholder="+15551234567" autocomplete="tel"
+  {% if preview %}disabled{% else %}required{% endif %}></label>
+{% if preview %}
+  <p><strong>Phone call</strong></p>
+{% elif notify_sms_available %}
+  <label>Send the code by
+    <select name="channel">
+      <option value="voice">Phone call</option>
+      <option value="sms">Text message</option>
+    </select>
+  </label>
+{% else %}
+  <input type="hidden" name="channel" value="voice">
+  <p><strong>Phone call</strong></p>
+  <p class="muted">We'll call this number and read you a 6-digit code. (Text messages are coming once carrier registration completes.)</p>
+{% endif %}
+{# Every element below is required by CTIA and is what a vetter looks for at the
+   point a number is collected: who is sending, what is sent, how often, cost,
+   how to stop, how to get help, and the two policy links. It is a real gate —
+   the server refuses a submission without `sms_consent`, so it cannot be
+   bypassed by posting the form directly. #}
+<label class="consent">
+  <input type="checkbox" name="sms_consent" value="yes"
+    {% if preview %}disabled{% else %}required{% endif %}>
+  <span>{% with consent_links_new_tab = true %}{% include "_sms_consent.html" %}{% endwith %}</span>
+</label>
+<button class="btn primary" type="submit"
+  {% if preview or resend_wait_seconds %}disabled{% endif %}>
+  {%- if not preview and resend_wait_seconds %}You can request a code in {{ resend_wait_seconds }}s{% else %}Send code{% endif -%}
+</button>

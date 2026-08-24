@@ -24,7 +24,10 @@
 """OpenAI pricing parser for provider-owned HTML or normalized Markdown."""
 from __future__ import annotations
 
+import json
 import re
+
+from bs4 import BeautifulSoup
 
 # Display name on platform.openai.com/docs/pricing → OR-canonical id.
 _NAME_TO_OR_ID = {
@@ -63,6 +66,58 @@ _SHORT_CONTEXT_THRESHOLD = 272_000
 
 
 _DOLLAR_RE = re.compile(r"\$([\d.]+)")
+_CHAT_PRICE_NAME_RE = re.compile(
+    r"^(?:gpt-(?:[0-9][a-z0-9.-]*|oss-[0-9]+b)|o[0-9][a-z0-9.-]*|chat-latest)$",
+    re.I,
+)
+_SHORT_CONTEXT_SUFFIX_RE = re.compile(
+    r"\s*\(<\s*272k\s+context\s+length\)\s*$",
+    re.I,
+)
+
+
+def _canonical_id(name: str) -> str | None:
+    normalized = _SHORT_CONTEXT_SUFFIX_RE.sub("", name.strip().strip("*")).casefold()
+    mapped = _NAME_TO_OR_ID.get(normalized)
+    if mapped is not None:
+        return mapped
+    if not _CHAT_PRICE_NAME_RE.fullmatch(normalized):
+        return None
+    return f"openai/{normalized}"
+
+
+def _astro_unwrap(value):
+    """Decode Astro's compact JSON serialization used by hidden table rows."""
+
+    if isinstance(value, list) and len(value) == 2 and value[0] in (0, 1):
+        return _astro_unwrap(value[1])
+    if isinstance(value, list):
+        return [_astro_unwrap(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _astro_unwrap(item) for key, item in value.items()}
+    return value
+
+
+def _embedded_standard_rows(source: str) -> list[list]:
+    """Return official Standard rows hidden behind the page's All models UI."""
+
+    rows: list[list] = []
+    soup = BeautifulSoup(source, "html.parser")
+    for island in soup.find_all("astro-island"):
+        props = island.get("props")
+        if not isinstance(props, str) or '"tier"' not in props or '"rows"' not in props:
+            continue
+        try:
+            decoded = _astro_unwrap(json.loads(props))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(decoded, dict) or decoded.get("tier") != "standard":
+            continue
+        candidate_rows = decoded.get("rows")
+        if not isinstance(candidate_rows, list):
+            continue
+        rows.extend(row for row in candidate_rows if isinstance(row, list))
+    return rows
 
 
 def _to_micro_per_m(text: str | None) -> int | None:
@@ -78,6 +133,12 @@ def _to_micro_per_m(text: str | None) -> int | None:
         return int(round(float(match.group(1)) * 1_000_000))
     except (TypeError, ValueError):
         return None
+
+
+def _embedded_to_micro_per_m(value) -> int | None:
+    if isinstance(value, (int, float)):
+        return int(round(float(value) * 1_000_000))
+    return _to_micro_per_m(str(value))
 
 
 def _flat_row(prompt: int, completion: int,
@@ -121,7 +182,7 @@ def parse(md: str) -> dict:
         if not cells:
             continue
         name = cells[0]
-        or_id = _NAME_TO_OR_ID.get(name)
+        or_id = _canonical_id(name)
         if or_id is None:
             continue
         if or_id in _live_seen:
@@ -192,6 +253,37 @@ def parse(md: str) -> dict:
         # continuation). Handled by the 4-column branch above via the
         # secondary lookup below.
 
+    # OpenAI collapses older rows behind an "All models" client control. The
+    # DOM contains those rows in an Astro JSON attribute even though they are
+    # absent from the rendered table. Parse only the Standard processing tier;
+    # visible rows already won above and retain their explicit long-context
+    # columns. Models labelled <272K use OpenAI's documented 2x input/cache and
+    # 1.5x output rates above that threshold.
+    for cells in _embedded_standard_rows(md):
+        if len(cells) < 4:
+            continue
+        name = str(cells[0])
+        or_id = _canonical_id(name)
+        if or_id is None or or_id in _live_seen:
+            continue
+        short_in = _embedded_to_micro_per_m(cells[1])
+        short_cached = _embedded_to_micro_per_m(cells[2])
+        short_out = _embedded_to_micro_per_m(cells[4] if len(cells) >= 5 else cells[3])
+        if short_in is None or short_out is None:
+            continue
+        if _SHORT_CONTEXT_SUFFIX_RE.search(name):
+            out[or_id] = _tiered_row(
+                short_in,
+                short_out,
+                short_cached,
+                short_in * 2,
+                short_out * 3 // 2,
+                short_cached * 2 if short_cached is not None else None,
+            )
+        else:
+            out[or_id] = _flat_row(short_in, short_out, short_cached)
+        _live_seen.add(or_id)
+
     # Also handle the specialized-models table where the row is prefixed
     # with a category column: | Codex | gpt-5.3-codex | $1.75 | $0.175 | $14.00 |
     # That yields 5 cells with cells[1] as the model name.
@@ -202,7 +294,7 @@ def parse(md: str) -> dict:
         if len(cells) < 5:
             continue
         name = cells[1]
-        or_id = _NAME_TO_OR_ID.get(name)
+        or_id = _canonical_id(name)
         if or_id is None or or_id in _live_seen:
             continue
         single_in = _to_micro_per_m(cells[2])

@@ -14,7 +14,7 @@ TEST_BYOK_KMS_KEY_NAME = (
 
 
 def test_catalog_prices_use_uniform_markup_and_exact_openrouter_decimal(client: TestClient) -> None:
-    """Under uniform pricing (cost+5%, $0.01/M floor), prompt_price and
+    """Under uniform pricing (cost+5.5%, $0.01/M floor), prompt_price and
     published_prompt are the same number — no 1¢/M discount theater. The
     `discount_microdollars_per_million_tokens` field is preserved for
     OpenRouter consumer compat but pinned to 0."""
@@ -116,6 +116,7 @@ def test_gateway_settle_repeat_cannot_charge_or_log_twice(
     )
     assert repeat.status_code == 200, repeat.text
     assert repeat.json()["data"]["already_settled"] is True
+    assert repeat.json()["data"]["generation_id"] == first.json()["data"]["generation_id"]
     assert STORE.credit_money[workspace_id].total_usage_microdollars == usage_after_first
     assert len(STORE.generation_store.generations) == generation_count_after_first
     assert all(gen.request_id != "gw-double-charge-attempt" for gen in STORE.generation_store.generations.values())
@@ -149,14 +150,16 @@ def test_gateway_refund_repeat_cannot_restore_credit_twice(
     assert first.status_code == 200, first.text
     assert repeat.status_code == 200, repeat.text
     assert repeat.json()["data"]["already_settled"] is True
+    assert "generation_id" not in repeat.json()["data"]
     assert _available_microdollars(workspace_id) == starting_available
     assert STORE.credit_money[workspace_id].reserved_microdollars == 0
 
 
 def test_production_prompt_routes_are_absent_and_gateway_requires_internal_token() -> None:
-    prod_client = TestClient(_production_app())
+    control_client = TestClient(_production_app("control"))
+    internal_client = TestClient(_production_app("internal"))
 
-    prompt = prod_client.post(
+    prompt = control_client.post(
         "/v1/chat/completions",
         json={
             "model": "openai/gpt-5.4-nano",
@@ -165,11 +168,11 @@ def test_production_prompt_routes_are_absent_and_gateway_requires_internal_token
     )
     assert prompt.status_code == 404
 
-    no_token = prod_client.post(
+    no_token = internal_client.post(
         "/v1/internal/gateway/authorize",
         json={"api_key_hash": "key_missing", "model": "openai/gpt-5.4-nano"},
     )
-    wrong_token = prod_client.post(
+    wrong_token = internal_client.post(
         "/v1/internal/gateway/authorize",
         headers={"x-trustedrouter-internal-token": "wrong"},
         json={"api_key_hash": "key_missing", "model": "openai/gpt-5.4-nano"},
@@ -197,23 +200,40 @@ def test_all_stubbed_coverage_routes_have_stable_error_shapes(client: TestClient
             assert payload["error"]["type"] == "endpoint_not_supported", item
 
 
-def _production_app():
+def _production_app(surface: str):
     internal_token = "prod" + "-internal-token"
     webhook_secret = "whsec_" + "test"
     stripe_key = "sk_" + "test_secret"
+    values = {
+        "environment": "production",
+        "service_surface": surface,
+        "sentry_dsn": "https://example@example.ingest.sentry.io/1",
+        "storage_backend": "spanner-bigtable",
+        "spanner_instance_id": "trusted-router",
+        "spanner_database_id": "trusted-router",
+        "bigtable_instance_id": "trusted-router-logs",
+    }
+    if surface == "control":
+        values.update(
+            {
+                "attribution_cookie_secret": "attribution-cookie-" + "a" * 32,
+                "stripe_webhook_secret": webhook_secret,
+                "stripe_secret_key": stripe_key,
+                "aws_access_key_id": "test-access-key",
+                "aws_secret_access_key": "test-secret-key",
+                "ses_from_email": "noreply@example.com",
+                "byok_kms_key_name": TEST_BYOK_KMS_KEY_NAME,
+            }
+        )
+    elif surface == "internal":
+        values.update(
+            {
+                "internal_gateway_token": internal_token,
+                "observer_internal_token": "prod-observer-token",
+            }
+        )
     return create_app(
-        Settings(
-            environment="production",
-            internal_gateway_token=internal_token,
-            stripe_webhook_secret=webhook_secret,
-            stripe_secret_key=stripe_key,
-            sentry_dsn="https://example@example.ingest.sentry.io/1",
-            storage_backend="spanner-bigtable",
-            spanner_instance_id="trusted-router",
-            spanner_database_id="trusted-router",
-            bigtable_instance_id="trusted-router-logs",
-            byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
-        ),
+        Settings(**values),
         configure_store_arg=False,
         init_observability=False,
     )

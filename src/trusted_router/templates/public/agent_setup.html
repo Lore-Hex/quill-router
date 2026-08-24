@@ -2,17 +2,35 @@
 
 {% block body %}
 <section class="public-section docs-section">
+  <section class="public-proof-strip" aria-label="Sixty second agent setup">
+    <div><strong>1. Create a key</strong><span>Use one TrustedRouter key across supported agents.</span></div>
+    <div><strong>2. Set the base URL</strong><span><span class="mono">{{ api_base_url }}</span></span></div>
+    <div><strong>3. Send PONG</strong><span>Confirm authentication, routing, and streaming before migration.</span></div>
+    <div><strong>4. Choose from the catalog</strong><span>Read the live <a href="/v1/models">model API</a> or compare measured routes.</span></div>
+  </section>
+
   <div class="panel">
-    <div class="panel-head"><h2>Agent setup</h2><span class="pill good">OpenAI compatible</span></div>
+    <div class="panel-head"><h2>Agent router base URLs</h2><span class="pill good">OpenAI compatible</span></div>
     <div class="panel-body">
-      <p>Use this when a coding agent needs to switch a project to TrustedRouter without changing the app architecture.</p>
+      <p>For Claude Code, Codex, Cursor, eval runners, and other AI agents using the OpenAI SDK, set the base URL to <span class="mono">{{ api_base_url }}</span>. Keep the SDK and application architecture you already use.</p>
+      <div class="model-table-wrap">
+        <table>
+          <thead><tr><th>Client</th><th>Base URL</th><th>Use when</th></tr></thead>
+          <tbody>
+            <tr><td>OpenAI compatible</td><td><span class="mono">{{ api_base_url }}</span></td><td>Chat Completions, Responses, models, and most agents</td></tr>
+            <tr><td>Anthropic compatible</td><td><span class="mono">https://api.trustedrouter.com</span></td><td>Anthropic SDK Messages calls</td></tr>
+            <tr><td>EU regional</td><td><span class="mono">https://api-europe-west4.quillrouter.com/v1</span></td><td>Europe-focused gateway and routing</td></tr>
+            <tr><td>Permanent alias</td><td><span class="mono">https://api.quillrouter.com/v1</span></td><td>Existing integrations using the original hostname</td></tr>
+          </tbody>
+        </table>
+      </div>
       <pre><code>export TRUSTEDROUTER_API_KEY="sk-tr-v1-..."
 export OPENAI_API_KEY="$TRUSTEDROUTER_API_KEY"
 export OPENAI_BASE_URL="{{ api_base_url }}"</code></pre>
       <pre><code># Anthropic SDKs use the non-/v1 base URL.
 export ANTHROPIC_API_KEY="$TRUSTEDROUTER_API_KEY"
 export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"</code></pre>
-      <p class="muted">Already integrated against <span class="mono">api.quillrouter.com</span>? It stays a permanent working alias — no migration needed. Both hostnames terminate inside the same attested gateway.</p>
+      <p class="muted">All listed TrustedRouter API hostnames terminate prompt TLS inside an attested gateway. Browse the current public catalog at <a href="/v1/models">/v1/models</a>, then run the PONG check below before changing application code.</p>
     </div>
   </div>
 
@@ -28,6 +46,7 @@ export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"</code></pre>
     "max_tokens": 4
   }'</code></pre>
       <p>The response should contain <span class="mono">PONG</span>. Use this check before moving evals or production traffic.</p>
+      <p class="muted">After PONG, compare current routes on the <a href="/leaderboard">live leaderboard</a> and verify longer-term behavior in the <a href="/benchmarks/reports">monthly benchmark reports</a>.</p>
     </div>
   </div>
 
@@ -154,8 +173,13 @@ Read the full behavior at https://trustedrouter.com/docs/synth.</code></pre>
       <a class="pill" href="#codex-skill">Agent skill</a>
       <a class="pill" href="/docs/synth">Synth</a>
       <a class="pill" href="/models">Models</a>
+      <a class="pill" href="/compare/models">Model comparisons</a>
       <a class="pill" href="/providers">Providers</a>
       <a class="pill" href="/leaderboard">Leaderboard</a>
+      <a class="pill" href="/benchmarks/reports">Monthly reports</a>
+      <a class="pill" href="/private-llm-api">Private API</a>
+      <a class="pill" href="/eu">EU setup</a>
+      <a class="pill" href="/docs/migrate-from-openrouter">Migration guide</a>
     </div>
   </section>
 </section>

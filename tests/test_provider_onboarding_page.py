@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 from trusted_router.provider_contract import (
     PROVIDER_CATALOG_EXAMPLE,
     PROVIDER_CATALOG_SCHEMA_URL,
+    PROVIDER_CATALOG_V2_EXAMPLE,
+    PROVIDER_CATALOG_V2_SCHEMA_URL,
 )
 
 
@@ -35,13 +37,26 @@ def test_provider_onboarding_page_has_machine_readable_requirements(
     assert "separate secure handoff" in response.text
     assert "OpenAI-compatible base URL." in response.text
     assert "Canonical catalog." in response.text
+    assert "Provider Reliability Contract v2" in response.text
     assert "Copy this output exactly." in response.text
     assert "GET /v1/models" in response.text
     assert "POST /v1/chat/completions" in response.text
     assert "No separate pricing endpoint is required." in response.text
     assert "per_1m_tokens" in response.text
     assert "Do not invent a second format." in response.text
+    assert "uvx trustedrouter-provider-check \\" in response.text
+    assert "--base-url https://api.provider.com/v1" in response.text
+    assert 'href="https://github.com/Lore-Hex/trustedrouter-provider-check"' in response.text
+    assert 'href="/docs/provider-conformance"' in response.text
+    assert "Featured partnership" in response.text
+    assert "Neurometric AI is live on TrustedRouter." in response.text
+    assert 'href="/providers/neurometric"' in response.text
+    assert "ZDR classification: not contractual" in response.text
+    assert client.get("/providers/neurometric").status_code == 200
     assert 'href="/providers/marketplace/catalog.schema.json"' in response.text
+    assert 'href="/providers/marketplace/catalog.v2.schema.json"' in response.text
+    assert "Always send <code>Retry-After</code>" in response.text
+    assert "Provider sign in" in response.text
     assert "Exclude account administration, billing, user management" in response.text
     assert (
         'href="mailto:providers@trustedrouter.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D"'
@@ -51,6 +66,25 @@ def test_provider_onboarding_page_has_machine_readable_requirements(
         '<link rel="canonical" href="https://trustedrouter.com/providers/marketplace">'
         in response.text
     )
+
+
+def test_provider_onboarding_page_links_the_open_source_checker(
+    client: TestClient,
+) -> None:
+    response = client.get("/providers/marketplace")
+
+    assert response.status_code == 200
+    assert "Run the conformance suite before you apply." in response.text
+    assert 'href="https://github.com/Lore-Hex/trustedrouter-provider-check"' in response.text
+    # Installed from PyPI rather than cloned. A provider who has to clone and
+    # build before they can check conformance mostly does not check conformance.
+    assert "uvx trustedrouter-provider-check \\" in response.text
+    assert "git clone" not in response.text
+    assert "TR_PROVIDER_API_KEY" in response.text
+    assert "--tier 4" in response.text
+    assert "--json provider-report.json" in response.text
+    assert "Tiers 1&ndash;4" in response.text
+    assert "real, billable completion" in response.text
 
 
 def test_provider_catalog_schema_is_public_and_matches_documented_example(
@@ -76,17 +110,52 @@ def test_provider_catalog_schema_is_public_and_matches_documented_example(
     assert "embeddings" not in model_schema["properties"]["endpoints"]["items"]["enum"]
 
 
+def test_provider_reliability_contract_v2_is_public_and_complete(
+    client: TestClient,
+) -> None:
+    response = client.get("/providers/marketplace/catalog.v2.schema.json")
+
+    assert response.status_code == 200
+    schema = response.json()
+    assert schema["$id"] == PROVIDER_CATALOG_V2_SCHEMA_URL
+    assert set(schema["required"]) == {
+        "object",
+        "contract_version",
+        "provider",
+        "data",
+    }
+    model_schema = schema["$defs"]["model"]
+    assert "reliability" in model_schema["required"]
+    assert set(model_schema["properties"]["reliability"]["required"]) == set(
+        PROVIDER_CATALOG_V2_EXAMPLE["data"][0]["reliability"]
+    )
+    provider_schema = schema["properties"]["provider"]
+    assert "error_contract" in provider_schema["required"]
+    assert (
+        provider_schema["properties"]["error_contract"]["properties"]["overload_status"]["const"]
+        == 503
+    )
+
+
 def test_provider_onboarding_page_is_discoverable(client: TestClient) -> None:
     providers = client.get("/providers")
     footer = client.get("/")
     sitemap = client.get("/sitemap-core.xml")
     llms = client.get("/llms.txt")
 
-    assert providers.status_code == footer.status_code == sitemap.status_code == llms.status_code == 200
+    assert (
+        providers.status_code
+        == footer.status_code
+        == sitemap.status_code
+        == llms.status_code
+        == 200
+    )
     assert 'href="/providers/marketplace"' in providers.text
     assert 'href="/providers/marketplace"' in footer.text
     assert "<loc>https://trustedrouter.com/providers/marketplace</loc>" in sitemap.text
-    assert "Provider marketplace: https://trustedrouter.com/providers/marketplace" in llms.text
+    # llms.txt is a markdown navigation index now, so entries are links rather
+    # than "Label: url" text.
+    assert "[Provider marketplace](https://trustedrouter.com/providers/marketplace)" in llms.text
     assert "https://trustedrouter.com/providers/apply" not in sitemap.text
     assert "https://trustedrouter.com/providers/apply" not in llms.text
 

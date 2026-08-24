@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for Google AI Studio chat and image models that are available from the Gemini API before the OpenRouter snapshot catches up. Verified against Google Gemini /v1beta/models and direct countTokens/generateContent smoke.",
   "provider": "google-ai-studio",
   "source": "https://generativelanguage.googleapis.com/v1beta/models",
-  "generated_at": "2026-07-30T00:02:56Z",
-  "model_count": 32,
+  "generated_at": "2026-08-24T10:39:58Z",
+  "model_count": 35,
   "models": [
     {
       "id": "google/gemini-3.5-flash",
@@ -76,7 +76,8 @@
         "image"
       ],
       "endpoints": [
-        "chat/completions"
+        "chat/completions",
+        "images"
       ],
       "status": 1
     },
@@ -100,7 +101,8 @@
       "context_length": 1048576,
       "max_output_tokens": 8192,
       "routable": false,
-      "routable_reason": "awaiting-price"
+      "routable_reason": "delisted-upstream",
+      "missing_since": "2026-08-10"
     },
     {
       "display_name": "Gemini 2.0 Flash 001",
@@ -123,7 +125,10 @@
       "max_output_tokens": 8192,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000,
-      "cached_input_token_price_per_m": 25000
+      "cached_input_token_price_per_m": 25000,
+      "missing_since": "2026-08-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Gemini 2.0 Flash-Lite",
@@ -145,7 +150,8 @@
       "context_length": 1048576,
       "max_output_tokens": 8192,
       "routable": false,
-      "routable_reason": "awaiting-price"
+      "routable_reason": "delisted-upstream",
+      "missing_since": "2026-08-10"
     },
     {
       "display_name": "Gemini 2.0 Flash-Lite 001",
@@ -167,7 +173,10 @@
       "context_length": 1048576,
       "max_output_tokens": 8192,
       "input_token_price_per_m": 75000,
-      "output_token_price_per_m": 300000
+      "output_token_price_per_m": 300000,
+      "missing_since": "2026-08-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Gemini 2.5 Computer Use Preview 10-2025",
@@ -426,29 +435,35 @@
       "context_length": 1048576,
       "max_output_tokens": 65536,
       "routable": false,
-      "routable_reason": "awaiting-price"
+      "routable_reason": "delisted-upstream",
+      "missing_since": "2026-08-10"
     },
     {
       "display_name": "Nano Banana 2",
       "title": "google/gemini-3.1-flash-image",
       "model_type": "chat",
-      "features": [],
+      "features": [
+        "reasoning",
+        "image-generation"
+      ],
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
+        "image",
         "text"
       ],
       "endpoints": [
-        "chat/completions"
+        "images"
       ],
       "status": 1,
       "id": "google/gemini-3.1-flash-image",
       "upstream_id": "gemini-3.1-flash-image",
       "context_length": 65536,
       "max_output_tokens": 65536,
-      "routable": false,
-      "routable_reason": "awaiting-price"
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 60000000
     },
     {
       "display_name": "Gemini 3.1 Flash Lite",
@@ -683,7 +698,8 @@
       "context_length": 1048576,
       "max_output_tokens": 65536,
       "routable": false,
-      "routable_reason": "awaiting-price"
+      "routable_reason": "delisted-upstream",
+      "missing_since": "2026-08-10"
     },
     {
       "display_name": "Gemini Robotics-ER 1.6 Preview",
@@ -753,9 +769,81 @@
       "upstream_id": "gemini-3.6-flash",
       "context_length": 1048576,
       "max_output_tokens": 65536,
-      "input_token_price_per_m": 1500000,
-      "output_token_price_per_m": 7500000,
-      "cached_input_token_price_per_m": 150000
+      "input_token_price_per_m": 750000,
+      "output_token_price_per_m": 3750000,
+      "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "Gemini Robotics-ER 2 Preview",
+      "title": "google/gemini-robotics-er-2-preview",
+      "model_type": "chat",
+      "features": [],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-robotics-er-2-preview",
+      "upstream_id": "gemini-robotics-er-2-preview",
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-07-30"
+    },
+    {
+      "display_name": "Gemini 3.7 Flash",
+      "title": "google/gemini-3.7-flash",
+      "model_type": "chat",
+      "features": [],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.7-flash",
+      "upstream_id": "gemini-3.7-flash",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 750000,
+      "output_token_price_per_m": 3750000,
+      "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "[Confidential] Gemini 3.7 Flash Video Understanding EAP",
+      "title": "google/gemini-3.7-flash-video-understanding-eap",
+      "model_type": "chat",
+      "features": [],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.7-flash-video-understanding-eap",
+      "upstream_id": "gemini-3.7-flash-video-understanding-eap",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "routable": false,
+      "routable_reason": "delisted-upstream",
+      "unresolved_since": "2026-08-15",
+      "missing_since": "2026-08-16"
     }
   ],
   "pricing_source": "https://ai.google.dev/gemini-api/docs/pricing"

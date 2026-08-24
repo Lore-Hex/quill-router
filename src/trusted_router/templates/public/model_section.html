@@ -1,5 +1,6 @@
 {% extends "public/_base.html" %}
 {% from "public/_provider_privacy_badges.html" import provider_privacy_badges %}
+{% from "public/_provider_identity.html" import provider_identity %}
 {% block body %}
 <section class="panel">
   <div class="panel-head">
@@ -83,7 +84,7 @@
       <tbody>
         {% for endpoint in model.endpoints %}
         <tr>
-          <td><a href="{{ endpoint.provider_href }}">{{ endpoint.provider }}</a> <code>{{ endpoint.provider_slug }}</code></td>
+          <td>{{ provider_identity(endpoint.provider_slug, endpoint.provider, endpoint.provider_href, subtitle=endpoint.provider_slug) }}</td>
           <td>{{ endpoint.usage_type }}</td>
           <td>{{ endpoint.prompt_price }}</td>
           <td>{{ endpoint.completion_price }}</td>
@@ -97,17 +98,16 @@
     {% elif section == "performance" %}
     {% if measured %}
     <h3>Measured performance</h3>
-    <p class="muted-copy">Continuously sampled p50/p95 time-to-first-token (TTFT), time-to-first-byte (TTFB), effective throughput, and success rate for {{ model.name }}. Effective throughput uses provider-reported output tokens over complete request time. Unsupported route and probe-configuration rows are separated from provider downtime, and no prompt or output content is stored.</p>
+    <p class="muted-copy">Continuously sampled p50/p95 time-to-first-token (TTFT), effective throughput, and success rate for {{ model.name }}. Effective throughput uses provider-reported output tokens over complete request time. Unsupported route and probe-configuration rows are separated from provider downtime, and no prompt or output content is stored.</p>
     <div class="leaderboard-table-wrap">
       <table class="leaderboard-table">
-        <thead><tr><th>Provider</th><th>p50 TTFT</th><th>p95 TTFT</th><th>p50 TTFB</th><th>Effective throughput</th><th>Uptime</th><th>Config excluded</th><th>Availability samples</th></tr></thead>
+        <thead><tr><th>Provider</th><th>p50 TTFT</th><th>p95 TTFT</th><th>Effective throughput</th><th>Uptime</th><th>Config excluded</th><th>Availability samples</th></tr></thead>
         <tbody>
           {% for r in measured %}
           <tr>
-            <td><a href="/providers/{{ r.provider }}">{{ r.provider }}</a></td>
+            <td>{{ provider_identity(r.provider, r.provider, "/providers/" ~ r.provider) }}</td>
             <td>{% if r.p50_ttft_ms is not none %}{{ r.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if r.p95_ttft_ms is not none %}{{ r.p95_ttft_ms }} ms{% else %}—{% endif %}</td>
-            <td>{% if r.p50_ttfb_ms is not none %}{{ r.p50_ttfb_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if r.p50_tokens_per_second is not none %}{{ '%.0f'|format(r.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ r.throughput_sample_count }}</span>{% else %}—{% endif %}</td>
             <td>{% if r.sample_count %}{{ '%.2f'|format(r.uptime * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if r.excluded_count %}{{ r.excluded_count }}{% if r.top_excluded %} <code>{{ r.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
@@ -146,15 +146,23 @@
           <th>Usage</th>
           <th>Prompt</th>
           <th>Completion</th>
+          <th>Schedule</th>
         </tr>
       </thead>
       <tbody>
         {% for endpoint in model.endpoints %}
         <tr>
-          <td><a href="{{ endpoint.provider_href }}">{{ endpoint.provider }}</a></td>
+          <td>{{ provider_identity(endpoint.provider_slug, endpoint.provider, endpoint.provider_href) }}</td>
           <td>{{ endpoint.usage_type }}</td>
           <td>{{ endpoint.prompt_price }}</td>
           <td>{{ endpoint.completion_price }}</td>
+          <td>
+            {% if endpoint.pricing_schedule %}
+            DeepSeek direct authorization-time pricing. New rates begin 2026-08-16 16:00 UTC. Weekday peak windows are 01:00–04:00 UTC and 06:00–10:00 UTC. Weekends are off-peak all day in Beijing time beginning 2026-08-23.
+            {% else %}
+            Flat
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -175,7 +183,7 @@
         <p class="muted-copy">{{ model.endpoint_count }} endpoint{{ '' if model.endpoint_count == 1 else 's' }} across {{ model.providers|length }} provider{{ '' if model.providers|length == 1 else 's' }}.</p>
         <ul class="link-list">
           {% for provider in model.providers %}
-          <li><a href="/providers/{{ provider.slug }}">{{ provider.name }}</a><span>{{ provider.slug }}</span></li>
+          <li>{{ provider_identity(provider.slug, provider.name, "/providers/" ~ provider.slug, subtitle=provider.slug) }}</li>
           {% endfor %}
         </ul>
       </div>

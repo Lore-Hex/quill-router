@@ -1,0 +1,33 @@
+displayName: "TR Control Plane: memory pressure"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    A TrustedRouter control-plane instance has used more than 80 percent of
+    its configured memory for five minutes. Inspect the affected region,
+    in-process cache cardinality, background queues, and recent deploys before
+    the instance reaches its hard Cloud Run memory limit.
+conditions:
+  - displayName: "Cloud Run memory above 80 percent for 5 minutes"
+    conditionThreshold:
+      filter: 'resource.type = "cloud_run_revision" AND resource.labels.service_name = "trusted-router" AND metric.type = "run.googleapis.com/container/memory/utilizations"'
+      aggregations:
+        - alignmentPeriod: 60s
+          # Cloud Run publishes this metric as a DELTA DISTRIBUTION. Reduce
+          # each minute to a scalar percentile before taking the regional max.
+          perSeriesAligner: ALIGN_PERCENTILE_99
+          crossSeriesReducer: REDUCE_MAX
+          groupByFields:
+            - resource.label.location
+      comparison: COMPARISON_GT
+      thresholdValue: 0.8
+      duration: 300s
+      evaluationMissingData: EVALUATION_MISSING_DATA_INACTIVE
+      trigger:
+        count: 1
+alertStrategy:
+  autoClose: 1800s
+  notificationPrompts:
+    - OPENED
+    - CLOSED

@@ -7,7 +7,7 @@ came from a real incident; the linked commits are the receipts.
 Index:
 - [Router-core four-nines page fires](#router-core-page)
 - [Drain or disable one gateway region](#region-drain)
-- [Spanner or Bigtable is degraded](#storage-degraded)
+- [Spanner or ClickHouse is degraded](#storage-degraded)
 - [Provider returns 502 "provider error" via the gateway](#provider-502)
 - [Provider returns sustained 429 "rate limit exceeded"](#provider-429)
 - [Provider returns 401 "Invalid API key" via the gateway](#provider-401)
@@ -15,6 +15,7 @@ Index:
 - [GCP enclave deploy keeps auto-rolling back europe-west4](#eu-rollback)
 - [GCP enclave deploy fails with "unrecognized arguments: --min-ready"](#min-ready)
 - [Hourly price bot commits but TR catalog stays stale](#bot-doesnt-deploy)
+- [Production deployment mutex](#deployment-mutex)
 - [Status page shows a region "down" but the region is actually healthy](#stale-status)
 - [`refresh.py` reports "too_many_failures" locally](#local-refresh-fails)
 - [A provider serves a model but TR's `/v1/models` doesn't list it](#missing-model)
@@ -25,7 +26,9 @@ Index:
 - [Settle outbox: flip, verify, monitor, roll back](#settle-outbox)
 - [Credit ledger operations (single typed book)](#credit-ledger)
 - [Sentry "Aborted ... deadlock/wounded" burst on gateway authorize](#authorize-deadlock-burst)
+- [One workspace 503s "Workspace billing is paused" (interrupted reshard)](#reshard-interrupted)
 - [DNS-vendor-split symptoms (Cloudflare vs Cloud DNS)](#dns-vendor-split)
+- [Adding a cloud (and when it is allowed to be called done)](#adding-a-cloud)
 
 ---
 
@@ -81,10 +84,12 @@ Provider emergency disable:
 3. Watch the affected provider row on `/status` and `/leaderboard`, not
    `router_core`, for the remaining provider impact.
 
-## <a id="storage-degraded"></a>Spanner or Bigtable is degraded
+## <a id="storage-degraded"></a>Spanner or ClickHouse is degraded
 
-Spanner remains the source of truth for billing and settlement. Bigtable
-activity/status rows are repairable metadata.
+Spanner remains the source of truth for billing and settlement. Content-free
+activity and status analytics are delivered from a durable Spanner outbox to
+replicated ClickHouse. Bigtable is only a temporary migration mirror and is not
+part of the `spanner-clickhouse` runtime.
 
 Spanner degraded:
 1. Check whether regional quota leases can continue authorizing bounded spend.
@@ -94,17 +99,21 @@ Spanner degraded:
    and key-limit enforcement is still local/leased.
 4. After recovery, reconcile reservations and stuck authorizations.
 
-Bigtable degraded:
-1. Keep inference alive if Spanner settlement succeeds.
-2. Expect missing activity/status rows.
-3. Run:
-   ```bash
-   curl -X POST https://trustedrouter.com/v1/internal/reconcile/generation-activity \
-     -H "Authorization: Bearer $TR_INTERNAL_GATEWAY_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"workspace_id":"<workspace_id>","limit":10000}'
-   ```
-4. Verify `/activity`, `/generation`, and provider benchmark rollups recover.
+ClickHouse degraded:
+1. Keep inference and Spanner settlement alive. Never make ClickHouse part of
+   the synchronous prompt or billing path.
+2. Check `tr_operational_analytics_outbox` and `tr_analytics_outbox` oldest-row
+   lag. The drainer must catch up before either queue's retention window. The
+   first of those is published without credentials as `analytics.drain_lag_seconds`
+   in every cloud's `/status.json`; `PYTHONPATH=src python3 -m
+   clickhouse.check_fleet_analytics_freshness` reads it for the whole fleet.
+   A `not_configured` reason means that deployment has no outbox wired at all,
+   which is a different problem from a stopped drain.
+3. Check all three ClickHouse replicas, disk capacity, and Keeper delay.
+4. Start `tr-clickhouse-operational-ingest.service`, then run
+   `clickhouse.verify_spanner_delivery` and confirm no missing or mismatched
+   generation rows.
+5. Verify `/activity`, `/status`, `/leaderboard`, and provider rollups recover.
 
 ---
 
@@ -272,6 +281,34 @@ The reason for the workaround: GHA's loop-prevention says commits
 pushed by `GITHUB_TOKEN` don't trigger `push:` events. `workflow_dispatch`
 events from `GITHUB_TOKEN` DO fire workflows — that's the exception
 we exploit.
+
+---
+
+## <a id="deployment-mutex"></a>Production deployment mutex
+
+The control-plane deploy workflow, direct `rollout.sh` runs, and manual
+`staged_traffic.sh` traffic shifts share a generation-fenced lock in GCS. It
+prevents two operators or automation paths from changing production Cloud Run
+revisions or traffic at the same time. Inspect the current metadata-only holder
+record without changing it:
+
+```bash
+bash scripts/deploy/deploy_mutex.sh status
+```
+
+Break glass only after running `status`, checking that the recorded owner is no
+longer active, and confirming that no GitHub Actions or manual production deploy
+is still running. Use the generation printed by `status`; the precondition keeps
+this command from deleting a replacement lock acquired after the inspection:
+
+```bash
+gcloud storage rm \
+  gs://tr-deploy-mutex-quill-cloud-proxy/locks/trusted-router-production.json \
+  --if-generation-match=GENERATION
+```
+
+Normal recovery does not require manual removal: locks expire after 90 minutes,
+and the next acquirer can take over an expired generation safely.
 
 ---
 
@@ -492,6 +529,22 @@ gcloud spanner databases execute-sql trusted-router \
 Spot-check settle latency is unchanged in `httpRequest.latency` for
 `/internal/gateway/settle`.
 
+Do not locate a canary authorization by scanning `tr_gateway_authorization.payload`.
+The payload JSON is intentionally not indexed; a production scan can consume millions
+of row reads and compete with customer billing traffic. Use the bounded verifier, which
+resolves the existing idempotency index and then uses primary-key reads:
+
+```bash
+uv run python scripts/verify_gateway_authorization.py \
+  --workspace-id <workspace-id> \
+  --key-hash <key-hash> \
+  --idempotency-key <canary-idempotency-key>
+```
+
+When the authorization ID is already available, prefer
+`--authorization-id <gwa-id>`; that path is primary-key-only. The verifier emits only
+billing and routing metadata. It never emits prompt or response content.
+
 Resume the drain after the flip. The job already exists and is paused:
 
 ```bash
@@ -517,6 +570,85 @@ Outcome cheat-sheet:
 | `reservation_missing` | Dead plus alert; investigate missing reservation state. |
 | `invalid_row` | Dead; no page. |
 | `park_typed_unavailable` | Typed-store outage; retries without burning attempts. |
+| `resolved_zero_cost_elsewhere` | Benign $0 race (reaper free-release or a refund won); done, no page. The activity index is attempted first whenever the row carries a generation, so this outcome means the index SUCCEEDED; if it fails the row stays `activity_pending` and keeps its payload. |
+| `activity_pending` | Rolling-legacy only: charge committed but its historical Bigtable activity-index write failed. New typed rows atomically enqueue ClickHouse delivery and cannot enter this state because of a mirror failure. |
+
+`activity_pending` is the one outcome where the terminal transition is NOT a
+money problem. The charge already committed in Spanner (the billing source of
+truth) *before* the index attempt. It is reached both from a fresh `SETTLED`
+finalize and from the `ALREADY_SETTLED` replay branches, so seeing it on a
+replay is normal. The customer is billed correctly; only the per-request
+Bigtable activity row is missing, so the request may be absent from their
+activity view.
+
+This section is retained only to drain rows created by revisions predating the
+Spanner operational outbox. Once the retirement gate has confirmed there are no
+such rows, a Bigtable outage cannot create new `activity_pending` work.
+
+Two things about this outcome are easy to get wrong:
+
+**The window measures continuous unrepaired-activity time, not row age.** It
+starts at the first `ACTIVITY_PENDING` observation and is carried forward in the
+park note (`last_error` = `bigtable activity index pending since=<ts>`). A row
+that sat behind a typed-store outage for a day and then fails its Bigtable write
+once has a *fresh* window — the clock is about the activity failure, not the
+row. A `park_typed_unavailable` **preserves** an existing stamp rather than
+clobbering it, so typed-outage time counts toward the window and the six hours
+is a genuine bound; without that, alternating activity and typed failures would
+reset it forever, since `park()` never burns attempts. A generic apply error
+does rewrite `last_error` and restart the window, but that path burns an
+attempt, so `max_attempts=8` bounds it. Read an expired row precisely: activity
+stayed unrepaired for six hours and the most recent index attempt failed. It
+does NOT prove Bigtable was failing throughout — typed-outage time ages the
+stamp too, so some of that window may be time Bigtable was never attempted.
+Check Bigtable health directly rather than inferring it from the alert.
+
+**The row goes `dead`, not `done` — and that is the point.** `mark(done=True)`
+NULLs `settle_body`, and for a gateway/typed request that payload is normally
+the only repair evidence there is: typed finalize skips the generic
+`generation` / `generation_by_workspace` entity writes (the legacy
+request-record compatibility fallback still writes them, so a rolling-legacy
+workspace may have them), and
+`POST /internal/reconcile/generation-activity` repairs by scanning
+`generation_by_workspace`. **That endpoint therefore repairs nothing for these
+rows** — it is for legacy `add()` callers. Do not reach for it here. `dead`
+preserves `settle_body`, stops the drain re-doing the full apply every 60s, and
+puts the row in the `status='dead'` queue that is already monitored above.
+Retention stays pinned (`terminal_at` NULL) on the reservation and gateway
+authorization, which is correct: those records are the evidence a human needs.
+Pinning is now bounded by operator response instead of unbounded.
+
+Repairing `ALERT settle outbox activity repair expired` (the alert carries
+`authorization_id`, `generation_id`, `request_id`, `reservation_id`):
+
+1. Fix the underlying Bigtable problem first — check the
+   `bigtable.activity_index_write_failed` logs for this `generation_id` and the
+   [Spanner or Bigtable is degraded](#storage-degraded) section. Re-driving the
+   row before Bigtable is healthy just fails again.
+2. Re-arm the row. `settle_body` is intact on a `dead` row, so the drain can
+   simply retry it — `due()` selects `status='pending' AND next_attempt_at <= now`:
+
+   ```bash
+   gcloud spanner databases execute-sql trusted-router \
+     --instance=trusted-router-nam6 --project=quill-cloud-proxy \
+     --sql="UPDATE tr_settle_outbox SET status='pending', next_attempt_at=CURRENT_TIMESTAMP(),
+            lease_owner=NULL, leased_until=NULL, last_error=NULL
+            WHERE authorization_id='<authorization_id>' AND intent_kind='settle'
+            AND status='dead' AND last_error='activity_repair_expired'"
+   ```
+
+   The `last_error='activity_repair_expired'` predicate is load-bearing: it scopes
+   the re-arm to THIS cause, so a mistyped or stale authorization id cannot
+   silently resurrect an `already_released_free`, `reservation_missing`, or
+   `invalid_row` dead row — those are money questions that must stay frozen for a
+   human. If the statement reports 0 rows updated, you have the wrong row or the
+   wrong cause; do not widen the predicate to make it match.
+
+   Clearing `last_error` restarts the repair window, which is what you want after
+   a fix. Replay is safe: the row hits the reservation claim gate, sees the prior
+   charge, and only retries the index — it will not double-charge.
+3. Confirm the row reached `done` and the request appears in the workspace's
+   activity view.
 
 Monitoring signals:
 
@@ -636,6 +768,29 @@ money keys. It preserves the credit row's Stripe, auto-refill, shard, and future
 metadata. Run once without flags, review, then run with `--apply`. Re-running is
 idempotent.
 
+**Legacy retention backfill** (issue #357): `tr_reservation` rows written before
+`terminal_at` arming shipped have it NULL, and Spanner's
+`ROW DELETION POLICY (OLDER_THAN(terminal_at, INTERVAL 30 DAY))` never deletes a
+NULL-timestamp row — as of 2026-07-30 that was 1.17M settled rows (~97% of the
+settled table) permanently exempt from the TTL. One-off, idempotent repair:
+
+```bash
+PYTHONPATH=src uv run python scripts/backfill_reservation_terminal_at.py
+```
+
+reports candidates / guard-excluded counts (dry run); add `--apply` to arm
+`terminal_at = now` in batches (`--batch`, default 5000). Two predicates in the
+UPDATE are load-bearing and must never be widened: `settled` (an open hold must
+NEVER get a TTL fuse — the reaper owns its lifecycle) and the
+`NOT EXISTS (... tr_settle_outbox ... status IN ('pending','dead'))` guard (a
+frozen intent's evidence must not age out under it; the script reports such rows
+as excluded and stops rather than spinning). Backfilled rows age out ~30 days
+after the run. Run it off the deploy path in a low-traffic window — bulk DML
+overlapping a rolling deploy produces the
+[Aborted/wounded burst](#authorize-deadlock-burst). Safe to re-run any time;
+once the debt drains the candidate count stays ~0 because steady-state arming
+is structural.
+
 ---
 
 ## <a id="authorize-deadlock-burst"></a>Sentry "Aborted ... deadlock/wounded" burst on gateway authorize
@@ -681,10 +836,14 @@ regressed, not just contention.
    Also inspect the `tr_key_limit` / `tr_credit_balance` shard rows for
    reserved/usage on the named `<key_hash>` and `<workspace_id>`.
 
-4. Bursts self-resolve when the tenant's spike ends. Receipt: the 2026-07-04
-   22:26-22:33 UTC burst was a single tenant and ended with zero intervention.
-   Client impact is a handful of 500s the enclave retries. Do NOT restart
-   services or roll back deploys for this signature.
+4. Stop any in-progress rollout and measure the full customer-facing burst.
+   Do not assume the enclave absorbed it. Receipt: on 2026-08-20 one capped
+   key generated a shard-zero retry storm with 1,667 billing-path 503s across
+   four regions in 18 minutes even though Cloud Run readiness stayed green.
+   Restarting Cloud Run does not repair a hot Spanner row. Rollback only when
+   the regional billing gate ties failures to a new revision; otherwise move
+   directly to the guarded online split and verify the affected customer's
+   subsequent authorize/settle results.
 
 Structural fix if a tenant does this chronically: **shard spreading is now
 operable** (as of the 2026-07 credit/key row-sharding work). A hot workspace's
@@ -694,10 +853,126 @@ operator (`.github/workflows/reshard-billing-workspace.yml` →
 unpause; requires an explicit `--apply`). The authorize reject path also does a
 lock-free precheck + bounded repair so no-move verdicts no longer take
 whole-shard-set write locks. Do NOT hand-set shard columns; always go through
-the operator. Before activating spreading on any workspace, confirm the
-credit-shard rebalance fix is deployed (a negative per-shard headroom from an
-overage settle must return a clean 402, never a `_RebalanceInvariantError`
-500 — fixed 2026-07).
+the operator. Exact lifetime key caps are escrowed across those rows while
+retaining the precise global limit; a large fragmented hold uses one atomic
+cold-path rebalance. Before activating spreading on any workspace, confirm the
+credit-shard rebalance and exact-cap escrow fixes are deployed. A negative
+per-shard headroom from an overage settle must return a clean 402, never a
+`_RebalanceInvariantError` 500.
+
+---
+
+## <a id="reshard-interrupted"></a>One workspace 503s "Workspace billing is paused" (interrupted reshard)
+
+Symptom: every request from exactly ONE workspace returns
+`503 Workspace billing is paused` with `Retry-After: 30`, while every other
+tenant is healthy. Key creation for that workspace fails the same way
+(`assert_workspace_billing_active` guards authorize/validate and every
+key-minting path). Settle is deliberately NOT guarded, so in-flight work still
+finalizes rather than stranding money. It does not follow that holds always
+reach zero — see the frozen-hold case below.
+
+The near-certain cause is a **reshard that ran `prepare --apply` but never
+reached `finish`**: the runner died, the workflow was cancelled, or the operator
+walked away. Once `prepare --apply` has paused the workspace, every subsequent
+exit — success and failure alike — leaves it paused on purpose. This is
+fail-safe, not a bug: an unverified shard set must not take live traffic. (A
+dry run, without `--apply`, returns before pausing and cannot cause this.)
+
+Confirm the cause before touching anything. The pause reason names it:
+
+```bash
+gcloud spanner databases execute-sql trusted-router \
+  --instance=trusted-router-nam6 --project=quill-cloud-proxy \
+  --sql="SELECT body FROM tr_entities WHERE kind='workspace' AND id='<workspace_id>'"
+```
+
+`body` is the workspace JSON; read its `billing_paused` and
+`billing_pause_reason` fields. `"billing_pause_reason": "credit-row reshard
+prepare"` is the interrupted-reshard signature. Any other reason means someone
+paused this workspace for a different purpose — stop and find out why before
+unpausing.
+
+**Recovery.** Read the shard state first (read-only, safe at any time — this is
+the `status` operation of `.github/workflows/reshard-billing-workspace.yml`, or
+locally):
+
+```bash
+PYTHONPATH=src uv run python scripts/shard_workspace.py status --workspace <workspace_id> --shards <N>
+```
+
+`<N>` must be the SAME target shard count the interrupted run used. It prints
+`current_shards`, `target_shards`, `ready`, `at_target`, `applied`, the typed
+totals, open reservations, and a `BLOCKED:` line per unmet precondition, then one
+line per API key. Booleans print as `True`/`False`.
+
+**Read `at_target`, not `ready`.** `ready` only means "nothing blocks a
+reshard" — a drained, healthy, paused workspace still at 1 shard is `ready=True`
+against a target of 16. `at_target` is the one that says the ledger actually
+adopted the target count. (`applied` is always `False` here: `status` only
+inspects, it never applies.) Then:
+
+- **`at_target=True` and `ready=True` on the credit row and every key** → the
+  transition landed; only the unpause is missing. Run `finish --apply` with the
+  same `--shards <N>` and the same `--preserve-open-holds` value. `finish`
+  re-verifies the whole shard set and only then clears `billing_paused`,
+  refusing with `ERROR: refusing to unpause; ...` if anything is unclean or not
+  at the target.
+- **`at_target=False`** → the transition did not complete. Re-run
+  `prepare --apply` with the same arguments; it is idempotent. The usual blocker
+  is open holds that had not drained, and since settle keeps running while
+  paused, waiting a few minutes and re-running is normally enough. Then run
+  `finish --apply`. Exit **2** means the *credit ledger* was still draining
+  (retry shortly, nothing is wrong); an API-key drain blocker exits **1**, as do
+  argument and workspace-resolution errors. So read the printed `BLOCKED:` lines
+  rather than the exit code alone — a `wait for drain` reason on a key line is
+  just as retriable as one on the credit line, despite the different code.
+- **`at_target=True` but `ready=False`** → the transition DID land and
+  verification found something else wrong. Re-running `prepare` will not help;
+  it re-inspects and returns the same unready status. Read the `BLOCKED:` lines
+  and fix the named condition.
+
+**If the holds never drain, stop waiting and check the settle outbox.** A
+`pending` or `dead` outbox row deliberately excludes its reservation from the
+reaper (`_REAP_SCAN_GUARDED_SQL`), so a frozen row pins an unsettled hold
+indefinitely and `wait for drain` can never succeed on its own:
+
+```bash
+gcloud spanner databases execute-sql trusted-router \
+  --instance=trusted-router-nam6 --project=quill-cloud-proxy \
+  --sql="SELECT o.authorization_id, o.intent_kind, o.status, o.last_error
+         FROM tr_settle_outbox o JOIN tr_reservation r
+           ON r.authorization_id = o.authorization_id
+         WHERE r.workspace_id='<workspace_id>' AND r.settled=false
+           AND o.status IN ('pending','dead')"
+```
+
+Resolve those rows first — see
+[Settle outbox](#settle-outbox) — then re-run `prepare --apply`. This is a
+correctness feature, not a deadlock to force past: the hold is frozen because a
+money question about it is still open.
+
+Mutating operations need `--apply` locally, or `confirmation: APPLY` in the
+workflow. They differ: locally, omitting `--apply` runs a real dry run
+(`finish` without `--apply` performs the complete verification and prints
+`DRY-RUN: would unpause this verified workspace` without touching the pause —
+the ideal rehearsal). In the *workflow*, omitting `confirmation: APPLY` on a
+mutating operation is refused outright with
+`Mutation refused: type APPLY in confirmation` and exit 2 — it does not dry-run.
+Dispatch `operation: status` for a read-only look via the workflow.
+
+`finish` is the ONLY way back to serving traffic. Do not hand-clear
+`billing_paused` and do not hand-set shard columns — both bypass the shard-set
+verification that is the entire point of the two-phase design, and a workspace
+serving on an unverified shard set can under-count spend across sub-ledgers.
+
+One thing that looks like this but is not: the workflow serializes on
+`concurrency: production-billing-workspace-reshard`, so a second dispatch waits
+rather than racing a half-finished workspace — a queued run is expected, not a
+symptom. Exact lifetime caps no longer pin a key to shard zero: the operator
+partitions the cap into escrow sub-budgets whose sum remains the configured
+limit. A capped key that still reports one shard after a 16-shard operation is
+therefore incomplete and must not be unpaused by hand.
 
 ---
 
@@ -818,6 +1093,114 @@ After deploys that add SEO pages:
 
 ---
 
+## <a id="adding-a-cloud"></a>Adding a cloud (and when it is allowed to be called done)
+
+**Symptom this prevents:** a cloud that serves traffic, shows an all-green
+status page, and records none of its operational history — because the process
+that moves rows out of its outbox was never installed, and the only alarm for
+that is emitted by the missing process. AWS-EU ran that way from 2026-08-02 to
+2026-08-17: 470,897 undelivered rows, `activity_generations` empty, no page.
+
+**The rule: a cloud is not in service until rows are observed moving.**
+
+Check any cloud, from anywhere, with no credentials:
+
+```bash
+bash scripts/deploy/verify_cloud_complete.sh aws     # or azure, gcp
+```
+
+It exits non-zero until all five stages hold, each naming its own fix:
+
+| # | Stage | Fix when it fails |
+|---|---|---|
+| a | in the fleet freshness registry (registered, not watched — that workflow has no schedule trigger yet) | add a `FleetAnalyticsEndpoint` in `src/trusted_router/operational_analytics_fleet.py` |
+| b | `/status.json` has the `analytics` section | deploy a control plane whose status snapshot publishes `drain_lag_seconds` |
+| c | `analytics.available` is true | the control plane cannot read its outbox — check its database connection |
+| d | `drain_lag_seconds` under bound | the drain is stopped or behind: `bash scripts/deploy/aws_eu_clickhouse_drain_install.sh` |
+| e | control-plane outbox enabled | set `TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true` in that cloud's deploy script |
+
+Stage (e) is a static read of that deploy script **in your working tree**, not
+of the revision the cloud is running: it tells you what a deploy from this
+checkout would set, and stages (b)–(d) are the evidence about the running
+service.
+
+**There is no way to excuse a stage.** No waiver, no exemption field, no flag,
+no environment variable. A cloud that cannot be checked is NOT VERIFIED and the
+run exits non-zero with the reason printed. (An earlier revision had an
+`analytics_absent_reason` that waived "structural" blockers, plus the machinery
+to decide which failures counted as structural. Review found bugs inside that
+machinery twice, the second set introduced by the fix for the first, so it is
+gone.) `TR_MAX_DRAIN_LAG_SECONDS` and `TR_STATUS_URL` are read only so the
+script can tell you loudly that it is ignoring them.
+
+Exit codes (`scripts/deploy/cloud_complete_gate.sh` turns each into the same
+words for every bound script):
+
+| code | meaning |
+|---|---|
+| 0 | `VERIFIED` — every stage was measured and held. The banner then says what that does *not* establish, which is that rows were seen moving |
+| 5 | `NOT YET OBSERVABLE` — the page parses and carries no `analytics` section, so the question cannot be asked from outside yet. Its own code because it is the state a cloud is in before its control plane publishes the section, and the run that installs a drain hits it by construction |
+| 1 | `NOT VERIFIED`, for everything else, with the reason printed: a stage failed, the page did not answer 200, the body was not the status document, the cloud is unknown, the arguments were wrong |
+
+The AWS and Azure bring-up and control-plane scripts end by running this, so an
+exit of 0 from one of them means the check passed — which is a statement about
+what the check measures, not a certificate that the cloud works. Read the
+banner: it lists the five stages and then says, every time, that rows moving is
+not among them.
+
+That binding is not taken on trust. Those scripts — GCP's included — are
+executed end to end against a stub `PATH` in
+`tests/test_deploy_script_execution.py`, which asserts each one calls the gate,
+cannot exit 0 over a failing gate, runs no cloud CLI after the gate answered,
+and passes both exit codes through unchanged. The one exception is
+`aws_eu_clickhouse_drain_install.sh`, whose SSM-heavy middle cannot be stubbed
+honestly — its tail is claimed, not proven, and `ROLLOUT_REGISTRY` says so.
+Which scripts are in which list is checked for exact set equality against
+`docs/storage-portability/multi-cloud-separation.md`, so a script cannot quietly
+lose its behavioural coverage while the docs still call it proven.
+
+**GCP's exempt file is `rollout.sh`, not GCP:** `rollout.sh` runs inside
+`.github/workflows/deploy.yml`, and ending it here would put a fetch of
+`trustedrouter.com/status.json` in the middle of deploying the cloud that serves
+it — the deploy that repairs an outage would abort partway. GCP is instead
+checked out of band by `scripts/deploy/verify_gcp_complete.sh`, which the
+`verify-cloud-complete` job in that same workflow runs as its whole body, and
+which the behavioural harness executes like every other bound script. Coverage,
+exactly: every run in which the `deploy` job ran, whatever its result —
+including a deploy that failed partway having already mutated production. It
+does NOT cover a run that skipped `deploy`, and `migrate-schema` and
+`sync-runtime-secrets` mutate production before `deploy` gets there. You can
+always run it yourself, from anywhere, with no credentials:
+
+```bash
+bash scripts/deploy/verify_gcp_complete.sh
+```
+
+If a script exits non-zero it prints the exact next command; run it and re-run
+the script, which is idempotent. Do not work around the exit code — that is the
+failure mode this exists to stop.
+
+**Do not read the fleet's state out of this runbook — run the gate.** A cloud
+starts answering when a control plane built from the publisher is deployed to
+it, and exits 5 until then. The last reading taken while editing this section
+was `gcp` VERIFIED with `aws` and `azure` both at 5, and it is a note about a
+moment rather than a claim about now. Azure additionally fails stage (e): it has
+no operational-analytics outbox at all. See
+`docs/storage-portability/multi-cloud-separation.md` §7 for the full definition
+of done and the checklist for a new cloud.
+
+**Last check that cannot be automated from outside:** once a cloud passes, look
+at the count from inside it, twice, ten minutes apart:
+
+```bash
+clickhouse-client --query 'SELECT count() FROM activity_generations'
+```
+
+Two numbers, the second larger. A drained outbox and a disabled outbox both
+publish `drain_lag_seconds: 0.0`; only the count tells them apart.
+
+---
+
 ## <a id="useful-one-liners"></a>Useful one-liners
 
 Live phala model list:
@@ -855,11 +1238,16 @@ for prov, n in sorted(c.items(), key=lambda kv: -kv[1]):
 
 Per-region MIG status (GCP enclave):
 ```bash
-for region in us-central1 europe-west4 us-east4; do
-  short=${region%%-*}
-  echo "=== $region ==="
-  gcloud compute instance-groups managed describe quill-enclave-mig-${short:0:2} \
-    --region=$region --project=quill-cloud-proxy \
+for entry in \
+  us-central1:quill-enclave-mig-us \
+  us-east4:quill-enclave-mig-useast4 \
+  europe-west4:quill-enclave-mig-eu \
+  southamerica-east1:quill-enclave-mig-sa; do
+  region=${entry%%:*}
+  mig=${entry#*:}
+  echo "=== ${region} ==="
+  gcloud compute instance-groups managed describe "${mig}" \
+    --region="${region}" --project=quill-cloud-proxy \
     --format='value(versions[0].instanceTemplate,targetSize,status.isStable)'
 done
 ```

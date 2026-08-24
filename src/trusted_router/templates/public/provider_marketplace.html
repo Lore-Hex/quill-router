@@ -9,6 +9,9 @@
     <div class="hero-actions">
       <a class="btn primary" href="mailto:providers@trustedrouter.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D">Email providers@trustedrouter.com</a>
       <a class="btn" href="#integration-contract">View requirements <span aria-hidden="true">↓</span></a>
+      <form action="/provider" method="get">
+        <button class="btn" type="submit">Provider sign in</button>
+      </form>
     </div>
   </div>
   <div class="public-hero-metrics" aria-label="Provider integration requirements">
@@ -25,6 +28,29 @@
   <div><strong>Review</strong><span>We verify privacy, compliance, and API claims.</span></div>
   <div><strong>Connect</strong><span>Exchange a restricted key through a separate secure channel.</span></div>
   <div><strong>Publish</strong><span>We test, monitor, and list working routes.</span></div>
+</section>
+
+<section class="marketing-split" aria-labelledby="featured-neurometric-heading">
+  <div class="marketing-copy">
+    <span class="eyebrow">Featured partnership</span>
+    <h2 id="featured-neurometric-heading">Neurometric AI is live on TrustedRouter.</h2>
+    <p>Neurometric AI is a featured provider partner in the TrustedRouter marketplace. Its integration publishes a machine-readable catalog and gives developers one place to inspect callable models, exact pricing, capabilities, and the documented data-handling boundary.</p>
+    <p>TrustedRouter refreshes the catalog, runs live canaries, and monitors route availability through the same provider contract used across the marketplace.</p>
+    <div class="hero-actions">
+      <a class="btn primary" href="/providers/neurometric">View Neurometric AI models</a>
+      <a class="btn" href="https://www.neurometric.ai/" rel="noopener noreferrer">Visit Neurometric AI</a>
+    </div>
+  </div>
+  <div class="copy-terminal" aria-label="Neurometric AI integration summary">
+    <div class="code-head"><span>Featured provider</span><span>Live</span></div>
+    <pre><code>Provider: Neurometric AI
+Catalog: machine readable
+Pricing: exact decimal ingestion
+Availability: live canaries
+Content policy: no-store
+ZDR classification: not contractual
+Confidential compute: not claimed</code></pre>
+  </div>
 </section>
 
 <section class="marketing-split" id="integration-contract" aria-label="Provider integration contract">
@@ -119,21 +145,53 @@ API key: DO NOT INCLUDE</code></pre>
 
 <section class="marketing-split" aria-labelledby="canonical-contract-heading">
   <div class="marketing-copy">
-    <span class="eyebrow">Canonical contract v1</span>
+    <span class="eyebrow">Provider Reliability Contract v2</span>
     <h2 id="canonical-contract-heading">Copy this output exactly.</h2>
-    <p>Do not design a custom catalog or pricing format. Return one unpaginated JSON document from <code>GET /v1/models</code>. Put availability, capabilities, prices, and lifecycle in each model row.</p>
+    <p>Do not design a custom catalog or pricing format. Return one unpaginated JSON document from <code>GET /v1/models</code>. Put capabilities, prices, lifecycle, model deadlines, regions, and overload semantics in the machine-readable response.</p>
     <ul class="check-list">
       <li><strong>Use exact decimal strings.</strong> Every price is USD per one million tokens. Use <code>"0.50"</code>, never a JSON float.</li>
       <li><strong>Use <code>null</code> when a cache rate does not apply.</strong> Do not omit required fields.</li>
       <li><strong>Use lowercase stable IDs.</strong> The format is <code>provider/model-name</code>. Never recycle an ID for a different model.</li>
       <li><strong>Use UTC timestamps.</strong> Lifecycle timestamps use RFC 3339, for example <code>2026-08-05T00:00:00Z</code>.</li>
       <li><strong>Use one row per billable tier.</strong> If rates or capabilities differ, publish a distinct stable model ID for that tier.</li>
+      <li><strong>Separate overload from account quota.</strong> Return <code>503</code> for temporary serving capacity, <code>429</code> for request rate limits, and a stable account-quota error code when TrustedRouter must provision more quota.</li>
+      <li><strong>Always send <code>Retry-After</code>.</strong> Fast, explicit backpressure lets TrustedRouter roll over immediately instead of letting requests hang.</li>
+      <li><strong>Publish model deadlines.</strong> First-token, completion, and stream-idle budgets are evaluated per model rather than with one global timeout.</li>
     </ul>
-    <p><a href="/providers/marketplace/catalog.schema.json">Download the JSON Schema</a> and validate the response before emailing us.</p>
+    <p><a href="/providers/marketplace/catalog.v2.schema.json">Download the v2 JSON Schema</a>. The <a href="/providers/marketplace/catalog.schema.json">v1 schema</a> remains supported for existing integrations.</p>
   </div>
   <div class="copy-terminal" aria-label="Canonical provider catalog response">
     <div class="code-head"><span>GET /v1/models</span><span>application/json</span></div>
-    <pre><code>{{ provider_catalog_example_json }}</code></pre>
+    <pre><code>{{ provider_catalog_v2_example_json }}</code></pre>
+  </div>
+</section>
+
+<section class="marketing-split" aria-labelledby="provider-check-heading">
+  <div class="marketing-copy">
+    <span class="eyebrow">Open-source preflight</span>
+    <h2 id="provider-check-heading">Run the conformance suite before you apply.</h2>
+    <p>Run the <a href="https://github.com/Lore-Hex/trustedrouter-provider-check" target="_blank" rel="noopener noreferrer">TrustedRouter provider checker</a> against the same production API base you plan to submit. It tests catalog discovery, advertised model callability, chat completions, streaming, usage, tool calls, errors, and first-token behavior against the contract expected by TrustedRouter's attested gateway translator.</p>
+    <p>The suite is open source under Apache-2.0 and works with any conformant serving stack.</p>
+    <ul class="check-list">
+      <li><strong>Tiers 1&ndash;4 are the conformance gate.</strong> A hard failure exits with status <code>1</code>, so the checker works in CI.</li>
+      <li><strong>Credentials stay local.</strong> Use <code>TR_PROVIDER_API_KEY</code> to keep the key out of shell history. Reports recursively redact it.</li>
+      <li><strong>Checks make real requests.</strong> The model sweep and chat probes use real, billable completion calls. The default sweep is bounded to 25 advertised models.</li>
+      <li><strong>Keep the report.</strong> Attach the redacted JSON artifact to your application so failures can be reproduced quickly.</li>
+    </ul>
+    <div class="hero-actions">
+      <a class="btn primary" href="https://github.com/Lore-Hex/trustedrouter-provider-check" target="_blank" rel="noopener noreferrer">Open the provider checker <span aria-hidden="true">&nearr;</span></a>
+      <a class="btn" href="/docs/provider-conformance">Read the conformance guide</a>
+    </div>
+  </div>
+  <div class="copy-terminal" aria-label="Run the TrustedRouter provider checker">
+    <div class="code-head"><span>Provider preflight</span><span>uvx</span></div>
+    <pre><code>export TR_PROVIDER_API_KEY='your-provider-key'
+
+uvx trustedrouter-provider-check \
+  --base-url https://api.provider.com/v1 \
+  --model provider/model-name \
+  --tier 4 \
+  --json provider-report.json</code></pre>
   </div>
 </section>
 

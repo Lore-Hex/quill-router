@@ -52,6 +52,22 @@ class StoreUnavailable(StoreError):
     """
 
 
+class DeferredSettlementCapReached(StoreError):
+    """This plane already holds the maximum unsettled spend for a workspace.
+
+    A refusal, not a failure: the request is admissible again as soon as
+    settlements are delivered to the home plane (or the reaper reclaims an
+    abandoned authorization). Distinct from insufficient credits, which is a
+    statement about the customer's money; this one is a statement about how
+    much debt THIS plane is willing to carry on their behalf while the home
+    plane is unreachable.
+
+    A StoreError rather than a bare ValueError because the routes must be able
+    to tell it apart from "the local balance refused" without matching on
+    message text — the two lead to opposite responses.
+    """
+
+
 @lru_cache(maxsize=1)
 def _google_error_types() -> tuple[tuple[type[Exception], ...], tuple[type[Exception], ...]]:
     """`(transient, conflict)` types contributed by the GCP backend.
@@ -150,3 +166,46 @@ def is_transient_store_error(exc: BaseException) -> bool:
 def is_conflict_error(exc: BaseException) -> bool:
     """True when the transaction lost a write conflict and may be replayed."""
     return isinstance(exc, conflict_store_error_types())
+
+
+@lru_cache(maxsize=1)
+def duplicate_key_store_error_types() -> tuple[type[Exception], ...]:
+    """Types meaning "that primary key is already taken".
+
+    The THIRD question application code asks about a storage failure, and the
+    one insert-once idempotency is built on: a losing INSERT must be told apart
+    from a conflict (replay the transaction) and from a transient fault (retry
+    later), because the correct response is neither — it is to go and read what
+    the winner wrote.
+
+    Deliberately NOT folded into `conflict_store_error_types`: a conflict means
+    nothing committed and re-running is right, whereas a duplicate key means
+    somebody else's write DID commit and re-running would fail identically
+    forever. Retrying a duplicate key is an infinite loop; replaying a conflict
+    is the fix.
+    """
+    types: list[type[Exception]] = []
+    try:
+        from google.api_core.exceptions import AlreadyExists
+    except ImportError:  # pragma: no cover - only hit without GCP deps
+        pass
+    else:
+        types.append(AlreadyExists)
+    try:
+        import psycopg
+    except ImportError:  # pragma: no cover - only hit without Postgres deps
+        pass
+    else:
+        types.append(psycopg.errors.UniqueViolation)
+    return tuple(types)
+
+
+def is_duplicate_key_error(exc: BaseException) -> bool:
+    """True when an insert lost an insert-once race on an existing key."""
+    if isinstance(exc, duplicate_key_store_error_types()):
+        return True
+    # Name-based fallback for the in-process Spanner fake when the Google
+    # libraries are absent: `FakeAlreadyExists` subclasses the real type when it
+    # can import it and plain `Exception` when it cannot, and in the latter case
+    # there is no type left to match on.
+    return type(exc).__name__ in ("AlreadyExists", "FakeAlreadyExists")

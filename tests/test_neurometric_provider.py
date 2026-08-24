@@ -13,6 +13,7 @@ from scripts.pricing.provider_contract_catalog import (
 )
 from scripts.pricing.providers import neurometric
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS, model_open_weights
+from trusted_router.provider_contract import PROVIDER_CATALOG_V2_EXAMPLE
 
 
 def _model_row(
@@ -81,6 +82,23 @@ def test_canonical_contract_parser_preserves_exact_price_and_capabilities() -> N
         "tools",
         "json_mode",
         "structured_outputs",
+    ]
+
+
+def test_reliability_contract_v2_preserves_deadlines_and_error_contract() -> None:
+    payload = copy.deepcopy(PROVIDER_CATALOG_V2_EXAMPLE)
+
+    _prices, discovered = discover_provider_contract_catalog(
+        payload,
+        upstream_id_map={},
+    )
+
+    row = discovered["acme/atlas-70b"]
+    assert row["reliability"]["first_token_timeout_seconds"] == 20
+    assert row["reliability"]["completion_timeout_seconds"] == 120
+    assert row["provider_reliability"]["request_id_header"] == "x-request-id"
+    assert row["provider_reliability"]["account_quota_error_codes"] == [
+        "account_quota_exceeded"
     ]
 
 
@@ -175,9 +193,18 @@ def test_neurometric_manifest_tombstones_only_after_repeated_fresh_miss(
     manifest_path = tmp_path / "neurometric.json"
     raw = json.loads(neurometric.MANIFEST_PATH.read_text(encoding="utf-8"))
     manifest_path.write_text(json.dumps(raw) + "\n", encoding="utf-8")
+    target_id = "qwen/qwen3-vl-8b-thinking"
+    existing_ids = {
+        row["id"]
+        for row in raw["models"]
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+    assert target_id in existing_ids
+    # Keep every other live row present. This test exercises one repeated
+    # delisting and must not become a mass-prune test when Neurometric adds
+    # unrelated models to its live catalog.
     payload = _payload(
-        _model_row(),
-        _model_row("qwen/qwen3-vl-8b-instruct"),
+        *(_model_row(model_id) for model_id in sorted(existing_ids - {target_id}))
     )
 
     class FakeResponse:
@@ -209,18 +236,15 @@ def test_neurometric_manifest_tombstones_only_after_repeated_fresh_miss(
     neurometric.write_provider_manifest(result)
     first = json.loads(manifest_path.read_text(encoding="utf-8"))
     first_rows = {row["id"]: row for row in first["models"]}
-    assert first_rows["qwen/qwen3-vl-8b-thinking"]["missing_since"]
-    assert first_rows["qwen/qwen3-vl-8b-thinking"].get("routable") is not False
+    assert first_rows[target_id]["missing_since"]
+    assert first_rows[target_id].get("routable") is not False
 
     result = neurometric.fetch()
     neurometric.write_provider_manifest(result)
     second = json.loads(manifest_path.read_text(encoding="utf-8"))
     second_rows = {row["id"]: row for row in second["models"]}
-    assert second_rows["qwen/qwen3-vl-8b-thinking"]["routable"] is False
-    assert (
-        second_rows["qwen/qwen3-vl-8b-thinking"]["routable_reason"]
-        == "delisted-upstream"
-    )
+    assert second_rows[target_id]["routable"] is False
+    assert second_rows[target_id]["routable_reason"] == "delisted-upstream"
 
 
 def test_neurometric_catalog_routes_are_prepaid_only_and_no_store() -> None:
@@ -239,12 +263,12 @@ def test_neurometric_catalog_routes_are_prepaid_only_and_no_store() -> None:
         for endpoint in MODEL_ENDPOINTS.values()
         if endpoint.provider == "neurometric"
     ]
-    assert len(endpoints) == 3
+    assert endpoints
     assert {endpoint.usage_type for endpoint in endpoints} == {"Credits"}
     assert {
         endpoint.upstream_id
         for endpoint in endpoints
-    } == {
+    } >= {
         "ibm-granite/granite-4.1-8b",
         "qwen/qwen3-vl-8b-instruct",
         "qwen/qwen3-vl-8b-thinking",
@@ -272,8 +296,8 @@ def test_neurometric_public_api_exposes_provider_and_exact_endpoint(client: Any)
         endpoint for endpoint in endpoints if endpoint["provider_name"] == "Neurometric AI"
     )
     assert neurometric["upstream_id"] == "ibm-granite/granite-4.1-8b"
-    assert neurometric["pricing"]["prompt"] == "0.0000000525"
-    assert neurometric["pricing"]["completion"] == "0.000000105"
+    assert neurometric["pricing"]["prompt"] == "0.00000005275"
+    assert neurometric["pricing"]["completion"] == "0.0000001055"
 
 
 def test_neurometric_hourly_refresh_and_secret_wiring_are_complete() -> None:

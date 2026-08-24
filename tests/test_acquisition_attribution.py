@@ -1,28 +1,29 @@
 from __future__ import annotations
 
 import base64
-import csv
 import datetime as dt
-import io
+import hashlib
+import hmac
+import json
 import logging
 
 import pytest
 from fastapi.testclient import TestClient
 
+import trusted_router.acquisition as acquisition_module
 from tests.fakes.spanner import make_fake_store
 from trusted_router.acquisition import (
     ATTRIBUTION_COOKIE_NAME,
     AttributionContext,
     decode_attribution_cookie,
     encode_attribution_cookie,
+    record_free_credit_exhausted_safely,
     record_successful_api_call,
 )
 from trusted_router.config import Settings
+from trusted_router.google_ads_conversions import decrypt_google_ads_click_id
 from trusted_router.storage import STORE
 from trusted_router.storage_models import AcquisitionAttribution
-
-_FEED_USERNAME = "trustedrouter-data-manager"
-_FEED_PASSWORD = "test-google-ads-feed-password-at-least-32-characters"  # noqa: S105
 
 
 def _campaign_landing(client: TestClient, *, click_id: str = "google-click-123") -> None:
@@ -43,13 +44,28 @@ def _signup(client: TestClient, email: str = "attributed@example.com") -> dict[s
     return payload
 
 
-def _feed_headers(
+def _legacy_cookie(
+    context: AttributionContext,
+    settings: Settings,
     *,
-    username: str = _FEED_USERNAME,
-    password: str = _FEED_PASSWORD,
-) -> dict[str, str]:
-    token = base64.b64encode(f"{username}:{password}".encode()).decode()
-    return {"authorization": f"Basic {token}"}
+    version: int,
+) -> str:
+    payload = {
+        "v": version,
+        "anonymous_id": context.anonymous_id,
+        "first_touch": context.first_touch,
+        "last_touch": context.last_touch,
+        "created_at": context.created_at,
+    }
+    encoded = acquisition_module._b64encode(  # noqa: SLF001 - migration fixture.
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    )
+    signature = hmac.new(
+        acquisition_module._cookie_signing_key(settings),  # noqa: SLF001
+        encoded.encode("ascii"),
+        acquisition_module.hashlib.sha256,
+    ).digest()
+    return f"{encoded}.{acquisition_module._b64encode(signature)}"  # noqa: SLF001
 
 
 def test_cookie_round_trip_and_tamper_rejection() -> None:
@@ -61,7 +77,7 @@ def test_cookie_round_trip_and_tamper_rejection() -> None:
         "utm_source": "google",
         "utm_medium": "paid_search",
         "utm_campaign": "launch",
-        "gclid": "click-123",
+        "gclid_fingerprint": "a" * 64,
         "landing_path": "/openrouter-alternative",
         "captured_at": now,
     }
@@ -70,10 +86,46 @@ def test_cookie_round_trip_and_tamper_rejection() -> None:
     encoded = encode_attribution_cookie(context, settings)
     assert decode_attribution_cookie(encoded, settings) == context
     assert decode_attribution_cookie(encoded + "tampered", settings) is None
-    assert decode_attribution_cookie(
-        encoded,
-        Settings(internal_gateway_token="rotated"),  # noqa: S106 - test fixture secret.
-    ) is None
+    assert (
+        decode_attribution_cookie(
+            encoded,
+            Settings(internal_gateway_token="rotated"),  # noqa: S106 - test fixture secret.
+        )
+        is None
+    )
+
+
+def test_derived_cookie_key_matches_legacy_gateway_root_bidirectionally() -> None:
+    token = "pretend-gateway-token-value-1234567890"  # noqa: S105 - fixed test vector.
+    derived = hmac.new(
+        token.encode(),
+        b"trustedrouter-attribution-cookie-v1",
+        hashlib.sha256,
+    ).digest()
+    encoded_key = base64.b64encode(derived).decode("ascii")
+    assert encoded_key == "aDMnBV9nDwwAD1tr4MpooFMj7i8Kv6lB5Q9LTmrjTfc="
+
+    legacy = Settings(
+        environment="test",
+        service_surface="combined",
+        internal_gateway_token=token,
+    )
+    public = Settings(
+        environment="test",
+        service_surface="public",
+        attribution_cookie_key=encoded_key,
+    )
+    assert acquisition_module._cookie_signing_key(legacy) == derived  # noqa: SLF001
+    assert acquisition_module._cookie_signing_key(public) == derived  # noqa: SLF001
+
+    now = dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    touch = {"utm_source": "compatibility", "landing_path": "/", "captured_at": now}
+    context = AttributionContext("e" * 32, touch, touch, now)
+
+    public_cookie = encode_attribution_cookie(context, public)
+    legacy_cookie = encode_attribution_cookie(context, legacy)
+    assert decode_attribution_cookie(public_cookie, legacy) == context
+    assert decode_attribution_cookie(legacy_cookie, public) == context
 
 
 def test_expired_cookie_is_rejected() -> None:
@@ -94,6 +146,42 @@ def test_expired_cookie_is_rejected() -> None:
     assert decode_attribution_cookie(encoded, settings) is None
 
 
+def test_legacy_v1_cookie_with_raw_click_id_is_rejected() -> None:
+    settings = Settings(
+        internal_gateway_token="cookie-signing-root"  # noqa: S106 - test fixture secret.
+    )
+    now = dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    legacy_touch = {
+        "utm_source": "google",
+        "utm_medium": "paid_search",
+        "gclid": "legacy-raw-click-id",
+        "landing_path": "/",
+        "captured_at": now,
+    }
+    context = AttributionContext("c" * 32, legacy_touch, legacy_touch, now)
+    encoded = _legacy_cookie(context, settings, version=1)
+
+    assert decode_attribution_cookie(encoded, settings) is None
+
+
+def test_legacy_v2_fingerprint_cookie_remains_readable() -> None:
+    settings = Settings(
+        internal_gateway_token="cookie-signing-root"  # noqa: S106 - test fixture secret.
+    )
+    now = dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    touch = {
+        "utm_source": "google",
+        "gclid_fingerprint": "d" * 64,
+        "landing_path": "/",
+        "captured_at": now,
+    }
+    context = AttributionContext("d" * 32, touch, touch, now)
+
+    assert (
+        decode_attribution_cookie(_legacy_cookie(context, settings, version=2), settings) == context
+    )
+
+
 def test_paid_landing_sets_signed_httponly_cookie(client: TestClient) -> None:
     response = client.get(
         "/?utm_source=x&utm_medium=paid_social&utm_campaign=privacy&twclid=tw-123"
@@ -110,15 +198,47 @@ def test_paid_landing_sets_signed_httponly_cookie(client: TestClient) -> None:
     assert context is not None
     assert context.last_touch["utm_source"] == "x"
     assert context.last_touch["utm_medium"] == "paid_social"
-    assert context.last_touch["twclid"] == "tw-123"
+    assert context.last_touch["twclid_fingerprint"]
+    assert "twclid" not in context.last_touch
+
+
+@pytest.mark.parametrize(
+    ("path", "campaign"),
+    [
+        ("/openrouter-alternative", "exact_openrouter_migration_20260809"),
+        ("/private-llm-api", "exact_private_llm_20260809"),
+        ("/llm-failover", "exact_provider_failover_20260809"),
+        ("/latest-model-apis", "exact_hot_models_20260809"),
+    ],
+)
+def test_exact_intent_landings_keep_distinct_first_party_attribution(
+    client: TestClient,
+    path: str,
+    campaign: str,
+) -> None:
+    response = client.get(
+        f"{path}?utm_source=google&utm_medium=paid_search"
+        f"&utm_campaign={campaign}&utm_content=rsa1&gclid=click-{campaign}"
+    )
+
+    assert response.status_code == 200
+    context = decode_attribution_cookie(
+        client.cookies.get(ATTRIBUTION_COOKIE_NAME), client.app.state.settings
+    )
+    assert context is not None
+    assert context.last_touch["utm_source"] == "google"
+    assert context.last_touch["utm_medium"] == "paid_search"
+    assert context.last_touch["utm_campaign"] == campaign
+    assert context.last_touch["utm_content"] == "rsa1"
+    assert context.last_touch["landing_path"] == path
+    assert context.last_touch["gclid_fingerprint"]
+    assert "gclid" not in context.last_touch
 
 
 def test_first_touch_is_preserved_and_last_touch_updates(client: TestClient) -> None:
     first = client.get("/?utm_source=x&utm_campaign=first&twclid=tw-first")
     assert first.status_code == 200
-    second = client.get(
-        "/private-llm-api?utm_source=google&utm_campaign=second&gclid=g-second"
-    )
+    second = client.get("/private-llm-api?utm_source=google&utm_campaign=second&gclid=g-second")
     assert second.status_code == 200
 
     context = decode_attribution_cookie(
@@ -127,15 +247,61 @@ def test_first_touch_is_preserved_and_last_touch_updates(client: TestClient) -> 
     assert context is not None
     assert context.first_touch["utm_source"] == "x"
     assert context.first_touch["utm_campaign"] == "first"
+    assert context.first_touch["twclid_fingerprint"]
+    assert "twclid" not in context.first_touch
     assert context.last_touch["utm_source"] == "google"
     assert context.last_touch["utm_campaign"] == "second"
+    assert context.last_touch["gclid_fingerprint"]
+    assert "gclid" not in context.last_touch
     assert context.last_touch["landing_path"] == "/private-llm-api"
 
 
-@pytest.mark.parametrize("header", ["sec-gpc", "dnt"])
-def test_privacy_signals_suppress_attribution_cookie(
-    client: TestClient, header: str
+def test_paid_experiment_preserves_exact_landing_path(client: TestClient) -> None:
+    response = client.get(
+        "/openrouter-alternative/quickstart"
+        "?utm_source=google&utm_medium=paid_search"
+        "&utm_campaign=openrouter_landing_test&utm_content=or_quickstart_v1"
+        "&gclid=experiment-click-123"
+    )
+
+    assert response.status_code == 200
+    context = decode_attribution_cookie(
+        client.cookies.get(ATTRIBUTION_COOKIE_NAME), client.app.state.settings
+    )
+    assert context is not None
+    assert context.last_touch["landing_path"] == "/openrouter-alternative/quickstart"
+    assert context.last_touch["utm_content"] == "or_quickstart_v1"
+
+
+def test_multiarm_landing_redirect_attributes_the_selected_page(
+    client: TestClient,
 ) -> None:
+    query = (
+        "utm_source=google&utm_medium=paid_search&"
+        "utm_campaign=openrouter_lp_multi_20260822&"
+        "utm_content=openrouter_exact_control&gclid=multiarm-click-123"
+    )
+    assigned = client.get(
+        f"/openrouter-alternative/experiment?{query}",
+        follow_redirects=False,
+    )
+    assert assigned.status_code == 307
+
+    landing = client.get(assigned.headers["location"])
+    assert landing.status_code == 200
+    context = decode_attribution_cookie(
+        client.cookies.get(ATTRIBUTION_COOKIE_NAME), client.app.state.settings
+    )
+    assert context is not None
+    assert context.last_touch["landing_path"] == assigned.headers["location"].split("?", 1)[0]
+    assert context.last_touch["utm_campaign"] == "openrouter_lp_multi_20260822"
+    assert context.last_touch["utm_content"] == "openrouter_exact_control"
+    assert context.last_touch["gclid_fingerprint"]
+    assert "gclid" not in context.last_touch
+
+
+@pytest.mark.parametrize("header", ["sec-gpc", "dnt"])
+def test_privacy_signals_suppress_attribution_cookie(client: TestClient, header: str) -> None:
     response = client.get(
         "/?utm_source=google&gclid=do-not-store",
         headers={header: "1"},
@@ -151,6 +317,38 @@ def test_crawlers_do_not_receive_attribution_cookie(client: TestClient) -> None:
     )
     assert response.status_code == 200
     assert ATTRIBUTION_COOKIE_NAME not in response.headers.get("set-cookie", "")
+
+
+def test_status_host_does_not_receive_attribution_cookie(client: TestClient) -> None:
+    response = client.get(
+        "/",
+        headers={"host": "status.trustedrouter.com"},
+    )
+
+    assert response.status_code == 200
+    assert ATTRIBUTION_COOKIE_NAME not in response.headers.get("set-cookie", "")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/leaderboard",
+        "/leaderboard/video",
+        "/leaderboard/video.json",
+        "/status",
+        "/status.json",
+        "/status/history?window=24h&format=json",
+    ],
+)
+def test_public_analytics_pages_are_cookie_free_for_shared_edge_cache(
+    client: TestClient,
+    path: str,
+) -> None:
+    response = client.get(path, headers={"host": "trustedrouter.com"})
+
+    assert response.status_code == 200
+    assert ATTRIBUTION_COOKIE_NAME not in response.headers.get("set-cookie", "")
+    assert "public" in response.headers.get("cache-control", "")
 
 
 @pytest.mark.parametrize(
@@ -182,28 +380,41 @@ def test_invalid_click_id_is_not_persisted(client: TestClient) -> None:
     )
     assert context is not None
     assert "gclid" not in context.last_touch
+    assert "gclid_fingerprint" not in context.last_touch
 
 
 @pytest.mark.parametrize("click_field", ["gbraid", "wbraid"])
-def test_google_browser_click_ids_are_exportable(
+def test_google_browser_click_ids_are_fingerprinted_and_encrypted(
     client: TestClient,
     click_field: str,
 ) -> None:
     click_id = f"{click_field}-private-123"
-    landing = client.get(
-        f"/?utm_source=google&utm_medium=paid_search&{click_field}={click_id}"
-    )
+    landing = client.get(f"/?utm_source=google&utm_medium=paid_search&{click_field}={click_id}")
     assert landing.status_code == 200
-    _signup(client, f"{click_field}@example.com")
-
-    conversions = STORE.list_google_ads_conversions(
-        since="2000-01-01T00:00:00Z",
-        limit=10,
+    context = decode_attribution_cookie(
+        client.cookies.get(ATTRIBUTION_COOKIE_NAME), client.app.state.settings
     )
+    assert context is not None
+    assert click_field not in context.last_touch
+    fingerprint = context.last_touch[f"{click_field}_fingerprint"]
+    assert len(fingerprint) == 64
+    assert click_id not in client.cookies.get(ATTRIBUTION_COOKIE_NAME)
 
-    assert len(conversions) == 1
-    assert getattr(conversions[0], click_field) == click_id
-    assert conversions[0].gclid is None
+    payload = _signup(client, f"{click_field}@example.com")
+    record = STORE.get_acquisition_attribution(str(payload["workspace_id"]))
+    assert record is not None
+    assert click_field not in record.last_touch
+    assert record.last_touch[f"{click_field}_fingerprint"] == fingerprint
+    assert record.google_click_id_kind == click_field
+    assert record.encrypted_google_click_id is not None
+    assert (
+        decrypt_google_ads_click_id(
+            record.encrypted_google_click_id,
+            client.app.state.settings,
+            attribution_id=record.anonymous_id,
+        )
+        == click_id
+    )
 
 
 def test_signup_persists_attribution_and_emits_no_raw_click_id(
@@ -218,23 +429,58 @@ def test_signup_persists_attribution_and_emits_no_raw_click_id(
     workspace_id = str(payload["workspace_id"])
     record = STORE.get_acquisition_attribution(workspace_id)
     assert record is not None
-    assert record.first_touch["gclid"] == raw_click_id
+    assert "gclid" not in record.first_touch
+    assert len(record.first_touch["gclid_fingerprint"]) == 64
     assert record.last_touch["utm_campaign"] == "router_launch"
     assert record.signup_provider == "email"
+    assert record.starter_credit_microdollars == 300_000
+    assert record.google_click_id_kind == "gclid"
+    assert record.encrypted_google_click_id is not None
     assert set(record.milestones) == {"signup_completed", "api_key_created"}
     assert "acquisition.signup_completed" in caplog.text
     assert "acquisition.api_key_created" in caplog.text
+    signup_log = next(
+        item for item in caplog.records if item.getMessage() == "acquisition.signup_completed"
+    )
+    assert signup_log.google_ads_click_persisted is True
     assert raw_click_id not in caplog.text
     assert str(payload["key"]) not in caplog.text
 
-    conversions = STORE.list_google_ads_conversions(
-        since="2000-01-01T00:00:00Z",
-        limit=10,
+
+def test_google_click_encryption_failure_is_visible_and_does_not_block_signup(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    raw_click_id = "gclid-encryption-failure-123"
+    _campaign_landing(client, click_id=raw_click_id)
+
+    def fail_encrypt(*_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("kms permission denied")
+
+    monkeypatch.setattr(acquisition_module, "encrypt_google_ads_click_id", fail_encrypt)
+    caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
+
+    payload = _signup(client, "click-encryption-failure@example.com")
+
+    record = STORE.get_acquisition_attribution(str(payload["workspace_id"]))
+    assert record is not None
+    assert record.google_click_id_kind is None
+    assert record.encrypted_google_click_id is None
+    failure_log = next(
+        item
+        for item in caplog.records
+        if item.getMessage() == "acquisition.google_click_encrypt_failed"
     )
-    assert len(conversions) == 1
-    assert conversions[0].conversion_action == "TrustedRouter Signup"
-    assert conversions[0].gclid == raw_click_id
-    assert conversions[0].value_microdollars == 0
+    assert failure_log.event == "acquisition.google_click_encrypt_failed"
+    assert failure_log.error == "RuntimeError"
+    signup_log = next(
+        item for item in caplog.records if item.getMessage() == "acquisition.signup_completed"
+    )
+    assert signup_log.has_gclid is True
+    assert signup_log.google_ads_click_persisted is False
+    assert raw_click_id not in caplog.text
+    assert "kms permission denied" not in caplog.text
 
 
 def test_attribution_failure_never_blocks_signup(
@@ -260,9 +506,7 @@ def test_signin_open_event_is_campaign_attributed_without_click_id_leak(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     raw_click_id = "tw-private-123"
-    landing = client.get(
-        f"/?utm_source=x&utm_campaign=modal-test&twclid={raw_click_id}"
-    )
+    landing = client.get(f"/?utm_source=x&utm_campaign=modal-test&twclid={raw_click_id}")
     assert landing.status_code == 200
     caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
     response = client.post("/analytics/events", json={"event": "sign_in_opened"})
@@ -282,9 +526,7 @@ def test_engaged_landing_has_stable_click_fingerprint_without_raw_id(
     first = client.post("/analytics/events", json={"event": "landing_engaged"})
     assert first.status_code == 204
     first_record = next(
-        item
-        for item in caplog.records
-        if item.getMessage() == "acquisition.landing_engaged"
+        item for item in caplog.records if item.getMessage() == "acquisition.landing_engaged"
     )
 
     caplog.clear()
@@ -293,9 +535,7 @@ def test_engaged_landing_has_stable_click_fingerprint_without_raw_id(
     second = client.post("/analytics/events", json={"event": "landing_engaged"})
     assert second.status_code == 204
     second_record = next(
-        item
-        for item in caplog.records
-        if item.getMessage() == "acquisition.landing_engaged"
+        item for item in caplog.records if item.getMessage() == "acquisition.landing_engaged"
     )
 
     assert first_record.twclid_fingerprint == second_record.twclid_fingerprint
@@ -308,6 +548,16 @@ def test_unknown_browser_funnel_event_is_rejected(client: TestClient) -> None:
     assert response.status_code == 400
 
 
+@pytest.mark.parametrize("event", ["first_call_started", "first_call_failed"])
+def test_first_call_browser_events_are_accepted_without_payload(
+    client: TestClient,
+    event: str,
+) -> None:
+    _campaign_landing(client)
+    response = client.post("/analytics/events", json={"event": event})
+    assert response.status_code == 204
+
+
 def test_successful_usage_milestones_are_once_only(
     client: TestClient,
     caplog: pytest.LogCaptureFixture,
@@ -318,8 +568,11 @@ def test_successful_usage_milestones_are_once_only(
     record = STORE.get_acquisition_attribution(workspace_id)
     assert record is not None
     record.signup_at = (
-        dt.datetime.now(dt.UTC) - dt.timedelta(days=8)
-    ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        (dt.datetime.now(dt.UTC) - dt.timedelta(days=8))
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
     caplog.clear()
     caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
@@ -333,14 +586,97 @@ def test_successful_usage_milestones_are_once_only(
     messages = [item.getMessage() for item in caplog.records]
     assert messages.count("acquisition.first_successful_api_call") == 1
     assert messages.count("acquisition.retained_api_usage_7d") == 1
-    conversions = STORE.list_google_ads_conversions(
-        since="2000-01-01T00:00:00Z",
-        limit=10,
-    )
-    actions = [item.conversion_action for item in conversions]
-    assert actions.count("TrustedRouter Signup") == 1
-    assert actions.count("TrustedRouter Activated API User") == 1
-    assert actions.count("TrustedRouter Retained API User 7d") == 1
+
+
+def test_free_credit_exhaustion_uses_typed_usage_and_is_once_only(
+    client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _campaign_landing(client)
+    payload = _signup(client, "starter-exhausted@example.com")
+    workspace_id = str(payload["workspace_id"])
+    starter_credit = int(payload["trial_credit_microdollars"])
+    caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
+
+    STORE.credit_money[workspace_id].total_usage_microdollars = starter_credit - 1
+    assert record_free_credit_exhausted_safely(workspace_id) is False
+
+    STORE.credit_money[workspace_id].total_usage_microdollars = starter_credit
+    assert record_free_credit_exhausted_safely(workspace_id) is True
+    assert record_free_credit_exhausted_safely(workspace_id) is False
+
+    record = STORE.get_acquisition_attribution(workspace_id)
+    assert record is not None
+    assert "free_credit_exhausted" in record.milestones
+    messages = [item.getMessage() for item in caplog.records]
+    assert messages.count("acquisition.free_credit_exhausted") == 1
+    assert str(payload["key"]) not in caplog.text
+
+
+def test_checkout_and_saved_payment_method_milestones_are_once_only(
+    client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _campaign_landing(client)
+    payload = _signup(client, "checkout-funnel@example.com")
+    workspace_id = str(payload["workspace_id"])
+    headers = {"authorization": f"Bearer {payload['key']}"}
+    caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
+
+    for _ in range(2):
+        checkout = client.post(
+            "/v1/billing/checkout",
+            headers=headers,
+            json={"amount": 20},
+        )
+        assert checkout.status_code == 201, checkout.text
+    for _ in range(2):
+        setup = client.post(
+            "/v1/billing/payment-methods/setup",
+            headers=headers,
+        )
+        assert setup.status_code == 201, setup.text
+
+    record = STORE.get_acquisition_attribution(workspace_id)
+    assert record is not None
+    assert "checkout_started" in record.milestones
+    assert "payment_method_saved" in record.milestones
+    messages = [item.getMessage() for item in caplog.records]
+    assert messages.count("acquisition.checkout_started") == 1
+    assert messages.count("acquisition.payment_method_saved") == 1
+    assert str(payload["key"]) not in caplog.text
+
+
+def test_stripe_webhook_records_saved_payment_method_for_attributed_signup(
+    client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _campaign_landing(client)
+    payload = _signup(client, "saved-card-webhook@example.com")
+    workspace_id = str(payload["workspace_id"])
+    event = {
+        "id": "evt_attributed_setup",
+        "type": "setup_intent.succeeded",
+        "data": {
+            "object": {
+                "customer": "cus_attributed",
+                "payment_method": "pm_attributed",
+                "metadata": {"workspace_id": workspace_id},
+            }
+        },
+    }
+    caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
+
+    first = client.post("/v1/internal/stripe/webhook", json=event)
+    second = client.post("/v1/internal/stripe/webhook", json=event)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    record = STORE.get_acquisition_attribution(workspace_id)
+    assert record is not None
+    assert "payment_method_saved" in record.milestones
+    messages = [item.getMessage() for item in caplog.records]
+    assert messages.count("acquisition.payment_method_saved") == 1
 
 
 def test_stripe_purchase_attribution_follows_ledger_idempotency(
@@ -373,16 +709,6 @@ def test_stripe_purchase_attribution_follows_ledger_idempotency(
     assert record.purchase_microdollars == 25_000_000
     messages = [item.getMessage() for item in caplog.records]
     assert messages.count("acquisition.credit_purchase_completed") == 1
-    purchases = [
-        item
-        for item in STORE.list_google_ads_conversions(
-            since="2000-01-01T00:00:00Z",
-            limit=10,
-        )
-        if item.conversion_action == "TrustedRouter Credit Purchase"
-    ]
-    assert len(purchases) == 1
-    assert purchases[0].value_microdollars == 25_000_000
 
 
 def test_public_pageviews_cover_marketing_but_not_console(
@@ -414,9 +740,7 @@ def test_prefetch_pageview_is_classified_and_has_no_attribution(
         },
     )
     assert response.status_code == 200
-    record = next(
-        item for item in caplog.records if item.getMessage() == "public.page_view"
-    )
+    record = next(item for item in caplog.records if item.getMessage() == "public.page_view")
     assert record.automated_request is True
     assert not hasattr(record, "anonymous_fingerprint")
     assert not hasattr(record, "twclid_fingerprint")
@@ -436,176 +760,22 @@ def test_record_signup_helper_uses_direct_fallback_without_cookie(
     assert record is not None
     assert record.first_touch["utm_source"] == "direct"
     assert record.first_touch["landing_path"] == "/v1/signup"
-    assert (
-        STORE.list_google_ads_conversions(
-            since="2000-01-01T00:00:00Z",
-            limit=10,
-        )
-        == []
-    )
 
 
-def test_google_ads_feed_is_disabled_without_secret(client: TestClient) -> None:
-    response = client.get("/v1/internal/marketing/google-ads-conversions.csv")
-    assert response.status_code == 404
+def test_google_ads_export_routes_do_not_exist(client: TestClient) -> None:
+    export = client.get("/v1/internal/marketing/google-ads-conversions.csv")
+    backfill = client.post("/v1/internal/marketing/google-ads-conversions/backfill")
+
+    assert export.status_code == 404
+    assert backfill.status_code == 404
 
 
-def test_google_ads_feed_requires_valid_basic_auth(client: TestClient) -> None:
-    client.app.state.settings.google_ads_conversion_feed_password = _FEED_PASSWORD
-    missing = client.get("/v1/internal/marketing/google-ads-conversions.csv")
-    invalid = client.get(
-        "/v1/internal/marketing/google-ads-conversions.csv",
-        headers=_feed_headers(password="x" * 40),
-    )
-    assert missing.status_code == 401
-    assert missing.headers["www-authenticate"].startswith("Basic ")
-    assert invalid.status_code == 401
+def test_google_reporting_is_server_side_and_disabled_by_default() -> None:
+    settings = Settings()
 
-
-def test_google_ads_feed_is_metadata_only_and_exact(client: TestClient) -> None:
-    raw_click_id = "gclid-feed-private-123"
-    _campaign_landing(client, click_id=raw_click_id)
-    payload = _signup(client, "never-export@example.com")
-    workspace_id = str(payload["workspace_id"])
-    record_successful_api_call(
-        workspace_id,
-        model="private/model",
-        provider="private-provider",
-    )
-    client.app.state.settings.google_ads_conversion_feed_password = _FEED_PASSWORD
-
-    response = client.get(
-        "/v1/internal/marketing/google-ads-conversions.csv",
-        headers=_feed_headers(),
-    )
-
-    assert response.status_code == 200
-    assert response.headers["cache-control"] == "private, no-store"
-    assert response.headers["x-robots-tag"] == "noindex, nofollow"
-    rows = list(csv.DictReader(io.StringIO(response.text)))
-    assert {row["conversion_action"] for row in rows} == {
-        "TrustedRouter Signup",
-        "TrustedRouter Activated API User",
-    }
-    assert all(row["gclid"] == raw_click_id for row in rows)
-    assert all(row["conversion_value"] == "0.000000" for row in rows)
-    assert all(row["currency_code"] == "USD" for row in rows)
-    assert all(len(row["order_id"]) == 64 for row in rows)
-    assert workspace_id not in response.text
-    assert "never-export@example.com" not in response.text
-    assert str(payload["key"]) not in response.text
-    assert "private/model" not in response.text
-    assert "private-provider" not in response.text
-    assert "prompt" not in response.text.lower()
-    assert "output" not in response.text.lower()
-
-
-def test_google_ads_feed_preserves_microdollar_purchase_value(
-    client: TestClient,
-) -> None:
-    _campaign_landing(client)
-    payload = _signup(client)
-    occurred_at = dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace(
-        "+00:00", "Z"
-    )
-    STORE.record_acquisition_purchase(
-        str(payload["workspace_id"]),
-        amount_microdollars=1_234_567,
-        occurred_at=occurred_at,
-    )
-    client.app.state.settings.google_ads_conversion_feed_password = _FEED_PASSWORD
-
-    response = client.get(
-        "/v1/internal/marketing/google-ads-conversions.csv",
-        headers=_feed_headers(),
-    )
-
-    purchases = [
-        row
-        for row in csv.DictReader(io.StringIO(response.text))
-        if row["conversion_action"] == "TrustedRouter Credit Purchase"
-    ]
-    assert len(purchases) == 1
-    assert purchases[0]["conversion_value"] == "1.234567"
-
-
-def test_google_ads_feed_fails_loudly_instead_of_truncating(
-    client: TestClient,
-) -> None:
-    _campaign_landing(client)
-    payload = _signup(client)
-    record_successful_api_call(
-        str(payload["workspace_id"]),
-        model="test/model",
-        provider="test-provider",
-    )
-    settings = client.app.state.settings
-    settings.google_ads_conversion_feed_password = _FEED_PASSWORD
-    settings.google_ads_conversion_feed_max_rows = 1
-
-    response = client.get(
-        "/v1/internal/marketing/google-ads-conversions.csv",
-        headers=_feed_headers(),
-    )
-
-    assert response.status_code == 503
-    assert response.json()["error"]["type"] == "service_unavailable"
-
-
-def test_google_ads_backfill_is_idempotent(client: TestClient) -> None:
-    _campaign_landing(client)
-    _signup(client)
-    attribution_store = STORE.in_memory_target.acquisition_store
-    attribution_store.google_ads_conversions.clear()
-
-    first = client.post("/v1/internal/marketing/google-ads-conversions/backfill")
-    second = client.post("/v1/internal/marketing/google-ads-conversions/backfill")
-
-    assert first.status_code == 200
-    assert first.json()["data"]["created"] == 1
-    assert second.status_code == 200
-    assert second.json()["data"]["created"] == 0
-    assert len(attribution_store.google_ads_conversions) == 1
-
-
-def test_google_ads_feed_excludes_events_older_than_retention(
-    client: TestClient,
-) -> None:
-    _campaign_landing(client)
-    payload = _signup(client)
-    attribution_store = STORE.in_memory_target.acquisition_store
-    conversion = next(iter(attribution_store.google_ads_conversions.values()))
-    conversion.occurred_at = (
-        dt.datetime.now(dt.UTC) - dt.timedelta(days=91)
-    ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    client.app.state.settings.google_ads_conversion_feed_password = _FEED_PASSWORD
-
-    response = client.get(
-        "/v1/internal/marketing/google-ads-conversions.csv",
-        headers=_feed_headers(),
-    )
-
-    assert response.status_code == 200
-    assert list(csv.DictReader(io.StringIO(response.text))) == []
-    assert payload["workspace_id"]
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("google_ads_conversion_feed_retention_days", 0),
-        ("google_ads_conversion_feed_retention_days", 91),
-        ("google_ads_conversion_feed_max_rows", 0),
-        ("google_ads_conversion_feed_username", "invalid:name"),
-        ("google_ads_conversion_feed_password", "too-short"),
-    ],
-)
-def test_google_ads_feed_config_rejects_unsafe_values(
-    field: str,
-    value: object,
-) -> None:
-    with pytest.raises(ValueError):
-        Settings(**{field: value})
+    assert not hasattr(settings, "google_ads_conversion_feed_password")
+    assert settings.google_data_manager_enabled is False
+    assert settings.google_data_manager_kms_key_name is None
 
 
 def test_spanner_attribution_adapter_is_atomic_and_persistent() -> None:
@@ -615,7 +785,7 @@ def test_spanner_attribution_adapter_is_atomic_and_persistent() -> None:
         "utm_source": "google",
         "utm_medium": "paid_search",
         "utm_campaign": "launch",
-        "gclid": "private-click-id",
+        "gclid_fingerprint": "d" * 64,
         "landing_path": "/private-llm-api",
         "captured_at": now,
     }
@@ -625,6 +795,7 @@ def test_spanner_attribution_adapter_is_atomic_and_persistent() -> None:
         first_touch=touch,
         last_touch=touch,
         signup_provider="google",
+        starter_credit_microdollars=300_000,
         signup_at=now,
     )
 
@@ -632,7 +803,9 @@ def test_spanner_attribution_adapter_is_atomic_and_persistent() -> None:
     assert store.create_acquisition_attribution(original) is False
     stored = store.get_acquisition_attribution(original.workspace_id)
     assert stored is not None
-    assert stored.first_touch["gclid"] == "private-click-id"
+    assert stored.first_touch["gclid_fingerprint"] == "d" * 64
+    assert "gclid" not in stored.first_touch
+    assert stored.starter_credit_microdollars == 300_000
 
     stored, claimed = store.claim_acquisition_milestones(
         original.workspace_id,
@@ -656,19 +829,3 @@ def test_spanner_attribution_adapter_is_atomic_and_persistent() -> None:
     assert purchased is not None
     assert purchased.purchase_count == 1
     assert purchased.purchase_microdollars == 12_345_678
-    conversions = store.list_google_ads_conversions(
-        since="2000-01-01T00:00:00Z",
-        limit=10,
-    )
-    actions = [item.conversion_action for item in conversions]
-    assert sorted(actions) == sorted(
-        [
-            "TrustedRouter Signup",
-            "TrustedRouter Activated API User",
-            "TrustedRouter Credit Purchase",
-        ]
-    )
-    purchase = next(
-        item for item in conversions if item.conversion_action == "TrustedRouter Credit Purchase"
-    )
-    assert purchase.value_microdollars == 12_345_678

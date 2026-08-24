@@ -16,6 +16,7 @@ from trusted_router.storage_gcp_counters import (
     KEY_LIMIT_TABLE,
     distribute_credit_amount,
     key_usage_shard_count,
+    partition_key_limit,
 )
 from trusted_router.storage_gcp_legacy_reservations import (
     legacy_reservation_snapshot,
@@ -62,6 +63,15 @@ class KeyUsageReshardResult:
     @property
     def ready(self) -> bool:
         return not self.reasons
+
+    @property
+    def at_target(self) -> bool:
+        """Whether this key's usage rows are ACTUALLY at the requested count.
+
+        See `CreditReshardResult.at_target`: `ready` only means "nothing blocks
+        a reshard", which is true before the reshard has happened.
+        """
+        return self.current_shard_count == self.target_shard_count
 
 
 def _typed_key_state(
@@ -143,11 +153,6 @@ def inspect_key_usage_reshard(
         result.reasons.append("workspace not found")
     elif not workspace.billing_paused:
         result.reasons.append("workspace not billing-paused")
-    if target_count > 1 and key.limit_microdollars is not None:
-        result.reasons.append(
-            "API key with an exact lifetime limit must remain on one usage shard"
-        )
-
     try:
         current_count = key_usage_shard_count(key)
     except ValueError as exc:
@@ -228,8 +233,6 @@ def reshard_key_usage(
             Workspace,
         )
         if workspace is None or not workspace.billing_paused:
-            return None
-        if target_count > 1 and key.limit_microdollars is not None:
             return None
         current_count = key_usage_shard_count(key)
         rows = list(
@@ -312,6 +315,13 @@ def reshard_key_usage(
             day_parts = list(distribute_credit_amount(day_usage, target_count))
             week_parts = list(distribute_credit_amount(week_usage, target_count))
             month_parts = list(distribute_credit_amount(month_usage, target_count))
+        limit_parts = partition_key_limit(
+            key.limit_microdollars,
+            usage_parts=usage_parts,
+            byok_usage_parts=byok_parts,
+            reserved_parts=reserved_parts,
+            include_byok=key.include_byok_in_limit,
+        )
         commit_timestamp = store._spanner.COMMIT_TIMESTAMP
         transaction.insert_or_update(
             table=KEY_LIMIT_TABLE,
@@ -320,7 +330,7 @@ def reshard_key_usage(
                 (
                     key_hash,
                     shard,
-                    key.limit_microdollars,
+                    limit_parts[shard],
                     usage_parts[shard],
                     byok_parts[shard],
                     reserved_parts[shard],

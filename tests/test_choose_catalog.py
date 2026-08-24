@@ -7,9 +7,13 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from trusted_router.catalog import (
+    ADVISOR_MODEL_ID,
     AUTO_MODEL_ID,
     CHEAP_MODEL_ID,
+    CONFIDENTIAL_MODEL_ID,
     E2E_MODEL_ID,
+    EU_MODEL_ID,
+    FAST_MODEL_ID,
     MODELS,
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_ZERO_RETENTION,
@@ -45,17 +49,14 @@ def test_choose_catalog_is_compact_endpoint_scoped_and_cached(client: TestClient
 
     payload = response.json()
     assert payload["catalog_model_count"] > payload["evaluated_model_count"] > 0
+    assert payload["catalog_provider_count"] > 0
     assert payload["catalog_route_count"] > payload["catalog_model_count"]
     for model in payload["models"]:
         assert model["quality"]["score"] > 0
         assert model["endpoints"]
         for endpoint in model["endpoints"]:
-            assert isinstance(
-                endpoint["prompt_price_microdollars_per_million_tokens"], int
-            )
-            assert isinstance(
-                endpoint["completion_price_microdollars_per_million_tokens"], int
-            )
+            assert isinstance(endpoint["prompt_price_microdollars_per_million_tokens"], int)
+            assert isinstance(endpoint["completion_price_microdollars_per_million_tokens"], int)
             assert endpoint["provider"]
             assert endpoint["usage_type"] in {"BYOK", "Credits"}
             assert endpoint["privacy_tier"] in {0, 1, 2, 3}
@@ -98,14 +99,15 @@ def test_choose_route_guarantees_match_runtime_source_of_truth(
     client: TestClient,
     test_settings: Settings,
 ) -> None:
-    routes = {
-        route["id"]: route for route in client.get("/choose/catalog.json").json()["routes"]
-    }
+    routes = {route["id"]: route for route in client.get("/choose/catalog.json").json()["routes"]}
 
     assert routes[AUTO_MODEL_ID]["min_privacy_tier"] == 0
+    assert routes[FAST_MODEL_ID]["min_privacy_tier"] == 0
     assert routes[CHEAP_MODEL_ID]["min_privacy_tier"] == 0
+    assert routes[EU_MODEL_ID]["min_privacy_tier"] == 0
     assert routes[ZDR_MODEL_ID]["min_privacy_tier"] == PRIVACY_TIER_ZERO_RETENTION
     assert routes[E2E_MODEL_ID]["min_privacy_tier"] == PRIVACY_TIER_CONFIDENTIAL
+    assert routes[CONFIDENTIAL_MODEL_ID]["min_privacy_tier"] == PRIVACY_TIER_CONFIDENTIAL
     assert ROUTING_MODEL_MIN_PRIVACY_TIERS[ZDR_MODEL_ID] == PRIVACY_TIER_ZERO_RETENTION
     assert ROUTING_MODEL_MIN_PRIVACY_TIERS[E2E_MODEL_ID] == PRIVACY_TIER_CONFIDENTIAL
     assert AUTO_MODEL_ID not in ROUTING_MODEL_MIN_PRIVACY_TIERS
@@ -126,16 +128,20 @@ def test_choose_route_guarantees_match_runtime_source_of_truth(
     assert all(endpoint.provider != "gmi" for _model, endpoint in e2e_candidates)
 
 
-def test_choose_synth_pricing_is_component_usage_not_free(client: TestClient) -> None:
-    routes = {
-        route["id"]: route for route in client.get("/choose/catalog.json").json()["routes"]
-    }
+def test_choose_orchestration_pricing_is_component_usage_not_free(client: TestClient) -> None:
+    routes = {route["id"]: route for route in client.get("/choose/catalog.json").json()["routes"]}
     synth = routes[SYNTH_MODEL_ID]
 
     assert synth["pricing_mode"] == "component_usage"
     assert synth["prompt_price_min_microdollars_per_million_tokens"] is None
     assert synth["completion_price_min_microdollars_per_million_tokens"] is None
     assert "Every inner inference call is billable" in synth["description"]
+
+    advisor = routes[ADVISOR_MODEL_ID]
+    assert advisor["pricing_mode"] == "component_usage"
+    assert advisor["prompt_price_min_microdollars_per_million_tokens"] is None
+    assert advisor["completion_price_min_microdollars_per_million_tokens"] is None
+    assert "Every inner inference call is billable" in advisor["description"]
 
 
 def test_choose_catalog_omits_unscored_and_zero_score_models() -> None:

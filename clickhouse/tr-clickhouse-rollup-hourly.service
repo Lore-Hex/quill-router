@@ -1,0 +1,19 @@
+[Unit]
+Description=TrustedRouter hourly analytics rollup
+After=clickhouse-server.service
+Requires=clickhouse-server.service
+
+[Service]
+Type=oneshot
+User=tr-clickhouse-ingest
+Group=tr-clickhouse-ingest
+WorkingDirectory=/opt/tr-clickhouse
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/var/lib/tr-clickhouse-ingest
+EnvironmentFile=/etc/tr-clickhouse-ingest.env
+ExecStart=/opt/tr-clickhouse/venv/bin/python -m clickhouse.rollup_analytics --granularity hourly
+TimeoutStartSec=2h
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict

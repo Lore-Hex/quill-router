@@ -16,10 +16,10 @@ silently resume billing:
   python scripts/shard_workspace.py online-split --workspace WS --shards 16 \
     --preserve-open-holds --apply
 
-Eligible API-key usage rows are split to the same count; keys with an exact
-lifetime cap remain on one row. Approximate daily/weekly/monthly windows sum
-usage across the configured rows. Reverse with the same commands and
-``--shards 1``.
+Every API-key usage row is split to the same count. Exact lifetime caps are
+partitioned into escrow sub-budgets whose sum remains the configured cap;
+approximate daily/weekly/monthly windows sum usage across the configured rows.
+Reverse with the same commands and ``--shards 1``.
 Without ``--apply`` every command is read-only. A failed prepare/finish always
 leaves the workspace paused.
 """
@@ -79,7 +79,7 @@ def _print_status(status: CreditReshardResult) -> None:
     print(
         f"{status.workspace_id}: current_shards={status.current_shard_count} "
         f"target_shards={status.target_shard_count} ready={status.ready} "
-        f"applied={status.applied}"
+        f"at_target={status.at_target} applied={status.applied}"
     )
     print(
         "  typed totals: "
@@ -103,6 +103,7 @@ def _print_key_status(status: KeyUsageReshardResult) -> None:
     print(
         f"  key {status.key_hash}: current_shards={status.current_shard_count} "
         f"target_shards={status.target_shard_count} ready={status.ready} "
+        f"at_target={status.at_target} "
         f"applied={status.applied} usage={status.usage_micro} "
         f"byok_usage={status.byok_usage_micro} reserved={status.reserved_micro}"
     )
@@ -116,7 +117,8 @@ def _print_key_status(status: KeyUsageReshardResult) -> None:
 
 
 def _key_target(key: ApiKey, requested_shards: int) -> int:
-    return 1 if key.limit_microdollars is not None else requested_shards
+    _ = key
+    return requested_shards
 
 
 def _prepare_keys(
@@ -129,10 +131,6 @@ def _prepare_keys(
     clean = True
     for key in store.api_keys.list_for_workspace(workspace_id):
         target = _key_target(key, requested_shards)
-        if target != requested_shards:
-            print(
-                f"  key {key.hash}: exact lifetime cap; keeping usage_shards=1"
-            )
         status = reshard_key_usage(
             store,
             key.hash,
@@ -161,7 +159,9 @@ def _verify_keys(
             preserve_open_holds=preserve_open_holds,
         )
         _print_key_status(status)
-        clean = clean and status.ready
+        # Same distinction as the credit row: a key that has not been resharded
+        # yet is `ready` for its target without being AT it.
+        clean = clean and status.ready and status.at_target
     return clean
 
 
@@ -270,6 +270,18 @@ def run_finish(store: Any, args: argparse.Namespace) -> int:
     _print_status(status)
     if not status.ready:
         print("ERROR: refusing to unpause; reshard verification is not clean", file=sys.stderr)
+        return 1
+    # `ready` alone does not mean the transition landed: a drained, paused,
+    # healthy workspace is `ready` for a target it has not moved to yet.
+    # Unpausing on `ready` alone would resume traffic while reporting a shard
+    # count the ledger never adopted.
+    if not status.at_target:
+        print(
+            "ERROR: refusing to unpause; credit ledger is at "
+            f"{status.current_shard_count} shards, not the requested "
+            f"{status.target_shard_count}. Run prepare first.",
+            file=sys.stderr,
+        )
         return 1
     if not _verify_keys(
         store,

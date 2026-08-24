@@ -12,13 +12,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from trusted_router.auth import SettingsDep
 from trusted_router.byok_crypto import encrypt_byok_secret
 from trusted_router.catalog import PROVIDERS
+from trusted_router.provider_compat import canonical_byok_provider
 from trusted_router.routes.console._shared import ConsoleDep, render
 from trusted_router.storage import STORE
 
 
 def register(app: FastAPI) -> None:
     @app.get("/console/byok")
-    async def console_byok(ctx: ConsoleDep, settings: SettingsDep) -> Response:
+    def console_byok(ctx: ConsoleDep, settings: SettingsDep) -> Response:
         providers = [
             {
                 "provider": p.provider,
@@ -32,16 +33,15 @@ def register(app: FastAPI) -> None:
         return HTMLResponse(render(
             "console/byok.html",
             settings=settings,
-            user=ctx.user,
+            ctx=ctx,
             active="byok",
             page_title="BYOK",
             page_subtitle="Bring your own provider keys.",
             providers=providers,
-            api_base_url=settings.api_base_url,
         ))
 
     @app.post("/console/byok")
-    async def console_save_byok(
+    def console_save_byok(
         ctx: ConsoleDep,
         settings: SettingsDep,
         provider: str = Form(..., min_length=1, max_length=64),
@@ -53,7 +53,19 @@ def register(app: FastAPI) -> None:
         # may send `secret_ref` + `key_hint`. Mirror PUT /v1/byok/providers/...
         # so both paths land on the same storage shape.
         api_key = api_key.strip()
-        provider_slug = provider.strip().lower()
+        # Validate against the catalog exactly as PUT /v1/byok/providers/... does
+        # (_require_byok_provider). This route previously accepted any lowercased
+        # string up to 64 chars and passed it straight into encrypt_byok_secret
+        # as the `provider` component of the AEAD associated data. Control
+        # secrets are sealed in the SAME namespace with their `purpose` in that
+        # slot, so a tenant could register a BYOK entry whose provider equalled
+        # a control purpose (e.g. a broadcast destination key) and produce two
+        # envelopes in one workspace that share associated data — exactly the
+        # substitution the AAD exists to prevent.
+        provider_slug = canonical_byok_provider(provider)
+        catalog_provider = PROVIDERS.get(provider_slug)
+        if catalog_provider is None or not catalog_provider.supports_byok:
+            return RedirectResponse(url="/console/byok?error=provider", status_code=303)
         secret_ref = secret_ref.strip()
         explicit_hint = key_hint.strip() or None
         stored_hint: str | None

@@ -1,0 +1,11 @@
+[Unit]
+Description=Sample Bigtable and ClickHouse parity every 30 minutes
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=30m
+RandomizedDelaySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

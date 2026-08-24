@@ -103,7 +103,7 @@ def register(router: APIRouter) -> None:
         # Set the one-shot cookie so the chat client's page-load
         # bootstrap can pick up the key without an extra request. JS
         # reads it, copies to sessionStorage, then clears the cookie.
-        secure = settings.environment.lower() == "production"
+        secure = settings.environment.lower() not in {"local", "test"}
         response.set_cookie(
             key=CHAT_BROWSER_KEY_COOKIE_NAME,
             value=raw_key,

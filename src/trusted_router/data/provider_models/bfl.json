@@ -1,0 +1,140 @@
+{
+  "provider": "bfl",
+  "models": [
+    {
+      "display_name": "FLUX.2 [flex]",
+      "title": "flux-2-flex",
+      "model_type": "image",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "black-forest-labs/flux-2-flex",
+      "upstream_id": "flux-2-flex",
+      "supported_features": [
+        "image-generation"
+      ],
+      "fixed_output_price_microdollars": {
+        "1k": 50000
+      },
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "FLUX.2 [klein] 4B",
+      "title": "flux-2-klein-4b",
+      "model_type": "image",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "black-forest-labs/flux-2-klein-4b",
+      "upstream_id": "flux-2-klein-4b",
+      "supported_features": [
+        "image-generation"
+      ],
+      "fixed_output_price_microdollars": {
+        "1k": 14000
+      },
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "FLUX.2 [klein] 9B",
+      "title": "flux-2-klein-9b",
+      "model_type": "image",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "black-forest-labs/flux-2-klein-9b",
+      "upstream_id": "flux-2-klein-9b",
+      "supported_features": [
+        "image-generation"
+      ],
+      "fixed_output_price_microdollars": {
+        "1k": 15000
+      },
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "FLUX.2 [max]",
+      "title": "flux-2-max",
+      "model_type": "image",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "black-forest-labs/flux-2-max",
+      "upstream_id": "flux-2-max",
+      "supported_features": [
+        "image-generation"
+      ],
+      "fixed_output_price_microdollars": {
+        "1k": 70000
+      },
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "FLUX.2 [pro]",
+      "title": "flux-2-pro",
+      "model_type": "image",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "black-forest-labs/flux-2-pro",
+      "upstream_id": "flux-2-pro",
+      "supported_features": [
+        "image-generation"
+      ],
+      "fixed_output_price_microdollars": {
+        "1k": 30000
+      },
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    }
+  ],
+  "source": "https://api.bfl.ai/openapi.json",
+  "pricing_source": "https://docs.bfl.ml/quick_start/pricing",
+  "generated_at": "2026-08-24T10:39:58Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 5
+}

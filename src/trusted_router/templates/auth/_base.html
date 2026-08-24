@@ -9,7 +9,7 @@
      flash-of-light). Dark is the default here too; these bare auth steps
      have no toggle of their own — they inherit whatever the user picked
      in the marketing chrome / console. #}
-  <script>
+  <script nonce="{{ csp_nonce() }}">
     (function () {
       try {
         if (localStorage.getItem("tr-theme") === "light") {

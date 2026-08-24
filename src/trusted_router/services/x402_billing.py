@@ -32,6 +32,7 @@ def create_x402_funding_challenge(
     *,
     body: X402FundingRequest,
     workspace_id: str,
+    initiating_user_id: str,
     settings: Settings,
 ) -> dict[str, Any]:
     _require_x402_enabled(settings)
@@ -40,6 +41,7 @@ def create_x402_funding_challenge(
         amount=body.amount,
         amount_microdollars=amount_microdollars,
         workspace_id=workspace_id,
+        initiating_user_id=initiating_user_id,
         settings=settings,
     )
     payment_intent_id = str(payment_intent.get("id") or "")
@@ -168,6 +170,7 @@ def credit_x402_payment_intent(
         workspace_id,
         amount_microdollars,
         x402_event_id(payment_intent_id),
+        lifetime_topup_user_id=_lifetime_topup_user_id(workspace_id, metadata),
     )
     if credited:
         record_credit_purchase(
@@ -217,6 +220,7 @@ def _create_payment_intent(
     amount: Decimal | str | int,
     amount_microdollars: int,
     workspace_id: str,
+    initiating_user_id: str,
     settings: Settings,
 ) -> dict[str, Any]:
     amount_cents = dollars_to_cents(amount)
@@ -229,6 +233,7 @@ def _create_payment_intent(
             "amount": amount_cents,
             "metadata": {
                 "workspace_id": workspace_id,
+                "initiating_user_id": initiating_user_id,
                 "amount_microdollars": str(amount_microdollars),
                 "payment_method": X402_PAYMENT_METHOD,
                 "purpose": "trustedrouter_credits",
@@ -263,6 +268,7 @@ def _create_payment_intent(
         "confirm": True,
         "metadata": {
             "workspace_id": workspace_id,
+            "initiating_user_id": initiating_user_id,
             "amount_microdollars": str(amount_microdollars),
             "payment_method": X402_PAYMENT_METHOD,
             "purpose": "trustedrouter_credits",
@@ -435,6 +441,14 @@ def _stripe_object_to_dict(value: Any) -> dict[str, Any]:
 
 def _dict_value(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _lifetime_topup_user_id(workspace_id: str, metadata: dict[str, Any]) -> str | None:
+    initiating_user_id = metadata.get("initiating_user_id")
+    if isinstance(initiating_user_id, str) and initiating_user_id:
+        return initiating_user_id
+    workspace = STORE.get_workspace(workspace_id)
+    return workspace.owner_user_id if workspace is not None else None
 
 
 def _mock_payments_enabled(settings: Settings) -> bool:

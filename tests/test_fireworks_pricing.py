@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.parsers import fireworks as fireworks_parser
 from scripts.pricing.providers import fireworks
+from trusted_router.catalog import MODEL_ENDPOINTS, effective_endpoint
+from trusted_router.provider_lifecycle import (
+    FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT,
+    ProviderPrice,
+    provider_price_microdollars,
+    provider_pricing_schedule,
+)
 
 
 def _price() -> ModelPrice:
@@ -14,6 +22,57 @@ def _price() -> ModelPrice:
         completion_micro_per_m=2_000_000,
         prompt_cached_micro_per_m=100_000,
     )
+
+
+def test_fireworks_dsv4_flash_announced_cutover_is_exact() -> None:
+    model_id = "deepseek/deepseek-v4-flash-0731"
+
+    assert provider_price_microdollars(
+        "fireworks",
+        model_id,
+        at=FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT - timedelta(seconds=1),
+    ) == ProviderPrice(140_000, 280_000, 28_000)
+    assert provider_price_microdollars(
+        "fireworks",
+        model_id,
+        at=FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT,
+    ) == ProviderPrice(220_000, 660_000, 7_000)
+
+
+def test_fireworks_dsv4_flash_cutover_applies_markup_and_cache_floor() -> None:
+    endpoint = MODEL_ENDPOINTS[
+        "deepseek/deepseek-v4-flash-0731@fireworks/prepaid"
+    ]
+
+    before = effective_endpoint(
+        endpoint,
+        at=datetime(2026, 8, 22, 11, 59, 59, tzinfo=UTC),
+    )
+    after = effective_endpoint(
+        endpoint,
+        at=datetime(2026, 8, 22, 12, 0, tzinfo=UTC),
+    )
+
+    assert before.prompt_price_microdollars_per_million_tokens == 147_700
+    assert before.completion_price_microdollars_per_million_tokens == 295_400
+    assert before.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 29_540
+    assert after.prompt_price_microdollars_per_million_tokens == 232_100
+    assert after.completion_price_microdollars_per_million_tokens == 696_300
+    assert after.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 10_000
+
+
+def test_fireworks_dsv4_flash_schedule_is_public_and_authorization_locked() -> None:
+    assert provider_pricing_schedule(
+        "fireworks",
+        "deepseek/deepseek-v4-flash-0731",
+        at=datetime(2026, 8, 22, 12, 0, tzinfo=UTC),
+    ) == {
+        "kind": "fixed_cutover",
+        "timezone": "UTC",
+        "effective_at": "2026-08-22T12:00:00Z",
+        "current_period": "new",
+        "rate_locked_at": "authorization",
+    }
 
 
 def test_fireworks_fetch_intersects_prices_with_operator_catalog(
@@ -45,6 +104,49 @@ def test_fireworks_fetch_intersects_prices_with_operator_catalog(
 
     assert set(result.prices) == set(fireworks.EXPECTED_MODELS)
     assert any("kimi-k2.7-code" in note for note in result.notes)
+
+
+def test_fireworks_dated_flash_uses_live_native_id_and_family_price(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    dated_model = "deepseek/deepseek-v4-flash-0731"
+    native_id = "accounts/fireworks/models/deepseek-v4-flash-0731"
+    captured: dict[str, object] = {}
+    priced_ids = {*fireworks.EXPECTED_MODELS, dated_model}
+    monkeypatch.setenv("FIREWORKS_API_KEY", "test-key")
+    monkeypatch.setattr(fireworks, "UPSTREAM_ID_MAP", dict(fireworks.UPSTREAM_ID_MAP))
+
+    def fake_fetch_provider(**kwargs: object) -> ProviderPricingResult:
+        captured.update(kwargs)
+        return ProviderPricingResult(
+            slug="fireworks",
+            prices={model_id: _price() for model_id in priced_ids},
+            source="deterministic",
+        )
+
+    monkeypatch.setattr(fireworks, "fetch_provider", fake_fetch_provider)
+    live_rows = [
+        {"id": fireworks.UPSTREAM_ID_MAP[model_id]}
+        for model_id in fireworks.EXPECTED_MODELS
+        if model_id not in fireworks.VERIFIED_PRICED_LAUNCH_MODELS
+    ]
+    live_rows.append({"id": native_id})
+    monkeypatch.setattr(
+        fireworks,
+        "fetch_json",
+        lambda *_args, **_kwargs: {"data": live_rows},
+    )
+
+    result = fireworks.fetch()
+
+    aliases = captured["required_model_price_aliases"]
+    assert isinstance(aliases, dict)
+    assert aliases[dated_model] == "deepseek/deepseek-v4-flash"
+    required_models = captured["required_models"]
+    assert isinstance(required_models, frozenset)
+    assert dated_model in required_models
+    assert fireworks.UPSTREAM_ID_MAP[dated_model] == native_id
+    assert dated_model in result.prices
 
 
 def test_fireworks_parser_reads_kimi_k3_standard_pricing() -> None:

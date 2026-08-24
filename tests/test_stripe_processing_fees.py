@@ -40,6 +40,34 @@ def test_stablecoin_fee_grosses_up_principal_without_fixed_fee() -> None:
     assert fee.estimated_processor_cost_cents() <= fee.processing_fee_cents
 
 
+def test_card_purchase_fee_honors_eighty_cent_floor() -> None:
+    fee = stripe_processing_fee(
+        credit_amount_cents=300,
+        variable_basis_points=290,
+        fixed_fee_cents=30,
+        minimum_fee_cents=80,
+    )
+
+    assert fee.credit_amount_cents == 300
+    assert fee.processing_fee_cents == 80
+    assert fee.charge_amount_cents == 380
+    assert fee.estimated_processor_cost_cents() <= fee.processing_fee_cents
+    assert fee.metadata(workspace_id="ws_test", payment_method="card")[
+        "fee_minimum_cents"
+    ] == "80"
+
+
+def test_processing_fee_rejects_minimum_above_cap() -> None:
+    with pytest.raises(ValueError, match="minimum_fee_cents cannot exceed"):
+        stripe_processing_fee(
+            credit_amount_cents=300,
+            variable_basis_points=80,
+            fixed_fee_cents=0,
+            minimum_fee_cents=80,
+            max_fee_cents=50,
+        )
+
+
 def test_ach_fee_is_integer_only_and_caps_at_five_dollars() -> None:
     small = stripe_processing_fee(
         credit_amount_cents=2_500,
@@ -63,7 +91,7 @@ def test_ach_fee_is_integer_only_and_caps_at_five_dollars() -> None:
 
 
 @given(
-    credit_amount_cents=st.integers(min_value=100, max_value=1_000_000),
+    credit_amount_cents=st.integers(min_value=1, max_value=1_000_000),
     variable_basis_points=st.integers(min_value=0, max_value=900),
     fixed_fee_cents=st.integers(min_value=0, max_value=100),
 )
@@ -86,6 +114,40 @@ def test_processing_fee_is_minimal_and_always_preserves_principal(
             lower_charge * variable_basis_points + 9_999
         ) // 10_000 + fixed_fee_cents
         assert lower_charge - lower_cost < credit_amount_cents
+
+
+@given(
+    credit_amount_cents=st.integers(min_value=1, max_value=1_000_000),
+    variable_basis_points=st.integers(min_value=0, max_value=900),
+    fixed_fee_cents=st.integers(min_value=0, max_value=100),
+    minimum_fee_cents=st.integers(min_value=0, max_value=200),
+)
+def test_processing_fee_floor_is_exact_and_preserves_principal(
+    credit_amount_cents: int,
+    variable_basis_points: int,
+    fixed_fee_cents: int,
+    minimum_fee_cents: int,
+) -> None:
+    without_floor = stripe_processing_fee(
+        credit_amount_cents=credit_amount_cents,
+        variable_basis_points=variable_basis_points,
+        fixed_fee_cents=fixed_fee_cents,
+    )
+    with_floor = stripe_processing_fee(
+        credit_amount_cents=credit_amount_cents,
+        variable_basis_points=variable_basis_points,
+        fixed_fee_cents=fixed_fee_cents,
+        minimum_fee_cents=minimum_fee_cents,
+    )
+
+    assert with_floor.processing_fee_cents == max(
+        without_floor.processing_fee_cents,
+        minimum_fee_cents,
+    )
+    assert with_floor.charge_amount_cents == (
+        credit_amount_cents + with_floor.processing_fee_cents
+    )
+    assert with_floor.estimated_processor_cost_cents() <= with_floor.processing_fee_cents
 
 
 def test_checkout_rejects_subcent_credit_amount() -> None:
@@ -135,6 +197,106 @@ def test_card_checkout_uses_separate_credit_and_processing_fee_line_items(
     assert data["amount_microdollars"] == 25_000_000
     assert data["processing_fee_microdollars"] == 1_060_000
     assert data["total_microdollars"] == 26_060_000
+
+
+def test_small_card_checkout_applies_fee_floor(
+    monkeypatch,
+    user_headers: dict[str, str],
+) -> None:
+    app = create_app(
+        Settings(environment="test", stripe_secret_key="sk_test_floor"),  # noqa: S106
+        init_observability=False,
+    )
+    captured: dict[str, Any] = {}
+
+    def create_session(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"id": "cs_floor", "url": "https://checkout.stripe.test/floor"}
+
+    monkeypatch.setattr(
+        "trusted_router.services.stripe_billing.stripe.checkout.Session.create",
+        create_session,
+    )
+
+    with TestClient(app) as local_client:
+        response = local_client.post(
+            "/v1/billing/checkout",
+            headers=user_headers,
+            json={"amount": 3, "payment_method": "card"},
+        )
+
+    assert response.status_code == 201, response.text
+    assert [item["price_data"]["unit_amount"] for item in captured["line_items"]] == [
+        300,
+        80,
+    ]
+    assert captured["metadata"]["fee_minimum_cents"] == "80"
+    assert response.json()["data"]["processing_fee_microdollars"] == 800_000
+
+
+def test_small_stablecoin_checkout_keeps_lower_rail_fee(
+    monkeypatch,
+    user_headers: dict[str, str],
+) -> None:
+    app = create_app(
+        Settings(environment="test", stripe_secret_key="sk_test_crypto_floor"),  # noqa: S106
+        init_observability=False,
+    )
+    captured: dict[str, Any] = {}
+
+    def create_session(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"id": "cs_crypto_floor", "url": "https://checkout.stripe.test/crypto"}
+
+    monkeypatch.setattr(
+        "trusted_router.services.stripe_billing.stripe.checkout.Session.create",
+        create_session,
+    )
+
+    with TestClient(app) as local_client:
+        response = local_client.post(
+            "/v1/billing/checkout",
+            headers=user_headers,
+            json={"amount": 3, "payment_method": "stablecoin"},
+        )
+
+    assert response.status_code == 201, response.text
+    assert [item["price_data"]["unit_amount"] for item in captured["line_items"]] == [
+        300,
+        5,
+    ]
+    assert captured["metadata"]["fee_minimum_cents"] == "0"
+
+
+def test_explicit_card_checkout_saves_only_a_reusable_card(
+    monkeypatch,
+    user_headers: dict[str, str],
+) -> None:
+    app = create_app(
+        Settings(environment="test", stripe_secret_key="sk_test_card_only"),  # noqa: S106
+        init_observability=False,
+    )
+    captured: dict[str, Any] = {}
+
+    def create_session(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"id": "cs_card_only", "url": "https://checkout.stripe.test/card"}
+
+    monkeypatch.setattr(
+        "trusted_router.services.stripe_billing.stripe.checkout.Session.create",
+        create_session,
+    )
+
+    with TestClient(app) as local_client:
+        response = local_client.post(
+            "/v1/billing/checkout",
+            headers=user_headers,
+            json={"amount": 20, "payment_method": "card"},
+        )
+
+    assert response.status_code == 201, response.text
+    assert captured["payment_method_types"] == ["card"]
+    assert captured["payment_intent_data"]["setup_future_usage"] == "off_session"
 
 
 def test_stablecoin_checkout_uses_stablecoin_fee_schedule(

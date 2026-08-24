@@ -4,6 +4,13 @@ Companion to `README.md`. One question: **how analytics rows get from the
 control plane into ClickHouse** at 1T tokens/month within ~2 months and 100T
 soon after.
 
+> **Implementation update, 2026-07-31:** the durable Spanner outbox, a
+> three-zone replicated ClickHouse cluster, verified Parquet archives, and
+> recomputed hour/day/month rollups are live. See
+> [`../clickhouse-reliability.md`](../clickhouse-reliability.md) for current
+> topology and operations. This document preserves the design analysis and
+> historical staging plan.
+
 > **Revision history.** v1 of this document proposed a Bigtable high-water-mark
 > replay feeding an additive materialized view, justified by a
 > `parts/s = N/T` argument. An adversarial review found that design cannot

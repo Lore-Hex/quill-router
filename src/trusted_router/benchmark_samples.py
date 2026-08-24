@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from trusted_router.catalog import providers_for_display
+from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, providers_for_display
 from trusted_router.storage import STORE
 from trusted_router.storage_models import ProviderBenchmarkSample
 
@@ -32,6 +32,11 @@ def _after_cutoff(sample: ProviderBenchmarkSample, cutoff: str | None) -> bool:
     return cutoff is None or sample.created_at >= cutoff
 
 
+def _is_video_sample(sample: ProviderBenchmarkSample) -> bool:
+    model = MODELS.get(sample.model)
+    return sample.route_type == "videos" or bool(model and model.supports_video)
+
+
 def public_benchmark_samples(
     *,
     limit: int,
@@ -46,9 +51,21 @@ def public_benchmark_samples(
     provider_slugs = [provider.slug for provider in providers_for_display()]
     if not provider_slugs:
         rows = STORE.provider_benchmark_samples(date=None, limit=limit)
-        return [sample for sample in rows if _after_cutoff(sample, cutoff)]
+        return [
+            sample
+            for sample in rows
+            if _after_cutoff(sample, cutoff) and not _is_video_sample(sample)
+        ]
 
     per_provider = per_provider_limit or max(25, -(-limit // len(provider_slugs)))
+    balanced_reader = getattr(STORE, "provider_balanced_benchmark_samples", None)
+    if callable(balanced_reader):
+        rows = balanced_reader(
+            cutoff=cutoff,
+            per_provider_limit=per_provider,
+            limit=limit,
+        )
+        return [sample for sample in rows if not _is_video_sample(sample)][:limit]
     by_id: dict[str, ProviderBenchmarkSample] = {}
     for provider in provider_slugs:
         for sample in STORE.provider_benchmark_samples(
@@ -56,14 +73,47 @@ def public_benchmark_samples(
             provider=provider,
             limit=per_provider,
         ):
-            if _after_cutoff(sample, cutoff):
+            if _after_cutoff(sample, cutoff) and not _is_video_sample(sample):
                 by_id[sample.id] = sample
 
     # Include a small global tail so an uncataloged provider name from organic
     # traffic is still visible, without allowing it to dominate the page.
     for sample in STORE.provider_benchmark_samples(date=None, limit=per_provider):
-        if _after_cutoff(sample, cutoff):
+        if _after_cutoff(sample, cutoff) and not _is_video_sample(sample):
             by_id[sample.id] = sample
 
     samples = sorted(by_id.values(), key=lambda sample: sample.created_at, reverse=True)
     return samples[:limit]
+
+
+def public_video_benchmark_samples(
+    *,
+    limit: int,
+    recent_minutes: int | None = None,
+    now: dt.datetime | None = None,
+) -> list[ProviderBenchmarkSample]:
+    """Return a bounded provider-balanced window containing only video jobs."""
+    if limit <= 0:
+        return []
+    cutoff = _cutoff_iso(recent_minutes=recent_minutes, now=now)
+    providers = sorted(
+        {
+            endpoint.provider
+            for endpoint in MODEL_ENDPOINTS.values()
+            if endpoint.catalog_is_current()
+            and (model := MODELS.get(endpoint.model_id)) is not None
+            and model.supports_video
+        }
+    )
+    per_provider = max(50, -(-limit // max(len(providers), 1)))
+    by_id: dict[str, ProviderBenchmarkSample] = {}
+    for provider in providers:
+        for sample in STORE.provider_benchmark_samples(
+            date=None, provider=provider, limit=per_provider
+        ):
+            if _after_cutoff(sample, cutoff) and _is_video_sample(sample):
+                by_id[sample.id] = sample
+    for sample in STORE.provider_benchmark_samples(date=None, limit=per_provider):
+        if _after_cutoff(sample, cutoff) and _is_video_sample(sample):
+            by_id[sample.id] = sample
+    return sorted(by_id.values(), key=lambda sample: sample.created_at, reverse=True)[:limit]

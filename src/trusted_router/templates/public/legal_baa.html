@@ -29,7 +29,7 @@
         <tr><th>Authorized signatory</th><td>{{ entity.signatory_name }}, {{ entity.signatory_title }}, signing as officer of {{ entity.name }}.</td></tr>
         <tr><th>Security contact</th><td><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a>.</td></tr>
         <tr><th>Permitted uses</th><td>Provide hosted AI routing, authentication, billing, provider routing, security monitoring, support, and customer-configured observability for the covered service. Content export for PHI requires written approval before activation.</td></tr>
-        <tr><th>Prohibited uses</th><td>No use or disclosure of PHI except as permitted by the signed BAA, required by law, or instructed by customer. TrustedRouter never logs or persists prompt/output content.</td></tr>
+        <tr><th>Prohibited uses</th><td>No use or disclosure of PHI except as permitted by the signed BAA, required by law, or instructed by customer. TrustedRouter never logs prompt/output content, and ordinary synchronous and streaming inference does not persist it. The opt-in Batch API is excluded unless a signed BAA amendment expressly approves its encrypted retention mode.</td></tr>
         <tr><th>Safeguards</th><td>Administrative, physical, and technical safeguards appropriate to the service, including attested gateway isolation, encrypted transport, access controls, key hashing, BYOK encryption, and prompt-content logging prohibitions.</td></tr>
         <tr><th>Subcontractors</th><td>Subcontractors that may access PHI must be approved for PHI workloads in the signed BAA or route policy and bound to equivalent restrictions. Default PHI routing starts with <span class="mono">trustedrouter/zdr</span>, not broad automatic fallback.</td></tr>
         <tr><th>Reporting</th><td>TrustedRouter will report confirmed unauthorized use or disclosure of PHI and security incidents as required by the signed BAA.</td></tr>
@@ -44,7 +44,7 @@
 <section class="limitation-band">
   <span class="pill warn">Required before PHI</span>
   <div>
-    <p>Before PHI traffic: execute BAA signed by {{ entity.signatory_name }}, {{ entity.signatory_title }}, approve subprocessors, restrict routing to approved ZDR or confidential providers, disable content export unless separately approved in writing, and verify the gateway at <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a>.</p>
+    <p>Before PHI traffic: execute BAA signed by {{ entity.signatory_name }}, {{ entity.signatory_title }}, approve subprocessors, restrict routing to approved ZDR or confidential providers, disable content export, do not use Batch unless a signed amendment expressly permits it, and verify the gateway at <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a>.</p>
   </div>
 </section>
 {% endblock %}

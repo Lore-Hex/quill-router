@@ -1,16 +1,10 @@
 """HTTP middleware shared across the FastAPI app.
 
-HTTP middleware registers in order from outermost to innermost:
-  1. request_id  — mints/accepts a per-request id, echoes in response
-                   header, makes it available as request.state.request_id.
-  2. canonical_public_host — keeps marketing URLs off www/status aliases.
-  3. public_pageview — captures signed first-party attribution and emits
-                       metadata-only public pageview events.
-  4. rate_limit  — enforces process-local limits for anonymous safe reads and
-                   shared per-(key|ip|internal-token) limits for other traffic;
-                   logs structured 429s with the request_id from (1).
-  5. security_headers — sets HSTS so browsers remember to skip http://
-                        on subsequent visits.
+HTTP middleware executes from outermost to innermost as security headers,
+trusted-source rate admission, read-only mode, narrow OAuth CORS, public
+pageview accounting, canonical-host redirects, request-id handling, request
+body admission, and response gzip. Route authentication adds one validated
+credential bucket after that source admission.
 
 Starlette's GZipMiddleware wraps compressible responses larger than 1 KiB.
 It explicitly excludes ``text/event-stream``, so inference streaming remains
@@ -24,15 +18,17 @@ it could be reused by other ASGI services in the same project.
 from __future__ import annotations
 
 import logging
+import secrets
 import threading
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from hashlib import sha256
+from contextvars import ContextVar
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.gzip import GZipMiddleware
 
 from trusted_router.acquisition import (
@@ -42,10 +38,26 @@ from trusted_router.acquisition import (
     set_attribution_cookie,
 )
 from trusted_router.auth import get_authorization_bearer
-from trusted_router.config import Settings
+from trusted_router.config import Settings, parse_settlement_inbound_tokens
+from trusted_router.domains import (
+    control_domain_for_hostname,
+    is_status_hostname,
+    is_www_hostname,
+    request_hostname,
+)
 from trusted_router.errors import error_response
-from trusted_router.storage import STORE
-from trusted_router.storage_models import RateLimitHit
+from trusted_router.markdown_negotiation import MarkdownNegotiationMiddleware
+from trusted_router.request_body_limit import (
+    RequestBodyLimitMiddleware,
+    UnreadRequestBodyCloseMiddleware,
+)
+from trusted_router.request_limits import (
+    AUTHENTICATED_LIMITER_STATE,
+    fingerprint_subject,
+    normalized_client_identity,
+    rate_limit_headers,
+)
+from trusted_router.security import constant_time_equal
 from trusted_router.storage_rate_limits import InMemoryRateLimits
 from trusted_router.types import ErrorType
 
@@ -75,19 +87,67 @@ STATUS_HOST_EXACT_PATHS = frozenset(
     }
 )
 STATUS_HOST_PATH_PREFIXES = ("/static/", "/status/")
+COOKIE_FREE_PUBLIC_ANALYTICS_PATHS = frozenset(
+    {
+        "/leaderboard",
+        "/leaderboard/video",
+        "/leaderboard/video.json",
+        "/status",
+        "/status.json",
+        "/status/history",
+    }
+)
 
 
 def register_http_middleware(app: FastAPI, settings: Settings) -> None:
     """Wire all HTTP middlewares onto `app` in the right order.
 
-    Starlette wraps middleware in reverse-add order: the FIRST one
-    registered runs first on the way in (outermost wrap). We want
-    request_id to mint the id before pageview/rate-limit logs use it,
-    so request_id is registered first.
+    Starlette prepends each newly registered middleware, so the final
+    registration is the outermost wrapper.
     """
 
+    # Registered BEFORE GZipMiddleware on purpose. Starlette prepends, so the
+    # later registration is the outer wrapper: gzip ends up outside this, sees
+    # the markdown body, and compresses that. Register it after gzip and this
+    # would be handed already-compressed bytes.
+    #
+    # It is a raw ASGI class rather than an @app.middleware("http") function.
+    # BaseHTTPMiddleware, which that decorator uses, converts every response
+    # into a streaming one -- including the ones this passes through untouched
+    # -- which pushed GZipMiddleware onto its chunked branch and dropped
+    # Content-Length from every static asset. See the class docstring.
+    app.add_middleware(MarkdownNegotiationMiddleware)
+
     app.add_middleware(GZipMiddleware, minimum_size=1_000, compresslevel=6)
-    public_read_rate_limits = InMemoryRateLimits(lock=threading.RLock())
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_bytes=settings.max_request_body_bytes,
+        max_in_flight_bytes=settings.max_in_flight_request_body_bytes,
+        max_concurrent_bodies=settings.max_concurrent_request_bodies,
+        read_timeout_seconds=settings.request_body_read_timeout_seconds,
+    )
+    ingress_rate_limits = InMemoryRateLimits(lock=threading.RLock())
+    federation_settlement_tokens = tuple(
+        parse_settlement_inbound_tokens(settings.federation_settlement_inbound_tokens)
+    )
+    # Authenticated buckets are intentionally process-local. Fleet-wide source
+    # control belongs at the trusted front door; keeping counters out of
+    # Spanner prevents the limiter from becoming a transactional hot row.
+    setattr(
+        app.state,
+        AUTHENTICATED_LIMITER_STATE,
+        InMemoryRateLimits(lock=threading.RLock()),
+    )
+
+    @app.middleware("http")
+    async def internal_auth_before_body_middleware(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        denied = _internal_auth_before_body(request, settings)
+        if denied is not None:
+            return denied
+        return await call_next(request)
 
     @app.middleware("http")
     async def request_id_middleware(
@@ -127,16 +187,16 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         Redirecting those escaped paths prevents duplicate pages and
         status-host 404s without changing the status API or static assets.
         """
-        hostname = request.headers.get("host", "").split(":", 1)[0].lower()
+        hostname = request_hostname(request)
         path = request.url.path
-        if hostname == f"www.{settings.trusted_domain}":
+        if is_www_hostname(settings, hostname):
             return RedirectResponse(
-                url=_canonical_public_url(settings, request),
+                url=_apex_public_url(settings, request, hostname),
                 status_code=308,
             )
-        if hostname == f"status.{settings.trusted_domain}" and not _status_host_path(path):
+        if is_status_hostname(settings, hostname) and not _status_host_path(path):
             return RedirectResponse(
-                url=_canonical_public_url(settings, request),
+                url=_apex_public_url(settings, request, hostname),
                 status_code=308,
             )
         return await call_next(request)
@@ -146,7 +206,16 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        attribution, attribution_changed = prepare_request_attribution(request, settings)
+        if is_status_hostname(
+            settings, request_hostname(request)
+        ) or _cookie_free_public_analytics_path(request.url.path):
+            # Public operational analytics are not acquisition pages. Keeping
+            # them cookie-free also lets Cloud CDN cache one shared response
+            # instead of forcing an origin request for every anonymous viewer.
+            request.state.acquisition_attribution = None
+            attribution, attribution_changed = None, False
+        else:
+            attribution, attribution_changed = prepare_request_attribution(request, settings)
         start = time.perf_counter()
         response = await call_next(request)
         if attribution is not None and attribution_changed:
@@ -231,24 +300,14 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        # Read-only mode bypasses rate-limiting entirely: STORE.hit_rate_limit
-        # writes to the Spanner rate_limit table on every request (it's a
-        # windowed-counter increment), and during a Stage-1 cutover we
-        # need ALL writes silent so the snapshot we exported on the
-        # source matches the snapshot we imported on nam6. Without this
-        # bypass GETs continue rate-limit-writing through the read-only
-        # window — we observed ~9 rate_limit rows landing on source after
-        # Phase B during the 2026-05-10 cutover, missed by Phase A's
-        # export. Skipping the limiter for the cutover window is safe
-        # because the window is short (~30min) and traffic is bounded by
-        # LB capacity anyway; rate limits resume the moment Phase E
-        # drops the flag.
-        if settings.read_only:
-            return await call_next(request)
-        limited = _rate_limit_request(
+        # Admission is process-local and performs no storage writes, so it can
+        # remain active during a Spanner read-only cutover. This closes the old
+        # maintenance-window bypass without changing the write-block response.
+        limited = await _rate_limit_request(
             request,
             settings,
-            public_read_rate_limits=public_read_rate_limits,
+            ingress_rate_limits=ingress_rate_limits,
+            federation_settlement_tokens=federation_settlement_tokens,
         )
         if limited is not None:
             return limited
@@ -267,92 +326,229 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         `docs`...) inherit the guarantee. Set conservatively — no
         `preload` directive yet because submitting to the Chrome
         preload list is a one-way commitment."""
-        response = await call_next(request)
+        nonce = secrets.token_urlsafe(16)
+        token = _CSP_NONCE.set(nonce)
+        try:
+            response = await call_next(request)
+        finally:
+            _CSP_NONCE.reset(token)
         response.headers.setdefault(
             "strict-transport-security",
             "max-age=63072000; includeSubDomains",
         )
+        # Cheap, universal, and safe on every response including JSON.
+        response.headers.setdefault("x-content-type-options", "nosniff")
+        response.headers.setdefault("referrer-policy", "strict-origin-when-cross-origin")
+        # SAMEORIGIN, not DENY: /choose embeds /static/choose-app.html in a
+        # same-origin iframe, and DENY would blank it. SAMEORIGIN still blocks
+        # the clickjacking case, which is a THIRD party framing a page where
+        # somebody is creating an API key.
+        response.headers.setdefault("x-frame-options", "SAMEORIGIN")
+        if response.headers.get("content-type", "").startswith("text/html"):
+            # REPORT-ONLY on purpose. 14 templates carry inline <script> and 27
+            # carry inline style=, so an enforcing policy would have to ship
+            # with 'unsafe-inline' (which buys almost nothing) or with nonces
+            # threaded through every template (which is the real fix and a
+            # separate change). Report-only breaks nothing while the violation
+            # list is gathered.
+            #
+            # It has NO report-uri, so nothing collects these automatically:
+            # they appear in the browser console and nowhere else. That is a
+            # deliberate first step, not a monitoring claim -- see the PR.
+            # REPORT-ONLY first, deliberately. The nonces are already correct
+            # (verified in a browser under enforcement on /, /choose, /docs and
+            # /chat), but /console/* needs a session and the Adyen checkout page
+            # loads a third-party SDK that injects its own iframes -- neither
+            # was exercised. Report-only lets real traffic prove those paths
+            # before a blocked script can break a money path. Flip this to
+            # "content-security-policy" once the violation reports are clean.
+            response.headers.setdefault(
+                "content-security-policy-report-only",
+                content_security_policy(nonce),
+            )
         return response
+
+    # Registered last, therefore outermost in Starlette. It never rejects or
+    # admits a request itself: the source limiter still counts framing errors.
+    # It only prevents early auth/rate/read-only/404 responses from leaving an
+    # unread request body on a reusable HTTP/1 backend connection.
+    app.add_middleware(UnreadRequestBodyCloseMiddleware)
+
+
+#: Per-request CSP nonce. A ContextVar rather than a template global because
+#: both Jinja environments are ``lru_cache``d and therefore shared across
+#: requests -- a nonce stored on the env would be reused, which is exactly as
+#: good as no nonce at all.
+_CSP_NONCE: ContextVar[str] = ContextVar("csp_nonce", default="")
+
+
+def current_csp_nonce() -> str:
+    """The nonce for the request being rendered, or "" outside a request.
+
+    Registered as the ``csp_nonce`` template global. Empty outside a request
+    so template rendering in tests and scripts does not explode; an empty
+    nonce attribute simply fails the policy rather than silently passing it.
+    """
+    return _CSP_NONCE.get()
+
+
+#: The policy the site would have to satisfy before CSP can be enforced.
+#: Derived from what the templates actually reference today (jsdelivr for a
+#: couple of scripts, the trust and status subdomains, GitHub links), not from
+#: a generic template -- a policy nobody measured is one that gets switched to
+#: report-only forever.
+#: Script origins the templates actually load today: our own static files,
+#: four jsdelivr libraries, and Adyen's checkout SDK on the credits page.
+CSP_SCRIPT_ORIGINS = (
+    "https://cdn.jsdelivr.net",
+    "https://checkoutshopper-live.cdn.adyen.com",
+    "https://checkoutshopper-test.cdn.adyen.com",
+)
+
+
+def content_security_policy(nonce: str) -> str:
+    """Build the policy for one request.
+
+    ``script-src`` carries a nonce, which makes browsers IGNORE any
+    ``'unsafe-inline'`` there -- that is the whole point, and why every inline
+    <script> in the templates now carries ``nonce="{{ csp_nonce() }}"``.
+
+    ``style-src`` keeps ``'unsafe-inline'`` and is not a mistake: a nonce
+    cannot authorise an inline ``style="..."`` ATTRIBUTE, only a <style>
+    block, and 27 templates use style attributes. Removing them is a real
+    change with no security payoff next to script-src, so it is not bundled
+    here. Said plainly rather than left looking like an oversight.
+    """
+    return "; ".join(
+        (
+            "default-src 'self'",
+            f"script-src 'self' 'nonce-{nonce}' " + " ".join(CSP_SCRIPT_ORIGINS),
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+            "img-src 'self' data: https:",
+            "font-src 'self' data: https://cdn.jsdelivr.net",
+            "connect-src 'self' https://api.trustedrouter.com "
+            "https://trust.trustedrouter.com https://status.trustedrouter.com",
+            "frame-src 'self' https://checkoutshopper-live.cdn.adyen.com "
+            "https://checkoutshopper-test.cdn.adyen.com",
+            "frame-ancestors 'self'",
+            "base-uri 'self'",
+            "form-action 'self'",
+            "object-src 'none'",
+        )
+    )
 
 
 def _status_host_path(path: str) -> bool:
     return path in STATUS_HOST_EXACT_PATHS or path.startswith(STATUS_HOST_PATH_PREFIXES)
 
 
-def _canonical_public_url(settings: Settings, request: Request) -> str:
+def _internal_auth_before_body(
+    request: Request,
+    settings: Settings,
+) -> JSONResponse | None:
+    """Authenticate split internal surfaces before FastAPI parses a body."""
+    if settings.service_surface not in {"internal", "observer"}:
+        return None
+    path = request.url.path
+    if path.startswith("/v1/internal/"):
+        path = path.removeprefix("/v1")
+    if not path.startswith("/internal/"):
+        return None
+
+    # Imports remain local so ordinary public/control processes never import
+    # billing/federation route modules just to install generic middleware.
+    from trusted_router.routes.internal._shared import require_internal_gateway
+    from trusted_router.routes.internal.federation import (
+        require_federation_credit_peer,
+        require_federation_peer,
+        require_federation_settlement_peer,
+    )
+
+    try:
+        if path == "/internal/federation/resolve-key":
+            require_federation_peer(request, settings)
+        elif path == "/internal/federation/apply-usage":
+            require_federation_settlement_peer(request, settings)
+        elif path == "/internal/federation/credit-transfer":
+            require_federation_credit_peer(request, settings)
+        else:
+            require_internal_gateway(request, settings)
+    except StarletteHTTPException as exc:
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(
+                exc.detail,
+                status_code=exc.status_code,
+                headers=exc.headers,
+            )
+        return error_response(
+            exc.status_code,
+            str(exc.detail),
+            ErrorType.HTTP_ERROR,
+        )
+    return None
+
+
+def _cookie_free_public_analytics_path(path: str) -> bool:
+    return path in COOKIE_FREE_PUBLIC_ANALYTICS_PATHS
+
+
+def _apex_public_url(settings: Settings, request: Request, hostname: str) -> str:
     query = request.url.query
     suffix = f"?{query}" if query else ""
-    return f"https://{settings.trusted_domain}{request.url.path}{suffix}"
+    domain = control_domain_for_hostname(settings, hostname)
+    return f"https://{domain}{request.url.path}{suffix}"
 
 
-def _rate_limit_request(
+async def _rate_limit_request(
     request: Request,
     settings: Settings,
     *,
-    public_read_rate_limits: InMemoryRateLimits,
+    ingress_rate_limits: InMemoryRateLimits,
+    federation_settlement_tokens: tuple[str, ...],
 ) -> JSONResponse | None:
     if not settings.rate_limit_enabled:
         return None
     path = request.url.path
-    if path in {"/health", "/v1/health", "/ready", "/v1/ready"} or path.startswith(
-        ("/docs", "/openapi.json")
-    ):
-        return None
 
     bearer = get_authorization_bearer(request)
     internal_token = request.headers.get("x-trustedrouter-internal-token")
-    user = request.headers.get("x-trustedrouter-user")
-    ip = _client_ip(request)
-    # Public catalog and marketing reads are cacheable. A durable
-    # read-modify-write counter here turns one crawler into a single-row
-    # Spanner hotspot before the application can return the page. Use a
-    # process-local guard for safe anonymous reads; authenticated, internal,
-    # and state-changing requests remain on the shared application limiter.
-    public_read = (
-        request.method.upper() in {"GET", "HEAD", "OPTIONS"}
-        and not bearer
-        and not internal_token
-        and not user
-    )
-    hit_rate_limit: Callable[..., RateLimitHit]
-    if public_read:
-        namespace = "public_ip"
-        subject = _fingerprint(ip)
-        limit = settings.rate_limit_ip_per_window
-        hit_rate_limit = public_read_rate_limits.hit
-    elif path.startswith(("/internal/", "/v1/internal/")):
-        namespace = "internal"
-        subject = _fingerprint(internal_token or bearer or ip)
-        limit = settings.rate_limit_internal_per_window
-        hit_rate_limit = STORE.hit_rate_limit
-    elif bearer:
-        namespace = "key"
-        subject = _fingerprint(bearer)
-        limit = settings.rate_limit_key_per_window
-        hit_rate_limit = STORE.hit_rate_limit
+    source = normalized_client_identity(request, settings)
+    internal_path = path.startswith(("/internal/", "/v1/internal/"))
+    trusted_internal = False
+    if internal_path:
+        trusted_credential = _trusted_internal_credential(
+            request,
+            settings,
+            path=path,
+            bearer=bearer,
+            internal_token=internal_token,
+            federation_settlement_tokens=federation_settlement_tokens,
+        )
+        if trusted_credential is not None:
+            credential_kind, supplied = trusted_credential
+            trusted_internal = True
+            namespace = f"internal_{credential_kind}"
+            subject = fingerprint_subject(f"{credential_kind}:{supplied}")
+            limit = settings.rate_limit_internal_per_window
+        else:
+            namespace = "internal_ip"
+            subject = fingerprint_subject(source)
+            limit = settings.rate_limit_ip_per_window
     else:
         namespace = "ip"
-        subject = _fingerprint(user or ip)
+        subject = fingerprint_subject(source)
         limit = settings.rate_limit_ip_per_window
-        hit_rate_limit = STORE.hit_rate_limit
 
     try:
-        hit = hit_rate_limit(
+        hit = ingress_rate_limits.hit(
             namespace=namespace,
             subject=subject,
             limit=limit,
             window_seconds=settings.rate_limit_window_seconds,
         )
-    except Exception as exc:  # noqa: BLE001 — best-effort guard, must not 500
-        # Rate limiting is a best-effort guard, not core request logic. The
-        # Spanner read-modify-write on the (namespace#subject#bucket) counter
-        # ABORTS under hot-row contention — e.g. a bot bursting junk GETs from
-        # one IP all increment the same row, deadlocking the transaction
-        # ("Aborted: Deadlock with higher priority transaction", observed
-        # 2026-06-08 on scanner traffic). Never crash a request because the
-        # limiter is contended or unavailable: fail OPEN (allow) and log.
+    except Exception as exc:  # noqa: BLE001 - explicit fail policy below
         log.warning(
-            "rate_limit.store_error",
+            "rate_limit.ingress_local_error",
             extra={
                 "request_id": getattr(request.state, "request_id", None),
                 "namespace": namespace,
@@ -360,7 +556,18 @@ def _rate_limit_request(
                 "error": type(exc).__name__,
             },
         )
-        return None
+        if trusted_internal:
+            # The caller already presented the exact configured credential for
+            # this internal route. Preserve internal-path availability if this
+            # local backstop has an implementation failure.
+            return None
+        response = error_response(
+            503,
+            "Request admission is temporarily unavailable",
+            ErrorType.SERVICE_UNAVAILABLE,
+        )
+        response.headers["Retry-After"] = "1"
+        return response
     if hit.allowed:
         return None
     request_id = getattr(request.state, "request_id", None)
@@ -376,27 +583,62 @@ def _rate_limit_request(
         },
     )
     response = error_response(429, "Rate limit exceeded", ErrorType.RATE_LIMITED)
-    response.headers["Retry-After"] = str(hit.retry_after_seconds)
-    response.headers["X-RateLimit-Limit"] = str(hit.limit)
-    response.headers["X-RateLimit-Remaining"] = str(hit.remaining)
-    response.headers["X-RateLimit-Reset"] = hit.reset_at
+    response.headers.update(rate_limit_headers(hit))
     if request_id:
         response.headers.setdefault("X-TrustedRouter-Request-Id", request_id)
     return response
 
 
-def _client_ip(request: Request) -> str:
-    forwarded_for = request.headers.get("x-forwarded-for", "")
-    if forwarded_for:
-        return forwarded_for.split(",", 1)[0].strip()
-    cf_ip = request.headers.get("cf-connecting-ip")
-    if cf_ip:
-        return cf_ip.strip()
-    return request.client.host if request.client else "unknown"
+def _trusted_internal_credential(
+    request: Request,
+    settings: Settings,
+    *,
+    path: str,
+    bearer: str | None,
+    internal_token: str | None,
+    federation_settlement_tokens: tuple[str, ...],
+) -> tuple[str, str] | None:
+    """Match only the credential that the exact internal route accepts.
 
+    This performs no storage or body reads. Caller-supplied values become a
+    limiter subject only after a constant-time match to configured secrets, so
+    rotating guesses cannot mint buckets. Federation credentials stay scoped
+    to their distinct powers instead of gaining a generic internal allowance.
+    """
 
-def _fingerprint(value: str) -> str:
-    return sha256(value.encode("utf-8")).hexdigest()
+    route_path = path[3:] if path.startswith("/v1/") else path
+    if route_path == "/internal/federation/resolve-key":
+        supplied = request.headers.get("x-trustedrouter-federation-token") or ""
+        expected = settings.federation_peer_token
+        if expected and constant_time_equal(supplied, expected):
+            return "federation_peer", supplied
+        return None
+    if route_path == "/internal/federation/apply-usage":
+        supplied = request.headers.get("x-trustedrouter-federation-settlement-token") or ""
+        matched = False
+        for expected in federation_settlement_tokens:
+            matched |= constant_time_equal(supplied, expected)
+        if matched:
+            return "federation_settlement", supplied
+        return None
+    if route_path == "/internal/federation/credit-transfer":
+        supplied = request.headers.get("x-trustedrouter-federation-credit-token") or ""
+        expected = settings.federation_credit_inbound_token
+        if expected and constant_time_equal(supplied, expected):
+            return "federation_credit", supplied
+        return None
+
+    # Credential precedence mirrors require_internal_gateway exactly: bearer
+    # first, then the dedicated header. Observer and billing tokens are
+    # intentionally route-scoped and disjoint, and neither generic token
+    # grants a higher allowance on the three federation routes above.
+    supplied = bearer or internal_token or ""
+    from trusted_router.routes.internal._shared import internal_service_credential
+
+    kind, internal_expected = internal_service_credential(settings, route_path)
+    if internal_expected and constant_time_equal(supplied, internal_expected):
+        return kind, supplied
+    return None
 
 
 def _log_public_page_view(request: Request, response: Response, *, latency_ms: float) -> None:

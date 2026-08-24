@@ -45,6 +45,20 @@ class CreditReshardResult:
     def ready(self) -> bool:
         return not self.reasons
 
+    @property
+    def at_target(self) -> bool:
+        """Whether the ledger is ACTUALLY partitioned at the requested count.
+
+        Deliberately separate from `ready`, which only means "nothing blocks a
+        reshard". Before a reshard the current count differs from the target by
+        definition, so `reshard_credit_account`'s preflight must not require
+        this. Verification after the fact must: a drained, paused, healthy
+        one-shard workspace inspected with a target of 16 is `ready` while still
+        at one shard, and unpausing on `ready` alone would claim a transition
+        that never happened.
+        """
+        return self.current_shard_count == self.target_shard_count
+
 
 def _typed_state(
     store: Any,

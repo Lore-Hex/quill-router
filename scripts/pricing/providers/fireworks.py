@@ -22,6 +22,7 @@ from scripts.pricing.base import (
 )
 from scripts.pricing.model_ids import (
     canonicalize_unqualified_model_id,
+    price_aliases_for_versioned_families,
     remember_upstream_id,
 )
 
@@ -68,6 +69,9 @@ UPSTREAM_ID_MAP["z-ai/glm-5.2-fast"] = "accounts/fireworks/routers/glm-5p2-fast"
 # and only while the first-party pricing page still contains the model.
 VERIFIED_PRICED_LAUNCH_MODELS = frozenset({"moonshotai/kimi-k3"})
 _DISCOVERED_LIVE_MODEL_IDS: set[str] = set()
+_VERSIONED_PRICE_FAMILIES = {
+    "deepseek/deepseek-v4-flash-": "deepseek/deepseek-v4-flash",
+}
 
 
 def _live_model_ids() -> set[str]:
@@ -101,10 +105,16 @@ def fetch() -> ProviderPricingResult:
     global _DISCOVERED_LIVE_MODEL_IDS
 
     live_model_ids = _live_model_ids()
+    price_aliases = price_aliases_for_versioned_families(
+        live_model_ids,
+        _VERSIONED_PRICE_FAMILIES,
+    )
     result = fetch_provider(
         slug=SLUG,
         url=URL,
         expected_models=EXPECTED_MODELS,
+        required_models=frozenset(price_aliases),
+        required_model_price_aliases=price_aliases,
     )
     verified_launch_ids = VERIFIED_PRICED_LAUNCH_MODELS.intersection(result.prices)
     routable_model_ids = live_model_ids | verified_launch_ids

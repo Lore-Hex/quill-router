@@ -4,6 +4,7 @@ import re
 import secrets
 import string
 import threading
+from collections.abc import Callable
 from typing import Any
 
 from trusted_router.storage_models import CustomModel, iso_now
@@ -34,6 +35,7 @@ class InMemoryCustomModels:
         hidden_prompt: str,
         enabled: bool = True,
         slug: str | None = None,
+        other_model_exists: Callable[[str], bool] | None = None,
     ) -> CustomModel:
         with self._lock:
             existing = [
@@ -44,11 +46,13 @@ class InMemoryCustomModels:
             if len(existing) >= CUSTOM_MODEL_LIMIT_PER_USER:
                 raise ValueError("custom_model_limit_exceeded")
             model_id = (
-                self._new_id_locked()
+                self._new_id_locked(other_model_exists)
                 if slug is None
                 else custom_model_id_from_slug(slug)
             )
-            if model_id in self.models:
+            if model_id in self.models or (
+                other_model_exists is not None and other_model_exists(model_id)
+            ):
                 raise ValueError("custom_model_slug_taken")
             model = CustomModel(
                 id=model_id,
@@ -82,19 +86,24 @@ class InMemoryCustomModels:
         *,
         owner_user_id: str,
         patch: dict[str, Any],
+        other_model_exists: Callable[[str], bool] | None = None,
     ) -> CustomModel | None:
+        values = dict(patch)
         with self._lock:
             model = self.models.get(normalize_custom_model_id(model_id))
             if model is None or model.owner_user_id != owner_user_id:
                 return None
             new_id = None
-            if "slug" in patch:
-                new_id = custom_model_id_from_slug(str(patch.pop("slug")))
-                if new_id != model.id and new_id in self.models:
+            if "slug" in values:
+                new_id = custom_model_id_from_slug(str(values.pop("slug")))
+                if new_id != model.id and (
+                    new_id in self.models
+                    or (other_model_exists is not None and other_model_exists(new_id))
+                ):
                     raise ValueError("custom_model_slug_taken")
             for key in ("name", "base_model_id", "hidden_prompt", "enabled"):
-                if key in patch:
-                    setattr(model, key, patch[key])
+                if key in values:
+                    setattr(model, key, values[key])
             if new_id is not None and new_id != model.id:
                 self.models.pop(model.id, None)
                 model.id = new_id
@@ -112,14 +121,19 @@ class InMemoryCustomModels:
             self.models.pop(canonical, None)
             return True
 
-    def _new_id_locked(self) -> str:
+    def _new_id_locked(
+        self,
+        other_model_exists: Callable[[str], bool] | None,
+    ) -> str:
         for _ in range(100):
             suffix = "".join(
                 secrets.choice(CUSTOM_MODEL_ID_CHARS)
                 for _ in range(CUSTOM_MODEL_ID_RANDOM_LENGTH)
             )
             model_id = f"{CUSTOM_MODEL_PREFIX}{suffix}"
-            if model_id not in self.models:
+            if model_id not in self.models and not (
+                other_model_exists is not None and other_model_exists(model_id)
+            ):
                 return model_id
         raise RuntimeError("could not allocate custom model id")
 

@@ -58,6 +58,13 @@ def openai_model_price(row: dict[str, Any]) -> ModelPrice | None:
     )
 
 
+def _supports_text_output(row: dict[str, Any]) -> bool:
+    output_modalities = row.get("output_modalities")
+    if not isinstance(output_modalities, list) or not output_modalities:
+        return True
+    return "text" in {str(item).casefold() for item in output_modalities}
+
+
 def discover_openai_chat_catalog(
     rows: list[dict[str, Any]],
     *,
@@ -65,7 +72,11 @@ def discover_openai_chat_catalog(
     upstream_id_map: dict[str, str],
     include: Callable[[dict[str, Any]], bool] | None = None,
 ) -> tuple[dict[str, ModelPrice], dict[str, dict[str, Any]]]:
-    """Normalize priced text-chat rows while preserving exact upstream IDs."""
+    """Normalize text-chat rows while preserving exact upstream IDs.
+
+    All-zero prices remain in ``discovered`` so manifest writers can disable
+    an existing route immediately, but never enter ``prices`` as billable.
+    """
 
     prices: dict[str, ModelPrice] = {}
     discovered: dict[str, dict[str, Any]] = {}
@@ -75,10 +86,8 @@ def discover_openai_chat_catalog(
             continue
         if include is not None and not include(source):
             continue
-        output_modalities = source.get("output_modalities")
-        if isinstance(output_modalities, list) and output_modalities:
-            if "text" not in {str(item).casefold() for item in output_modalities}:
-                continue
+        if not _supports_text_output(source):
+            continue
         model_id = mapped_or_canonical_model_id(native_id, explicit_map)
         if model_id is None:
             continue
@@ -97,7 +106,9 @@ def discover_openai_chat_catalog(
         if context_length is not None:
             row["context_length"] = context_length
         max_output = positive_int(
-            source.get("max_output_length") or source.get("max_output_tokens")
+            source.get("max_output_length")
+            or source.get("max_output_tokens")
+            or source.get("max_completion_tokens")
         )
         if max_output is not None:
             row["max_output_tokens"] = max_output
@@ -111,31 +122,110 @@ def discover_openai_chat_catalog(
             if isinstance(value, list):
                 row[field] = [str(item) for item in value]
         discovered[model_id] = row
-        prices[model_id] = price
+        if price.prompt_micro_per_m > 0 or price.completion_micro_per_m > 0:
+            prices[model_id] = price
     return prices, discovered
 
 
-def probe_openai_chat(*, base_url: str, api_key: str | None, model: str) -> bool:
+def discover_available_priced_chat_catalog(
+    rows: list[dict[str, Any]],
+    *,
+    prices: dict[str, ModelPrice],
+    explicit_map: dict[str, str],
+    upstream_id_map: dict[str, str],
+    include: Callable[[dict[str, Any]], bool] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Intersect an authenticated model list with independently sourced prices.
+
+    Some first-party catalogs expose availability and capabilities but keep
+    prices on a separate official page. Only the intersection is eligible for
+    publication; availability alone can never create an unpriced route.
+    """
+
+    discovered: dict[str, dict[str, Any]] = {}
+    for source in rows:
+        native_id = source.get("id")
+        if not isinstance(native_id, str) or not native_id.strip():
+            continue
+        if include is not None and not include(source):
+            continue
+        if not _supports_text_output(source):
+            continue
+        model_id = mapped_or_canonical_model_id(native_id, explicit_map)
+        if model_id is None or model_id not in prices:
+            continue
+        remember_upstream_id(upstream_id_map, model_id, native_id)
+        row: dict[str, Any] = {
+            "id": model_id,
+            "upstream_id": native_id,
+            "display_name": str(source.get("name") or native_id),
+            "endpoints": ["chat/completions"],
+        }
+        context_length = positive_int(
+            source.get("context_length") or source.get("max_context_length")
+        )
+        if context_length is not None:
+            row["context_length"] = context_length
+        created = positive_int(source.get("created"))
+        if created is not None:
+            row["created"] = created
+        for field in ("input_modalities", "output_modalities"):
+            value = source.get(field)
+            if isinstance(value, list):
+                row[field] = [str(item) for item in value]
+        discovered[model_id] = row
+    return discovered
+
+
+def probe_openai_chat(
+    *,
+    base_url: str,
+    api_key: str | None,
+    model: str,
+    extra_headers: dict[str, str] | None = None,
+    expected_content: str | None = None,
+    max_tokens: int = 4,
+    max_tokens_field: str = "max_tokens",
+) -> bool:
     """Run a minimal paid-path canary without logging response content."""
 
     if not api_key:
         return False
     try:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": PROVIDER_FETCH_UA,
+        }
+        headers.update(extra_headers or {})
         response = httpx.post(
             f"{base_url.rstrip('/')}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "User-Agent": PROVIDER_FETCH_UA,
-            },
+            headers=headers,
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": "Reply PONG"}],
-                "max_tokens": 4,
+                max_tokens_field: max_tokens,
                 "stream": False,
             },
             timeout=PROVIDER_FETCH_TIMEOUT,
         )
     except httpx.HTTPError:
         return False
-    return response.status_code == 200
+    if response.status_code != 200:
+        return False
+    if expected_content is None:
+        return True
+    try:
+        payload = response.json()
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return False
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        return False
+    content = message.get("content")
+    return isinstance(content, str) and content.strip() == expected_content

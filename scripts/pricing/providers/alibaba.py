@@ -8,7 +8,11 @@ intentionally skipped instead of published at a guessed or zero price.
 
 from __future__ import annotations
 
+import json
 import os
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -17,25 +21,53 @@ from scripts.pricing.base import (
     PROVIDER_FETCH_TRANSPORT_RETRIES,
     PROVIDER_FETCH_UA,
     ModelPrice,
+    PriceTier,
     ProviderPricingResult,
+    guard_manifest_prune,
+    reconcile_manifest_tombstones,
     validate,
 )
 from scripts.pricing.model_ids import remember_upstream_id
+from trusted_router.provider_lifecycle import (
+    ALIBABA_OCTOBER_2026_RETIREMENT_AT,
+    provider_model_retired,
+)
 
 SLUG = "alibaba"
 URL = (
     os.environ.get("ALIBABA_BASE_URL")
     or "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/compatible-mode/v1"
 ) + "/models"
+MANIFEST_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "src"
+    / "trusted_router"
+    / "data"
+    / "provider_models"
+    / "alibaba.json"
+)
 
 EXPECTED_MODELS = [
     "z-ai/glm-5.2",
     "moonshotai/kimi-k2.7-code",
-    "deepseek/deepseek-v4-flash",
+    "deepseek/deepseek-v4-flash-0731",
     "deepseek/deepseek-v4-pro",
+    "qwen/qwen3.7-flash",
     "qwen/qwen3.7-max",
     "qwen/qwen3.7-plus",
 ]
+
+_DEEPSEEK_V4_FLASH_REPLACEMENTS = {
+    "deepseek-v4-flash": "deepseek/deepseek-v4-flash-0731",
+    "deepseek-v4-flash-us": "deepseek/deepseek-v4-flash-0731-us",
+}
+_DEEPSEEK_V4_FLASH_FAMILY = frozenset(
+    {
+        *_DEEPSEEK_V4_FLASH_REPLACEMENTS,
+        "deepseek-v4-flash-0731",
+        "deepseek-v4-flash-0731-us",
+    }
+)
 
 
 def _micro(dollars_per_million: float) -> int:
@@ -57,11 +89,58 @@ def _canonical_model_id(native_id: str) -> str | None:
         return f"qwen/{lowered}"
     if lowered.startswith("minimax-"):
         return f"minimax/{lowered}"
-    return None
+    # Keep every model returned by Alibaba's authenticated OpenAI-compatible
+    # catalog visible to the refresh system. Unknown families are namespaced
+    # to Alibaba and enter the manifest as non-routable ``awaiting-price``
+    # rows until a reviewed price rule exists; they must never be silently
+    # ignored or accidentally exposed as zero-cost routes.
+    if "/" in lowered:
+        return lowered
+    return f"alibaba/{lowered}"
 
 
 def _price(native_id: str) -> ModelPrice | None:
     model = native_id.lower()
+    if model.startswith("qwen3.7-flash"):
+        return ModelPrice(
+            tiers=[
+                PriceTier(
+                    max_prompt_tokens=32_000,
+                    prompt_micro_per_m=_micro(0.03),
+                    completion_micro_per_m=_micro(0.13),
+                    prompt_cached_micro_per_m=_micro(0.006),
+                ),
+                PriceTier(
+                    max_prompt_tokens=256_000,
+                    prompt_micro_per_m=_micro(0.10),
+                    completion_micro_per_m=_micro(0.40),
+                    prompt_cached_micro_per_m=_micro(0.02),
+                ),
+                PriceTier(
+                    max_prompt_tokens=None,
+                    prompt_micro_per_m=_micro(0.20),
+                    completion_micro_per_m=_micro(0.80),
+                    prompt_cached_micro_per_m=_micro(0.04),
+                ),
+            ]
+        )
+    if model.startswith("qwen3.7-plus"):
+        return ModelPrice(
+            tiers=[
+                PriceTier(
+                    max_prompt_tokens=256_000,
+                    prompt_micro_per_m=_micro(0.40),
+                    completion_micro_per_m=_micro(1.60),
+                    prompt_cached_micro_per_m=_micro(0.04),
+                ),
+                PriceTier(
+                    max_prompt_tokens=None,
+                    prompt_micro_per_m=_micro(1.20),
+                    completion_micro_per_m=_micro(4.80),
+                    prompt_cached_micro_per_m=_micro(0.12),
+                ),
+            ]
+        )
     prompt = completion = cached = None
     if model.startswith("glm-5."):
         prompt, completion, cached = 1.40, 4.40, 0.26
@@ -69,14 +148,12 @@ def _price(native_id: str) -> ModelPrice | None:
         prompt, completion, cached = 0.894, 3.713, 0.18
     elif model.startswith("kimi-k2."):
         prompt, completion, cached = 0.574, 3.011, 0.115
-    elif model == "deepseek-v4-flash":
-        prompt, completion, cached = 0.20, 0.40, 0.02
+    elif model in _DEEPSEEK_V4_FLASH_FAMILY:
+        prompt, completion, cached = 0.138, 0.275, 0.028
     elif model == "deepseek-v4-pro":
         prompt, completion, cached = 2.40, 4.80, 0.24
     elif model.startswith("qwen3.7-max"):
         prompt, completion, cached = 2.50, 7.50, 0.25
-    elif model.startswith("qwen3.7-plus"):
-        prompt, completion, cached = 0.40, 1.60, 0.04
     elif model.startswith("qwen3.6-plus"):
         prompt, completion, cached = 0.50, 3.00, 0.05
     elif model.startswith("qwen3.6-flash"):
@@ -147,9 +224,47 @@ def _price(native_id: str) -> ModelPrice | None:
 
 
 UPSTREAM_ID_MAP: dict[str, str] = {}
+_DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
+
+
+def _manifest_row(
+    *,
+    model_id: str,
+    native_id: str,
+    source_row: dict[str, Any],
+) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "id": model_id,
+        "upstream_id": native_id,
+        "display_name": native_id.replace("-", " ").title(),
+        "title": native_id,
+        "model_type": "chat",
+        "endpoints": ["chat/completions"],
+    }
+    created = source_row.get("created")
+    if isinstance(created, int) and not isinstance(created, bool) and created > 0:
+        row["created"] = created
+    if native_id.startswith("qwen3.7-"):
+        row["context_length"] = 1_048_576
+    if native_id.startswith("qwen3.7-flash"):
+        row["input_modalities"] = ["text", "image"]
+        row["output_modalities"] = ["text"]
+    if native_id.startswith("deepseek-v4-flash"):
+        row["context_length"] = 1_000_000
+        row["input_modalities"] = ["text"]
+        row["output_modalities"] = ["text"]
+    replacement = _DEEPSEEK_V4_FLASH_REPLACEMENTS.get(native_id.lower())
+    if replacement is not None:
+        row["retirement_at"] = (
+            ALIBABA_OCTOBER_2026_RETIREMENT_AT.isoformat().replace("+00:00", "Z")
+        )
+        row["replacement_model_id"] = replacement
+    return row
 
 
 def fetch() -> ProviderPricingResult:
+    global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
+
     api_key = (
         os.environ.get("ALIBABA_API_KEY")
         or os.environ.get("DASHSCOPE_API_KEY")
@@ -173,6 +288,7 @@ def fetch() -> ProviderPricingResult:
         rows = []
 
     prices: dict[str, ModelPrice] = {}
+    manifest_rows: dict[str, dict[str, Any]] = {}
     UPSTREAM_ID_MAP.clear()
     for row in rows:
         if not isinstance(row, dict):
@@ -183,12 +299,20 @@ def fetch() -> ProviderPricingResult:
         model_id = _canonical_model_id(native_id)
         if model_id is None:
             continue
+        if provider_model_retired(SLUG, model_id, native_id):
+            continue
+        manifest_rows[model_id] = _manifest_row(
+            model_id=model_id,
+            native_id=native_id,
+            source_row=row,
+        )
         price = _price(native_id)
         if price is None:
             continue
         remember_upstream_id(UPSTREAM_ID_MAP, model_id, native_id)
         prices[model_id] = price
 
+    _DISCOVERED_MANIFEST_ROWS = manifest_rows
     errors = validate(prices, EXPECTED_MODELS)
     if errors:
         raise RuntimeError("; ".join(errors))
@@ -199,3 +323,106 @@ def fetch() -> ProviderPricingResult:
         fetched_url=URL,
         notes=["Alibaba /models does not include prices; family rates come from published Model Studio pricing."],
     )
+
+
+def _apply_price(row: dict[str, Any], price: ModelPrice) -> None:
+    first = price.tiers[0]
+    row["input_token_price_per_m"] = first.prompt_micro_per_m
+    row["output_token_price_per_m"] = first.completion_micro_per_m
+    if first.prompt_cached_micro_per_m is not None:
+        row["cached_input_token_price_per_m"] = first.prompt_cached_micro_per_m
+    else:
+        row.pop("cached_input_token_price_per_m", None)
+
+    if len(price.tiers) == 1:
+        # Several older Alibaba families have hand-verified context tiers in
+        # the committed manifest while the public source parser currently
+        # exposes only the headline rate. Do not erase those safer tiers.
+        return
+    row["price_tiers"] = [
+        {
+            "max_prompt_tokens": tier.max_prompt_tokens,
+            "input_token_price_per_m": tier.prompt_micro_per_m,
+            "output_token_price_per_m": tier.completion_micro_per_m,
+            **(
+                {"cached_input_token_price_per_m": tier.prompt_cached_micro_per_m}
+                if tier.prompt_cached_micro_per_m is not None
+                else {}
+            ),
+        }
+        for tier in price.tiers
+    ]
+
+
+def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
+    """Refresh Alibaba routes from the workspace's authoritative model feed."""
+
+    raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    rows = raw.get("models")
+    if not isinstance(rows, list):
+        raise RuntimeError("alibaba manifest has no models list")
+    if not _DISCOVERED_MANIFEST_ROWS:
+        guarded = guard_manifest_prune(rows, [], provider_slug=SLUG)
+        if guarded is rows:
+            return ["alibaba: kept old manifest (mass-prune guard)"]
+        raise RuntimeError("alibaba discovery returned no supported model rows")
+
+    existing_by_id = {
+        row["id"]: row
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+    present_rows: dict[str, dict[str, Any]] = {}
+    updated: list[str] = []
+    for model_id, discovered in sorted(_DISCOVERED_MANIFEST_ROWS.items()):
+        existing = existing_by_id.get(model_id)
+        if existing is None:
+            row = dict(discovered)
+        else:
+            # The live /models feed carries only id/object/created. Preserve
+            # richer curated metadata while refreshing route identity and
+            # availability from the authoritative feed.
+            row = dict(existing)
+            row["id"] = discovered["id"]
+            row["upstream_id"] = discovered["upstream_id"]
+            if "created" in discovered:
+                row["created"] = discovered["created"]
+        price = result.prices.get(model_id)
+        if price is not None:
+            _apply_price(row, price)
+            updated.append(model_id)
+        present_rows[model_id] = row
+
+    refreshed_rows = reconcile_manifest_tombstones(
+        rows,
+        present_rows,
+        priced_ids=set(result.prices),
+        source=result.source,
+    )
+    guarded = guard_manifest_prune(rows, refreshed_rows, provider_slug=SLUG)
+    if guarded is rows:
+        return ["alibaba: kept old manifest (mass-prune guard)"]
+
+    previous_ids = set(existing_by_id)
+    current_ids = {
+        row["id"]
+        for row in guarded
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+    appended = sorted(current_ids - previous_ids)
+    raw["models"] = guarded
+    raw["source"] = URL
+    raw["price_source"] = "https://www.alibabacloud.com/help/en/model-studio/model-pricing"
+    raw["generated_at"] = (
+        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
+    raw["model_count"] = len(guarded)
+    MANIFEST_PATH.write_text(
+        json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    suffix = f", appended {len(appended)}" if appended else ""
+    return [
+        f"alibaba: refreshed provider_models/alibaba.json "
+        f"({len(updated)} priced rows{suffix})"
+    ]

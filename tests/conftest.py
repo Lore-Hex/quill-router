@@ -67,7 +67,7 @@ def auto_credit_test_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
         if trial_credit_microdollars is None:
             self.credit_workspace_once(
                 ws.id,
-                # This is test execution budget, not the product's $0.10
+                # This is test execution budget, not the product's $0.30
                 # signup grant. Some billing tests reserve more than ten
                 # cents to exercise large-request and tool-cost paths.
                 10 * MICRODOLLARS_PER_DOLLAR,
@@ -92,6 +92,7 @@ def test_settings() -> Settings:
         github_client_id=None,
         github_client_secret=None,
         github_oauth_redirect_url=None,
+        email_signup_enabled=True,
     )
 
 

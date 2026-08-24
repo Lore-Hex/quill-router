@@ -1,29 +1,32 @@
 # First-Party Acquisition Attribution
 
-TrustedRouter measures paid and organic acquisition without sending inference
-content to an advertising platform.
+TrustedRouter measures paid and organic acquisition internally. For visitors
+who arrive through a Google ad, it also reports three narrowly scoped
+server-side conversion classes to Google Ads: signup, first successful API
+call, and settled credit purchase. X and other advertising platforms receive
+no downstream conversion events.
 
 ## Collection Boundary
 
-The public website captures a signed, HttpOnly, SameSite=Lax cookie for 90
-days. Production sends it only over HTTPS. The cookie contains:
+The public website captures an encrypted, authenticated, HttpOnly,
+SameSite=Lax cookie for 90 days. Production sends it only over HTTPS. The
+cookie contains:
 
 - an anonymous random identifier
 - first and last source, medium, campaign, term, and creative
 - first and last landing path and external referring host
-- Google `gclid`, `gbraid`, and `wbraid`, when supplied
-- X `twclid`, when supplied
+- keyed, non-reversible fingerprints indicating a Google or X click
+- for a Google ad click only, Google's click identifier inside the encrypted
+  cookie so a later conversion can be attributed without browser tracking code
 - capture timestamps
 
 The cookie and durable attribution record never contain prompts, outputs, raw
 API keys, BYOK keys, email addresses, payment credentials, request bodies, IP
-addresses, or full referring URLs. Click identifiers are retained only in
-private Spanner records and the metadata-only Google conversion rows described
-below. Logs contain booleans indicating which click identifier was present,
-never its raw value. Public landing events also contain a server-keyed HMAC
-fingerprint of the click identifier. This lets reports deduplicate the same ad
-click across cookie churn without exposing an identifier that an analytics
-operator can reuse outside TrustedRouter.
+addresses, or full referring URLs. X `twclid` values are converted immediately
+to a keyed HMAC fingerprint and discarded. Google `gclid`, `gbraid`, and
+`wbraid` values are fingerprinted for internal reporting and also retained only
+as encrypted ciphertext for a maximum of 90 days. They never appear in logs,
+public APIs, dashboards, or plaintext database fields.
 
 Requests carrying `Sec-GPC: 1` or `DNT: 1` do not create or use attribution.
 Known crawler, link-preview, prefetch, and prerender requests do not receive
@@ -46,8 +49,11 @@ Structured metadata-only events are shipped through the existing Axiom logger:
 3. `acquisition.signup_completed`
 4. `acquisition.api_key_created`
 5. `acquisition.first_successful_api_call`
-6. `acquisition.credit_purchase_completed`
-7. `acquisition.retained_api_usage_7d`
+6. `acquisition.free_credit_exhausted`
+7. `acquisition.checkout_started`
+8. `acquisition.payment_method_saved`
+9. `acquisition.credit_purchase_completed`
+10. `acquisition.retained_api_usage_7d`
 
 `public.page_view` is a server-request metric and is deliberately labeled
 `measurement_tier=server_request`. Paid-landing reports should use
@@ -62,42 +68,33 @@ The first API call is recorded only after settlement commits. The seven-day
 event is recorded on the first successful settled call at least seven days
 after signup.
 
+`free_credit_exhausted` is claimed only when the authoritative typed ledger
+shows settled prepaid usage at or above the starter grant. The check runs after
+an insufficient-credit authorization or when checkout begins, outside the
+successful inference path. `checkout_started` is claimed after Stripe or PayPal
+successfully creates a checkout session. `payment_method_saved` is claimed only
+after Stripe confirms a reusable payment method. All three are
+once-per-workspace milestones. Checkout and saved-payment-method events remain
+first-party only.
+
 Attribution writes are failure-isolated. They cannot fail signup, inference,
 settlement, payment acknowledgement, or streaming.
 
-## Google Ads Data Manager
+## Advertising Platform Boundary
 
-Google Ads imports attributed outcomes from:
+TrustedRouter does not load Google Analytics, Google Tag Manager, a Google Ads
+browser tag, an X pixel, or another advertising SDK. It exposes no conversion
+CSV feed.
 
-```text
-GET /v1/internal/marketing/google-ads-conversions.csv
-```
-
-The HTTPS feed requires a dedicated HTTP Basic username and a 32-character or
-longer secret from Secret Manager. It is private, uncached, and excluded from
-indexing. The feed covers the last 90 days and fails with `503` rather than
-silently truncating if it reaches the configured row ceiling.
-
-Each Google-attributed milestone creates an idempotent, month-partitioned
-Spanner row:
-
-1. `TrustedRouter Signup`
-2. `TrustedRouter Activated API User`
-3. `TrustedRouter Retained API User 7d`
-4. `TrustedRouter Credit Purchase`
-
-The row contains only `gclid`, `gbraid`, or `wbraid`, the conversion action and
-timestamp, exact integer-derived USD value, currency, and a SHA-256 order ID
-derived from the random anonymous attribution ID. It contains no workspace ID,
-user ID, email, model/provider choice, API key, prompt, output, or request body.
-Google can use the order ID and its own click ID for deduplication without
-receiving a TrustedRouter account identifier.
-
-Signup and product-use rows are committed atomically with their attribution
-milestones. Purchase rows are created only after the payment ledger's
-idempotency check wins. A protected backfill endpoint reconstructs historic
-signup, activation, and retention rows; it deliberately does not synthesize
-historic individual purchases from aggregate totals.
+A separate server-side Google Data Manager worker sends only Google's original
+click identifier, one of the three conversion classes, event time, an opaque
+deduplication ID, and, for a settled purchase, exact amount and currency. It
+does not send email, name, account ID, user ID, workspace ID, API key, model,
+provider, IP address, prompt, output, request body, or retention activity. The
+worker decrypts click identifiers in memory with a dedicated KMS key that
+cannot decrypt customer BYOK credentials. Delivery is durable, idempotent, and
+confirmed through Google Data Manager's asynchronous request-status API before
+the outbox marks an event submitted.
 
 ## Campaign Conventions
 
@@ -114,9 +111,63 @@ Google and X click identifiers can be appended by their respective auto-tagging
 features. Creative-specific `utm_content` values are required so Axiom can
 compare privacy, migration, and reliability messages within one campaign.
 
+## First-Party Funnel Report
+
+TrustedRouter records its metadata-only funnel internally and can compare
+campaigns and creative cells through signup, first successful API call,
+payment, and seven-day retained usage:
+
+```bash
+uv run python scripts/marketing_funnel_report.py \
+  --source google \
+  --campaign high_intent_search_20260725 \
+  --days 30
+```
+
+Use `--format json` for analysis or dashboards. JSON reports include a
+measurement-health decision, aggregate Google Ads spend when configured, and
+the creative-level funnel. Add `--creative <utm_content>`
+to inspect one creative cell, or `--landing <path>` to inspect one exact
+destination. Reports retain the landing path as its own dimension and show
+signup, activation, and purchase rates against engaged visitors. Revenue
+remains integer microdollars until the final display conversion.
+
+For Google reports, the command distinguishes a UTM-labeled visit from a real
+Google Ads click. It counts only visits carrying `gclid`, `gbraid`, or `wbraid`
+as eligible for server-side conversion delivery. The report holds scale when
+those identifiers are absent, a click-backed signup was not durably encrypted,
+native spend is unavailable, or paid traffic has spend but no settled purchase
+in the window. Click persistence is reported separately from click capture so
+KMS permission regressions cannot silently empty the conversion outbox.
+
+Native spend uses Google's aggregate reporting API. Configure the report with:
+
+```text
+TR_GOOGLE_ADS_REPORTING_CUSTOMER_ID=<Google Ads customer ID>
+TR_GOOGLE_ADS_REPORTING_LOGIN_CUSTOMER_ID=<manager ID, when applicable>
+TR_GOOGLE_ADS_DEVELOPER_TOKEN=<Google Ads API developer token>
+TR_GOOGLE_ADS_REPORTING_TIME_ZONE=America/Los_Angeles
+```
+
+The reporting identity needs read access to the Google Ads customer. The API
+returns campaign name, impressions, clicks, and `cost_micros`; TrustedRouter
+does not request search text, user identifiers, or audience data. Spend and
+revenue remain integer microdollars. Use `--google-ads-spend required` in a
+decision report so missing credentials or permissions fail closed.
+
+One `utm_content` value is one measurable creative cell. Multiple headlines
+inside one responsive search ad share that cell, so create separately tagged
+ads when headline-level downstream measurement is required.
+
+For landing-page tests, keep campaign, keywords, bids, ad copy, geography, and
+device settings identical. Change only the destination and use one stable
+`utm_content` value per arm. This prevents a strong headline or a different
+search term from being mistaken for a landing-page improvement.
+
 ## Initial Optimization Policy
 
-Use `signup_completed` as the first primary conversion while volume is low.
-Report activated CAC separately using `first_successful_api_call`. Move bidding
-optimization toward activated use or credited purchases only after each event
-has enough weekly volume to avoid unstable learning.
+Use `signup_completed` as a secondary early indicator while volume is low.
+Optimize bidding toward activated users and credited purchases after each
+action is verified as recording and has enough weekly volume to avoid unstable
+conclusions. First-party attribution remains the source of truth for funnel and
+revenue reporting.

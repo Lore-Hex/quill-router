@@ -1,19 +1,20 @@
-"""Bigtable activity index with a legacy Spanner compatibility path.
+"""Generation records plus ClickHouse delivery and legacy Bigtable mirroring.
 
 Sibling of InMemoryGenerations. The general ``add()`` path remains compatible
 with non-gateway callers and rolling legacy records:
   1. add_usage_to_key — roll cost into per-key counters (own txn).
   2. Spanner txn — generation row + workspace index entry.
-  3. Bigtable activity-index write.
-  4. Provider-benchmark sample (Bigtable, best-effort).
+  3. Durable ClickHouse outbox enqueue.
+  4. Optional Bigtable mirror during migration.
 
 The high-volume gateway path does not call ``add()``. Billing settles in typed
-Spanner tables and writes bounded Bigtable metadata directly. Its durable
-settle outbox retains repair inputs until ``index_after_commit`` succeeds.
+Spanner tables and atomically enqueues bounded ClickHouse metadata. Its durable
+settle outbox retains repair inputs until delivery durability is confirmed.
 User-facing reads prefer bounded families and fall back to legacy cells."""
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from collections.abc import Iterator
 from typing import Any, Protocol
@@ -52,7 +53,14 @@ from trusted_router.storage_gcp_benchmark_index import (
 from trusted_router.storage_gcp_codec import (
     generation_workspace_id as _generation_workspace_id,
 )
+from trusted_router.storage_gcp_generation_records import (
+    read_generation_record,
+    upsert_generation_record,
+)
 from trusted_router.storage_gcp_io import SpannerIO
+from trusted_router.storage_gcp_operational_analytics_outbox import (
+    SpannerOperationalAnalyticsOutbox,
+)
 from trusted_router.storage_models import (
     Generation,
     ProviderBenchmarkSample,
@@ -74,16 +82,23 @@ class SpannerGenerations:
         self,
         io: SpannerIO,
         *,
-        bt_table: Any,
+        bt_table: Any | None,
+        param_types: Any | None = None,
+        generation_records_enabled: bool = False,
+        bigtable_writes_enabled: bool = True,
         generation_family: str | None = None,
         activity_family: str | None = None,
         benchmark_family: str | None = None,
         legacy_family: str | None = None,
         add_usage_to_key: _AddUsageCallback,
         analytics_outbox: SpannerAnalyticsOutbox | None = None,
+        operational_analytics_outbox: SpannerOperationalAnalyticsOutbox | None = None,
     ) -> None:
         self._io = io
         self._bt_table = bt_table
+        self._param_types = param_types
+        self._generation_records_enabled = generation_records_enabled
+        self._bigtable_writes_enabled = bigtable_writes_enabled and bt_table is not None
         legacy = legacy_family or generation_family or "m"
         self._activity_family = activity_family or generation_family or legacy
         self._benchmark_family = benchmark_family or generation_family or legacy
@@ -101,6 +116,7 @@ class SpannerGenerations:
         )
         self._add_usage_to_key = add_usage_to_key
         self._analytics_outbox = analytics_outbox
+        self._operational_analytics_outbox = operational_analytics_outbox
 
     def add(self, generation: Generation) -> None:
         # Two separate transactions instead of one fused one. Per-key
@@ -124,10 +140,72 @@ class SpannerGenerations:
         self.index_after_commit(generation)
 
     def index_after_commit(self, generation: Generation) -> bool:
-        # Spanner remains the source of truth for billing. Bigtable owns bounded
-        # per-request activity metadata. Gateway callers retain a durable outbox
-        # row until this idempotent write succeeds; legacy add() callers can
-        # still repair from generation_by_workspace.
+        """Repair durable delivery, then best-effort mirror legacy indexes.
+
+        New typed settlements enqueue activity in their billing transaction and
+        call ``mirror_after_commit`` instead. This method remains for an old
+        settlement replay whose original commit may predate the atomic outbox.
+        """
+        if self._operational_analytics_outbox is None:
+            activity_indexed = (
+                self._write_bigtable_activity(generation)
+                if self._bigtable_writes_enabled
+                else False
+            )
+            if generation.app != "TrustedRouter Synthetic":
+                self.record_benchmark(ProviderBenchmarkSample.from_generation(generation))
+            return activity_indexed
+        activity_queued = self._repair_durable_delivery(generation)
+        self.mirror_after_commit(generation)
+        return activity_queued
+
+    def mirror_after_commit(self, generation: Generation) -> None:
+        """Write migration-only mirrors without affecting settlement success."""
+        if self._bigtable_writes_enabled:
+            self._write_bigtable_activity(generation)
+        if generation.app != "TrustedRouter Synthetic":
+            self.record_benchmark(ProviderBenchmarkSample.from_generation(generation))
+
+    def _repair_durable_delivery(self, generation: Generation) -> bool:
+        outbox = self._operational_analytics_outbox
+        if outbox is None:
+            return False
+        try:
+            now = dt.datetime.now(dt.UTC)
+
+            def txn(transaction: Any) -> None:
+                if self._generation_records_enabled:
+                    if self._param_types is None:
+                        raise RuntimeError("Spanner param types are not configured")
+                    upsert_generation_record(
+                        transaction,
+                        self._param_types,
+                        generation,
+                        terminal_at=now,
+                    )
+                outbox.enqueue_activity_tx(
+                    transaction,
+                    generation,
+                )
+
+            self._io.database.run_in_transaction(txn)
+        except Exception as exc:
+            log.exception(
+                "spanner.operational_analytics_activity_repair_failed",
+                extra={
+                    "request_id": generation.request_id,
+                    "generation_id": generation.id,
+                    "model": generation.model,
+                    "provider": generation.provider,
+                    "error_class": type(exc).__name__,
+                    "error_message": str(exc)[:500],
+                    "repairable_via": "settle_outbox",
+                },
+            )
+            return False
+        return True
+
+    def _write_bigtable_activity(self, generation: Generation) -> bool:
         try:
             _bt_write_generation(
                 self._bt_table,
@@ -149,24 +227,54 @@ class SpannerGenerations:
                     "repairable_via": "reconcile_activity()",
                 },
             )
-            activity_indexed = False
-        else:
-            activity_indexed = True
-        if generation.app != "TrustedRouter Synthetic":
-            self.record_benchmark(ProviderBenchmarkSample.from_generation(generation))
-        return activity_indexed
+            return False
+        return True
 
     def get(self, generation_id: str) -> Generation | None:
-        generation = _bt_generation_by_id(
+        if self._generation_records_enabled:
+            if self._param_types is None:
+                raise RuntimeError("Spanner param types are not configured")
+            with self._io.database.snapshot() as snapshot:
+                generation = read_generation_record(
+                    snapshot,
+                    self._param_types,
+                    generation_id,
+                )
+            if generation is not None:
+                return generation
+        generation = self._io.read_entity("generation", generation_id, Generation)
+        if generation is not None:
+            return generation
+        if self._bt_table is None:
+            return None
+        return _bt_generation_by_id(
             self._bt_table,
             self._activity_families(),
             generation_id,
         )
-        if generation is not None:
-            return generation
-        return self._io.read_entity("generation", generation_id, Generation)
 
     def record_benchmark(self, sample: ProviderBenchmarkSample) -> None:
+        if self._analytics_outbox is not None:
+            try:
+                # A separate transaction by construction. Do not move this into
+                # gateway settlement: analytics is best-effort; money is not.
+                self._analytics_outbox.enqueue(sample)
+            except Exception as exc:
+                log.exception(
+                    "spanner.analytics_outbox_enqueue_failed",
+                    extra={
+                        "event_id": sample.id,
+                        "model": sample.model,
+                        "provider": sample.provider,
+                        "status": sample.status,
+                        "error_class": type(exc).__name__,
+                        "error_message": str(exc)[:500],
+                        "loss_tolerated": True,
+                        "repairable_via": "provider analytics outbox replay",
+                    },
+                )
+        if not getattr(self, "_bigtable_writes_enabled", self._bt_table is not None):
+            return
         try:
             _bt_write_provider_benchmark(
                 self._bt_table,
@@ -175,36 +283,14 @@ class SpannerGenerations:
             )
         except Exception as exc:
             log.exception(
-                "bigtable.benchmark_index_write_failed",
+                "bigtable.benchmark_mirror_write_failed",
                 extra={
                     "model": sample.model,
                     "provider": sample.provider,
                     "status": sample.status,
                     "error_class": type(exc).__name__,
                     "error_message": str(exc)[:500],
-                    # Benchmarks are not repairable — they're loss-tolerant
-                    # observability data, not billing. Log and move on.
-                    "loss_tolerated": True,
-                },
-            )
-        if self._analytics_outbox is None:
-            return
-        try:
-            # A separate transaction by construction. Do not move this into
-            # gateway settlement: analytics is best-effort; money is not.
-            self._analytics_outbox.enqueue(sample)
-        except Exception as exc:
-            log.exception(
-                "spanner.analytics_outbox_enqueue_failed",
-                extra={
-                    "event_id": sample.id,
-                    "model": sample.model,
-                    "provider": sample.provider,
-                    "status": sample.status,
-                    "error_class": type(exc).__name__,
-                    "error_message": str(exc)[:500],
-                    "loss_tolerated": True,
-                    "repairable_via": "clickhouse/reconcile_benchmark_samples.py",
+                    "migration_mirror_only": True,
                 },
             )
 
@@ -452,6 +538,13 @@ class SpannerGenerations:
         for ref in refs:
             generation = self.get(str(ref["generation_id"]))
             if generation is None:
+                continue
+            if self._operational_analytics_outbox is not None:
+                if not self._repair_durable_delivery(generation):
+                    continue
+                if self._bigtable_writes_enabled:
+                    self._write_bigtable_activity(generation)
+                repaired += 1
                 continue
             try:
                 _bt_write_generation(
