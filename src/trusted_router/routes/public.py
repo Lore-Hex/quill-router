@@ -130,6 +130,11 @@ from trusted_router.provider_contract import (
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
 from trusted_router.request_limits import normalized_client_identity
 from trusted_router.routes.mcp import MCP_PROTOCOL_VERSION
+from trusted_router.routes.oauth_keys import (
+    OAUTH_AUTHORIZATION_ENDPOINT_PATH,
+    OAUTH_KEY_EXCHANGE_ENDPOINT_PATH,
+    PKCE_METHODS,
+)
 from trusted_router.serialization import user_model_public_shape
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.ops_chat import OpsChatSupportMessage, fanout_support_message
@@ -1491,6 +1496,27 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 },
                 "capabilities": {"tools": {}},
                 "documentation": f"https://{domain}/docs/mcp",
+            },
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
+    @app.get("/.well-known/oauth-authorization-server", include_in_schema=False)
+    async def oauth_authorization_server_metadata(request: Request) -> JSONResponse:
+        """Describe the delegated API-key authorization flow to public clients."""
+        origin = f"https://{request_control_domain(request, settings)}"
+        return JSONResponse(
+            {
+                "issuer": origin,
+                "authorization_endpoint": f"{origin}{OAUTH_AUTHORIZATION_ENDPOINT_PATH}",
+                "token_endpoint": f"{origin}{OAUTH_KEY_EXCHANGE_ENDPOINT_PATH}",
+                "response_types_supported": ["code"],
+                "grant_types_supported": ["authorization_code"],
+                "code_challenge_methods_supported": sorted(PKCE_METHODS),
+                "token_endpoint_auth_methods_supported": ["none"],
+                "service_documentation": f"{origin}/sign-in-with-trustedrouter",
+                # scopes_supported is deliberately absent. API keys have no scope or
+                # permission concept, so advertising scopes would falsely imply that
+                # a requested narrow scope produces anything but a full-access key.
             },
             headers={"cache-control": "public, max-age=300, s-maxage=3600"},
         )
