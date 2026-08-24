@@ -703,16 +703,17 @@ OPENROUTER_PAID_LANDING_VARIANTS: dict[str, OpenRouterLandingVariant] = {
 }
 
 OPENROUTER_PAID_LANDING_PATHS: tuple[str, ...] = (
+    "/openai-compatible-llm-api",
     "/openrouter-alternative/quickstart",
-    *tuple(f"/openrouter-alternative/lp/{slug}" for slug in OPENROUTER_PAID_LANDING_VARIANTS),
 )
+OPENROUTER_LANDING_EXPERIMENT_ID = "openrouter-lp-v2"
 
 
 def assigned_openrouter_landing_path(seed: str | None) -> str:
     """Choose one stable experiment arm without retaining visitor identity."""
     if not seed:
         return OPENROUTER_PAID_LANDING_PATHS[0]
-    digest = hashlib.sha256(f"openrouter-lp-v1:{seed}".encode()).digest()
+    digest = hashlib.sha256(f"{OPENROUTER_LANDING_EXPERIMENT_ID}:{seed}".encode()).digest()
     index = int.from_bytes(digest[:8], "big") % len(OPENROUTER_PAID_LANDING_PATHS)
     return OPENROUTER_PAID_LANDING_PATHS[index]
 

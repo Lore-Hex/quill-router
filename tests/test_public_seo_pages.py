@@ -277,7 +277,7 @@ def test_openrouter_experiment_router_is_sticky_and_preserves_campaign_query(
 
     rendered = client.get(first.headers["location"])
     assert rendered.status_code == 200
-    assert '<meta name="robots" content="noindex,follow">' in rendered.text
+    assert 'data-action="open-signin"' in rendered.text
 
 
 @pytest.mark.parametrize(
@@ -330,6 +330,19 @@ def test_openrouter_experiment_assignment_reaches_every_arm() -> None:
     )
 
 
+def test_openrouter_experiment_v2_has_exactly_two_activation_arms() -> None:
+    assert OPENROUTER_PAID_LANDING_PATHS == (
+        "/openai-compatible-llm-api",
+        "/openrouter-alternative/quickstart",
+    )
+    assignments = [
+        assigned_openrouter_landing_path(f"balance-check-{index}")
+        for index in range(1_000)
+    ]
+    for path in OPENROUTER_PAID_LANDING_PATHS:
+        assert 450 <= assignments.count(path) <= 550
+
+
 def test_openrouter_experiment_honors_global_privacy_control(
     client: TestClient,
 ) -> None:
@@ -341,7 +354,7 @@ def test_openrouter_experiment_honors_global_privacy_control(
 
     assert response.status_code == 307
     assert response.headers["location"].startswith(
-        "/openrouter-alternative/quickstart?"
+        "/openai-compatible-llm-api?"
     )
     assert "tr_attribution=" not in response.headers.get("set-cookie", "")
 
