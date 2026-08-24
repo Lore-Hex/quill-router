@@ -80,10 +80,7 @@ def _settings_from_containerapp_mutation(call: list[str]) -> Settings:
         for argument in call[start:end]
         if argument.startswith("TR_") and "=" in argument
     }
-    kwargs = {
-        env_name.removeprefix("TR_").lower(): value
-        for env_name, value in raw_env.items()
-    }
+    kwargs = {env_name.removeprefix("TR_").lower(): value for env_name, value in raw_env.items()}
     # Container Apps resolves these references before starting the process.
     kwargs["attribution_cookie_secret"] = "a" * 64
     kwargs["postgres_dsn"] = "postgresql://canary.invalid/trustedrouter"
@@ -105,9 +102,7 @@ def _settings_kwargs_from_cloud_run_job(call: list[str]) -> dict[str, object]:
         for name, value in _cloud_run_job_env(call).items()
         if name.startswith("TR_")
     }
-    secret_flag = next(
-        flag for flag in ("--update-secrets", "--set-secrets") if flag in call
-    )
+    secret_flag = next(flag for flag in ("--update-secrets", "--set-secrets") if flag in call)
     for binding in call[call.index(secret_flag) + 1].split(","):
         name, separator, reference = binding.partition("=")
         if not separator or not name.startswith("TR_"):
@@ -211,9 +206,7 @@ def test_regional_quota_reconciler_creates_only_when_scheduler_is_not_found(
         tmp_path,
         monkeypatch,
         describe_rc=1,
-        describe_stderr=(
-            "ERROR: (gcloud.scheduler.jobs.describe) NOT_FOUND: Job not found.\n"
-        ),
+        describe_stderr=("ERROR: (gcloud.scheduler.jobs.describe) NOT_FOUND: Job not found.\n"),
     )
 
     assert run.returncode == 0, summarise(run)
@@ -306,9 +299,7 @@ def test_aws_observer_executes_bounded_capacity_tcp_health_and_waf_before_schedu
     ]
     assert len(postcondition_queries) == 2
     service_updates = [
-        call
-        for call in run.calls
-        if call[:3] == ["aws", "apprunner", "update-service"]
+        call for call in run.calls if call[:3] == ["aws", "apprunner", "update-service"]
     ]
     assert len(service_updates) == 1
     service_config = service_updates[0][service_updates[0].index("--source-configuration") + 1]
@@ -346,14 +337,8 @@ def test_aws_observer_executes_bounded_capacity_tcp_health_and_waf_before_schedu
     ]
     assert len(scheduler_rules) == 1
     scheduler_index, scheduler_rule = scheduler_rules[0]
-    assert scheduler_rule[scheduler_rule.index("--schedule-expression") + 1] == (
-        "rate(2 minutes)"
-    )
-    scheduler_targets = [
-        call
-        for call in run.calls
-        if call[:3] == ["aws", "events", "put-targets"]
-    ]
+    assert scheduler_rule[scheduler_rule.index("--schedule-expression") + 1] == ("rate(2 minutes)")
+    scheduler_targets = [call for call in run.calls if call[:3] == ["aws", "events", "put-targets"]]
     assert len(scheduler_targets) == 1
     targets = json.loads(scheduler_targets[0][scheduler_targets[0].index("--targets") + 1])
     assert len(targets) == 1
@@ -373,10 +358,7 @@ def test_aws_observer_initial_create_reaches_running_postconditions_waf_and_sche
 ) -> None:
     script = "scripts/deploy/aws_eu_control_plane.sh"
     fixture = SCRIPT_FIXTURES[script]
-    service_arn = (
-        "arn:aws:apprunner:eu-west-3:330422590279:"
-        "service/tr-eu/harness-service-id"
-    )
+    service_arn = "arn:aws:apprunner:eu-west-3:330422590279:service/tr-eu/harness-service-id"
     responses = (
         (r"apprunner list-services", ""),
         (r"apprunner create-service", service_arn),
@@ -404,16 +386,11 @@ def test_aws_observer_initial_create_reaches_running_postconditions_waf_and_sche
     ]
     assert len(creates) == 1
     create_index, create = creates[0]
-    assert not any(
-        call[:3] == ["aws", "apprunner", "update-service"] for call in run.calls
-    )
+    assert not any(call[:3] == ["aws", "apprunner", "update-service"] for call in run.calls)
     assert create[create.index("--auto-scaling-configuration-arn") + 1].startswith(
-        "arn:aws:apprunner:eu-west-3:330422590279:"
-        "autoscalingconfiguration/tr-eu-observer-bounded/"
+        "arn:aws:apprunner:eu-west-3:330422590279:autoscalingconfiguration/tr-eu-observer-bounded/"
     )
-    assert create[create.index("--health-check-configuration") + 1].startswith(
-        "Protocol=TCP"
-    )
+    assert create[create.index("--health-check-configuration") + 1].startswith("Protocol=TCP")
 
     running_index = next(
         index
@@ -439,9 +416,7 @@ def test_aws_observer_initial_create_reaches_running_postconditions_waf_and_sche
         if call[:3] == ["aws", "wafv2", "associate-web-acl"]
     )
     schedule_index = next(
-        index
-        for index, call in enumerate(run.calls)
-        if call[:3] == ["aws", "events", "put-rule"]
+        index for index, call in enumerate(run.calls) if call[:3] == ["aws", "events", "put-rule"]
     )
     assert create_index < running_index < scaling_index < health_index < waf_index
     assert waf_index < schedule_index
@@ -465,11 +440,7 @@ def test_aws_observer_never_secures_or_schedules_a_non_running_service(
     fixture = SCRIPT_FIXTURES[script]
     responses = (
         (r"apprunner describe-service.*Service\.Status", reported_status),
-        *(
-            response
-            for response in fixture.responses
-            if "Service\\.Status" not in response[0]
-        ),
+        *(response for response in fixture.responses if "Service\\.Status" not in response[0]),
     )
     monkeypatch.setitem(
         SCRIPT_FIXTURES,
@@ -555,8 +526,7 @@ def test_aws_observer_fails_closed_when_legacy_credential_cannot_be_inspected(
     [
         (
             r"apprunner describe-service.*AutoScalingConfigurationSummary",
-            "arn:aws:apprunner:eu-west-3:330422590279:"
-            "autoscalingconfiguration/unbounded/1/drift",
+            "arn:aws:apprunner:eu-west-3:330422590279:autoscalingconfiguration/unbounded/1/drift",
             "AutoScalingConfigurationSummary",
         ),
         (
@@ -577,11 +547,7 @@ def test_aws_observer_stops_before_waf_and_schedule_on_each_live_postcondition_d
     fixture = SCRIPT_FIXTURES[script]
     responses = (
         (fixture_pattern, drift_value),
-        *(
-            response
-            for response in fixture.responses
-            if query_fragment not in response[0]
-        ),
+        *(response for response in fixture.responses if query_fragment not in response[0]),
     )
     monkeypatch.setitem(
         SCRIPT_FIXTURES,
@@ -594,9 +560,7 @@ def test_aws_observer_stops_before_waf_and_schedule_on_each_live_postcondition_d
 
     assert run.returncode != 0
     assert "expected" in run.stderr
-    assert not any(
-        call[:3] == ["aws", "wafv2", "associate-web-acl"] for call in run.calls
-    )
+    assert not any(call[:3] == ["aws", "wafv2", "associate-web-acl"] for call in run.calls)
     assert not any(call[:3] == ["aws", "events", "put-rule"] for call in run.calls)
     assert not run.verifier_calls
 
@@ -621,7 +585,8 @@ def test_azure_observer_executes_single_revision_bounded_http_scaling(
     mutations = [
         (index, call)
         for index, call in enumerate(run.calls)
-        if call[:3] in (
+        if call[:3]
+        in (
             ["az", "containerapp", "update"],
             ["az", "containerapp", "create"],
         )
@@ -634,10 +599,7 @@ def test_azure_observer_executes_single_revision_bounded_http_scaling(
     mutation_text = " ".join(mutation)
     if script.endswith("azure_canary_app.sh"):
         assert "TR_SERVICE_SURFACE=public" in mutation_text
-        assert (
-            "TR_ATTRIBUTION_COOKIE_SECRET=secretref:attribution-cookie-secret"
-            in mutation_text
-        )
+        assert "TR_ATTRIBUTION_COOKIE_SECRET=secretref:attribution-cookie-secret" in mutation_text
         assert "TR_INTERNAL_GATEWAY_TOKEN" not in mutation_text
         assert "TR_SYNTHETIC_MONITOR_API_KEY" not in mutation_text
         assert "TR_FEDERATION_" not in mutation_text
@@ -704,16 +666,25 @@ def test_azure_observer_executes_single_revision_bounded_http_scaling(
 
 
 @pytest.mark.parametrize(
-    ("script", "app_name", "password_file", "expected_max"),
+    ("script", "rg_name", "app_name", "password_file", "expected_max"),
     [
         (
             "scripts/deploy/azure_control_plane.sh",
+            # Resource group and app name are no longer the same string. The
+            # container app is tr-azure-vnet inside resource group tr-azure;
+            # the pre-vnet name has not existed since the VNet migration, and
+            # this fixture asserting `-g tr-azure -n tr-azure` is why the
+            # script could target a nonexistent app with every deploy test
+            # still green -- the harness faked the name the script asked for
+            # rather than the one Azure has.
             "tr-azure",
+            "tr-azure-vnet",
             ".config/tr-azure/pgpw",
             "1",
         ),
         (
             "scripts/deploy/azure_canary_app.sh",
+            "tr-canary",
             "tr-canary",
             ".config/tr-canary/pgpw",
             "2",
@@ -724,6 +695,7 @@ def test_azure_observer_initial_create_is_bounded_too(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     script: str,
+    rg_name: str,
     app_name: str,
     password_file: str,
     expected_max: str,
@@ -736,9 +708,16 @@ def test_azure_observer_initial_create_is_bounded_too(
         replace(
             fixture,
             home_files=home_files,
-            failures=(
-                rf"^az containerapp show -g {app_name} -n {app_name}$",
+            responses=(
+                # A genuine first run: the resource group is empty. The
+                # preflight distinguishes "nothing deployed yet, create it"
+                # from "something else is already the deployment here" by
+                # listing the group, and the harness answers unknown commands
+                # with "stub-output", which would read as a phantom app.
+                (r"^az containerapp list -g \S+ --query", ""),
+                *fixture.responses,
             ),
+            failures=(rf"^az containerapp show -g {rg_name} -n {app_name}$",),
         ),
     )
     isolated = DeployScriptHarness(tmp_path / f"azure-create-{expected_max}")
@@ -746,15 +725,9 @@ def test_azure_observer_initial_create_is_bounded_too(
     run = isolated.run(script, verifier_rc=0)
 
     assert run.returncode == 0, summarise(run)
-    creates = [
-        call
-        for call in run.calls
-        if call[:3] == ["az", "containerapp", "create"]
-    ]
+    creates = [call for call in run.calls if call[:3] == ["az", "containerapp", "create"]]
     assert len(creates) == 1
-    assert not any(
-        call[:3] == ["az", "containerapp", "update"] for call in run.calls
-    )
+    assert not any(call[:3] == ["az", "containerapp", "update"] for call in run.calls)
     create = creates[0]
     create_index = run.calls.index(create)
     assert create[create.index("--min-replicas") + 1] == "1"
@@ -763,14 +736,9 @@ def test_azure_observer_initial_create_is_bounded_too(
     if script.endswith("azure_canary_app.sh"):
         create_text = " ".join(create)
         assert "TR_SERVICE_SURFACE=public" in create_text
-        assert (
-            "TR_ATTRIBUTION_COOKIE_SECRET=secretref:attribution-cookie-secret"
-            in create_text
-        )
+        assert "TR_ATTRIBUTION_COOKIE_SECRET=secretref:attribution-cookie-secret" in create_text
         attribution_secrets = [
-            argument
-            for argument in create
-            if argument.startswith("attribution-cookie-secret=")
+            argument for argument in create if argument.startswith("attribution-cookie-secret=")
         ]
         assert len(attribution_secrets) == 1
         assert len(attribution_secrets[0].partition("=")[2]) == 64
@@ -787,9 +755,7 @@ def test_azure_observer_initial_create_is_bounded_too(
         create_text = " ".join(create)
         assert "TR_SERVICE_SURFACE=observer" in create_text
         assert "TR_OBSERVER_INTERNAL_TOKEN=secretref:observer-token" in create_text
-        assert any(
-            argument.startswith("observer-token=") for argument in create
-        )
+        assert any(argument.startswith("observer-token=") for argument in create)
         assert "TR_INTERNAL_GATEWAY_TOKEN" not in create_text
         assert "TR_FEDERATION_" not in create_text
     set_mode_index = next(
@@ -865,10 +831,7 @@ def test_azure_canary_persists_a_missing_dedicated_attribution_secret_before_upd
         index
         for index, call in enumerate(run.calls)
         if call[:4] == ["az", "containerapp", "secret", "set"]
-        and any(
-            argument.startswith("attribution-cookie-secret=")
-            for argument in call
-        )
+        and any(argument.startswith("attribution-cookie-secret=") for argument in call)
     )
     update_index = next(
         index
@@ -884,10 +847,7 @@ def test_azure_canary_persists_a_missing_dedicated_attribution_secret_before_upd
     )
     assert len(stored) == 64
     update_text = " ".join(run.calls[update_index])
-    assert (
-        "TR_ATTRIBUTION_COOKIE_SECRET=secretref:attribution-cookie-secret"
-        in update_text
-    )
+    assert "TR_ATTRIBUTION_COOKIE_SECRET=secretref:attribution-cookie-secret" in update_text
     assert "TR_INTERNAL_GATEWAY_TOKEN" not in update_text
     assert "TR_FEDERATION_" not in update_text
 
@@ -917,24 +877,13 @@ def test_azure_canary_fails_closed_if_a_retired_oauth_credential_survives_cleanu
     run = isolated.run(script, verifier_rc=0)
 
     assert run.returncode != 0
-    assert (
-        "public canary retains forbidden OAuth env TR_GOOGLE_CLIENT_SECRET"
-        in run.stderr
-    )
-    update = next(
-        call for call in run.calls if call[:3] == ["az", "containerapp", "update"]
-    )
+    assert "public canary retains forbidden OAuth env TR_GOOGLE_CLIENT_SECRET" in run.stderr
+    update = next(call for call in run.calls if call[:3] == ["az", "containerapp", "update"])
     remove_index = update.index("--remove-env-vars")
-    assert "TR_GOOGLE_CLIENT_SECRET" in update[
-        remove_index + 1 : update.index("--min-replicas")
-    ]
+    assert "TR_GOOGLE_CLIENT_SECRET" in update[remove_index + 1 : update.index("--min-replicas")]
+    assert not any(call[:4] == ["az", "containerapp", "revision", "set-mode"] for call in run.calls)
     assert not any(
-        call[:4] == ["az", "containerapp", "revision", "set-mode"]
-        for call in run.calls
-    )
-    assert not any(
-        call[:3] == ["az", "containerapp", "show"]
-        and "ingress.fqdn" in " ".join(call)
+        call[:3] == ["az", "containerapp", "show"] and "ingress.fqdn" in " ".join(call)
         for call in run.calls
     )
 
@@ -958,30 +907,20 @@ def test_azure_canary_fails_closed_if_an_oauth_capability_flag_drifts_true(
             fixture,
             responses=(
                 (fixture_fragment, "true"),
-                *(
-                    response
-                    for response in fixture.responses
-                    if provider not in response[0]
-                ),
+                *(response for response in fixture.responses if provider not in response[0]),
             ),
         ),
     )
-    isolated = DeployScriptHarness(
-        tmp_path / f"azure-canary-{provider.lower()}-capability-drift"
-    )
+    isolated = DeployScriptHarness(tmp_path / f"azure-canary-{provider.lower()}-capability-drift")
 
     run = isolated.run(script, verifier_rc=0)
 
     assert run.returncode != 0
     assert "public canary OAuth capability verification failed" in run.stderr
     assert f"{provider.lower()}=true" in run.stderr
+    assert not any(call[:4] == ["az", "containerapp", "revision", "set-mode"] for call in run.calls)
     assert not any(
-        call[:4] == ["az", "containerapp", "revision", "set-mode"]
-        for call in run.calls
-    )
-    assert not any(
-        call[:3] == ["az", "containerapp", "show"]
-        and "ingress.fqdn" in " ".join(call)
+        call[:3] == ["az", "containerapp", "show"] and "ingress.fqdn" in " ".join(call)
         for call in run.calls
     )
 
@@ -1038,7 +977,8 @@ def test_azure_observer_rejects_reused_billing_gateway_credential_before_mutatio
     assert run.returncode != 0
     assert "must differ from the billing gateway token" in run.stderr
     assert not any(
-        call[:3] in (
+        call[:3]
+        in (
             ["az", "containerapp", "create"],
             ["az", "containerapp", "update"],
         )
@@ -1073,20 +1013,14 @@ def test_azure_surfaces_fail_closed_on_each_live_scaling_postcondition_drift(
     fixture = SCRIPT_FIXTURES[script]
     responses = (
         (fixture_fragment, reported_value),
-        *(
-            response
-            for response in fixture.responses
-            if fixture_fragment not in response[0]
-        ),
+        *(response for response in fixture.responses if fixture_fragment not in response[0]),
     )
     monkeypatch.setitem(
         SCRIPT_FIXTURES,
         script,
         replace(fixture, responses=responses),
     )
-    isolated = DeployScriptHarness(
-        tmp_path / f"azure-drift-{Path(script).stem}-{reported_value}"
-    )
+    isolated = DeployScriptHarness(tmp_path / f"azure-drift-{Path(script).stem}-{reported_value}")
 
     run = isolated.run(script, verifier_rc=0)
 
@@ -1095,8 +1029,7 @@ def test_azure_surfaces_fail_closed_on_each_live_scaling_postcondition_drift(
     assert reported_value in run.stderr
     assert not run.verifier_calls
     assert not any(
-        call[:3] == ["az", "containerapp", "show"]
-        and "ingress.fqdn" in " ".join(call)
+        call[:3] == ["az", "containerapp", "show"] and "ingress.fqdn" in " ".join(call)
         for call in run.calls
     )
 
@@ -1155,8 +1088,7 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
         assert "TR_ALLOW_DEPLOYED_COMBINED_SURFACE" not in deployed_env
         assert "TR_RATE_LIMIT_ENABLED" not in deployed_env
         assert (
-            "TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:latest"
-            in deploy_text
+            "TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:latest" in deploy_text
         )
         assert "TR_INTERNAL_GATEWAY_TOKEN" not in deploy_text
         assert "--set-secrets" in deploy
@@ -1290,8 +1222,7 @@ def test_synthetic_combined_bridge_restores_legacy_job_deploys(
         region = deploy[deploy.index("--region") + 1]
         assert f"https://trusted-router-stub-output.{region}.run.app" in deploy_text
         assert (
-            "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest"
-            in deploy_text
+            "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest" in deploy_text
         )
         assert "TR_OBSERVER_INTERNAL_TOKEN" not in deploy_text
         assert deployed_env["TR_SERVICE_SURFACE"] == "combined"
@@ -1390,7 +1321,7 @@ def test_synthetic_combined_bridge_job_environment_constructs_settings(
         '{"secretKeyRef":{"name":"wrong-secret"}}},'
         '{"name":"TR_INTERNAL_GATEWAY_TOKEN","valueFrom":'
         '{"secretKeyRef":{"name":"trustedrouter-internal-gateway-token"}}}'
-        '] }]}}}}',
+        "] }]}}}}",
     ],
     ids=("not-ready", "public-ingress", "wrong-surface", "wrong-observer-secret"),
 )
@@ -1519,8 +1450,7 @@ def test_the_script_calls_the_gate_for_its_own_cloud(
         f"for {cloud}.\n{summarise(run)}"
     )
     assert run.returncode == 0, (
-        f"{script} called the gate, the gate passed, and the script still failed.\n"
-        f"{summarise(run)}"
+        f"{script} called the gate, the gate passed, and the script still failed.\n{summarise(run)}"
     )
 
 
