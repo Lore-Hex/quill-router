@@ -1,29 +1,24 @@
 from __future__ import annotations
 
-import dataclasses
 import datetime as dt
-import json
-from dataclasses import asdict
-from typing import Any
 
+from trusted_router.storage_codec import json_body
 from trusted_router.storage_models import Generation
 
-_SENTINEL = object()
-
-
-def json_body(value: Any) -> str:
-    if hasattr(value, "__dataclass_fields__"):
-        data = asdict(value)
-        for field in dataclasses.fields(value):
-            field_value = data.get(field.name, _SENTINEL)
-            if field_value is None and field.default is None:
-                data.pop(field.name)
-            elif field_value == [] and field.default_factory is list:
-                data.pop(field.name)
-            elif field_value == {} and field.default_factory is dict:
-                data.pop(field.name)
-        value = data
-    return json.dumps(value, separators=(",", ":"), sort_keys=True)
+# ``json_body`` is a plain deterministic JSON dumper, not a GCP concern, so it
+# now lives in the backend-neutral :mod:`trusted_router.storage_codec`.  It is
+# re-exported here (rather than moved outright) so the twelve existing
+# ``from trusted_router.storage_gcp_codec import json_body`` sites keep working
+# unchanged.  Everything else below really is a Spanner/Bigtable key shape.
+__all__ = [
+    "byok_id",
+    "generation_workspace_id",
+    "json_body",
+    "member_id",
+    "normalize_email",
+    "reverse_time_key",
+    "workspace_key_id",
+]
 
 
 def member_id(workspace_id: str, user_id: str) -> str:

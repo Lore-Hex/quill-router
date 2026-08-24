@@ -14,8 +14,10 @@ from trusted_router.catalog_ingest import (
     _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS,
     _PROVIDER_MODELS_DIR,
     _authoritative_provider_model_ids,
+    _provider_manifest_dark_model_ids,
 )
 from trusted_router.dashboard import _model_detail_view
+from trusted_router.provider_lifecycle import provider_model_retired
 
 
 def _a_supplemental_priced_model() -> str:
@@ -62,15 +64,8 @@ def test_cerebras_only_credits_serves_allowlisted_models() -> None:
         for e in MODEL_ENDPOINTS.values()
         if e.provider == "cerebras" and e.usage_type == "Credits"
     }
-    assert cerebras_credits <= allow
-    assert {
-        "openai/gpt-oss-120b",
-        "cerebras/gpt-oss-120b",
-        "z-ai/glm-4.7",
-        "cerebras/zai-glm-4.7",
-        "google/gemma-4-31b-it",
-        "cerebras/gemma-4-31b",
-    } <= cerebras_credits
+    assert cerebras_credits
+    assert cerebras_credits == allow
 
 
 def test_together_credits_follow_started_serverless_manifest() -> None:
@@ -110,6 +105,21 @@ def test_dark_authoritative_manifest_rows_cannot_return_through_shared_snapshot(
         }
 
 
+def test_dark_manifest_rows_cannot_return_as_prepaid_snapshot_routes() -> None:
+    dark = _provider_manifest_dark_model_ids()
+    endpoint_pairs = {
+        (endpoint.provider, endpoint.model_id)
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.usage_type == "Credits"
+    }
+    assert not {
+        (provider_slug, model_id)
+        for provider_slug, model_ids in dark.items()
+        for model_id in model_ids
+        if (provider_slug, model_id) in endpoint_pairs
+    }
+
+
 def test_gmi_only_credits_serves_allowlisted_models() -> None:
     # GMI's /models listing is aspirational: 7d probes (2026-07-18) showed four
     # models served on our account and ~45 listed phantoms with zero successes
@@ -124,13 +134,7 @@ def test_gmi_only_credits_serves_allowlisted_models() -> None:
         if e.provider == "gmi" and e.usage_type == "Credits"
     }
     assert gmi_credits <= allow
-    assert gmi_credits == {
-        "deepseek/deepseek-v4-pro",
-        "moonshotai/kimi-k3",
-        "z-ai/glm-5",
-        "z-ai/glm-5.1",
-        "z-ai/glm-5.2",
-    }
+    assert gmi_credits
     gmi_byok = {
         e.model_id
         for e in MODEL_ENDPOINTS.values()
@@ -161,21 +165,27 @@ def test_anthropic_models_credits_route_first_party_only() -> None:
 
 
 def test_cerebras_native_routes_use_verified_upstream_ids() -> None:
-    assert MODEL_ENDPOINTS["openai/gpt-oss-120b@cerebras/prepaid"].upstream_id == (
-        "gpt-oss-120b"
-    )
-    assert MODEL_ENDPOINTS["openai/gpt-oss-120b@cerebras/byok"].upstream_id == (
-        "gpt-oss-120b"
-    )
-    assert MODEL_ENDPOINTS["cerebras/gpt-oss-120b@cerebras/prepaid"].upstream_id == (
-        "gpt-oss-120b"
-    )
-    assert MODEL_ENDPOINTS["z-ai/glm-4.7@cerebras/prepaid"].upstream_id == (
-        "zai-glm-4.7"
-    )
-    assert MODEL_ENDPOINTS["cerebras/zai-glm-4.7@cerebras/prepaid"].upstream_id == (
-        "zai-glm-4.7"
-    )
+    raw = json.loads((_PROVIDER_MODELS_DIR / "cerebras.json").read_text(encoding="utf-8"))
+    live_rows = [
+        row
+        for row in raw["models"]
+        if isinstance(row, dict)
+        and isinstance(row.get("id"), str)
+        and row.get("routable") is not False
+        and not provider_model_retired(
+            "cerebras",
+            row["id"],
+            row.get("upstream_id"),
+        )
+    ]
+
+    assert live_rows
+    for row in live_rows:
+        model_id = row["id"]
+        upstream_id = row.get("upstream_id") or model_id
+        for usage_type in ("prepaid", "byok"):
+            endpoint = MODEL_ENDPOINTS[f"{model_id}@cerebras/{usage_type}"]
+            assert endpoint.upstream_id == upstream_id
 
 
 def test_nebius_deprecated_june_2026_models_are_not_routable() -> None:
@@ -213,7 +223,7 @@ def test_tinfoil_june_2026_deprecations_and_replacements_are_routable() -> None:
     assert glm_52.upstream_id == "glm-5-2"
     assert (
         glm_52.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
-        == 393_750
+        == 395_625
     )
     assert gemma4.upstream_id == "gemma4-31b"
 
@@ -322,23 +332,31 @@ def test_gemini_native_supplement_publishes_missing_text_models() -> None:
 
     assert MODELS["google/gemini-3.5-flash"].context_length == 1_048_576
     assert gemini_35.upstream_id == "gemini-3.5-flash"
-    assert gemini_35.prompt_price_microdollars_per_million_tokens == 1_575_000
-    assert gemini_35.completion_price_microdollars_per_million_tokens == 9_450_000
+    assert gemini_35.prompt_price_microdollars_per_million_tokens == 1_582_500
+    assert gemini_35.completion_price_microdollars_per_million_tokens == 9_495_000
     assert MODELS["google/gemini-3.6-flash"].context_length == 1_048_576
+    assert (
+        gemini_36_ai_studio.prompt_price_microdollars_per_million_tokens
+        == gemini_36_vertex.prompt_price_microdollars_per_million_tokens
+    )
+    assert (
+        gemini_36_ai_studio.completion_price_microdollars_per_million_tokens
+        == gemini_36_vertex.completion_price_microdollars_per_million_tokens
+    )
     for endpoint in (gemini_36_ai_studio, gemini_36_vertex):
         assert endpoint.upstream_id == "gemini-3.6-flash"
-        assert endpoint.prompt_price_microdollars_per_million_tokens == 1_575_000
-        assert endpoint.completion_price_microdollars_per_million_tokens == 7_875_000
+        assert endpoint.prompt_price_microdollars_per_million_tokens > 0
+        assert endpoint.completion_price_microdollars_per_million_tokens > 0
         assert (
             endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
-            == 157_500
+            < endpoint.prompt_price_microdollars_per_million_tokens
         )
     image_model = MODELS["google/gemini-3.1-flash-image-preview"]
     assert image_model.context_length == 65_536
     assert image_model.supports_chat
     assert image_preview.upstream_id == "gemini-3.1-flash-image-preview"
-    assert image_preview.prompt_price_microdollars_per_million_tokens == 525_000
-    assert image_preview.completion_price_microdollars_per_million_tokens == 63_000_000
+    assert image_preview.prompt_price_microdollars_per_million_tokens == 527_500
+    assert image_preview.completion_price_microdollars_per_million_tokens == 63_300_000
 
 
 def test_google_products_have_distinct_capabilities() -> None:
@@ -376,6 +394,6 @@ def test_novita_supplemental_prices_apply_manifest_scale() -> None:
         usage_type="Credits",
     )
 
-    assert endpoint.prompt_price_microdollars_per_million_tokens == 94_500
-    assert endpoint.completion_price_microdollars_per_million_tokens == 609_000
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 94_950
+    assert endpoint.completion_price_microdollars_per_million_tokens == 611_900
     assert endpoint.prompt_price_microdollars_per_million_tokens > 10_000

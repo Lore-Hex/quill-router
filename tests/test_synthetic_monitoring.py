@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import datetime as dt
 import json
 import random
+import socket
 import threading
 import time
+from collections.abc import AsyncIterator
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -15,6 +18,7 @@ import httpx
 import pytest
 from fastapi import BackgroundTasks
 from fastapi.testclient import TestClient
+from trustedrouter import AsyncTrustedRouter
 
 from trusted_router.catalog import (
     CHEAP_MODEL_ID,
@@ -47,6 +51,7 @@ from trusted_router.storage_gcp_synthetic_rollups import (
 )
 from trusted_router.storage_models import ProviderBenchmarkSample, iso_now, utcnow
 from trusted_router.synthetic.components import sample_slo_class_ids
+from trusted_router.synthetic.inference_sdk import build_inference_sdk, close_inference_sdk
 from trusted_router.synthetic.probes import (
     IMAGE_GENERATION_MODEL,
     IMAGE_GENERATION_PROVIDER,
@@ -83,6 +88,35 @@ from trusted_router.synthetic.route_health import (
     report_route_health,
 )
 from trusted_router.synthetic.status import history_payload, status_snapshot
+
+
+def _closed_local_port() -> int:
+    """A localhost port nothing listens on: connections are refused at once."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+# The SDK sessions' beacon destination in these tests. A refused port keeps
+# the reporter's close-time flush instant and off the network.
+_NO_CONTROL_PLANE = f"http://127.0.0.1:{_closed_local_port()}"
+
+
+@contextlib.asynccontextmanager
+async def _monitor_sdk(
+    client: httpx.AsyncClient, target: SyntheticTarget
+) -> AsyncIterator[AsyncTrustedRouter]:
+    """The production SDK session around a fake-gateway client, closed after use."""
+    sdk = build_inference_sdk(
+        target.api_base_url,
+        api_key="sk-test",
+        http_client=client,
+        control_plane_base_url=_NO_CONTROL_PLANE,
+    )
+    try:
+        yield sdk
+    finally:
+        await close_inference_sdk(sdk)
 
 
 def test_catalog_exposes_free_cheap_and_monitor_meta_models() -> None:
@@ -347,6 +381,16 @@ def test_gateway_latency_anatomy_distinguishes_global_and_direct_targets() -> No
             latency_milliseconds=10,
             created_at=created_at,
         ),
+        _sample(
+            id="sao-paulo",
+            target="southamerica-east1",
+            target_region="southamerica-east1",
+            monitor_region="us-central1",
+            probe_type="gateway_reused_path",
+            status="up",
+            latency_milliseconds=120,
+            created_at=created_at,
+        ),
     ]
 
     rows = status_snapshot(samples, now=now)["headline_metrics"]["latency_anatomy"]
@@ -355,6 +399,9 @@ def test_gateway_latency_anatomy_distinguishes_global_and_direct_targets() -> No
     assert labels == {
         "canonical": "Global endpoint · us-central1 -> us-central1",
         "us-central1": "US Central direct · us-central1 -> us-central1",
+        "southamerica-east1": (
+            "São Paulo direct · us-central1 -> southamerica-east1"
+        ),
     }
 
 
@@ -761,10 +808,19 @@ def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
         ),
     ]
 
-    snapshot = status_snapshot(samples, now=now)
+    # This deployment runs pongs (monitor key set), so the Model Inference
+    # component is published and the two down pongs must show.
+    snapshot = status_snapshot(
+        samples,
+        now=now,
+        settings=Settings(environment="test", synthetic_monitor_api_key="sk-tr-monitor-test"),
+    )
 
     assert snapshot["current"]["checks"]
-    assert snapshot["overall_status"] == "up"
+    # Both pong samples above are down and recent, so the Model Inference
+    # component pulls the banner off green — while router_core (the SLO)
+    # stays up because pong failures never burn it.
+    assert snapshot["overall_status"] == "degraded"
     assert snapshot["slo_classes"]["router_core"]["status"] == "up"
     assert set(snapshot["slo_classes"]) == {"router_core", "control_plane"}
     assert snapshot["history_scope"] == "router_core"
@@ -782,7 +838,11 @@ def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
     assert canonical["p50_latency_milliseconds"] == 25
     assert canonical["end_to_end_p50_latency_milliseconds"] == 25
     assert len(canonical["history"]) == 48
-    assert snapshot["recent_events"] == []
+    # The two recent pong failures now surface on the incident timeline,
+    # attributed to the Model Inference component (pre-2026-08 they mapped
+    # to no component and were silently dropped here).
+    assert {event["id"] for event in snapshot["recent_events"]} == {"syn_down", "syn_down_2"}
+    assert all(event["component"] == "Model Inference" for event in snapshot["recent_events"])
 
 
 def test_status_keeps_provider_failures_out_of_global_slo_classes() -> None:
@@ -825,10 +885,17 @@ def test_status_keeps_provider_failures_out_of_global_slo_classes() -> None:
         ),
     ]
 
-    snapshot = status_snapshot(samples, now=now)
+    snapshot = status_snapshot(
+        samples,
+        now=now,
+        settings=Settings(environment="test", synthetic_monitor_api_key="sk-tr-monitor-test"),
+    )
 
-    assert snapshot["overall_status"] == "up"
-    assert snapshot["summary"]["headline"] == "All Systems Operational"
+    # Provider-effective failures stay out of the SLO math (July decision),
+    # but since 2026-08 they are no longer allowed to hide: the Model
+    # Inference component goes down and pulls the banner to degraded.
+    assert snapshot["overall_status"] == "degraded"
+    assert snapshot["summary"]["headline"] == "Partial Outage: Model Inference"
     assert snapshot["slo_classes"]["router_core"]["status"] == "up"
     assert snapshot["slo_classes"]["router_core"]["windows"]["5m"]["bad_count"] == 0
     assert set(snapshot["slo_classes"]) == {"router_core", "control_plane"}
@@ -849,10 +916,16 @@ def test_status_keeps_provider_failures_out_of_global_slo_classes() -> None:
     assert canonical["status"] == "up"
     assert canonical["sample_count_24h"] == 1
     assert snapshot["windows"]["5m"]["sample_count"] == 3
-    assert all(
-        event["probe_type"] not in {"openai_sdk_pong", "responses_pong"}
+    # Pong failures stay out of the SLO windows above but are no longer
+    # hidden from the incident timeline: they surface as Model Inference
+    # component events.
+    pong_events = [
+        event
         for event in snapshot["recent_events"]
-    )
+        if event["probe_type"] in {"openai_sdk_pong", "responses_pong"}
+    ]
+    assert len(pong_events) == 2
+    assert all(event["component"] == "Model Inference" for event in pong_events)
 
 
 def test_regional_gateway_maintenance_never_reduces_global_router_core_slo() -> None:
@@ -1568,20 +1641,13 @@ async def test_synthetic_http_probes_parse_success_shapes() -> None:
     async with httpx.AsyncClient(transport=transport) as client:
         health = await tls_health_probe(client, target, monitor_region="us-central1")
         attestation = await attestation_nonce_probe(client, target, monitor_region="us-central1")
-        chat = await openai_chat_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
-        responses = await responses_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
+        async with _monitor_sdk(client, target) as sdk:
+            chat = await openai_chat_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
+            responses = await responses_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
 
     assert health.status == "up"
     assert attestation.status == "up"
@@ -1589,6 +1655,20 @@ async def test_synthetic_http_probes_parse_success_shapes() -> None:
     assert chat.output_match is True
     assert responses.status == "up"
     assert responses.output_match is True
+
+
+@pytest.mark.asyncio
+async def test_attestation_http_error_is_availability_failure_not_format_failure() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": {"message": "revision starting"}})
+
+    target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await attestation_nonce_probe(client, target, monitor_region="europe-west4")
+
+    assert sample.status == "down"
+    assert sample.http_status == 500
+    assert sample.error_type == "attestation_http_500"
 
 
 @pytest.mark.asyncio
@@ -1796,35 +1876,26 @@ async def test_pong_probe_accepts_reasoning_model_shapes() -> None:
 
     target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(chat_handler)) as client:
-        chat = await openai_chat_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
+        async with _monitor_sdk(client, target) as sdk:
+            chat = await openai_chat_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
     assert chat.status == "up", chat.error_type
     assert chat.output_match is True
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(chat_list_handler)) as client:
-        chat_list = await openai_chat_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
+        async with _monitor_sdk(client, target) as sdk:
+            chat_list = await openai_chat_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
     assert chat_list.status == "up", chat_list.error_type
     assert chat_list.output_match is True
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(responses_handler)) as client:
-        responses = await responses_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
+        async with _monitor_sdk(client, target) as sdk:
+            responses = await responses_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
     assert responses.status == "up", responses.error_type
     assert responses.output_match is True
 
@@ -1848,13 +1919,10 @@ async def test_pong_probe_still_catches_real_mismatches() -> None:
 
     target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        chat = await openai_chat_pong_probe(
-            client,
-            target,
-            monitor_region="us-central1",
-            api_key="sk-test",  # noqa: S106 - test placeholder.
-            model=MONITOR_MODEL_ID,
-        )
+        async with _monitor_sdk(client, target) as sdk:
+            chat = await openai_chat_pong_probe(
+                sdk, target, monitor_region="us-central1", model=MONITOR_MODEL_ID
+            )
 
     assert chat.status == "down"
     assert chat.output_match is False
@@ -2126,7 +2194,7 @@ def test_configured_targets_include_primary_regional_gateway() -> None:
     settings = Settings(
         environment="test",
         api_base_url="https://api.trustedrouter.com/v1",
-        regions="us-central1,us-east4,europe-west4",
+        regions="us-central1,us-east4,europe-west4,southamerica-east1",
         primary_region="us-central1",
     )
 
@@ -2142,6 +2210,9 @@ def test_configured_targets_include_primary_regional_gateway() -> None:
     assert by_name["us-east4"].api_base_url == "https://api-us-east4.quillrouter.com/v1"
     assert by_name["europe-west4"].api_base_url == (
         "https://api-europe-west4.quillrouter.com/v1"
+    )
+    assert by_name["southamerica-east1"].api_base_url == (
+        "https://api-southamerica-east1.quillrouter.com/v1"
     )
 
 
@@ -2172,6 +2243,14 @@ def test_status_components_include_all_warm_regional_gateways() -> None:
             status="up",
             created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
         ),
+        _sample(
+            id="syn_sa",
+            target="southamerica-east1",
+            target_region="southamerica-east1",
+            probe_type="tls_health",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
+        ),
     ]
 
     components = {row["id"]: row for row in status_snapshot(samples, now=now)["components"]}
@@ -2179,6 +2258,7 @@ def test_status_components_include_all_warm_regional_gateways() -> None:
     assert components["us_central1_regional_api"]["status"] == "up"
     assert components["us_east4_regional_api"]["status"] == "up"
     assert components["eu_regional_api"]["status"] == "up"
+    assert components["sa_regional_api"]["status"] == "up"
 
 
 @pytest.mark.asyncio
@@ -2196,7 +2276,36 @@ async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytes
         ),
     ]
 
-    def fake_probe(probe_type: str) -> Any:
+    # Fan-out is proven STRUCTURALLY (mutual handshake), not by wall clock:
+    # the old `elapsed < 0.18` bound flaked on CI at 0.1802s. Every unmetered
+    # probe registers itself and then WAITS until all of them are in flight at
+    # once, so a serialized implementation parks the first probe forever and
+    # asyncio.wait_for fails the test deterministically, while a concurrent one
+    # releases every probe the instant the last one arrives. There is no timing
+    # margin left to erode.
+    #
+    # Ten unmetered coroutines: tls_health + attestation_nonce +
+    # gateway_latency_phase_probes on each of the 3 targets, plus the single
+    # control-plane probe on the one target that configures a control plane URL.
+    # The six credit-bearing probes are deliberately EXCLUDED from the
+    # handshake: DEFAULT_SYNTHETIC_BILLING_CONCURRENCY caps them at 2 in flight
+    # (pinned by test_run_synthetic_once_bounds_credit_bearing_probe_concurrency),
+    # so making them join a ten-way rendezvous would deadlock by design.
+    unmetered_probe_count = 10
+    in_flight = 0
+    peak_in_flight = 0
+    all_in_flight = asyncio.Event()
+
+    async def rendezvous() -> None:
+        nonlocal in_flight, peak_in_flight
+        in_flight += 1
+        peak_in_flight = max(peak_in_flight, in_flight)
+        if in_flight >= unmetered_probe_count:
+            all_in_flight.set()
+        await asyncio.wait_for(all_in_flight.wait(), timeout=5)
+        in_flight -= 1
+
+    def fake_probe(probe_type: str, *, unmetered: bool = True) -> Any:
         async def run(
             _client: httpx.AsyncClient,
             target: SyntheticTarget,
@@ -2204,7 +2313,8 @@ async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytes
             monitor_region: str,
             **_kwargs: Any,
         ) -> SyntheticProbeSample:
-            await asyncio.sleep(0.03)
+            if unmetered:
+                await rendezvous()
             return _sample(
                 id=f"{probe_type}-{target.name}",
                 probe_type=probe_type,
@@ -2226,6 +2336,7 @@ async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytes
         monitor_region: str,
         **_kwargs: Any,
     ) -> list[SyntheticProbeSample]:
+        await rendezvous()
         return [
             _sample(
                 id=f"{probe_type}-{target.name}",
@@ -2242,10 +2353,13 @@ async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytes
     monkeypatch.setattr(
         probe_module, "control_plane_health_probe", fake_probe("control_plane_health")
     )
-    monkeypatch.setattr(probe_module, "openai_chat_pong_probe", fake_probe("openai_sdk_pong"))
-    monkeypatch.setattr(probe_module, "responses_pong_probe", fake_probe("responses_pong"))
+    monkeypatch.setattr(
+        probe_module, "openai_chat_pong_probe", fake_probe("openai_sdk_pong", unmetered=False)
+    )
+    monkeypatch.setattr(
+        probe_module, "responses_pong_probe", fake_probe("responses_pong", unmetered=False)
+    )
 
-    started = time.perf_counter()
     samples = await run_synthetic_once(
         Settings(
             environment="test",
@@ -2255,13 +2369,14 @@ async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytes
         monitor_region="us-central1",
         api_key="sk-tr-test",
     )
-    elapsed = time.perf_counter() - started
 
     assert len(samples) == 19
     assert {sample.target for sample in samples} == {"canonical", "us-east4", "europe-west4"}
-    # Serial execution would take about 13 * 30ms. Keep enough slack for busy CI
-    # while still proving a single slow target no longer blocks the whole pass.
-    assert elapsed < 0.18
+    # Every unmetered probe across every target was in flight at the same
+    # instant. A pass that serialized targets, or serialized probes within a
+    # target, could never reach this count — it would have timed out in
+    # rendezvous() above rather than reaching this assertion.
+    assert peak_in_flight == unmetered_probe_count
 
 
 @pytest.mark.asyncio
@@ -2343,6 +2458,16 @@ async def test_run_synthetic_once_bounds_credit_bearing_probe_concurrency(
 async def test_rotation_pass_fans_out_model_samples(monkeypatch: pytest.MonkeyPatch) -> None:
     from trusted_router.synthetic import cli as cli_module
 
+    # Concurrency is asserted STRUCTURALLY (peak in-flight), not by wall
+    # clock: an elapsed-time bound flaked under contended CI CPU (xdist
+    # workers sharing cores pushed 120ms to 128ms). The interleaving of an
+    # in-flight counter is deterministic on one event loop — the second
+    # probe's increment always runs while the first awaits — so this proves
+    # the same fan-out with zero timing sensitivity, and additionally pins
+    # the billing budget: peak must be exactly the semaphore's 2.
+    active = 0
+    peak = 0
+
     async def fake_rotation_probe(
         _client: httpx.AsyncClient,
         _target: SyntheticTarget,
@@ -2353,10 +2478,14 @@ async def test_rotation_pass_fans_out_model_samples(monkeypatch: pytest.MonkeyPa
         model: str,
         default_timeout_seconds: float,
     ) -> tuple[str, str, str, str]:
+        nonlocal active, peak
         assert monitor_region == "us-central1"
         assert api_key == "sk-tr-test"
         assert default_timeout_seconds == 20.0
-        await asyncio.sleep(0.03)
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.005)
+        active -= 1
         return (provider, model, monitor_region, api_key)
 
     monkeypatch.setattr(
@@ -2366,8 +2495,7 @@ async def test_rotation_pass_fans_out_model_samples(monkeypatch: pytest.MonkeyPa
     )
     monkeypatch.setattr(cli_module, "provider_rotation_probe", fake_rotation_probe)
 
-    started = time.perf_counter()
-    samples = await cli_module._rotation_pass(
+    samples = await cli_module.rotation_pass(
         settings=Settings(environment="test", api_base_url="https://api.trustedrouter.com/v1"),
         monitor_region="us-central1",
         api_key="sk-tr-test",
@@ -2375,10 +2503,10 @@ async def test_rotation_pass_fans_out_model_samples(monkeypatch: pytest.MonkeyPa
         count=4,
         rng=random.Random(0),  # noqa: S311 - deterministic test selection.
     )
-    elapsed = time.perf_counter() - started
 
     assert len(samples) == 4
-    assert elapsed < 0.12
+    # Parallel within the billing budget, never beyond it.
+    assert peak == 2
 
 
 @pytest.mark.asyncio
@@ -2387,21 +2515,31 @@ async def test_probe_and_rotation_pass_runs_independent_blocks_concurrently(
 ) -> None:
     from trusted_router.synthetic import cli as cli_module
 
+    # Overlap is proven by a mutual handshake, not wall clock (an elapsed
+    # bound flaked under contended CI CPU): each block signals its start and
+    # then WAITS for the other block to have started before it can finish.
+    # Serialized execution deadlocks the first block until wait_for's timeout
+    # fails the test deterministically; concurrent execution releases both
+    # immediately. No timing margin exists to erode.
+    probe_started = asyncio.Event()
+    rotation_started = asyncio.Event()
+
     async def fake_one_probe_pass(**_kwargs: Any) -> list[SyntheticProbeSample]:
-        await asyncio.sleep(0.03)
+        probe_started.set()
+        await asyncio.wait_for(rotation_started.wait(), timeout=5)
         return [
             _sample(id="tls", probe_type="tls_health", status="up"),
             _sample(id="settle", probe_type="gateway_authorize_settle", status="up"),
         ]
 
     async def fake_rotation_pass(**_kwargs: Any) -> list[str]:
-        await asyncio.sleep(0.03)
+        rotation_started.set()
+        await asyncio.wait_for(probe_started.wait(), timeout=5)
         return ["rotation-a", "rotation-b"]
 
     monkeypatch.setattr(cli_module, "_one_probe_pass", fake_one_probe_pass)
-    monkeypatch.setattr(cli_module, "_rotation_pass", fake_rotation_pass)
+    monkeypatch.setattr(cli_module, "rotation_pass", fake_rotation_pass)
 
-    started = time.perf_counter()
     samples, rotation_samples = await cli_module._probe_and_rotation_pass(
         settings=Settings(environment="test", api_base_url="https://api.trustedrouter.com/v1"),
         monitor_region="us-central1",
@@ -2413,14 +2551,12 @@ async def test_probe_and_rotation_pass_runs_independent_blocks_concurrently(
         rotation_per_pass=4,
         rotation_rng=random.Random(0),  # noqa: S311 - deterministic test selection.
     )
-    elapsed = time.perf_counter() - started
 
     assert [sample.probe_type for sample in samples] == [
         "tls_health",
         "gateway_authorize_settle",
     ]
     assert rotation_samples == ["rotation-a", "rotation-b"]
-    assert elapsed < 0.06
 
 
 @pytest.mark.asyncio
@@ -2451,7 +2587,7 @@ async def test_probe_and_rotation_share_one_billing_concurrency_budget(
         return []
 
     monkeypatch.setattr(cli_module, "_one_probe_pass", fake_one_probe_pass)
-    monkeypatch.setattr(cli_module, "_rotation_pass", fake_rotation_pass)
+    monkeypatch.setattr(cli_module, "rotation_pass", fake_rotation_pass)
 
     await cli_module._probe_and_rotation_pass(
         settings=Settings(environment="test"),
@@ -2496,9 +2632,22 @@ async def test_one_probe_pass_keeps_gateway_accounting_probes_ordered(
         events.append("fallback-end")
         return [_sample(id="fallback", probe_type="provider_fallback", status="up")]
 
+    async def fake_canary_probe(_client: object, **kwargs: object) -> SyntheticProbeSample:
+        events.append("canary")
+        return SyntheticProbeSample(
+            id="syn_canary",
+            probe_type="client_telemetry_ingest",
+            target="control_plane",
+            target_url="https://control.example/v1/client-events",
+            monitor_region=str(kwargs["monitor_region"]),
+            status="up",
+            created_at="2026-08-17T03:00:00Z",
+        )
+
     monkeypatch.setattr(cli_module, "run_synthetic_once", fake_run_synthetic_once)
     monkeypatch.setattr(cli_module, "gateway_billing_probe", fake_billing_probe)
     monkeypatch.setattr(cli_module, "gateway_fallback_probe", fake_fallback_probe)
+    monkeypatch.setattr(cli_module, "client_telemetry_canary_probe", fake_canary_probe)
 
     samples = await cli_module._one_probe_pass(
         settings=Settings(environment="test", api_base_url="https://api.trustedrouter.com/v1"),
@@ -2513,8 +2662,11 @@ async def test_one_probe_pass_keeps_gateway_accounting_probes_ordered(
         "tls_health",
         "gateway_authorize_settle",
         "provider_fallback",
+        "client_telemetry_ingest",
     ]
     assert events.index("billing-end") < events.index("fallback-start")
+    # The canary is not a ledger probe; it runs after the ordered pair.
+    assert events.index("fallback-start") < events.index("canary")
 
 
 @pytest.mark.asyncio
@@ -2597,31 +2749,281 @@ async def test_route_health_caller_obeys_hourly_gate_and_override(
     assert posted == (expected if should_post else [])
 
 
-def test_synthetic_deploy_targets_public_api_domain() -> None:
+@pytest.mark.asyncio
+async def test_remediator_caller_reports_success_and_failure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["x-trustedrouter-internal-token"] == "internal"
+        assert request.extensions["timeout"]["read"] == 90.0
+        if request.url.path.endswith("/failure"):
+            return httpx.Response(503, json={"error": "unavailable"})
+        return httpx.Response(200, json={"data": {"decisions": 2}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        succeeded = await cli_module._post_remediator(
+            client,
+            url="https://trustedrouter.com/v1/internal/synthetic/remediate",
+            internal_token="internal",  # noqa: S106 - test placeholder.
+        )
+        failed = await cli_module._post_remediator(
+            client,
+            url="https://trustedrouter.com/failure",
+            internal_token="internal",  # noqa: S106 - test placeholder.
+        )
+
+    output = capsys.readouterr()
+    assert succeeded is True
+    assert failed is False
+    assert "remediator decisions: 2" in output.out
+    assert "remediator check failed: HTTPStatusError:" in output.err
+
+
+@pytest.mark.asyncio
+async def test_primary_synthetic_job_invokes_scheduled_remediator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    seen_urls: list[str] = []
+    remediator_started = asyncio.Event()
+
+    async def empty_pass(**kwargs: Any) -> tuple[list[Any], list[Any]]:
+        assert kwargs["internal_token"] is None
+        # A sequential implementation deadlocks here until the test timeout;
+        # the remediator must begin while independent probes are in flight.
+        await asyncio.wait_for(remediator_started.wait(), timeout=1.0)
+        return [], []
+
+    class _Response:
+        status_code = 200
+        text = '{"data":{"decisions":0}}'
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {"data": {"decisions": 0}}
+
+    class _Client:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def post(self, url: str, **kwargs: Any) -> _Response:
+            assert (
+                kwargs["headers"]["x-trustedrouter-internal-token"]
+                == "observer-only"
+            )
+            assert kwargs["timeout"].read == 75.0
+            seen_urls.append(url)
+            remediator_started.set()
+            return _Response()
+
+    settings = Settings(
+        environment="test",
+        sentry_dsn=None,
+        internal_gateway_token="billing-only",  # noqa: S106 - test placeholder.
+        observer_internal_token="observer-only",  # noqa: S106 - test placeholder.
+    )
+    monkeypatch.setattr(cli_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "_probe_and_rotation_pass", empty_pass)
+    monkeypatch.setattr(cli_module.httpx, "AsyncClient", _Client)
+    monkeypatch.setenv(
+        "TR_SYNTHETIC_REMEDIATOR_URL",
+        "https://trustedrouter.com/v1/internal/synthetic/remediate",
+    )
+    monkeypatch.setenv("TR_SYNTHETIC_REMEDIATOR_TIMEOUT_SECONDS", "75")
+    monkeypatch.delenv("TR_SYNTHETIC_THROUGHPUT_ONLY", raising=False)
+    monkeypatch.delenv("TR_SYNTHETIC_THROUGHPUT_ENABLED", raising=False)
+
+    assert await cli_module.run() == 0
+    assert seen_urls == ["https://trustedrouter.com/v1/internal/synthetic/remediate"]
+
+
+def test_synthetic_credential_selection_uses_gateway_only_for_combined_bridge() -> None:
+    from trusted_router.synthetic.internal_auth import (
+        synthetic_observer_token,
+        synthetic_transaction_token,
+    )
+
+    both = Settings(
+        environment="test",
+        internal_gateway_token="billing-only",  # noqa: S106 - test placeholder.
+        observer_internal_token="observer-only",  # noqa: S106 - test placeholder.
+    )
+    billing_only = Settings(
+        environment="test",
+        internal_gateway_token="billing-only",  # noqa: S106 - test placeholder.
+    )
+    bridged = Settings(
+        environment="test",
+        service_surface="combined",
+        allow_deployed_combined_surface=True,
+        internal_gateway_token="billing-only",  # noqa: S106 - test placeholder.
+    )
+
+    assert synthetic_observer_token(both) == "observer-only"
+    assert synthetic_observer_token(billing_only) is None
+    assert synthetic_observer_token(bridged) == "billing-only"
+    assert synthetic_transaction_token(both) is None
+    assert synthetic_transaction_token(billing_only) is None
+    assert synthetic_transaction_token(bridged) == "billing-only"
+
+
+@pytest.mark.asyncio
+async def test_combined_bridge_job_keeps_transaction_probe_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    transaction_tokens: list[str | None] = []
+
+    async def empty_pass(**kwargs: Any) -> tuple[list[Any], list[Any]]:
+        transaction_tokens.append(kwargs["internal_token"])
+        return [], []
+
+    settings = Settings(
+        environment="test",
+        service_surface="combined",
+        allow_deployed_combined_surface=True,
+        internal_gateway_token="billing-only",  # noqa: S106 - test placeholder.
+    )
+    monkeypatch.setattr(cli_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "_probe_and_rotation_pass", empty_pass)
+    monkeypatch.setenv("TR_SYNTHETIC_RUNS_PER_INVOCATION", "1")
+    monkeypatch.delenv("TR_SYNTHETIC_REMEDIATOR_URL", raising=False)
+    monkeypatch.delenv("TR_SYNTHETIC_ROTATION_ENABLED", raising=False)
+    monkeypatch.delenv("TR_SYNTHETIC_THROUGHPUT_ENABLED", raising=False)
+    monkeypatch.delenv("TR_SYNTHETIC_THROUGHPUT_ONLY", raising=False)
+
+    assert await cli_module.run() == 0
+    assert transaction_tokens == ["billing-only"]
+
+
+@pytest.mark.asyncio
+async def test_synthetic_job_ingests_with_observer_token_and_never_runs_ledger_probes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    ingested: list[dict[str, Any]] = []
+
+    async def fake_run_synthetic_once(
+        *_args: Any, **_kwargs: Any
+    ) -> list[SyntheticProbeSample]:
+        return [_sample(id="tls", probe_type="tls_health", status="up")]
+
+    async def fake_canary(
+        _client: httpx.AsyncClient, **kwargs: Any
+    ) -> SyntheticProbeSample:
+        return _sample(
+            id="canary",
+            probe_type="client_telemetry_ingest",
+            status="up",
+            monitor_region=str(kwargs["monitor_region"]),
+        )
+
+    async def forbidden_ledger_probe(*_args: Any, **_kwargs: Any) -> list[Any]:
+        raise AssertionError("synthetic job attempted a billing gateway probe")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/internal/synthetic/samples"
+        assert request.headers["x-trustedrouter-internal-token"] == "observer-only"
+        ingested.append(json.loads(request.content))
+        return httpx.Response(200, json={"data": {"recorded": 2}})
+
+    settings = Settings(
+        environment="test",
+        service_surface="observer",
+        internal_gateway_token="billing-only",  # noqa: S106 - test placeholder.
+        observer_internal_token="observer-only",  # noqa: S106 - test placeholder.
+        synthetic_monitor_api_key="sk-tr-test",
+    )
+    real_async_client = httpx.AsyncClient
+    transport = httpx.MockTransport(handler)
+
+    def client_factory(**kwargs: Any) -> httpx.AsyncClient:
+        return real_async_client(transport=transport, **kwargs)
+
+    monkeypatch.setattr(cli_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "run_synthetic_once", fake_run_synthetic_once)
+    monkeypatch.setattr(cli_module, "client_telemetry_canary_probe", fake_canary)
+    monkeypatch.setattr(cli_module, "gateway_billing_probe", forbidden_ledger_probe)
+    monkeypatch.setattr(cli_module, "gateway_fallback_probe", forbidden_ledger_probe)
+    monkeypatch.setattr(cli_module.httpx, "AsyncClient", client_factory)
+    monkeypatch.setenv(
+        "TR_SYNTHETIC_INGEST_URL",
+        "https://trustedrouter.com/v1/internal/synthetic/samples",
+    )
+    monkeypatch.setenv("TR_SYNTHETIC_RUNS_PER_INVOCATION", "1")
+    monkeypatch.delenv("TR_SYNTHETIC_REMEDIATOR_URL", raising=False)
+    monkeypatch.delenv("TR_SYNTHETIC_ROTATION_ENABLED", raising=False)
+    monkeypatch.delenv("TR_SYNTHETIC_THROUGHPUT_ENABLED", raising=False)
+    monkeypatch.delenv("TR_SYNTHETIC_THROUGHPUT_ONLY", raising=False)
+
+    assert await cli_module.run() == 0
+    assert len(ingested) == 1
+    assert {sample["probe_type"] for sample in ingested[0]["samples"]} == {
+        "tls_health",
+        "client_telemetry_ingest",
+    }
+
+
+def test_synthetic_deploy_targets_public_api_and_private_internal_ingest() -> None:
     deploy_script = Path(__file__).resolve().parents[1] / "scripts/deploy/synthetic.sh"
     body = deploy_script.read_text()
 
+    assert '"TR_ENVIRONMENT=worker"' in body
+    assert '"TR_ENVIRONMENT=production"' not in body
+    assert '"TR_SERVICE_SURFACE=observer"' in body
+    assert '"TR_SERVICE_SURFACE=internal"' not in body
+    assert (
+        '"TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:latest"'
+        in body
+    )
+    assert (
+        '"TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest"'
+        in body
+    )
     assert "TR_API_BASE_URL=https://api.trustedrouter.com/v1" in body
     assert "TR_API_BASE_URL=https://api.quillrouter.com/v1" not in body
     assert 'throughput_job_name="trusted-router-throughput-${throughput_region}"' in body
     assert '"TR_SYNTHETIC_THROUGHPUT_ONLY=true"' in body
     assert '"TR_SYNTHETIC_THROUGHPUT_ONLY=false"' in body
     assert '"TR_SYNTHETIC_THROUGHPUT_ENABLED=false"' in body
-    assert 'scheduler_name="${job_name}-every-five-minutes"' in body
-    assert 'legacy_scheduler_name="${job_name}-every-minute"' in body
+    assert 'scheduler_name="${job_name}-every-three-minutes"' in body
+    assert '"${job_name}-every-minute"' in body
+    assert '"${job_name}-every-five-minutes"' in body
+    assert '"TR_SYNTHETIC_ROTATION_PER_PASS=2"' in body
+    assert '"*/3 * * * *"' in body
     assert '"*/5 * * * *"' in body
     assert 'throughput_scheduler_name="${throughput_job_name}-every-five-minutes"' in body
     assert '"TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=300"' in body
     assert '"TR_SYNTHETIC_BILLING_CONCURRENCY=2"' in body
     assert '"TR_SYNTHETIC_START_DELAY_SECONDS=$((monitor_index * 20))"' in body
-    assert '"TR_SYNTHETIC_START_DELAY_SECONDS=45"' in body
+    assert '"TR_SYNTHETIC_START_DELAY_SECONDS=0"' in body
+    assert '"TR_SYNTHETIC_THROUGHPUT_TIMEOUT_CEILING_SECONDS=210"' in body
     assert '"${throughput_job_name}-every-minute"' in body
     assert '"${throughput_job_name}-every-two-minutes"' in body
     assert 'image_job_name="trusted-router-image-generation-${image_region}"' in body
     assert (
-        'regional_ingest_base="https://${SERVICE}-${PROJECT_NUMBER}.${monitor_region}.run.app"'
+        'regional_ingest_base="https://${SYNTHETIC_INGEST_SERVICE}-${PROJECT_NUMBER}.'
+        '${monitor_region}.run.app"'
         in body
     )
+    assert (
+        'SYNTHETIC_INGEST_SERVICE="$TR_BILLING_SERVICE"'
+    ) in body
+    assert "TR_SYNTHETIC_INGEST_SERVICE" not in body
+    assert "TR_BILLING_SERVICE must be separate from legacy SERVICE" in body
     assert (
         '"TR_SYNTHETIC_INGEST_URL=${regional_ingest_base}/v1/internal/synthetic/samples"'
         in body
@@ -2634,6 +3036,13 @@ def test_synthetic_deploy_targets_public_api_domain() -> None:
         '"TR_SYNTHETIC_ROUTE_HEALTH_URL=${regional_ingest_base}/v1/internal/synthetic/route-health"'
         in body
     )
+    assert (
+        '"TR_SYNTHETIC_REMEDIATOR_URL=${regional_ingest_base}/v1/internal/synthetic/remediate"'
+        in body
+    )
+    assert 'if [ "$monitor_region" = "$TR_PRIMARY_REGION" ]' in body
+    rollout = (Path(__file__).resolve().parents[1] / "scripts/deploy/rollout.sh").read_text()
+    assert '"TR_REMEDIATOR_IN_PROCESS_ENABLED=false"' in rollout
     assert (
         '"TR_SYNTHETIC_INGEST_URL=${throughput_ingest_base}/v1/internal/synthetic/samples"'
         in body
@@ -2679,6 +3088,10 @@ async def test_image_generation_job_runs_one_probe_and_ingests_metadata(
                 },
             )
         if request.url.path == "/v1/internal/synthetic/samples":
+            assert (
+                request.headers["x-trustedrouter-internal-token"]
+                == "observer-test"
+            )
             ingested.append(json.loads(request.content))
             return httpx.Response(200, json={"data": {"recorded": 1}})
         return httpx.Response(404)
@@ -2686,7 +3099,8 @@ async def test_image_generation_job_runs_one_probe_and_ingests_metadata(
     settings = Settings(
         environment="test",
         api_base_url="https://api.trustedrouter.com/v1",
-        internal_gateway_token="internal-test",  # noqa: S106 - test placeholder.
+        internal_gateway_token="billing-test",  # noqa: S106 - test placeholder.
+        observer_internal_token="observer-test",  # noqa: S106 - test placeholder.
         synthetic_monitor_api_key="sk-tr-test",
     )
     real_async_client = httpx.AsyncClient
@@ -2750,6 +3164,10 @@ async def test_image_generation_job_confirms_a_text_only_response(
                 },
             )
         if request.url.path == "/v1/internal/synthetic/samples":
+            assert (
+                request.headers["x-trustedrouter-internal-token"]
+                == "observer-test"
+            )
             ingested.append(json.loads(request.content))
             return httpx.Response(200, json={"data": {"recorded": 2}})
         return httpx.Response(404)
@@ -2757,7 +3175,8 @@ async def test_image_generation_job_confirms_a_text_only_response(
     settings = Settings(
         environment="test",
         api_base_url="https://api.trustedrouter.com/v1",
-        internal_gateway_token="internal-test",  # noqa: S106 - test placeholder.
+        internal_gateway_token="billing-test",  # noqa: S106 - test placeholder.
+        observer_internal_token="observer-test",  # noqa: S106 - test placeholder.
         synthetic_monitor_api_key="sk-tr-test",
     )
     real_async_client = httpx.AsyncClient
@@ -3461,7 +3880,8 @@ def _benchmark_ingest_settings() -> Settings:
     return Settings(
         environment="test",
         sentry_dsn=None,
-        internal_gateway_token="test-internal-secret",  # noqa: S106 - test fixture.
+        internal_gateway_token="test-billing-secret",  # noqa: S106 - test fixture.
+        observer_internal_token="test-observer-secret",  # noqa: S106 - test fixture.
         stripe_secret_key=None,
         stripe_webhook_secret=None,
         google_client_id=None,
@@ -3499,7 +3919,7 @@ def test_internal_benchmark_ingest_records_sample() -> None:
     }
     resp = client.post(
         "/v1/internal/synthetic/benchmark",
-        headers={"x-trustedrouter-internal-token": "test-internal-secret"},
+        headers={"x-trustedrouter-internal-token": "test-observer-secret"},
         json=payload,
     )
     assert resp.status_code == 200
@@ -3988,10 +4408,43 @@ def test_internal_route_health_reports_flags_and_requires_token(
     unauthorized = client.post("/v1/internal/synthetic/route-health")
     response = client.post(
         "/v1/internal/synthetic/route-health",
-        headers={"x-trustedrouter-internal-token": "test-internal-secret"},
+        headers={"x-trustedrouter-internal-token": "test-observer-secret"},
     )
 
     assert unauthorized.status_code in (401, 403)
     assert response.status_code == 200
     assert response.json() == {"data": {"flagged": [asdict(flag)]}}
     assert reported == [flag]
+
+
+def test_internal_remediator_runs_between_heartbeats_and_requires_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.routes.internal import synthetic as synthetic_routes
+
+    events: list[str] = []
+
+    def fake_heartbeat(name: str, *, settings: Settings) -> None:
+        assert name == "scheduler:remediator"
+        assert settings.environment == "test"
+        events.append("heartbeat")
+
+    def fake_remediator(settings: Settings) -> list[object]:
+        assert settings.environment == "test"
+        events.append("remediate")
+        return [object(), object()]
+
+    monkeypatch.setattr(synthetic_routes, "record_heartbeat", fake_heartbeat)
+    monkeypatch.setattr(synthetic_routes, "run_remediator_pass", fake_remediator)
+    client = TestClient(create_app(_benchmark_ingest_settings(), init_observability=False))
+
+    unauthorized = client.post("/v1/internal/synthetic/remediate")
+    response = client.post(
+        "/v1/internal/synthetic/remediate",
+        headers={"x-trustedrouter-internal-token": "test-observer-secret"},
+    )
+
+    assert unauthorized.status_code in (401, 403)
+    assert response.status_code == 200
+    assert response.json() == {"data": {"decisions": 2}}
+    assert events == ["heartbeat", "remediate", "heartbeat"]

@@ -90,6 +90,23 @@ def test_video_leaderboard_ranks_success_before_raw_speed() -> None:
     ]
 
 
+def test_video_leaderboard_lists_configured_routes_while_samples_warm_up() -> None:
+    payload = aggregate_video_leaderboard(
+        [],
+        configured_routes={
+            ("ltx", "lightricks/ltx-2.3-fast"),
+            ("minimax", "minimax/hailuo-3"),
+        },
+    )
+
+    assert payload["total_samples"] == 0
+    assert payload["provider_count"] == 2
+    assert payload["model_count"] == 2
+    assert {row["provider"] for row in payload["providers"]} == {"ltx", "minimax"}
+    assert all(row["measurement_status"] == "awaiting_samples" for row in payload["models"])
+    assert all(row["rank"] is None for row in payload["models"])
+
+
 def test_video_leaderboard_page_and_json_are_separate_from_text_metrics() -> None:
     client = TestClient(create_app(_settings(), init_observability=False))
     STORE.record_provider_benchmark(_video_sample("video-page"))
@@ -103,7 +120,12 @@ def test_video_leaderboard_page_and_json_are_separate_from_text_metrics() -> Non
     assert "Video generation performance" in page.text
     assert "p50 cost / output sec" in page.text
     assert "minimax/hailuo-3" in page.text
-    assert payload.json()["data"]["model_count"] == 1
+    data = payload.json()["data"]
+    assert data["model_count"] > 1
+    routes = {(row["provider"], row["model"]) for row in data["models"]}
+    assert ("atlas-cloud", "minimax/hailuo-3") in routes
+    assert ("ltx", "lightricks/ltx-2.3-fast") in routes
+    assert "Awaiting sample" in page.text
     assert "minimax/hailuo-3" not in text_page.text
 
 

@@ -28,6 +28,8 @@ async def test_mock_provider_path_does_not_require_live_provider_keys(tmp_path) 
 
 @pytest.mark.asyncio
 async def test_live_provider_missing_secret_fails_before_http(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CHATGPT_API_KEY", raising=False)
     key_file = tmp_path / "keys.private"
     key_file.write_text("", encoding="utf-8")
 

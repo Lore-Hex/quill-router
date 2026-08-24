@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">TrustedRouter Confidential AI trust seal</title>
+  <desc id="desc">Privacy with proof through an attested gateway and confidential provider route.</desc>
+  <rect width="1200" height="630" fill="#0a0e0b"/>
+  <rect x="0.5" y="0.5" width="1199" height="629" fill="none" stroke="#3a423a"/>
+
+  <g transform="translate(70 47) scale(1.8)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M1.4 7.5H6.5L11 12M1.4 16.5H4L8.5 12M1.4 12H15.5" stroke="#ede8db" stroke-width="1.7"/>
+    <circle cx="15.5" cy="12" r="1.9" fill="#a9cdb9" stroke="none"/>
+    <path d="M17.4 12H22.6" stroke="#a9cdb9" stroke-width="1.7"/>
+  </g>
+  <text x="126" y="83" fill="#ede8db" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" letter-spacing="0">TrustedRouter</text>
+
+  <rect x="924" y="52" width="204" height="38" rx="4" fill="#121813" stroke="#3a423a"/>
+  <circle cx="948" cy="71" r="6" fill="#a9cdb9"/>
+  <text x="966" y="76.5" fill="#a9cdb9" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" letter-spacing="0">PRIVACY WITH PROOF</text>
+
+  <text x="72" y="174" fill="#a9cdb9" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="0">CONFIDENTIAL AI TRUST SEAL</text>
+  <text x="72" y="256" fill="#ede8db" font-family="Georgia, 'Times New Roman', serif" font-size="61" font-weight="400" letter-spacing="0">Show where your</text>
+  <text x="72" y="330" fill="#ede8db" font-family="Georgia, 'Times New Roman', serif" font-size="61" font-weight="400" letter-spacing="0">customers' AI data goes.</text>
+  <text x="72" y="414" fill="#b9c2b6" font-family="Arial, Helvetica, sans-serif" font-size="23" letter-spacing="0">Attested gateway. Confidential provider route.</text>
+  <text x="72" y="450" fill="#b9c2b6" font-family="Arial, Helvetica, sans-serif" font-size="23" letter-spacing="0">No prompt or output logs.</text>
+
+  <rect x="834" y="126" width="294" height="372" rx="8" fill="#111812" stroke="#3a423a" stroke-width="2"/>
+  <circle cx="1094" cy="160" r="16" fill="#a9cdb9"/>
+  <path d="m1087 160 5 5 10-11" fill="none" stroke="#10140f" stroke-linecap="round" stroke-linejoin="round" stroke-width="4"/>
+  <path d="M981 171 1041 193v47.7c0 40.6-25.7 70.4-60 83.7-34.3-13.3-60-43.1-60-83.7V193l60-22Z" fill="#0a0e0b" stroke="#a9cdb9" stroke-width="3"/>
+  <g transform="translate(944 207) scale(3.5)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M1.4 7.5H6.5L11 12M1.4 16.5H4L8.5 12M1.4 12H15.5" stroke="#ede8db" stroke-width="1.2"/>
+    <circle cx="15.5" cy="12" r="1.9" fill="#a9cdb9" stroke="none"/>
+    <path d="M17.4 12H22.6" stroke="#a9cdb9" stroke-width="1.2"/>
+  </g>
+  <text x="981" y="375" text-anchor="middle" fill="#ede8db" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" letter-spacing="0">CONFIDENTIAL AI</text>
+  <line x1="882" y1="400" x2="1080" y2="400" stroke="#3a423a"/>
+  <text x="981" y="437" text-anchor="middle" fill="#a9cdb9" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" letter-spacing="0">HARDWARE ATTESTED</text>
+  <text x="981" y="466" text-anchor="middle" fill="#d6d9cc" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" letter-spacing="0">TRUSTEDROUTER</text>
+
+  <line x1="72" y1="540" x2="1128" y2="540" stroke="#3a423a"/>
+  <text x="72" y="583" fill="#a9cdb9" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" letter-spacing="0">trustedrouter.com/badge</text>
+  <text x="1128" y="583" text-anchor="end" fill="#ede8db" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="0">VERIFY THE RUNNING SYSTEM →</text>
+</svg>

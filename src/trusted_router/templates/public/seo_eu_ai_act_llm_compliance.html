@@ -18,7 +18,7 @@ curl "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE"
 </section>
 <section class="marketing-grid three">
   <div class="marketing-card"><span class="card-label">Catalog transparency</span><h3>Know exactly what you deployed</h3><p>Every route in the model catalog is listed with its provider and privacy tier: Open, Zero-Data-Retention, or TEE. Pin a specific model id per workload so your records show which model handled which task, at a <a href="/pricing">transparent per-model price</a>.</p></div>
-  <div class="marketing-card"><span class="card-label">Retention</span><h3>No prompt or output logs</h3><p>TrustedRouter never logs or stores prompt or output content. Privacy you can check beats privacy you're promised: the enforcement point is an attested gateway, and Zero-Data-Retention routes add contractual no-retention from the serving provider.</p></div>
+  <div class="marketing-card"><span class="card-label">Retention</span><h3>No prompt or output logs</h3><p>{{ content_handling_claim }} Privacy you can check beats privacy you're promised: the enforcement point is an attested gateway, and Zero-Data-Retention routes add contractual no-retention from the serving provider.</p></div>
   <div class="marketing-card"><span class="card-label">EU routing</span><h3>Keep inference in Europe</h3><p>An <a href="/eu">EU gateway with EU-focused routing</a> is available for European workloads. Its scope is stated plainly: EU-focused routing, with no data-residency guarantees beyond that. Reaching it is a base_url change on an OpenAI-compatible API.</p></div>
 </section>
 <section class="quote-feature">

@@ -22,6 +22,7 @@ from trusted_router.catalog_data import (
     ModelProviderPrivacyOverride,
     Provider,
 )
+from trusted_router.wafer_policy import wafer_zdr_support
 
 
 def provider_privacy_tier(provider: Provider) -> int:
@@ -41,9 +42,28 @@ def provider_privacy_tier(provider: Provider) -> int:
 def _model_provider_privacy_override(
     model_id: str, provider_slug: str
 ) -> ModelProviderPrivacyOverride | None:
-    return _MODEL_PROVIDER_PRIVACY_OVERRIDES.get(
+    override = _MODEL_PROVIDER_PRIVACY_OVERRIDES.get(
         (model_id, provider_slug)
     ) or _MODEL_PROVIDER_PRIVACY_OVERRIDES.get((model_id, "*"))
+    if override is not None or provider_slug != "wafer":
+        return override
+
+    zdr_supported = wafer_zdr_support(model_id)
+    if zdr_supported is None:
+        return None
+    return ModelProviderPrivacyOverride(
+        privacy_tier=(
+            PRIVACY_TIER_ZERO_RETENTION if zdr_supported else PRIVACY_TIER_STANDARD
+        ),
+        provider_zero_data_retention=zdr_supported,
+        provider_policy=(
+            "Wafer's authenticated model catalog reports that this exact route "
+            "supports request-scoped ZDR via Wafer-ZDR: required."
+            if zdr_supported
+            else "Wafer's authenticated model catalog does not report ZDR support "
+            "for this exact route."
+        ),
+    )
 
 
 def model_provider_privacy_tier(model_id: str, provider_slug: str) -> int:
@@ -69,7 +89,26 @@ def endpoint_stores_content(endpoint: ModelEndpoint) -> bool:
 
 
 def endpoint_zero_data_retention(endpoint: ModelEndpoint) -> bool | None:
-    """Return the ZDR guarantee that applies to this exact credential path."""
+    """Return the ZDR guarantee that applies to this exact credential path.
+
+    Deliberately reads the provider's own flag rather than deriving from the
+    tier. An earlier version of this change derived it — CONFIDENTIAL implies
+    ZDR — to close a case where the router admits a route for a `zdr` floor
+    while this function reports False. Review rejected that reasoning and was
+    right: confidential compute means the provider cannot READ the content, and
+    says nothing about whether it RETAINS the ciphertext or has a deletion
+    policy. Publishing ZDR on that basis would assert a stronger claim than the
+    provider itself makes, which is the exact failure mode this whole tier
+    system exists to prevent.
+
+    The contradictory combination (confidential compute + e2ee together with an
+    explicit provider_zero_data_retention=False) is instead forbidden at the
+    catalog level — see
+    tests/test_catalog_privacy_coherence_property.py::
+    test_no_shipped_provider_has_the_contradictory_flag_combination. No shipped
+    provider has it; the test fails loudly if a catalog edit introduces one,
+    rather than either function quietly inventing an answer.
+    """
     override = _model_provider_privacy_override(endpoint.model_id, endpoint.provider)
     if override is not None and override.provider_zero_data_retention is not None:
         return override.provider_zero_data_retention

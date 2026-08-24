@@ -3,11 +3,20 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
-from google.api_core.exceptions import Aborted
+from google.api_core.exceptions import (
+    Aborted,
+    DeadlineExceeded,
+    InternalServerError,
+    ResourceExhausted,
+    ServiceUnavailable,
+)
+from google.api_core.retry import Retry, if_exception_type
 
 from trusted_router.storage_gcp_io import (
     TXN_BUDGET_SECONDS,
+    configure_spanner_rpc_deadlines,
     run_in_transaction_with_retry,
+    spanner_rpc_budget,
 )
 
 
@@ -204,3 +213,113 @@ def test_aborted_retries_then_succeeds_within_budget(monkeypatch: pytest.MonkeyP
     assert handed[0] == pytest.approx(20.0)
     assert all(0.0 < t <= 20.0 + 1e-9 for t in handed)
     assert handed == sorted(handed, reverse=True)
+
+
+class _WrappedRpc:
+    def __init__(self) -> None:
+        self._retry = Retry(
+            predicate=if_exception_type(ResourceExhausted, ServiceUnavailable),
+            timeout=3600.0,
+        )
+
+
+class _CommitTransport:
+    def __init__(self) -> None:
+        self.commit = object()
+        self._wrapped_methods = {self.commit: _WrappedRpc()}
+
+
+class _CommitApi:
+    def __init__(self, clock: _Clock | None = None, *, fail: bool = False) -> None:
+        self._transport = _CommitTransport()
+        self.clock = clock
+        self.fail = fail
+        self.calls: list[dict[str, object]] = []
+
+    def commit(self, *args: object, **kwargs: object) -> str:
+        self.calls.append(dict(kwargs))
+        if self.clock is not None:
+            self.clock.now += 6.0
+        if self.fail:
+            raise InternalServerError("RST_STREAM")
+        return "committed"
+
+
+class _CommitDatabase:
+    def __init__(self, api: _CommitApi, *, retry_commit: bool = False) -> None:
+        self.spanner_api = api
+        self.retry_commit = retry_commit
+        self.timeouts: list[float | None] = []
+
+    def run_in_transaction(
+        self,
+        func: Callable[..., str],
+        *,
+        timeout_secs: float | None = None,
+    ) -> str:
+        self.timeouts.append(timeout_secs)
+        result = func("txn")
+        try:
+            self.spanner_api.commit(request="commit")
+        except InternalServerError:
+            if not self.retry_commit:
+                raise
+            # Model Transaction.commit's private RST_STREAM retry. The second
+            # call must inherit the original transaction deadline.
+            self.spanner_api.commit(request="commit")
+        return result
+
+
+def test_configure_spanner_rpc_deadlines_caps_commit_and_retry_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _Clock()
+    _install_clock(monkeypatch, clock)
+    database = _CommitDatabase(_CommitApi())
+    configure_spanner_rpc_deadlines(database, max_seconds=7.0)
+
+    assert database.run_in_transaction(_txn, timeout_secs=100.0) == "ok"
+    assert database.timeouts == [pytest.approx(7.0)]
+    commit_call = database.spanner_api.calls[0]
+    assert commit_call["timeout"] == pytest.approx(7.0, abs=0.001)
+    retry = commit_call["retry"]
+    assert isinstance(retry, Retry)
+    assert retry._timeout == pytest.approx(7.0, abs=0.001)
+
+
+def test_commit_rst_retry_cannot_receive_a_fresh_transaction_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _Clock()
+    _install_clock(monkeypatch, clock)
+    api = _CommitApi(clock, fail=True)
+    database = _CommitDatabase(api, retry_commit=True)
+    configure_spanner_rpc_deadlines(database, max_seconds=5.0)
+
+    with pytest.raises(DeadlineExceeded, match="transaction deadline exceeded"):
+        database.run_in_transaction(_txn)
+
+    # The first stuck commit consumes the budget. The retry is rejected before
+    # reaching the transport instead of starting another one-hour default RPC.
+    assert len(api.calls) == 1
+
+
+def test_hot_path_budget_is_shared_across_multiple_transactions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _Clock()
+    _install_clock(monkeypatch, clock)
+    api = _CommitApi(clock)
+    database = _CommitDatabase(api)
+    configure_spanner_rpc_deadlines(database, max_seconds=20.0)
+
+    @spanner_rpc_budget(10.0)
+    def two_transactions() -> None:
+        database.run_in_transaction(_txn)
+        database.run_in_transaction(_txn)
+
+    two_transactions()
+
+    assert len(api.calls) == 2
+    assert api.calls[0]["timeout"] == pytest.approx(10.0)
+    assert api.calls[1]["timeout"] == pytest.approx(4.0)

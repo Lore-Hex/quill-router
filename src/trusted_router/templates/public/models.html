@@ -1,5 +1,6 @@
 {% extends "public/_base.html" %}
 {% from "public/_provider_privacy_badges.html" import provider_privacy_badges %}
+{% from "public/_provider_identity.html" import provider_identity %}
 {% block body %}
 <section class="public-proof-strip">
   <div><strong>Public catalog</strong><span>No auth needed to inspect routes.</span></div>
@@ -19,7 +20,7 @@
       <span class="eyebrow">Models</span>
       <h2>Route by model, provider, price, or privacy posture.</h2>
     </div>
-    <p>API JSON remains at <span class="mono">{{ api_base_url }}/models</span> with an API key. <a href="/compare/models">Compare models</a>.</p>
+    <p>API JSON remains at <span class="mono">{{ api_base_url }}/models</span> with an API key. <a href="/compare/models">Compare models</a>. By jurisdiction: <a href="/us-ai-models">US AI models</a>, <a href="/eu-ai-models">EU AI models</a>, <a href="/china-ai-models">Chinese AI models</a>.</p>
   </div>
   <div class="model-filter-row" aria-label="Model filters">
     {% for item in model_filters %}
@@ -60,7 +61,7 @@
             </div>
             {% endif %}
           </td>
-          <td>{{ model.provider }}</td>
+          <td>{{ provider_identity(model.publisher_slug, model.provider, "/providers/" ~ model.publisher_slug) }}</td>
           <td>
             {% if model.ai_iq %}
             <a class="ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener">
@@ -75,7 +76,7 @@
           <td>
             <div class="provider-chip-list" aria-label="{{ model.provider_count }} provider{{ '' if model.provider_count == 1 else 's' }}">
               {% for provider in model.providers %}
-              <span class="pill" title="{{ provider.slug }}">{{ provider.name }}</span>
+              <a class="pill provider-chip" href="/providers/{{ provider.slug }}" title="{{ provider.slug }}"><img class="provider-logo" src="{{ provider.logo_url }}" alt="{{ provider.name }} logo" aria-hidden="true" width="22" height="22" loading="lazy" decoding="async"><span>{{ provider.name }}</span></a>
               {% endfor %}
             </div>
           </td>

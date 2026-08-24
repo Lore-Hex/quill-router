@@ -39,14 +39,18 @@ MANIFEST_PATH = (
 
 EXPECTED_MODELS = [
     "deepseek/deepseek-v4-flash",
-    "deepseek/deepseek-v4-pro",
     "z-ai/glm-5.2",
     "z-ai/glm-5.2-nvfp4",
     "moonshotai/kimi-k2.7-code",
+    "moonshotai/kimi-k3",
     "meta-llama/llama-3.3-70b-instruct",
     "qwen/qwen3.6-27b",
     "qwen/qwen3.6-35b-a3b",
 ]
+
+# Makora ended serverless DeepSeek V4 Pro service on 2026-08-04. Keep the
+# route disabled even if its catalog briefly serves a stale row after EOL.
+RETIRED_MODELS = frozenset({"deepseek/deepseek-v4-pro"})
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 
 
@@ -118,7 +122,7 @@ def _live_catalog() -> tuple[dict[str, dict[str, Any]], dict[str, ModelPrice]]:
             or existing_ids.get(native_id.casefold())
             or canonicalize_native_model_id(native_id)
         )
-        if model_id is None:
+        if model_id is None or model_id in RETIRED_MODELS:
             continue
         row: dict[str, Any] = {
             "id": model_id,

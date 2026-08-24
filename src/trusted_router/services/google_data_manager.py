@@ -1,10 +1,4 @@
-"""Direct, metadata-only Google Ads Data Manager conversion delivery.
-
-This module deliberately uses raw HTTPS instead of a Google SDK. Uploads carry
-only Google's click identifier, event time, integer-derived dollar value,
-currency, and TrustedRouter's opaque transaction ID. They never carry email,
-workspace, account, prompt, output, API-key, or inference data.
-"""
+"""Direct, metadata-only Google Ads Data Manager conversion delivery."""
 
 from __future__ import annotations
 
@@ -24,13 +18,16 @@ from trusted_router.google_ads_conversions import (
     GOOGLE_ADS_ACTIVATED_ACTION,
     GOOGLE_ADS_PURCHASE_ACTION,
     GOOGLE_ADS_SIGNUP_ACTION,
-    is_google_ads_direct_delivery,
+    decrypt_google_ads_click_id,
 )
 from trusted_router.storage_models import GoogleAdsConversion
 
 log = logging.getLogger(__name__)
 
 DATA_MANAGER_INGEST_URL = "https://datamanager.googleapis.com/v1/events:ingest"
+DATA_MANAGER_STATUS_URL = (
+    "https://datamanager.googleapis.com/v1/requestStatus:retrieve"
+)
 DATA_MANAGER_SCOPE = "https://www.googleapis.com/auth/datamanager"
 METADATA_IDENTITY_URL = (
     "http://metadata.google.internal/computeMetadata/v1/"
@@ -44,6 +41,7 @@ _DESTINATION_REFERENCE_BY_ACTION = {
     GOOGLE_ADS_PURCHASE_ACTION: "purchase",
 }
 _NUMERIC_ID_RE = re.compile(r"^[0-9]+$")
+_CLICK_ID_RE = re.compile(r"^[A-Za-z0-9._~-]{1,256}$")
 
 
 @dataclass(frozen=True)
@@ -69,7 +67,7 @@ class GoogleDataManagerConfig:
             ),
             activated_action_id=_numeric_id(
                 settings.google_data_manager_activated_action_id,
-                "activated conversion action ID",
+                "activation conversion action ID",
             ),
             purchase_action_id=_numeric_id(
                 settings.google_data_manager_purchase_action_id,
@@ -98,17 +96,25 @@ class GoogleDataManagerRunResult:
     submitted: int
     failed: int
     repaired: int
+    purged: int
     request_id: str | None = None
 
 
 class GoogleDataManagerUploadError(RuntimeError):
-    def __init__(self, message: str, *, retryable: bool) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool,
+        request_id: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.retryable = retryable
+        self.request_id = request_id
 
 
 class GoogleAdsDeliveryStore(Protocol):
-    """Narrow storage surface available to the conversion worker."""
+    def purge_expired_google_ads_click_ids(self, *, before: str, limit: int) -> int: ...
 
     def repair_google_ads_delivery_queue(self, *, since: str, limit: int) -> int: ...
 
@@ -141,7 +147,7 @@ class GoogleAdsDeliveryStore(Protocol):
 
 
 class MetadataAccessTokenProvider:
-    """Fetch and cache a scoped Cloud Run service-identity access token."""
+    """Fetch and cache a scoped Cloud Run service-identity token."""
 
     def __init__(self, client: httpx.Client) -> None:
         self._client = client
@@ -154,10 +160,7 @@ class MetadataAccessTokenProvider:
         try:
             response = self._client.get(
                 METADATA_IDENTITY_URL,
-                params={
-                    "scopes": DATA_MANAGER_SCOPE,
-                    "enforce_scopes": "true",
-                },
+                params={"scopes": DATA_MANAGER_SCOPE, "enforce_scopes": "true"},
                 headers={"Metadata-Flavor": "Google"},
             )
         except httpx.HTTPError as exc:
@@ -189,59 +192,45 @@ class GoogleDataManagerClient:
         self,
         *,
         config: GoogleDataManagerConfig,
+        settings: Settings,
         client: httpx.Client,
         token_provider: Callable[[], str],
-        ingest_url: str = DATA_MANAGER_INGEST_URL,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._config = config
+        self._settings = settings
         self._client = client
         self._token_provider = token_provider
-        self._ingest_url = ingest_url
+        self._sleep = sleep
 
-    def ingest(
-        self,
-        conversions: list[GoogleAdsConversion],
-    ) -> GoogleDataManagerIngestResult:
-        if not conversions:
-            raise ValueError("at least one Google Ads conversion is required")
-        if len(conversions) > MAX_EVENTS_PER_REQUEST:
-            raise ValueError(
-                f"Google Data Manager accepts at most {MAX_EVENTS_PER_REQUEST} events"
-            )
+    def ingest(self, conversions: list[GoogleAdsConversion]) -> GoogleDataManagerIngestResult:
         body = encode_google_data_manager_request(
             conversions,
             config=self._config,
+            settings=self._settings,
         )
+        headers = self._headers()
         try:
             response = self._client.post(
-                self._ingest_url,
+                DATA_MANAGER_INGEST_URL,
                 content=body,
-                headers={
-                    "Authorization": f"Bearer {self._token_provider()}",
-                    "Content-Type": "application/json",
-                    "User-Agent": "TrustedRouter-DataManager/1",
-                    "x-goog-user-project": self._config.project_id,
-                },
+                headers=headers,
             )
-        except GoogleDataManagerUploadError:
-            raise
         except httpx.HTTPError as exc:
             raise GoogleDataManagerUploadError(
                 "Google Data Manager request failed",
                 retryable=True,
             ) from exc
         if not 200 <= response.status_code < 300:
-            detail = _google_error_detail(response)
-            suffix = f" ({detail})" if detail else ""
             raise GoogleDataManagerUploadError(
-                f"Google Data Manager returned HTTP {response.status_code}{suffix}",
+                f"Google Data Manager returned HTTP {response.status_code}"
+                + _google_error_suffix(response),
                 retryable=_is_retryable_status(response.status_code),
             )
         try:
             payload = response.json()
             request_id = str(payload["requestId"]).strip()
             warnings = payload.get("fieldWarnings", [])
-            warning_count = len(warnings) if isinstance(warnings, list) else 0
         except (KeyError, TypeError, ValueError) as exc:
             raise GoogleDataManagerUploadError(
                 "Google Data Manager response did not contain a request ID",
@@ -252,54 +241,99 @@ class GoogleDataManagerClient:
                 "Google Data Manager response did not contain a request ID",
                 retryable=True,
             )
-        return GoogleDataManagerIngestResult(
+        warning_count = len(warnings) if isinstance(warnings, list) else 0
+        self._wait_for_success(request_id, headers=headers)
+        return GoogleDataManagerIngestResult(request_id, warning_count)
+
+    def _wait_for_success(self, request_id: str, *, headers: dict[str, str]) -> None:
+        attempts = self._settings.google_data_manager_status_poll_attempts
+        for attempt in range(attempts):
+            try:
+                response = self._client.get(
+                    DATA_MANAGER_STATUS_URL,
+                    params={"requestId": request_id},
+                    headers=headers,
+                )
+            except httpx.HTTPError as exc:
+                raise GoogleDataManagerUploadError(
+                    "Google Data Manager status request failed",
+                    retryable=True,
+                    request_id=request_id,
+                ) from exc
+            if not 200 <= response.status_code < 300:
+                raise GoogleDataManagerUploadError(
+                    f"Google Data Manager status returned HTTP {response.status_code}"
+                    + _google_error_suffix(response),
+                    retryable=_is_retryable_status(response.status_code),
+                    request_id=request_id,
+                )
+            statuses, reasons = _request_statuses(response)
+            if statuses and all(status == "SUCCESS" for status in statuses):
+                return
+            if any(status in {"FAILED", "PARTIAL_SUCCESS"} for status in statuses):
+                detail = ",".join(sorted(reasons))[:300]
+                suffix = f" reasons={detail}" if detail else ""
+                raise GoogleDataManagerUploadError(
+                    "Google Data Manager processing failed" + suffix,
+                    retryable=True,
+                    request_id=request_id,
+                )
+            if attempt + 1 < attempts:
+                self._sleep(self._settings.google_data_manager_status_poll_seconds)
+        raise GoogleDataManagerUploadError(
+            "Google Data Manager processing did not finish before the polling deadline",
+            retryable=True,
             request_id=request_id,
-            warning_count=warning_count,
         )
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self._token_provider()}",
+            "Content-Type": "application/json",
+            "User-Agent": "TrustedRouter-DataManager/2",
+            "x-goog-user-project": self._config.project_id,
+        }
 
 
 def encode_google_data_manager_request(
     conversions: list[GoogleAdsConversion],
     *,
     config: GoogleDataManagerConfig,
+    settings: Settings,
 ) -> bytes:
-    """Encode exact microdollar values as JSON numbers without binary floats."""
     if not conversions:
         raise ValueError("at least one Google Ads conversion is required")
     if len(conversions) > MAX_EVENTS_PER_REQUEST:
-        raise ValueError(
-            f"Google Data Manager accepts at most {MAX_EVENTS_PER_REQUEST} events"
-        )
-    for conversion in conversions:
-        if not is_google_ads_direct_delivery(conversion):
-            raise ValueError(
-                f"conversion action is not eligible for direct delivery: "
-                f"{conversion.conversion_action}"
-            )
-
-    references = {
-        _destination_reference(conversion)
-        for conversion in conversions
-    }
+        raise ValueError(f"Google Data Manager accepts at most {MAX_EVENTS_PER_REQUEST} events")
+    references = {_destination_reference(conversion) for conversion in conversions}
     destinations = [
         _destination(reference, config=config)
         for reference in ("signup", "activation", "purchase")
         if reference in references
     ]
-    event_json = [
-        _encode_event(conversion)
-        for conversion in conversions
-    ]
-    destination_json = json.dumps(
-        destinations,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
+    decrypted: dict[tuple[str, str], str] = {}
+    events: list[str] = []
+    for conversion in conversions:
+        if conversion.encrypted_click_id is None:
+            raise ValueError("encrypted Google click identifier is unavailable")
+        cache_key = (conversion.attribution_id, conversion.encrypted_click_id.ciphertext)
+        click_id = decrypted.get(cache_key)
+        if click_id is None:
+            click_id = decrypt_google_ads_click_id(
+                conversion.encrypted_click_id,
+                settings,
+                attribution_id=conversion.attribution_id,
+            )
+            if not _CLICK_ID_RE.fullmatch(click_id):
+                raise ValueError("decrypted Google click identifier is invalid")
+            decrypted[cache_key] = click_id
+        events.append(_encode_event(conversion, click_id=click_id))
+    destination_json = json.dumps(destinations, separators=(",", ":"), sort_keys=True)
     return (
         '{"destinations":'
         + destination_json
         + ',"events":['
-        + ",".join(event_json)
+        + ",".join(events)
         + "]}"
     ).encode("utf-8")
 
@@ -311,13 +345,13 @@ def run_google_data_manager_once(
     client: GoogleDataManagerClient,
 ) -> GoogleDataManagerRunResult:
     if not settings.google_data_manager_enabled:
-        return GoogleDataManagerRunResult(
-            claimed=0,
-            submitted=0,
-            failed=0,
-            repaired=0,
-        )
-
+        return GoogleDataManagerRunResult(0, 0, 0, 0, 0)
+    purged = store.purge_expired_google_ads_click_ids(
+        before=dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace(
+            "+00:00", "Z"
+        ),
+        limit=settings.google_data_manager_batch_size,
+    )
     since = (
         dt.datetime.now(dt.UTC).replace(microsecond=0)
         - dt.timedelta(days=settings.google_data_manager_repair_lookback_days)
@@ -331,50 +365,50 @@ def run_google_data_manager_once(
         lease_seconds=settings.google_data_manager_lease_seconds,
     )
     if not conversions:
-        return GoogleDataManagerRunResult(
-            claimed=0,
-            submitted=0,
-            failed=0,
-            repaired=repaired,
-        )
-
+        return GoogleDataManagerRunResult(0, 0, 0, repaired, purged)
     try:
         result = client.ingest(conversions)
-    except GoogleDataManagerUploadError as exc:
+    except (GoogleDataManagerUploadError, ValueError) as exc:
+        retryable = not isinstance(exc, ValueError) and exc.retryable
+        request_id = exc.request_id if isinstance(exc, GoogleDataManagerUploadError) else None
+        error = str(exc)
+        if request_id:
+            error = f"{error} request_id={request_id[:128]}"
         failed = _mark_batch_failed(
             store,
             conversions,
-            error=str(exc),
-            retryable=exc.retryable,
+            error=error,
+            retryable=retryable,
             max_attempts=settings.google_data_manager_max_attempts,
         )
         log.warning(
-            "google_data_manager.upload_failed error=%s "
-            "conversion_count=%d retryable=%s marked_failed=%d",
-            exc,
-            len(conversions),
-            exc.retryable,
-            failed,
+            "google_data_manager.upload_failed",
+            extra={
+                "conversion_count": len(conversions),
+                "retryable": retryable,
+                "marked_failed": failed,
+                "error_type": type(exc).__name__,
+                "google_request_id": request_id,
+            },
         )
         return GoogleDataManagerRunResult(
-            claimed=len(conversions),
-            submitted=0,
-            failed=failed,
-            repaired=repaired,
+            len(conversions),
+            0,
+            failed,
+            repaired,
+            purged,
+            request_id,
         )
-
     submitted = 0
     for conversion in conversions:
-        lease_owner = conversion.lease_owner
-        if not lease_owner:
+        if not conversion.lease_owner:
             continue
-        marked = store.mark_google_ads_delivery_submitted(
+        if store.mark_google_ads_delivery_submitted(
             order_id=conversion.order_id,
             occurred_at=conversion.occurred_at,
-            lease_owner=lease_owner,
+            lease_owner=conversion.lease_owner,
             request_id=result.request_id,
-        )
-        if marked is not None:
+        ) is not None:
             submitted += 1
     log.info(
         "google_data_manager.upload_submitted",
@@ -386,11 +420,12 @@ def run_google_data_manager_once(
         },
     )
     return GoogleDataManagerRunResult(
-        claimed=len(conversions),
-        submitted=submitted,
-        failed=0,
-        repaired=repaired,
-        request_id=result.request_id,
+        len(conversions),
+        submitted,
+        0,
+        repaired,
+        purged,
+        result.request_id,
     )
 
 
@@ -404,27 +439,21 @@ def _mark_batch_failed(
 ) -> int:
     failed = 0
     for conversion in conversions:
-        lease_owner = conversion.lease_owner
-        if not lease_owner:
+        if not conversion.lease_owner:
             continue
-        marked = store.mark_google_ads_delivery_failed(
+        if store.mark_google_ads_delivery_failed(
             order_id=conversion.order_id,
             occurred_at=conversion.occurred_at,
-            lease_owner=lease_owner,
+            lease_owner=conversion.lease_owner,
             error=error,
             retryable=retryable,
             max_attempts=max_attempts,
-        )
-        if marked is not None:
+        ) is not None:
             failed += 1
     return failed
 
 
-def _destination(
-    reference: str,
-    *,
-    config: GoogleDataManagerConfig,
-) -> dict[str, Any]:
+def _destination(reference: str, *, config: GoogleDataManagerConfig) -> dict[str, Any]:
     action_id = {
         "signup": config.signup_action_id,
         "activation": config.activated_action_id,
@@ -446,10 +475,11 @@ def _destination(
     return destination
 
 
-def _encode_event(conversion: GoogleAdsConversion) -> str:
-    click_name, click_value = _one_click_identifier(conversion)
+def _encode_event(conversion: GoogleAdsConversion, *, click_id: str) -> str:
+    if conversion.click_id_kind not in {"gclid", "gbraid", "wbraid"}:
+        raise ValueError("unsupported Google click identifier kind")
     event = {
-        "adIdentifiers": {click_name: click_value},
+        "adIdentifiers": {conversion.click_id_kind: click_id},
         "currency": conversion.currency_code,
         "destinationReferences": [_destination_reference(conversion)],
         "eventSource": "WEB",
@@ -465,16 +495,6 @@ def _encode_event(conversion: GoogleAdsConversion) -> str:
     )
 
 
-def _one_click_identifier(
-    conversion: GoogleAdsConversion,
-) -> tuple[str, str]:
-    for name in ("gclid", "gbraid", "wbraid"):
-        value = getattr(conversion, name)
-        if value:
-            return name, value
-    raise ValueError("Google Ads conversion has no click identifier")
-
-
 def _destination_reference(conversion: GoogleAdsConversion) -> str:
     try:
         return _DESTINATION_REFERENCE_BY_ACTION[conversion.conversion_action]
@@ -488,9 +508,7 @@ def _microdollars_json_number(value: int) -> str:
     if value < 0:
         raise ValueError("Google Ads conversion value cannot be negative")
     whole, fractional = divmod(value, 1_000_000)
-    if not fractional:
-        return str(whole)
-    return f"{whole}.{fractional:06d}".rstrip("0")
+    return str(whole) if not fractional else f"{whole}.{fractional:06d}".rstrip("0")
 
 
 def _numeric_id(value: str | None, label: str) -> str:
@@ -500,41 +518,58 @@ def _numeric_id(value: str | None, label: str) -> str:
     return normalized
 
 
-def _google_error_detail(response: httpx.Response) -> str:
-    """Extract safe diagnostic codes without logging Google's raw response."""
+def _request_statuses(response: httpx.Response) -> tuple[list[str], set[str]]:
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise GoogleDataManagerUploadError(
+            "Google Data Manager status response was invalid",
+            retryable=True,
+        ) from exc
+    rows = payload.get("requestStatusPerDestination") if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or not rows:
+        raise GoogleDataManagerUploadError(
+            "Google Data Manager status response contained no destinations",
+            retryable=True,
+        )
+    statuses: list[str] = []
+    reasons: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        statuses.append(str(row.get("requestStatus") or "REQUEST_STATUS_UNKNOWN"))
+        error_info = row.get("errorInfo")
+        if isinstance(error_info, dict):
+            counts = error_info.get("errorCounts")
+            if isinstance(counts, list):
+                for item in counts:
+                    if isinstance(item, dict) and item.get("reason"):
+                        reasons.add(str(item["reason"])[:120])
+    return statuses, reasons
+
+
+def _google_error_suffix(response: httpx.Response) -> str:
     try:
         payload = response.json()
     except ValueError:
         return ""
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or not isinstance(payload.get("error"), dict):
         return ""
-    error = payload.get("error")
-    if not isinstance(error, dict):
-        return ""
-
-    details: list[str] = []
+    error = payload["error"]
     status = error.get("status")
-    if isinstance(status, str) and status:
-        details.append(f"status={status[:80]}")
-
-    raw_details = error.get("details")
-    if isinstance(raw_details, list):
-        for item in raw_details:
-            if not isinstance(item, dict):
-                continue
-            detail_type = str(item.get("@type", ""))
-            if detail_type.endswith("ErrorInfo"):
-                reason = item.get("reason")
-                if isinstance(reason, str) and reason:
-                    details.append(f"reason={reason[:80]}")
-            elif detail_type.endswith("RequestInfo"):
-                request_id = item.get("requestId")
-                if isinstance(request_id, str) and request_id:
-                    details.append(f"request_id={request_id[:128]}")
-    return " ".join(details)
+    return f" status={str(status)[:80]}" if status else ""
 
 
 def _is_retryable_status(status_code: int) -> bool:
-    # Google documents propagation-time SERVICE_DISABLED as a 403. Retry is
-    # still bounded by google_data_manager_max_attempts.
     return status_code in {403, 408, 409, 425, 429} or status_code >= 500
+
+
+__all__ = [
+    "GoogleDataManagerClient",
+    "GoogleDataManagerConfig",
+    "GoogleDataManagerRunResult",
+    "GoogleDataManagerUploadError",
+    "MetadataAccessTokenProvider",
+    "encode_google_data_manager_request",
+    "run_google_data_manager_once",
+]

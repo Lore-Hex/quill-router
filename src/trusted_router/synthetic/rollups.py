@@ -6,8 +6,16 @@ import math
 from collections import Counter
 from typing import Any
 
-from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, iso_now
-from trusted_router.synthetic.components import sample_component_ids
+from trusted_router.storage_models import (
+    FUTURE_SAMPLE_SKEW_SECONDS,
+    SyntheticProbeSample,
+    SyntheticRollup,
+    iso_now,
+)
+from trusted_router.synthetic.components import (
+    UNCATEGORIZED_COMPONENT,
+    sample_component_ids,
+)
 
 ROLLUP_PERIODS = {"hour", "day", "month"}
 ROLLUP_RETENTION_MONTHS = 24
@@ -28,7 +36,7 @@ def rollup_period_start(created_at: str, period: str) -> str:
 
 
 def sample_rollup_ids(sample: SyntheticProbeSample) -> list[tuple[str, str]]:
-    component_ids = sample_component_ids(sample) or ["uncategorized"]
+    component_ids = sample_component_ids(sample) or [UNCATEGORIZED_COMPONENT]
     return [
         (period, component_id)
         for period in ("hour", "day", "month")
@@ -163,7 +171,9 @@ def merge_rollups(rollups: list[SyntheticRollup]) -> dict[str, Any]:
         )
         error_counts.update(rollup.error_counts)
         cost_microdollars += rollup.cost_microdollars
-        if rollup.last_checked_at and (last_checked_at is None or rollup.last_checked_at > last_checked_at):
+        if rollup.last_checked_at and (
+            last_checked_at is None or rollup.last_checked_at > last_checked_at
+        ):
             last_checked_at = rollup.last_checked_at
     return {
         "sample_count": sample_count,
@@ -174,18 +184,10 @@ def merge_rollups(rollups: list[SyntheticRollup]) -> dict[str, Any]:
         "p95_ttfb_milliseconds": percentile_from_histogram(ttfb_histogram, 95),
         "p50_dns_milliseconds": percentile_from_histogram(dns_histogram, 50),
         "p95_dns_milliseconds": percentile_from_histogram(dns_histogram, 95),
-        "p50_tcp_connect_milliseconds": percentile_from_histogram(
-            tcp_connect_histogram, 50
-        ),
-        "p95_tcp_connect_milliseconds": percentile_from_histogram(
-            tcp_connect_histogram, 95
-        ),
-        "p50_tls_handshake_milliseconds": percentile_from_histogram(
-            tls_handshake_histogram, 50
-        ),
-        "p95_tls_handshake_milliseconds": percentile_from_histogram(
-            tls_handshake_histogram, 95
-        ),
+        "p50_tcp_connect_milliseconds": percentile_from_histogram(tcp_connect_histogram, 50),
+        "p95_tcp_connect_milliseconds": percentile_from_histogram(tcp_connect_histogram, 95),
+        "p50_tls_handshake_milliseconds": percentile_from_histogram(tls_handshake_histogram, 50),
+        "p95_tls_handshake_milliseconds": percentile_from_histogram(tls_handshake_histogram, 95),
         "p50_gateway_processing_milliseconds": percentile_from_histogram(
             gateway_processing_histogram, 50
         ),
@@ -229,7 +231,15 @@ def raw_sample_is_within_retention(
     now: dt.datetime,
     days: int = RAW_SYNTHETIC_RETENTION_DAYS,
 ) -> bool:
-    return _parse_time(sample.created_at) >= now - dt.timedelta(days=days)
+    """Bounded on BOTH sides. The lower bound is retention. The upper
+    bound excludes future-dated poison: a sample dated past the skew
+    budget (e.g. a year-7748 conformance fixture written to a live
+    store) would otherwise sort first in every newest-first read forever
+    — retention alone never expires a row dated in the future."""
+    created = _parse_time(sample.created_at)
+    if created > now + dt.timedelta(seconds=FUTURE_SAMPLE_SKEW_SECONDS):
+        return False
+    return created >= now - dt.timedelta(days=days)
 
 
 def _increment_histogram(histogram: dict[str, int], value: int) -> None:

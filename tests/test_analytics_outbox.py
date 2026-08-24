@@ -15,7 +15,11 @@ from clickhouse.ingest_outbox import (
     drain_once,
     normalise_outbox_payload,
 )
-from clickhouse.reconcile_benchmark_samples import _add_row, _reverse_time_key
+from clickhouse.reconcile_benchmark_samples import (
+    CLICKHOUSE_COLUMNS,
+    _add_row,
+    _reverse_time_key,
+)
 from trusted_router.config import Settings
 from trusted_router.storage_gcp_analytics_outbox import (
     SpannerAnalyticsOutbox,
@@ -35,6 +39,7 @@ def _sample() -> ProviderBenchmarkSample:
         status="error",
         usage_type=UsageType.CREDITS,
         streamed=True,
+        workspace_id="ws-analytics-test",
         input_tokens=12,
         output_tokens=3,
         speed_tokens_per_second=7.125,
@@ -137,6 +142,8 @@ def test_normalise_is_identical_for_backfill_and_outbox_payload() -> None:
     assert expected is not None
     assert expected["error_status"] == 429
     assert expected["elapsed_milliseconds"] == 210
+    assert expected["workspace_id"] == "ws-analytics-test"
+    assert "workspace_id" in CLICKHOUSE_COLUMNS
 
 
 class _Source:

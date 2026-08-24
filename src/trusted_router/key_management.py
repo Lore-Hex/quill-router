@@ -25,11 +25,10 @@ docs/storage-portability/README.md rather than smuggled in here.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-from trusted_router.config import Settings
 
 
 class KeyManagementError(Exception):
@@ -60,6 +59,31 @@ class KeyWrapper(Protocol):
     def wrap(self, dek: bytes, *, nonce: bytes, aad: bytes) -> bytes: ...
 
     def unwrap(self, wrapped: bytes, *, nonce: bytes, aad: bytes) -> bytes: ...
+
+
+class KeyWrapperSettings(Protocol):
+    """The small configuration surface envelope wrapping actually needs."""
+
+    environment: str
+    byok_kms_key_name: str | None
+    byok_envelope_key_b64: str | None
+    byok_envelope_key_ref: str
+
+
+@dataclass(frozen=True)
+class KeyWrapperConfig:
+    """Standalone key configuration for offline operator tools.
+
+    Operator migrations must not instantiate the full web application settings
+    object: doing so couples a KMS-only job to OAuth, email, gateway, and every
+    other production startup validator. The explicit non-local environment also
+    keeps the development wrapping-key fallback unavailable.
+    """
+
+    environment: str = "production"
+    byok_kms_key_name: str | None = None
+    byok_envelope_key_b64: str | None = None
+    byok_envelope_key_ref: str = "trustedrouter/byok-envelope-key/v1"
 
 
 class LocalAesKeyWrapper:
@@ -153,7 +177,7 @@ def _translate_kms_error(exc: Exception) -> Exception:
     return exc
 
 
-def key_wrapper_for(settings: Settings) -> KeyWrapper:
+def key_wrapper_for(settings: KeyWrapperSettings) -> KeyWrapper:
     """Select the wrapper for this deployment.
 
     Precedence matches the behaviour this replaced: an explicit local key wins

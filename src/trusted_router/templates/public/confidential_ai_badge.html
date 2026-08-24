@@ -1,0 +1,109 @@
+{% extends "public/_base.html" %}
+{% block hero %}
+<section class="public-hero marketing-hero badge-hero">
+  <div>
+    <div class="kicker">OpenAI compatible API · Confidential AI trust seal</div>
+    <h1>Show where your customers' AI data goes.</h1>
+    <p class="lead">Display the TrustedRouter Confidential AI badge when your product uses the strongest confidential route. Every badge links to the evidence: open source, a live workload digest, and hardware attestation.</p>
+    <div class="hero-actions">
+      <a class="btn primary" href="#embed">Get the badge</a>
+      <a class="btn" href="https://trust.trustedrouter.com">Verify live <span aria-hidden="true">→</span></a>
+    </div>
+  </div>
+  <div class="trust-badge-preview dark" aria-label="Dark Confidential AI badge preview">
+    <img src="/static/badges/confidential-ai-dark.svg" width="288" height="72" alt="Confidential AI via TrustedRouter. Hardware attested.">
+  </div>
+</section>
+{% endblock %}
+{% block body %}
+
+<section class="public-proof-strip" aria-label="Badge properties">
+  <div><strong>Static</strong><span>SVG or PNG. No script.</span></div>
+  <div><strong>Linked</strong><span>Customers can inspect the claim.</span></div>
+  <div><strong>Attested</strong><span>Fresh evidence from the live gateway.</span></div>
+  <div><strong>Fail closed</strong><span>Confidential routing is a hard floor.</span></div>
+</section>
+
+<section class="marketing-split" aria-label="Confidential AI badge meaning">
+  <div class="marketing-copy">
+    <span class="eyebrow">Privacy with proof</span>
+    <h2>A trust seal backed by a running system.</h2>
+    <p>The badge says that the AI feature displaying it sends requests through TrustedRouter's hardware-attested gateway and enforces the confidential provider route. TrustedRouter never logs or stores prompt or output content.</p>
+    <p>Use <code>model="trustedrouter/confidential"</code>, <code>model="trustedrouter/e2e"</code>, or <code>provider.min_privacy="confidential"</code>. These routes fail closed when no qualifying confidential endpoint is available.</p>
+    <p>The badge is evidence of the AI data path. It is not a SOC 2, ISO 27001, HIPAA, or product-wide certification.</p>
+  </div>
+  <div class="trust-path badge-trust-path" aria-label="Badge verification path">
+    <div class="trust-path-node"><strong>Customer product</strong><span>Displays the seal</span></div>
+    <span class="trust-path-arrow" aria-hidden="true">→</span>
+    <div class="trust-path-node"><strong>Attested gateway</strong><span>Matches published source</span></div>
+    <span class="trust-path-arrow" aria-hidden="true">→</span>
+    <div class="trust-path-node"><strong>Confidential provider</strong><span>E2EE route floor</span></div>
+  </div>
+</section>
+
+<section id="embed" class="badge-section" aria-labelledby="badge-variants-title">
+  <div class="section-heading">
+    <span class="eyebrow">Website assets</span>
+    <h2 id="badge-variants-title">Choose the seal that fits your site.</h2>
+    <p>Keep the badge readable at its native size. The linked SVG is the best default; PNG files are available for systems that require them.</p>
+  </div>
+  <div class="trust-badge-grid">
+    <div class="trust-badge-option">
+      <div class="trust-badge-preview light">
+        <img src="/static/badges/confidential-ai-light.svg" width="288" height="72" alt="Light Confidential AI badge">
+      </div>
+      <div class="badge-option-meta">
+        <div><strong>Light</strong><span>For light backgrounds</span></div>
+        <div class="badge-downloads"><a href="/static/badges/confidential-ai-light.svg" download>SVG</a><a href="/static/badges/confidential-ai-light.png" download>PNG</a></div>
+      </div>
+    </div>
+    <div class="trust-badge-option">
+      <div class="trust-badge-preview dark">
+        <img src="/static/badges/confidential-ai-dark.svg" width="288" height="72" alt="Dark Confidential AI badge">
+      </div>
+      <div class="badge-option-meta">
+        <div><strong>Dark</strong><span>For dark backgrounds</span></div>
+        <div class="badge-downloads"><a href="/static/badges/confidential-ai-dark.svg" download>SVG</a><a href="/static/badges/confidential-ai-dark.png" download>PNG</a></div>
+      </div>
+    </div>
+    <div class="trust-badge-option compact">
+      <div class="trust-badge-preview seal">
+        <img src="/static/badges/confidential-ai-seal.svg" width="136" height="136" alt="Compact Confidential AI trust seal">
+      </div>
+      <div class="badge-option-meta">
+        <div><strong>Compact</strong><span>For trust centers and footers</span></div>
+        <div class="badge-downloads"><a href="/static/badges/confidential-ai-seal.svg" download>SVG</a><a href="/static/badges/confidential-ai-seal.png" download>PNG</a></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="badge-code-grid" aria-label="Badge embed code">
+  <div class="copy-terminal">
+    <div class="code-head"><span>Light badge</span><button class="code-copy" type="button" data-action="copy-code" data-copy-target="confidential-badge-light-code">Copy</button></div>
+    <pre><code id="confidential-badge-light-code">&lt;a href="https://trustedrouter.com/badge"
+   aria-label="Verify Confidential AI via TrustedRouter"&gt;
+  &lt;img src="https://trustedrouter.com/static/badges/confidential-ai-light.svg"
+       alt="Confidential AI via TrustedRouter. Hardware attested."
+       width="288" height="72" loading="lazy"&gt;
+&lt;/a&gt;</code></pre>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Dark badge</span><button class="code-copy" type="button" data-action="copy-code" data-copy-target="confidential-badge-dark-code">Copy</button></div>
+    <pre><code id="confidential-badge-dark-code">&lt;a href="https://trustedrouter.com/badge"
+   aria-label="Verify Confidential AI via TrustedRouter"&gt;
+  &lt;img src="https://trustedrouter.com/static/badges/confidential-ai-dark.svg"
+       alt="Confidential AI via TrustedRouter. Hardware attested."
+       width="288" height="72" loading="lazy"&gt;
+&lt;/a&gt;</code></pre>
+  </div>
+</section>
+
+<section class="limitation-band">
+  <span class="pill good">Use of seal</span>
+  <div>
+    <p>Display this seal on the product surface whose AI calls enforce TrustedRouter's confidential privacy floor. Keep the badge linked to this page so customers can inspect the scope and challenge the live gateway themselves.</p>
+  </div>
+</section>
+
+{% endblock %}

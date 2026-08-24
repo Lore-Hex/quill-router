@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for FriendliAI serverless Model API routes. Verified against https://api.friendli.ai/serverless/v1/models on 2026-06-22.",
   "provider": "friendli",
   "source": "https://api.friendli.ai/serverless/v1/models",
-  "generated_at": "2026-08-01T23:03:20Z",
-  "model_count": 9,
+  "generated_at": "2026-08-24T10:39:58Z",
+  "model_count": 10,
   "models": [
     {
       "id": "meta-llama/llama-3.3-70b-instruct",
@@ -82,7 +82,10 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "missing_since": "2026-08-05",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "lgai-exaone/k-exaone-236b-a23b",
@@ -107,7 +110,10 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "missing_since": "2026-08-21",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "minimax/minimax-m2.5",
@@ -232,6 +238,27 @@
       "context_length": 262144,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 400000
+    },
+    {
+      "display_name": "LGAI-EXAONE/K-EXAONE-2.0-750B-A37B",
+      "title": "LGAI-EXAONE/K-EXAONE-2.0-750B-A37B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "lgai-exaone/k-exaone-2.0-750b-a37b",
+      "upstream_id": "LGAI-EXAONE/K-EXAONE-2.0-750B-A37B",
+      "context_length": 262144,
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 120000
     }
   ]
 }

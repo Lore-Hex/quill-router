@@ -1,9 +1,11 @@
 <!doctype html>
 <html lang="en">
 <head>
+  {% set meta_title = og_title|seo_title %}
+  {% set meta_description = og_description|seo_meta_description %}
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script>
+  <script nonce="{{ csp_nonce() }}">
     (function () {
       try {
         if (localStorage.getItem("tr-theme") === "light") {
@@ -12,32 +14,35 @@
       } catch (e) { /* Dark remains the default when storage is unavailable. */ }
     })();
   </script>
-  <title>{{ og_title }}</title>
-  <meta name="description" content="{{ og_description }}">
+  <title>{{ meta_title }}</title>
+  <meta name="description" content="{{ meta_description }}">
   {% include "_favicon.html" %}
-  <link rel="canonical" href="{{ site_url }}">
+  <link rel="canonical" href="{{ canonical_site_url }}">
   <meta property="og:type" content="website">
-  <meta property="og:site_name" content="TrustedRouter">
-  <meta property="og:title" content="{{ og_title }}">
-  <meta property="og:description" content="{{ og_description }}">
+  <meta property="og:site_name" content="{{ brand_name }}">
+  <meta property="og:title" content="{{ meta_title }}">
+  <meta property="og:description" content="{{ meta_description }}">
   <meta property="og:url" content="{{ site_url }}">
   <meta property="og:image" content="{{ og_image }}">
   <meta property="og:image:type" content="image/png">
   <meta property="og:image:width" content="{{ og_image_width }}">
   <meta property="og:image:height" content="{{ og_image_height }}">
-  <meta property="og:image:alt" content="TrustedRouter, end-to-end encrypted AI routing">
+  <meta property="og:image:alt" content="{{ brand_name }}, end-to-end encrypted AI routing">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="{{ og_title }}">
-  <meta name="twitter:description" content="{{ og_description }}">
+  <meta name="twitter:title" content="{{ meta_title }}">
+  <meta name="twitter:description" content="{{ meta_description }}">
   <meta name="twitter:image" content="{{ og_image }}">
-  <meta name="twitter:image:alt" content="TrustedRouter, end-to-end encrypted AI routing">
-  <link rel="alternate" type="text/plain" href="/docs/llms.txt" title="TrustedRouter LLM docs">
-  <link rel="alternate" type="text/plain" href="/docs/llms-full.txt" title="TrustedRouter full LLM context">
+  <meta name="twitter:image:alt" content="{{ brand_name }}, end-to-end encrypted AI routing">
+  <link rel="alternate" type="text/plain" href="/docs/llms.txt" title="{{ brand_name }} LLM docs">
+  <link rel="alternate" type="text/plain" href="/docs/llms-full.txt" title="{{ brand_name }} full LLM context">
   <link rel="preload" href="/static/fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/static/fonts/spectral-300-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
-  <script>window.__TR__ = {{ tr_config | safe }};</script>
+  {# The homepage carried no structured data at all, which is the page an
+     assistant is most likely to land on when asked who operates this. #}
+  {% if organization_json_ld %}<script type="application/ld+json" nonce="{{ csp_nonce() }}">{{ organization_json_ld|safe }}</script>{% endif %}
+  <script nonce="{{ csp_nonce() }}">window.__TR__ = {{ tr_config | safe }};</script>
   <script src="/static/dashboard.js?v={{ static_version|default('local') }}" defer></script>
 </head>
 <body>
@@ -46,9 +51,16 @@
   <main class="home">
     <section class="charter-home-hero">
       <div class="home-hero-copy">
-        <div class="kicker">Own your alpha</div>
-        <h1><span class="hero-line">Every model.</span><em class="hero-line">Provable privacy.</em></h1>
-        <p class="lead">One OpenAI-compatible API for hundreds of open-weight and frontier models. Requests cross an attested gateway that does not log prompt or output content. Even our engineers cannot read your requests.</p>
+        <div class="kicker">{% if alternate_brand %}Powered by TrustedRouter{% else %}Own your alpha{% endif %}</div>
+        <h1>
+          <span class="hero-line">600+ AI Models at your fingertips.</span>
+          <span class="hero-line">One Unified Interface.</span>
+          <em class="hero-line">Privacy with proof.</em>
+        </h1>
+        <p class="lead">
+          <strong class="lead-claim">Better privacy, better prices, better uptime, no subscriptions.</strong>
+          One OpenAI-compatible API for open-weight and frontier models. Requests cross an attested gateway that does not log prompt or output content. Even our engineers cannot read your requests.
+        </p>
         <div class="hero-actions">
           <button class="btn primary" type="button" data-action="open-signin">Get API key</button>
           <a class="btn" href="https://trust.trustedrouter.com">Verify trust <span aria-hidden="true">→</span></a>
@@ -83,19 +95,70 @@
       </aside>
     </section>
 
-    <section class="charter-stat-band" aria-label="TrustedRouter facts">
-      <div class="charter-stat"><strong>{{ api_region_count }}</strong><span>Live regions</span></div>
-      <div class="charter-stat"><strong>Hundreds</strong><span>Models through one API</span></div>
-      <div class="charter-stat"><strong class="accent">Never</strong><span>Prompt logs</span></div>
-      <div class="charter-stat"><strong>Public</strong><span>Source and status</span></div>
+    <section class="charter-stat-band" aria-label="{{ brand_name }} facts">
+      <div class="charter-stat"><strong>600+</strong><span>AI models</span></div>
+      <div class="charter-stat"><strong>81+</strong><span>providers</span></div>
+      <div class="charter-stat"><strong>3 clouds</strong><span>GCP · AWS · Azure</span></div>
+    </section>
+
+    <section class="home-section" aria-label="How {{ brand_name }} works">
+      <div class="home-wrap narrow">
+        <div class="section-lead center">
+          <div class="kicker">Watch</div>
+          <h2>How {{ brand_name }} works</h2>
+        </div>
+        {#
+          Click-to-load facade, deliberately. A standard YouTube embed contacts
+          Google and sets tracking cookies on page load — indefensible on a page
+          whose claim is that we cannot read your requests. Nothing leaves the
+          browser until the visitor presses play; only then do we load the
+          privacy-enhanced (youtube-nocookie) player. It is also faster: no
+          third-party iframe on first paint.
+        #}
+        <div
+          class="video-embed"
+          data-action="load-video"
+          data-video-id="UzLY4kvjklI"
+          data-video-start="128"
+          role="button"
+          tabindex="0"
+          aria-label="Play: how {{ brand_name }} works (loads YouTube)"
+        >
+          <span class="video-embed-play" aria-hidden="true"></span>
+          <span class="video-embed-note">Loads YouTube only when you press play</span>
+        </div>
+      </div>
+    </section>
+
+    <nav class="home-topic-links" aria-label="TrustedRouter developer resources">
+      <span>Explore</span>
+      <a href="/compare/models">Model comparisons</a>
+      <a href="/private-llm-api">Private and ZDR APIs</a>
+      <a href="/eu">EU AI infrastructure</a>
+      <a href="/openrouter-alternative">OpenRouter alternatives</a>
+      <a href="/docs/agent-setup">Agent setup</a>
+    </nav>
+
+    <section class="home-section band-dim" aria-label="Customer story">
+      <div class="home-wrap quote-feature">
+        <div>
+          <div class="kicker">Customer story · Robot, Robot &amp; Human</div>
+          <h2>170,974 legal documents. Billions of routed tokens. Production in three weeks.</h2>
+          <a class="btn" href="/customers/robot-robot-human">Read the case study <span aria-hidden="true">→</span></a>
+        </div>
+        <div>
+          <blockquote>“‘Trust us, we won't peek’ was never an acceptable answer to give a client.”</blockquote>
+          <p>RRH uses one OpenAI-compatible API for extraction, retrieval preparation, and multi-stage legal reasoning while every request crosses TrustedRouter's attested gateway.</p>
+        </div>
+      </div>
     </section>
 
     <section class="home-section">
       <div class="home-wrap">
         <div class="section-lead">
-          <div class="kicker">Why developers choose TrustedRouter.</div>
+          <div class="kicker">Why developers choose {{ brand_name }}.</div>
           <h2>The trust model is the product.</h2>
-          <p>TrustedRouter is an OpenRouter alternative for teams that need verifiable privacy, lower-cost model choices, provider fallback, and one API across hundreds of models.</p>
+          <p>{{ brand_name }} is an OpenRouter alternative for teams that need verifiable privacy, lower-cost model choices, provider fallback, and one API across hundreds of models.</p>
         </div>
         <div class="charter-pillars">
           <article class="charter-pillar">
@@ -189,10 +252,10 @@ response = client.chat.completions.create(
           <div class="kicker">Verify trust</div>
           <h2>Do not take our word for any of this.</h2>
           <p class="section-sub">The production prompt path is separate from the dashboard and billing control plane. Every trust claim reduces to evidence you can inspect.</p>
-          <div class="trust-path" aria-label="TrustedRouter prompt path">
+          <div class="trust-path" aria-label="{{ brand_name }} prompt path">
             <div class="trust-path-node"><strong>Your application</strong><span>OpenAI-compatible request</span></div>
             <div class="trust-path-arrow">Encrypted transport ↓</div>
-            <div class="trust-path-node"><strong>Attested TrustedRouter gateway</strong><span>Prompt path · no content logs</span></div>
+            <div class="trust-path-node"><strong>Attested {{ brand_name }} gateway</strong><span>Prompt path · no content logs</span></div>
             <div class="trust-path-arrow">Selected route ↓</div>
             <div class="trust-path-node"><strong>Model provider</strong><span>Provider policy published separately</span></div>
           </div>
@@ -214,36 +277,19 @@ response = client.chat.completions.create(
     </section>
 
     <section class="home-section">
-      <div class="home-wrap charter-map-grid">
-        <div>
-          <div class="kicker">Regional reliability</div>
-          <h2>Routing that does not depend on one provider or one region.</h2>
-          <p class="section-sub">Regional gateways, provider health measurements, and explicit fallback keep failures visible and contained. The public status page separates router-core health from upstream model health.</p>
-          <ul class="check-list">
-            <li>{{ api_region_count }} live API regions</li>
-            <li>Provider and model health measured continuously</li>
-            <li>Public latency and availability history</li>
-            <li>No silent fallback to a non-attested prompt path</li>
-          </ul>
-          <a class="btn" href="/status">View public status</a>
+      <div class="home-wrap narrow">
+        <div class="section-lead">
+          <div class="kicker">Multi-cloud reliability</div>
+          <h2>Routing that does not depend on one provider or one cloud.</h2>
+          <p>TrustedRouter runs across GCP, AWS, and Azure. Provider health measurements and explicit fallback keep failures visible and contained.</p>
         </div>
-        <div class="region-map-card" aria-label="TrustedRouter regional footprint">
-          <div class="region-map-visual">
-            <img src="/static/world-map.svg?v={{ static_version }}" alt="" loading="lazy">
-            <svg viewBox="0 0 1000 500" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
-              {% for region in map_regions %}
-              <g class="region-dot {% if region.primary %}primary{% endif %} {% if region.serving %}live{% else %}edge{% endif %}" transform="translate({{ '%.1f'|format(region.x) }} {{ '%.1f'|format(region.y) }})">
-                <circle r="{% if region.primary %}9{% else %}7{% endif %}"></circle>
-                <text x="12" y="-8">{{ region.city }}{% if region.cloud == "aws" %} · AWS{% elif region.cloud == "azure" %} · Azure{% endif %}</text>
-              </g>
-              {% endfor %}
-            </svg>
-          </div>
-          <div class="region-map-copy">
-            <strong>{{ map_regions|length }} regions across three clouds</strong>
-            <span>{{ api_region_count }} live GCP regions, plus standalone EU (AWS) and APAC (Azure) deployments. Additional capacity staged.</span>
-          </div>
-        </div>
+        <ul class="check-list">
+          <li>GCP, AWS, and Azure</li>
+          <li>Provider and model health measured continuously</li>
+          <li>Public latency and availability history</li>
+          <li>No silent fallback to a non-attested prompt path</li>
+        </ul>
+        <a class="btn" href="/status">View public status</a>
       </div>
     </section>
 
@@ -281,11 +327,11 @@ response = client.chat.completions.create(
         <h2 class="section-center">What developers ask before routing.</h2>
         <div class="faq">
           {% for f in [
-            {"q":"What is TrustedRouter?","a":"A privacy-first AI gateway that routes requests across many providers through one OpenAI-compatible API without logging prompt or output content."},
+            {"q":"What is " ~ brand_name ~ "?","a":"A privacy-first AI gateway that routes requests across many providers through one OpenAI-compatible API without logging prompt or output content."},
             {"q":"Is this an OpenRouter alternative?","a":"Yes, with an attested prompt path, public source, explicit privacy aliases, and fail-closed behavior as core design constraints."},
             {"q":"Do you log prompts or outputs?","a":"No. Prompt and output content are intentionally excluded from the control plane and metadata systems. Optional content export requires explicit destination-level configuration."},
             {"q":"What does attested gateway mean?","a":"The gateway runs in a Trusted Execution Environment and publishes evidence that connects the running image to public source. You can verify that evidence on the trust page."},
-            {"q":"Can I bring my own provider keys?","a":"Yes. BYOK lets you retain provider commitments or enterprise rate limits while using the TrustedRouter routing and trust boundary."},
+            {"q":"Can I bring my own provider keys?","a":"Yes. BYOK lets you retain provider commitments or enterprise rate limits while using the " ~ brand_name ~ " routing and trust boundary."},
             {"q":"What happens if attestation fails?","a":"The gateway fails closed. It does not silently route prompts through an unverified fallback."},
             {"q":"How do I migrate?","a":"Keep the OpenAI SDK, change the base URL, and use the same chat or Responses calls. The migration guide includes tested examples."}
           ] %}

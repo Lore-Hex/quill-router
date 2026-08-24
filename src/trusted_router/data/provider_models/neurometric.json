@@ -168,8 +168,42 @@
       "routable": true,
       "input_token_price_per_m": 20000,
       "output_token_price_per_m": 120000
+    },
+    {
+      "display_name": "diffusiongemma-26B-A4B-it",
+      "title": "google/diffusiongemma-26b-a4b-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/diffusiongemma-26b-a4b-it",
+      "upstream_id": "google/diffusiongemma-26b-a4b-it",
+      "context_length": 65536,
+      "max_output_tokens": 32000,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 120000
     }
   ],
-  "generated_at": "2026-08-01T23:03:20Z",
-  "model_count": 5
+  "generated_at": "2026-08-24T10:39:58Z",
+  "model_count": 6
 }

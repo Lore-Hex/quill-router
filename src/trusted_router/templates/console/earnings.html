@@ -1,0 +1,74 @@
+{% extends "console/_layout.html" %}
+{% block body %}
+{% if flash %}<div class="console-flash {{ flash.type }}">{{ flash.text }}</div>{% endif %}
+
+<section class="panel">
+  <div class="panel-head"><h2>Your earnings</h2><span class="pill">TrustedRouter credits</span></div>
+  <div class="panel-body">
+    <p class="earnings-copy">You earn 70% of every charge in TrustedRouter credits. Transfer earnings into a workspace to spend them.</p>
+    <div class="metrics">
+      <div class="metric"><div class="label">Earned</div><div class="value earnings-money">{{ summary.total_earned_display }}</div><div class="sub">lifetime</div></div>
+      <div class="metric"><div class="label">Transferred</div><div class="value earnings-money">{{ summary.total_transferred_display }}</div><div class="sub">lifetime</div></div>
+      <div class="metric"><div class="label">Available</div><div class="value earnings-money">{{ summary.available_display }}</div><div class="sub">ready to transfer</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>Transfer earnings</h2></div>
+  <div class="panel-body">
+    {% if transfer_workspaces %}
+    <form class="form" method="post" action="/console/earnings/transfer">
+      <input type="hidden" name="idempotency_key" value="{{ transfer_idempotency_key }}">
+      <div class="row">
+        <label>Workspace
+          <select name="workspace_id" required>
+            {% for target in transfer_workspaces %}<option value="{{ target.id }}">{{ target.name }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Amount (USD)<input name="amount" type="number" min="0.000001" step="0.000001" placeholder="10.00" required></label>
+      </div>
+      <button class="btn primary earnings-transfer-submit" type="submit">Transfer credits</button>
+    </form>
+    {% else %}<p class="empty">No local workspace is available for transfers.</p>{% endif %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>Earnings by model</h2><span class="pill">last 30 days</span></div>
+  <div class="panel-body">
+    {% if by_model_30d %}
+    <div class="earnings-table-wrap"><table class="data-table" style="width:100%;border-collapse:collapse">
+      <thead><tr><th>Model</th><th>Earned</th></tr></thead>
+      <tbody>
+        {% for row in by_model_30d %}
+        <tr><td>{% if row.model_name %}<strong>{{ row.model_name }}</strong><br>{% endif %}<code>{{ row.model_id }}</code></td><td class="earnings-money">{{ row.earned_display }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="empty">No model earnings in the last 30 days.</p>{% endif %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>Recent movements</h2><span class="pill">{{ recent|length }} recent</span></div>
+  <div class="panel-body">
+    {% if recent %}
+    <div class="earnings-table-wrap"><table class="data-table" style="width:100%;border-collapse:collapse">
+      <thead><tr><th>Kind</th><th>Amount</th><th>Model</th><th>Counterparty</th><th>When</th></tr></thead>
+      <tbody>
+        {% for movement in recent %}
+        <tr>
+          <td>{{ movement.kind|replace('_', ' ') }}</td>
+          <td class="earnings-money">{{ movement.amount_display }}</td>
+          <td>{% if movement.custom_model_id %}<code>{{ movement.custom_model_id }}</code>{% else %}<span class="muted">none</span>{% endif %}</td>
+          <td>{% if movement.counterparty_account_id %}<code>{{ movement.counterparty_account_id }}</code>{% else %}<span class="muted">none</span>{% endif %}</td>
+          <td class="earnings-money">{{ movement.created_at|datetime_iso }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="empty">No earnings movements yet.</p>{% endif %}
+  </div>
+</section>
+{% endblock %}

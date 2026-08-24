@@ -2,7 +2,7 @@
 {% block hero %}
 <section class="public-hero marketing-hero">
   <div>
-    <span class="eyebrow">Smart · Cheap · Fast — pick two</span>
+    <span class="eyebrow">Current models · live provider routes</span>
     <h1>Choose the right model for the job.</h1>
     <p class="lead">Describe your task and how private it has to be. We combine independent quality
       scores with live provider routes, integer pricing, privacy posture, and measured performance.</p>
@@ -12,7 +12,7 @@
     </div>
   </div>
   <div class="public-hero-metrics" aria-label="TrustedRouter quick facts">
-    <div><strong>Hundreds</strong><span>of live models &amp; routes</span></div>
+    <div><strong>Live</strong><span>model &amp; provider catalog</span></div>
     <div><strong>E2E</strong><span>encrypted routes available</span></div>
     <div><strong>0</strong><span>prompt or output logs. Always.</span></div>
   </div>
@@ -44,13 +44,13 @@ Estimate cost and speed before making billable calls.</code></pre>
           loading="eager"
           referrerpolicy="same-origin"></iframe>
 </section>
-<style>
+<style nonce="{{ csp_nonce() }}">
   .choose-embed{margin:6px 0 30px;border-radius:var(--r-panel);overflow:hidden;
     border:1px solid var(--border-default);background:var(--surface-card)}
   #tr-choose-frame{width:100%;border:0;display:block;min-height:1480px;background:var(--surface-card)}
   @media(max-width:980px){ #tr-choose-frame{min-height:2200px} }
 </style>
-<script>
+<script nonce="{{ csp_nonce() }}">
   /* Same-origin iframe: size it to its content. Prefer the height the app
      postMessages; fall back to reading the document directly. */
   (function(){
@@ -94,23 +94,27 @@ Estimate cost and speed before making billable calls.</code></pre>
 
 # let the router pick, per request:
 model="trustedrouter/auto"     # general rollover, no upstream privacy floor
+model="trustedrouter/fast"     # lowest measured TTFT among healthy candidates
 model="trustedrouter/cheap"    # lowest-cost paid candidate pool
+model="trustedrouter/eu"       # EU-focused provider pool
 model="trustedrouter/zdr"      # zero-retention or stronger routes
-model="trustedrouter/e2e"      # end-to-end encrypted routes
-model="trustedrouter/synth"    # billable panel + judge + synthesizer</code></pre>
+model="trustedrouter/confidential"  # provider confidential compute + E2EE
+model="trustedrouter/synth"    # billable panel + judge + synthesizer
+model="trustedrouter/advisor"  # worker with optional billable advisors</code></pre>
   </div>
 </section>
 
 <section class="quote-feature">
   <div>
     <span class="eyebrow">The shortcut</span>
-    <h2>The corner you actually want rarely exists in one model.</h2>
+    <h2>Compare the frontier you can actually route.</h2>
   </div>
   <div>
-    <p>Frontier-smart, real-time-fast, dirt-cheap and private almost never coexist in a single model.
-      TrustedRouter's <code>auto</code>, <code>cheap</code> and <code>synth</code> routes handle the
-      tradeoff through one OpenAI-shaped endpoint. Gateway attestation verifies TrustedRouter does not
-      log prompt content; the upstream privacy guarantee depends on the selected route.
+    <p>The chooser loads current models and provider endpoints from the same deployed catalog as
+      <code>/v1/models</code>. TrustedRouter's <code>auto</code>, <code>fast</code>, <code>cheap</code>,
+      <code>confidential</code>, and orchestration routes expose those choices through one
+      OpenAI-shaped endpoint. Gateway attestation verifies the router hop; endpoint rows state the
+      downstream provider posture separately.
       <button class="btn primary" type="button" data-action="open-signin">Create a key</button></p>
   </div>
 </section>

@@ -1,0 +1,78 @@
+[Unit]
+Description=TrustedRouter operational analytics ClickHouse ingester (Postgres/Aurora DSQL source)
+After=network-online.target clickhouse-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tr-clickhouse-ingest
+Group=tr-clickhouse-ingest
+WorkingDirectory=/opt/tr-clickhouse
+# libpq resolves a client certificate at $HOME/.postgresql/postgresql.crt on
+# every connect. ProtectHome=true (below) makes /home unreadable, and libpq
+# treats "Permission denied" on that path as FATAL -- unlike a missing file,
+# which it ignores. Without this line the drain authenticated fine and then
+# failed every single connection with
+#   could not open certificate file "/home/tr-clickhouse-ingest/.postgresql/postgresql.crt"
+# reporting failed_shards=32, rows=0 while the unit sat "active". HOME must
+# therefore point inside ReadWritePaths, which is also what the archive
+# sibling does. DSQL uses an IAM token, never a client cert, so the file is
+# expected to be absent -- it just must be absent READABLY.
+Environment=HOME=/var/lib/tr-clickhouse-ingest
+# The venv MUST be built on Python >= 3.11. trusted_router.types imports
+# StrEnum, which is 3.11+. The AWS-EU ClickHouse node runs Ubuntu 22.04 whose
+# system python is 3.10, so `python3 -m venv` there produces an interpreter
+# that imports this package fine until it reaches that one line and dies with
+# ImportError. Provision 3.12 explicitly (deadsnakes on 22.04) and build the
+# venv from it; verified working with 3.12.13 on the live node.
+#
+# Supplies TR_POSTGRES_DSN, TR_POSTGRES_IAM_AUTH=aws-dsql and CH_PASSWORD, plus
+# TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER / _DATABASE. Those two default to
+# "tr"/"tr" for the GCP node and MUST be set to "default"/"default" on the
+# AWS-EU node, whose schema is applied unqualified — a mismatch fails
+# authentication only after a batch has already been read.
+# The DSN must NOT carry a password: on DSQL the token is minted per
+# connection, and on plain Postgres libpq reads PGPASSWORD from this file
+# rather than from argv, where every local user could read it.
+#
+# SECOND DURABLE COPY (optional, additive). Setting
+# TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_REPLICA_HOST turns the drain into a
+# dual-write: it writes each batch to the local node AND to that host, and
+# deletes the outbox rows only when BOTH accept. Provision the second node with
+# scripts/deploy/aws_eu_north_clickhouse.sh, which prints this block. Also
+# needs CH_REPLICA_PASSWORD, and takes optional _REPLICA_NAME / _REPLICA_PORT /
+# _REPLICA_USER / _REPLICA_DATABASE / _REPLICA_SECURE / _REPLICA_TIMEOUT_SECONDS.
+# With none of these set the drain is exactly what it was: one node, one copy.
+#
+# While a configured node is unreachable NOTHING is deleted, so the outbox
+# absorbs the whole backlog and the node catches up by itself when it returns.
+# That is also why the outbox can grow without bound: watch for
+# `operational_analytics_outbox.backlog_alarm` (ERROR, past
+# --max-lag-seconds, default 1h) and for `degraded_targets=` in the metrics
+# line. The two supported responses are to restore the node, or to remove its
+# _REPLICA_ variables here and restart — after which that node is permanently
+# behind and needs an out-of-band backfill. See the module docstring.
+EnvironmentFile=/etc/tr-clickhouse-ingest-postgres.env
+ExecStart=/opt/tr-clickhouse/venv/bin/python -m clickhouse.ingest_operational_outbox_postgres
+# The drain sweeps shards independently and contains per-shard failures, so it
+# survives a bad row or a ClickHouse blip on its own. Restart=always covers
+# what it cannot: process-fatal faults, and Aurora DSQL expiring the long-lived
+# connection. Without this the first such event silently ends delivery and the
+# ClickHouse tables quietly return to reading zero rows.
+Restart=always
+RestartSec=5
+# ...except for a CONFIGURATION error (EX_CONFIG), which running again cannot
+# fix. Without this, a typo in the replica block below crash-loops every 5s
+# forever: the outbox grows at full rate, and the backlog alarm that is meant to
+# bound that growth is emitted BY this process, so it never fires. A unit sitting
+# in `failed` is visible to an operator and to any unit-state alerting; a unit
+# restarting silently is not.
+RestartPreventExitStatus=78
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/tr-clickhouse-ingest
+
+[Install]
+WantedBy=multi-user.target

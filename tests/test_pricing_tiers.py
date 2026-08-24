@@ -13,7 +13,11 @@ from trusted_router.catalog import (
     PriceTier,
     select_price_tier,
 )
-from trusted_router.pricing import RequestRates, resolve_request_rates
+from trusted_router.pricing import (
+    RequestRates,
+    _optional_customer_price_from_dollars_per_token,
+    resolve_request_rates,
+)
 from trusted_router.routes.helpers import cost_microdollars
 
 # ----------------------------------------------------------------------
@@ -23,17 +27,17 @@ from trusted_router.routes.helpers import cost_microdollars
 
 def _gemini_pro_tiers() -> tuple[PriceTier, ...]:
     """Recreate the Gemini 2.5 Pro tier shape: ≤200k vs >200k."""
-    # Markup applied: $1.25/M wholesale * 1.05 = $1.3125/M
+    # Markup applied: $1.25/M wholesale * 1.055 = $1.31875/M
     return (
         PriceTier(
             max_prompt_tokens=200_000,
-            prompt_price_microdollars_per_million_tokens=1_312_500,
-            completion_price_microdollars_per_million_tokens=10_500_000,
+            prompt_price_microdollars_per_million_tokens=1_318_750,
+            completion_price_microdollars_per_million_tokens=10_550_000,
         ),
         PriceTier(
             max_prompt_tokens=None,
-            prompt_price_microdollars_per_million_tokens=2_625_000,
-            completion_price_microdollars_per_million_tokens=15_750_000,
+            prompt_price_microdollars_per_million_tokens=2_637_500,
+            completion_price_microdollars_per_million_tokens=15_825_000,
         ),
     )
 
@@ -42,7 +46,7 @@ def test_select_price_tier_picks_low_tier_for_small_prompt() -> None:
     tiers = _gemini_pro_tiers()
     tier = select_price_tier(tiers, prompt_tokens=10_000)
     assert tier.max_prompt_tokens == 200_000
-    assert tier.prompt_price_microdollars_per_million_tokens == 1_312_500
+    assert tier.prompt_price_microdollars_per_million_tokens == 1_318_750
 
 
 def test_select_price_tier_picks_low_tier_at_threshold() -> None:
@@ -55,8 +59,8 @@ def test_select_price_tier_picks_high_tier_above_threshold() -> None:
     tiers = _gemini_pro_tiers()
     tier = select_price_tier(tiers, prompt_tokens=200_001)
     assert tier.max_prompt_tokens is None
-    assert tier.prompt_price_microdollars_per_million_tokens == 2_625_000
-    assert tier.completion_price_microdollars_per_million_tokens == 15_750_000
+    assert tier.prompt_price_microdollars_per_million_tokens == 2_637_500
+    assert tier.completion_price_microdollars_per_million_tokens == 15_825_000
 
 
 def test_select_price_tier_handles_single_uncapped_tier() -> None:
@@ -91,6 +95,15 @@ def test_resolve_request_rates_empty_tiers_uses_headline_rates() -> None:
     )
 
 
+def test_optional_cached_price_distinguishes_zero_from_missing_or_malformed() -> None:
+    assert _optional_customer_price_from_dollars_per_token(None) is None
+    assert _optional_customer_price_from_dollars_per_token("") is None
+    assert _optional_customer_price_from_dollars_per_token("not-a-price") is None
+    assert _optional_customer_price_from_dollars_per_token("NaN") is None
+    assert _optional_customer_price_from_dollars_per_token("-0.1") is None
+    assert _optional_customer_price_from_dollars_per_token("0") == 10_000
+
+
 def test_resolve_request_rates_single_tier() -> None:
     rates = resolve_request_rates(
         (
@@ -120,8 +133,8 @@ def test_resolve_request_rates_multi_tier_below_threshold() -> None:
         headline_completion_micro_per_m=456,
         total_prompt_tokens=199_999,
     ) == RequestRates(
-        prompt_price_microdollars_per_million_tokens=1_312_500,
-        completion_price_microdollars_per_million_tokens=10_500_000,
+        prompt_price_microdollars_per_million_tokens=1_318_750,
+        completion_price_microdollars_per_million_tokens=10_550_000,
         prompt_cached_price_microdollars_per_million_tokens=None,
     )
 
@@ -133,8 +146,8 @@ def test_resolve_request_rates_multi_tier_at_inclusive_threshold() -> None:
         headline_completion_micro_per_m=456,
         total_prompt_tokens=200_000,
     ) == RequestRates(
-        prompt_price_microdollars_per_million_tokens=1_312_500,
-        completion_price_microdollars_per_million_tokens=10_500_000,
+        prompt_price_microdollars_per_million_tokens=1_318_750,
+        completion_price_microdollars_per_million_tokens=10_550_000,
         prompt_cached_price_microdollars_per_million_tokens=None,
     )
 
@@ -146,8 +159,8 @@ def test_resolve_request_rates_multi_tier_above_threshold() -> None:
         headline_completion_micro_per_m=456,
         total_prompt_tokens=200_001,
     ) == RequestRates(
-        prompt_price_microdollars_per_million_tokens=2_625_000,
-        completion_price_microdollars_per_million_tokens=15_750_000,
+        prompt_price_microdollars_per_million_tokens=2_637_500,
+        completion_price_microdollars_per_million_tokens=15_825_000,
         prompt_cached_price_microdollars_per_million_tokens=None,
     )
 
@@ -163,36 +176,36 @@ def _gemini_pro_model() -> Model:
         name="Gemini 2.5 Pro",
         provider="google-ai-studio",
         context_length=1_000_000,
-        prompt_price_microdollars_per_million_tokens=1_312_500,
-        completion_price_microdollars_per_million_tokens=10_500_000,
-        published_prompt_price_microdollars_per_million_tokens=1_312_500,
-        published_completion_price_microdollars_per_million_tokens=10_500_000,
+        prompt_price_microdollars_per_million_tokens=1_318_750,
+        completion_price_microdollars_per_million_tokens=10_550_000,
+        published_prompt_price_microdollars_per_million_tokens=1_318_750,
+        published_completion_price_microdollars_per_million_tokens=10_550_000,
         price_tiers=_gemini_pro_tiers(),
     )
 
 
 def test_cost_microdollars_uses_low_tier_for_short_prompt() -> None:
     """A 100k-token prompt + 5k completion on Gemini 2.5 Pro should
-    bill at the ≤200k tier ($1.3125/M input + $10.5/M output)."""
+    bill at the ≤200k tier ($1.31875/M input + $10.55/M output)."""
     model = _gemini_pro_model()
     cost = cost_microdollars(model, input_tokens=100_000, output_tokens=5_000)
-    # Expected: 100_000 / 1_000_000 * 1_312_500 = 131_250 micro
-    #         + 5_000 / 1_000_000 * 10_500_000 = 52_500 micro
-    #         = 183_750 micro
-    assert cost == 131_250 + 52_500
+    # Expected: 100_000 / 1_000_000 * 1_318_750 = 131_875 micro
+    #         + 5_000 / 1_000_000 * 10_550_000 = 52_750 micro
+    #         = 184_625 micro
+    assert cost == 131_875 + 52_750
 
 
 def test_cost_microdollars_uses_high_tier_for_long_prompt() -> None:
     """A 250k-token prompt + 5k completion on Gemini 2.5 Pro should
-    bill at the >200k tier ($2.625/M input + $15.75/M output) because
+    bill at the >200k tier ($2.6375/M input + $15.825/M output) because
     the prompt size triggers the higher tier for BOTH input AND
     output rates."""
     model = _gemini_pro_model()
     cost = cost_microdollars(model, input_tokens=250_000, output_tokens=5_000)
-    # Expected: 250_000 / 1_000_000 * 2_625_000 = 656_250 micro
-    #         + 5_000 / 1_000_000 * 15_750_000 = 78_750 micro
-    #         = 735_000 micro
-    assert cost == 656_250 + 78_750
+    # Expected: 250_000 / 1_000_000 * 2_637_500 = 659_375 micro
+    #         + 5_000 / 1_000_000 * 15_825_000 = 79_125 micro
+    #         = 738_500 micro
+    assert cost == 659_375 + 79_125
 
 
 def test_cost_microdollars_respects_threshold_boundary() -> None:
@@ -203,12 +216,12 @@ def test_cost_microdollars_respects_threshold_boundary() -> None:
     model = _gemini_pro_model()
     low_cost = cost_microdollars(model, input_tokens=200_000, output_tokens=0)
     high_cost = cost_microdollars(model, input_tokens=200_001, output_tokens=0)
-    # 200_000 * 1_312_500 / 1_000_000 = 262_500 (exact)
-    assert low_cost == 262_500
-    # 200_001 * 2_625_000 / 1_000_000 = 525_002.625. The exact rounding
+    # 200_000 * 1_318_750 / 1_000_000 = 263_750 (exact)
+    assert low_cost == 263_750
+    # 200_001 * 2_637_500 / 1_000_000 = 527_502.6375. The exact rounding
     # behavior depends on token_cost_microdollars; at the boundary one
     # micro either way is fine. Assert range rather than exact value.
-    assert 525_002 <= high_cost <= 525_003
+    assert 527_502 <= high_cost <= 527_503
     # The key contract: high tier strictly greater than low tier — even
     # for a 1-token-over prompt, the high tier almost-doubles the rate.
     assert high_cost > low_cost * 1.9

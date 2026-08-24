@@ -6,14 +6,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, Response
 
 from trusted_router.auth import SettingsDep
-from trusted_router.routes.console._shared import ConsoleDep, money, render
+from trusted_router.routes.console._shared import ConsoleDep, render
 from trusted_router.routes.oauth import PENDING_REVEAL_COOKIE
 from trusted_router.typed_balance import live_credit_summary
 
 
 def register(app: FastAPI) -> None:
     @app.get("/console/welcome")
-    async def console_welcome(
+    def console_welcome(
         request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
@@ -39,18 +39,16 @@ def register(app: FastAPI) -> None:
         response = HTMLResponse(render(
             "console/welcome.html",
             settings=settings,
-            user=ctx.user,
+            ctx=ctx,
             active="api-keys",
-            page_title="Welcome",
-            page_subtitle="Save your API key — it won't be shown again.",
+            page_title="Make your first API call",
+            page_subtitle="Save your key, confirm it works, then connect your app.",
             revealed_key=revealed_key,
             workspace_name=ctx.workspace.name,
-            # `trial_credit` is the formatted display value; the matching raw
-            # amount lets the template distinguish starter-credit accounts
-            # from accounts configured with the grant disabled.
-            trial_credit=money(trial_microdollars),
+            # The raw amount selects the appropriate next step without
+            # advertising the account-creation grant.
             trial_credit_microdollars=trial_microdollars,
-            api_base_url=ctx.api_base_url,
+            can_run_first_call=trial_microdollars > 0,
         ))
         if clear_pending_reveal:
             # Delete cookie with the same path it was set with — otherwise
@@ -59,7 +57,7 @@ def register(app: FastAPI) -> None:
             response.delete_cookie(
                 key=PENDING_REVEAL_COOKIE,
                 path="/console/welcome",
-                secure=settings.environment.lower() == "production",
+                secure=settings.environment.lower() not in {"local", "test"},
                 samesite="lax",
             )
         return response

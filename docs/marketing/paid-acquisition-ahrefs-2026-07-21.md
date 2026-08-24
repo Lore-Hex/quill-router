@@ -146,10 +146,10 @@ twice per week during the first month.
 
 Use at least three independent messages instead of one all-purpose ad:
 
-1. **Every model. Provable privacy.** One OpenAI-compatible API with an
+1. **Every model. Privacy with proof.** One OpenAI-compatible API with an
    attested, open-source prompt path.
 2. **Switch from OpenRouter in one line.** Keep the SDK and change the base
-   URL. No prompt or output logs by default.
+   URL. No prompt or output logs, always.
 3. **One provider can go down. Your API should not.** Route across providers
    with measured fallback and public status data.
 
@@ -162,7 +162,8 @@ audience quality.
 Capture the following first-party attribution fields:
 
 - `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`
-- `gclid`, `gbraid`, `wbraid`, and `twclid`
+- keyed, non-reversible fingerprints derived from `gclid`, `gbraid`, `wbraid`,
+  and `twclid`; retain Google click IDs only in the encrypted conversion path
 - first landing page and first-touch timestamp
 - last-touch source before signup
 
@@ -175,21 +176,18 @@ Persist attribution through these product events:
 5. `credit_purchase_completed`
 6. `retained_api_usage_7d`
 
-Do not send prompts, outputs, API keys, BYOK secrets, or request bodies to an
-ad platform. Use consented click identifiers and aggregate product events.
+Send Google only signup, first successful API call, and settled purchase
+conversions through the metadata-only Data Manager worker. Never send user or
+workspace data, prompts, outputs, API keys, BYOK secrets, payment credentials,
+model or provider choices, or request bodies. X remains a source of impression,
+click, and spend reports only.
 
-The first Google primary conversion should be `signup_completed`. Move the
-primary optimization event to `first_successful_api_call` or a credit purchase
-only after there is enough volume for the bidding system to learn. Report both
-CAC and activated CAC; signup CAC alone is easy to make look good.
-
-Implementation: Google Ads Data Manager pulls the authenticated,
-metadata-only CSV documented in
-[`first-party-attribution.md`](first-party-attribution.md). Keep
-`TrustedRouter Signup` as the only primary bidding conversion initially.
-Configure activation, seven-day retention, and purchase as secondary
-observation conversions until each has enough weekly volume for stable
-optimization.
+Report signup CAC and activated CAC internally; signup CAC alone is easy to
+make look good. Compare campaign and creative UTMs against first-party signup,
+activation, purchase, and retention records, then adjust budgets manually.
+Google automated bidding may use the reported activation and purchase signals
+after those actions are verified as recording. Google remains an optimization
+input; the first-party ledger remains the source of truth.
 
 ## Raw Inputs
 

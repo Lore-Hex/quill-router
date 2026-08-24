@@ -23,17 +23,6 @@
       "config_note": "computer use"
     },
     {
-      "model_id": "anthropic/claude-opus-4.1",
-      "benchmark_key": "swe_bench_verified",
-      "score": 74.5,
-      "unit": "percent",
-      "source_name": "Anthropic — Claude Opus 4.1",
-      "source_url": "https://www.anthropic.com/news/claude-opus-4-1",
-      "source_class": "A",
-      "as_of_date": "2025-08-05",
-      "config_note": null
-    },
-    {
       "model_id": "google/gemini-2.5-pro",
       "benchmark_key": "livecodebench",
       "score": 74.2,

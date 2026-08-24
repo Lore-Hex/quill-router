@@ -112,8 +112,10 @@ def test_every_pricing_parser_has_a_fixture_and_contract_case() -> None:
     ]
     assert refresh._SELF_HEALING_PARSER_SLUGS == parser_slugs - {
         "cerebras",
+        "grok",
         "makora",
         "phala",
+        "venice",
     }
 
 
@@ -502,6 +504,36 @@ def test_grok_parser_extracts_current_long_context_tiers_and_future_names() -> N
             "prompt_cached_micro_per_m": 200_000,
         },
     ]
+
+
+def test_grok_parser_extracts_grok_46_official_tiered_pricing() -> None:
+    from scripts.pricing.parsers import grok
+
+    result = grok.parse(
+        """
+| Model | Context | Input | Cached input | Output |
+| --- | --- | --- | --- | --- |
+| grok-4.6 (< 200k prompt tokens) | 500k | $2.00 | $0.50 | $6.00 |
+| grok-4.6 (≥ 200k prompt tokens) | 500k | $4.00 | $1.00 | $12.00 |
+"""
+    )
+
+    assert result["x-ai/grok-4.6"] == {
+        "tiers": [
+            {
+                "max_prompt_tokens": 200_000,
+                "prompt_micro_per_m": 2_000_000,
+                "completion_micro_per_m": 6_000_000,
+                "prompt_cached_micro_per_m": 500_000,
+            },
+            {
+                "max_prompt_tokens": None,
+                "prompt_micro_per_m": 4_000_000,
+                "completion_micro_per_m": 12_000_000,
+                "prompt_cached_micro_per_m": 1_000_000,
+            },
+        ]
+    }
 
 
 def test_siliconflow_parser_reads_server_rendered_framer_card() -> None:

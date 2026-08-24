@@ -1,0 +1,89 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="US AI models and US-operated routes">
+  <div class="marketing-copy">
+    <span class="eyebrow">American labs, and the operators who serve them</span>
+    <h2>"US AI models" is two questions. This page answers both, separately.</h2>
+    <p><strong>Who built it</strong> and <strong>where your prompt goes</strong> are different facts. {{ region.origin_model_count }} models here come from {{ region.lab_count }} US labs: {% for lab in region.labs %}{{ lab.lab_name }}{% if not loop.last %}, {% endif %}{% endfor %}. {{ region.provider_count }} of {{ region.catalog_provider_count }} providers are US-headquartered.</p>
+    <p>Need US-only routing? Set <span class="mono">provider.jurisdiction</span> to <span class="mono">us</span>. It fails closed when nothing qualifies.</p>
+    <p><a class="btn primary" href="/models?filter=us">Browse US-provider routes</a> <a class="btn" href="/providers">Review provider policies</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>us_jurisdiction.py</span><span>Python</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="sk-tr-...",  # your TrustedRouter key
+)
+
+reply = client.chat.completions.create(
+    model="trustedrouter/liberty-3.0",
+    messages=[{"role": "user",
+               "content": "Draft the incident summary."}],
+    extra_body={"provider": {"jurisdiction": "us"}},
+)</code></pre>
+  </div>
+</section>
+
+<section class="panel" aria-label="Liberty model family">
+  <div class="panel-head"><h2>Liberty: US labs, open weights, one route</h2><span class="pill good">open weight</span></div>
+  <div class="panel-body">
+    <p>Our own family. Each Liberty id calls several component models and returns one answer &mdash; and every component is an open-weight model from a US lab. Both facts are computed from the catalog when this page renders, so if a component were ever swapped the counts would move and the claim would retire itself.</p>
+    <div class="model-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Route</th>
+            <th>Context</th>
+            <th>Component models</th>
+            <th>From US labs</th>
+            <th>US-operated route available</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for model in region.liberty_models %}
+          <tr>
+            <td><a href="{{ model.detail_href }}"><code>{{ model.id }}</code></a><br>{{ model.name }}</td>
+            <td>{{ model.context_length }}</td>
+            <td>
+              <div class="mini-links">
+                {% for component in model.components %}
+                <a href="{{ component.detail_href }}"><code>{{ component.id }}</code></a>
+                {% endfor %}
+              </div>
+              {% if model.has_nested_components %}<span class="table-note">{{ model.component_count }} models once the nested Liberty presets are expanded</span>{% endif %}
+            </td>
+            <td>{% if model.all_components_us %}<span class="pill good">{{ model.us_component_count }} of {{ model.component_count }}</span>{% else %}<span class="pill warn">{{ model.us_component_count }} of {{ model.component_count }}</span>{% endif %}</td>
+            <td>{% if model.us_provider_available %}<span class="pill good">yes</span>{% else %}<span class="pill warn">not currently</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted">Two limits worth stating plainly. First, the component models are open-weights models that many providers serve, and Liberty's default candidate pool includes operators outside the US; set <span class="mono">provider.jurisdiction</span> to <span class="mono">us</span> when the serving provider has to be US-operated. Second, operator jurisdiction is not datacentre location — a US-registered company can run inference on hardware elsewhere, and the catalog records the company, not the machine.</p>
+    <p class="muted">Measurement for these routes is published rather than summarised here: our own DRACO run for Liberty 2.0 is written up in <a href="/blog/introducing-liberty">the Liberty 2.0 post</a>, and live route behaviour is on the <a href="/leaderboard">leaderboard</a>.</p>
+  </div>
+</section>
+
+<section class="panel" aria-label="US open-weight models">
+  <div class="panel-head"><h2>Open weights from US labs</h2><span class="pill">{{ region.open_weight_count }} routes</span></div>
+  <div class="panel-body">
+    <p>The labs themselves. Weights you can download, run anywhere, and inspect.</p>
+    <ul class="link-list">
+      {% for lab in region.open_weight_labs %}
+      <li><a href="/models?filter={{ lab.prefix }}">{{ lab.lab_name }}</a><span>{{ lab.count }} open-weight model{{ '' if lab.count == 1 else 's' }} &middot; {{ lab.example }}</span></li>
+      {% endfor %}
+    </ul>
+    <p><a class="btn primary" href="/models?filter=open-weight">Browse all open-weight routes</a></p>
+  </div>
+</section>
+
+{% include "public/_model_region_directory.html" %}
+
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Origin</span><h3>A lab's country is fixed.</h3><p>Where a model was built does not change when you route it differently. It is a procurement fact, and it is the one this page's lab sections answer, each with the primary source it was read from.</p></div>
+  <div class="marketing-card"><span class="card-label">Traffic</span><h3>Your route is yours to pick.</h3><p>Where prompts go is decided per request. <span class="mono">provider.jurisdiction</span> accepts <span class="mono">us</span> today; <span class="mono">provider.only</span> pins an exact allowlist for any other requirement, and both fail closed rather than falling back.</p></div>
+  <div class="marketing-card"><span class="card-label">Scope</span><h3>What this page will not say.</h3><p>Not that a US operator keeps data in the US, not that a US lab's model is safer, and not that any of it is certified. It reports two recorded fields and the source behind each. <a href="/llm-data-residency">Residency is a separate control</a>.</p></div>
+</section>
+{% endblock %}

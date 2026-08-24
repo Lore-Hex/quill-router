@@ -159,30 +159,22 @@ class ProviderModelStats:
             "error_rate": round(self.error_rate, 4),
             "effective_attempt_count": self.effective_attempt_count,
             "completion_rate": (
-                round(self.completion_rate, 4)
-                if self.effective_attempt_count
-                else None
+                round(self.completion_rate, 4) if self.effective_attempt_count else None
             ),
             "provider_sample_count": self.provider_sample_count,
             "provider_availability": (
-                round(self.provider_availability, 4)
-                if self.provider_sample_count
-                else None
+                round(self.provider_availability, 4) if self.provider_sample_count else None
             ),
             "deadline_sample_count": self.deadline_sample_count,
             "availability_within_deadline": (
-                round(self.availability_within_deadline, 4)
-                if self.deadline_sample_count
-                else None
+                round(self.availability_within_deadline, 4) if self.deadline_sample_count else None
             ),
             "first_token_deadline_ms": int(
                 model_deadlines(self.model, provider=self.provider).first_token_seconds * 1000
             ),
             "capacity_attempt_count": self.capacity_attempt_count,
             "capacity_acceptance_rate": (
-                round(self.capacity_acceptance_rate, 4)
-                if self.capacity_attempt_count
-                else None
+                round(self.capacity_acceptance_rate, 4) if self.capacity_attempt_count else None
             ),
             "excluded_count": self.excluded_count,
             "ttft_sample_count": self.ttft_sample_count,
@@ -297,27 +289,19 @@ class ProviderStats:
             "error_rate": round(self.error_rate, 4),
             "effective_attempt_count": self.effective_attempt_count,
             "completion_rate": (
-                round(self.completion_rate, 4)
-                if self.effective_attempt_count
-                else None
+                round(self.completion_rate, 4) if self.effective_attempt_count else None
             ),
             "provider_sample_count": self.provider_sample_count,
             "provider_availability": (
-                round(self.provider_availability, 4)
-                if self.provider_sample_count
-                else None
+                round(self.provider_availability, 4) if self.provider_sample_count else None
             ),
             "deadline_sample_count": self.deadline_sample_count,
             "availability_within_deadline": (
-                round(self.availability_within_deadline, 4)
-                if self.deadline_sample_count
-                else None
+                round(self.availability_within_deadline, 4) if self.deadline_sample_count else None
             ),
             "capacity_attempt_count": self.capacity_attempt_count,
             "capacity_acceptance_rate": (
-                round(self.capacity_acceptance_rate, 4)
-                if self.capacity_attempt_count
-                else None
+                round(self.capacity_acceptance_rate, 4) if self.capacity_attempt_count else None
             ),
             "excluded_count": self.excluded_count,
             "ttft_sample_count": self.ttft_sample_count,
@@ -343,7 +327,7 @@ class ProviderStats:
 
 
 def _sort_key(p50_ttft_ms: int | None) -> tuple[int, int]:
-    # Latency breaks reliability ties; un-measured (None) sinks to the bottom.
+    # Fastest measured TTFT first; un-measured (None) sinks to the bottom.
     return (0 if p50_ttft_ms is not None else 1, p50_ttft_ms or 0)
 
 
@@ -464,8 +448,8 @@ def aggregate_leaderboard(
     models.sort(
         key=lambda stats: (
             0 if stats.rank_eligible else 1,
-            -stats.provider_availability,
             *_sort_key(stats.p50_ttft_ms),
+            -stats.provider_availability,
             stats.model,
             stats.provider,
         )
@@ -533,14 +517,10 @@ def _aggregate_providers(
         agg.failure_classes.update(model_stat.failure_classes)
         # Weight each model's p50 by its sample count for the provider median.
         if model_stat.p50_ttft_ms is not None:
-            ttft[model_stat.provider].extend(
-                [model_stat.p50_ttft_ms] * model_stat.sample_count
-            )
+            ttft[model_stat.provider].extend([model_stat.p50_ttft_ms] * model_stat.sample_count)
         if model_stat.p50_tokens_per_second is not None:
             weight = model_stat.throughput_sample_count
-            tps[model_stat.provider].extend(
-                [model_stat.p50_tokens_per_second] * weight
-            )
+            tps[model_stat.provider].extend([model_stat.p50_tokens_per_second] * weight)
     providers = list(by_provider.values())
     for agg in providers:
         agg.p50_ttft_ms = _percentile(ttft[agg.provider], 50)
@@ -555,8 +535,8 @@ def _aggregate_providers(
     providers.sort(
         key=lambda stats: (
             0 if stats.rank_eligible else 1,
-            -stats.provider_availability,
             *_sort_key(stats.p50_ttft_ms),
+            -stats.provider_availability,
             stats.provider,
         )
     )

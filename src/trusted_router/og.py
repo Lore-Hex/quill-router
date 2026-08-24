@@ -4,11 +4,10 @@ from pathlib import Path
 
 from trusted_router.config import Settings
 
-OG_TITLE = "TrustedRouter | Every model. Provable privacy."
+OG_TITLE = "TrustedRouter | Every model. Privacy with proof."
 OG_DESCRIPTION = (
-    "One OpenAI-compatible API for hundreds of models, routed through attested "
-    "infrastructure with ZDR options, provider failover, BYOK, and no prompt "
-    "or output logs. Always."
+    "One OpenAI-compatible API for hundreds of models on attested infrastructure, "
+    "with ZDR routes, provider failover, BYOK, and no prompt or output logs."
 )
 OG_IMAGE_WIDTH = 1200
 OG_IMAGE_HEIGHT = 630
@@ -254,8 +253,8 @@ def choose_og_image_svg(_settings: Settings) -> str:
 def pricing_og_image_svg(_settings: Settings) -> str:
     """Social card for /pricing with the customer-visible prepaid rate."""
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" viewBox="0 0 {OG_IMAGE_WIDTH} {OG_IMAGE_HEIGHT}" role="img" aria-label="TrustedRouter pricing">
-  <title>TrustedRouter pricing: 5% markup, no subscription</title>
-  <desc>Provider cost plus 5% for prepaid routes, with no monthly subscription.</desc>
+  <title>TrustedRouter pricing: 5.5% markup, no subscription</title>
+  <desc>Provider cost plus 5.5% for prepaid routes, with no monthly subscription.</desc>
   <rect width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" fill="#07100a"/>
   <path d="M80 80 H1120 M80 550 H1120" stroke="#314036" stroke-width="1"/>
 
@@ -267,7 +266,7 @@ def pricing_og_image_svg(_settings: Settings) -> str:
 
   <g transform="translate(80 145)">
     <text x="0" y="0" font-family="Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="2" fill="#91ad98">PRICING</text>
-    <text x="0" y="84" font-family="Georgia, serif" font-size="68" fill="#edf1e9">5% markup.</text>
+    <text x="0" y="84" font-family="Georgia, serif" font-size="68" fill="#edf1e9">5.5% markup.</text>
     <text x="0" y="162" font-family="Georgia, serif" font-size="68" fill="#edf1e9">No subscription.</text>
     <text x="0" y="220" font-family="Arial, sans-serif" font-size="25" fill="#a8b4a8">Cheaper. Smarter. More reliable. More secure.</text>
   </g>
@@ -277,7 +276,7 @@ def pricing_og_image_svg(_settings: Settings) -> str:
     <text x="28" y="42" font-size="14" font-weight="700" letter-spacing="1.4" fill="#8ca092">PLATFORM CHARGE</text>
     <path d="M28 62 H332" stroke="#2d3b31"/>
     <text x="28" y="112" font-size="22" fill="#cbd4cb">TrustedRouter</text>
-    <text x="332" y="112" text-anchor="end" font-family="Georgia, serif" font-size="36" fill="#edf1e9">5%</text>
+    <text x="332" y="112" text-anchor="end" font-family="Georgia, serif" font-size="36" fill="#edf1e9">5.5%</text>
     <text x="28" y="150" font-size="15" fill="#8fa092">on prepaid model cost</text>
     <path d="M28 174 H332" stroke="#2d3b31"/>
     <text x="28" y="210" font-size="17" fill="#9db0a0">OpenRouter credit fee</text>
@@ -441,6 +440,77 @@ def synth_og_image_svg(_settings: Settings) -> str:
 """
 
 
+def bedrock_group_buy_og_image_svg(_settings: Settings) -> str:
+    """Social card for the public Bedrock purchasing campaign."""
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" viewBox="0 0 {OG_IMAGE_WIDTH} {OG_IMAGE_HEIGHT}" role="img" aria-label="TrustedRouter Bedrock Group Buy">
+  <title>The one million dollar per month Bedrock Group Buy</title>
+  <desc>Founders combine Amazon Bedrock commitments through TrustedRouter and keep ten percent.</desc>
+  <defs>
+    <linearGradient id="bgb-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#080d0a"/>
+      <stop offset="60%" stop-color="#101712"/>
+      <stop offset="100%" stop-color="#14251c"/>
+    </linearGradient>
+    <linearGradient id="bgb-accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#a9cdb9"/>
+      <stop offset="100%" stop-color="#d3b779"/>
+    </linearGradient>
+    <pattern id="bgb-grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" fill="none" stroke="#a9cdb9" stroke-opacity=".06"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bgb-bg)"/>
+  <rect width="1200" height="630" fill="url(#bgb-grid)"/>
+  <rect x="0" y="0" width="1200" height="7" fill="url(#bgb-accent)"/>
+
+  <g transform="translate(70 60)" font-family="{_SANS}">
+    <rect width="46" height="46" rx="5" fill="#a9cdb9"/>
+    <text x="23" y="31" text-anchor="middle" font-size="17" font-weight="800" fill="#10140f">TR</text>
+    <text x="62" y="30" font-size="19" font-weight="700" fill="#d6d9cc">TrustedRouter</text>
+    <text x="285" y="30" font-size="14" font-weight="700" fill="#838f80" letter-spacing="1.2">GROUP PURCHASING</text>
+  </g>
+
+  <g transform="translate(70 157)" font-family="{_SANS}">
+    <text x="0" y="0" font-size="25" font-weight="750" fill="#a9cdb9" letter-spacing="1.3">THE BEDROCK GROUP BUY</text>
+    <text x="0" y="88" font-size="92" font-weight="850" fill="#ede8db">$1M</text>
+    <text x="244" y="88" font-size="38" font-weight="750" fill="#acb5a4">/ MONTH</text>
+    <text x="0" y="151" font-size="42" font-weight="750" fill="#ede8db">Buy together.</text>
+    <text x="0" y="203" font-size="42" font-weight="750" fill="#c6e2d3">Keep 10%.</text>
+    <rect x="0" y="243" width="350" height="52" rx="4" fill="#182019" stroke="#56685c"/>
+    <text x="175" y="276" text-anchor="middle" font-size="17" font-weight="700" fill="#d6d9cc">$400K COMMITTED  ·  10 BUYERS</text>
+  </g>
+
+  <g transform="translate(660 132)" font-family="{_SANS}">
+    <text x="0" y="0" font-size="14" font-weight="700" fill="#838f80" letter-spacing="1.1">MANY COMMITMENTS</text>
+    <g transform="translate(0 34)" fill="#182019" stroke="#4a544a">
+      <rect x="0" y="0" width="92" height="44" rx="3"/><rect x="106" y="0" width="92" height="44" rx="3"/><rect x="212" y="0" width="92" height="44" rx="3"/>
+      <rect x="0" y="58" width="92" height="44" rx="3"/><rect x="106" y="58" width="92" height="44" rx="3"/><rect x="212" y="58" width="92" height="44" rx="3"/>
+      <rect x="0" y="116" width="92" height="44" rx="3"/><rect x="106" y="116" width="92" height="44" rx="3"/><rect x="212" y="116" width="92" height="44" rx="3"/>
+    </g>
+    <g transform="translate(326 100)" stroke="#a9cdb9" stroke-width="3" fill="none">
+      <path d="M0 0H54"/><path d="M40 -10L54 0 40 10"/>
+    </g>
+    <g transform="translate(398 38)">
+      <rect width="104" height="154" rx="5" fill="#a9cdb9"/>
+      <text x="52" y="46" text-anchor="middle" font-size="12" font-weight="800" fill="#10140f">ONE GROUP</text>
+      <text x="52" y="65" text-anchor="middle" font-size="12" font-weight="800" fill="#10140f">AGREEMENT</text>
+      <path d="M22 88H82M22 104H70M22 120H78" stroke="#33443a" stroke-width="5"/>
+    </g>
+    <g transform="translate(0 235)">
+      <rect width="502" height="104" rx="5" fill="#0d120e" stroke="#56685c"/>
+      <text x="24" y="36" font-size="13" font-weight="750" fill="#838f80" letter-spacing="1">GROUP SAVINGS</text>
+      <text x="24" y="78" font-size="31" font-weight="800" fill="#c6e2d3">10% back to every buyer</text>
+    </g>
+  </g>
+
+  <g transform="translate(70 584)" font-family="{_SANS}" font-size="16" font-weight="700">
+    <text x="0" y="0" fill="#d6d9cc">trustedrouter.com/bedrock-group-buy</text>
+    <text x="988" y="0" text-anchor="end" fill="#a9cdb9">Join the group</text>
+  </g>
+</svg>
+"""
+
+
 if __name__ == "__main__":
     # Regenerate the social cards from their SVG sources:
     #   uv run python -m trusted_router.og \
@@ -456,6 +526,8 @@ if __name__ == "__main__":
         svg = pricing_og_image_svg(Settings())
     elif which == "synth":
         svg = synth_og_image_svg(Settings())
+    elif which == "bedrock-group-buy":
+        svg = bedrock_group_buy_og_image_svg(Settings())
     else:
         svg = og_image_svg(Settings())
     sys.stdout.write(svg)

@@ -96,6 +96,30 @@ ensure_service_account() {
   done
   ensure_project_role "serviceAccount:${CLUSTER_SERVICE_ACCOUNT}" roles/monitoring.metricWriter
   ensure_project_role "serviceAccount:${CLUSTER_SERVICE_ACCOUNT}" roles/logging.logWriter
+  # The parity and bounded backfill workers compare ClickHouse with the one
+  # retained Bigtable instance. Keep this at the instance boundary: the
+  # dedicated VM identity must not inherit project-wide Bigtable access.
+  for attempt in {1..12}; do
+    if gc bigtable instances add-iam-policy-binding "$BIGTABLE_INSTANCE_ID" \
+        --member="serviceAccount:${CLUSTER_SERVICE_ACCOUNT}" \
+        --role=roles/bigtable.reader \
+        --quiet >/dev/null 2>&1; then
+      break
+    fi
+    if [ "$attempt" -eq 12 ]; then
+      echo "could not grant Bigtable read access to ${CLUSTER_SERVICE_ACCOUNT}" >&2
+      exit 1
+    fi
+    sleep 5
+  done
+  # Node 1 drains the durable Spanner analytics outbox. Keep this grant at the
+  # database boundary: changing the VM from the broad default Compute identity
+  # must not silently stop ingestion with spanner.sessions.create 403s.
+  gc spanner databases add-iam-policy-binding "$SPANNER_DATABASE_ID" \
+    --instance="$SPANNER_INSTANCE_ID" \
+    --member="serviceAccount:${CLUSTER_SERVICE_ACCOUNT}" \
+    --role=roles/spanner.databaseUser \
+    --quiet >/dev/null
 }
 
 ensure_network() {

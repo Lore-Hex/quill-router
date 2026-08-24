@@ -1,29 +1,56 @@
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import threading
 import uuid
 from typing import Any, cast
 
+from trusted_router import credit_transfer, phone_verification
 from trusted_router.analytics_sink import AnalyticsSink, NullAnalyticsSink
+from trusted_router.credit_transfer import (
+    CreditTransferConflict,
+    validate_amount,
+    validate_outcome,
+    validate_transfer_id,
+)
+from trusted_router.custom_model_billing import (
+    user_model_authorization_id_from_payout_event_id,
+)
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
+from trusted_router.operational_analytics_freshness import (
+    BACKEND_MEMORY,
+    REASON_NOT_CONFIGURED,
+    OutboxFreshness,
+)
 from trusted_router.storage_attribution import InMemoryAcquisitionAttribution
+from trusted_router.storage_auth_context import build_session_auth_context
 from trusted_router.storage_auth_sessions import InMemoryAuthSessions
 from trusted_router.storage_broadcast import InMemoryBroadcastDestinations
 from trusted_router.storage_byok import InMemoryByok
 from trusted_router.storage_custom_models import InMemoryCustomModels
 from trusted_router.storage_email_blocks import InMemoryEmailBlocks
+from trusted_router.storage_errors import StoreConflict
 from trusted_router.storage_generations import InMemoryGenerations
+from trusted_router.storage_group_buy import InMemoryBedrockGroupBuy
 from trusted_router.storage_keys import InMemoryApiKeys
 from trusted_router.storage_models import (
     AcquisitionAttribution,
+    ActivationReminderTask,
     ApiKey,
+    ApiKeyAuthContext,
+    ApiKeyUsageSnapshot,
     AuthSession,
+    BedrockGroupBuyAggregate,
+    BedrockGroupBuyPledge,
+    BedrockGroupBuyPublicMessage,
     BroadcastDeliveryJob,
     BroadcastDestination,
     ByokProviderConfig,
     CreditAccount,
     CreditMoney,
+    CreditMovement,
+    CreditTransfer,
     CustomModel,
     EmailSendBlock,
     EncryptedSecretEnvelope,
@@ -36,14 +63,18 @@ from trusted_router.storage_models import (
     ProviderBenchmarkSample,
     RateLimitHit,
     Reservation,
+    SessionAuthContext,
     SignupResult,
     SyntheticProbeSample,
     SyntheticRollup,
     User,
+    UserProvidedModel,
     VerificationToken,
     VideoJob,
     WalletChallenge,
     Workspace,
+    federated_api_key_from_record,
+    federated_workspace_from_record,
     iso_now,
     normalize_provider_access_role,
     normalize_provider_access_slug,
@@ -51,10 +82,11 @@ from trusted_router.storage_models import (
 from trusted_router.storage_oauth_codes import InMemoryOAuthCodes
 from trusted_router.storage_rate_limits import InMemoryRateLimits
 from trusted_router.storage_synthetic import InMemorySyntheticChecks
+from trusted_router.storage_user_models import InMemoryUserProvidedModels
 from trusted_router.storage_verification_tokens import InMemoryVerificationTokens
 from trusted_router.storage_video_jobs import InMemoryVideoJobs
 from trusted_router.storage_wallet_challenges import InMemoryWalletChallenges
-from trusted_router.types import UsageType
+from trusted_router.types import IdentityVerificationStatus, UsageType
 
 
 class InMemoryStore:
@@ -76,6 +108,23 @@ class InMemoryStore:
         self.credits: dict[str, CreditAccount] = {}
         self.credit_money: dict[str, CreditMoney] = {}
         self.stripe_events: set[str] = set()
+        self.webhook_events: set[tuple[str, str]] = set()
+        self.earnings_money: dict[str, tuple[int, int]] = {}
+        self.credit_movements: dict[tuple[str, str], CreditMovement] = {}
+        self.lifetime_topups: dict[str, int] = {}
+        # Cross-plane credit transfer (trusted_router.credit_transfer).
+        # `credit_transfers` is this plane as the SOURCE (escrow records);
+        # `credit_transfer_claims` is this plane as the DESTINATION (the
+        # insert-once verdict per transfer id). One store can be both.
+        self.credit_transfers: dict[str, CreditTransfer] = {}
+        self.credit_transfer_claims: dict[str, dict[str, Any]] = {}
+        self.client_events_batches: list[dict[str, Any]] = []
+        self.client_event_ids: set[str] = set()
+        #: Federated settlement claims, keyed (source_plane, authorization_id).
+        #: Insert-once: the recorded terms are the verdict for every replay.
+        self.federated_settlement_claims: dict[tuple[str, str], dict[str, Any]] = {}
+        #: Aggregate clamp counters, keyed (source_plane, workspace_id, utc_date).
+        self.federated_settlement_windows: dict[tuple[str, str, str], int] = {}
         # Composed feature stores. Each owns its own state and is importable
         # on its own. Keeps storage.py focused on identity + credit ledger;
         # spend control / BYOK / OAuth codes / auth sessions / generations /
@@ -86,6 +135,7 @@ class InMemoryStore:
             lock=self._lock,
         )
         self.acquisition_store = InMemoryAcquisitionAttribution(lock=self._lock)
+        self.bedrock_group_buy_store = InMemoryBedrockGroupBuy(lock=self._lock)
         self.generation_store = InMemoryGenerations(
             lock=self._lock,
             add_usage_to_key=self.api_keys.add_usage,
@@ -93,6 +143,7 @@ class InMemoryStore:
         self.synthetic_store = InMemorySyntheticChecks(lock=self._lock)
         self.byok_store = InMemoryByok(lock=self._lock)
         self.custom_model_store = InMemoryCustomModels(lock=self._lock)
+        self.user_model_store = InMemoryUserProvidedModels(lock=self._lock)
         self.broadcast_store = InMemoryBroadcastDestinations(lock=self._lock)
         self.video_job_store = InMemoryVideoJobs(lock=self._lock)
         self.auth_session_store = InMemoryAuthSessions(lock=self._lock)
@@ -113,12 +164,22 @@ class InMemoryStore:
             self.credits.clear()
             self.credit_money.clear()
             self.stripe_events.clear()
+            self.webhook_events.clear()
+            self.earnings_money.clear()
+            self.credit_movements.clear()
+            self.lifetime_topups.clear()
+            self.credit_transfers.clear()
+            self.credit_transfer_claims.clear()
+            self.client_events_batches.clear()
+            self.client_event_ids.clear()
             self.api_keys.reset()
             self.acquisition_store.reset()
+            self.bedrock_group_buy_store.reset()
             self.generation_store.reset()
             self.synthetic_store.reset()
             self.byok_store.reset()
             self.custom_model_store.reset()
+            self.user_model_store.reset()
             self.broadcast_store.reset()
             self.video_job_store.reset()
             self.auth_session_store.reset()
@@ -257,19 +318,17 @@ class InMemoryStore:
             occurred_at=occurred_at,
         )
 
-    def list_google_ads_conversions(
-        self,
-        *,
-        since: str,
-        limit: int,
-    ) -> list[GoogleAdsConversion]:
-        return self.acquisition_store.list_google_ads_conversions(
+    def repair_google_ads_delivery_queue(self, *, since: str, limit: int) -> int:
+        return self.acquisition_store.repair_google_ads_delivery_queue(
             since=since,
             limit=limit,
         )
 
-    def backfill_google_ads_conversions(self, *, limit: int) -> int:
-        return self.acquisition_store.backfill_google_ads_conversions(limit=limit)
+    def purge_expired_google_ads_click_ids(self, *, before: str, limit: int) -> int:
+        return self.acquisition_store.purge_expired_google_ads_click_ids(
+            before=before,
+            limit=limit,
+        )
 
     def claim_google_ads_deliveries(
         self,
@@ -316,11 +375,48 @@ class InMemoryStore:
             max_attempts=max_attempts,
         )
 
-    def repair_google_ads_delivery_queue(self, *, since: str, limit: int) -> int:
-        return self.acquisition_store.repair_google_ads_delivery_queue(
-            since=since,
-            limit=limit,
+    def list_activation_reminders(self, *, limit: int = 100) -> list[ActivationReminderTask]:
+        return self.acquisition_store.list_reminders(limit=limit)
+
+    def delete_activation_reminders(self, reminder_ids: list[str]) -> None:
+        self.acquisition_store.delete_reminders(reminder_ids)
+
+    def claim_activation_reminder(
+        self,
+        workspace_id: str,
+        stage: str,
+        *,
+        occurred_at: str,
+    ) -> tuple[AcquisitionAttribution | None, bool]:
+        return self.acquisition_store.claim_reminder(
+            workspace_id,
+            stage,
+            occurred_at=occurred_at,
         )
+
+    def upsert_bedrock_group_buy_pledge(
+        self, pledge: BedrockGroupBuyPledge
+    ) -> BedrockGroupBuyPledge:
+        return self.bedrock_group_buy_store.upsert(pledge)
+
+    def get_bedrock_group_buy_pledge(self, user_id: str) -> BedrockGroupBuyPledge | None:
+        return self.bedrock_group_buy_store.get(user_id)
+
+    def withdraw_bedrock_group_buy_pledge(self, user_id: str) -> bool:
+        return self.bedrock_group_buy_store.withdraw(user_id)
+
+    def bedrock_group_buy_aggregate(self) -> BedrockGroupBuyAggregate:
+        return self.bedrock_group_buy_store.aggregate()
+
+    def list_bedrock_group_buy_public_messages(
+        self, *, limit: int = 50
+    ) -> list[BedrockGroupBuyPublicMessage]:
+        return self.bedrock_group_buy_store.list_public_messages(limit=limit)
+
+    def list_bedrock_group_buy_private_pledges(
+        self, *, limit: int = 1000
+    ) -> list[BedrockGroupBuyPledge]:
+        return self.bedrock_group_buy_store.list_private_pledges(limit=limit)
 
     # Auth sessions delegate to storage_auth_sessions.InMemoryAuthSessions.
     def create_auth_session(
@@ -353,6 +449,39 @@ class InMemoryStore:
 
     def delete_auth_session_by_raw(self, raw_token: str) -> bool:
         return self.auth_session_store.delete_by_raw(raw_token)
+
+    def session_auth_context(
+        self,
+        raw_token: str,
+        *,
+        requested_workspace_id: str | None = None,
+    ) -> SessionAuthContext | None:
+        """Resolve a session principal under one lock.
+
+        Production backends implement the same contract with one strong SQL
+        statement.  Keeping the in-memory implementation atomic makes tests
+        model the same point-in-time membership decision instead of a sequence
+        of independently locked lookups.
+        """
+        with self._lock:
+            session = self.auth_session_store.get_by_raw(raw_token)
+            if session is None:
+                return None
+            user = self.users.get(session.user_id)
+            memberships: list[tuple[Member, Workspace]] = []
+            for (workspace_id, user_id), candidate_member in self.members.items():
+                if user_id != session.user_id:
+                    continue
+                candidate = self.workspaces.get(workspace_id)
+                if candidate is None:
+                    continue
+                memberships.append((candidate_member, candidate))
+            return build_session_auth_context(
+                session=session,
+                user=user,
+                memberships=memberships,
+                requested_workspace_id=requested_workspace_id,
+            )
 
     def create_workspace(
         self,
@@ -521,6 +650,79 @@ class InMemoryStore:
             user.email_verified = True
             return user
 
+    def set_user_identity_status(
+        self,
+        user_id: str,
+        *,
+        status: str,
+        session_id: str | None = None,
+        session_url: str | None = None,
+        decision_code: int | None = None,
+        decision_reason: str | None = None,
+        decision_reason_code: int | None = None,
+        verified_name: str | None = None,
+        increment_attempts: bool = False,
+    ) -> User | None:
+        with self._lock:
+            user = self.users.get(user_id)
+            if user is None:
+                return None
+            normalized = IdentityVerificationStatus.coerce(status)
+            if normalized is IdentityVerificationStatus.APPROVED and not user.identity_verified_at:
+                user.identity_verified_at = iso_now()
+            user.identity_status = normalized.value
+            if session_id is not None:
+                if session_id != user.veriff_session_id or not user.veriff_session_created_at:
+                    user.veriff_session_created_at = iso_now()
+                user.veriff_session_id = session_id
+            if session_url is not None:
+                user.veriff_session_url = session_url
+            if decision_code is not None:
+                user.veriff_decision_code = decision_code
+            if decision_reason is not None:
+                user.veriff_decision_reason = decision_reason
+            if decision_reason_code is not None:
+                user.veriff_decision_reason_code = decision_reason_code
+            if verified_name is not None:
+                user.identity_verified_name = verified_name
+            if increment_attempts:
+                user.veriff_attempt_count += 1
+            return user
+
+    def begin_phone_verification(
+        self, user_id: str, phone: str, channel: str | None = None
+    ) -> tuple[str, User] | None:
+        with self._lock:
+            user = self.users.get(user_id)
+            if user is None:
+                return None
+            code = phone_verification.begin(user, phone, channel=channel)
+            return code, user
+
+    def confirm_phone_verification(self, user_id: str, code: str) -> tuple[str, User | None]:
+        with self._lock:
+            user = self.users.get(user_id)
+            if user is None:
+                return "no_pending", None
+            result = phone_verification.confirm(user, code)
+            return result.status, user
+
+    def cancel_phone_verification(self, user_id: str) -> User | None:
+        with self._lock:
+            user = self.users.get(user_id)
+            if user is None:
+                return None
+            phone_verification.cancel_pending(user)
+            return user
+
+    def clear_user_phone(self, user_id: str) -> User | None:
+        with self._lock:
+            user = self.users.get(user_id)
+            if user is None:
+                return None
+            phone_verification.clear(user)
+            return user
+
     def _resolve_user_identifier(self, identifier: str) -> str | None:
         if identifier in self.users:
             return identifier
@@ -567,7 +769,12 @@ class InMemoryStore:
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:
         return self.api_keys.get_by_hash(key_hash)
 
-    def typed_key_usage(self, key_hash: str) -> dict[str, Any] | None:
+    def typed_key_usage(
+        self,
+        key_hash: str,
+        *,
+        allow_stale: bool = False,
+    ) -> dict[str, Any] | None:
         """InMemory twin of the Spanner typed point-read: lifetime counters are
         already live on the ApiKey; windows come from the lazy snapshot."""
         key = self.api_keys.get_by_hash(key_hash)
@@ -580,14 +787,69 @@ class InMemoryStore:
             "windows": self.api_keys.window_usage_snapshot(key_hash),
         }
 
+    def upsert_federated_api_key(self, record: dict[str, Any]) -> ApiKey:
+        """Persist a key record resolved from the home plane.
+
+        Identity only. The record carries NO salt/secret_hash (a peer never
+        holds home-issued key material) and NO credits — a federated key
+        seeds at ZERO local balance, because copying a balance mints money.
+        Spending on this plane requires an explicit transfer.
+
+        The shadow workspace is materialized under the SAME lock as the key.
+        A key without its workspace 403s on every request (the authorize path
+        reads the workspace before it reads credits), so the pair must appear
+        together — the InMemory twin of the Postgres single transaction.
+        """
+        key = federated_api_key_from_record(record)
+        workspace = federated_workspace_from_record(record)
+        with self._lock:
+            if not workspace.id:
+                raise ValueError("federated record carries no workspace_id")
+            existing = self.workspaces.get(workspace.id)
+            if existing is not None and not existing.federated_home:
+                # Directory collision: a real local workspace already owns
+                # this id. Overwriting it would replace a tenant with an
+                # ownerless shadow. See the Postgres twin for the reasoning.
+                raise StoreConflict(
+                    f"workspace {workspace.id} exists locally and is not federated; "
+                    "refusing to overwrite it with a federated shadow"
+                )
+            self.workspaces[workspace.id] = workspace
+            # setdefault, NOT assignment: re-federating a key must never reset
+            # a balance a completed credit transfer already funded.
+            self.credits.setdefault(workspace.id, CreditAccount(workspace_id=workspace.id))
+            self.credit_money.setdefault(workspace.id, CreditMoney())
+            # BOTH the entity and its lookup index. Writing only `keys` made
+            # the first federated request work (the resolve returns the record
+            # directly) and every one after it miss — the same defect the
+            # Postgres backend had, because I wrote both by hand instead of
+            # going through one shared helper.
+            self.api_keys.keys[key.hash] = key
+            self.api_keys.key_ids_by_lookup_hash[key.lookup_hash] = key.hash
+            return key
+
     def get_key_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None:
         return self.api_keys.get_by_lookup_hash(lookup_hash)
 
     def get_key_by_raw(self, raw_key: str) -> ApiKey | None:
         return self.api_keys.get_by_raw(raw_key)
 
+    def api_key_auth_context(self, raw_key: str) -> ApiKeyAuthContext | None:
+        """Resolve the key and its workspace atomically, without a cache."""
+        with self._lock:
+            api_key = self.api_keys.get_by_raw(raw_key)
+            if api_key is None:
+                return None
+            workspace = self.workspaces.get(api_key.workspace_id)
+            if workspace is not None and workspace.deleted:
+                workspace = None
+            return ApiKeyAuthContext(api_key=api_key, workspace=workspace)
+
     def list_keys(self, workspace_id: str) -> list[ApiKey]:
         return self.api_keys.list_for_workspace(workspace_id)
+
+    def list_api_keys_with_usage(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]:
+        return self.api_keys.list_with_usage_for_workspace(workspace_id)
 
     def delete_key(self, key_hash: str) -> bool:
         return self.api_keys.delete(key_hash)
@@ -671,6 +933,8 @@ class InMemoryStore:
             hidden_prompt=hidden_prompt,
             enabled=enabled,
             slug=slug,
+            other_model_exists=lambda model_id: self.user_model_store.get(model_id)
+            is not None,
         )
 
     def list_custom_models_for_user(self, owner_user_id: str) -> list[CustomModel]:
@@ -690,10 +954,166 @@ class InMemoryStore:
             model_id,
             owner_user_id=owner_user_id,
             patch=patch,
+            other_model_exists=lambda candidate_id: self.user_model_store.get(candidate_id)
+            is not None,
         )
 
     def delete_custom_model(self, model_id: str, *, owner_user_id: str) -> bool:
         return self.custom_model_store.delete(model_id, owner_user_id=owner_user_id)
+
+    def create_user_model(
+        self,
+        *,
+        owner_user_id: str,
+        owner_workspace_id: str,
+        name: str,
+        kind: str,
+        description: str = "",
+        display_identity: str = "handle",
+        display_name: str = "",
+        endpoint_url: str,
+        upstream_model_id: str | None = None,
+        encrypted_endpoint_api_key: EncryptedSecretEnvelope | None = None,
+        endpoint_key_hint: str | None = None,
+        encrypted_signing_secret: EncryptedSecretEnvelope | None = None,
+        supports_streaming: bool = True,
+        heartbeat_interval_seconds: int | None = None,
+        max_concurrency: int = 4,
+        prompt_price_microdollars_per_million_tokens: int = 0,
+        completion_price_microdollars_per_million_tokens: int = 0,
+        human_verified: bool = False,
+        enabled: bool = True,
+        status: str = "active",
+        slug: str | None = None,
+    ) -> UserProvidedModel:
+        return self.user_model_store.create(
+            owner_user_id=owner_user_id,
+            owner_workspace_id=owner_workspace_id,
+            name=name,
+            kind=kind,
+            description=description,
+            display_identity=display_identity,
+            display_name=display_name,
+            endpoint_url=endpoint_url,
+            upstream_model_id=upstream_model_id,
+            encrypted_endpoint_api_key=encrypted_endpoint_api_key,
+            endpoint_key_hint=endpoint_key_hint,
+            encrypted_signing_secret=encrypted_signing_secret,
+            supports_streaming=supports_streaming,
+            heartbeat_interval_seconds=heartbeat_interval_seconds,
+            max_concurrency=max_concurrency,
+            prompt_price_microdollars_per_million_tokens=(
+                prompt_price_microdollars_per_million_tokens
+            ),
+            completion_price_microdollars_per_million_tokens=(
+                completion_price_microdollars_per_million_tokens
+            ),
+            human_verified=human_verified,
+            enabled=enabled,
+            status=status,
+            slug=slug,
+            other_model_exists=lambda model_id: self.custom_model_store.get(model_id)
+            is not None,
+        )
+
+    def list_user_models_for_user(self, owner_user_id: str) -> list[UserProvidedModel]:
+        return self.user_model_store.list_for_user(owner_user_id)
+
+    def get_user_model(self, model_id: str) -> UserProvidedModel | None:
+        return self.user_model_store.get(model_id)
+
+    def get_user_models_by_ids(
+        self,
+        model_ids: list[str],
+    ) -> dict[str, UserProvidedModel]:
+        return self.user_model_store.get_many(model_ids)
+
+    def update_user_model(
+        self,
+        model_id: str,
+        *,
+        owner_user_id: str,
+        patch: dict[str, Any],
+    ) -> UserProvidedModel:
+        return self.user_model_store.update(
+            model_id,
+            owner_user_id=owner_user_id,
+            patch=patch,
+            other_model_exists=lambda candidate_id: self.custom_model_store.get(
+                candidate_id
+            )
+            is not None,
+        )
+
+    def delete_user_model(self, model_id: str, *, owner_user_id: str) -> bool:
+        return self.user_model_store.delete(model_id, owner_user_id=owner_user_id)
+
+    def set_user_model_online(
+        self,
+        model_id: str,
+        *,
+        owner_user_id: str,
+        online: bool,
+    ) -> UserProvidedModel:
+        return self.user_model_store.set_online(
+            model_id,
+            owner_user_id=owner_user_id,
+            online=online,
+        )
+
+    def record_user_model_heartbeat(
+        self,
+        model_id: str,
+        *,
+        expires_at: str,
+    ) -> UserProvidedModel:
+        return self.user_model_store.record_heartbeat(model_id, expires_at=expires_at)
+
+    def record_user_model_probe(
+        self,
+        model_id: str,
+        *,
+        status: str,
+        checked_at: str,
+    ) -> UserProvidedModel:
+        return self.user_model_store.record_probe(
+            model_id,
+            status=status,
+            checked_at=checked_at,
+        )
+
+    def record_user_model_dispatch_result(
+        self,
+        model_id: str,
+        *,
+        success: bool,
+    ) -> UserProvidedModel:
+        return self.user_model_store.record_dispatch_result(model_id, success=success)
+
+    def acquire_user_model_slot(
+        self,
+        model_id: str,
+        authorization_id: str,
+        *,
+        limit: int,
+        ttl_seconds: int,
+    ) -> bool:
+        return self.user_model_store.acquire_slot(
+            model_id,
+            authorization_id,
+            limit=limit,
+            ttl_seconds=ttl_seconds,
+        )
+
+    def release_user_model_slot(self, model_id: str, authorization_id: str) -> None:
+        self.user_model_store.release_slot(model_id, authorization_id)
+
+    def list_public_user_models(
+        self,
+        *,
+        kind: str | None = None,
+    ) -> list[UserProvidedModel]:
+        return self.user_model_store.list_public(kind=kind)
 
     def create_broadcast_destination(
         self,
@@ -849,20 +1269,298 @@ class InMemoryStore:
     def mark_video_job_cleaned(self, job_id: str) -> VideoJob | None:
         return self.video_job_store.mark_cleaned(job_id)
 
+    def apply_federated_usage(
+        self,
+        *,
+        source_plane: str,
+        authorization_id: str,
+        workspace_id: str,
+        cost_microdollars: int,
+        daily_cap_microdollars: int,
+    ) -> str:
+        """HOME side of deferred settlement: book a peer's recorded debt.
+
+        Outcomes (strings, matched by the route):
+          applied            first application; usage booked
+          already            replay of the SAME terms; nothing booked again
+          conflict           same id, DIFFERENT terms; nothing booked, ever
+          workspace_unknown  no such workspace here
+          clamped            per-(plane, workspace) daily cap would be
+                             exceeded; nothing recorded — the row stays
+                             pending on the peer and retries tomorrow
+
+        Debit-only by construction: the only mutation is total_usage UP.
+        The clamp is checked BEFORE the claim is recorded, so a clamped row
+        leaves no residue and can apply cleanly later. The window is keyed by
+        THIS plane's clock — a peer-supplied timestamp choosing its own
+        window would let a compromised peer spread a burst across days.
+        """
+        from trusted_router.spend_windows import utcnow
+
+        cost = int(cost_microdollars)
+        if cost <= 0:
+            raise ValueError("cost_microdollars must be positive")
+        claim_key = (source_plane, authorization_id)
+        window_key = (source_plane, workspace_id, utcnow().date().isoformat())
+        with self._lock:
+            existing = self.federated_settlement_claims.get(claim_key)
+            if existing is not None:
+                if (
+                    existing["workspace_id"] == workspace_id
+                    and existing["cost_microdollars"] == cost
+                ):
+                    return "already"
+                return "conflict"
+            if self.workspaces.get(workspace_id) is None:
+                return "workspace_unknown"
+            applied_today = self.federated_settlement_windows.get(window_key, 0)
+            if applied_today + cost > int(daily_cap_microdollars):
+                return "clamped"
+            self.federated_settlement_claims[claim_key] = {
+                "workspace_id": workspace_id,
+                "cost_microdollars": cost,
+            }
+            self.federated_settlement_windows[window_key] = applied_today + cost
+            money = self.credit_money.setdefault(workspace_id, CreditMoney())
+            money.total_usage_microdollars += cost
+            return "applied"
+
     def credit_workspace_once(
         self, workspace_id: str, amount_microdollars: int, event_id: str
     ) -> bool:
         with self._lock:
             if event_id in self.stripe_events:
                 return False
+            money = self.credit_money.get(workspace_id)
+            if money is None:
+                raise ValueError("credit_account_not_found")
             self.stripe_events.add(event_id)
-            self.credit_money[workspace_id].total_credits_microdollars += amount_microdollars
+            money.total_credits_microdollars += amount_microdollars
             return True
 
     def credit_workspace_typed_direct(
-        self, workspace_id: str, amount_microdollars: int, event_id: str
+        self,
+        workspace_id: str,
+        amount_microdollars: int,
+        event_id: str,
+        *,
+        lifetime_topup_user_id: str | None = None,
     ) -> bool:
-        return self.credit_workspace_once(workspace_id, amount_microdollars, event_id)
+        with self._lock:
+            if event_id in self.stripe_events:
+                return False
+            self.stripe_events.add(event_id)
+            self.credit_money[workspace_id].total_credits_microdollars += amount_microdollars
+            if lifetime_topup_user_id is not None:
+                self.lifetime_topups[lifetime_topup_user_id] = self.lifetime_topups.get(
+                    lifetime_topup_user_id, 0
+                ) + int(amount_microdollars)
+            return True
+
+    # Earnings & movement primitives -----------------------------------------
+
+    @staticmethod
+    def _positive_money_amount(amount_microdollars: int) -> int:
+        amount = int(amount_microdollars)
+        if amount <= 0:
+            raise ValueError("amount_must_be_positive")
+        return amount
+
+    def debit_workspace_guarded(
+        self,
+        workspace_id: str,
+        amount_microdollars: int,
+        event_id: str,
+        *,
+        kind: str,
+        custom_model_id: str | None = None,
+        authorization_id: str | None = None,
+    ) -> str:
+        amount = self._positive_money_amount(amount_microdollars)
+        with self._lock:
+            if event_id in self.stripe_events:
+                return "duplicate"
+            money = self.credit_money.get(workspace_id)
+            available = (
+                -1
+                if money is None
+                else money.total_credits_microdollars
+                - money.total_usage_microdollars
+                - money.reserved_microdollars
+            )
+            if money is None or available < amount:
+                return "insufficient"
+            money.total_credits_microdollars -= amount
+            self.stripe_events.add(event_id)
+            self.credit_movements[(workspace_id, event_id)] = CreditMovement(
+                account_id=workspace_id,
+                movement_id=event_id,
+                kind=kind,
+                amount_microdollars=-amount,
+                custom_model_id=custom_model_id,
+                authorization_id=authorization_id,
+            )
+            return "accepted"
+
+    def credit_user_earnings(
+        self,
+        user_id: str,
+        amount_microdollars: int,
+        event_id: str,
+        *,
+        custom_model_id: str | None = None,
+        payer_workspace_id: str | None = None,
+    ) -> bool:
+        amount = self._positive_money_amount(amount_microdollars)
+        account_id = f"user:{user_id}"
+        with self._lock:
+            if event_id in self.stripe_events:
+                return False
+            earned, transferred = self.earnings_money.get(user_id, (0, 0))
+            self.earnings_money[user_id] = (earned + amount, transferred)
+            self.stripe_events.add(event_id)
+            self.credit_movements[(account_id, event_id)] = CreditMovement(
+                account_id=account_id,
+                movement_id=event_id,
+                kind="custom_model_payout",
+                amount_microdollars=amount,
+                counterparty_account_id=payer_workspace_id,
+                custom_model_id=custom_model_id,
+                authorization_id=(
+                    user_model_authorization_id_from_payout_event_id(event_id)
+                ),
+            )
+            return True
+
+    def transfer_earnings_to_workspace(
+        self,
+        user_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        event_id: str,
+    ) -> str:
+        amount = self._positive_money_amount(amount_microdollars)
+        user_account_id = f"user:{user_id}"
+        with self._lock:
+            if event_id in self.stripe_events:
+                return "duplicate"
+            earned, transferred = self.earnings_money.get(user_id, (0, 0))
+            if earned - transferred < amount:
+                return "insufficient"
+            money = self.credit_money.get(workspace_id)
+            if money is None:
+                raise ValueError("credit_account_not_found")
+            self.earnings_money[user_id] = (earned, transferred + amount)
+            money.total_credits_microdollars += amount
+            self.stripe_events.add(event_id)
+            created_at = iso_now()
+            self.credit_movements[(user_account_id, event_id)] = CreditMovement(
+                account_id=user_account_id,
+                movement_id=event_id,
+                kind="earnings_transfer_out",
+                amount_microdollars=-amount,
+                counterparty_account_id=workspace_id,
+                created_at=created_at,
+            )
+            self.credit_movements[(workspace_id, event_id)] = CreditMovement(
+                account_id=workspace_id,
+                movement_id=event_id,
+                kind="earnings_transfer_in",
+                amount_microdollars=amount,
+                counterparty_account_id=user_account_id,
+                created_at=created_at,
+            )
+            return "accepted"
+
+    def ensure_earnings_account(self, user_id: str) -> None:
+        with self._lock:
+            self.earnings_money.setdefault(user_id, (0, 0))
+
+    def earnings_summary(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = False,
+    ) -> dict[str, int]:
+        with self._lock:
+            earned, transferred = self.earnings_money.get(user_id, (0, 0))
+            return {
+                "total_earned": earned,
+                "total_transferred": transferred,
+                "available": earned - transferred,
+            }
+
+    def list_credit_movements(
+        self,
+        account_id: str,
+        *,
+        kinds: list[str] | None = None,
+        limit: int = 50,
+        before: str | None = None,
+    ) -> list[CreditMovement]:
+        allowed = None if kinds is None else set(kinds)
+        bounded = max(0, int(limit))
+        before_timestamp = None if before is None else _parse_iso_timestamp(before)
+        with self._lock:
+            matches = [
+                movement
+                for (movement_account_id, _), movement in self.credit_movements.items()
+                if movement_account_id == account_id
+                and (allowed is None or movement.kind in allowed)
+                and (
+                    before_timestamp is None
+                    or _parse_iso_timestamp(movement.created_at) < before_timestamp
+                )
+            ]
+        matches.sort(
+            key=lambda movement: (movement.created_at, movement.movement_id),
+            reverse=True,
+        )
+        return matches[:bounded]
+
+    def custom_model_earnings_by_model(
+        self,
+        user_id: str,
+        *,
+        since: str,
+    ) -> dict[str, int]:
+        totals: dict[str, int] = {}
+        since_timestamp = _parse_iso_timestamp(since)
+        with self._lock:
+            for movement in self.credit_movements.values():
+                if (
+                    movement.account_id == f"user:{user_id}"
+                    and movement.kind == "custom_model_payout"
+                    and movement.custom_model_id is not None
+                    and _parse_iso_timestamp(movement.created_at) >= since_timestamp
+                ):
+                    totals[movement.custom_model_id] = (
+                        totals.get(movement.custom_model_id, 0) + movement.amount_microdollars
+                    )
+        return totals
+
+    def get_lifetime_topup_microdollars(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = False,
+    ) -> int:
+        with self._lock:
+            return self.lifetime_topups.get(user_id, 0)
+
+    def add_lifetime_topup(
+        self,
+        user_id: str,
+        amount_microdollars: int,
+        event_id: str,
+    ) -> bool:
+        amount = self._positive_money_amount(amount_microdollars)
+        with self._lock:
+            if event_id in self.stripe_events:
+                return False
+            self.stripe_events.add(event_id)
+            self.lifetime_topups[user_id] = self.lifetime_topups.get(user_id, 0) + amount
+            return True
 
     def update_auto_refill_settings(
         self,
@@ -949,6 +1647,165 @@ class InMemoryStore:
     def refund(self, reservation_id: str) -> None:
         self.api_keys.refund(reservation_id)
 
+    # --- Cross-plane credit transfer ---------------------------------------
+    #
+    # The InMemory twin of the Postgres implementation. See
+    # trusted_router.credit_transfer for the state machine, which plane holds
+    # the value in each state, and the conservation invariant. `self._lock` is
+    # this backend's transaction: every insert-once check and the balance
+    # change it authorizes happen inside ONE acquisition, so a concurrent
+    # caller can never observe (or act on) a half-applied transition.
+
+    def open_credit_transfer(
+        self,
+        *,
+        transfer_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        destination: str,
+    ) -> CreditTransfer:
+        """SOURCE side: debit into escrow. Value becomes held by THIS plane."""
+        transfer_id = validate_transfer_id(transfer_id)
+        amount = validate_amount(amount_microdollars)
+        with self._lock:
+            existing = self.credit_transfers.get(transfer_id)
+            if existing is not None:
+                # Redelivered open: return the first one, debit nothing.
+                # But only to a caller naming the SAME move — an id is not an
+                # agreement. A different destination lets two planes rule on
+                # one escrow; a different workspace or amount reports somebody
+                # else's completed transfer as this caller's.
+                credit_transfer.require_matching_transfer(
+                    transfer_id,
+                    existing,
+                    workspace_id=workspace_id,
+                    amount_microdollars=amount,
+                    destination=destination,
+                )
+                return existing
+            money = self.credit_money.get(workspace_id)
+            available = (
+                0
+                if money is None
+                else money.total_credits_microdollars
+                - money.total_usage_microdollars
+                - money.reserved_microdollars
+            )
+            if money is None or amount > available:
+                # Nothing was written yet, so the transfer id stays usable
+                # after a top-up — a refused transfer leaves no trace.
+                raise ValueError("insufficient credits")
+            money.total_credits_microdollars -= amount
+            transfer = CreditTransfer(
+                id=transfer_id,
+                workspace_id=workspace_id,
+                amount_microdollars=amount,
+                destination=str(destination or ""),
+                state=credit_transfer.ESCROWED,
+            )
+            self.credit_transfers[transfer_id] = transfer
+            return transfer
+
+    def get_credit_transfer(self, transfer_id: str) -> CreditTransfer | None:
+        with self._lock:
+            return self.credit_transfers.get(transfer_id)
+
+    def list_open_credit_transfers(
+        self, limit: int = 100, *, after_id: str = ""
+    ) -> list[CreditTransfer]:
+        """Transfers still in ESCROWED — the recovery queue, paged by id."""
+        bounded = max(1, min(int(limit), 500))
+        cursor_id = str(after_id or "")
+        with self._lock:
+            return [
+                transfer
+                for transfer in sorted(self.credit_transfers.values(), key=lambda t: t.id)
+                if transfer.state == credit_transfer.ESCROWED and transfer.id > cursor_id
+            ][:bounded]
+
+    def resolve_credit_transfer(self, *, transfer_id: str, outcome: str) -> CreditTransfer:
+        """SOURCE side: record the DESTINATION's verdict, and only that."""
+        transfer_id = validate_transfer_id(transfer_id)
+        outcome = validate_outcome(outcome)
+        target_state = credit_transfer.STATE_FOR_OUTCOME[outcome]
+        with self._lock:
+            existing = self.credit_transfers.get(transfer_id)
+            if existing is None:
+                raise KeyError(transfer_id)
+            if existing.state != credit_transfer.ESCROWED:
+                if existing.state != target_state:
+                    raise CreditTransferConflict(
+                        f"transfer {transfer_id} is {existing.state}; "
+                        f"cannot re-resolve it as {target_state}"
+                    )
+                return existing
+            # Look the balance up BEFORE recording the state. The Postgres twin
+            # gets this for free — a rowcount != 1 rolls the whole transaction
+            # back — but a dict store has no rollback, so writing the state
+            # first and then raising leaves the transfer RETURNED with nothing
+            # returned. That is value destroyed in the store the conservation
+            # tests assert against, i.e. a place a real bug could hide.
+            money = (
+                self.credit_money.get(existing.workspace_id)
+                if outcome == credit_transfer.REJECTED
+                else None
+            )
+            if outcome == credit_transfer.REJECTED and money is None:
+                raise RuntimeError(f"missing credit money for workspace {existing.workspace_id}")
+            resolved = dataclasses.replace(existing, state=target_state, resolved_at=iso_now())
+            self.credit_transfers[transfer_id] = resolved
+            if money is not None:
+                money.total_credits_microdollars += existing.amount_microdollars
+            return resolved
+
+    def claim_credit_transfer(
+        self,
+        *,
+        transfer_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        source: str,
+        accept: bool,
+    ) -> str:
+        """DESTINATION side: decide a transfer's fate, exactly once."""
+        transfer_id = validate_transfer_id(transfer_id)
+        amount = validate_amount(amount_microdollars)
+        requested = credit_transfer.ACCEPTED if accept else credit_transfer.REJECTED
+        with self._lock:
+            recorded = self.credit_transfer_claims.get(transfer_id)
+            if recorded is not None:
+                # First writer won; every later caller learns that verdict —
+                # but only a caller asking about the SAME move. The recorded
+                # verdict says nothing about a different (workspace, amount),
+                # and replaying it hands a second source plane "accepted" for
+                # free: it debited, nothing here was credited.
+                credit_transfer.require_matching_transfer(
+                    transfer_id,
+                    recorded,
+                    workspace_id=workspace_id,
+                    amount_microdollars=amount,
+                    source=str(source or ""),
+                )
+                return str(recorded["outcome"])
+            if requested == credit_transfer.ACCEPTED:
+                money = self.credit_money.get(workspace_id)
+                if money is None:
+                    # No workspace here yet: write no claim, so the source can
+                    # retry once it is federated rather than being told a
+                    # plane accepted value it never credited.
+                    raise ValueError(
+                        f"no credit balance for workspace {workspace_id} on this plane"
+                    )
+                money.total_credits_microdollars += amount
+            self.credit_transfer_claims[transfer_id] = {
+                "outcome": requested,
+                "workspace_id": workspace_id,
+                "amount_microdollars": amount,
+                "source": str(source or ""),
+                "created_at": iso_now(),
+            }
+            return requested
+
     def create_gateway_authorization(
         self,
         *,
@@ -959,6 +1816,7 @@ class InMemoryStore:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
+        authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
         region: str | None = None,
@@ -969,7 +1827,16 @@ class InMemoryStore:
         idempotency_fingerprint: str | None = None,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
+        user_provided_model_id: str | None = None,
+        user_provided_model_revision: int | None = None,
+        user_model_prompt_price_microdollars_per_m: int | None = None,
+        user_model_completion_price_microdollars_per_m: int | None = None,
+        user_model_owner_user_id: str | None = None,
         additional_cost_reservation_microdollars: int = 0,
+        native_batch_eligible: bool = False,
+        settlement: str = "local",
+        expires_at: str | None = None,
+        deferred_cap_microdollars: int | None = None,
     ) -> GatewayAuthorization:
         return self.api_keys.create_gateway_authorization(
             workspace_id=workspace_id,
@@ -979,6 +1846,7 @@ class InMemoryStore:
             usage_type=usage_type,
             estimated_microdollars=estimated_microdollars,
             credit_reservation_id=credit_reservation_id,
+            authorization_id=authorization_id,
             requested_model_id=requested_model_id,
             candidate_model_ids=candidate_model_ids,
             region=region,
@@ -989,7 +1857,20 @@ class InMemoryStore:
             idempotency_fingerprint=idempotency_fingerprint,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
+            user_provided_model_id=user_provided_model_id,
+            user_provided_model_revision=user_provided_model_revision,
+            user_model_prompt_price_microdollars_per_m=(
+                user_model_prompt_price_microdollars_per_m
+            ),
+            user_model_completion_price_microdollars_per_m=(
+                user_model_completion_price_microdollars_per_m
+            ),
+            user_model_owner_user_id=user_model_owner_user_id,
             additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
+            native_batch_eligible=native_batch_eligible,
+            settlement=settlement,
+            expires_at=expires_at,
+            deferred_cap_microdollars=deferred_cap_microdollars,
         )
 
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:
@@ -1048,12 +1929,30 @@ class InMemoryStore:
                     usage_type=authorization.usage_type,
                 )
 
-            authorization.settled = True
+            authorization.record_finalization(
+                success=success,
+                actual_microdollars=actual_microdollars,
+                selected_usage_type=actual_usage_type,
+                generation=generation,
+            )
             return True
 
     # Generations + activity + benchmarks delegate to storage_generations.
     def add_generation(self, generation: Generation) -> None:
         self.generation_store.add(generation)
+
+    def record_client_events_batch(self, payload: dict[str, Any]) -> None:
+        event_id = f"{payload['tenant_id']}:{payload['batch_id']}"
+        with self._lock:
+            if event_id in self.client_event_ids:
+                return
+            self.client_event_ids.add(event_id)
+            self.client_events_batches.append(dict(payload))
+            if len(self.client_events_batches) > 1_000:
+                removed = self.client_events_batches.pop(0)
+                self.client_event_ids.discard(
+                    f"{removed['tenant_id']}:{removed['batch_id']}"
+                )
 
     def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None:
         self.generation_store.record_benchmark(sample)
@@ -1072,6 +1971,18 @@ class InMemoryStore:
 
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
         self.synthetic_store.record(sample)
+
+    def operational_analytics_outbox_freshness(self) -> OutboxFreshness:
+        """No outbox exists in memory, and this says so rather than returning 0.
+
+        The in-memory backend never enqueues an operational-analytics row and
+        has no drain behind it, so an empty queue here is not evidence that a
+        drain is keeping up -- it is evidence that there is nothing to keep up
+        with. Reporting `not_configured` keeps a dev or test deployment from
+        publishing the healthiest possible number for a pipeline it does not
+        run.
+        """
+        return OutboxFreshness.unavailable(BACKEND_MEMORY, REASON_NOT_CONFIGURED)
 
     def synthetic_probe_samples(
         self,
@@ -1317,12 +2228,22 @@ class InMemoryStore:
         reason: str,
         bounce_type: str | None = None,
         feedback_id: str | None = None,
+        mail_class: str | None = None,
+        sender_profile: str | None = None,
+        acquisition_source: str | None = None,
+        acquisition_medium: str | None = None,
+        acquisition_campaign: str | None = None,
     ) -> EmailSendBlock:
         return self.email_blocks.block(
             email=email,
             reason=reason,
             bounce_type=bounce_type,
             feedback_id=feedback_id,
+            mail_class=mail_class,
+            sender_profile=sender_profile,
+            acquisition_source=acquisition_source,
+            acquisition_medium=acquisition_medium,
+            acquisition_campaign=acquisition_campaign,
         )
 
     def is_email_blocked(self, email: str) -> bool:
@@ -1333,6 +2254,14 @@ class InMemoryStore:
 
     def record_sns_message_once(self, message_id: str) -> bool:
         return self.email_blocks.record_message_once(message_id)
+
+    def record_webhook_event_once(self, source: str, event_id: str) -> bool:
+        with self._lock:
+            key = (source, event_id)
+            if key in self.webhook_events:
+                return False
+            self.webhook_events.add(key)
+            return True
 
 
 #: Analytics mirror. No-op until the app factory installs a real one, so
@@ -1456,6 +2385,9 @@ def create_store(settings: Any) -> Store:
             dsn,
             postgres_iam_auth=str(getattr(settings, "postgres_iam_auth", "") or ""),
             postgres_iam_region=str(getattr(settings, "postgres_iam_region", "") or ""),
+            operational_analytics_outbox_enabled=bool(
+                getattr(settings, "operational_analytics_outbox_enabled", False)
+            ),
         )
         store.apply_schema()
         return store
@@ -1507,8 +2439,28 @@ def create_store(settings: Any) -> Store:
             analytics_dual_read_grace_seconds=getattr(
                 settings, "analytics_dual_read_grace_seconds", 30
             ),
+            regional_quota_leases_enabled=getattr(
+                settings, "regional_quota_leases_enabled", False
+            ),
+            regional_quota_bigtable_table=getattr(
+                settings,
+                "regional_quota_bigtable_table",
+                "trustedrouter-regional-quota",
+            ),
+            regional_quota_bigtable_app_profiles=getattr(
+                settings,
+                "regional_quota_bigtable_app_profile_map",
+                {},
+            ),
         )
     raise ValueError(f"unsupported storage backend: {backend}")
+
+
+def _parse_iso_timestamp(value: str) -> dt.datetime:
+    parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.UTC)
+    return parsed.astimezone(dt.UTC)
 
 
 def _normalize_email(value: str) -> str:

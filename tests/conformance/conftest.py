@@ -96,8 +96,56 @@ def _spanner_emulator_store() -> Store:
     )
 
 
+def _spanner_fake_store() -> Store:
+    """The REAL `SpannerBigtableStore`, over the in-process Spanner fake.
+
+    This is the only backend in this table that executes `storage_gcp.py`, and
+    it is the one that runs unconditionally in CI. That combination is the
+    point of it.
+
+    WHY IT EXISTS, since the obvious objection is "a fake proves nothing":
+    `spanner-pg` below constructs a **PostgresStore**. It points that store at a
+    Spanner server, which tests Spanner's SQL DIALECT — genuinely valuable — but
+    it never executes one line of the native-Spanner store, so it cannot cover
+    the sharded money code GCP actually runs in production. `spanner-emulator`
+    does construct that store, and skips unconditionally (no emulator schema
+    provisioning). Between them the native store had NO runnable semantic
+    coverage at all, which is how its cross-plane credit transfer sat
+    unimplemented behind a comment saying it could not be tested.
+
+    `tests/fakes/spanner.py` is not a stub: it models the read-set validation
+    and abort-retry that make Spanner transactions serialize, duplicate-PK
+    ALREADY_EXISTS, the DML/mutation mixing ban, and single-use snapshot
+    exhaustion — each added because the corresponding real-Spanner behaviour
+    leaked a production bug. `tests/test_fake_spanner_fidelity.py` guards those.
+    It is the same harness ~28 existing test modules already use for the typed
+    counter money path.
+
+    WHAT IT DOES NOT PROVE, stated so nobody reads more into a green run: it is
+    not the Spanner query planner and not its lock manager. It cannot catch an
+    unsupported SQL construct, a DDL/schema mismatch, or a real ABORTED storm.
+    Passing here means the STORE'S LOGIC is right; `spanner-emulator` is still
+    the backend that would prove the SQL runs on Spanner, and it still skips.
+    """
+    from tests.fakes.spanner import make_fake_store
+
+    store, _database, _bigtable = make_fake_store()
+    return store
+
+
 def _postgres_store() -> Store:
-    """A PostgresStore pointed at the conformance database."""
+    """A PostgresStore pointed at the conformance database.
+
+    Honours the SAME IAM-auth switches production uses
+    (TR_POSTGRES_IAM_AUTH / TR_POSTGRES_IAM_REGION). Without them this
+    harness could only ever reach a password-authenticated Postgres, so
+    Aurora DSQL — the backend the EU deployment actually runs on — was
+    unreachable and every DSQL run died in the fixture with
+    `fe_sendauth: no password supplied`, before exercising a single
+    behaviour. A conformance suite that cannot connect to the real
+    backend proves nothing about it, which is exactly how "Postgres-wire
+    compatible" hid three DSQL incompatibilities previously.
+    """
     dsn = os.environ.get("TR_CONFORMANCE_POSTGRES_DSN")
     if not dsn:
         pytest.skip(
@@ -106,7 +154,11 @@ def _postgres_store() -> Store:
         )
     from trusted_router.storage_postgres import PostgresStore
 
-    store = PostgresStore(dsn)
+    store = PostgresStore(
+        dsn,
+        postgres_iam_auth=os.environ.get("TR_POSTGRES_IAM_AUTH", ""),
+        postgres_iam_region=os.environ.get("TR_POSTGRES_IAM_REGION", ""),
+    )
     store.apply_schema()
     return store
 
@@ -148,12 +200,78 @@ def _spanner_pg_store() -> Store:
 BACKENDS: dict[str, Callable[[], Store]] = {
     "memory": _memory_store,
     "postgres": _postgres_store,
+    "spanner-fake": _spanner_fake_store,
     "spanner-pg": _spanner_pg_store,
     "spanner-emulator": _spanner_emulator_store,
 }
 
 
-@pytest.fixture(params=sorted(BACKENDS), ids=lambda name: f"backend={name}")
+# Server-backed backends are marked into one xdist_group each: the Spanner PG
+# emulator rejects CONCURRENT schema changes, and every server-backed store
+# fixture applies schema on construction. Measured: plain `-n 4` against the
+# real containers produced 14 setup errors on backend=spanner-pg; a serial run
+# passed 53/53. With `--dist loadgroup` each backend's tests share one worker
+# (DDL serialized) while memory-backend tests parallelize freely. The per-test
+# `unique` fixture keeps the shared database ORDER-independent; this keeps it
+# CONCURRENCY-safe too. Marks ride the fixture params (not
+# collection_modifyitems) so xdist's scheduler sees them reliably.
+#: Backends with no shared server: a fresh instance per test, so they need no
+#: DDL serialization and parallelize freely.
+_IN_PROCESS_BACKENDS = frozenset({"memory", "spanner-fake"})
+
+_BACKEND_PARAMS = [
+    name
+    if name in _IN_PROCESS_BACKENDS
+    else pytest.param(
+        name, marks=pytest.mark.xdist_group(f"conformance-{name}")
+    )
+    for name in sorted(BACKENDS)
+]
+
+
+_C1_LEGACY_MONEY = (
+    "native-Spanner store deliberately removed the legacy JSON reserve/settle/"
+    "refund/finalize path (billing phase C1): GCP runs the TYPED authorize+settle "
+    "path instead (storage_gcp_authorize.py / storage_gcp_counter_dml.py), which "
+    "these Store-protocol methods do not route to. This is a real divergence "
+    "from the Store contract, not a gap in the fake — the typed path has its own "
+    "tests (tests/test_billing_typed_*.py), but it is NOT this suite's assertions."
+)
+_FAKE_ROLLUP_ORDERING = (
+    "tests/fakes/spanner.py does not reproduce Bigtable's row ordering for "
+    "synthetic rollups, so the limit-is-a-newest-first-prefix property cannot be "
+    "asserted through it. A fake limitation, not a store claim either way."
+)
+
+#: Tests the `spanner-fake` backend is KNOWN not to satisfy, each with the
+#: reason. Applied as **strict xfail**, deliberately, not skip:
+#:
+#:   * a skip is invisible in a green run and would let this backend read as
+#:     coverage it does not have — the exact failure mode this suite exists to
+#:     prevent (see the module docstring);
+#:   * strict xfail fails the run if one of these starts PASSING, so the list
+#:     cannot silently rot into a permanent excuse after somebody fixes the
+#:     underlying divergence.
+#:
+#: Anything not listed here is genuinely asserted against the native Spanner
+#: store, cross-plane credit transfer included.
+_SPANNER_FAKE_KNOWN_GAPS: dict[str, str] = {
+    "test_reserve_then_settle_less_releases_unused_hold": _C1_LEGACY_MONEY,
+    "test_reserve_then_settle_more_books_full_actual": _C1_LEGACY_MONEY,
+    "test_reserve_then_refund_restores_exact_balance": _C1_LEGACY_MONEY,
+    "test_settle_is_idempotent": _C1_LEGACY_MONEY,
+    "test_refund_is_idempotent": _C1_LEGACY_MONEY,
+    "test_concurrent_reserves_cannot_oversubscribe": _C1_LEGACY_MONEY,
+    "test_insufficient_reserve_does_not_mutate_balance": _C1_LEGACY_MONEY,
+    "test_finalize_gateway_authorization_is_exactly_once": _C1_LEGACY_MONEY,
+    "test_finalize_unknown_authorization_is_false_not_error": _C1_LEGACY_MONEY,
+    "test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option": (
+        _FAKE_ROLLUP_ORDERING
+    ),
+}
+
+
+@pytest.fixture(params=_BACKEND_PARAMS, ids=lambda name: f"backend={name}")
 def store(request: pytest.FixtureRequest) -> Iterator[Store]:
     """A live store for each registered backend.
 
@@ -161,6 +279,12 @@ def store(request: pytest.FixtureRequest) -> Iterator[Store]:
     reported per-backend so a skipped backend is visible rather than silently
     counted as a pass.
     """
+    if request.param == "spanner-fake":
+        gap = _SPANNER_FAKE_KNOWN_GAPS.get(
+            getattr(request.node, "originalname", None) or request.node.name
+        )
+        if gap is not None:
+            request.node.add_marker(pytest.mark.xfail(reason=gap, strict=True))
     backend = BACKENDS[request.param]()
     try:
         yield backend

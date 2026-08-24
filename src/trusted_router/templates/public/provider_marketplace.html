@@ -9,7 +9,9 @@
     <div class="hero-actions">
       <a class="btn primary" href="mailto:providers@trustedrouter.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D">Email providers@trustedrouter.com</a>
       <a class="btn" href="#integration-contract">View requirements <span aria-hidden="true">↓</span></a>
-      <a class="btn" href="/provider">Provider sign in</a>
+      <form action="/provider" method="get">
+        <button class="btn" type="submit">Provider sign in</button>
+      </form>
     </div>
   </div>
   <div class="public-hero-metrics" aria-label="Provider integration requirements">
@@ -26,6 +28,29 @@
   <div><strong>Review</strong><span>We verify privacy, compliance, and API claims.</span></div>
   <div><strong>Connect</strong><span>Exchange a restricted key through a separate secure channel.</span></div>
   <div><strong>Publish</strong><span>We test, monitor, and list working routes.</span></div>
+</section>
+
+<section class="marketing-split" aria-labelledby="featured-neurometric-heading">
+  <div class="marketing-copy">
+    <span class="eyebrow">Featured partnership</span>
+    <h2 id="featured-neurometric-heading">Neurometric AI is live on TrustedRouter.</h2>
+    <p>Neurometric AI is a featured provider partner in the TrustedRouter marketplace. Its integration publishes a machine-readable catalog and gives developers one place to inspect callable models, exact pricing, capabilities, and the documented data-handling boundary.</p>
+    <p>TrustedRouter refreshes the catalog, runs live canaries, and monitors route availability through the same provider contract used across the marketplace.</p>
+    <div class="hero-actions">
+      <a class="btn primary" href="/providers/neurometric">View Neurometric AI models</a>
+      <a class="btn" href="https://www.neurometric.ai/" rel="noopener noreferrer">Visit Neurometric AI</a>
+    </div>
+  </div>
+  <div class="copy-terminal" aria-label="Neurometric AI integration summary">
+    <div class="code-head"><span>Featured provider</span><span>Live</span></div>
+    <pre><code>Provider: Neurometric AI
+Catalog: machine readable
+Pricing: exact decimal ingestion
+Availability: live canaries
+Content policy: no-store
+ZDR classification: not contractual
+Confidential compute: not claimed</code></pre>
+  </div>
 </section>
 
 <section class="marketing-split" id="integration-contract" aria-label="Provider integration contract">
@@ -138,6 +163,35 @@ API key: DO NOT INCLUDE</code></pre>
   <div class="copy-terminal" aria-label="Canonical provider catalog response">
     <div class="code-head"><span>GET /v1/models</span><span>application/json</span></div>
     <pre><code>{{ provider_catalog_v2_example_json }}</code></pre>
+  </div>
+</section>
+
+<section class="marketing-split" aria-labelledby="provider-check-heading">
+  <div class="marketing-copy">
+    <span class="eyebrow">Open-source preflight</span>
+    <h2 id="provider-check-heading">Run the conformance suite before you apply.</h2>
+    <p>Run the <a href="https://github.com/Lore-Hex/trustedrouter-provider-check" target="_blank" rel="noopener noreferrer">TrustedRouter provider checker</a> against the same production API base you plan to submit. It tests catalog discovery, advertised model callability, chat completions, streaming, usage, tool calls, errors, and first-token behavior against the contract expected by TrustedRouter's attested gateway translator.</p>
+    <p>The suite is open source under Apache-2.0 and works with any conformant serving stack.</p>
+    <ul class="check-list">
+      <li><strong>Tiers 1&ndash;4 are the conformance gate.</strong> A hard failure exits with status <code>1</code>, so the checker works in CI.</li>
+      <li><strong>Credentials stay local.</strong> Use <code>TR_PROVIDER_API_KEY</code> to keep the key out of shell history. Reports recursively redact it.</li>
+      <li><strong>Checks make real requests.</strong> The model sweep and chat probes use real, billable completion calls. The default sweep is bounded to 25 advertised models.</li>
+      <li><strong>Keep the report.</strong> Attach the redacted JSON artifact to your application so failures can be reproduced quickly.</li>
+    </ul>
+    <div class="hero-actions">
+      <a class="btn primary" href="https://github.com/Lore-Hex/trustedrouter-provider-check" target="_blank" rel="noopener noreferrer">Open the provider checker <span aria-hidden="true">&nearr;</span></a>
+      <a class="btn" href="/docs/provider-conformance">Read the conformance guide</a>
+    </div>
+  </div>
+  <div class="copy-terminal" aria-label="Run the TrustedRouter provider checker">
+    <div class="code-head"><span>Provider preflight</span><span>uvx</span></div>
+    <pre><code>export TR_PROVIDER_API_KEY='your-provider-key'
+
+uvx trustedrouter-provider-check \
+  --base-url https://api.provider.com/v1 \
+  --model provider/model-name \
+  --tier 4 \
+  --json provider-report.json</code></pre>
   </div>
 </section>
 

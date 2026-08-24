@@ -104,10 +104,18 @@ def test_build_budget_alert_email_content() -> None:
     msg = build_budget_alert_email(
         to="x@example.com", key_name="prod", workspace_name="Acme",
         crossings=[("daily", 5_000_000, 1_000_000)],
+        acquisition_source="google",
+        acquisition_medium="paid_search",
+        acquisition_campaign="legal",
     )
     assert "prod" in msg.subject and "daily" in msg.subject
     assert "still working" in msg.text_body.lower()
     assert "$5" in msg.text_body and "$1" in msg.text_body
+    assert msg.mail_class == "budget_alert"
+    assert msg.sender_profile == "alerts"
+    assert msg.acquisition_source == "google"
+    assert msg.acquisition_medium == "paid_search"
+    assert msg.acquisition_campaign == "legal"
 
 
 def _authorize(client, key_hash: str):

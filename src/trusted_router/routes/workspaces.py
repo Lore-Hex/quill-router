@@ -5,12 +5,16 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from trusted_router.auth import ManagementPrincipal, Principal
+from trusted_router.auth import ManagementPrincipal, Principal, SettingsDep
 from trusted_router.errors import api_error
 from trusted_router.routes.helpers import json_body
 from trusted_router.serialization import member_shape, workspace_shape
+from trusted_router.signup_gate import require_new_account_creation
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
+
+MAX_WORKSPACE_MEMBER_MUTATIONS = 100
+MAX_WORKSPACE_MEMBER_IDENTIFIER_LENGTH = 320
 
 
 def register_workspace_routes(router: APIRouter) -> None:
@@ -72,13 +76,37 @@ def register_workspace_routes(router: APIRouter) -> None:
         id: str,  # noqa: A002
         request: Request,
         principal: ManagementPrincipal,
+        settings: SettingsDep,
     ) -> dict[str, Any]:
-        _require_managed_workspace(id, principal)
         body = await json_body(request)
         emails = body.get("emails") or body.get("members") or []
         if not isinstance(emails, list):
             raise api_error(400, "emails must be a list", ErrorType.BAD_REQUEST)
-        members = STORE.add_members(id, [str(e) for e in emails], role=str(body.get("role") or "member"))
+        normalized_emails = _bounded_unique_member_identifiers(
+            emails,
+            field_name="emails",
+            normalize_case=True,
+        )
+        raw_role = body.get("role") or "member"
+        if not isinstance(raw_role, str) or raw_role not in {"member", "admin"}:
+            raise api_error(
+                400,
+                "role must be member or admin",
+                ErrorType.BAD_REQUEST,
+            )
+        _require_managed_workspace(id, principal)
+        # add_members intentionally creates a user record for an unknown email.
+        # Preflight the whole batch so a closed gate cannot partially add the
+        # existing members before discovering a new-account invite later.
+        if not settings.new_signups_enabled and any(
+            STORE.find_user_by_email(email) is None for email in normalized_emails
+        ):
+            require_new_account_creation(settings)
+        members = STORE.add_members(
+            id,
+            normalized_emails,
+            role=raw_role,
+        )
         return {"data": [member_shape(m) for m in members]}
 
     @router.post("/workspaces/{id}/members/remove")
@@ -87,13 +115,18 @@ def register_workspace_routes(router: APIRouter) -> None:
         request: Request,
         principal: ManagementPrincipal,
     ) -> dict[str, Any]:
-        _require_managed_workspace(id, principal)
         body = await json_body(request)
         user_ids = body.get("user_ids") or body.get("members") or []
         if not isinstance(user_ids, list):
             raise api_error(400, "user_ids must be a list", ErrorType.BAD_REQUEST)
-        STORE.remove_members(id, [str(uid) for uid in user_ids])
-        return {"data": {"removed": len(user_ids)}}
+        normalized_user_ids = _bounded_unique_member_identifiers(
+            user_ids,
+            field_name="user_ids",
+            normalize_case=False,
+        )
+        _require_managed_workspace(id, principal)
+        STORE.remove_members(id, normalized_user_ids)
+        return {"data": {"removed": len(normalized_user_ids)}}
 
     @router.get("/organization/members")
     async def organization_members(principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
@@ -113,3 +146,46 @@ def _principal_can_manage_workspace(principal: Principal, workspace_id: str) -> 
     if principal.user is None:
         return principal.workspace.id == workspace_id
     return STORE.user_can_manage(principal.user.id, workspace_id)
+
+
+def _bounded_unique_member_identifiers(
+    values: list[object],
+    *,
+    field_name: str,
+    normalize_case: bool,
+) -> list[str]:
+    """Validate and de-duplicate one bounded workspace membership mutation."""
+    if len(values) > MAX_WORKSPACE_MEMBER_MUTATIONS:
+        raise api_error(
+            400,
+            f"{field_name} may contain at most {MAX_WORKSPACE_MEMBER_MUTATIONS} items",
+            ErrorType.BAD_REQUEST,
+        )
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            raise api_error(
+                400,
+                f"{field_name} entries must be strings",
+                ErrorType.BAD_REQUEST,
+            )
+        normalized = value.strip()
+        if normalize_case:
+            normalized = normalized.lower()
+        if not normalized or len(normalized) > MAX_WORKSPACE_MEMBER_IDENTIFIER_LENGTH:
+            raise api_error(
+                400,
+                (
+                    f"{field_name} entries must be between 1 and "
+                    f"{MAX_WORKSPACE_MEMBER_IDENTIFIER_LENGTH} characters"
+                ),
+                ErrorType.BAD_REQUEST,
+            )
+        identity = normalized.casefold()
+        if identity in seen:
+            continue
+        seen.add(identity)
+        unique.append(normalized)
+    return unique

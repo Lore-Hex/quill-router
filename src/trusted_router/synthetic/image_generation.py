@@ -8,6 +8,7 @@ import sys
 import httpx
 
 from trusted_router.config import get_settings
+from trusted_router.synthetic.internal_auth import synthetic_observer_token
 from trusted_router.synthetic.probes import (
     IMAGE_GENERATION_MODEL,
     IMAGE_GENERATION_PROVIDER,
@@ -19,12 +20,12 @@ from trusted_router.synthetic.probes import (
 async def run() -> int:
     settings = get_settings()
     api_key = settings.synthetic_monitor_api_key
-    internal_token = settings.internal_gateway_token
+    internal_token = synthetic_observer_token(settings)
     if not api_key:
         print("TR_SYNTHETIC_MONITOR_API_KEY is required", file=sys.stderr)
         return 2
     if not internal_token:
-        print("TR_INTERNAL_GATEWAY_TOKEN is required", file=sys.stderr)
+        print("TR_OBSERVER_INTERNAL_TOKEN is required", file=sys.stderr)
         return 2
 
     monitor_region = os.environ.get("TR_SYNTHETIC_MONITOR_REGION", "us-central1")
@@ -95,9 +96,7 @@ async def run() -> int:
                 "generation_id": sample.generation_id,
                 "cost_microdollars": sample.cost_microdollars,
                 "attempts": len(samples),
-                "total_cost_microdollars": sum(
-                    item.cost_microdollars or 0 for item in samples
-                ),
+                "total_cost_microdollars": sum(item.cost_microdollars or 0 for item in samples),
                 "ingest_status": response.status_code,
             },
             separators=(",", ":"),

@@ -5,8 +5,8 @@
   <div class="marketing-copy">
     <span class="eyebrow">Switch in 1 line</span>
     <h2>OpenRouter, but you can verify the prompt path.</h2>
-    <p>Change <span class="mono">base_url</span>. Keep your OpenAI SDK. Keep your model IDs. Keep your code.</p>
-    <p>What you add: a hardware-attested gateway, open-source source-to-binary, no prompt or output logs, and a public status page with continuous SLO probes.</p>
+    <p>Change <span class="mono">base_url</span>. Keep your OpenAI SDK, your messages shape, and your streaming loop. Canonical vendor-prefixed model ids mostly resolve unchanged.</p>
+    <p>What you add: a hardware-attested gateway, a public source-to-binary trail, no durable prompt or output logs on realtime inference, and a public status page with live burn rates.</p>
     <p>
       <a class="btn primary" href="/chat">Try the playground</a>
       <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
@@ -40,7 +40,7 @@ resp = client.chat.completions.create(
   <div class="marketing-card">
     <span class="card-label">Same API</span>
     <h3>OpenAI-compatible.</h3>
-    <p>Drop into any OpenRouter integration. Streaming, tool calls, vision, structured output — all supported.</p>
+    <p>Streaming, tool calls, vision, structured output — supported. Every OpenRouter API path carries an explicit compatibility classification (real, compatible-real, or stub), enforced in CI against their published OpenAPI spec.</p>
   </div>
   <div class="marketing-card">
     <span class="card-label">Verifiable</span>
@@ -50,7 +50,7 @@ resp = client.chat.completions.create(
   <div class="marketing-card">
     <span class="card-label">No logging</span>
     <h3>Zero by construction.</h3>
-    <p>Prompt and output paths never touch persistent storage. The binary you can verify is the binary that handles your traffic.</p>
+    <p>Ordinary synchronous and streaming prompt paths do not touch persistent storage. Batch is a separate opt-in encrypted-retention mode. The binary you can verify is the binary that handles your traffic.</p>
   </div>
 </section>
 
@@ -62,25 +62,25 @@ resp = client.chat.completions.create(
     <span>API shape</span><span>OpenAI compatible</span><span>OpenAI compatible</span>
   </div>
   <div class="matrix-row">
-    <span>Prompt logging</span><span>Operator-controlled retention</span><span>None — verifiable in source</span>
+    <span>Prompt logging</span><span>Off by default; opt-in for a 1% discount</span><span>None on realtime — verifiable in source</span>
   </div>
   <div class="matrix-row">
-    <span>Trust model</span><span>Hosted policy</span><span>Hardware attestation + open source</span>
+    <span>Trust model</span><span>Policy + SOC 2 Type 2</span><span>Hardware attestation + public source</span>
   </div>
   <div class="matrix-row">
-    <span>Source</span><span>Closed</span><span>Open — every line that touches your prompt</span>
+    <span>Source</span><span>Closed (SDKs Apache-2.0)</span><span>Public — every line that touches your prompt</span>
   </div>
   <div class="matrix-row">
     <span>Provider fallback</span><span>Yes</span><span>Yes — across 30+ providers</span>
   </div>
   <div class="matrix-row">
-    <span>Platform charge</span><span><a href="https://openrouter.ai/pricing">5.5% on credit purchases</a></span><span>5% on prepaid model cost</span>
+    <span>Platform charge</span><span><a href="https://openrouter.ai/pricing">5.5% ($0.80 min) buying credits; inference at list price</a></span><span>5.5% on prepaid model cost ($0.01/M floor)</span>
   </div>
   <div class="matrix-row">
-    <span>Status SLOs</span><span>Public status page</span><span>Public 99.99% SLO + 30-day burn rates</span>
+    <span>Status SLOs</span><span>Public status page</span><span>99.99% availability target + live 5m-24h burn rates</span>
   </div>
   <div class="matrix-row">
-    <span>Best fit</span><span>Broad model marketplace</span><span>Privacy-sensitive workloads, regulated industries, audited routing</span>
+    <span>Best fit</span><span>Broad model marketplace</span><span>Privacy-sensitive workloads that need a verifiable prompt path</span>
   </div>
 </section>
 
@@ -106,8 +106,8 @@ curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" \
   <div class="marketing-copy">
     <span class="eyebrow">60-second proof</span>
     <h2>Don't trust. Check.</h2>
-    <p>The gateway exposes a live attestation endpoint that returns a JWT signed by the CPU's hardware root key. You match the image digest to the open-source binary, and you know — not assume — what code is running.</p>
-    <p>Everyone else publishes a privacy policy. We publish the hash.</p>
+    <p>The gateway exposes a live attestation endpoint that returns a JWT signed by the CPU's hardware root key. You match the image digest to the source-built binary, and you know — not assume — what code is running.</p>
+    <p>A privacy policy is a promise. A hash is something you can check.</p>
     <p>
       <a class="btn" href="/security">How attestation works</a>
       <a class="btn" href="/docs/migrate-from-openrouter">Migration guide</a>
@@ -121,13 +121,15 @@ curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" \
     <h2>The boring details that make this real.</h2>
   </div>
   <div>
-    <p><strong>Do my existing keys work?</strong> No — TR keys are a different prefix (<span class="mono">sk-tr-v1-…</span>). Issuance takes 30 seconds after sign-up.</p>
-    <p><strong>Same model catalog?</strong> Yes — every OpenRouter model id resolves on TR, plus 30+ providers including DeepSeek, Kimi, MiniMax, GLM, and Together.</p>
-    <p><strong>Pricing?</strong> Provider cost + 5% markup, with a $0.01/M floor. That is a lower percentage than OpenRouter's published <a href="https://openrouter.ai/pricing">5.5% fee on credit purchases</a>. Exact customer prices are published on every model page.</p>
+    <p><strong>Do my existing keys work?</strong> No — TR keys are a different prefix (<span class="mono">sk-tr-v1-…</span>). Issuance is self-serve after sign-up.</p>
+    <p><strong>Same model catalog?</strong> Partly. As of August 2026, 168 of the 413 ids on OpenRouter's live feed resolve on TR unchanged; an unknown id returns <span class="mono">MODEL_NOT_SUPPORTED</span> instead of a guess. The catalog spans 30+ providers including DeepSeek, Kimi, MiniMax, GLM, and Together — check your ids on <a href="/models">/models</a> first.</p>
+    <p><strong>Pricing?</strong> Provider cost + 5.5% markup, with a $0.01/M floor. Same percentage as OpenRouter's published <a href="https://openrouter.ai/pricing">5.5% fee on credit purchases</a> — but on a different base: ours applies to model cost, theirs at credit top-up with inference passed through at list price. Exact customer prices are published on every model page.</p>
     <p><strong>BYOK?</strong> Yes — bring your own provider keys for billing isolation. Routing code stays attested.</p>
     <p><strong>Self-host?</strong> The full control plane and gateway are source-available (BUSL-1.1) — read, build, and verify every line; the attestation story works because the image hash you build is the hash the enclave reports. Production self-hosting runs under a commercial license.</p>
     <p><strong>Why build this?</strong> The full argument is in the essay <a href="https://jperla.com/blog/attestation-is-all-you-need">&ldquo;Attestation is All You Need&rdquo;</a>.</p>
   </div>
 </section>
+
+{% include "public/_competitor_evidence.html" %}
 
 {% endblock %}

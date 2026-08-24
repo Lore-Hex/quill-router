@@ -6,12 +6,27 @@ from collections import defaultdict
 from dataclasses import replace
 from typing import Any
 
-from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, iso_now, utcnow
+from trusted_router.config import Settings, get_settings
+from trusted_router.storage_models import (
+    FUTURE_SAMPLE_SKEW_SECONDS,
+    SyntheticProbeSample,
+    SyntheticRollup,
+    iso_now,
+    utcnow,
+)
 from trusted_router.synthetic.components import (
     COMPONENT_DEFINITIONS,
+    COMPONENT_PROBE_TARGETS,
+    GATEWAY_REGION_TARGET_NAMES,
+    OPS_PROBE_TYPES,
+    REGIONAL_GATEWAY_PROBES,
     SLO_DEFINITIONS,
+    UNCATEGORIZED_COMPONENT,
+    applicable_component_definitions,
     component_name,
     component_probe_types,
+    published_gateway_region_components,
+    published_machine_region_components,
     rollup_slo_class_ids,
     sample_component_ids,
     sample_slo_class_ids,
@@ -19,6 +34,11 @@ from trusted_router.synthetic.components import (
 from trusted_router.synthetic.rollups import merge_rollups, new_rollup_for_sample
 
 CURRENT_SAMPLE_TTL_SECONDS = 5 * 60
+# Regional monitor jobs run every three minutes so normal Cloud Run startup
+# latency remains inside this five-minute freshness contract. A sample that
+# crosses the contract is degraded; only two missed freshness windows plus a
+# small scheduling allowance are a silent-probe failure.
+SILENT_PROBE_TTL_SECONDS = (2 * CURRENT_SAMPLE_TTL_SECONDS) + 60
 IMAGE_GENERATION_SAMPLE_TTL_SECONDS = 7 * 60 * 60
 STATUS_HISTORY_HOURS = 48
 # Uptime thresholds for per-bucket coloring. Single-sample blips
@@ -52,6 +72,7 @@ def status_snapshot(
     *,
     rollups: list[SyntheticRollup] | None = None,
     now: dt.datetime | None = None,
+    settings: Settings | None = None,
 ) -> dict[str, Any]:
     # `now` defaults to wall-clock so production callers don't need to
     # pass it; tests inject a fixed timestamp so daily-rollup bucketing
@@ -60,13 +81,33 @@ def status_snapshot(
     # depending on whether it's morning vs. late-night UTC).
     if now is None:
         now = utcnow()
+    # `settings` scopes which components this deployment publishes at all.
+    # Defaulting to the running deployment's own configuration is the point:
+    # a caller that forgets to pass it must not silently fall back to
+    # advertising another cloud's regions.
+    if settings is None:
+        settings = get_settings()
     precomputed_rollups = rollups or []
     ordered = sorted(samples, key=lambda sample: sample.created_at, reverse=True)
     freshness = _monitor_freshness(ordered, now=now)
     router_core_samples = [
         sample for sample in ordered if ROUTER_CORE_SLO_ID in sample_slo_class_ids(sample)
     ]
-    current = _current_status(router_core_samples, now=now)
+    gateway_region_components = published_gateway_region_components(settings)
+    # `current.checks` is the MACHINE-readable surface, not a second copy of
+    # the components table: quill-cloud-proxy's watchdog decides per-region
+    # rollback from checks[].target_region, and its deploy gate waits on the
+    # same array. Restricting it to router_core (canonical-only) meant a
+    # region pinned probe could be flat down and no automation would ever see
+    # an eu-west-1 row at all — the gate would sit at "waiting" forever
+    # instead of "down", and nobody would be paged. The SLO windows below
+    # stay canonical-only on purpose: they measure the address customers
+    # resolve, and mixing in diagnostic per-region probes would triple the
+    # denominator of a published SLO.
+    current = _current_status(
+        router_core_samples + _machine_region_samples(ordered, settings=settings),
+        now=now,
+    )
     router_core_rollups = [
         rollup
         for rollup in precomputed_rollups
@@ -94,7 +135,7 @@ def status_snapshot(
         router_core_samples
     )
     monthly = _monthly_history(router_core_rollups)
-    components = _components(ordered, now=now, rollups=precomputed_rollups)
+    components = _components(ordered, now=now, rollups=precomputed_rollups, settings=settings)
     slo_classes = _slo_classes(ordered, precomputed_rollups, now=now)
     slo_history = {
         str(definition["id"]): _slo_long_term_history(
@@ -105,13 +146,52 @@ def status_snapshot(
         for definition in SLO_DEFINITIONS
     }
     router_core_status = str(slo_classes.get(ROUTER_CORE_SLO_ID, {}).get("status") or "unknown")
-    overall_status = router_core_status
+    # A dead region behind an anycast record must not read "All Systems
+    # Operational". router_core measures the hostname customers resolve,
+    # which Global Accelerator keeps answering from the SURVIVING region, so
+    # the pinned per-region rows are the only evidence that half the fleet is
+    # gone. Without this the banner contradicted the table directly beneath
+    # it. `_worse_status` treats "unknown" as no-opinion and the tuple is
+    # empty on every deployment that configures no pinned endpoints, so this
+    # is a byte-identical no-op on GCP.
+    overall_status = _worse_status(
+        router_core_status,
+        _aggregate_component_statuses(
+            [
+                str(row["status"])
+                for row in components
+                if str(row["id"]) in gateway_region_components
+            ]
+        ),
+    )
+    # Model Inference also pulls the banner, but only as far as "degraded":
+    # on 2026-08-10 every pong probe on two deployments failed 100% while the
+    # banner read "All Systems Operational", because pong samples fed no
+    # component and no SLO. A dead model path must not render green — and it
+    # must not render "Router Core Outage" either, because router_core is
+    # passing; "Partial Outage: Model Inference" is what is actually true.
+    # The SLO math is untouched (pong failures still never burn router_core).
+    model_inference_down = any(
+        str(row["id"]) == "model_inference" and str(row["status"]) == "down" for row in components
+    )
+    if model_inference_down:
+        overall_status = _worse_status(overall_status, "degraded")
+    down_component_names = [
+        str(row["name"])
+        for row in components
+        if str(row["status"]) == "down"
+        and (str(row["id"]) in gateway_region_components or str(row["id"]) == "model_inference")
+    ]
     return {
         "generated_at": iso_now(),
         "overall_status": overall_status,
         "overall_status_label": _status_label(overall_status),
         "overall_status_class": _status_class(overall_status),
-        "summary": _summary(overall_status, freshness=freshness),
+        "summary": _summary(
+            overall_status,
+            freshness=freshness,
+            down_components=down_component_names,
+        ),
         "monitor_freshness": freshness,
         "headline_metrics": _headline_metrics(ordered, now=now),
         "current": current,
@@ -132,7 +212,12 @@ def status_snapshot(
         },
         "daily": daily,
         "monthly": monthly,
-        "samples": [sample.public_dict() for sample in ordered[:100]],
+        # Ops/liveness samples stay off the public live feed: they would
+        # crowd real probes out of the bounded window and leak internal job
+        # names; /fleet is their surface.
+        "samples": [
+            sample.public_dict() for sample in ordered if sample.probe_type not in OPS_PROBE_TYPES
+        ][:100],
     }
 
 
@@ -141,20 +226,44 @@ def _monitor_freshness(
     *,
     now: dt.datetime,
 ) -> dict[str, Any]:
-    if not samples:
+    # Future-dated samples are NOT evidence of freshness. This is not a
+    # theoretical case: conformance fixtures dated in the year 7748 were
+    # once written to a live store, and the previous implementation —
+    # `max(age, 0)` over `max(samples, key=created_at)` — locked
+    # latest_sample_age_seconds to 0 and is_stale to False permanently.
+    # A staleness detector a single poison row can disable forever is
+    # worse than none: it reports "fresh" through a total monitor outage.
+    # Small negative ages are ordinary clock skew between the monitor and
+    # this host, so only samples beyond the skew budget are excluded.
+    #
+    # Ops/liveness samples (heartbeats, peer policing) are excluded for the
+    # same reason from the other direction: a background loop's heartbeat is
+    # not the probe fleet reporting, and counting it would keep this clock
+    # "fresh" straight through a dead monitor — the masking failure this
+    # detector exists to catch.
+    probe_samples = [sample for sample in samples if sample.probe_type not in OPS_PROBE_TYPES]
+    dateable = [
+        sample
+        for sample in probe_samples
+        if (now - _parse_time(sample.created_at)).total_seconds() >= -FUTURE_SAMPLE_SKEW_SECONDS
+    ]
+    future_dated = len(probe_samples) - len(dateable)
+    if not dateable:
         return {
             "latest_sample_at": None,
             "latest_sample_age_seconds": None,
             "stale_after_seconds": CURRENT_SAMPLE_TTL_SECONDS,
             "is_stale": True,
+            "future_dated_samples": future_dated,
         }
-    latest = max(samples, key=lambda sample: _parse_time(sample.created_at))
-    age = max((now - _parse_time(latest.created_at)).total_seconds(), 0)
+    latest = max(dateable, key=lambda sample: _parse_time(sample.created_at))
+    age = (now - _parse_time(latest.created_at)).total_seconds()
     return {
         "latest_sample_at": latest.created_at,
-        "latest_sample_age_seconds": int(age),
+        "latest_sample_age_seconds": int(max(age, 0)),
         "stale_after_seconds": CURRENT_SAMPLE_TTL_SECONDS,
         "is_stale": age > CURRENT_SAMPLE_TTL_SECONDS,
+        "future_dated_samples": future_dated,
     }
 
 
@@ -188,6 +297,25 @@ def _headline_metrics(samples: list[SyntheticProbeSample], *, now: dt.datetime) 
     }
 
 
+def _machine_region_samples(
+    samples: list[SyntheticProbeSample],
+    *,
+    settings: Settings,
+) -> list[SyntheticProbeSample]:
+    """Regional gateway samples consumed by deploy and watchdog automation."""
+    published = {
+        COMPONENT_PROBE_TARGETS[component_id]
+        for component_id in published_machine_region_components(settings)
+    }
+    if not published:
+        return []
+    return [
+        sample
+        for sample in samples
+        if sample.target in published and sample.probe_type in REGIONAL_GATEWAY_PROBES
+    ]
+
+
 def _gateway_latency_values(
     samples: list[SyntheticProbeSample],
     *,
@@ -199,6 +327,16 @@ def _gateway_latency_values(
     rows = []
     for sample in samples:
         if sample.probe_type != "tls_health" or sample.status != "up":
+            continue
+        # The headline "gateway overhead" numbers describe the path customers
+        # take. A pinned per-region probe deliberately BYPASSES Global
+        # Accelerator by dialling one load balancer directly, so its latency
+        # describes a path nobody is served on: pooling it dropped the
+        # published in-region p50 from ~30 ms to ~12 ms on deploy with no
+        # change whatsoever in what customers experience. Asking for that
+        # target by name still returns it — this only excludes it from the
+        # unscoped in-region/global aggregates.
+        if target is None and sample.target in GATEWAY_REGION_TARGET_NAMES:
             continue
         if sample.latency_milliseconds is None or _parse_time(sample.created_at) < cutoff:
             continue
@@ -241,6 +379,62 @@ def history_payload(
     return {"window": window, "scope": ROUTER_CORE_SLO_ID, "data": {}}
 
 
+def _monitor_is_reporting(samples: list[SyntheticProbeSample], *, now: dt.datetime) -> bool:
+    """Is the monitor alive at all — i.e. did ANY probe report recently?
+
+    Distinguishes "the whole monitor stopped" (reported once, by
+    monitor_freshness) from "one probe stopped while the rest kept
+    reporting" (a real, probe-specific outage that must turn something
+    red). Without the distinction you must choose between missing the
+    second case and painting the page red on every cold start.
+    """
+    return any(
+        -FUTURE_SAMPLE_SKEW_SECONDS
+        <= (now - _parse_time(sample.created_at)).total_seconds()
+        <= CURRENT_SAMPLE_TTL_SECONDS
+        for sample in samples
+    )
+
+
+def _sample_effective_status(
+    sample: SyntheticProbeSample,
+    *,
+    now: dt.datetime,
+    monitor_reporting: bool = False,
+) -> tuple[str, float]:
+    """(effective status, signed age).
+
+    Too far in the FUTURE is always "unknown": a future-dated `up` sample
+    must never pin a component green — that is poison or clock breakage,
+    not evidence.
+
+    Too OLD depends on whether the monitor is otherwise alive:
+
+      * monitor_reporting=True and past the freshness contract -> "degraded".
+        Regional jobs run every three minutes, leaving room for Cloud Run
+        startup latency before this five-minute boundary.
+
+      * monitor_reporting=True and two cadences late -> "down". This probe
+        stopped emitting while its siblings kept going. That is the
+        silent-disappearance outage: previously it dropped to "unknown",
+        and _worse_status treats unknown as no-opinion, so a probe that
+        vanished entirely left the SLO green.
+
+      * monitor_reporting=False -> "unknown". Every probe is stale, so
+        the monitor itself is down or cold-starting. monitor_freshness
+        reports that as is_stale; marking each probe `down` too would
+        paint a false outage on every deploy.
+    """
+    age = (now - _parse_time(sample.created_at)).total_seconds()
+    if age < -FUTURE_SAMPLE_SKEW_SECONDS:
+        return "unknown", age
+    if age > SILENT_PROBE_TTL_SECONDS:
+        return ("down" if monitor_reporting else "unknown"), age
+    if age > CURRENT_SAMPLE_TTL_SECONDS:
+        return ("degraded" if monitor_reporting else "unknown"), age
+    return sample.status, age
+
+
 def _current_status(
     samples: list[SyntheticProbeSample],
     *,
@@ -253,9 +447,12 @@ def _current_status(
             latest[key] = sample
     rows = []
     overall = "unknown"
+    monitor_reporting = _monitor_is_reporting(samples, now=now)
     for sample in latest.values():
-        age = max((now - _parse_time(sample.created_at)).total_seconds(), 0)
-        status = "unknown" if age > CURRENT_SAMPLE_TTL_SECONDS else sample.status
+        status, signed_age = _sample_effective_status(
+            sample, now=now, monitor_reporting=monitor_reporting
+        )
+        age = max(signed_age, 0)
         overall = _worse_status(overall, status)
         row = sample.public_dict()
         row["age_seconds"] = int(age)
@@ -406,15 +603,10 @@ def _slo_long_term_history(
     *,
     slo_id: str,
 ) -> dict[str, list[dict[str, Any]]]:
-    scoped_samples = [
-        sample for sample in samples if slo_id in sample_slo_class_ids(sample)
-    ]
-    scoped_rollups = [
-        rollup for rollup in rollups if slo_id in rollup_slo_class_ids(rollup)
-    ]
+    scoped_samples = [sample for sample in samples if slo_id in sample_slo_class_ids(sample)]
+    scoped_rollups = [rollup for rollup in rollups if slo_id in rollup_slo_class_ids(rollup)]
     return {
-        "daily": _rollup_history(scoped_rollups, period="day")
-        or _daily_rollups(scoped_samples),
+        "daily": _rollup_history(scoped_rollups, period="day") or _daily_rollups(scoped_samples),
         "monthly": _monthly_history(scoped_rollups),
     }
 
@@ -474,9 +666,7 @@ def _slo_classes(
     for definition in SLO_DEFINITIONS:
         slo_id = str(definition["id"])
         slo_samples = [sample for sample in samples if slo_id in sample_slo_class_ids(sample)]
-        slo_rollups = [
-            rollup for rollup in rollups if slo_id in rollup_slo_class_ids(rollup)
-        ]
+        slo_rollups = [rollup for rollup in rollups if slo_id in rollup_slo_class_ids(rollup)]
         current = _slo_current(slo_samples, now=now)
         windows = {
             name: _slo_window(slo_samples, slo_rollups, now=now, seconds=seconds)
@@ -509,9 +699,11 @@ def _slo_current(
     overall = "unknown"
     by_region: dict[str, dict[str, Any]] = {}
     sample_count = 0
+    monitor_reporting = _monitor_is_reporting(samples, now=now)
     for sample in latest.values():
-        age = max((now - _parse_time(sample.created_at)).total_seconds(), 0)
-        status = "unknown" if age > CURRENT_SAMPLE_TTL_SECONDS else sample.status
+        status, _signed_age = _sample_effective_status(
+            sample, now=now, monitor_reporting=monitor_reporting
+        )
         overall = _worse_status(overall, status)
         sample_count += 1
         for region in _sample_region_keys(sample):
@@ -645,11 +837,15 @@ def _components(
     samples: list[SyntheticProbeSample],
     *,
     now: dt.datetime,
+    settings: Settings,
     rollups: list[SyntheticRollup] | None = None,
 ) -> list[dict[str, Any]]:
     rows = []
     precomputed_rollups = rollups or []
-    for definition in COMPONENT_DEFINITIONS:
+    # Only what THIS deployment can measure. Iterating the full catalogue
+    # here is what made the AWS EU status page advertise GCP's regional
+    # gateways as permanently "unknown".
+    for definition in applicable_component_definitions(settings):
         component_id = str(definition["id"])
         component_samples = [
             sample for sample in samples if component_id in sample_component_ids(sample)
@@ -928,18 +1124,10 @@ def _rollup_group_breakdown(
             "p95_dns_milliseconds": merged["p95_dns_milliseconds"],
             "p50_tcp_connect_milliseconds": merged["p50_tcp_connect_milliseconds"],
             "p95_tcp_connect_milliseconds": merged["p95_tcp_connect_milliseconds"],
-            "p50_tls_handshake_milliseconds": merged[
-                "p50_tls_handshake_milliseconds"
-            ],
-            "p95_tls_handshake_milliseconds": merged[
-                "p95_tls_handshake_milliseconds"
-            ],
-            "p50_gateway_processing_milliseconds": merged[
-                "p50_gateway_processing_milliseconds"
-            ],
-            "p95_gateway_processing_milliseconds": merged[
-                "p95_gateway_processing_milliseconds"
-            ],
+            "p50_tls_handshake_milliseconds": merged["p50_tls_handshake_milliseconds"],
+            "p95_tls_handshake_milliseconds": merged["p95_tls_handshake_milliseconds"],
+            "p50_gateway_processing_milliseconds": merged["p50_gateway_processing_milliseconds"],
+            "p95_gateway_processing_milliseconds": merged["p95_gateway_processing_milliseconds"],
             "last_checked_at": merged["last_checked_at"],
             "top_error": merged["top_error"],
         }
@@ -962,6 +1150,13 @@ def _target_label(target: str) -> str:
         "us-central1": "US Central direct",
         "us-east4": "US East direct",
         "europe-west4": "EU direct",
+        "southamerica-east1": "São Paulo direct",
+        # Per-region AWS targets: same hostname as "canonical", pinned to
+        # one region's load balancer (which fronts that region's enclave
+        # fleet — see COMPONENT_DEFINITIONS on why this does not say
+        # "enclave").
+        "eu-west-1": "Ireland gateway direct",
+        "eu-west-3": "Paris gateway direct",
         "control-plane": "Control plane",
     }.get(target, target.replace("-", " ").title())
 
@@ -1241,8 +1436,7 @@ def _recent_events(
         )
 
     component_order = {
-        str(definition["id"]): index
-        for index, definition in enumerate(COMPONENT_DEFINITIONS)
+        str(definition["id"]): index for index, definition in enumerate(COMPONENT_DEFINITIONS)
     }
     rollup_groups_seen: set[tuple[str, str, str, str]] = set()
     recent_rollups = sorted(
@@ -1260,10 +1454,18 @@ def _recent_events(
         reverse=True,
     )
     for rollup in recent_rollups:
+        # Apply the SAME publishability rule the raw-sample loop above uses.
+        # The two loops render into one public list, so disagreeing about
+        # what belongs there is the defect: component-less diagnostics
+        # (gateway_cold_path / gateway_reused_path) were skipped as raw
+        # samples but then reappeared an hour later as their rollup, drawn
+        # as "Uncategorized — Major outage" with an internal error slug.
+        # The underlying sample and rollup are still recorded and still red;
+        # only the unlabelled public row is suppressed.
+        if rollup.component == UNCATEGORIZED_COMPONENT and not rollup_slo_class_ids(rollup):
+            continue
         counts = _rollup_status_counts(rollup)
-        failure_count = sum(
-            count for status, count in counts.items() if status != "up"
-        )
+        failure_count = sum(count for status, count in counts.items() if status != "up")
         if failure_count <= 0:
             continue
         bucket_key = (
@@ -1374,7 +1576,12 @@ def _status_class(status: str) -> str:
     return status.replace("_", "-")
 
 
-def _summary(status: str, *, freshness: dict[str, Any] | None = None) -> dict[str, str]:
+def _summary(
+    status: str,
+    *,
+    freshness: dict[str, Any] | None = None,
+    down_components: list[str] | None = None,
+) -> dict[str, str]:
     if status == "unknown" and freshness and freshness.get("is_stale"):
         latest = freshness.get("latest_sample_at")
         if latest:
@@ -1402,6 +1609,20 @@ def _summary(status: str, *, freshness: dict[str, Any] | None = None) -> dict[st
             "detail": "Inference may still work, but an attestation check is failing and should be treated as critical.",
         }
     if status in {"degraded", "routing_degraded"}:
+        # Name the failing surface when the degradation is a component-level
+        # outage rather than a router-core burn: "Partial Outage: Model
+        # Inference" is honest and actionable; "Router Core Degraded" for a
+        # dead pong path would be both wrong and alarming.
+        if down_components:
+            names = ", ".join(down_components)
+            verb = "is" if len(down_components) == 1 else "are"
+            return {
+                "headline": f"Partial Outage: {names}",
+                "detail": (
+                    f"{names} {verb} failing synthetic checks. "
+                    "Other router-core checks are passing."
+                ),
+            }
         return {
             "headline": "Router Core Degraded",
             "detail": (

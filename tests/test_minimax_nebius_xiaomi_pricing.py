@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
 
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
@@ -8,6 +9,7 @@ from scripts.pricing.parsers import minimax as minimax_parser
 from scripts.pricing.parsers import xiaomi as xiaomi_parser
 from scripts.pricing.providers import minimax, nebius
 from scripts.pricing.providers import xiaomi as xiaomi_provider
+from trusted_router import provider_lifecycle
 
 
 def test_minimax_parser_reads_official_token_plan_tiers() -> None:
@@ -150,6 +152,37 @@ def test_xiaomi_parser_reads_current_overseas_markdown_table() -> None:
     }
 
 
+def test_xiaomi_parser_reads_rendered_overseas_html_table() -> None:
+    html = """
+    <h3>Domestic Pricing of the Model</h3>
+    <table><tbody>
+      <tr><td><code>mimo-v2.5-pro</code></td><td>¥0.025</td><td>¥3.00</td><td>¥6.00</td></tr>
+    </tbody></table>
+    <h3>Overseas Pricing of the Model</h3>
+    <table><thead><tr>
+      <th>MiMo-V2.5 Series</th><th>Input (Cache Hit)</th>
+      <th>Input (Cache Miss)</th><th>Output</th>
+    </tr></thead><tbody>
+      <tr><td><code>mimo-v2.5-pro</code></td><td>$0.0036</td><td>$0.435</td><td>$0.87</td></tr>
+      <tr><td><code>mimo-v2.5</code></td><td>$0.0028</td><td>$0.14</td><td>$0.28</td></tr>
+    </tbody></table>
+    <h3>Pricing for Web Search Plugins</h3>
+    """
+
+    assert xiaomi_parser.parse(html) == {
+        "xiaomi/mimo-v2.5-pro": {
+            "prompt_micro_per_m": 435_000,
+            "completion_micro_per_m": 870_000,
+            "prompt_cached_micro_per_m": 3_600,
+        },
+        "xiaomi/mimo-v2.5": {
+            "prompt_micro_per_m": 140_000,
+            "completion_micro_per_m": 280_000,
+            "prompt_cached_micro_per_m": 2_800,
+        },
+    }
+
+
 def test_xiaomi_parser_reads_flattened_overseas_table_without_using_domestic_prices() -> None:
     html = """
     ### Domestic Pricing of the Model
@@ -229,6 +262,14 @@ def test_nebius_fetch_uses_verbose_pricing_and_skips_embeddings(
     tmp_path,
     monkeypatch,  # noqa: ANN001
 ) -> None:
+    # This fixture exercises the native-to-canonical mapping while the route
+    # is still live. The separate lifecycle suite owns its August 31 cutoff.
+    monkeypatch.setattr(
+        provider_lifecycle,
+        "_utc_now",
+        lambda: provider_lifecycle.NEBIUS_AUGUST_2026_RETIREMENT_AT
+        - timedelta(microseconds=1),
+    )
     payload = {
         "data": [
             {

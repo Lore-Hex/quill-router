@@ -22,7 +22,6 @@ def main() -> int:
     if not settings.google_data_manager_enabled:
         logging.getLogger(__name__).info("google_data_manager.disabled")
         return 0
-
     store = create_google_ads_delivery_store(settings)
     config = GoogleDataManagerConfig.from_settings(settings)
     timeout = httpx.Timeout(settings.google_data_manager_timeout_seconds)
@@ -32,17 +31,19 @@ def main() -> int:
             settings=settings,
             client=GoogleDataManagerClient(
                 config=config,
+                settings=settings,
                 client=client,
                 token_provider=MetadataAccessTokenProvider(client),
             ),
         )
     logging.getLogger(__name__).info(
-        "google_data_manager.run_complete claimed=%d submitted=%d "
-        "failed=%d repaired=%d google_request_id=%s",
+        "google_data_manager.run_complete claimed=%d submitted=%d failed=%d "
+        "repaired=%d purged=%d google_request_id=%s",
         result.claimed,
         result.submitted,
         result.failed,
         result.repaired,
+        result.purged,
         result.request_id or "",
     )
     return 1 if result.failed else 0

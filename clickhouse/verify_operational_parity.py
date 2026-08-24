@@ -41,6 +41,7 @@ PROJECT = "quill-cloud-proxy"
 INSTANCE = "trusted-router-logs"
 TABLE = "trustedrouter-generations"
 T = TypeVar("T")
+HEARTBEAT_BUCKET_SECONDS = 5 * 60
 
 
 def _body(row: Any, families: tuple[str, ...]) -> dict[str, Any] | None:
@@ -65,6 +66,26 @@ def _parse(cls: type[T], payload: dict[str, Any] | None) -> T | None:
         return None
 
 
+def _stable_source_write(
+    row: Any,
+    *,
+    families: tuple[str, ...],
+    cutoff: dt.datetime,
+) -> bool:
+    """Exclude rows whose Bigtable write may still be in flight to ClickHouse."""
+    for family in families:
+        cells = row.cells.get(family, {}).get(b"body", [])
+        if not cells:
+            continue
+        timestamp_micros = getattr(cells[0], "timestamp_micros", None)
+        if not isinstance(timestamp_micros, int):
+            # Lightweight test and operator fakes may not carry cell metadata.
+            return True
+        written_at = dt.datetime.fromtimestamp(timestamp_micros / 1_000_000, tz=dt.UTC)
+        return written_at <= cutoff
+    return False
+
+
 def _stable_source_row(
     payload: dict[str, Any],
     *,
@@ -83,6 +104,17 @@ def _stable_source_row(
         parsed = parsed.replace(tzinfo=dt.UTC)
     parsed = parsed.astimezone(dt.UTC)
     if surface != "rollup":
+        if surface == "synthetic" and payload.get("probe_type") == "heartbeat":
+            try:
+                bucket = int(str(payload.get("id") or "").rsplit("_", 1)[1])
+            except (IndexError, ValueError):
+                return False
+            bucket_end = dt.datetime.fromtimestamp(
+                (bucket + 1) * HEARTBEAT_BUCKET_SECONDS,
+                tz=dt.UTC,
+            )
+            if bucket_end > cutoff:
+                return False
         return parsed <= cutoff
     period = str(payload.get("period") or "")
     if period == "hour":
@@ -121,10 +153,14 @@ def _source_rows(
         limit=max(limit * 2, limit + 1000),
         filter_=CellsColumnLimitFilter(1),
     )
+    # Reverse-time indexes return newest rows first. Preserve the first row
+    # when deterministic IDs were written by more than one region.
     result: dict[str, dict[str, Any]] = {}
     cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=max(0, grace_seconds))
     for row in rows:
         raw = _body(row, families)
+        if not _stable_source_write(row, families=families, cutoff=cutoff):
+            continue
         if surface == "benchmark":
             benchmark_sample = _parse(ProviderBenchmarkSample, raw)
             if benchmark_sample is None:
@@ -135,12 +171,12 @@ def _source_rows(
                 surface=surface,
                 cutoff=cutoff,
             ):
-                result[benchmark_sample.id] = normalized
+                result.setdefault(benchmark_sample.id, normalized)
         elif surface == "activity":
             generation = _parse(Generation, raw)
             if generation is None:
                 continue
-            event = normalise_operational_event(
+            [event] = normalise_operational_event(
                 OperationalOutboxRow(
                     shard=0,
                     commit_ts=dt.datetime.now(dt.UTC),
@@ -151,13 +187,13 @@ def _source_rows(
             )
             event.row.pop("ingest_version", None)
             if _stable_source_row(event.row, surface=surface, cutoff=cutoff):
-                result[generation.id] = event.row
+                result.setdefault(generation.id, event.row)
         elif surface == "synthetic":
             synthetic_sample = _parse(SyntheticProbeSample, raw)
             if synthetic_sample is not None:
                 payload = synthetic_payload(synthetic_sample)
                 if _stable_source_row(payload, surface=surface, cutoff=cutoff):
-                    result[synthetic_sample.id] = payload
+                    result.setdefault(synthetic_sample.id, payload)
         if len(result) >= limit:
             break
     return result
@@ -181,6 +217,12 @@ def _source_rollups_from_raw(
     )
     samples: list[SyntheticProbeSample] = []
     for row in rows:
+        if not _stable_source_write(
+            row,
+            families=("synthetic", "m"),
+            cutoff=cutoff,
+        ):
+            continue
         sample = _parse(SyntheticProbeSample, _body(row, ("synthetic", "m")))
         if sample is not None:
             samples.append(sample)

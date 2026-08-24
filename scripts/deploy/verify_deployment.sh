@@ -66,11 +66,36 @@ status_code="$(code "$BASE/status.json")"
 if [ "$status_code" = "200" ]; then
   ok "/status.json responds 200 (database read path works)"
   status_payload="$(body "$BASE/status.json")"
-  if printf '%s' "$status_payload" | grep -q '"overall_status"'; then
-    ok "status payload is well-formed"
-  else
-    bad "status payload missing overall_status — served, but wrong shape"
-  fi
+  # Parse the VALUE, don't grep for the key. `grep -q '"overall_status"'`
+  # matches just as happily when the value is "down" — a deploy gate that
+  # passes on a red status page is not a gate. Attestation failures
+  # (trust_degraded) count as failures here: an attested gateway that
+  # cannot prove itself is the product being broken.
+  overall_status="$(
+    printf '%s' "$status_payload" | python3 -c '
+import json
+import sys
+
+try:
+    payload = json.load(sys.stdin)
+except ValueError:
+    print("UNPARSEABLE")
+    sys.exit(0)
+data = payload.get("data") or {}
+print(str(data.get("overall_status") or "MISSING"))
+'
+  )"
+  case "$overall_status" in
+    up|degraded|routing_degraded)
+      ok "status payload overall_status=$overall_status"
+      ;;
+    MISSING|UNPARSEABLE)
+      bad "status payload missing/unparseable overall_status — served, but wrong shape"
+      ;;
+    *)
+      bad "status page reports overall_status=$overall_status"
+      ;;
+  esac
   if [ "$EXPECT_MONITOR" -eq 1 ]; then
     monitor_result="$(
       printf '%s' "$status_payload" | python3 -c '
@@ -78,7 +103,11 @@ import datetime as dt
 import json
 import sys
 
-MAX_AGE_SECONDS = 30 * 60
+# Must match CURRENT_SAMPLE_TTL_SECONDS in the app (5 min). At 30 min
+# this gate printed "synthetic monitor is fresh" for a deployment whose
+# own status page already rendered "Monitor Data Stale" - a gate looser
+# than the thing it gates cannot fail before the product does.
+MAX_AGE_SECONDS = 5 * 60
 
 
 def parse_time(value):

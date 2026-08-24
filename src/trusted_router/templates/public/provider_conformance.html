@@ -1,0 +1,90 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Provider conformance quickstart">
+  <div class="marketing-copy">
+    <span class="eyebrow">Public provider check</span>
+    <h2>Test the gateway contract before you apply.</h2>
+    <p><code>trustedrouter-provider-check</code> exercises a provider's model catalog and OpenAI-compatible chat endpoint the way TrustedRouter's attested gateway translator will use them. Run it against the public base URL and a model you intend to advertise.</p>
+    <ul class="check-list">
+      <li>Catalog and advertised-model availability</li>
+      <li>Non-streaming and SSE chat completion shapes</li>
+      <li>Usage accounting and tool-call delta structure</li>
+      <li>Stream termination, errors, and first-token behavior</li>
+    </ul>
+    <p><a class="btn primary" href="https://github.com/Lore-Hex/trustedrouter-provider-check" rel="noopener noreferrer">View the GitHub repository</a> <a class="btn" href="/providers/marketplace">Provider marketplace</a></p>
+    <p class="small-copy">Open source under the Apache-2.0 license.</p>
+  </div>
+  <div class="copy-terminal" aria-label="Run trustedrouter-provider-check">
+    <div class="code-head"><span>Provider check</span><span>uvx</span></div>
+    <pre><code>uvx trustedrouter-provider-check --base-url https://your-endpoint.example/v1 --model your-model</code></pre>
+  </div>
+</section>
+
+<section style="margin-top:48px" aria-labelledby="failure-modes-heading">
+  <h2 class="section-center" id="failure-modes-heading">What the suite catches</h2>
+  <div class="model-table-wrap">
+    <table>
+      <thead>
+        <tr><th>Failure mode</th><th>Real-world symptom</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>stream=true</code> answered with plain JSON</td><td>The gateway expects SSE, so it rejects the content type or waits for events that never arrive.</td></tr>
+        <tr><td>Missing <code>[DONE]</code></td><td>The stream appears unfinished and can hang until the idle timeout.</td></tr>
+        <tr><td>Usage suppressed despite <code>include_usage</code></td><td>The gateway cannot rely on the provider's final token accounting for settlement and reporting.</td></tr>
+        <tr><td>Tool-call deltas missing <code>index</code></td><td>Interleaved argument fragments cannot be assigned safely to the correct tool call.</td></tr>
+        <tr><td>Mid-stream error after HTTP <code>200</code></td><td>The client receives a truncated answer after the request already looked successful, and safe fallback is no longer possible.</td></tr>
+        <tr><td>Buffered streaming</td><td>The final body may be correct, but buffering defeats first-token latency and can trigger gateway deadlines.</td></tr>
+        <tr><td>An advertised model returns <code>404</code> on chat</td><td>The catalog publishes a route that the gateway cannot actually serve.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="marketing-split" style="margin-top:48px" aria-label="Implementation independence">
+  <div class="marketing-copy">
+    <span class="eyebrow">Implementation agnostic</span>
+    <h2>Your serving engine is not the contract.</h2>
+    <p>vLLM, SGLang, TGI, TensorRT-LLM, llama.cpp, ollama, and custom stacks can all pass when their public API is conformant. The suite asserts the contract of TrustedRouter's attested gateway translator, not the defaults or private interfaces of any one model server.</p>
+  </div>
+  <div class="marketing-copy">
+    <span class="eyebrow">Why these details matter</span>
+    <h2>Compatibility includes failure behavior.</h2>
+    <p>A response can look OpenAI-compatible in a one-line curl test while still breaking streaming, tool calls, usage settlement, fallback safety, or route latency. The suite probes those seams directly.</p>
+  </div>
+</section>
+
+<section style="margin-top:48px" aria-labelledby="results-heading">
+  <h2 class="section-center" id="results-heading">How to read the results</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <span class="card-label">fail</span>
+      <h3>Fix before onboarding.</h3>
+      <p><code>fail</code> means the gateway rejects the behavior, silently drops required data, or breaks when it encounters it.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">warn</span>
+      <h3>Tolerated, but risky.</h3>
+      <p><code>warn</code> identifies behavior the gateway currently tolerates but that remains operationally risky or likely to become a failure under load.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Performance</span>
+      <h3>Numbers are advisory.</h3>
+      <p>First-token and streaming measurements help find buffering and deadline risk. They are advisory, not a certification or universal performance threshold.</p>
+    </div>
+  </div>
+</section>
+
+<section class="quote-feature" style="margin-top:48px">
+  <div>
+    <span class="eyebrow">Production parity</span>
+    <h2>The public suite tracks the deployed contract.</h2>
+  </div>
+  <div>
+    <p>The suite vendors production contract functions from the attested gateway translator. A parity gate in this repository's CI verifies that those vendored functions have not drifted from production.</p>
+    <p>That gate keeps the check honest: passing the public suite predicts passing the production gateway contract. It does not certify a provider, replace marketplace review, or guarantee future uptime.</p>
+    <p><a class="btn" href="https://github.com/Lore-Hex/trustedrouter-provider-check" rel="noopener noreferrer">Inspect the tests and license</a></p>
+  </div>
+</section>
+
+{% endblock %}

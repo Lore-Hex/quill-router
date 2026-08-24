@@ -88,6 +88,120 @@ def reserve_credit(
     return count == 1
 
 
+def debit_workspace_credit(
+    transaction: Any,
+    param_types: Any,
+    workspace_id: str,
+    amount: int,
+    *,
+    now: Any,
+) -> bool:
+    """Atomically remove a grant from authoritative shard zero.
+
+    This is deliberately a negative grant (``total_credits`` down), never
+    booked usage. The conditional predicate keeps current usage and live holds
+    covered even under concurrent debits.
+    """
+    if amount <= 0:
+        raise ValueError("amount_must_be_positive")
+    count = transaction.execute_update(
+        "UPDATE tr_credit_balance "
+        "SET total_credits = total_credits - @amt, updated_at=@now "
+        "WHERE workspace_id=@ws AND shard=0 "
+        "AND (total_credits - total_usage - reserved) >= @amt",
+        params={"amt": int(amount), "now": now, "ws": workspace_id},
+        param_types={
+            "amt": param_types.INT64,
+            "now": param_types.TIMESTAMP,
+            "ws": param_types.STRING,
+        },
+    )
+    return count == 1
+
+
+def debit_credit_shard(
+    transaction: Any,
+    param_types: Any,
+    workspace_id: str,
+    amount: int,
+    *,
+    shard: int,
+) -> bool:
+    """Conditionally remove `amount` of idle sub-budget from ONE credit shard.
+
+    True = debited (row-count 1); False = that shard's headroom did not cover
+    it, and nothing changed.
+
+    The predicate ``(total_credits-total_usage-reserved)>=@move`` is what makes
+    this a CONDITIONAL debit rather than a blind decrement: the row write lock
+    is taken by the UPDATE itself and the predicate re-evaluates against
+    committed state, so two concurrent debits cannot both pass a check that
+    only one shard's headroom can satisfy.
+
+    It moves only headroom — never booked usage, never a live reservation — so
+    a debit can no more strand an in-flight hold than it can overdraw.
+
+    Extracted from `transfer_credit_budget`, whose donor half this is verbatim,
+    so cross-plane escrow debits the sharded balance through the SAME statement
+    the shard rebalancer has been running in production rather than a second
+    hand-written one that could drift from it.
+    """
+    if amount <= 0:
+        raise ValueError("credit shard debit amount must be positive")
+    count = transaction.execute_update(
+        "UPDATE tr_credit_balance SET total_credits=total_credits-@move "
+        "WHERE workspace_id=@ws AND shard=@donor "
+        "AND (total_credits-total_usage-reserved)>=@move",
+        params={
+            "move": int(amount),
+            "ws": workspace_id,
+            "donor": shard,
+        },
+        param_types={
+            "move": param_types.INT64,
+            "ws": param_types.STRING,
+            "donor": param_types.INT64,
+        },
+    )
+    return count == 1
+
+
+def credit_credit_shard(
+    transaction: Any,
+    param_types: Any,
+    workspace_id: str,
+    amount: int,
+    *,
+    shard: int,
+    now: Any,
+) -> int:
+    """Add `amount` to ONE credit shard. Returns the modified-row count.
+
+    Unconditional by design — a credit cannot fail a headroom test — so the
+    ONLY thing the row count reports is whether the shard row exists. Callers
+    must treat 0 as a hard error: it means the authoritative balance row is
+    missing, and silently continuing would book a credit nowhere.
+    """
+    return transaction.execute_update(
+        "UPDATE tr_credit_balance "
+        "SET total_credits = total_credits + @amount, "
+        "source_updated_at=@now, updated_at=@now "
+        "WHERE workspace_id=@ws AND shard=@shard",
+        params={
+            "amount": int(amount),
+            "now": now,
+            "ws": workspace_id,
+            "shard": shard,
+        },
+        param_types={
+            "amount": param_types.INT64,
+            "now": param_types.TIMESTAMP,
+            "ws": param_types.STRING,
+            "shard": param_types.INT64,
+        },
+    )
+
+
 def transfer_credit_budget(
     transaction: Any,
     param_types: Any,
@@ -108,22 +222,9 @@ def transfer_credit_budget(
         raise ValueError("credit budget transfer amount must be positive")
     if donor_shard == target_shard:
         raise ValueError("credit budget donor and target must differ")
-    donor_count = transaction.execute_update(
-        "UPDATE tr_credit_balance SET total_credits=total_credits-@move "
-        "WHERE workspace_id=@ws AND shard=@donor "
-        "AND (total_credits-total_usage-reserved)>=@move",
-        params={
-            "move": int(amount),
-            "ws": workspace_id,
-            "donor": donor_shard,
-        },
-        param_types={
-            "move": param_types.INT64,
-            "ws": param_types.STRING,
-            "donor": param_types.INT64,
-        },
-    )
-    if donor_count != 1:
+    if not debit_credit_shard(
+        transaction, param_types, workspace_id, amount, shard=donor_shard
+    ):
         return False
     target_count = transaction.execute_update(
         "UPDATE tr_credit_balance SET total_credits=total_credits+@move "
@@ -544,6 +645,29 @@ def insert_entity_dml_at(
             "kind": param_types.STRING, "id": param_types.STRING,
             "body": param_types.STRING, "now": param_types.TIMESTAMP,
         },
+    )
+
+
+def delete_entity_dml(
+    transaction: Any, param_types: Any, kind: str, entity_id: str
+) -> int:
+    """DML DELETE of a tr_entities row. Returns the modified-row count.
+
+    The DML counterpart of the `transaction.delete(...)` MUTATION helper. It
+    exists because Spanner forbids mixing DML and mutations in one transaction
+    (docs §5): a transaction that has already run conditional balance DML — as
+    every credit-transfer resolution does — cannot then delete its recovery-queue
+    index row by mutation without faulting. Deleting by DML keeps the row's
+    removal in the SAME transaction as the balance change it accompanies, which
+    is what makes "left the queue" and "the verdict was applied" one fact.
+
+    A 0 count is not an error here: the caller is removing a row that may
+    legitimately be absent already.
+    """
+    return transaction.execute_update(
+        "DELETE FROM tr_entities WHERE kind=@kind AND id=@id",
+        params={"kind": kind, "id": entity_id},
+        param_types={"kind": param_types.STRING, "id": param_types.STRING},
     )
 
 

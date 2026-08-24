@@ -35,21 +35,34 @@ VIDEO_MODELS = {
     "lightricks/ltx-2.3-fast",
     "minimax/hailuo-3",
     "x-ai/grok-imagine-video",
+    "decart/lucy-2.5",
+    "decart/lucy-vton-3.5",
+    "decart/lucy-restyle-2",
 }
 
-DIRECT_VIDEO_PROVIDERS = {
-    "lightricks/ltx-2.3": "ltx",
-    "lightricks/ltx-2.3-fast": "ltx",
-    "minimax/hailuo-3": "minimax",
-    "google/veo-3.1": "google-ai-studio",
-    "google/veo-3.1-fast": "google-ai-studio",
-    "alibaba/wan-2.7": "alibaba",
-    "x-ai/grok-imagine-video": "grok",
-    "runway/gen-4.5": "runway",
-    "openai/sora-2": "openai",
-    "openai/sora-2-pro": "openai",
-    "kling/v3-pro": "kling",
-    "kling/o3-pro": "kling",
+NATIVE_VIDEO_PROVIDERS = {
+    "lightricks/ltx-2.3": ("ltx",),
+    "lightricks/ltx-2.3-fast": ("ltx",),
+    "minimax/hailuo-3": ("atlas-cloud",),
+    "google/veo-3.1": ("google-ai-studio",),
+    "google/veo-3.1-fast": ("google-ai-studio",),
+    "alibaba/wan-2.7": ("alibaba",),
+    "x-ai/grok-imagine-video": ("grok",),
+    "runway/gen-4.5": ("runway",),
+    "openai/sora-2": ("openai",),
+    "openai/sora-2-pro": ("openai",),
+    "kling/v3-pro": ("kling",),
+    "kling/o3-pro": ("kling",),
+    "decart/lucy-2.5": ("decart",),
+    "decart/lucy-vton-3.5": ("decart",),
+    "decart/lucy-restyle-2": ("decart",),
+}
+
+NATIVE_ONLY_VIDEO_MODELS = {
+    "x-ai/grok-imagine-video",
+    "decart/lucy-2.5",
+    "decart/lucy-vton-3.5",
+    "decart/lucy-restyle-2",
 }
 
 
@@ -87,14 +100,20 @@ def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
         assert model.prepaid_available is True
         assert model.byok_available is False
         endpoints = endpoints_for_model(model_id)
-        expected = [DIRECT_VIDEO_PROVIDERS.get(model_id, "venice")]
-        if model_id in DIRECT_VIDEO_PROVIDERS and model_id != "x-ai/grok-imagine-video":
+        expected = list(NATIVE_VIDEO_PROVIDERS.get(model_id, ("venice",)))
+        if model_id in NATIVE_VIDEO_PROVIDERS and model_id not in NATIVE_ONLY_VIDEO_MODELS:
             expected.append("venice")
         assert [endpoint.provider for endpoint in endpoints] == expected
         assert all(endpoint.usage_type == "Credits" for endpoint in endpoints)
         assert all(endpoint.upstream_id for endpoint in endpoints)
 
     assert MODELS["minimax/hailuo-3"].name == "MiniMax Hailuo 3 (H3)"
+    assert MODELS["minimax/hailuo-3"].input_modalities == (
+        "text",
+        "image",
+        "audio",
+        "video",
+    )
 
 
 def test_sora_video_authorizes_direct_openai_before_standard_fallback() -> None:
@@ -120,6 +139,16 @@ def test_video_router_rejects_text_models_and_honors_provider_filters() -> None:
     assert [(model.id, endpoint.provider) for model, endpoint in candidates] == [
         ("minimax/hailuo-3", "venice")
     ]
+    atlas_candidates = video_route_endpoint_candidates(
+        {
+            "model": "minimax/hailuo-3",
+            "provider": {"only": ["atlas-cloud"]},
+        },
+        Settings(environment="test"),
+    )
+    assert [(model.id, endpoint.provider) for model, endpoint in atlas_candidates] == [
+        ("minimax/hailuo-3", "atlas-cloud")
+    ]
 
 
 def test_video_authorize_and_settle_bill_exact_fixed_microdollars(
@@ -132,7 +161,7 @@ def test_video_authorize_and_settle_bill_exact_fixed_microdollars(
     assert authorization is not None
     assert authorization.estimated_microdollars == quote
     assert authorization.additional_cost_reservation_microdollars == quote
-    assert auth["provider"] == "minimax"
+    assert auth["provider"] == "atlas-cloud"
     assert auth["usage_type"] == "Credits"
 
     response = client.post(
@@ -411,11 +440,9 @@ def test_video_job_can_persist_an_authorized_fallback_route_and_exact_charge(
         quote=900_000,
         idempotency_key="video-authorized-fallback",
     )
-    assert auth["provider"] == "minimax"
+    assert auth["provider"] == "atlas-cloud"
     venice = next(
-        candidate
-        for candidate in auth["route_candidates"]
-        if candidate["provider"] == "venice"
+        candidate for candidate in auth["route_candidates"] if candidate["provider"] == "venice"
     )
     prepare = client.post(
         "/v1/internal/gateway/video/jobs/prepare",
@@ -423,9 +450,9 @@ def test_video_job_can_persist_an_authorized_fallback_route_and_exact_charge(
             "job_id": "job-authorized-fallback",
             "authorization_id": auth["authorization_id"],
             "model": "minimax/hailuo-3",
-            "provider": "minimax",
+            "provider": "atlas-cloud",
             "endpoint_id": auth["endpoint_id"],
-            "provider_model": "MiniMax-H3",
+            "provider_model": "minimax/h3/text-to-video",
             "quoted_microdollars": 840_000,
             "duration_seconds": 5,
             "resolution": "2K",

@@ -114,6 +114,58 @@ def test_spanner_delivery_normalizes_integral_float_json_values() -> None:
     assert result["mismatch_fields"] == {}
 
 
+def test_spanner_delivery_matches_clickhouse_defaults_for_legacy_rows() -> None:
+    generation = _generation()
+    actual = activity_payload(generation)
+    actual.update(
+        {
+            "gateway_request_id": "",
+            "synthetic": 0,
+            "client_source": "none",
+            "client_sdk": "",
+            "client_sdk_version": "",
+            "client_lang": "",
+            "client_runtime": "",
+            "client_os": "",
+            "client_arch": "",
+            "client_prev_outcome": "",
+            "client_prev_error_class": "",
+            "client_prev_host": "",
+        }
+    )
+
+    result = verify_delivery(
+        FakeSource([generation]),
+        FakeClickHouse({generation.id: actual}),
+        start=dt.datetime(2026, 7, 31, tzinfo=dt.UTC),
+        end=dt.datetime(2026, 8, 1, tzinfo=dt.UTC),
+        limit=100,
+    )
+
+    assert result["ok"] is True
+    assert result["mismatch_fields"] == {}
+
+
+def test_spanner_delivery_normalizes_nullable_clickhouse_booleans() -> None:
+    generation = _generation()
+    generation.client_stream = False
+    generation.client_failover_used = True
+    actual = activity_payload(generation)
+    actual["client_stream"] = 0
+    actual["client_failover_used"] = 1
+
+    result = verify_delivery(
+        FakeSource([generation]),
+        FakeClickHouse({generation.id: actual}),
+        start=dt.datetime(2026, 7, 31, tzinfo=dt.UTC),
+        end=dt.datetime(2026, 8, 1, tzinfo=dt.UTC),
+        limit=100,
+    )
+
+    assert result["ok"] is True
+    assert result["mismatch_fields"] == {}
+
+
 def test_spanner_delivery_reports_missing_and_mismatched_rows() -> None:
     missing = _generation("gen-missing")
     mismatched = _generation("gen-mismatched")

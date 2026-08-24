@@ -7,6 +7,7 @@ from trusted_router.acquisition import record_signup_attribution
 from trusted_router.auth import SettingsDep
 from trusted_router.errors import api_error
 from trusted_router.schemas import SignupRequest
+from trusted_router.signup_gate import require_new_account_creation
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
@@ -18,6 +19,15 @@ def register_signup_routes(router: APIRouter) -> None:
         request: Request,
         settings: SettingsDep,
     ) -> JSONResponse:
+        require_new_account_creation(settings)
+        if not settings.email_signup_enabled:
+            # Closed to stop credit-farming via disposable emails. Real users
+            # sign up with Google, GitHub, or a wallet.
+            raise api_error(
+                403,
+                "Email signup is closed. Create an account with Google, GitHub, or a wallet.",
+                ErrorType.FORBIDDEN,
+            )
         result = STORE.signup(
             email=str(body.email).lower(),
             workspace_name=body.name,
@@ -33,6 +43,7 @@ def register_signup_routes(router: APIRouter) -> None:
             request,
             workspace_id=result.workspace.id,
             signup_provider="email",
+            starter_credit_microdollars=result.trial_credit_microdollars,
         )
         return JSONResponse(
             {

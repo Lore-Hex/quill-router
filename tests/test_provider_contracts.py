@@ -652,7 +652,7 @@ def test_fireworks_catalog_exposes_provider_specific_endpoints() -> None:
         "accounts/fireworks/models/gpt-oss-120b"
     }
     assert {endpoint.prompt_price_microdollars_per_million_tokens for endpoint in fireworks} == {
-        157_500
+        158_250
     }
 
 
@@ -665,15 +665,15 @@ def test_fireworks_catalog_exposes_kimi_k3_with_cached_pricing() -> None:
         "accounts/fireworks/models/kimi-k3"
     }
     assert {endpoint.prompt_price_microdollars_per_million_tokens for endpoint in fireworks} == {
-        3_150_000
+        3_165_000
     }
     assert {endpoint.completion_price_microdollars_per_million_tokens for endpoint in fireworks} == {
-        15_750_000
+        15_825_000
     }
     assert {
         endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
         for endpoint in fireworks
-    } == {315_000}
+    } == {316_500}
 
 
 def test_fireworks_catalog_exposes_glm_52_fast_router() -> None:
@@ -685,7 +685,7 @@ def test_fireworks_catalog_exposes_glm_52_fast_router() -> None:
         "accounts/fireworks/routers/glm-5p2-fast"
     }
     assert {endpoint.prompt_price_microdollars_per_million_tokens for endpoint in fireworks} == {
-        2_940_000
+        2_954_000
     }
 
 
@@ -698,15 +698,15 @@ def test_baseten_catalog_exposes_glm_52_fast_router() -> None:
         "zai-org/GLM-5.2-Fast"
     }
     assert {endpoint.prompt_price_microdollars_per_million_tokens for endpoint in baseten} == {
-        2_205_000
+        2_215_500
     }
     assert {endpoint.completion_price_microdollars_per_million_tokens for endpoint in baseten} == {
-        6_930_000
+        6_963_000
     }
     assert {
         endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
         for endpoint in baseten
-    } == {220_500}
+    } == {221_550}
 
 
 def test_alibaba_catalog_is_routable_after_workspace_entitlement() -> None:

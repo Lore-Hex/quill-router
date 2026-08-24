@@ -1,0 +1,100 @@
+name: Check client telemetry freshness
+
+# Client-observed reliability telemetry (docs/client-telemetry.md) is a
+# five-stage pipeline -- SDK beacon -> POST /v1/client-events -> operational
+# outbox -> ClickHouse ingester/rollup -> public snapshot -> /status.json --
+# and a dark pipeline looks exactly like "no failures". The in-process watch
+# (synthetic/client_watch.py) pages when it can see staleness; this job is the
+# check that survives the watch itself being down. It reads the PUBLIC
+# /status.json the way a customer would (no credentials) and fails, filing or
+# updating ONE issue, when the client_observed section is unavailable, its
+# snapshot is stale, or the synthetic monitor's own canary batches (posted on
+# every pass since TR_CLIENT_EVENTS_ENABLED=true) stopped landing.
+
+on:
+  schedule:
+    # Twice daily; the canary is per-minute so a one-hour tolerance is loose.
+    - cron: "45 6,18 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "clickhouse/check_client_telemetry_freshness.py"
+      - ".github/workflows/check-client-telemetry-freshness.yml"
+  workflow_dispatch:
+    inputs:
+      status_url:
+        description: "status.json URL to check"
+        required: false
+        default: "https://trustedrouter.com/status.json"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: check-client-telemetry-freshness
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check /status.json client_observed freshness
+        id: check
+        env:
+          STATUS_URL: ${{ github.event.inputs.status_url || 'https://trustedrouter.com/status.json' }}
+        run: |
+          set -euo pipefail
+          python3 -m clickhouse.check_client_telemetry_freshness \
+            --status-url "${STATUS_URL}" \
+            --problems-file /tmp/problems.txt
+
+      - name: Open or update the freshness issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -f /tmp/problems.txt ]; then
+            cp /tmp/problems.txt /tmp/detail.txt
+          else
+            echo "the freshness check failed before it could report; see the run log" > /tmp/detail.txt
+          fi
+          {
+            echo "The scheduled check found client-observed telemetry is not observably flowing."
+            echo
+            echo '```'
+            cat /tmp/detail.txt
+            echo '```'
+            echo
+            echo "What to look at, in order (docs/client-telemetry.md §9):"
+            echo
+            echo "1. Is the flag on? \`TR_CLIENT_EVENTS_ENABLED\` in scripts/deploy/rollout.sh and the live Cloud Run env."
+            echo "2. Is the canary probe running? Sentry/Cloud Logging for \`client_telemetry_ingest\` samples and \`client_observed.*\` lines."
+            echo "3. Is the node draining? On tr-clickhouse-1: \`journalctl -u tr-clickhouse-operational-ingest -n 30\` (look for quarantined= and rows=),"
+            echo "   \`journalctl -u tr-clickhouse-client-rollup -n 5\`, \`journalctl -u tr-clickhouse-public-snapshots -n 5\`."
+            echo "4. \`SELECT max(received_at), countIf(synthetic=1) FROM client_minute_counters WHERE received_at > now() - INTERVAL 1 DAY\`."
+            echo
+            echo "Record the outcome in the SOC 2 evidence log."
+            echo
+            echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } > /tmp/issue-body.md
+          gh label create client-telemetry-freshness \
+            --description "Client-observed telemetry stopped flowing" \
+            --color D93F0B --force >/dev/null
+          existing="$(gh issue list --label client-telemetry-freshness --state open --json number --jq '.[0].number' 2>/dev/null || true)"
+          if [ -n "${existing}" ]; then
+            gh issue comment "${existing}" --body-file /tmp/issue-body.md
+          else
+            gh issue create \
+              --title "Client-observed telemetry has stopped flowing" \
+              --label client-telemetry-freshness \
+              --body-file /tmp/issue-body.md
+          fi

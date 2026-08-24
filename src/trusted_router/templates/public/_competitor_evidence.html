@@ -1,0 +1,32 @@
+<section class="panel" aria-labelledby="comparison-sources-heading">
+  <div class="panel-head">
+    <div>
+      <span class="eyebrow">Official evidence</span>
+      <h2 id="comparison-sources-heading">Sources checked {{ verified_on_label }}</h2>
+    </div>
+    <a href="/support">Report a change</a>
+  </div>
+  <div class="panel-body">
+    <ul class="link-list">
+      {% for source in comparison.sources %}
+      <li><a href="{{ source.url }}" rel="noopener">{{ source.label }}</a><span>{{ source.url }}</span></li>
+      {% endfor %}
+      <li><a href="/benchmarks/reports">TrustedRouter monthly benchmark reports</a><span>Stable first-party route evidence</span></li>
+      <li><a href="https://trust.trustedrouter.com" rel="noopener">TrustedRouter live trust record</a><span>Release and attestation evidence</span></li>
+    </ul>
+  </div>
+</section>
+
+<section class="panel" aria-labelledby="related-comparisons-heading">
+  <div class="panel-head">
+    <h2 id="related-comparisons-heading">Related comparisons</h2>
+    <a href="/compare">All gateways</a>
+  </div>
+  <div class="panel-body">
+    <ul class="link-list">
+      {% for related in related_comparisons %}
+      <li><a href="{{ related.href }}">TrustedRouter vs {{ related.name }}</a><span>{{ related.category }}</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>

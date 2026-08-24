@@ -9,6 +9,7 @@ from trusted_router.auth import SettingsDep
 from trusted_router.catalog import MODELS
 from trusted_router.custom_model_rules import (
     is_allowed_custom_model_base,
+    missing_custom_model_requirements,
     require_custom_model_base_model,
 )
 from trusted_router.routes.console._shared import ConsoleDep, render
@@ -21,7 +22,7 @@ from trusted_router.storage_custom_models import (
 
 def register(app: FastAPI) -> None:
     @app.get("/console/custom-models")
-    async def console_custom_models(
+    def console_custom_models(
         request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
@@ -29,7 +30,7 @@ def register(app: FastAPI) -> None:
         return HTMLResponse(_render_page(ctx, settings, request=request))
 
     @app.post("/console/custom-models")
-    async def console_create_custom_model(
+    def console_create_custom_model(
         ctx: ConsoleDep,
         settings: SettingsDep,
         name: str = Form(..., min_length=1, max_length=120),
@@ -38,6 +39,8 @@ def register(app: FastAPI) -> None:
         hidden_prompt: str = Form("", max_length=CUSTOM_MODEL_PROMPT_CHAR_LIMIT),
         enabled: bool = Form(False),
     ) -> Response:
+        if missing_custom_model_requirements(ctx.user, settings):
+            return _custom_model_redirect("error=verification")
         _require_base_model(base_model_id)
         try:
             STORE.create_custom_model(
@@ -61,8 +64,9 @@ def register(app: FastAPI) -> None:
         return RedirectResponse(url="/console/custom-models?saved=created", status_code=303)
 
     @app.post("/console/custom-models/{model_id:path}")
-    async def console_update_custom_model(
+    def console_update_custom_model(
         ctx: ConsoleDep,
+        settings: SettingsDep,
         model_id: str,
         name: str = Form(..., min_length=1, max_length=120),
         slug: str | None = Form(default=None, min_length=3, max_length=96),
@@ -70,6 +74,8 @@ def register(app: FastAPI) -> None:
         hidden_prompt: str = Form("", max_length=CUSTOM_MODEL_PROMPT_CHAR_LIMIT),
         enabled: bool = Form(False),
     ) -> Response:
+        if missing_custom_model_requirements(ctx.user, settings):
+            return _custom_model_redirect("error=verification")
         model = _require_owner_model(model_id, ctx.user.id)
         _require_base_model(base_model_id)
         try:
@@ -94,7 +100,7 @@ def register(app: FastAPI) -> None:
         return RedirectResponse(url="/console/custom-models?saved=updated", status_code=303)
 
     @app.post("/console/custom-models/{model_id:path}/delete")
-    async def console_delete_custom_model(ctx: ConsoleDep, model_id: str) -> Response:
+    def console_delete_custom_model(ctx: ConsoleDep, model_id: str) -> Response:
         model = _require_owner_model(model_id, ctx.user.id)
         STORE.delete_custom_model(model.id, owner_user_id=ctx.user.id)
         return RedirectResponse(url="/console/custom-models?saved=deleted", status_code=303)
@@ -102,11 +108,11 @@ def register(app: FastAPI) -> None:
 
 def _render_page(ctx: ConsoleDep, settings: SettingsDep, *, request: Request) -> str:
     models = [_model_view(model) for model in STORE.list_custom_models_for_user(ctx.user.id)]
+    missing_requirements = missing_custom_model_requirements(ctx.user, settings)
     return render(
         "console/custom_models.html",
         settings=settings,
-        user=ctx.user,
-        workspace=ctx.workspace,
+        ctx=ctx,
         active="custom-models",
         page_title="Custom Models",
         page_subtitle="Create hidden-prompt model aliases that run through the attested gateway.",
@@ -114,6 +120,11 @@ def _render_page(ctx: ConsoleDep, settings: SettingsDep, *, request: Request) ->
         base_models=_base_model_options(),
         limit=CUSTOM_MODEL_LIMIT_PER_USER,
         prompt_limit=CUSTOM_MODEL_PROMPT_CHAR_LIMIT,
+        verification={
+            "met": not missing_requirements,
+            "missing_requirements": missing_requirements,
+            "url": "/console/account/verification",
+        },
         flash=_flash_message(request.query_params.get("saved"), request.query_params.get("error")),
     )
 
@@ -173,6 +184,13 @@ def _flash_message(saved: str | None, error: str | None) -> dict[str, str] | Non
         }
     if error == "slug_taken":
         return {"type": "error", "text": "That custom model slug is already in use."}
+    if error == "verification":
+        return {
+            "type": "error",
+            "text": "Verify your account before creating or editing custom models.",
+            "href": "/console/account/verification",
+            "link_text": "Complete verification",
+        }
     if saved:
         return {"type": "success", "text": "Custom model saved."}
     return None

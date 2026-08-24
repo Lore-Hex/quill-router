@@ -66,11 +66,16 @@ const r = await client.chat.completions.create({
     <a class="marketing-card card-as-link" href="/docs/agent-setup#codex-skill"><h3>Agent skill</h3><p>Help Codex, Claude Code, Hermes, and other agents choose models using speed, cost, AI IQ, privacy, context length, and prompt-cache fit.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/migrate-from-openrouter"><h3>Migrate from OpenRouter</h3><p>Swap one base_url and keep your existing calls working.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/tagging"><h3>Request tagging</h3><p>Allocate cost and usage with AWS style tags while keeping metadata out of model prompts.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/telemetry"><h3>Client reliability telemetry</h3><p>See the content-free fields TrustedRouter SDKs report, the retention policy, and every opt-out.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/prompt-caching"><h3>Prompt caching</h3><p>Reuse stable prompt prefixes, inspect cache hits, and keep the router itself free of prompt storage.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/batch"><h3>Batch API</h3><p>Submit OpenRouter-compatible inline batches and poll encrypted results through the attested gateway.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/web-search"><h3>Responses web search</h3><p>Search the live web inside the attested gateway and return source citations through the OpenAI Responses API.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/video"><h3>Video generation</h3><p>Generate video with Seedance, Veo, Sora, Runway, Kling, Wan, Vidu, PixVerse, LTX, Gemini Omni, and Hailuo 3 through asynchronous jobs with exact quoted billing.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/evals"><h3>Evals</h3><p>Run eval suites across providers through one API.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/provider-conformance"><h3>Provider conformance</h3><p>Check an OpenAI-compatible provider endpoint against the production gateway contract before applying.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/synth"><h3>Synth</h3><p>Run Iris, Prometheus, Zeus, and code-tuned Synth presets inside the attested gateway.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/agent-setup#socrates"><h3>Socrates</h3><p>Run the advisor preset, or configure the generic advisor primitive directly.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/user-models"><h3>User-provided models</h3><p>List your own endpoint — a machine, an agent, or yourself typing — at a price you set, and keep 70% in credits.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/x402"><h3>x402 stablecoin funding</h3><p>Let agents add prepaid credits automatically without changing the prompt path.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/eu"><h3>EU routing</h3><p>Use the Europe West attested gateway and the EU-focused model alias.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/sign-in-with-trustedrouter"><h3>Sign in with TrustedRouter</h3><p>Let your users bring their own account and credits.</p><span class="card-link">Open →</span></a>
@@ -84,7 +89,12 @@ const r = await client.chat.completions.create({
   <div class="repo-grid">
     <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-py"><span class="mono">trusted-router-py</span><span class="repo-sub">Python SDK</span></a>
     <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-js"><span class="mono">trusted-router-js</span><span class="repo-sub">TypeScript SDK</span></a>
-    <a class="repo-card" href="https://github.com/jperla/trusted-router-swift"><span class="mono">trusted-router-swift</span><span class="repo-sub">Swift SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-go"><span class="mono">trusted-router-go</span><span class="repo-sub">Go SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-rust"><span class="mono">trusted-router-rust</span><span class="repo-sub">Rust SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-swift"><span class="mono">trusted-router-swift</span><span class="repo-sub">Swift SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-java"><span class="mono">trusted-router-java</span><span class="repo-sub">Java SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trustedrouter-ai-sdk-provider"><span class="mono">trustedrouter-ai-sdk-provider</span><span class="repo-sub">Vercel AI SDK provider</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trustedrouter-provider-check"><span class="mono">trustedrouter-provider-check</span><span class="repo-sub">Provider conformance suite</span></a>
     <a class="repo-card" href="https://github.com/Lore-Hex/quill-router"><span class="mono">quill-router</span><span class="repo-sub">Open-source router</span></a>
   </div>
   <div class="public-proof-strip" style="margin-top:18px">
@@ -121,7 +131,11 @@ const r = await client.chat.completions.create({
         <li><a href="https://github.com/Lore-Hex/LLM-advisor">trustedrouter-model-advisor</a> — source repo and <a href="https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md">raw playbook</a> for agent installation</li>
         <li><a href="/docs/agent-setup#socrates">Socrates</a> — advisor orchestration guide</li>
         <li><a href="/docs/synth">/docs/synth</a> — Synth model panel guide</li>
+        <li><a href="/docs/user-models">/docs/user-models</a> — post your own endpoint as a priced model; verification, dispatch, payouts</li>
+        <li><a href="/docs/prompt-caching">/docs/prompt-caching</a> — provider cache behavior, usage fields, billing, and routing tradeoffs</li>
+        <li><a href="/docs/batch">/docs/batch</a> — inline Batch API quickstart, response contract, limits, and encrypted retention</li>
         <li><a href="/docs/web-search">/docs/web-search</a> — Responses API web search, citations, controls, and privacy boundaries</li>
+        <li><a href="/docs/provider-conformance">/docs/provider-conformance</a> — public provider contract checks, result meanings, and production parity</li>
         <li><a href="/docs/video">/docs/video</a> — asynchronous video generation, models, billing, and retention boundaries</li>
         <li><a href="https://github.com/Lore-Hex/quill-router">GitHub</a> — source + issues</li>
         <li><a href="/openai-compatible-llm-api">OpenAI-compatible API</a> — SDK migration surface</li>

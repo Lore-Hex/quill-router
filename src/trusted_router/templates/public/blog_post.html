@@ -5,8 +5,7 @@
 {% block hero %}{% endblock %}
 
 {% block body %}
-{% include "public/_hiring_banner.html" %}
-<style>
+<style nonce="{{ csp_nonce() }}">
   /* Medium-style reading column: narrow measure, serif body, generous
      line-height. Scoped to .blog-article so no other page is affected.
      Colors use the theme vars so dark (default) and light both work. */
@@ -23,6 +22,9 @@
   .blog-body p { margin: 0 0 26px; }
   .blog-body strong { color: var(--inkstrong); font-weight: 700; }
   .blog-body a { color: var(--blue); text-decoration: underline; text-underline-offset: 2px; }
+  .blog-body .blog-hero-image { margin: 0 0 32px; }
+  .blog-body .blog-hero-image img { display: block; width: 100%; height: auto;
+    border: 1px solid var(--line); border-radius: var(--r-panel); }
   .blog-body .mono { font-family: var(--font-mono);
     font-size: 0.82em; background: var(--code-bg); color: var(--code-ink);
     padding: 1px 6px; border-radius: var(--r-control); }

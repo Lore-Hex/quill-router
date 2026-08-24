@@ -25,10 +25,7 @@ Auth: same internal-gateway-token guard as the rest of /internal/*.
 from __future__ import annotations
 
 import base64
-import ipaddress
-import socket
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Request
@@ -37,6 +34,10 @@ from trusted_router.auth import SettingsDep
 from trusted_router.errors import api_error
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.schemas import GatewayFetchImageRequest
+from trusted_router.services.safe_egress import (
+    resolve_public_or_reject,
+    validate_url_scheme,
+)
 from trusted_router.types import ErrorType
 
 # Mirrored from enclave-go/internal/llm/multimodal.go const block. Keep
@@ -45,76 +46,8 @@ from trusted_router.types import ErrorType
 _MAX_IMAGE_BYTES = 10 * 1024 * 1024
 _MAX_REDIRECTS = 3
 _FETCH_TIMEOUT_SECONDS = 15.0
-_ALLOWED_SCHEMES = ("http", "https")
 _ACCEPT_HEADER = "image/png,image/jpeg"
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
-
-
-def _is_safe_public_ip(ip_str: str) -> bool:
-    """Mirror of enclave-go's allowedImageIP: reject loopback, RFC1918,
-    link-local, multicast, and unspecified addresses. ipaddress.ip_address
-    handles IPv6 too."""
-    try:
-        ip = ipaddress.ip_address(ip_str)
-    except ValueError:
-        return False
-    if (
-        ip.is_loopback
-        or ip.is_private
-        or ip.is_link_local
-        or ip.is_multicast
-        or ip.is_unspecified
-        or ip.is_reserved
-    ):
-        return False
-    return True
-
-
-def _resolve_or_reject(host: str) -> None:
-    """Reject if ANY resolved IP for `host` is private. We don't need
-    to return the IP — we let httpx redo the resolve for the actual
-    request. Strictly checking all returned IPs (not just the first)
-    closes the obvious DNS-rebinding-style trick where a hostname
-    resolves to both a public and a private address."""
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except (socket.gaierror, UnicodeError) as exc:
-        raise api_error(
-            400, "image fetch: resolve failed", ErrorType.BAD_REQUEST
-        ) from exc
-    if not infos:
-        raise api_error(
-            400, "image fetch: resolve failed", ErrorType.BAD_REQUEST
-        )
-    for _family, _, _, _, sockaddr in infos:
-        # sockaddr is `tuple[str, int] | tuple[str, int, int, int]` —
-        # element 0 is always the host string. mypy needs the cast to
-        # know that, since the type is unioned.
-        ip = str(sockaddr[0])
-        if not _is_safe_public_ip(ip):
-            raise api_error(
-                400,
-                "image fetch: image host resolves to a private address",
-                ErrorType.BAD_REQUEST,
-            )
-
-
-def _validate_url_scheme(url: str) -> tuple[str, str]:
-    """Return (scheme, host) after rejecting non-http(s) schemes and
-    requiring a host. Caller passes the original URL string to httpx;
-    we just gate-check it first."""
-    parsed = urlparse(url)
-    scheme = (parsed.scheme or "").lower()
-    if scheme not in _ALLOWED_SCHEMES:
-        raise api_error(
-            400, "image fetch: unsupported image URL scheme", ErrorType.BAD_REQUEST
-        )
-    host = parsed.hostname
-    if not host:
-        raise api_error(
-            400, "image fetch: invalid image URL", ErrorType.BAD_REQUEST
-        )
-    return scheme, host
 
 
 async def _fetch_with_redirect_chain(client: httpx.AsyncClient, url: str) -> tuple[str, bytes]:
@@ -123,8 +56,8 @@ async def _fetch_with_redirect_chain(client: httpx.AsyncClient, url: str) -> tup
     re-resolves DNS too but doesn't let us inject SSRF checks per hop."""
     current = url
     for _ in range(_MAX_REDIRECTS + 1):
-        _, host = _validate_url_scheme(current)
-        _resolve_or_reject(host)
+        _, host = validate_url_scheme(current)
+        resolve_public_or_reject(host)
         async with client.stream("GET", current, headers={"accept": _ACCEPT_HEADER}) as resp:
             if resp.status_code in _REDIRECT_STATUSES:
                 next_url = resp.headers.get("location")
@@ -171,7 +104,7 @@ def register(router: APIRouter) -> None:
             )
         # Pre-flight scheme/host check before opening any client. The
         # actual per-hop SSRF check happens inside the redirect loop.
-        _validate_url_scheme(url)
+        validate_url_scheme(url)
         timeout = httpx.Timeout(_FETCH_TIMEOUT_SECONDS, connect=_FETCH_TIMEOUT_SECONDS)
         async with httpx.AsyncClient(
             follow_redirects=False, timeout=timeout

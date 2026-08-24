@@ -1,0 +1,78 @@
+{% from "public/_provider_identity.html" import provider_identity %}
+<section class="seo-evidence" aria-labelledby="seo-evidence-heading">
+  <div class="seo-evidence-head">
+    <div>
+      <span class="eyebrow">Live catalog evidence</span>
+      <h2 id="seo-evidence-heading">Current routes, prices, privacy, and measured performance.</h2>
+    </div>
+    <p>Catalog facts come from the routes currently configured in TrustedRouter. Performance uses the same cached metadata snapshot as the public leaderboard. Prompts and outputs are not part of these measurements.</p>
+  </div>
+
+  <div class="seo-evidence-stats" aria-label="Current TrustedRouter catalog facts">
+    <div><strong>{{ catalog_evidence.model_count }}</strong><span>public models</span></div>
+    <div><strong>{{ catalog_evidence.provider_count }}</strong><span>providers</span></div>
+    <div><strong>{{ catalog_evidence.route_count }}</strong><span>configured routes</span></div>
+    <div><strong>{{ catalog_evidence.zdr_route_count }}</strong><span>ZDR routes</span></div>
+    <div><strong>{{ catalog_evidence.e2e_route_count }}</strong><span>provider E2EE routes</span></div>
+    <div><strong>{{ catalog_evidence.measured_sample_count }}</strong><span>recent availability samples</span></div>
+  </div>
+
+  <div class="seo-evidence-table-wrap">
+    <table class="seo-evidence-table">
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Providers</th>
+          <th>Context</th>
+          <th>Input</th>
+          <th>Output</th>
+          <th>Privacy</th>
+          <th>Measured route</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for model in catalog_evidence.models %}
+        <tr>
+          <td><a href="{{ model.detail_href }}"><strong>{{ model.name }}</strong></a><code>{{ model.id }}</code></td>
+          <td>
+            <div class="provider-logo-list" aria-label="{{ model.provider_count }} providers">
+              {% for provider in model.providers[:4] %}
+              <a href="{{ provider.detail_href }}" title="{{ provider.name }}"><img class="provider-logo" src="{{ provider.logo_url }}" alt="{{ provider.name }}" width="28" height="28" loading="lazy" decoding="async"></a>
+              {% endfor %}
+              {% if model.provider_count > 4 %}<span class="provider-logo-more">+{{ model.provider_count - 4 }}</span>{% endif %}
+            </div>
+            <span class="table-note">{{ model.route_count }} routes</span>
+          </td>
+          <td>{{ model.context_length }}</td>
+          <td>{{ model.prompt_price }}</td>
+          <td>{{ model.completion_price }}</td>
+          <td>
+            {% if model.has_e2e %}<span class="pill good">E2EE</span>{% elif model.has_confidential %}<span class="pill good">confidential</span>{% elif model.has_zdr %}<span class="pill good">ZDR</span>{% else %}<span class="pill">varies</span>{% endif %}
+            {% if model.benchmark_count %}<a class="table-note" href="{{ model.detail_href }}/benchmarks">{{ model.benchmark_count }} cited scores</a>{% endif %}
+          </td>
+          <td>
+            {% if model.sample_count %}
+            <strong>{% if model.p50_ttft_ms is not none %}{{ model.p50_ttft_ms }} ms TTFT{% else %}measured{% endif %}</strong>
+            <span class="table-note">{{ model.measurement_provider }}{% if model.p50_tokens_per_second is not none %} · {{ '%.0f'|format(model.p50_tokens_per_second) }} tok/s{% endif %}{% if model.availability is not none %} · {{ '%.2f'|format(model.availability * 100) }}% available{% endif %} · n={{ model.sample_count }}</span>
+            {% else %}
+            <span class="muted-copy">Warming up</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="seo-provider-strip" aria-label="Related providers">
+    {% for provider in catalog_evidence.providers %}
+    <div class="seo-provider-row">
+      {{ provider_identity(provider.slug, provider.name, provider.detail_href, subtitle=provider.privacy) }}
+      <span>{{ provider.model_count }} models</span>
+      {% if provider.sample_count %}<span>{% if provider.p50_ttft_ms is not none %}{{ provider.p50_ttft_ms }} ms p50{% else %}measured{% endif %} · n={{ provider.sample_count }}</span>{% else %}<span>measurements warming up</span>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <p class="seo-evidence-foot"><a href="/models">Browse every model</a><a href="/providers">Review provider policies</a><a href="/leaderboard">Open the full leaderboard</a>{% if catalog_evidence.generated_at %}<span>Snapshot {{ catalog_evidence.generated_at }}</span>{% endif %}</p>
+</section>

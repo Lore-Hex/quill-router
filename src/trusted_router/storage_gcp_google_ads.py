@@ -1,4 +1,4 @@
-"""Spanner-only storage adapter for the Google Ads conversion worker."""
+"""Spanner-only adapter for the isolated Google Ads conversion worker."""
 
 from __future__ import annotations
 
@@ -10,14 +10,14 @@ from trusted_router.config import Settings
 from trusted_router.services.google_data_manager import GoogleAdsDeliveryStore
 from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
 from trusted_router.storage_gcp_codec import json_body
-from trusted_router.storage_gcp_io import SpannerIO
+from trusted_router.storage_gcp_io import SpannerIO, configure_spanner_rpc_deadlines
 from trusted_router.storage_models import GoogleAdsConversion
 
 T = TypeVar("T")
 
 
 class SpannerGoogleAdsDeliveryStore:
-    """Expose only the durable conversion queue, without creating Bigtable."""
+    """Expose only conversion rows, without constructing prompt-path storage."""
 
     entity_table = "tr_entities"
 
@@ -33,27 +33,22 @@ class SpannerGoogleAdsDeliveryStore:
         try:
             from google.cloud import spanner
             from google.cloud.spanner_v1 import FixedSizePool, param_types
-        except ImportError as exc:  # pragma: no cover - production image dependency.
+        except ImportError as exc:  # pragma: no cover - production dependency.
             raise RuntimeError(
                 "Install google-cloud-spanner for the Google Data Manager worker"
             ) from exc
-
         self._spanner = spanner
         self._param_types = param_types
         self._database = (
-            spanner.Client(
-                project=project_id,
-                disable_builtin_metrics=True,
-            )
+            spanner.Client(project=project_id, disable_builtin_metrics=True)
             .instance(spanner_instance_id)
-            .database(
-                spanner_database_id,
-                pool=FixedSizePool(size=2),
-            )
+            .database(spanner_database_id, pool=FixedSizePool(size=2))
         )
+        configure_spanner_rpc_deadlines(self._database)
         io = SpannerIO(
             database=self._database,
             spanner_module=self._spanner,
+            param_types=self._param_types,
             write_entity_batch=self._write_entity_batch,
             read_entity_tx=self._read_entity_tx,
             write_entity_tx=self._write_entity_tx,
@@ -66,8 +61,11 @@ class SpannerGoogleAdsDeliveryStore:
         self._attribution = SpannerAcquisitionAttribution(io)
 
     def repair_google_ads_delivery_queue(self, *, since: str, limit: int) -> int:
-        return self._attribution.repair_google_ads_delivery_queue(
-            since=since,
+        return self._attribution.repair_google_ads_delivery_queue(since=since, limit=limit)
+
+    def purge_expired_google_ads_click_ids(self, *, before: str, limit: int) -> int:
+        return self._attribution.purge_expired_google_ads_click_ids(
+            before=before,
             limit=limit,
         )
 
@@ -116,12 +114,7 @@ class SpannerGoogleAdsDeliveryStore:
             max_attempts=max_attempts,
         )
 
-    def _read_entity(
-        self,
-        kind: str,
-        entity_id: str,
-        cls: type[T],
-    ) -> T | None:
+    def _read_entity(self, kind: str, entity_id: str, cls: type[T]) -> T | None:
         with self._database.snapshot() as snapshot:
             return self._read_entity_from(snapshot, kind, entity_id, cls)
 
@@ -151,15 +144,7 @@ class SpannerGoogleAdsDeliveryStore:
                 },
             )
         )
-        if not rows:
-            return None
-        data = json.loads(rows[0][0])
-        if cls is dict:
-            return data
-        if dataclasses.is_dataclass(cls):
-            known = {field.name for field in dataclasses.fields(cls)}
-            data = {key: value for key, value in data.items() if key in known}
-        return cls(**data)
+        return self._decode_entity(rows[0][0], cls) if rows else None
 
     def _list_entities(
         self,
@@ -194,7 +179,8 @@ class SpannerGoogleAdsDeliveryStore:
             )
             return [self._decode_entity(row[0], cls) for row in rows]
 
-    def _decode_entity(self, body: str, cls: type[T]) -> T:
+    @staticmethod
+    def _decode_entity(body: str, cls: type[T]) -> T:
         data = json.loads(body)
         if cls is dict:
             return data
@@ -218,12 +204,7 @@ class SpannerGoogleAdsDeliveryStore:
             table=self.entity_table,
             columns=("kind", "id", "body", "updated_at"),
             values=[
-                (
-                    kind,
-                    entity_id,
-                    json_body(value),
-                    self._spanner.COMMIT_TIMESTAMP,
-                )
+                (kind, entity_id, json_body(value), self._spanner.COMMIT_TIMESTAMP)
             ],
         )
 
@@ -238,12 +219,7 @@ class SpannerGoogleAdsDeliveryStore:
             table=self.entity_table,
             columns=("kind", "id", "body", "updated_at"),
             values=[
-                (
-                    kind,
-                    entity_id,
-                    json_body(value),
-                    self._spanner.COMMIT_TIMESTAMP,
-                )
+                (kind, entity_id, json_body(value), self._spanner.COMMIT_TIMESTAMP)
             ],
         )
 
@@ -251,9 +227,7 @@ class SpannerGoogleAdsDeliveryStore:
         with self._database.batch() as batch:
             batch.delete(
                 self.entity_table,
-                self._spanner.KeySet(
-                    keys=[(kind, entity_id) for entity_id in entity_ids]
-                ),
+                self._spanner.KeySet(keys=[(kind, entity_id) for entity_id in entity_ids]),
             )
 
     def _delete_entities_tx(
@@ -264,9 +238,7 @@ class SpannerGoogleAdsDeliveryStore:
     ) -> None:
         transaction.delete(
             self.entity_table,
-            self._spanner.KeySet(
-                keys=[(kind, entity_id) for entity_id in entity_ids]
-            ),
+            self._spanner.KeySet(keys=[(kind, entity_id) for entity_id in entity_ids]),
         )
 
 

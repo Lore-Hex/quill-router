@@ -44,7 +44,7 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 150000,
+      "input_token_price_per_m": 220000,
       "output_token_price_per_m": 900000,
       "cached_input_token_price_per_m": 50000
     },
@@ -128,15 +128,14 @@
         "max_tokens",
         "parallel_tool_calls",
         "presence_penalty",
-        "reasoning_effort",
         "seed",
         "stop",
         "temperature",
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 720000,
-      "output_token_price_per_m": 3500000,
+      "input_token_price_per_m": 670000,
+      "output_token_price_per_m": 3400000,
       "cached_input_token_price_per_m": 150000
     },
     {
@@ -180,11 +179,56 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 940000,
+      "input_token_price_per_m": 750000,
       "output_token_price_per_m": 2900000,
       "cached_input_token_price_per_m": 170000
+    },
+    {
+      "display_name": "DeepSeek V4 Flash 0731",
+      "title": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "context_length": 1048576,
+      "max_output_tokens": 1048576,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "reasoning",
+        "logprobs",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "frequency_penalty",
+        "logit_bias",
+        "logprobs",
+        "max_tokens",
+        "parallel_tool_calls",
+        "presence_penalty",
+        "reasoning_effort",
+        "seed",
+        "stop",
+        "temperature",
+        "top_logprobs",
+        "top_p"
+      ],
+      "input_token_price_per_m": 130000,
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 30000
     }
   ],
-  "generated_at": "2026-08-01T23:03:20Z",
-  "model_count": 4
+  "generated_at": "2026-08-16T15:24:13Z",
+  "model_count": 5
 }

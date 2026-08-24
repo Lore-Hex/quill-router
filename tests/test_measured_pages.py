@@ -75,7 +75,7 @@ def test_provider_performance_page_indexes_with_enough_samples() -> None:
     assert "Cerebras performance" in resp.text
     assert "110 ms" in resp.text
     assert '<meta name="robots" content="noindex,follow">' not in resp.text
-    assert '<script type="application/ld+json">' in resp.text
+    assert '<script type="application/ld+json"' in resp.text
 
 
 def test_model_performance_page_without_data_still_renders() -> None:

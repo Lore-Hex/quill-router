@@ -8,6 +8,31 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
 
+validate_synthetic_monitor_candidate() {
+  local value="$1"
+  local repo_root
+  local -a python_cmd
+  repo_root="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+  if [ -x "${repo_root}/.venv/bin/python" ]; then
+    python_cmd=("${repo_root}/.venv/bin/python")
+  elif command -v uv >/dev/null 2>&1; then
+    python_cmd=(uv run python)
+  else
+    echo "ERROR: synthetic monitor validation requires the project venv or uv." >&2
+    return 1
+  fi
+  log "validating synthetic monitor key against the dedicated production workspace"
+  printf '%s' "$value" | (
+    cd "$repo_root"
+    TR_STORAGE_BACKEND=spanner-bigtable \
+      TR_GCP_PROJECT_ID="$PROJECT_ID" \
+      TR_SPANNER_INSTANCE_ID="$SPANNER_INSTANCE_ID" \
+      TR_SPANNER_DATABASE_ID="$SPANNER_DATABASE_ID" \
+      PYTHONPATH=src:. \
+      "${python_cmd[@]}" scripts/validate_synthetic_monitor_key.py
+  ) >/dev/null
+}
+
 ensure_secret_from_env_file() {
   local env_name="$1"
   local secret_name="$2"
@@ -28,6 +53,9 @@ ensure_secret_from_env_file() {
   fi
   if [ -z "$value" ]; then
     return 0
+  fi
+  if [ "$secret_name" = "trustedrouter-synthetic-monitor-api-key" ]; then
+    validate_synthetic_monitor_candidate "$value"
   fi
   ensure_secret_value "$secret_name" "$value"
   log "uploaded secret ${secret_name}"
@@ -144,6 +172,10 @@ ensure_secret_from_env_file "MINIMAX_API_KEY" "trustedrouter-minimax-api-key" "M
 ensure_secret_from_env_file "FRIENDLI_API_KEY" "trustedrouter-friendli-api-key"
 ensure_secret_from_env_file "BASETEN_API_KEY" "trustedrouter-baseten-api-key"
 ensure_secret_from_env_file "TELNYX_API_KEY" "trustedrouter-telnyx-api-key"
+ensure_secret_from_env_file "VERIFF_API_KEY" "trustedrouter-veriff-api-key"
+ensure_secret_from_env_file \
+  "VERIFF_SHARED_SECRET_KEY" \
+  "trustedrouter-veriff-shared-secret-key"
 ensure_secret_from_env_file "THINKING_MACHINES_API_KEY" "trustedrouter-thinking-machines-api-key" "TINKER_API_KEY"
 ensure_secret_from_env_file "WAFER_API_KEY" "trustedrouter-wafer-api-key"
 ensure_secret_from_env_file "CRUSOE_API_KEY" "trustedrouter-crusoe-api-key"
@@ -160,6 +192,34 @@ ensure_secret_from_env_file "MORPH_API_KEY" "trustedrouter-morph-api-key"
 ensure_secret_from_env_file "ATLAS_CLOUD_API_KEY" "trustedrouter-atlas-cloud-api-key"
 ensure_secret_from_env_file "STREAMLAKE_API_KEY" "trustedrouter-streamlake-api-key"
 ensure_secret_from_env_file "NEUROMETRIC_API_KEY" "trustedrouter-neurometric-api-key"
+ensure_secret_from_env_file "ENGY_API_KEY" "trustedrouter-engy-api-key"
+ensure_secret_from_env_file "PEARL_RESEARCH_API_KEY" "trustedrouter-pearl-api-key"
+ensure_secret_from_env_file "STEPFUN_API_KEY" "trustedrouter-stepfun-api-key"
+ensure_secret_from_env_file "RELACE_API_KEY" "trustedrouter-relace-api-key"
+ensure_secret_from_env_file "RECRAFT_API_KEY" "trustedrouter-recraft-api-key"
+ensure_secret_from_env_file "BFL_API_KEY" "trustedrouter-bfl-api-key"
+ensure_secret_from_env_file "DECART_API_KEY" "trustedrouter-decart-api-key"
+ensure_secret_from_env_file "NVIDIA_NIM_API_KEY" "trustedrouter-nvidia-nim-api-key"
+ensure_secret_from_env_file "UPSTAGE_API_KEY" "trustedrouter-upstage-api-key"
+ensure_secret_from_env_file "SAIL_RESEARCH_API_KEY" "trustedrouter-sail-research-api-key"
+ensure_secret_from_env_file "REKA_API_KEY" "trustedrouter-reka-api-key" "REKA_PERSONALAPI_KEY"
+ensure_secret_from_env_file "NEXTBIT_API_KEY" "trustedrouter-nextbit-api-key"
+ensure_secret_from_env_file "AKASHML_API_KEY" "trustedrouter-akashml-api-key"
+ensure_secret_from_env_file "MANCER_API_KEY" "trustedrouter-mancer-api-key"
+ensure_secret_from_env_file "AION_LABS_API_KEY" "trustedrouter-aion-labs-api-key"
+ensure_secret_from_env_file "SAMBANOVA_API_KEY" "trustedrouter-sambanova-api-key"
+ensure_secret_from_env_file "ARCEE_API_KEY" "trustedrouter-arcee-api-key"
+ensure_secret_from_env_file "INCEPTION_API_KEY" "trustedrouter-inception-api-key"
+ensure_secret_from_env_file "IONET_API_KEY" "trustedrouter-io-net-api-key" "IO_NET_API_KEY"
+ensure_secret_from_env_file "SCALEWAY_SECRET_KEY" "trustedrouter-scaleway-api-key"
+ensure_secret_from_env_file "FEATHERLESS_API_KEY" "trustedrouter-featherless-api-key"
+ensure_secret_from_env_file "JINA_API_KEY" "trustedrouter-jina-api-key"
+ensure_secret_from_env_file "SAKANA_API_KEY" "trustedrouter-sakana-api-key"
+ensure_secret_from_env_file \
+  "AZURE_API_KEY" \
+  "trustedrouter-azure-api-key" \
+  "AZURE_FOUNDRY_API_KEY"
+ensure_secret_from_env_file "ZERO_G_API_KEY" "trustedrouter-zero-g-api-key"
 # Dedicated read-only ClickHouse credential for the private provider portal.
 # It is intentionally distinct from trustedrouter-clickhouse-password, which
 # can ingest data. Generate once with:
@@ -190,6 +250,10 @@ ensure_secret_from_prompt_file "trustedrouter-athena-worker-prompt-v1" "$ATHENA_
 
 ensure_secret_from_env_file "TR_SYNTHETIC_MONITOR_API_KEY" "trustedrouter-synthetic-monitor-api-key" "SYNTHETIC_MONITOR_API_KEY"
 ensure_secret_from_env_file "SENTRY_DSN" "trustedrouter-sentry-dsn"
+ensure_secret_from_env_file \
+  "TR_OPS_CHAT_WEBHOOK_SECRET" \
+  "trustedrouter-ops-chat-webhook-secret" \
+  "OPS_SUPPORT_HOOK_SECRET"
 
 # Credentials used by the hourly pricing refresh GHA workflow. Values are
 # pushed to Secret Manager like every other TR secret. The GHA WIF service
@@ -211,6 +275,7 @@ grant_tr_deploy_secret_access() {
 }
 
 grant_tr_deploy_secret_access "trustedrouter-tr-api-key-for-self-heal"
+grant_tr_deploy_secret_access "trustedrouter-ops-chat-webhook-secret"
 grant_tr_deploy_secret_access "trustedrouter-together-api-key"
 grant_tr_deploy_secret_access "trustedrouter-parasail-api-key"
 grant_tr_deploy_secret_access "trustedrouter-lightning-api-key"
@@ -219,6 +284,11 @@ grant_tr_deploy_secret_access "trustedrouter-deepinfra-api-key"
 grant_tr_deploy_secret_access "trustedrouter-phala-confidential-api-key"
 grant_tr_deploy_secret_access "trustedrouter-siliconflow-api-key"
 grant_tr_deploy_secret_access "trustedrouter-venice-api-key"
+grant_tr_deploy_secret_access "trustedrouter-openai-api-key"
+grant_tr_deploy_secret_access "trustedrouter-grok-api-key"
+grant_tr_deploy_secret_access "trustedrouter-deepseek-api-key"
+grant_tr_deploy_secret_access "trustedrouter-mistral-api-key"
+grant_tr_deploy_secret_access "trustedrouter-zai-api-key"
 grant_tr_deploy_secret_access "trustedrouter-cerebras-api-key"
 grant_tr_deploy_secret_access "trustedrouter-kimi-api-key"
 grant_tr_deploy_secret_access "trustedrouter-fireworks-api-key"
@@ -230,6 +300,8 @@ grant_tr_deploy_secret_access "trustedrouter-crusoe-api-key"
 grant_tr_deploy_secret_access "trustedrouter-friendli-api-key"
 grant_tr_deploy_secret_access "trustedrouter-baseten-api-key"
 grant_tr_deploy_secret_access "trustedrouter-telnyx-api-key"
+grant_tr_deploy_secret_access "trustedrouter-veriff-api-key"
+grant_tr_deploy_secret_access "trustedrouter-veriff-shared-secret-key"
 grant_tr_deploy_secret_access "trustedrouter-wafer-api-key"
 grant_tr_deploy_secret_access "trustedrouter-alibaba-api-key"
 grant_tr_deploy_secret_access "trustedrouter-makora-api-key"
@@ -241,7 +313,29 @@ grant_tr_deploy_secret_access "trustedrouter-morph-api-key"
 grant_tr_deploy_secret_access "trustedrouter-atlas-cloud-api-key"
 grant_tr_deploy_secret_access "trustedrouter-streamlake-api-key"
 grant_tr_deploy_secret_access "trustedrouter-neurometric-api-key"
+grant_tr_deploy_secret_access "trustedrouter-engy-api-key"
+grant_tr_deploy_secret_access "trustedrouter-pearl-api-key"
+grant_tr_deploy_secret_access "trustedrouter-stepfun-api-key"
+grant_tr_deploy_secret_access "trustedrouter-relace-api-key"
+grant_tr_deploy_secret_access "trustedrouter-recraft-api-key"
+grant_tr_deploy_secret_access "trustedrouter-bfl-api-key"
+grant_tr_deploy_secret_access "trustedrouter-decart-api-key"
+grant_tr_deploy_secret_access "trustedrouter-nvidia-nim-api-key"
+grant_tr_deploy_secret_access "trustedrouter-io-net-api-key"
+grant_tr_deploy_secret_access "trustedrouter-scaleway-api-key"
+grant_tr_deploy_secret_access "trustedrouter-featherless-api-key"
+grant_tr_deploy_secret_access "trustedrouter-jina-api-key"
+grant_tr_deploy_secret_access "trustedrouter-sakana-api-key"
+# The ten wave-3 keys are runtime-only until authenticated hourly discovery is
+# explicitly approved. Do not grant the GitHub deploy identity access merely
+# because the secrets exist; the attested workload identities hold their own
+# per-secret runtime grants in each cloud.
+grant_tr_deploy_secret_access "trustedrouter-zero-g-api-key"
 grant_tr_deploy_secret_access "trustedrouter-clickhouse-control-read-password"
+grant_tr_deploy_secret_access "trustedrouter-adyen-test-api-key"
+grant_tr_deploy_secret_access "trustedrouter-adyen-test-client-key"
+grant_tr_deploy_secret_access "trustedrouter-adyen-test-hmac-key"
+grant_tr_deploy_secret_access "trustedrouter-adyen-test-reference-key"
 
 # Axiom logging — ship structured logs to a dedicated dataset for
 # slice-and-dice analysis (request_id correlation, rate-limit hits,
@@ -251,28 +345,31 @@ grant_tr_deploy_secret_access "trustedrouter-clickhouse-control-read-password"
 ensure_secret_from_env_file "AXIOM_API_TOKEN" "trustedrouter-axiom-api-token" "AXIOM_TOKEN" "AXIOM_API_KEY"
 require_secret_from_env_file "STRIPE_SECRET_KEY" "trustedrouter-stripe-secret-key" "STRIPE_KEY"
 require_secret_from_env_file "STRIPE_WEBHOOK_SECRET" "trustedrouter-stripe-webhook-secret"
-if ! gc secrets describe trustedrouter-google-ads-conversion-feed-password >/dev/null 2>&1; then
-  ensure_secret_value trustedrouter-google-ads-conversion-feed-password "$(python3 - <<'PY'
-import secrets
-print(secrets.token_urlsafe(48))
-PY
-)"
-  log "generated secret trustedrouter-google-ads-conversion-feed-password"
-fi
 
 # OAuth + SES secrets — independently optional. Push to Secret Manager only
 # when the local keys file (or env) supplies a value; production fail-closed
 # rule treats half-configured providers as a hard error.
 ensure_secret_from_env_file "GOOGLE_CLIENT_ID" "trustedrouter-google-client-id"
 ensure_secret_from_env_file "GOOGLE_CLIENT_SECRET" "trustedrouter-google-client-secret"
+ensure_secret_from_env_file \
+  "GOOGLE_ALIAS_CREDENTIALS_JSON" \
+  "trustedrouter-google-alias-credentials-json"
 ensure_secret_from_env_file "GITHUB_CLIENT_ID" "trustedrouter-github-client-id"
 ensure_secret_from_env_file "GITHUB_CLIENT_SECRET" "trustedrouter-github-client-secret"
+ensure_secret_from_env_file \
+  "GITHUB_ALIAS_CREDENTIALS_JSON" \
+  "trustedrouter-github-alias-credentials-json"
 # SES email credentials only; not used for AWS hosting or failover.
 ensure_secret_from_env_file "AWS_ACCESS_KEY_ID" "trustedrouter-aws-access-key-id"
 ensure_secret_from_env_file "AWS_SECRET_ACCESS_KEY" "trustedrouter-aws-secret-access-key"
 ensure_secret_from_env_file "PAYPAL_CLIENT_ID" "trustedrouter-paypal-client-id"
 ensure_secret_from_env_file "PAYPAL_CLIENT_SECRET" "trustedrouter-paypal-client-secret"
 ensure_secret_from_env_file "PAYPAL_WEBHOOK_ID" "trustedrouter-paypal-webhook-id"
+ensure_secret_from_env_file "ADYEN_API_KEY" "trustedrouter-adyen-test-api-key"
+ensure_secret_from_env_file "ADYEN_CLIENT_KEY" "trustedrouter-adyen-test-client-key"
+ensure_secret_from_env_file "ADYEN_HMAC_KEY" "trustedrouter-adyen-test-hmac-key"
+ensure_secret_from_env_file \
+  "ADYEN_REFERENCE_KEY" "trustedrouter-adyen-test-reference-key"
 if ! gc secrets describe trustedrouter-internal-gateway-token >/dev/null 2>&1; then
   ensure_secret_value trustedrouter-internal-gateway-token "$(python3 - <<'PY'
 import secrets
@@ -281,6 +378,25 @@ PY
 )"
   log "generated secret trustedrouter-internal-gateway-token"
 fi
+if ! gc secrets describe trustedrouter-observer-internal-token >/dev/null 2>&1; then
+  ensure_secret_value trustedrouter-observer-internal-token "$(python3 - <<'PY'
+import secrets
+print(secrets.token_urlsafe(48))
+PY
+)"
+  log "generated secret trustedrouter-observer-internal-token"
+fi
+# A copied billing token would silently undo the surface split. Compare values
+# without logging either secret and fail before the rollout can consume them.
+_observer_token_check="$(gc secrets versions access latest \
+  --secret=trustedrouter-observer-internal-token)"
+_gateway_token_check="$(gc secrets versions access latest \
+  --secret=trustedrouter-internal-gateway-token)"
+if [ "$_observer_token_check" = "$_gateway_token_check" ]; then
+  echo "ERROR: observer internal token must differ from billing gateway token" >&2
+  exit 1
+fi
+unset _observer_token_check _gateway_token_check
 
 # Runtime-SA project-level IAM bindings live in infra.sh (Phase 1
 # bootstrap, run as a project Owner). Calling projects.setIamPolicy

@@ -4,75 +4,43 @@ This outbox is separate from the public/provider benchmark stream because its
 tables have different privacy and retention boundaries.  Raw workspace and API
 key identifiers never leave Spanner: ClickHouse receives stable one-way
 surrogates and content-free request metadata only.
+
+The constants and the payload projection are backend-neutral and now live in
+:mod:`trusted_router.storage_operational_analytics` so the Postgres/DSQL
+adapter can share them without importing from a ``storage_gcp_*`` module.
+They are re-exported here so every existing import site keeps working
+unchanged.  What stays is the Spanner-specific writer.
 """
 
 from __future__ import annotations
 
-import hashlib
+import datetime as dt
 from typing import Any
 
 from trusted_router.storage_gcp_codec import json_body
 from trusted_router.storage_models import Generation, SyntheticProbeSample
+from trusted_router.storage_operational_analytics import (
+    ACTIVITY_EVENT_KIND,
+    CLIENT_EVENTS_EVENT_KIND,
+    OPERATIONAL_ANALYTICS_OUTBOX_SHARDS,
+    SYNTHETIC_EVENT_KIND,
+    activity_payload,
+    analytics_surrogate,
+    operational_analytics_shard,
+    synthetic_payload,
+)
 
-OPERATIONAL_ANALYTICS_OUTBOX_SHARDS = 32
-ACTIVITY_EVENT_KIND = "activity"
-SYNTHETIC_EVENT_KIND = "synthetic"
-
-
-def operational_analytics_shard(
-    event_id: str,
-    *,
-    shard_count: int = OPERATIONAL_ANALYTICS_OUTBOX_SHARDS,
-) -> int:
-    if shard_count < 1:
-        raise ValueError("shard_count must be positive")
-    digest = hashlib.blake2b(event_id.encode("utf-8"), digest_size=8).digest()
-    return int.from_bytes(digest, "big") % shard_count
-
-
-def analytics_surrogate(namespace: str, value: str) -> str:
-    """Return a stable non-reversible identifier for private analytics."""
-    material = f"trustedrouter:{namespace}:{value}".encode()
-    return hashlib.sha256(material).hexdigest()
-
-
-def activity_payload(generation: Generation) -> dict[str, Any]:
-    """Project a generation onto the content-free tenant activity schema."""
-    return {
-        "generation_id": generation.id,
-        "request_id": generation.request_id,
-        "tenant_id": analytics_surrogate("workspace", generation.workspace_id),
-        "key_id": analytics_surrogate("api-key", generation.key_hash),
-        "model": generation.model,
-        "provider": generation.provider or "",
-        "provider_name": generation.provider_name,
-        "app": generation.app,
-        "tokens_prompt": generation.tokens_prompt,
-        "tokens_completion": generation.tokens_completion,
-        "cached_input_tokens": generation.cached_input_tokens,
-        "reasoning_tokens": generation.reasoning_tokens,
-        "total_cost_microdollars": generation.total_cost_microdollars,
-        "usage_type": str(generation.usage_type),
-        "speed_tokens_per_second": generation.speed_tokens_per_second,
-        "finish_reason": generation.finish_reason,
-        "status": generation.status,
-        "streamed": generation.streamed,
-        "usage_estimated": generation.usage_estimated,
-        "elapsed_milliseconds": generation.elapsed_milliseconds,
-        "first_token_milliseconds": generation.first_token_milliseconds,
-        "ttfb_milliseconds": generation.ttfb_milliseconds,
-        "region": generation.region,
-        "user": generation.user,
-        "session_id": generation.session_id,
-        "http_referer": generation.http_referer,
-        "app_categories": list(generation.app_categories),
-        "tags": dict(generation.tags),
-        "created_at": generation.created_at,
-    }
-
-
-def synthetic_payload(sample: SyntheticProbeSample) -> dict[str, Any]:
-    return sample.public_dict()
+__all__ = [
+    "ACTIVITY_EVENT_KIND",
+    "CLIENT_EVENTS_EVENT_KIND",
+    "OPERATIONAL_ANALYTICS_OUTBOX_SHARDS",
+    "SYNTHETIC_EVENT_KIND",
+    "SpannerOperationalAnalyticsOutbox",
+    "activity_payload",
+    "analytics_surrogate",
+    "operational_analytics_shard",
+    "synthetic_payload",
+]
 
 
 class SpannerOperationalAnalyticsOutbox:
@@ -131,6 +99,73 @@ class SpannerOperationalAnalyticsOutbox:
             event_id=sample.id,
             payload=synthetic_payload(sample),
         )
+
+    def enqueue_client_events(self, payload: dict[str, Any]) -> None:
+        self._enqueue(
+            event_kind=CLIENT_EVENTS_EVENT_KIND,
+            event_id=f"{payload['tenant_id']}:{payload['batch_id']}",
+            payload=payload,
+        )
+
+    def oldest_enqueued_at(self, *, timeout: float | None = None) -> dt.datetime | None:
+        """Commit timestamp of the oldest undelivered row, or ``None`` if empty.
+
+        Spanner's column is ``commit_ts``, not ``enqueued_at`` -- the method is
+        named for the contract it feeds (``analytics.oldest_enqueued_at`` in
+        /status.json) rather than for one backend's column, so the publisher
+        can hold either outbox without knowing which cloud it is on.
+
+        Per shard rather than one global ``ORDER BY commit_ts LIMIT 1``: the
+        table's primary key leads with ``shard``, so the global form is a scan
+        of the whole outbox and gets more expensive exactly as the backlog it
+        is measuring grows. Each shard read is a seek on the key prefix, and
+        the oldest of the 32 heads is the oldest row in the table.
+
+        This is the same read the Spanner drain performs
+        (``clickhouse.ingest_operational_outbox.oldest_commit_ts``); keeping
+        them identical is what stops the published number and the drain's own
+        ``backlog_alarm`` from meaning different things.
+
+        ``timeout`` bounds the one statement, which is the whole call. This
+        runs on the public /status.json path, in an async handler, where a
+        blocking wait stops the event loop rather than one thread. Running out
+        raises rather than returning a partial answer: a minimum over the
+        shards that happened to reply before the clock expired is not the
+        oldest row, it is a smaller number that would publish as better health.
+        """
+        # ONE round trip, not 32. Each arm is still a seek on the key prefix
+        # (the primary key leads with `shard`), so this keeps the cost the
+        # per-shard form was chosen for while paying the network once.
+        #
+        # Measured against production Spanner on 2026-08-17, the 32-statement
+        # loop this replaces took 9.76s -- 2.22s for the first shard, ~0.25s
+        # for each of the rest -- against a 3.0s budget. It therefore raised
+        # TimeoutError on every call, and /status.json published
+        # `{"available": false, "reason": "unreachable"}` for a cloud whose
+        # outbox was in fact EMPTY, i.e. whose drain was perfectly healthy. The
+        # same sweep as one statement: 2.93s cold, 1.01s warm.
+        #
+        # `MIN(commit_ts)` over the whole table would be one round trip too and
+        # is the wrong fix: no shard predicate means a scan, which gets slower
+        # exactly as the backlog it measures grows.
+        arms = " UNION ALL ".join(
+            "SELECT (SELECT commit_ts FROM tr_operational_analytics_outbox "  # noqa: S608
+            f"WHERE shard={shard} ORDER BY commit_ts LIMIT 1) AS commit_ts"
+            for shard in range(self._shard_count)
+        )
+        # Interpolation is safe and unavoidable here: shard numbers come from
+        # range(self._shard_count), never from a caller, and a query parameter
+        # cannot stand in for the literal each arm seeks on.
+        sql = f"SELECT MIN(commit_ts) FROM ({arms})"  # noqa: S608
+        kwargs: dict[str, Any] = {} if timeout is None else {"timeout": timeout}
+        with self._database.snapshot() as snapshot:
+            rows = list(snapshot.execute_sql(sql, **kwargs))
+        if not rows or rows[0][0] is None:
+            return None
+        oldest: dt.datetime = rows[0][0]
+        if oldest.tzinfo is None:
+            oldest = oldest.replace(tzinfo=dt.UTC)
+        return oldest
 
     def _enqueue(
         self,

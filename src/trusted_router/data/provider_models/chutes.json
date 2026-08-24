@@ -2,7 +2,7 @@
   "_about": "Provider-native Chutes TEE model catalog. Refreshed hourly from the authenticated Chutes OpenAI-compatible models API.",
   "provider": "chutes",
   "source": "https://llm.chutes.ai/v1/models",
-  "generated_at": "2026-08-01T23:03:20Z",
+  "generated_at": "2026-08-24T10:39:58Z",
   "price_scale": "microdollars_per_million",
   "model_count": 13,
   "models": [
@@ -33,7 +33,7 @@
       ],
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 1000000,
-      "cached_input_token_price_per_m": 500000
+      "cached_input_token_price_per_m": 100000
     },
     {
       "display_name": "google/gemma-4-31B-turbo",
@@ -63,7 +63,7 @@
       ],
       "input_token_price_per_m": 120000,
       "output_token_price_per_m": 370000,
-      "cached_input_token_price_per_m": 60000
+      "cached_input_token_price_per_m": 12000
     },
     {
       "display_name": "MiniMaxAI/MiniMax-M2.5",
@@ -117,7 +117,7 @@
       "context_length": 131072,
       "input_token_price_per_m": 24500,
       "output_token_price_per_m": 97800,
-      "cached_input_token_price_per_m": 12250
+      "cached_input_token_price_per_m": 2450
     },
     {
       "display_name": "moonshotai/Kimi-K2.5",
@@ -180,9 +180,9 @@
         "tools",
         "reasoning"
       ],
-      "input_token_price_per_m": 660000,
-      "output_token_price_per_m": 3500000,
-      "cached_input_token_price_per_m": 330000
+      "input_token_price_per_m": 580000,
+      "output_token_price_per_m": 3400000,
+      "cached_input_token_price_per_m": 58000
     },
     {
       "display_name": "Qwen/Qwen3-235B-A22B-Thinking-2507",
@@ -211,7 +211,7 @@
       ],
       "input_token_price_per_m": 298900,
       "output_token_price_per_m": 1195700,
-      "cached_input_token_price_per_m": 149450
+      "cached_input_token_price_per_m": 29890
     },
     {
       "display_name": "Qwen/Qwen3-32B",
@@ -240,7 +240,7 @@
       ],
       "input_token_price_per_m": 104000,
       "output_token_price_per_m": 416000,
-      "cached_input_token_price_per_m": 52000
+      "cached_input_token_price_per_m": 10400
     },
     {
       "display_name": "Qwen/Qwen3.5-397B-A17B",
@@ -270,7 +270,7 @@
       ],
       "input_token_price_per_m": 450000,
       "output_token_price_per_m": 3000000,
-      "cached_input_token_price_per_m": 225000
+      "cached_input_token_price_per_m": 45000
     },
     {
       "display_name": "Qwen/Qwen3.6-27B",
@@ -300,7 +300,7 @@
       ],
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 2000000,
-      "cached_input_token_price_per_m": 150000
+      "cached_input_token_price_per_m": 30000
     },
     {
       "display_name": "zai-org/GLM-5",
@@ -361,7 +361,7 @@
       ],
       "input_token_price_per_m": 980000,
       "output_token_price_per_m": 3080000,
-      "cached_input_token_price_per_m": 490000
+      "cached_input_token_price_per_m": 98000
     },
     {
       "display_name": "zai-org/GLM-5.2",
@@ -390,7 +390,7 @@
       ],
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 3950000,
-      "cached_input_token_price_per_m": 625000
+      "cached_input_token_price_per_m": 125000
     }
   ]
 }

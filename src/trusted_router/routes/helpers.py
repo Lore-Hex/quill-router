@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import threading
 from json import JSONDecodeError
 from typing import Any
 
@@ -13,6 +15,12 @@ from trusted_router.money import (
     token_cost_microdollars,
 )
 from trusted_router.pricing import resolve_request_rates
+from trusted_router.storage_models import RateLimitHit
+from trusted_router.storage_rate_limits import InMemoryRateLimits
+
+log = logging.getLogger(__name__)
+
+_CLIENT_EVENT_RATE_LIMITS = InMemoryRateLimits(lock=threading.RLock())
 
 
 async def json_body(request: Request) -> dict[str, Any]:
@@ -23,6 +31,41 @@ async def json_body(request: Request) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise api_error(400, "JSON body must be an object", "bad_request")
     return body
+
+
+async def read_json_body_bounded(request: Request, max_bytes: int) -> bytes:
+    """Read a request stream without ever buffering more than the allowed body."""
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > max_bytes:
+            raise api_error(413, "Request body is too large", "payload_too_large")
+        body.extend(chunk)
+    return bytes(body)
+
+
+def enforce_rate_limit(
+    namespace: str,
+    subject: str,
+    limit: int,
+    *,
+    window_seconds: int,
+) -> RateLimitHit | None:
+    """Apply a bounded process-local rate limit, failing open on limiter errors."""
+    if limit <= 0:
+        return None
+    try:
+        return _CLIENT_EVENT_RATE_LIMITS.hit(
+            namespace=namespace,
+            subject=subject,
+            limit=limit,
+            window_seconds=window_seconds,
+        )
+    except Exception:  # noqa: BLE001 - telemetry must never depend on its limiter.
+        log.exception(
+            "client_events.rate_limit_unavailable",
+            extra={"namespace": namespace},
+        )
+        return None
 
 
 def cost_microdollars(

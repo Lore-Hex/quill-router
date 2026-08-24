@@ -20,6 +20,7 @@ import re
 
 # Display name on docs.z.ai → OR-canonical id.
 _NAME_TO_OR_ID = {
+    "GLM-5.2": "z-ai/glm-5.2",
     "GLM-5.1": "z-ai/glm-5.1",
     "GLM-5": "z-ai/glm-5",
     "GLM-5-Turbo": "z-ai/glm-5-turbo",
@@ -43,6 +44,16 @@ _NAME_TO_OR_ID = {
     "GLM-4.6V": "z-ai/glm-4.6v",
     "GLM-4.5V": "z-ai/glm-4.5v",
 }
+
+
+def _canonical_id(name: str) -> str | None:
+    mapped = _NAME_TO_OR_ID.get(name)
+    if mapped is not None:
+        return mapped
+    normalized = name.strip().casefold()
+    if not normalized.startswith("glm-"):
+        return None
+    return f"z-ai/{normalized}"
 
 
 _DOLLAR_RE = re.compile(r"\$([\d.]+)")
@@ -72,7 +83,7 @@ def parse(md: str) -> dict:
         if not cells:
             continue
         name = cells[0]
-        or_id = _NAME_TO_OR_ID.get(name)
+        or_id = _canonical_id(name)
         if or_id is None:
             continue
         if or_id in out:

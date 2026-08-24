@@ -39,9 +39,12 @@ ALLOWED = {
     "storage_gcp_authorize.py",
     "storage_gcp_google_ads.py",
     "storage_gcp_io.py",
+    "storage_gcp_regional_quota.py",
     "storage_gcp_settle_outbox.py",
     "storage_gcp_synthetic_rollups.py",
     "storage_gcp_synthetic_index.py",
+    # Fixed-cluster Bigtable CAS implementation of the regional storage port.
+    "regional_quota_ledger.py",
     # The two explicit cloud ports. Both import lazily so a non-GCP deployment
     # need not install the Google libraries at all.
     "storage_errors.py",
@@ -54,9 +57,15 @@ ALLOWED = {
     # PROVIDER. Routing to Vertex requires Google credentials no matter which
     # cloud we run on, exactly as routing to OpenAI requires an OpenAI key.
     "providers.py",
+    # Google Ads reporting is a vendor-product adapter. google.auth mints the
+    # scoped OAuth token; aggregate reporting itself uses the portable REST API.
+    "google_ads_reporting.py",
     # boto3 talks to Amazon SES to send transactional mail. SES is reachable
     # from any cloud; this is a vendor choice, not a deployment coupling.
     "services/email.py",
+    # SES account suppression is the matching vendor-side feedback adapter.
+    # It keeps hard bounces and complaints blocked across every sender.
+    "services/ses_suppression.py",
 }
 
 CLOUD_SDK_ROOTS = {"google", "boto3", "botocore", "azure"}

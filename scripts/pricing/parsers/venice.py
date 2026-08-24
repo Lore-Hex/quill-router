@@ -1,4 +1,5 @@
 """Venice pricing parser for block and markdown-table layouts."""
+
 from __future__ import annotations
 
 import re
@@ -21,6 +22,7 @@ _NAME_TO_OR_ID = {
     "qwen3-next-80b": "qwen/qwen3-next-80b",
     "qwen3-vl-235b-a22b": "qwen/qwen3-vl-235b-a22b",
     "qwen3-coder-480b-a35b-instruct-turbo": "qwen/qwen3-coder-480b-a35b-instruct-turbo",
+    "nvidia-nemotron-3-5-lightning-30b-a3b": "nvidia/nemotron-3.5-lightning",
 }
 
 
@@ -28,10 +30,10 @@ _NAME_TO_OR_ID = {
 #   | Display | `native-id` | $X.XX | $Y.YY | $Z.ZZ | ... |
 # Cache-read column may be "-" or "$N.NN".
 _ROW_RE = re.compile(
-    r"\|[^|\n]*\|\s*`([\w.\-]+)`\s*\|"      # native id
-    r"\s*\$([\d.]+)\s*\|"                     # input
-    r"\s*\$([\d.]+)\s*\|"                     # output
-    r"\s*(?:\$([\d.]+)|-)\s*\|"               # optional cache read (or "-")
+    r"\|[^|\n]*\|\s*`([\w.\-]+)`\s*\|"  # native id
+    r"\s*\$([\d.]+)\s*\|"  # input
+    r"\s*\$([\d.]+)\s*\|"  # output
+    r"\s*(?:\$([\d.]+)|-)\s*\|"  # optional cache read (or "-")
 )
 
 _BLOCK_RE = re.compile(

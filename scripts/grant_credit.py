@@ -1,6 +1,8 @@
 """Grant prepaid credit through the authoritative typed ledger.
 
 Dry-run is the default. ``--event-id`` is required and makes retries idempotent.
+Support grants must not unlock identity verification unless the operator passes
+``--count-toward-lifetime-topup`` explicitly.
 
 Example:
   uv run python scripts/grant_credit.py \
@@ -27,7 +29,7 @@ from trusted_router.storage import create_store
 from trusted_router.typed_balance import LiveCreditSummary, live_credit_summary
 
 
-def _select_workspace(store: Any, email: str, workspace_id: str | None) -> Any:
+def _select_workspace(store: Any, email: str, workspace_id: str | None) -> tuple[Any, Any]:
     user = store.find_user_by_email(email)
     if user is None:
         raise ValueError(f"no user found for {email}")
@@ -36,12 +38,12 @@ def _select_workspace(store: Any, email: str, workspace_id: str | None) -> Any:
         matches = [workspace for workspace in workspaces if workspace.id == workspace_id]
         if len(matches) != 1:
             raise ValueError("workspace is not accessible to that user")
-        return matches[0]
+        return user, matches[0]
     if len(workspaces) == 1:
-        return workspaces[0]
+        return user, workspaces[0]
     personal = [workspace for workspace in workspaces if workspace.name == "Personal Workspace"]
     if len(personal) == 1:
-        return personal[0]
+        return user, personal[0]
     raise ValueError("user has multiple workspaces; pass --workspace-id explicitly")
 
 
@@ -60,6 +62,7 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
     parser.add_argument("--amount", required=True, help="positive USD amount")
     parser.add_argument("--event-id", required=True)
     parser.add_argument("--workspace-id")
+    parser.add_argument("--count-toward-lifetime-topup", action="store_true")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
 
@@ -71,7 +74,7 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
         if amount <= 0:
             raise ValueError("amount must be positive")
         active_store = create_store(Settings()) if store is None else store
-        workspace = _select_workspace(active_store, args.email, args.workspace_id)
+        user, workspace = _select_workspace(active_store, args.email, args.workspace_id)
         before = live_credit_summary(workspace.id, store=active_store)
         if before is None:
             raise ValueError("authoritative credit account not found")
@@ -86,7 +89,12 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
         print("DRY-RUN: no credit granted; pass --apply after reviewing the target")
         return 0
 
-    granted = active_store.credit_workspace_typed_direct(workspace.id, amount, args.event_id)
+    granted = active_store.credit_workspace_typed_direct(
+        workspace.id,
+        amount,
+        args.event_id,
+        lifetime_topup_user_id=(user.id if args.count_toward_lifetime_topup else None),
+    )
     after = live_credit_summary(workspace.id, store=active_store)
     if after is None:
         print("ERROR: authoritative credit account disappeared after grant", file=sys.stderr)

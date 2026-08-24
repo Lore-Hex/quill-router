@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from trusted_router.catalog import endpoints_for_model
 from trusted_router.dashboard import PUBLIC_PAGES
 from trusted_router.storage import STORE
 
@@ -19,15 +20,24 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/docs/synth": "Run a panel of models inside the attested gateway.",
         "/synth": "Synthesize many models into one perfect frontier answer.",
         "/resources": "Guides, comparisons, privacy references",
+        "/customers/robot-robot-human": "From first call to production-scale legal AI in three weeks.",
         "/careers": "Work on attested AI routing",
         "/blog": "TrustedRouter blog",
+        "/blog/they-are-still-training-on-your-data": (
+            "They Are Still Training on Your Data"
+        ),
+        "/blog/no-log-is-a-promise-attestation-is-proof": (
+            "ZDR is a vague promise. Attestation is precise proof"
+        ),
         "/blog/fusion-evals-open-source": "New SOTA: TrustedRouter Synth beats Fable and Frontier",
+        "/blog/sign-in-with-trustedrouter": "Sign in with TrustedRouter",
+        "/sign-in-with-trustedrouter": "A complete user-funded AI flow.",
         "/security": "No prompt or output logs",
         "/eu": "Use the EU gateway and an EU-focused model alias.",
         # SEO landing pages — each targets a high-intent buyer query.
         # The marker is a load-bearing headline from the page so a
         # silent template breakage gets caught here.
-        "/openrouter-alternative": "An OpenRouter alternative built around verifiable privacy.",
+        "/openrouter-alternative": "Switch from OpenRouter in one base URL.",
         "/private-llm-api": 'A private LLM API where "private" means cryptographically verified.',
         "/hipaa-llm-api": "The LLM API whose privacy posture is verifiable",
         "/llm-zero-data-retention": "Zero data retention as a verifiable property",
@@ -36,6 +46,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/litellm-alternative": "LiteLLM lets you self-host.",
         "/portkey-alternative": "Portkey logs every request.",
         "/confidential-computing-llm": "Run LLM inference behind hardware attestation",
+        "/badge": "Show where your customers' AI data goes.",
         "/tinfoil-alternative": "Same verifiable-privacy bet.",
         "/openai-compatible-llm-api": "Keep the SDK. Change the base URL.",
         "/kimi-k2-api": "Kimi K2 with provider fallback and measured routes.",
@@ -56,7 +67,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/llm-api-for-law-firms": "When the gateway operator provably cannot read the prompt, your privilege analysis starts from different facts.",
         "/llm-data-residency": "Residency pins where inference runs; attestation proves who can read the prompt.",
         "/no-log-llm-api": "No prompt logs, enforced by code you can read and attestation you can check.",
-        "/anonymous-llm-api": "Fund 220+ model routes from a crypto wallet, no card and no KYC, then verify for yourself that prompts are not stored.",
+        "/anonymous-llm-api": "Fund 220+ model routes from a crypto wallet, no card and no KYC, then verify the real-time content-stateless path.",
         "/cline-api-provider": "Your coding agent streams your entire repo through its API provider, so pick one you can verify.",
         "/sillytavern-api": "Point SillyTavern at an API that never logs prompts or outputs and proves what it runs.",
         "/aws-bedrock-alternative": "Keep the privacy you chose Bedrock for, without the quota wall.",
@@ -64,6 +75,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/gpt-oss-120b-api": "gpt-oss-120b, served fast on Cerebras and attested down to the image digest.",
         "/eu-ai-act-llm-compliance": "Your EU AI Act compliance file depends on facts from your LLM API vendor, and attestation makes those facts checkable.",
         "/x402-llm-api": "Your agent gets a 402, signs a payment, retries the call, and reads the completion.",
+        "/confidential-cowork": "Confidentiality cannot be clicked away",
     }
 
     for path, marker in markers.items():
@@ -81,6 +93,22 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         assert 'property="og:title"' in response.text, f"{path} missing og:title"
         assert 'property="og:image"' in response.text, f"{path} missing og:image"
         assert 'name="twitter:card"' in response.text, f"{path} missing twitter:card"
+
+
+def test_rrh_customer_story_scopes_privacy_claims_and_uses_tailored_og(
+    client: TestClient,
+) -> None:
+    response = client.get("/customers/robot-robot-human")
+
+    assert response.status_code == 200
+    assert "Gateway attestation and provider guarantees answer different questions." in response.text
+    assert "TrustedRouter did not inspect prompt or output content." in response.text
+    assert "independently verified E2E routes" in response.text
+    assert "not a single page ever leaving" not in response.text.lower()
+    card = "https://trustedrouter.com/static/og/rrh-case-study.png"
+    assert f'property="og:image" content="{card}"' in response.text
+    assert f'name="twitter:image" content="{card}"' in response.text
+    assert client.get("/static/og/rrh-case-study.png").status_code == 200
 
 
 def test_public_pages_never_weaken_content_handling_to_a_default(
@@ -117,6 +145,30 @@ def test_public_pages_never_weaken_content_handling_to_a_default(
             assert claim not in rendered, f"{path} contains weak claim {claim!r}"
 
 
+def test_signup_grant_amount_is_not_advertised(client: TestClient) -> None:
+    for path in [
+        "/",
+        "/pricing",
+        "/sign-in-with-trustedrouter",
+        "/blog/sign-in-with-trustedrouter",
+    ]:
+        response = client.get(path)
+        assert response.status_code == 200, f"{path} returned {response.status_code}"
+        rendered = response.text.lower()
+        assert "$0.10" not in rendered
+        assert "$0.30" not in rendered
+        assert "ten cents" not in rendered
+
+    for path in [
+        Path("docs/sign-in-with-trustedrouter.md"),
+        Path("src/trusted_router/templates/console/welcome.html"),
+    ]:
+        source = path.read_text().lower()
+        assert "$0.10" not in source
+        assert "$0.30" not in source
+        assert "ten cents" not in source
+
+
 def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
     paths = [
         "/compare/openrouter",
@@ -126,8 +178,11 @@ def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
         "/docs/synth",
         "/synth",
         "/blog",
+        "/blog/they-are-still-training-on-your-data",
+        "/blog/no-log-is-a-promise-attestation-is-proof",
         "/blog/fusion-evals-open-source",
         "/security",
+        "/badge",
         "/eu",
         "/models",
     ]
@@ -138,10 +193,91 @@ def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
         assert slash_response.status_code == 200
 
 
-def test_public_pricing_matches_five_percent_billing_policy(client: TestClient) -> None:
+def test_confidential_ai_badge_is_embeddable_and_scoped(client: TestClient) -> None:
+    response = client.get("/badge")
+    assert response.status_code == 200
+    assert "Confidential AI" in response.text
+    assert 'model="trustedrouter/confidential"' in response.text
+    assert 'provider.min_privacy="confidential"' in response.text
+    assert "not a SOC 2, ISO 27001, HIPAA, or product-wide certification" in response.text
+    assert "https://trustedrouter.com/static/badges/confidential-ai-light.svg" in response.text
+    assert "https://trustedrouter.com/static/badges/confidential-ai-dark.svg" in response.text
+    assert "certified confidential" not in response.text.casefold()
+    card = "https://trustedrouter.com/static/og/confidential-ai-badge.png"
+    assert f'property="og:image" content="{card}"' in response.text
+    assert f'name="twitter:image" content="{card}"' in response.text
+    assert "TrustedRouter Confidential AI trust seal with hardware attestation" in response.text
+    assert client.get("/static/og/confidential-ai-badge.png").status_code == 200
+
+    for asset in (
+        "/static/badges/confidential-ai-light.svg",
+        "/static/badges/confidential-ai-dark.svg",
+        "/static/badges/confidential-ai-seal.svg",
+        "/static/badges/confidential-ai-light.png",
+        "/static/badges/confidential-ai-dark.png",
+        "/static/badges/confidential-ai-seal.png",
+    ):
+        badge = client.get(asset)
+        assert badge.status_code == 200, asset
+        assert "public" in badge.headers["cache-control"]
+
+
+def test_confidential_cowork_is_self_serve_and_fail_closed(client: TestClient) -> None:
+    response = client.get("/confidential-cowork")
+
+    assert response.status_code == 200
+    assert "Confidential Cowork by TrustedRouter" in response.text
+    assert "Confidential-Cowork-macOS-universal.dmg" in response.text
+    assert "trustedrouter/confidential" in response.text
+    assert "searchable catalog of specific models and providers" in response.text
+    assert "Default route</span><strong>trustedrouter/confidential" in response.text
+    assert "Data collection</span><strong>deny" in response.text
+    assert "United States or European Union" in response.text
+    assert "No eligible confidential provider means no model request" in response.text
+    assert "Plan an enterprise deployment" in response.text
+    screenshot = client.get("/static/confidential-cowork-desktop.png")
+    assert screenshot.status_code == 200
+    assert screenshot.headers["content-type"] == "image/png"
+
+    canonical_mark = 'd="M1.4 7.5H6.5L11 12M1.4 16.5H4L8.5 12M1.4 12H15.5"'
+    for asset in (
+        "/static/badges/confidential-ai-light.svg",
+        "/static/badges/confidential-ai-dark.svg",
+        "/static/badges/confidential-ai-seal.svg",
+    ):
+        assert canonical_mark in client.get(asset).text
+
+    homepage = client.get("/")
+    assert 'href="/badge">Confidential AI badge</a>' in homepage.text
+
+    security = client.get("/security")
+    assert 'href="/badge">Get the badge</a>' in security.text
+    assert "Chutes requests are encrypted to the measured GPU workload" in security.text
+    assert "nras.attestation.nvidia.com" in security.text
+    assert "api.trustedservices.intel.com" in security.text
+    assert "never falls back to plaintext Chutes transport" in security.text
+
+
+def test_blog_has_no_phd_hiring_banner(client: TestClient) -> None:
+    for path in [
+        "/blog",
+        "/blog/they-are-still-training-on-your-data",
+        "/blog/no-log-is-a-promise-attestation-is-proof",
+        "/blog/sign-in-with-trustedrouter",
+    ]:
+        response = client.get(path)
+        assert response.status_code == 200
+        assert "hiring-banner" not in response.text
+        assert "PhD researchers" not in response.text
+        assert "We're hiring" not in response.text
+
+
+def test_public_pricing_matches_five_point_five_percent_billing_policy(
+    client: TestClient,
+) -> None:
     pricing = client.get("/pricing")
     assert pricing.status_code == 200
-    assert "provider cost + 5%" in pricing.text
+    assert "provider cost + 5.5%" in pricing.text
     assert "direct provider quote + 20%" in pricing.text
     assert "Cheaper. Smarter. More reliable. More secure." in pricing.text
     assert "5.5% pay as you go fee on credit purchases" in pricing.text
@@ -150,15 +286,40 @@ def test_public_pricing_matches_five_percent_billing_policy(client: TestClient) 
 
     comparison = client.get("/compare/openrouter")
     assert comparison.status_code == 200
-    assert "5% on prepaid model cost" in comparison.text
-    assert "5.5% on credit purchases" in comparison.text
-    assert "Provider cost + 5% markup" in comparison.text
+    assert "5.5% on prepaid model cost" in comparison.text
+    # The fee bases differ and the page now says so: OpenRouter's 5.5%
+    # ($0.80 min) applies when buying credits with inference at list price;
+    # ours applies to prepaid model cost.
+    assert "5.5% ($0.80 min) buying credits; inference at list price" in comparison.text
+    assert "Provider cost + 5.5% markup" in comparison.text
     assert "10% markup" not in comparison.text
 
     llms = client.get("/llms.txt")
     assert llms.status_code == 200
-    assert "Text and embedding prepaid pricing is provider cost + 5%" in llms.text
+    assert "Text and embedding prepaid pricing is provider cost + 5.5%" in llms.text
     assert "Video generation is the direct provider quote + 20%" in llms.text
+
+
+def test_paid_search_landing_pages_drive_a_runnable_first_call(
+    client: TestClient,
+) -> None:
+    openai_page = client.get("/openai-compatible-llm-api")
+    assert openai_page.status_code == 200
+    assert "Keep the SDK. Change the base URL." in openai_page.text
+    assert "import os" in openai_page.text
+    assert 'model="trustedrouter/cheap"' in openai_page.text
+    assert 'data-action="copy-code"' in openai_page.text
+    assert openai_page.text.count("Create my API key") == 2
+    assert "No card required." in openai_page.text
+    assert '<a class="btn primary" href="/docs">' not in openai_page.text
+
+    migration_page = client.get("/openrouter-alternative")
+    assert migration_page.status_code == 200
+    assert "Switch from OpenRouter in one base URL." in migration_page.text
+    assert "import os" in migration_page.text
+    assert migration_page.text.count("Create my API key") == 2
+    assert "No card required." in migration_page.text
+    assert '<a class="btn primary" href="/chat">' not in migration_page.text
 
 
 def test_agent_discovery_surfaces_model_advisor_skill(client: TestClient) -> None:
@@ -205,8 +366,11 @@ def test_choose_page_embeds_the_triangle_app(client: TestClient) -> None:
     assert "Trusted Execution Environment" in response.text
     assert "Tinfoil first" not in response.text
     assert "providers such as" not in response.text
-    assert "trustedrouter/e2e" in response.text
+    assert "trustedrouter/confidential" in response.text
+    assert "trustedrouter/fast" in response.text
+    assert "trustedrouter/eu" in response.text
     assert "trustedrouter/synth" in response.text
+    assert "trustedrouter/advisor" in response.text
     # Must unfurl with the tailored triangle social card (the PNG is checked
     # into static/og/, so _og_image_url resolves it rather than the default).
     assert 'property="og:title"' in response.text
@@ -220,10 +384,13 @@ def test_choose_app_static_asset_is_served(client: TestClient) -> None:
     response = client.get("/static/choose-app.html")
 
     assert response.status_code == 200
+    assert '<meta name="robots" content="noindex,follow">' in response.text
+    assert '<link rel="canonical" href="https://trustedrouter.com/choose">' in response.text
     assert "Choose with route-level facts." in response.text
     assert "Upstream privacy floor" in response.text
+    assert 'id="providerCount"' in response.text
     assert "/static/choose-app.css?v=2" in response.text
-    assert "/static/choose-app.js?v=2" in response.text
+    assert "/static/choose-app.js?v=3" in response.text
     assert "fonts.googleapis.com" not in response.text
     # Privacy floor defaults to Open (any provider), not ZDR.
     assert '<option value="0" selected>' in response.text
@@ -311,22 +478,26 @@ def test_public_models_page_does_not_require_api_key(client: TestClient) -> None
     assert "trustedrouter/auto" in response.text
     assert "trustedrouter/eu" in response.text
     assert "API JSON remains" in response.text
-    assert '<span class="pill" title="kimi">Kimi</span>' in response.text
-    assert '<span class="pill" title="parasail">Parasail</span>' in response.text
-    assert '<span class="pill" title="tinfoil">Tinfoil</span>' in response.text
+    for slug, name in (("kimi", "Kimi"), ("parasail", "Parasail"), ("tinfoil", "Tinfoil")):
+        assert f'href="/providers/{slug}" title="{slug}"' in response.text
+        assert f'src="/static/provider-logos/{slug}.png"' in response.text
+        assert f"<span>{name}</span>" in response.text
     assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
     assert "IQ 116" in response.text
 
 
 def test_public_model_detail_lists_distinct_serving_providers(client: TestClient) -> None:
-    response = client.get("/models/moonshotai/kimi-k2.6")
+    model_id = "moonshotai/kimi-k2.6"
+    response = client.get(f"/models/{model_id}")
 
     assert response.status_code == 200
     assert "Providers serving this model" in response.text
     assert "Endpoints</th>" in response.text
     assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
     assert "IQ 116" in response.text
-    for provider in ["kimi", "parasail", "together", "tinfoil", "novita"]:
+    expected_providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
+    assert "kimi" in expected_providers
+    for provider in expected_providers:
         assert f'title="{provider}"' in response.text
 
 
@@ -366,8 +537,14 @@ def test_public_kimi_k3_page_separates_router_attestation_from_provider_e2ee(
     assert "<th>TR router attested</th>" in detail.text
     assert "<th>Attested</th>" not in detail.text
     assert "Provider policy" in detail.text
-    assert "privacy unknown" in detail.text
-    assert "provider E2EE" not in detail.text
+    moonshot_row = re.search(
+        r'<tr>\s*<td><a[^>]+href="/providers/kimi".*?</tr>',
+        detail.text,
+        flags=re.DOTALL,
+    )
+    assert moonshot_row is not None
+    assert "privacy unknown" in moonshot_row.group(0)
+    assert "provider E2EE" not in moonshot_row.group(0)
 
 
 def test_single_provider_model_shows_provider_posture_not_variation(
@@ -413,7 +590,7 @@ def test_public_meta_model_detail_renders_orchestration_components(client: TestC
     assert rolling.status_code == 200
     assert '<span class="pill">advisor</span>' in rolling.text
     assert '<span class="pill">rolling alias</span>' in rolling.text
-    assert 'Canonical: <a href="/models/trustedrouter/socrates-1.1"' in rolling.text
+    assert 'Canonical: <a href="/models/trustedrouter/socrates-2.0"' in rolling.text
 
 
 def test_public_k3_combo_pages_render_exact_graphs(
@@ -472,7 +649,7 @@ def test_public_model_detail_uses_service_structured_data(client: TestClient) ->
 
     assert response.status_code == 200
     match = re.search(
-        r'<script type="application/ld\+json">(?P<payload>.*?)</script>',
+        r'<script type="application/ld\+json"[^>]*>(?P<payload>.*?)</script>',
         response.text,
     )
     assert match is not None
@@ -499,8 +676,14 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     # Redesigned homepage (2026-06): a static routing-diagram hero replaces the
     # animated orbital scene, on the friend-provided modern layout. Assert the
     # new conversion surface rather than the old orbital-scene markup.
-    assert "Every model." in response.text  # homepage tagline
-    assert "Provable privacy." in response.text
+    assert "600+ AI Models at your fingertips." in response.text
+    assert "One Unified Interface." in response.text
+    assert "Privacy with proof." in response.text
+    assert "Better privacy, better prices, better uptime, no subscriptions." in response.text
+    assert '<strong>81+</strong><span>providers</span>' in response.text
+    assert '<strong>3 clouds</strong><span>GCP · AWS · Azure</span>' in response.text
+    assert 'class="region-map-card"' not in response.text
+    assert "Provable privacy." not in response.text
     assert "ATTESTED GATEWAY" in response.text  # attestation record
     assert "Get API key" in response.text  # primary CTA
     assert "Provider failover" in response.text  # hero proof row
@@ -516,6 +699,7 @@ def test_public_docs_explain_hard_confidential_e2ee_filter(client: TestClient) -
     agent_setup = client.get("/docs/agent-setup")
 
     assert docs.status_code == providers.status_code == agent_setup.status_code == 200
+    assert "<title>API Docs: Quickstart and SDKs | TrustedRouter</title>" in docs.text
     assert '"min_privacy": "confidential"' in docs.text
     assert "<code>e2e</code> and <code>e2ee</code>" in docs.text
     assert "requires both provider-side confidential compute and end-to-end encryption" in docs.text

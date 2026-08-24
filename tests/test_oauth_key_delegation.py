@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from typing import Any
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -85,6 +87,8 @@ def test_oauth_code_exchange_returns_signed_in_identity(
     assert identity["sub"] == alice.id
     assert identity["email"] == "alice@example.com"
     assert "email_verified" in identity
+    assert identity["phone_verified"] is False
+    assert identity["identity_verified"] is False
 
 
 def test_userinfo_returns_identity_for_delegated_key(
@@ -446,6 +450,45 @@ def test_oauth_code_creation_accepts_openrouter_allowed_callback_ports(
     assert response.status_code == 200, response.text
 
 
+def test_oauth_code_creation_accepts_native_callback_with_pkce_s256(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    response = client.post(
+        "/v1/auth/keys/code",
+        headers=user_headers,
+        json={
+            "callback_url": "myapp://oauth-callback",
+            "code_challenge": "challenge",
+            "code_challenge_method": "S256",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {},
+        {"code_challenge": "challenge", "code_challenge_method": "plain"},
+    ],
+)
+def test_oauth_code_creation_requires_s256_for_native_callback(
+    client: TestClient,
+    user_headers: dict[str, str],
+    patch: dict[str, str],
+) -> None:
+    response = client.post(
+        "/v1/auth/keys/code",
+        headers=user_headers,
+        json={"callback_url": "myapp://oauth-callback", **patch},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "native callback_url requires PKCE S256"
+
+
 @pytest.mark.parametrize(
     "callback_url,message",
     [
@@ -453,6 +496,9 @@ def test_oauth_code_creation_accepts_openrouter_allowed_callback_ports(
         ("http://app.example.com/callback", "callback_url must be an https URL"),
         ("https://app.example.com:444/callback", "callback_url port must be 443 or 3000"),
         ("https://user:pass@app.example.com/callback", "callback_url cannot contain credentials"),
+        ("javascript://callback", "callback_url must be an https URL"),
+        ("file://callback", "callback_url must be an https URL"),
+        ("myapp://callback:444/path", "native callback_url cannot contain a port"),
         ("not-a-url", "callback_url must be an https URL"),
     ],
 )
@@ -569,6 +615,165 @@ def test_oauth_browser_consent_page_for_active_session(client: TestClient) -> No
     assert "Authorize Example" in response.text
     assert 'action="/auth/approve"' in response.text
     assert 'name="callback_url"' in response.text
+
+
+def test_oauth_browser_consent_defaults_funding_and_key_limit(client: TestClient) -> None:
+    user = STORE.ensure_user("alice@example.com", trial_credit_microdollars=0)
+    raw_session, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="google",
+        label="alice@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    client.cookies.set("tr_session", raw_session)
+
+    response = client.get(
+        "/auth?callback_url=https://app.example.com/callback&key_label=Example",
+    )
+
+    assert response.status_code == 200
+    assert "$0.00 available" in response.text
+    assert 'name="fund_amount" value="5"' in response.text
+    assert 'name="fund_amount" value="20" checked' in response.text
+    assert 'name="fund_amount" value="100"' in response.text
+    assert 'name="limit"' in response.text
+    assert 'value="20" required' in response.text
+    assert "card is saved" in response.text
+    assert 'href="https://app.example.com/callback?error=access_denied"' in response.text
+
+
+def test_oauth_browser_cancel_preserves_app_state(client: TestClient) -> None:
+    user = STORE.ensure_user("alice@example.com", trial_credit_microdollars=0)
+    raw_session, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="google",
+        label="alice@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    client.cookies.set("tr_session", raw_session)
+
+    response = client.get(
+        "/auth?callback_url=https%3A%2F%2Fapp.example.com%2Fcallback%3Fstate%3Dcsrf",
+    )
+
+    assert response.status_code == 200
+    assert (
+        'href="https://app.example.com/callback?state=csrf&amp;error=access_denied"'
+        in response.text
+    )
+
+
+def test_oauth_funding_checkout_saves_card_and_preserves_authorization(client: TestClient) -> None:
+    user = STORE.ensure_user("alice@example.com", trial_credit_microdollars=0)
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    raw_session, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="google",
+        label="alice@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    client.cookies.set("tr_session", raw_session)
+    settings = client.app.state.settings
+    settings.stripe_secret_key = "sk_test_oauth_funding"  # noqa: S105
+    captured: dict[str, Any] = {}
+
+    def create_session(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"id": "cs_oauth", "url": "https://checkout.stripe.test/oauth"}
+
+    with patch(
+        "trusted_router.services.stripe_billing.stripe.checkout.Session.create",
+        create_session,
+    ):
+        response = client.post(
+            "/auth/fund",
+            data={
+                "callback_url": "https://slopnazi.com/editor?state=csrf",
+                "code_challenge": "challenge",
+                "code_challenge_method": "S256",
+                "key_label": "SlopNazi",
+                "limit": "7.50",
+                "usage_limit_type": "monthly",
+                "fund_amount": "20",
+            },
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "https://checkout.stripe.test/oauth"
+    assert captured["customer_creation"] == "always"
+    assert captured["customer_email"] == "alice@example.com"
+    assert captured["payment_method_types"] == ["card"]
+    assert captured["payment_intent_data"]["setup_future_usage"] == "off_session"
+    assert captured["metadata"]["workspace_id"] == workspace.id
+    assert captured["metadata"]["credit_amount_microdollars"] == "20000000"
+    success = urlsplit(captured["success_url"])
+    success_query = parse_qs(success.query)
+    assert success.path == "/auth"
+    assert success_query["callback_url"] == ["https://slopnazi.com/editor?state=csrf"]
+    assert success_query["code_challenge"] == ["challenge"]
+    assert success_query["limit"] == ["7.50"]
+    assert success_query["usage_limit_type"] == ["monthly"]
+    assert success_query["checkout"] == ["success"]
+
+
+@pytest.mark.parametrize("amount", ["0", "10", "20.01", "1000", "not-money"])
+def test_oauth_funding_rejects_unlisted_amounts(client: TestClient, amount: str) -> None:
+    user = STORE.ensure_user("alice@example.com", trial_credit_microdollars=0)
+    raw_session, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="google",
+        label="alice@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    client.cookies.set("tr_session", raw_session)
+
+    response = client.post(
+        "/auth/fund",
+        data={
+            "callback_url": "https://app.example.com/callback",
+            "fund_amount": amount,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "fund_amount must be 5, 20, or 100"
+
+
+def test_oauth_browser_user_selected_limit_is_issued_to_app(client: TestClient) -> None:
+    user = STORE.ensure_user("alice@example.com", trial_credit_microdollars=0)
+    raw_session, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="google",
+        label="alice@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    client.cookies.set("tr_session", raw_session)
+
+    approved = client.post(
+        "/auth/approve",
+        data={
+            "callback_url": "https://app.example.com/callback",
+            "key_label": "Example app",
+            "limit": "3.25",
+            "usage_limit_type": "weekly",
+        },
+        follow_redirects=False,
+    )
+    code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
+    exchanged = client.post("/v1/auth/keys", json={"code": code})
+
+    assert exchanged.status_code == 200
+    key = STORE.get_key_by_raw(exchanged.json()["key"])
+    assert key is not None
+    assert key.management is False
+    assert key.limit_microdollars == 3_250_000
+    assert key.limit_reset == "weekly"
 
 
 def test_oauth_browser_approve_redirects_with_code_and_user_id(client: TestClient) -> None:

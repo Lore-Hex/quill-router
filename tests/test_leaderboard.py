@@ -173,7 +173,7 @@ def test_models_sorted_fastest_first_unmeasured_last() -> None:
     assert ordered[2] == "unknown/m"  # un-measured at the bottom
 
 
-def test_models_and_providers_rank_reliability_before_latency() -> None:
+def test_models_and_providers_rank_ttft_before_reliability() -> None:
     samples = [
         _sample(provider="reliable", model="reliable/m", ttft=500),
         _sample(
@@ -195,15 +195,17 @@ def test_models_and_providers_rank_reliability_before_latency() -> None:
     result = aggregate_leaderboard(samples)
 
     assert [row["model"] for row in result["models"]] == [
-        "reliable/m",
         "flaky/m",
+        "reliable/m",
     ]
     assert [row["provider"] for row in result["providers"]] == [
-        "reliable",
         "flaky",
+        "reliable",
     ]
-    assert result["models"][0]["uptime"] == 1.0
-    assert result["models"][1]["uptime"] == 0.5
+    assert result["models"][0]["p50_ttft_ms"] == 50
+    assert result["models"][0]["provider_availability"] == 0.5
+    assert result["models"][1]["p50_ttft_ms"] == 500
+    assert result["models"][1]["provider_availability"] == 1.0
 
 
 def test_min_samples_filters_thin_models() -> None:
@@ -366,9 +368,7 @@ def test_thin_rows_stay_visible_but_do_not_receive_ranks() -> None:
 
 
 def test_legacy_short_request_speed_never_creates_zero_sample_throughput() -> None:
-    result = aggregate_leaderboard(
-        [_sample(provider="p", model="p/m", ttft=50, tps=9999.0)]
-    )
+    result = aggregate_leaderboard([_sample(provider="p", model="p/m", ttft=50, tps=9999.0)])
 
     model = result["models"][0]
     provider = result["providers"][0]
