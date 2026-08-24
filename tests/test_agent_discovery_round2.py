@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
@@ -19,9 +20,19 @@ from trusted_router.config import Settings
 from trusted_router.dashboard import llms_txt
 from trusted_router.domains import configured_control_domains
 from trusted_router.main import create_app
+from trusted_router.mcp_metadata import (
+    MCP_SERVER_DESCRIPTION,
+    MCP_SERVER_NAME,
+    MCP_SERVER_TITLE,
+)
 from trusted_router.routes.oauth_keys import PKCE_METHODS
 
 PAGES_WITH_STRUCTURED_DATA = ["/", "/trust", "/docs", "/models", "/legal", "/support"]
+MCP_DISCOVERY_PATHS = (
+    "/.well-known/mcp.json",
+    "/.well-known/mcp/server-card.json",
+)
+STATIC_DIR = Path(__file__).resolve().parents[1] / "src" / "trusted_router" / "static"
 
 
 def _organization(html: str) -> dict | None:
@@ -80,12 +91,58 @@ def test_the_mcp_server_is_discoverable_without_reading_a_page(
     client: TestClient,
 ) -> None:
     """Everything needed to connect was prose on /docs/mcp."""
-    document = client.get("/.well-known/mcp.json").json()
+    responses = [client.get(path) for path in MCP_DISCOVERY_PATHS]
+    assert all(response.status_code == 200 for response in responses)
+    assert responses[0].content == responses[1].content
+    document = responses[0].json()
 
     assert document["url"].endswith("/mcp")
     assert document["transport"] == "http"
     assert document["authentication"]["scheme"] == "bearer"
     assert document["protocolVersion"]
+    assert document["name"] == MCP_SERVER_NAME
+    assert document["title"] == MCP_SERVER_TITLE
+    assert document["description"] == MCP_SERVER_DESCRIPTION
+
+
+def test_the_mcp_discovery_icon_is_a_served_repository_asset(
+    client: TestClient,
+) -> None:
+    document = client.get(MCP_DISCOVERY_PATHS[0]).json()
+    icon = urlsplit(document["iconUrl"])
+
+    assert icon.scheme == "https"
+    assert icon.netloc == "trustedrouter.com"
+    assert icon.path == "/static/favicon.svg"
+    assert (STATIC_DIR / icon.path.rsplit("/", 1)[-1]).is_file()
+
+    response = client.get(icon.path)
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+
+
+@pytest.mark.parametrize(
+    ("host", "domain"),
+    [
+        ("trustedrouter.com", "trustedrouter.com"),
+        ("allyrouter.com", "allyrouter.com"),
+        ("www.uptimerouter.com", "uptimerouter.com"),
+        ("attacker.example", "trustedrouter.com"),
+    ],
+)
+@pytest.mark.parametrize("path", MCP_DISCOVERY_PATHS)
+def test_mcp_discovery_urls_use_the_request_canonical_domain(
+    client: TestClient,
+    path: str,
+    host: str,
+    domain: str,
+) -> None:
+    document = client.get(path, headers={"host": host}).json()
+
+    assert document["url"] == f"https://{domain}/mcp"
+    assert document["iconUrl"] == f"https://{domain}/static/favicon.svg"
+    assert document["authentication"]["tokenUrl"] == f"https://{domain}/console/keys"
+    assert document["documentation"] == f"https://{domain}/docs/mcp"
 
 
 def test_the_discovery_document_matches_the_server_it_describes(
@@ -98,7 +155,8 @@ def test_the_discovery_document_matches_the_server_it_describes(
     document = client.get("/.well-known/mcp.json").json()
 
     assert document["protocolVersion"] == MCP_PROTOCOL_VERSION
-    assert document["name"] == "trustedrouter"
+    assert document["name"] == MCP_SERVER_NAME
+    assert document["title"] == MCP_SERVER_TITLE
 
 
 def test_oauth_authorization_server_metadata_resolves_to_mounted_routes(

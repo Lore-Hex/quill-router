@@ -21,6 +21,7 @@ from trusted_router.catalog import (
 from trusted_router.config import Settings
 from trusted_router.dashboard import docs_llms_full_txt
 from trusted_router.errors import error_response
+from trusted_router.mcp_metadata import MCP_SERVER_NAME, MCP_SERVER_TITLE
 from trusted_router.request_limits import enforce_authenticated_rate_limit
 from trusted_router.storage import STORE, ApiKey
 from trusted_router.typed_balance import live_credit_summary
@@ -160,7 +161,8 @@ class TrustedRouterMCP:
                     "protocolVersion": MCP_PROTOCOL_VERSION,
                     "capabilities": {"tools": {}},
                     "serverInfo": {
-                        "name": "trustedrouter",
+                        "name": MCP_SERVER_NAME,
+                        "title": MCP_SERVER_TITLE,
                         "version": self.settings.release,
                     },
                 },
