@@ -115,6 +115,11 @@ from trusted_router.domains import (
     request_hostname,
     status_hostname_for_domain,
 )
+from trusted_router.mcp_metadata import (
+    MCP_SERVER_DESCRIPTION,
+    MCP_SERVER_NAME,
+    MCP_SERVER_TITLE,
+)
 from trusted_router.og import OG_PNG_PATH
 from trusted_router.operational_analytics_freshness import (
     ANALYTICS_STATUS_KEY,
@@ -130,6 +135,11 @@ from trusted_router.provider_contract import (
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
 from trusted_router.request_limits import normalized_client_identity
 from trusted_router.routes.mcp import MCP_PROTOCOL_VERSION
+from trusted_router.routes.oauth_keys import (
+    OAUTH_AUTHORIZATION_ENDPOINT_PATH,
+    OAUTH_KEY_EXCHANGE_ENDPOINT_PATH,
+    PKCE_METHODS,
+)
 from trusted_router.serialization import user_model_public_shape
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.ops_chat import OpsChatSupportMessage, fanout_support_message
@@ -1450,8 +1460,9 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             headers={"cache-control": "public, max-age=300, s-maxage=3600"},
         )
 
+    @app.get("/.well-known/mcp/server-card.json", include_in_schema=False)
     @app.get("/.well-known/mcp.json", include_in_schema=False)
-    async def mcp_discovery() -> JSONResponse:
+    async def mcp_discovery(request: Request) -> JSONResponse:
         """Where the MCP server is, for a client that has only the domain.
 
         Lives with the public documents rather than beside the MCP endpoint
@@ -1471,14 +1482,13 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         rather than restating them, so the document cannot describe a server
         different from the one that answers.
         """
-        domain = settings.trusted_domain
+        domain = request_control_domain(request, settings)
         return JSONResponse(
             {
-                "name": "trustedrouter",
-                "description": (
-                    "Model catalog, provider metadata, routing advice and inference "
-                    "across hundreds of models through one OpenAI-compatible gateway."
-                ),
+                "name": MCP_SERVER_NAME,
+                "title": MCP_SERVER_TITLE,
+                "description": MCP_SERVER_DESCRIPTION,
+                "iconUrl": f"https://{domain}/static/favicon.svg",
                 "version": settings.release,
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "transport": "http",
@@ -1491,6 +1501,27 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 },
                 "capabilities": {"tools": {}},
                 "documentation": f"https://{domain}/docs/mcp",
+            },
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
+    @app.get("/.well-known/oauth-authorization-server", include_in_schema=False)
+    async def oauth_authorization_server_metadata(request: Request) -> JSONResponse:
+        """Describe the delegated API-key authorization flow to public clients."""
+        origin = f"https://{request_control_domain(request, settings)}"
+        return JSONResponse(
+            {
+                "issuer": origin,
+                "authorization_endpoint": f"{origin}{OAUTH_AUTHORIZATION_ENDPOINT_PATH}",
+                "token_endpoint": f"{origin}{OAUTH_KEY_EXCHANGE_ENDPOINT_PATH}",
+                "response_types_supported": ["code"],
+                "grant_types_supported": ["authorization_code"],
+                "code_challenge_methods_supported": sorted(PKCE_METHODS),
+                "token_endpoint_auth_methods_supported": ["none"],
+                "service_documentation": f"{origin}/sign-in-with-trustedrouter",
+                # scopes_supported is deliberately absent. API keys have no scope or
+                # permission concept, so advertising scopes would falsely imply that
+                # a requested narrow scope produces anything but a full-access key.
             },
             headers={"cache-control": "public, max-age=300, s-maxage=3600"},
         )

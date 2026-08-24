@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from trusted_router import phone_verification as pv
@@ -37,6 +37,13 @@ from trusted_router.services.notify import (
     send_verification_code,
 )
 from trusted_router.services.telephony import branded, spoken_text
+from trusted_router.spend_windows import (
+    KeyLimitExceeded,
+    KeyWindowLimitExceeded,
+    remember_spend_window_decision,
+    spend_window_headers,
+    spend_window_limit_error_message,
+)
 from trusted_router.storage import STORE
 from trusted_router.storage_models import User
 from trusted_router.types import ErrorType, UsageType
@@ -76,6 +83,7 @@ def register_notify_public_routes(router: APIRouter) -> None:
 def register_notify_routes(router: APIRouter) -> None:
     @router.post("/notify")
     async def send_notification(
+        request: Request,
         payload: dict[str, Any],
         principal: InferencePrincipal,
         settings: SettingsDep,
@@ -98,7 +106,7 @@ def register_notify_routes(router: APIRouter) -> None:
         # Reserved BEFORE the send so a workspace cannot be pushed past its
         # limit by notifications in flight, and refunded in full when nothing
         # was delivered.
-        ticket = _Charge.reserve(principal, price)
+        ticket = _Charge.reserve(principal, price, request=request)
         try:
             outcome = get_notify_service(settings).send(
                 owner=owner,
@@ -272,14 +280,38 @@ class _Charge:
         self.billable = billable
 
     @classmethod
-    def reserve(cls, principal: Principal, amount: int) -> _Charge:
+    def reserve(
+        cls,
+        principal: Principal,
+        amount: int,
+        *,
+        request: Request | None = None,
+    ) -> _Charge:
         if amount <= 0 or principal.api_key is None:
             # Push is free, so there is nothing to hold and nothing to release.
             return cls(None, None, 0)
 
         key_hash = principal.api_key.hash
         try:
-            STORE.reserve_key_limit(key_hash, amount, usage_type=UsageType.CREDITS)
+            window_decision = STORE.reserve_key_limit(
+                key_hash,
+                amount,
+                usage_type=UsageType.CREDITS,
+            )
+            remember_spend_window_decision(request, window_decision)
+        except KeyWindowLimitExceeded as exc:
+            remember_spend_window_decision(request, exc.decision)
+            raise api_error(
+                429,
+                spend_window_limit_error_message(exc.decision),
+                ErrorType.KEY_WINDOW_LIMIT_EXCEEDED,
+                headers=spend_window_headers(exc.decision, retry_after=True),
+            ) from exc
+        except KeyLimitExceeded as exc:
+            remember_spend_window_decision(request, exc.decision)
+            raise api_error(
+                402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
+            ) from exc
         except ValueError as exc:
             raise api_error(
                 402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
