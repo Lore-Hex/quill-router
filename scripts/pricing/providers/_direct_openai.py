@@ -60,6 +60,10 @@ class DirectOpenAIProviderSpec:
     catalog_loader: CatalogLoader | None = None
     include: IncludeRow | None = None
     normalize_rows: NormalizeRows | None = None
+    # Operator safety holds are applied after every canary. Keeping them in
+    # the shared fetcher prevents a healthy PONG from making a deliberately
+    # dark route live during a refactor or manifest rebuild.
+    operator_hold_reasons: dict[str, str] = field(default_factory=dict)
     canary_max_tokens: int = 16
     canary_expected_content: str | None = None
 
@@ -189,7 +193,10 @@ class DirectOpenAIProvider:
             if isinstance(native_id, str):
                 self.upstream_id_map.setdefault(model_id, native_id)
 
-        checked = models_requiring_canary(self.manifest_path, set(discovered) & set(prices))
+        checked = models_requiring_canary(
+            self.manifest_path,
+            (set(discovered) & set(prices)) - self.spec.operator_hold_reasons.keys(),
+        )
         healthy = {
             model_id
             for model_id in checked
@@ -206,6 +213,12 @@ class DirectOpenAIProvider:
             checked_model_ids=checked,
             healthy_model_ids=healthy,
         )
+        for model_id, reason in self.spec.operator_hold_reasons.items():
+            row = discovered.get(model_id)
+            if row is None:
+                continue
+            row["routable"] = False
+            row["routable_reason"] = reason
         self.discovered_rows = discovered
 
         errors = validate(prices, list(self.spec.expected_models))
@@ -233,4 +246,5 @@ class DirectOpenAIProvider:
             discovered_rows=self.discovered_rows,
             source_url=self.spec.catalog_url or f"{self.spec.base_url.rstrip('/')}/models",
             pricing_source_url=self.spec.pricing_source_url,
+            operator_hold_reasons=self.spec.operator_hold_reasons,
         )

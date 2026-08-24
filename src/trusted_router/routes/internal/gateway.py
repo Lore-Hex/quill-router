@@ -69,6 +69,7 @@ from trusted_router.partner_billing import (
 )
 from trusted_router.pricing import resolve_request_rates
 from trusted_router.provider_compat import byok_storage_provider_candidates
+from trusted_router.provider_contracts import SAKANA_FUGU_MODEL_ID
 from trusted_router.provider_types import estimate_tokens_from_text
 from trusted_router.regional_quota_ledger import RegionalLeaseLedgerError
 from trusted_router.regions import choose_region, region_payload
@@ -1773,6 +1774,14 @@ def _settle_gateway_authorization(
             "Parasail Liberty does not support BYOK routes",
             ErrorType.MODEL_NOT_SUPPORTED,
         )
+    # Only Fugu defines this provider-private tier basis, and Fugu remains
+    # operator-held until its internal orchestration spend has a hard bound.
+    # Ignoring the field for every other model prevents a future provider
+    # extension from silently selecting a cheaper context tier.
+    price_tier_input_tokens = _provider_price_tier_input_tokens(
+        selected_endpoint,
+        body.price_tier_input_tokens,
+    )
     actual_cost = (
         custom_model_cost_microdollars(
             input_tokens=total_input,
@@ -1793,6 +1802,7 @@ def _settle_gateway_authorization(
             output_tokens,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
+            price_tier_input_tokens=price_tier_input_tokens,
             effective_at=authorization.created_at,
             service_tier=service_tier,
         )
@@ -1840,6 +1850,7 @@ def _settle_gateway_authorization(
             output_tokens,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
+            price_tier_input_tokens=price_tier_input_tokens,
             effective_at=authorization.created_at,
             service_tier=service_tier,
         )
@@ -2168,6 +2179,7 @@ def _settle_gateway_authorization(
         # correlation id is useful to them, the client telemetry object is not.
         broadcast_settle_body = dict(settle_body)
         broadcast_settle_body.pop("client", None)
+        broadcast_settle_body.pop("price_tier_input_tokens", None)
         enqueue_metadata_broadcast(generation, settle_body=broadcast_settle_body)
         if should_drain_inline(settings) and background_tasks is not None:
             background_tasks.add_task(
@@ -2856,6 +2868,20 @@ def _native_batch_cost_or_error(
     return max(1, (cost_microdollars * billed_fraction_bps + 9_999) // 10_000)
 
 
+def _provider_price_tier_input_tokens(
+    endpoint: ModelEndpoint,
+    reported_input_tokens: int | None,
+) -> int | None:
+    """Admit a provider-private tier basis only for its pinned model contract."""
+
+    if (
+        endpoint.provider == "sakana"
+        and endpoint.model_id == SAKANA_FUGU_MODEL_ID
+    ):
+        return reported_input_tokens
+    return None
+
+
 def _endpoint_cost_microdollars(
     endpoint: ModelEndpoint,
     input_tokens: int,
@@ -2863,6 +2889,7 @@ def _endpoint_cost_microdollars(
     *,
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
+    price_tier_input_tokens: int | None = None,
     effective_at: datetime | str | None = None,
     service_tier: str | None = None,
     reserve_auto: bool = False,
@@ -2882,11 +2909,22 @@ def _endpoint_cost_microdollars(
             cache_creation_tokens=cache_creation_tokens,
         )
     total_prompt = input_tokens + cache_read_tokens + cache_creation_tokens
+    # Some providers expose separately billable internal orchestration tokens
+    # while selecting their long-context tier from the initial request context.
+    # The attested gateway supplies that exact provider-metered count. Invalid
+    # values fall back to the larger aggregate, which is conservative for COGS.
+    tier_prompt = total_prompt
+    if (
+        price_tier_input_tokens is not None
+        and price_tier_input_tokens > 0
+        and price_tier_input_tokens <= total_prompt
+    ):
+        tier_prompt = price_tier_input_tokens
     rates = resolve_request_rates(
         getattr(endpoint, "price_tiers", ()) or (),
         headline_prompt_micro_per_m=endpoint.prompt_price_microdollars_per_million_tokens,
         headline_completion_micro_per_m=endpoint.completion_price_microdollars_per_million_tokens,
-        total_prompt_tokens=total_prompt,
+        total_prompt_tokens=tier_prompt,
     )
     prompt_price = rates.prompt_price_microdollars_per_million_tokens
 

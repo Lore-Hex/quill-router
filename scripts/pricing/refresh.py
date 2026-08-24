@@ -148,6 +148,7 @@ PROVIDER_SLUGS = [
     "io_net",
     "scaleway",
     "featherless",
+    "sakana",
     "jina",
     # 0G Private Computer publishes exact per-route prices and trust metadata
     # in its public marketplace hydration data. The adapter admits only

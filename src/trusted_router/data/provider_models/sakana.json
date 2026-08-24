@@ -1,0 +1,72 @@
+{
+  "provider": "sakana",
+  "models": [
+    {
+      "display_name": "fugu-ultra-v1.1",
+      "title": "fugu-ultra-v1.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "sakana-ai/fugu-ultra-v1.1",
+      "upstream_id": "fugu-ultra-v1.1",
+      "context_length": 1000000,
+      "created": 1784781704,
+      "routable": false,
+      "routable_reason": "unbounded-provider-orchestration-cost",
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 30000000,
+      "cached_input_token_price_per_m": 500000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 272000,
+          "input_token_price_per_m": 5000000,
+          "output_token_price_per_m": 30000000,
+          "cached_input_token_price_per_m": 500000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 10000000,
+          "output_token_price_per_m": 45000000,
+          "cached_input_token_price_per_m": 1000000
+        }
+      ]
+    },
+    {
+      "display_name": "sakana-namazu-v1.0",
+      "title": "sakana-namazu-v1.0",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "sakana-ai/sakana-namazu-v1.0",
+      "upstream_id": "sakana-namazu-v1.0",
+      "context_length": 256000,
+      "created": 1785715200,
+      "routable": true,
+      "input_token_price_per_m": 950000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 150000
+    }
+  ],
+  "source": "https://api.sakana.ai/v1/models",
+  "pricing_source": "https://console.sakana.ai/pricing",
+  "generated_at": "2026-08-24T04:24:26Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 2
+}
