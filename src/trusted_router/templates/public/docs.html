@@ -110,13 +110,13 @@ const r = await client.chat.completions.create({
   <div class="marketing-grid two">
     <div class="marketing-card">
       <h3>OpenAI-compatible endpoints</h3>
-      <p>Base URL <code>{{ api_base_url }}</code>. Authenticate with a <code>Bearer sk-tr-…</code> key.</p>
+      <p>Base URL <code>{{ api_base_url }}</code>. Authenticate inference calls with a <code>Bearer sk-tr-…</code> key.</p>
       <ul class="check-list">
         <li><code>POST /v1/chat/completions</code></li>
         <li><code>POST /v1/responses</code></li>
         <li><code>POST /v1/embeddings</code></li>
         <li><code>POST /v1/videos</code></li>
-        <li><code>GET /v1/models</code></li>
+        <li><a href="https://api.trustedrouter.com/v1/models"><code>GET /v1/models</code></a> <span class="muted">public, no API key</span></li>
       </ul>
       <p style="margin-top:14px"><a class="card-link" href="/api/reference">Interactive API reference →</a></p>
     </div>
