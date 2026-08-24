@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from decimal import Decimal
 from pathlib import Path
@@ -11,6 +12,10 @@ from bs4 import BeautifulSoup, Tag
 
 from scripts.pricing.base import ModelPrice, PriceTier, fetch_html
 from scripts.pricing.providers._direct_openai import DirectOpenAIProvider, DirectOpenAIProviderSpec
+from trusted_router.provider_contracts import (
+    SAKANA_FUGU_MODEL_ID,
+    SAKANA_FUGU_ROUTE_HOLD_REASON,
+)
 
 SLUG = "sakana"
 BASE_URL = "https://api.sakana.ai/v1"
@@ -20,10 +25,11 @@ MANIFEST_PATH = Path(__file__).resolve().parents[3] / "src/trusted_router/data/p
 MANIFEST_STALE_FALLBACK = True
 
 MODEL_MAP = {
-    "fugu-ultra-v1.1": "sakana-ai/fugu-ultra-v1.1",
+    "fugu-ultra-v1.1": SAKANA_FUGU_MODEL_ID,
     "sakana-namazu-v1.0": "sakana-ai/sakana-namazu-v1.0",
 }
-EXPECTED_MODELS = tuple(MODEL_MAP.values())
+EXPECTED_MODELS = ("sakana-ai/sakana-namazu-v1.0",)
+logger = logging.getLogger("pricing")
 
 
 def _usd_per_m_to_micro(raw: str) -> int:
@@ -65,10 +71,41 @@ def _token_price_rows(table: Tag, *, expected_columns: int) -> dict[str, list[in
     return rows
 
 
-def _parse_pricing(html: str) -> dict[str, ModelPrice]:
-    """Parse the two exactly billable chat models from Sakana's public page."""
+def _parse_namazu_price(soup: BeautifulSoup) -> ModelPrice:
+    namazu_table = _pricing_table_after(soup, "sakana-namazu-v1.0")
+    namazu_headers = [
+        cell.get_text(" ", strip=True) for cell in namazu_table.select("thead th")
+    ]
+    if namazu_headers != ["Token type", "Price"]:
+        raise RuntimeError(f"sakana: Namazu pricing headers changed: {namazu_headers!r}")
+    namazu = _token_price_rows(namazu_table, expected_columns=2)
+    return ModelPrice(
+        prompt_micro_per_m=namazu["input"][0],
+        completion_micro_per_m=namazu["output"][0],
+        prompt_cached_micro_per_m=namazu["cached input"][0],
+    )
 
-    soup = BeautifulSoup(html, "html.parser")
+
+def _parse_fugu_price(soup: BeautifulSoup) -> ModelPrice | None:
+    fugu_heading = next(
+        (
+            candidate
+            for candidate in soup.find_all(re.compile(r"^h[1-6]$"))
+            if candidate.get_text(" ", strip=True) == "Fugu Ultra"
+        ),
+        None,
+    )
+    if fugu_heading is None:
+        return None
+
+    normalized_text = " ".join(soup.get_text(" ", strip=True).casefold().split())
+    usage_contract = (
+        "tokens from the user input sent to the first model",
+        "sum of all input tokens used for orchestration",
+        "output tokens from the orchestration",
+    )
+    if any(fragment not in normalized_text for fragment in usage_contract):
+        raise RuntimeError("sakana: additive orchestration usage contract changed")
 
     fugu_table = _pricing_table_after(soup, "Fugu Ultra")
     headers = [cell.get_text(" ", strip=True) for cell in fugu_table.select("thead th")]
@@ -79,42 +116,48 @@ def _parse_pricing(html: str) -> dict[str, ModelPrice]:
         raise RuntimeError(f"sakana: Fugu Ultra context tier changed: {headers[2]!r}")
     threshold = int(threshold_match.group(1)) * 1_000
     fugu = _token_price_rows(fugu_table, expected_columns=3)
+    return ModelPrice(
+        tiers=[
+            PriceTier(
+                max_prompt_tokens=threshold,
+                prompt_micro_per_m=fugu["input"][0],
+                completion_micro_per_m=fugu["output"][0],
+                prompt_cached_micro_per_m=fugu["cached input"][0],
+            ),
+            PriceTier(
+                max_prompt_tokens=None,
+                prompt_micro_per_m=fugu["input"][1],
+                completion_micro_per_m=fugu["output"][1],
+                prompt_cached_micro_per_m=fugu["cached input"][1],
+            ),
+        ]
+    )
 
-    namazu_table = _pricing_table_after(soup, "sakana-namazu-v1.0")
-    namazu_headers = [
-        cell.get_text(" ", strip=True) for cell in namazu_table.select("thead th")
-    ]
-    if namazu_headers != ["Token type", "Price"]:
-        raise RuntimeError(f"sakana: Namazu pricing headers changed: {namazu_headers!r}")
-    namazu = _token_price_rows(namazu_table, expected_columns=2)
 
-    return {
-        "sakana-ai/fugu-ultra-v1.1": ModelPrice(
-            tiers=[
-                PriceTier(
-                    max_prompt_tokens=threshold,
-                    prompt_micro_per_m=fugu["input"][0],
-                    completion_micro_per_m=fugu["output"][0],
-                    prompt_cached_micro_per_m=fugu["cached input"][0],
-                ),
-                PriceTier(
-                    max_prompt_tokens=None,
-                    prompt_micro_per_m=fugu["input"][1],
-                    completion_micro_per_m=fugu["output"][1],
-                    prompt_cached_micro_per_m=fugu["cached input"][1],
-                ),
-            ]
-        ),
-        "sakana-ai/sakana-namazu-v1.0": ModelPrice(
-            prompt_micro_per_m=namazu["input"][0],
-            completion_micro_per_m=namazu["output"][0],
-            prompt_cached_micro_per_m=namazu["cached input"][0],
-        ),
-    }
+def _parse_pricing(html: str) -> dict[str, ModelPrice]:
+    """Strictly parse every published Sakana chat price for regression tests."""
+
+    soup = BeautifulSoup(html, "html.parser")
+    prices = {"sakana-ai/sakana-namazu-v1.0": _parse_namazu_price(soup)}
+    fugu = _parse_fugu_price(soup)
+    if fugu is not None:
+        prices[SAKANA_FUGU_MODEL_ID] = fugu
+    return prices
 
 
 def _load_prices() -> dict[str, ModelPrice]:
-    return _parse_pricing(fetch_html(PRICING_URL))
+    soup = BeautifulSoup(fetch_html(PRICING_URL), "html.parser")
+    prices = {"sakana-ai/sakana-namazu-v1.0": _parse_namazu_price(soup)}
+    try:
+        fugu = _parse_fugu_price(soup)
+    except RuntimeError as exc:
+        # Fugu is deliberately operator-held. Its page drift must stay visible
+        # without expiring the independently billable Namazu route.
+        logger.warning("sakana: omitted held Fugu pricing after contract drift: %s", exc)
+    else:
+        if fugu is not None:
+            prices[SAKANA_FUGU_MODEL_ID] = fugu
+    return prices
 
 
 def _include(row: dict[str, Any]) -> bool:
@@ -180,6 +223,9 @@ CATALOG = DirectOpenAIProvider(
         price_loader=_load_prices,
         include=_include,
         normalize_rows=_normalize_rows,
+        operator_hold_reasons={
+            SAKANA_FUGU_MODEL_ID: SAKANA_FUGU_ROUTE_HOLD_REASON
+        },
         canary_max_tokens=64,
         canary_expected_content="PONG",
     ),

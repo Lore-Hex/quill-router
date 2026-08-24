@@ -69,6 +69,7 @@ from trusted_router.partner_billing import (
 )
 from trusted_router.pricing import resolve_request_rates
 from trusted_router.provider_compat import byok_storage_provider_candidates
+from trusted_router.provider_contracts import SAKANA_FUGU_MODEL_ID
 from trusted_router.provider_types import estimate_tokens_from_text
 from trusted_router.regional_quota_ledger import RegionalLeaseLedgerError
 from trusted_router.regions import choose_region, region_payload
@@ -1773,6 +1774,14 @@ def _settle_gateway_authorization(
             "Parasail Liberty does not support BYOK routes",
             ErrorType.MODEL_NOT_SUPPORTED,
         )
+    # Only Fugu defines this provider-private tier basis, and Fugu remains
+    # operator-held until its internal orchestration spend has a hard bound.
+    # Ignoring the field for every other model prevents a future provider
+    # extension from silently selecting a cheaper context tier.
+    price_tier_input_tokens = _provider_price_tier_input_tokens(
+        selected_endpoint,
+        body.price_tier_input_tokens,
+    )
     actual_cost = (
         custom_model_cost_microdollars(
             input_tokens=total_input,
@@ -1793,9 +1802,7 @@ def _settle_gateway_authorization(
             output_tokens,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
-            price_tier_input_tokens=(
-                body.price_tier_input_tokens if selected_endpoint.provider == "sakana" else None
-            ),
+            price_tier_input_tokens=price_tier_input_tokens,
             effective_at=authorization.created_at,
             service_tier=service_tier,
         )
@@ -1843,6 +1850,7 @@ def _settle_gateway_authorization(
             output_tokens,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
+            price_tier_input_tokens=price_tier_input_tokens,
             effective_at=authorization.created_at,
             service_tier=service_tier,
         )
@@ -2858,6 +2866,20 @@ def _native_batch_cost_or_error(
     # Round upward so a positive billable request never disappears below the
     # integer microdollar ledger's minimum unit.
     return max(1, (cost_microdollars * billed_fraction_bps + 9_999) // 10_000)
+
+
+def _provider_price_tier_input_tokens(
+    endpoint: ModelEndpoint,
+    reported_input_tokens: int | None,
+) -> int | None:
+    """Admit a provider-private tier basis only for its pinned model contract."""
+
+    if (
+        endpoint.provider == "sakana"
+        and endpoint.model_id == SAKANA_FUGU_MODEL_ID
+    ):
+        return reported_input_tokens
+    return None
 
 
 def _endpoint_cost_microdollars(

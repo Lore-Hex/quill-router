@@ -20,10 +20,61 @@ from scripts.pricing.base import (
     ast_whitelist_check,
     guard_manifest_prune,
     normalize_parser_input,
+    reconcile_manifest_tombstones,
     safe_exception_summary,
     sandbox_run_parser,
     validate,
 )
+
+
+def test_tombstone_reconciliation_preserves_operator_hold_across_relist() -> None:
+    held = {
+        "id": "provider/held",
+        "routable": False,
+        "routable_reason": "production-entitlement-required",
+        "old_metadata": True,
+    }
+    live = {
+        "id": "provider/held",
+        "routable": True,
+        "new_metadata": True,
+    }
+
+    present = reconcile_manifest_tombstones(
+        [held],
+        {"provider/held": live},
+        priced_ids={"provider/held"},
+        source="api",
+    )[0]
+    assert present["new_metadata"] is True
+    assert present["routable"] is False
+    assert present["routable_reason"] == "production-entitlement-required"
+
+    first_miss = reconcile_manifest_tombstones(
+        [present],
+        {},
+        priced_ids=set(),
+        source="api",
+        missing_date="2026-08-23",
+    )[0]
+    second_miss = reconcile_manifest_tombstones(
+        [first_miss],
+        {},
+        priced_ids=set(),
+        source="api",
+        missing_date="2026-08-24",
+    )[0]
+    assert second_miss["routable_reason"] == "production-entitlement-required"
+
+    relisted = reconcile_manifest_tombstones(
+        [second_miss],
+        {"provider/held": live},
+        priced_ids={"provider/held"},
+        source="api",
+    )[0]
+    assert relisted["routable"] is False
+    assert relisted["routable_reason"] == "production-entitlement-required"
+    assert "missing_since" not in relisted
 
 
 def test_authenticated_provider_headers_disable_redirects_by_default() -> None:

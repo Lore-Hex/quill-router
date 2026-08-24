@@ -7,7 +7,9 @@ from fastapi.testclient import TestClient
 from pytest_httpx import HTTPXMock
 
 from trusted_router.auth import SESSION_COOKIE_NAME
+from trusted_router.catalog import endpoint_for_id
 from trusted_router.config import Settings
+from trusted_router.routes.internal.gateway import _endpoint_cost_microdollars
 from trusted_router.services.broadcast import should_drain_inline
 from trusted_router.services.broadcast_adapters import adapter_for, supported_destination_types
 from trusted_router.storage import STORE
@@ -259,11 +261,12 @@ def test_metadata_broadcast_omits_prompt_and_output(
         },
     )
     assert authorize.status_code == 200, authorize.text
+    authorization_data = authorize.json()["data"]
 
     settle = client.post(
         "/v1/internal/gateway/settle",
         json={
-            "authorization_id": authorize.json()["data"]["authorization_id"],
+            "authorization_id": authorization_data["authorization_id"],
             "actual_input_tokens": 12,
             "actual_output_tokens": 8,
             "price_tier_input_tokens": 6,
@@ -278,6 +281,13 @@ def test_metadata_broadcast_omits_prompt_and_output(
         },
     )
     assert settle.status_code == 200, settle.text
+    endpoint = endpoint_for_id(authorization_data["endpoint_id"])
+    assert endpoint is not None
+    assert settle.json()["data"]["cost_microdollars"] == _endpoint_cost_microdollars(
+        endpoint,
+        12,
+        8,
+    )
     request = httpx_mock.get_request()
     payload = json.loads(request.content)
     assert payload["event"] == "$ai_generation"

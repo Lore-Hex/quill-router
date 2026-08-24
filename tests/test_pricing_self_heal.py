@@ -895,6 +895,54 @@ def test_manifest_stale_fallback_accepts_free_cache_reads(tmp_path: Path) -> Non
     assert result.prices["provider/free-cache"].tiers[0].prompt_cached_micro_per_m == 0
 
 
+def test_manifest_stale_fallback_preserves_tiers_and_price_scale(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "provider.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "price_scale_to_microdollars_per_million_tokens": 100,
+                "models": [
+                    {
+                        "id": "provider/tiered",
+                        "routable": True,
+                        "input_token_price_per_m": 10,
+                        "output_token_price_per_m": 20,
+                        "cached_input_token_price_per_m": 1,
+                        "price_tiers": [
+                            {
+                                "max_prompt_tokens": 272_000,
+                                "input_token_price_per_m": 10,
+                                "output_token_price_per_m": 20,
+                                "cached_input_token_price_per_m": 1,
+                            },
+                            {
+                                "max_prompt_tokens": None,
+                                "input_token_price_per_m": 30,
+                                "output_token_price_per_m": 40,
+                                "cached_input_token_price_per_m": 2,
+                            },
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result, error = pricing_base.read_stale_provider_manifest(
+        slug="provider",
+        manifest_path=manifest_path,
+        include_in_price_index=True,
+    )
+
+    assert error is None
+    assert result is not None
+    assert [(tier.max_prompt_tokens, tier.prompt_micro_per_m) for tier in result.prices["provider/tiered"].tiers] == [
+        (272_000, 1_000),
+        (None, 3_000),
+    ]
+
+
 def test_manifest_fallback_takes_precedence_over_rewritten_global_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

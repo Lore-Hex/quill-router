@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from trusted_router.pricing import provider_manifest_price_profile_is_valid
+
 RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS = frozenset(
     {
         "aion-labs",
@@ -71,15 +73,7 @@ def provider_manifest_valid_until(
         model_type = row.get("model_type") or "chat"
         try:
             if model_type == "chat":
-                prompt = int(row.get("input_token_price_per_m") or 0)
-                completion = int(row.get("output_token_price_per_m") or 0)
-                cached_raw = row.get("cached_input_token_price_per_m")
-                cached = int(cached_raw) if cached_raw is not None else None
-                valid_price = (
-                    prompt > 0
-                    and completion > 0
-                    and (cached is None or cached >= 0)
-                )
+                valid_price = provider_manifest_price_profile_is_valid(row)
             elif model_type == "image":
                 fixed = row.get("fixed_output_price_microdollars")
                 valid_price = (

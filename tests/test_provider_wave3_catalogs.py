@@ -36,6 +36,7 @@ from scripts.pricing.providers._direct_openai import (
     positive_chat_prices,
 )
 from scripts.pricing.refresh import _PRICING_RESULT_PROVIDER_ALIASES, PROVIDER_SLUGS
+from trusted_router import catalog_ingest
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     MODEL_ENDPOINTS,
@@ -46,6 +47,10 @@ from trusted_router.catalog_ingest import (
     _EXPIRED_PROVIDER_MANIFEST,
     _RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS,
     _provider_manifest_valid_until,
+)
+from trusted_router.pricing import (
+    provider_manifest_price_profile_is_valid,
+    provider_manifest_price_tiers_are_valid,
 )
 from trusted_router.provider_manifest_policy import (
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
@@ -119,7 +124,11 @@ def test_wave3_manifests_publish_only_canaried_priced_chat_routes() -> None:
             assert row["upstream_id"]
             if row.get("routable") is False:
                 reason = row.get("routable_reason")
-                assert reason in {"provider-canary-failed", "delisted-upstream"}
+                assert reason in {
+                    "provider-canary-failed",
+                    "delisted-upstream",
+                    "unbounded-provider-orchestration-cost",
+                }
                 if reason == "delisted-upstream":
                     assert row.get("missing_since")
                 continue
@@ -307,6 +316,87 @@ def test_direct_provider_catalog_fetch_uses_shared_retry_helper(
         "url": "https://example.invalid/v1/models",
         "headers": {"Authorization": "Bearer test-secret"},
     }
+
+
+def test_direct_provider_operator_hold_survives_canary_and_relist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = tmp_path / "held.json"
+    catalog_rows = [{"id": "vendor/held"}, {"id": "vendor/live"}]
+    probed: list[str] = []
+    manifest.write_text(
+        json.dumps(
+            {
+                "provider": "held-provider",
+                "models": [
+                    {
+                        "id": model_id,
+                        "upstream_id": model_id,
+                        "routable": True,
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 2,
+                    }
+                    for model_id in ("vendor/held", "vendor/live")
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HELD_PROVIDER_API_KEY", "test-secret")
+    monkeypatch.setattr(
+        _direct_openai,
+        "fetch_json",
+        lambda *_args, **_kwargs: {"data": list(catalog_rows)},
+    )
+    monkeypatch.setattr(
+        _direct_openai,
+        "models_requiring_canary",
+        lambda _path, model_ids: set(model_ids),
+    )
+
+    def probe(**kwargs: object) -> bool:
+        probed.append(str(kwargs["model"]))
+        return True
+
+    monkeypatch.setattr(_direct_openai, "probe_openai_chat", probe)
+    catalog = DirectOpenAIProvider(
+        DirectOpenAIProviderSpec(
+            slug="held-provider",
+            base_url="https://example.invalid/v1",
+            api_key_env="HELD_PROVIDER_API_KEY",
+            explicit_model_map={
+                "vendor/held": "vendor/held",
+                "vendor/live": "vendor/live",
+            },
+            static_prices={
+                "vendor/held": ModelPrice(1, 2),
+                "vendor/live": ModelPrice(1, 2),
+            },
+            operator_hold_reasons={"vendor/held": "operator-hold"},
+        ),
+        manifest_path=manifest,
+    )
+
+    def refresh() -> dict[str, dict[str, object]]:
+        result = catalog.fetch()
+        catalog.write_provider_manifest(result)
+        return {
+            row["id"]: row
+            for row in json.loads(manifest.read_text(encoding="utf-8"))["models"]
+        }
+
+    assert refresh()["vendor/held"]["routable_reason"] == "operator-hold"
+    catalog_rows[:] = [{"id": "vendor/live"}]
+    assert refresh()["vendor/held"]["routable_reason"] == "operator-hold"
+    assert refresh()["vendor/held"]["routable_reason"] == "operator-hold"
+    catalog_rows[:] = [{"id": "vendor/held"}, {"id": "vendor/live"}]
+    relisted = refresh()["vendor/held"]
+
+    assert relisted["routable"] is False
+    assert relisted["routable_reason"] == "operator-hold"
+    assert "missing_since" not in relisted
+    assert probed == ["vendor/live"] * 4
 
 
 def test_direct_provider_normalization_is_the_single_audit_policy() -> None:
@@ -615,6 +705,186 @@ def test_malformed_runtime_only_manifest_expires_every_route() -> None:
             ],
         },
     ) == _EXPIRED_PROVIDER_MANIFEST
+
+
+@pytest.mark.parametrize(
+    "bad_tiers",
+    [
+        [],
+        [
+            {
+                "max_prompt_tokens": None,
+                "input_token_price_per_m": 100,
+                "output_token_price_per_m": 200,
+            },
+            {
+                "max_prompt_tokens": 200_000,
+                "input_token_price_per_m": 200,
+                "output_token_price_per_m": 400,
+            },
+        ],
+        [
+            {
+                "max_prompt_tokens": 500_000,
+                "input_token_price_per_m": 100,
+                "output_token_price_per_m": 200,
+            },
+            {
+                "max_prompt_tokens": 272_000,
+                "input_token_price_per_m": 200,
+                "output_token_price_per_m": 400,
+            },
+            {
+                "max_prompt_tokens": None,
+                "input_token_price_per_m": 300,
+                "output_token_price_per_m": 600,
+            },
+        ],
+        [
+            {
+                "max_prompt_tokens": 272_000,
+                "input_token_price_per_m": 100,
+                "output_token_price_per_m": 200,
+            }
+        ],
+        [
+            {
+                "max_prompt_tokens": 272_000,
+                "input_token_price_per_m": 200,
+                "output_token_price_per_m": 400,
+            },
+            {
+                "max_prompt_tokens": None,
+                "input_token_price_per_m": 100,
+                "output_token_price_per_m": 200,
+            },
+        ],
+        [
+            {
+                "max_prompt_tokens": 272_000,
+                "input_token_price_per_m": 100,
+                "output_token_price_per_m": 200,
+                "cached_input_token_price_per_m": 0.5,
+            },
+            {
+                "max_prompt_tokens": None,
+                "input_token_price_per_m": 200,
+                "output_token_price_per_m": 400,
+                "cached_input_token_price_per_m": 1,
+            },
+        ],
+        [
+            {
+                "max_prompt_tokens": 272_000,
+                "input_token_price_per_m": 101,
+                "output_token_price_per_m": 200,
+            },
+            {
+                "max_prompt_tokens": None,
+                "input_token_price_per_m": 200,
+                "output_token_price_per_m": 400,
+            },
+        ],
+    ],
+)
+def test_malformed_price_tiers_expire_provider_manifest(bad_tiers: object) -> None:
+    assert _provider_manifest_valid_until(
+        "upstage",
+        {
+            "generated_at": "2026-08-22T00:00:00Z",
+            "models": [
+                {
+                    "id": "upstage/bad-tiers",
+                    "routable": True,
+                    "input_token_price_per_m": 100,
+                    "output_token_price_per_m": 200,
+                    "price_tiers": bad_tiers,
+                }
+            ],
+        },
+    ) == _EXPIRED_PROVIDER_MANIFEST
+
+
+def test_malformed_snapshot_tiers_create_no_catalog_route(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "models": [
+                    {
+                        "id": "google/test-tier-model",
+                        "context_length": 1_000_000,
+                        "endpoints": [
+                            {
+                                "tr_provider_slug": "google-ai-studio",
+                                "model_id": "test-tier-model",
+                                "context_length": 1_000_000,
+                                "pricing": {
+                                    "prompt": "0.000001",
+                                    "completion": "0.000002",
+                                    "prompt_tiers": [
+                                        {
+                                            "max_prompt_tokens": 500_000,
+                                            "prompt": "0.000001",
+                                        },
+                                        {
+                                            "max_prompt_tokens": 272_000,
+                                            "prompt": "0.000002",
+                                        },
+                                        {
+                                            "max_prompt_tokens": None,
+                                            "prompt": "0.000003",
+                                        },
+                                    ],
+                                    "completion_tiers": [
+                                        {
+                                            "max_prompt_tokens": 500_000,
+                                            "completion": "0.000002",
+                                        },
+                                        {
+                                            "max_prompt_tokens": 272_000,
+                                            "completion": "0.000004",
+                                        },
+                                        {
+                                            "max_prompt_tokens": None,
+                                            "completion": "0.000006",
+                                        },
+                                    ],
+                                },
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(catalog_ingest, "_INGEST_PATH", snapshot)
+
+    models, endpoints = catalog_ingest._ingested_models_and_endpoints()
+
+    assert "google/test-tier-model" not in models
+    assert not any(
+        endpoint.model_id == "google/test-tier-model"
+        for endpoint in endpoints.values()
+    )
+
+
+def test_every_committed_provider_price_tier_is_structurally_safe() -> None:
+    manifests = Path(__file__).parents[1] / "src/trusted_router/data/provider_models"
+    for path in manifests.glob("*.json"):
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        for row in raw.get("models", []):
+            if isinstance(row, dict) and "price_tiers" in row:
+                assert provider_manifest_price_tiers_are_valid(row["price_tiers"]), (
+                    f"{path.name}:{row.get('id')} has unsafe price_tiers"
+                )
+                assert provider_manifest_price_profile_is_valid(row), (
+                    f"{path.name}:{row.get('id')} headline disagrees with tier zero"
+                )
 
 
 def test_media_fallback_manifests_receive_provider_scoped_expiry() -> None:
