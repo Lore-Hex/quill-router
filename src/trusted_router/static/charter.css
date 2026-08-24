@@ -1226,7 +1226,7 @@ pre {
 
 .charter-stat-band {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   padding-top: 16px;
   padding-bottom: 16px;
   border-top: 1px solid var(--border-default);
@@ -2068,13 +2068,9 @@ body.auth.auth-shell {
   }
 
   .charter-stat-band {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     padding-right: 20px;
     padding-left: 20px;
-  }
-
-  .charter-stat:nth-child(2) {
-    border-right: 0;
   }
 
   .home-section {
