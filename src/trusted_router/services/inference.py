@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
 from trusted_router.adapter import resolve_max_output_tokens
 from trusted_router.auth import Principal
@@ -56,6 +56,7 @@ async def run_chat_stream(
     *,
     app_name: str,
     usage_type: UsageType | None = None,
+    request: Request | None = None,
 ) -> AsyncIterator[bytes]:
     async for chunk in _run_stream(
         body,
@@ -64,6 +65,7 @@ async def run_chat_stream(
         settings,
         app_name=app_name,
         usage_type=usage_type,
+        request=request,
         stream_provider=lambda client, stream_model, stream_body, state: client.stream_chat(
             stream_model, stream_body, state
         ),
@@ -77,6 +79,7 @@ async def run_chat_auto_stream(
     settings: Settings,
     *,
     app_name: str,
+    request: Request | None = None,
 ) -> AsyncIterator[tuple[Model, bytes]]:
     async for item in run_chat_candidates_stream(
         body,
@@ -84,6 +87,7 @@ async def run_chat_auto_stream(
         principal,
         settings,
         app_name=app_name,
+        request=request,
     ):
         yield item
 
@@ -96,6 +100,7 @@ async def run_chat_candidates_stream(
     *,
     app_name: str,
     usage_type: UsageType | None = None,
+    request: Request | None = None,
 ) -> AsyncIterator[tuple[Model, bytes]]:
     errors: list[str] = []
     last_error: HTTPException | None = None
@@ -108,6 +113,7 @@ async def run_chat_candidates_stream(
             settings,
             app_name=app_name,
             usage_type=usage_type,
+            request=request,
         )
         try:
             first = await anext(stream)
@@ -136,6 +142,7 @@ async def run_messages_stream(
     *,
     app_name: str,
     usage_type: UsageType | None = None,
+    request: Request | None = None,
 ) -> AsyncIterator[bytes]:
     async for chunk in _run_stream(
         body,
@@ -144,6 +151,7 @@ async def run_messages_stream(
         settings,
         app_name=app_name,
         usage_type=usage_type,
+        request=request,
         stream_provider=lambda client, stream_model, stream_body, state: client.stream_messages(
             stream_model, stream_body, state
         ),
@@ -159,6 +167,7 @@ async def _run_stream(
     *,
     app_name: str,
     usage_type: UsageType | None,
+    request: Request | None,
     stream_provider: Callable[
         [ProviderClient, Model, dict[str, Any], Any],
         AsyncIterator[bytes],
@@ -176,6 +185,7 @@ async def _run_stream(
         streamed=True,
         region=settings.primary_region,
         usage_type_override=usage_type,
+        request=request,
     ) as ticket:
         state = client.new_stream_state(model, body)
         saw_chunk = False
@@ -216,6 +226,7 @@ async def run_chat(
     *,
     app_name: str,
     usage_type: UsageType | None = None,
+    request: Request | None = None,
 ) -> tuple[Any, Generation]:
     assert principal.api_key is not None
     client = provider_client(settings)
@@ -229,6 +240,7 @@ async def run_chat(
         streamed=bool(body.get("stream")),
         region=settings.primary_region,
         usage_type_override=usage_type,
+        request=request,
     ) as ticket:
         result = await client.chat(model, body)
         actual_cost = cost_microdollars(
@@ -268,6 +280,7 @@ async def run_embeddings(
     *,
     app_name: str,
     usage_type: UsageType | None = None,
+    request: Request | None = None,
 ) -> tuple[dict[str, Any], Generation]:
     """Embeddings runner — parallels `run_chat` but bills INPUT tokens only
     (no completion phase). Reserves on the estimated input cost, settles on
@@ -285,6 +298,7 @@ async def run_embeddings(
         streamed=False,
         region=settings.primary_region,
         usage_type_override=usage_type,
+        request=request,
     ) as ticket:
         result = await client.embeddings(model, body)
         usage = result.get("usage") or {}
@@ -314,6 +328,7 @@ async def run_chat_auto(
     settings: Settings,
     *,
     app_name: str,
+    request: Request | None = None,
 ) -> tuple[Any, Generation, Model, list[str]]:
     return await run_chat_candidates(
         body,
@@ -321,6 +336,7 @@ async def run_chat_auto(
         principal,
         settings,
         app_name=app_name,
+        request=request,
     )
 
 
@@ -332,6 +348,7 @@ async def run_chat_candidates(
     *,
     app_name: str,
     usage_type: UsageType | None = None,
+    request: Request | None = None,
 ) -> tuple[Any, Generation, Model, list[str]]:
     errors: list[str] = []
     last_error: HTTPException | None = None
@@ -345,6 +362,7 @@ async def run_chat_candidates(
                 settings,
                 app_name=app_name,
                 usage_type=usage_type,
+                request=request,
             )
             return result, generation, model, errors
         except HTTPException as exc:

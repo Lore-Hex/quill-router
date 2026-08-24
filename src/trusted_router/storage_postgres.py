@@ -51,7 +51,13 @@ from trusted_router.security import (
     new_key_id,
     verify_api_key,
 )
-from trusted_router.spend_windows import KeyWindowLimitExceeded, window_floors
+from trusted_router.spend_windows import (
+    KeyLimitExceeded,
+    KeyWindowLimitDecision,
+    KeyWindowLimitExceeded,
+    decide_key_window_limits,
+    window_floors,
+)
 from trusted_router.storage_auth_context import build_session_auth_context
 from trusted_router.storage_codec import json_body
 from trusted_router.storage_custom_models import normalize_custom_model_id
@@ -1968,7 +1974,7 @@ class PostgresStore:
         amount_microdollars: int,
         *,
         usage_type: UsageType | str,
-    ) -> None:
+    ) -> KeyWindowLimitDecision | None:
         """Hold `amount` against this key's caps, or raise.
 
         Mirrors InMemoryApiKeys.reserve_limit (storage_keys.py), which is the
@@ -1977,8 +1983,8 @@ class PostgresStore:
           * BYOK spend on a key that excludes BYOK is a NO-OP — lifetime cap
             and windows both.
           * Window limits are checked FIRST and independently of the lifetime
-            cap, raising KeyWindowLimitExceeded(window) so the gateway can
-            answer 429 with a Retry-After derived from that window's reset.
+            cap, raising KeyWindowLimitExceeded with the authoritative verdict
+            so the gateway can answer 429 without re-reading the window.
             In-flight `reserved` is deliberately not counted toward windows,
             matching the typed authorize check.
           * A key with no lifetime limit is uncapped: no-op after windows.
@@ -1990,9 +1996,10 @@ class PostgresStore:
         hot row and loses the race with a 40001 abort, which _run_transaction
         retries.
         """
-        window_floor_map = window_floors(utcnow())
+        decision_now = utcnow()
+        window_floor_map = window_floors(decision_now)
 
-        def reserve(conn: Any) -> None:
+        def reserve(conn: Any) -> KeyWindowLimitDecision | None:
             row = conn.execute(
                 "SELECT limit_micro, usage, byok_usage, reserved, include_byok,"
                 " day_limit_micro, week_limit_micro, month_limit_micro,"
@@ -2004,7 +2011,7 @@ class PostgresStore:
             if row is None:
                 # No typed row: nothing to enforce here. The gateway's own
                 # KEY_MISSING handling covers the typed-authorize path.
-                return
+                return None
             (
                 limit_micro,
                 _usage,
@@ -2023,7 +2030,7 @@ class PostgresStore:
             ) = row
 
             if _is_byok(usage_type) and not include_byok:
-                return
+                return None
 
             # Lazy windows: a NULL or stale *_start means the window has not
             # started in this period, so its usage reads as ZERO. No reset job
@@ -2033,16 +2040,26 @@ class PostgresStore:
                 ("weekly", week_limit, week_usage, week_start),
                 ("monthly", month_limit, month_usage, month_start),
             )
+            window_limits: dict[str, int] = {}
+            used_by_window: dict[str, int] = {}
             for name, limit, used, started in windows:
                 if limit is None:
                     continue
                 floor = window_floor_map[name]
                 current = 0 if started is None or _as_utc(started) < floor else int(used or 0)
-                if current + amount_microdollars > int(limit):
-                    raise KeyWindowLimitExceeded(name)
+                window_limits[name] = int(limit)
+                used_by_window[name] = current
+            decision = decide_key_window_limits(
+                window_limits,
+                used_by_window,
+                amount_microdollars,
+                now=decision_now,
+            )
+            if decision is not None and not decision.allowed:
+                raise KeyWindowLimitExceeded(decision)
 
             if limit_micro is None:
-                return
+                return decision
 
             updated = conn.execute(
                 "UPDATE tr_key_limit"
@@ -2056,9 +2073,10 @@ class PostgresStore:
                 prepare=False,
             ).rowcount
             if updated == 0:
-                raise ValueError("key limit exceeded")
+                raise KeyLimitExceeded(decision)
+            return decision
 
-        self._run_transaction(reserve)
+        return self._run_transaction(reserve)
 
     def settle_key_limit(
         self,
