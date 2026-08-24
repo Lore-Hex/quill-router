@@ -807,6 +807,209 @@ def test_azure_observer_refuses_to_drop_its_only_synthetic_owner(
     assert not run.verifier_calls
 
 
+def _azure_without_analytics_discovery(fixture: ScriptFixture) -> ScriptFixture:
+    discovery_fragments = (
+        "vm list-ip-addresses",
+        "keyvault secret show.*clickhouse-default-password",
+        "identity show.*tr-azure-analytics-uaenorth-id",
+    )
+    return replace(
+        fixture,
+        responses=(
+            (r"vm list-ip-addresses.*tr-azure-clickhouse-uaenorth", ""),
+            (
+                r"keyvault secret show.*clickhouse-default-password.*--query id",
+                "",
+            ),
+            (
+                r"identity show.*tr-azure-analytics-uaenorth-id.*--query id",
+                "",
+            ),
+            *(
+                response
+                for response in fixture.responses
+                if not any(fragment in response[0] for fragment in discovery_fragments)
+            ),
+        ),
+    )
+
+
+def _azure_control_plane_update(run: HarnessRun) -> list[str]:
+    updates = [call for call in run.calls if call[:3] == ["az", "containerapp", "update"]]
+    assert len(updates) == 1, summarise(run)
+    return updates[0]
+
+
+def _azure_update_env(update: list[str]) -> dict[str, str]:
+    start = update.index("--set-env-vars") + 1
+    end = update.index("--remove-env-vars")
+    return {
+        argument.partition("=")[0]: argument.partition("=")[2]
+        for argument in update[start:end]
+        if "=" in argument
+    }
+
+
+def test_azure_observer_emits_the_discovered_operational_analytics_env(
+    tmp_path: Path,
+) -> None:
+    isolated = DeployScriptHarness(tmp_path / "azure-analytics-discovered")
+
+    run = isolated.run("scripts/deploy/azure_control_plane.sh", verifier_rc=0)
+
+    assert run.returncode == 0, summarise(run)
+    update = _azure_control_plane_update(run)
+    env = _azure_update_env(update)
+    assert {
+        name: env[name]
+        for name in (
+            "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED",
+            "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL",
+            "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER",
+            "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE",
+            "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD",
+        )
+    } == {
+        "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED": "true",
+        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL": "http://10.61.3.4:8123",
+        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER": "default",
+        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE": "default",
+        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD": "secretref:clickhouse-password",
+    }
+
+    identity_assign = next(
+        call
+        for call in run.calls
+        if call[:4] == ["az", "containerapp", "identity", "assign"]
+    )
+    secret_set = next(
+        call for call in run.calls if call[:4] == ["az", "containerapp", "secret", "set"]
+    )
+    assert run.calls.index(identity_assign) < run.calls.index(secret_set) < run.calls.index(update)
+    clickhouse_reference = next(
+        argument for argument in secret_set if argument.startswith("clickhouse-password=")
+    )
+    assert clickhouse_reference == (
+        "clickhouse-password=keyvaultref:https://tr-azure-analytics-kv.vault.azure.net/"
+        "secrets/clickhouse-default-password/harness-version,identityref:/subscriptions/"
+        "harness/resourceGroups/tr-azure/providers/Microsoft.ManagedIdentity/"
+        "userAssignedIdentities/tr-azure-analytics-uaenorth-id"
+    )
+
+
+def test_azure_observer_refuses_missing_analytics_discovery_before_any_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = "scripts/deploy/azure_control_plane.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        _azure_without_analytics_discovery(fixture),
+    )
+    isolated = DeployScriptHarness(tmp_path / "azure-analytics-undiscoverable")
+
+    run = isolated.run(script, verifier_rc=0)
+
+    assert run.returncode != 0
+    assert "expects_outbox=True" in run.stderr
+    assert "tr-azure-clickhouse-uaenorth" in run.stderr
+    assert "tr-azure-analytics-kv" in run.stderr
+    assert "az vm list-ip-addresses -g tr-azure -n tr-azure-clickhouse-uaenorth" in run.stderr
+    assert "az keyvault secret show --vault-name tr-azure-analytics-kv" in run.stderr
+    mutating_prefixes = (
+        ["az", "acr", "build"],
+        ["az", "acr", "import"],
+        ["az", "containerapp", "identity", "assign"],
+        ["az", "containerapp", "secret", "set"],
+        ["az", "containerapp", "update"],
+        ["az", "containerapp", "create"],
+        ["az", "containerapp", "revision", "set-mode"],
+        ["az", "postgres", "flexible-server", "firewall-rule"],
+        ["gcloud", "dns"],
+        ["psql"],
+    )
+    assert not any(
+        call[: len(prefix)] == prefix for call in run.calls for prefix in mutating_prefixes
+    ), summarise(run)
+    assert not run.verifier_calls
+
+
+def test_azure_observer_missing_analytics_requires_an_explicit_operator_opt_out(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = "scripts/deploy/azure_control_plane.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        _azure_without_analytics_discovery(fixture),
+    )
+    isolated = DeployScriptHarness(tmp_path / "azure-analytics-explicit-opt-out")
+
+    run = isolated.run(
+        script,
+        verifier_rc=0,
+        extra_env={"AZURE_ANALYTICS_OPERATOR_DECISION": "disable"},
+    )
+
+    assert run.returncode == 0, summarise(run)
+    update = _azure_control_plane_update(run)
+    env = _azure_update_env(update)
+    assert env["TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED"] == "false"
+    assert env["TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL"] == ""
+    assert "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD" not in env
+    removed = update[
+        update.index("--remove-env-vars") + 1 : update.index("--min-replicas")
+    ]
+    assert "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD" in removed
+    assert "operator explicitly decided to disable Azure analytics" in run.stderr
+
+
+def test_azure_observer_keeps_all_retired_private_env_names_absent(tmp_path: Path) -> None:
+    isolated = DeployScriptHarness(tmp_path / "azure-retired-env-absent")
+
+    run = isolated.run("scripts/deploy/azure_control_plane.sh", verifier_rc=0)
+
+    assert run.returncode == 0, summarise(run)
+    update = _azure_control_plane_update(run)
+    env = _azure_update_env(update)
+    retired = {
+        "TR_INTERNAL_GATEWAY_TOKEN",
+        "TR_FEDERATION_HOME_TOKEN",
+        "TR_FEDERATION_SETTLEMENT_HOME_TOKEN",
+        "TR_FEDERATION_DEFERRED_SETTLEMENT_ENABLED",
+        "TR_FEDERATION_HOME_BASE_URL",
+    }
+    assert retired.isdisjoint(env)
+    removed = set(
+        update[update.index("--remove-env-vars") + 1 : update.index("--min-replicas")]
+    )
+    assert retired <= removed
+
+
+def test_azure_clickhouse_password_never_enters_argv_or_logs(tmp_path: Path) -> None:
+    password = "harness-clickhouse-password-S3CR3T"  # noqa: S105 - leak canary
+    isolated = DeployScriptHarness(tmp_path / "azure-analytics-password-isolation")
+
+    run = isolated.run(
+        "scripts/deploy/azure_control_plane.sh",
+        verifier_rc=0,
+        extra_env={"CLICKHOUSE_PASSWORD": password},
+    )
+
+    assert run.returncode == 0, summarise(run)
+    observable = "\n".join((run.stdout, run.stderr, *("\t".join(call) for call in run.calls)))
+    assert password not in observable
+    key_vault_calls = [
+        call for call in run.calls if call[:4] == ["az", "keyvault", "secret", "show"]
+    ]
+    assert len(key_vault_calls) == 1
+    assert key_vault_calls[0][key_vault_calls[0].index("--query") + 1] == "id"
+
+
 def test_azure_canary_persists_a_missing_dedicated_attribution_secret_before_update(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -36,8 +36,9 @@ one of those is safe to ignore.
 
 UNCHECKED IS A THIRD OUTCOME, AND IT IS PRINTED
     Two registry states are neither pass nor fail: a cloud with no public
-    status page (``reason=``), and a cloud that legitimately runs no
-    operational-analytics outbox (``expects_outbox=False`` -- Azure today).
+    status page (``reason=``), and a cloud deliberately declared to run no
+    operational-analytics outbox (``expects_outbox=False``). All deployed
+    clouds currently expect an outbox, including Azure.
     Failing those every day would be crying wolf about something nobody can
     fix, and the repo has already learned what that costs: see
     ``CANARY_COUNT_GATE_FROM`` in
