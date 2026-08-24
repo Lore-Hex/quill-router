@@ -60,6 +60,7 @@ from scripts.pricing.providers import (
     scaleway,
     stepfun,
     upstage,
+    wandb,
 )
 from scripts.pricing.video_sources import (
     VIDEO_PRICE_PROVIDER_SLUGS,
@@ -485,6 +486,7 @@ _CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
     scaleway,
     featherless,
     sakana,
+    wandb,
 )
 
 _STALE_MANIFEST_PROVIDER_MODULES = (

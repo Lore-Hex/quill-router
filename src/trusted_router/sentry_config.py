@@ -63,6 +63,7 @@ SENSITIVE_STRING_FRAGMENTS: tuple[str, ...] = (
     "togetherai_api_key",
     "fireworks_api_key",
     "fireworks_ai_api_key",
+    "wandb_api_key",
     "cohere_api_key",
 )
 

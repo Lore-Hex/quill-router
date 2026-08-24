@@ -1156,6 +1156,27 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://docs.api.nvidia.com/nim/docs/run-anywhere",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "wandb": Provider(
+        slug="wandb",
+        name="Weights & Biases",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=True,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "W&B Serverless Inference runs on CoreWeave infrastructure. W&B "
+            "does not publish a zero-retention, confidential-compute, or "
+            "end-to-end-encryption commitment for this service, so these "
+            "routes use the Standard privacy tier. TrustedRouter does not "
+            "enable W&B Weave tracing for provider calls."
+        ),
+        provider_policy_url="https://wandb.ai/site/inference/",
+        # Weights and Biases, LLC is the US entity identified by W&B's terms.
+        # https://wandb.ai/site/terms/
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
     "databricks": Provider(
         slug="databricks",
         name="Databricks",
@@ -1845,6 +1866,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "recraft",
         "bfl",
         "decart",
+        "wandb",
         "databricks",
         "zero-g",
         "upstage",
