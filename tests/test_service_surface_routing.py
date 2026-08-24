@@ -113,6 +113,7 @@ def test_every_combined_route_sent_to_public_is_mounted_by_public() -> None:
         "/leaderboard",
         "/static/charter.css",
         "/robots.txt",
+        "/.well-known/oauth-authorization-server",
         "/health",
         "/ready",
     ],
