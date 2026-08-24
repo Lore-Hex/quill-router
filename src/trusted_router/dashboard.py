@@ -2397,8 +2397,17 @@ def _organization_node(settings: Settings) -> dict[str, object]:
                 "availableLanguage": ["en"],
             },
         ],
+        # Profiles that identify this organization somewhere OTHER than this
+        # site, so a search engine or agent can disambiguate "TrustedRouter"
+        # from similarly named entities. Only add a URL that actually resolves
+        # to a profile we own: a sameAs pointing at a page that does not exist
+        # is a broken identity claim, which is worse for disambiguation than
+        # publishing nothing. There is no Wikipedia article and no Wikidata
+        # entity as of 2026-08-24 (checked: article 404s, wbsearchentities
+        # returns zero results) — add the Wikidata URI here once one exists.
         "sameAs": [
             "https://github.com/Lore-Hex",
+            "https://x.com/trustedrouter",
             f"https://{domain}/trust",
         ],
     }
