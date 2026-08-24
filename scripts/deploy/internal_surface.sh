@@ -38,11 +38,16 @@ CURRENT_REGION_INDEX=""
 INTERNAL_SMOKE_DIR=""
 INTERNAL_DEPLOY_STATE_DIR="${TR_INTERNAL_DEPLOY_STATE_DIR:-${HOME}/.local/state/trusted-router/internal-surface}"
 PROMOTION_MARKER="${INTERNAL_DEPLOY_STATE_DIR}/${INTERNAL_SERVICE}.promotion-in-flight"
+PROMOTION_HISTORY="${INTERNAL_DEPLOY_STATE_DIR}/${INTERNAL_SERVICE}.promotion-history"
 IN_FLIGHT_REGION=""
 IN_FLIGHT_OLD_REVISION=""
 IN_FLIGHT_NEW_REVISION=""
 IN_FLIGHT_OLD_INGRESS=""
 IN_FLIGHT_PHASE=""
+HISTORY_REGIONS=()
+HISTORY_OLD_REVISIONS=()
+HISTORY_NEW_REVISIONS=()
+HISTORY_OLD_INGRESSES=()
 
 case "$INTERNAL_PROBE_ATTEMPTS" in
   ''|*[!0-9]*|0)
@@ -142,6 +147,115 @@ arm_promotion() {
 }
 
 clear_promotion_marker() { rm -f "$PROMOTION_MARKER"; }
+
+read_promotion_history() {
+  HISTORY_REGIONS=()
+  HISTORY_OLD_REVISIONS=()
+  HISTORY_NEW_REVISIONS=()
+  HISTORY_OLD_INGRESSES=()
+  [ -e "$PROMOTION_HISTORY" ] || return 1
+  [ -s "$PROMOTION_HISTORY" ] || {
+    echo "ERROR: promotion history ${PROMOTION_HISTORY} is empty; operator attention is required" >&2
+    return 2
+  }
+  local region old_revision new_revision old_ingress extra seen="," count=0
+  while IFS=$'\t' read -r region old_revision new_revision old_ingress extra; do
+    if [ -n "$extra" ] || [ -z "$region" ] || \
+       [[ "$old_revision" != "${INTERNAL_SERVICE}-"* ]] || \
+       [[ "$new_revision" != "${INTERNAL_SERVICE}-"* ]] || \
+       { [ "$old_ingress" != all ] && \
+         [ "$old_ingress" != internal-and-cloud-load-balancing ]; } || \
+       [[ "$seen" == *",${region},"* ]]; then
+      echo "ERROR: promotion history ${PROMOTION_HISTORY} is malformed; operator attention is required" >&2
+      return 2
+    fi
+    HISTORY_REGIONS+=("$region")
+    HISTORY_OLD_REVISIONS+=("$old_revision")
+    HISTORY_NEW_REVISIONS+=("$new_revision")
+    HISTORY_OLD_INGRESSES+=("$old_ingress")
+    seen+="${region},"
+    count=$((count + 1))
+  done <"$PROMOTION_HISTORY"
+  [ "$count" -gt 0 ]
+}
+
+record_promotion_history() {
+  python3 - "$PROMOTION_HISTORY" "$1" "$2" "$3" "$4" <<'PY'
+import os
+import pathlib
+import sys
+import tempfile
+
+path = pathlib.Path(sys.argv[1])
+path.parent.mkdir(parents=True, exist_ok=True)
+record = "\t".join(sys.argv[2:])
+lines = []
+if path.exists():
+    lines = [line for line in path.read_text().splitlines() if line.split("\t", 1)[0] != sys.argv[2]]
+lines.append(record)
+fd, temporary_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+temporary = pathlib.Path(temporary_name)
+try:
+    with os.fdopen(fd, "w") as handle:
+        os.fchmod(handle.fileno(), 0o600)
+        handle.write("\n".join(lines) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+    directory_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+finally:
+    temporary.unlink(missing_ok=True)
+PY
+  read_promotion_history >/dev/null
+}
+
+clear_promotion_history() {
+  python3 - "$PROMOTION_HISTORY" <<'PY'
+import os
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if path.exists():
+    path.unlink()
+    directory_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+PY
+}
+
+restore_promotion_history() {
+  local history_status=0 restore_failed=0 index region old_revision old_ingress
+  read_promotion_history || history_status=$?
+  [ "$history_status" -ne 1 ] || return 0
+  [ "$history_status" -eq 0 ] || return 1
+  for index in "${!HISTORY_REGIONS[@]}"; do
+    region="${HISTORY_REGIONS[$index]}"
+    old_revision="${HISTORY_OLD_REVISIONS[$index]}"
+    old_ingress="${HISTORY_OLD_INGRESSES[$index]}"
+    if ! gc run services update-traffic "$INTERNAL_SERVICE" --region "$region" \
+        --to-revisions="${old_revision}=100" --quiet >/dev/null; then
+      echo "CRITICAL: restore traffic with: gcloud --project ${PROJECT_ID} run services update-traffic ${INTERNAL_SERVICE} --region ${region} --to-revisions=${old_revision}=100 --quiet" >&2
+      restore_failed=1
+    fi
+    if ! gc run services update "$INTERNAL_SERVICE" --region "$region" \
+        --ingress "$old_ingress" --quiet >/dev/null; then
+      echo "CRITICAL: restore ingress with: gcloud --project ${PROJECT_ID} run services update ${INTERNAL_SERVICE} --region ${region} --ingress ${old_ingress} --quiet" >&2
+      restore_failed=1
+    fi
+  done
+  if [ "$restore_failed" -eq 0 ]; then
+    clear_promotion_history
+    return 0
+  fi
+  return 1
+}
 
 restore_in_flight_promotion() {
   local marker_status=0 restore_failed=0
@@ -462,10 +576,13 @@ if [ "$STAGE" = routed ]; then
   SERVICE="$INTERNAL_SERVICE"
   marker_status=0
   read_promotion_marker || marker_status=$?
-  if [ "$marker_status" -eq 0 ]; then
-    echo "ERROR: unresolved promotion marker for ${INTERNAL_SERVICE}/${IN_FLIGHT_REGION}; restore before retrying" >&2
-    exit 1
-  elif [ "$marker_status" -ne 1 ]; then
+  history_status=0
+  read_promotion_history || history_status=$?
+  if [ "$marker_status" -eq 0 ] || [ "$history_status" -eq 0 ]; then
+    echo "CRITICAL: interrupted internal promotion state found; restoring every recorded region" >&2
+    restore_in_flight_promotion || exit 1
+    restore_promotion_history || exit 1
+  elif [ "$marker_status" -ne 1 ] || [ "$history_status" -ne 1 ]; then
     exit 1
   fi
   for target in "${TARGET_REGIONS[@]}"; do
@@ -553,8 +670,10 @@ fail_routed_region() {
     fi
   done
   if [ "$restore_failed" -eq 0 ]; then
-    clear_promotion_marker
-  else
+    clear_promotion_marker || restore_failed=1
+    clear_promotion_history || restore_failed=1
+  fi
+  if [ "$restore_failed" -ne 0 ]; then
     echo "CRITICAL: FLEET IS SPLIT OR RESTORE COULD NOT BE VERIFIED; run every command below and verify every region before retrying." >&2
     for index in "${rollback_indexes[@]}"; do
       region="${TARGET_REGIONS[$index]}"
@@ -633,8 +752,29 @@ for index in "${!TARGET_REGIONS[@]}"; do
     fi
     smoke_attempt=$((smoke_attempt + 1))
   done
-  if [ "$smoke_code" != 401 ] || \
-     ! grep -Fq 'Invalid API key' "${INTERNAL_SMOKE_DIR}/body"; then
+  smoke_body_valid=0
+  if python3 - "${INTERNAL_SMOKE_DIR}/body" <<'PY'
+import json
+import pathlib
+import sys
+
+try:
+    payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+    error = payload["error"]
+except (KeyError, TypeError, ValueError):
+    raise SystemExit(1)
+if not isinstance(error, dict):
+    raise SystemExit(1)
+raise SystemExit(
+    0
+    if error.get("code") == 401 and error.get("message") == "Invalid API key"
+    else 1
+)
+PY
+  then
+    smoke_body_valid=1
+  fi
+  if [ "$smoke_code" != 401 ] || [ "$smoke_body_valid" -ne 1 ]; then
     cleanup_internal_smoke
     fail_routed_region "$index" \
       "authenticated validate smoke expected the dummy-key 401"
@@ -650,9 +790,13 @@ for index in "${!TARGET_REGIONS[@]}"; do
   gc run services update "$INTERNAL_SERVICE" --region "$target" \
     --ingress internal-and-cloud-load-balancing --quiet >/dev/null || \
     fail_routed_region "$index" "ingress restriction failed"
+  record_promotion_history "$target" "$old_revision" "$new_revision" "$old_ingress" || \
+    fail_routed_region "$index" "promotion history write failed"
   PROMOTED_INDEXES+=("$index")
   clear_promotion_marker || fail_routed_region "$index" "promotion marker cleanup failed"
   cleanup_internal_probe_tag || fail_routed_region "$index" "probe tag cleanup failed"
 done
+
+[ "$STAGE" != routed ] || clear_promotion_history
 
 log "${INTERNAL_SERVICE} ${STAGE} deploy complete; no load-balancer route was changed"

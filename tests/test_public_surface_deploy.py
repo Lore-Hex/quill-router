@@ -548,6 +548,37 @@ def test_region_three_failure_restores_every_earlier_public_promotion(
         )
 
 
+def test_restart_restores_every_public_region_from_durable_promotion_history(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / "public-promotion-state"
+    state_dir.mkdir()
+    (state_dir / "trusted-router-public.promotion-history").write_text(
+        "us-central1\ttrusted-router-public-active\t"
+        "trusted-router-public-candidate-us-central1\t"
+        "internal-and-cloud-load-balancing\n"
+        "us-east4\ttrusted-router-public-active\t"
+        "trusted-router-public-candidate-us-east4\t"
+        "internal-and-cloud-load-balancing\n"
+    )
+
+    run = DeployScriptHarness(tmp_path / "public-restart-restore").run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={"TR_PUBLIC_DEPLOY_STATE_DIR": str(state_dir)},
+    )
+
+    assert run.returncode == 0, summarise(run)
+    traffic = _traffic_calls(run)
+    for region in ("us-central1", "us-east4"):
+        assert any(
+            _region_arg(call) == region
+            and "--to-revisions=trusted-router-public-active=100" in call
+            for call in traffic
+        )
+    assert not (state_dir / "trusted-router-public.promotion-history").exists()
+
+
 def test_failed_public_fleet_restore_reports_every_exact_command(
     tmp_path: Path,
 ) -> None:

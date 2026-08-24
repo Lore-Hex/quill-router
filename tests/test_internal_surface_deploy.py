@@ -292,6 +292,19 @@ def test_routed_validate_smoke_rejects_unexpected_401_body(tmp_path: Path) -> No
     assert "authenticated validate smoke expected the dummy-key 401" in run.stderr
 
 
+def test_routed_validate_smoke_rejects_401_body_with_expected_phrase_only(
+    tmp_path: Path,
+) -> None:
+    run = DeployScriptHarness(tmp_path / "substring-internal-smoke-body").run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={"HARNESS_INTERNAL_SMOKE_BODY": "substring"},
+    )
+
+    assert run.returncode != 0
+    assert "authenticated validate smoke expected the dummy-key 401" in run.stderr
+
+
 def test_internal_settings_explicitly_reject_stripe_secret_key(
     harness: DeployScriptHarness,
 ) -> None:
@@ -323,6 +336,37 @@ def test_region_three_failure_restores_every_earlier_internal_promotion(
             and "--to-revisions=trusted-router-internal-active=100" in call
             for call in run.calls
         )
+
+
+def test_restart_restores_every_region_from_durable_promotion_history(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / "internal-promotion-state"
+    state_dir.mkdir()
+    (state_dir / "trusted-router-internal.promotion-history").write_text(
+        "us-central1\ttrusted-router-internal-active\t"
+        "trusted-router-internal-candidate-us-central1\t"
+        "internal-and-cloud-load-balancing\n"
+        "us-east4\ttrusted-router-internal-active\t"
+        "trusted-router-internal-candidate-us-east4\t"
+        "internal-and-cloud-load-balancing\n"
+    )
+
+    run = DeployScriptHarness(tmp_path / "internal-restart-restore").run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={"TR_INTERNAL_DEPLOY_STATE_DIR": str(state_dir)},
+    )
+
+    assert run.returncode == 0, summarise(run)
+    for region in ("us-central1", "us-east4"):
+        assert any(
+            "update-traffic" in call
+            and region in call
+            and "--to-revisions=trusted-router-internal-active=100" in call
+            for call in run.calls
+        )
+    assert not (state_dir / "trusted-router-internal.promotion-history").exists()
 
 
 def test_failed_internal_fleet_restore_reports_every_exact_command(

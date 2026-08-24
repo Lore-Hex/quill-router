@@ -8,7 +8,10 @@ from collections import Counter
 from typing import Any
 
 from trusted_router.config import Settings
-from trusted_router.services.auto_refill import maybe_charge_after_settle
+from trusted_router.services.auto_refill import (
+    maybe_charge_after_settle,
+    settlement_auto_refill_idempotency_key,
+)
 from trusted_router.services.settle_outbox_drain import spanner_settle_outbox
 from trusted_router.storage import STORE
 from trusted_router.synthetic.alerts import ops_alert
@@ -55,7 +58,7 @@ def drain_auto_refill_outbox(settings: Settings, *, limit: int = 100) -> dict[st
             outcome = maybe_charge_after_settle(
                 row.workspace_id,
                 settings=settings,
-                idempotency_key=f"auto-refill-settlement:{row.authorization_id}",
+                idempotency_key=settlement_auto_refill_idempotency_key(row.authorization_id),
             )
         except Exception as exc:  # noqa: BLE001 - queue row must survive any unexpected bug.
             logger.exception(

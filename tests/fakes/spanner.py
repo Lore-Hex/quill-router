@@ -1143,6 +1143,31 @@ class _FakeTransaction:
             self.pending_writes.append(("update_settle_outbox", pk, new))
             return 1
         if sql.startswith(
+            "UPDATE tr_settle_outbox SET auto_refill_workspace_id=@workspace_id"
+        ):
+            _require_pred(sql, "authorization_id=@aid", "auto-attach")
+            _require_pred(sql, "intent_kind='settle'", "auto-attach")
+            _require_pred(sql, "auto_refill_status IS NULL", "auto-attach")
+            pk = (p["aid"], "settle")
+            rec = self._settle_outbox_current(pk)
+            if rec is None or rec.get("auto_refill_status") is not None:
+                return 0
+            new = dict(
+                rec,
+                auto_refill_workspace_id=p["workspace_id"],
+                auto_refill_status="pending",
+                auto_refill_attempts=0,
+                auto_refill_last_error=None,
+                auto_refill_next_attempt_at=p["next_at"],
+                auto_refill_lease_owner=None,
+                auto_refill_leased_until=None,
+                auto_refill_enqueued_at=p["now"],
+                auto_refill_updated_at=p["now"],
+                auto_refill_terminal_at=None,
+            )
+            self.pending_writes.append(("update_settle_outbox", pk, new))
+            return 1
+        if sql.startswith(
             "UPDATE tr_settle_outbox SET auto_refill_lease_owner=@owner"
         ):
             _require_pred(sql, "authorization_id=@aid AND intent_kind='settle'", "auto-claim")

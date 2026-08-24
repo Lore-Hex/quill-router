@@ -50,6 +50,11 @@ class AutoRefillOutcome:
     retryable: bool = False
 
 
+def settlement_auto_refill_idempotency_key(authorization_id: str) -> str:
+    """Return the Stripe identity shared by every path for one settlement."""
+    return f"auto-refill-settlement:{authorization_id}"
+
+
 def maybe_charge_after_settle(
     workspace_id: str,
     *,

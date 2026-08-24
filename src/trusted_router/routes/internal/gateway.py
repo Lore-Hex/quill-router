@@ -1954,6 +1954,13 @@ def _settle_gateway_authorization(
     is_customer_billing_event = partner_mode != PartnerBillingMode.INTERNAL
     enqueue_ms = 0.0
     outbox_enqueued = False
+    refill_required = (
+        settings.service_surface == "internal"
+        and success
+        and is_customer_billing_event
+        and selected_usage_type == UsageType.CREDITS
+    )
+    refill_attached = not refill_required
     if settings.settle_outbox_enabled:
         enqueue_start = perf_counter()
         try:
@@ -1969,7 +1976,8 @@ def _settle_gateway_authorization(
             # §5.4 honest scope: durability starts only when this INSERT commits;
             # crashes before it still rely on enclave redelivery. MF4/MF5 freeze
             # the finalize path and exact resolved cost used by the inline attempt.
-            spanner_settle_outbox().enqueue(
+            settle_outbox = spanner_settle_outbox()
+            settle_outbox.enqueue(
                 SettleOutboxRow(
                     authorization_id=authorization.id,
                     intent_kind=intent_kind,
@@ -1980,19 +1988,23 @@ def _settle_gateway_authorization(
                     model_id=generation_model_id,
                     selected_usage_type=str(selected_usage_type),
                     settle_body=json.dumps(frozen_settle_body, separators=(",", ":")),
-                    auto_refill_workspace_id=(
-                        authorization.workspace_id
-                        if settings.service_surface == "internal"
-                        and success
-                        and is_customer_billing_event
-                        and selected_usage_type == UsageType.CREDITS
-                        else None
-                    ),
+                    auto_refill_workspace_id=(authorization.workspace_id if refill_required else None),
                 ),
                 # Grace so inline finalize wins the benign race; the drain only
                 # sees rows whose inline attempt is dead >=60s, avoiding replays.
                 initial_delay_seconds=60,
             )
+            if refill_required:
+                # Pre-cutover combined rows have no refill columns. Attaching is
+                # an independent NULL -> pending transition, so it is safe even
+                # when the settlement row is actively leased or terminal.
+                refill_attached = settle_outbox.attach_auto_refill(
+                    authorization.id,
+                    authorization.workspace_id,
+                    initial_delay_seconds=60,
+                )
+                if not refill_attached:
+                    raise RuntimeError("settlement auto-refill attachment was not confirmed")
             outbox_enqueued = True
         except Exception:
             logger.error(
@@ -2001,6 +2013,13 @@ def _settle_gateway_authorization(
                 exc_info=True,
             )
         enqueue_ms = (perf_counter() - enqueue_start) * 1000
+
+    if refill_required and not refill_attached:
+        raise api_error(
+            503,
+            "Settlement refill durability is temporarily unavailable",
+            ErrorType.SERVICE_UNAVAILABLE,
+        )
 
     if (
         is_typed
@@ -2138,7 +2157,12 @@ def _settle_gateway_authorization(
         )
 
     if success and is_customer_billing_event and selected_usage_type == UsageType.CREDITS:
-        _schedule_auto_refill(authorization.workspace_id, settings, background_tasks)
+        _schedule_auto_refill(
+            authorization.workspace_id,
+            authorization.id,
+            settings,
+            background_tasks,
+        )
     if success and is_customer_billing_event:
         if background_tasks is not None:
             background_tasks.add_task(
@@ -2945,10 +2969,14 @@ def _partner_billing_mode_or_error(
 
 def _schedule_auto_refill(
     workspace_id: str,
+    authorization_id: str,
     settings: Settings,
     background_tasks: BackgroundTasks | None,
 ) -> None:
-    from trusted_router.services.auto_refill import maybe_charge_after_settle
+    from trusted_router.services.auto_refill import (
+        maybe_charge_after_settle,
+        settlement_auto_refill_idempotency_key,
+    )
 
     # The internal surface has no Stripe credential. Its successful credit
     # settlement attached durable refill work to the settlement outbox row;
@@ -2956,7 +2984,17 @@ def _schedule_auto_refill(
     # legacy in-process behavior below.
     if settings.service_surface == "internal":
         return
+    idempotency_key = settlement_auto_refill_idempotency_key(authorization_id)
     if background_tasks is not None:
-        background_tasks.add_task(maybe_charge_after_settle, workspace_id, settings=settings)
+        background_tasks.add_task(
+            maybe_charge_after_settle,
+            workspace_id,
+            settings=settings,
+            idempotency_key=idempotency_key,
+        )
         return
-    maybe_charge_after_settle(workspace_id, settings=settings)
+    maybe_charge_after_settle(
+        workspace_id,
+        settings=settings,
+        idempotency_key=idempotency_key,
+    )

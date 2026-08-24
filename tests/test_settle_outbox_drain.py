@@ -15,6 +15,7 @@ from trusted_router.config import Settings
 from trusted_router.custom_model_billing import user_model_payout_event_id
 from trusted_router.main import create_app
 from trusted_router.regional_quota_ledger import RegionalLeaseLedgerError
+from trusted_router.services import auto_refill as auto_refill_mod
 from trusted_router.services import auto_refill_outbox_drain as auto_refill_drain_mod
 from trusted_router.services import settle_outbox_apply as apply_mod
 from trusted_router.services import settle_outbox_drain as drain_mod
@@ -501,6 +502,123 @@ def test_combined_settle_preserves_in_process_auto_refill(
     assert response.status_code == 200, response.text
     assert charged == [ws]
     assert _outbox(store).get_auto_refill(auth.id) is None
+
+
+def test_inline_failure_after_stripe_then_cross_minute_drain_creates_one_payment_intent(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One settlement has one Stripe identity across combined and control paths."""
+    store, db, _bt = fake_store
+    ws = "ws-auto-refill-cross-surface"
+    _seed_credit(store, ws, total=1_000_000)
+    store.update_auto_refill_settings(
+        ws,
+        enabled=True,
+        threshold_microdollars=5_000_000,
+        amount_microdollars=20_000_000,
+    )
+    store.set_stripe_customer(
+        ws,
+        customer_id="cus_cross_surface",
+        payment_method_id="pm_cross_surface",
+    )
+    key = _make_key(store, ws, limit=None)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    row = _row(auth)
+    row.auto_refill_workspace_id = ws
+    outbox = _outbox(store)
+    assert outbox.enqueue(row) == "inserted"
+
+    class CrossingMinute(dt.datetime):
+        current = dt.datetime(2030, 1, 1, 12, 0, 59, tzinfo=dt.UTC)
+
+        @classmethod
+        def now(cls, tz: dt.tzinfo | None = None) -> dt.datetime:
+            return cls.current if tz is not None else cls.current.replace(tzinfo=None)
+
+    monkeypatch.setattr(auto_refill_mod, "datetime", CrossingMinute)
+    submitted_keys: list[str] = []
+    created_by_key: dict[str, Any] = {}
+
+    def create_payment_intent(**kwargs: Any) -> Any:
+        idem = str(kwargs["idempotency_key"])
+        submitted_keys.append(idem)
+        intent = created_by_key.setdefault(idem, type("Intent", (), {"id": "pi_once"})())
+        if len(submitted_keys) == 1:
+            raise RuntimeError("response lost after Stripe accepted the PaymentIntent")
+        return intent
+
+    monkeypatch.setattr("stripe.PaymentIntent.create", create_payment_intent)
+    combined = _client(
+        Settings(
+            environment="test",
+            service_surface="combined",
+            settle_outbox_enabled=True,
+            stripe_secret_key="sk_test_combined",  # noqa: S106 - fixture credential.
+        )
+    )
+
+    response = combined.post("/v1/internal/gateway/settle", json=_settle_json(auth.id))
+
+    assert response.status_code == 200, response.text
+    CrossingMinute.current = dt.datetime(2030, 1, 1, 12, 6, tzinfo=dt.UTC)
+    db.settle_outbox[(auth.id, "settle")]["auto_refill_next_attempt_at"] = EXPIRED_AT
+    drained = auto_refill_drain_mod.drain_auto_refill_outbox(
+        Settings(
+            environment="test",
+            service_surface="control",
+            stripe_secret_key="sk_test_control",  # noqa: S106 - fixture credential.
+        ),
+        limit=10,
+    )
+
+    assert drained["claimed"] == 1
+    assert submitted_keys == [
+        f"auto-refill-settlement:{auth.id}",
+        f"auto-refill-settlement:{auth.id}",
+    ]
+    assert len(created_by_key) == 1
+
+
+@pytest.mark.parametrize("existing_status", ("leased", "dead"))
+def test_internal_settle_attaches_refill_to_pre_cutover_row_before_finalize(
+    fake_store: tuple[Any, Any, Any],
+    existing_status: str,
+) -> None:
+    """A pre-cutover settlement row cannot silently lose its refill sub-work."""
+    store, db, _bt = fake_store
+    ws = f"ws-pre-cutover-{existing_status}"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    outbox = _outbox(store)
+    assert outbox.enqueue(_row(auth, origin="typed")) == "inserted"
+    if existing_status == "leased":
+        [claimed] = outbox.claim(lease_seconds=300)
+        assert claimed.authorization_id == auth.id
+    else:
+        db.settle_outbox[(auth.id, "settle")].update(
+            status="dead",
+            next_attempt_at=None,
+        )
+    client = _client(
+        Settings(
+            environment="test",
+            service_surface="internal",
+            settle_outbox_enabled=True,
+        )
+    )
+
+    response = client.post("/v1/internal/gateway/settle", json=_settle_json(auth.id))
+
+    assert response.status_code == 200, response.text
+    settled = store.get_gateway_authorization(auth.id)
+    assert settled is not None and settled.settled is True
+    refill = outbox.get_auto_refill(auth.id)
+    assert refill is not None
+    assert refill.workspace_id == ws
+    assert refill.status == "pending"
 
 
 def test_auto_refill_drain_is_idempotent_after_duplicate_enqueue(

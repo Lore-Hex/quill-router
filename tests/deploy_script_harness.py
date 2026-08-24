@@ -518,7 +518,9 @@ PY
     if [ -n "$output_file" ]; then
       if [ "${HARNESS_INTERNAL_SMOKE_BODY:-valid}" = "valid" ] && \
           [ "$smoke_code" = "401" ]; then
-        printf '{"error":{"message":"Invalid API key"}}\n' >"$output_file"
+        printf '{"error":{"code":401,"message":"Invalid API key","type":"unauthorized","source":"router"}}\n' >"$output_file"
+      elif [ "${HARNESS_INTERNAL_SMOKE_BODY:-}" = "substring" ]; then
+        printf '{"error":{"code":401,"message":"Unexpected response containing Invalid API key"}}\n' >"$output_file"
       else
         printf '{"error":{"message":"Unexpected smoke response"}}\n' >"$output_file"
       fi

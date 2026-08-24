@@ -643,6 +643,52 @@ class SpannerSettleOutbox:
         return bool(run_in_transaction_with_retry(self._database, txn))
 
     # ── control-owned auto-refill sub-queue ─────────────────────────────────
+    def attach_auto_refill(
+        self,
+        authorization_id: str,
+        workspace_id: str,
+        *,
+        initial_delay_seconds: int = 0,
+    ) -> bool:
+        """Attach refill work independently of settlement status and leasing.
+
+        This is a one-way NULL -> pending transition. It can therefore repair a
+        pre-cutover row while a settle worker owns its lease, or after the
+        settlement row became terminal, without mutating the frozen settlement.
+        """
+        now = _iso_now()
+        next_attempt_at = (
+            _iso_after_seconds(initial_delay_seconds) if initial_delay_seconds > 0 else now
+        )
+
+        def txn(transaction: Any) -> int:
+            return transaction.execute_update(
+                "UPDATE tr_settle_outbox SET auto_refill_workspace_id=@workspace_id, "
+                "auto_refill_status='pending', auto_refill_attempts=0, "
+                "auto_refill_last_error=NULL, auto_refill_next_attempt_at=@next_at, "
+                "auto_refill_lease_owner=NULL, auto_refill_leased_until=NULL, "
+                "auto_refill_enqueued_at=@now, auto_refill_updated_at=@now, "
+                "auto_refill_terminal_at=NULL WHERE authorization_id=@aid "
+                "AND intent_kind='settle' AND auto_refill_status IS NULL",
+                params={
+                    "workspace_id": workspace_id,
+                    "next_at": next_attempt_at,
+                    "now": now,
+                    "aid": authorization_id,
+                },
+                param_types={
+                    "workspace_id": self._pt.STRING,
+                    "next_at": self._pt.TIMESTAMP,
+                    "now": self._pt.TIMESTAMP,
+                    "aid": self._pt.STRING,
+                },
+            )
+
+        if run_in_transaction_with_retry(self._database, txn) == 1:
+            return True
+        existing = self.get_auto_refill(authorization_id)
+        return existing is not None and existing.workspace_id == workspace_id
+
     def due_auto_refills(self, *, limit: int = 100) -> list[AutoRefillOutboxRow]:
         now = _iso_now()
         with self._database.snapshot() as snapshot:
