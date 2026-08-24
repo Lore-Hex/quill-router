@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from trusted_router.config import Settings
+from trusted_router.dashboard import _organization_node
 from trusted_router.domains import (
     api_base_url_for_domain,
     canonical_public_url,
@@ -340,19 +341,27 @@ def trust_html(
         "TLS boundary, and open-source deployment before sending prompts."
     )
     og_image = html.escape(canonical_public_url(settings, "/og.png"), quote=True)
+    # The @graph form so the operating company travels with the page. /trust is
+    # where somebody lands to decide whether this vendor is real, which makes it
+    # the worst page to omit the contact and address from.
     trust_json_ld = json.dumps(
         {
             "@context": "https://schema.org",
-            "@type": "WebPage",
-            "name": trust_title,
-            "description": trust_description,
-            "url": canonical_public_url(settings, "/trust"),
-            "about": {
-                "@type": "SoftwareApplication",
-                "name": "TrustedRouter",
-                "applicationCategory": "DeveloperApplication",
-                "codeRepository": ATTESTED_GATEWAY_REPO,
-            },
+            "@graph": [
+                _organization_node(settings),
+                {
+                    "@type": "WebPage",
+                    "name": trust_title,
+                    "description": trust_description,
+                    "url": canonical_public_url(settings, "/trust"),
+                    "about": {
+                        "@type": "SoftwareApplication",
+                        "name": "TrustedRouter",
+                        "applicationCategory": "DeveloperApplication",
+                        "codeRepository": ATTESTED_GATEWAY_REPO,
+                    },
+                },
+            ],
         },
         separators=(",", ":"),
     ).replace("<", "\\u003c")
