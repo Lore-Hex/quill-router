@@ -293,10 +293,10 @@ def test_discovery_only_non_runtime_manifest_warns_without_global_freeze() -> No
     assert warning not in hard_failures
 
 
-def test_discovery_only_fallback_manifests_are_age_gated() -> None:
+def test_nvidia_runtime_fallback_manifest_is_age_gated_provider_locally() -> None:
     from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS
 
-    assert "nvidia-nim" not in GATEWAY_PREPAID_PROVIDER_SLUGS
+    assert "nvidia-nim" in GATEWAY_PREPAID_PROVIDER_SLUGS
     raw = json.loads(
         check_price_coverage.MANIFEST_DIR.joinpath("nvidia-nim.json").read_text(encoding="utf-8")
     )
@@ -309,7 +309,8 @@ def test_discovery_only_fallback_manifests_are_age_gated() -> None:
     )
 
     warning = next(item for item in warnings if item.startswith("nvidia-nim:"))
-    assert "live scraper fallback manifest fails runtime route validity checks" in warning
+    assert "live scraper fallback manifest is 15d stale" in warning
+    assert "provider routes are quarantined" in warning
     assert warning not in hard_failures
 
 

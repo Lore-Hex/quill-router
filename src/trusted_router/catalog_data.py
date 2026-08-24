@@ -1172,17 +1172,19 @@ PROVIDERS: dict[str, Provider] = {
     "nvidia-nim": Provider(
         slug="nvidia-nim",
         name="NVIDIA NIM",
-        supports_chat=False,
-        supports_prepaid=False,
+        supports_chat=True,
+        supports_prepaid=True,
         supports_byok=False,
         provider_zero_data_retention=False,
         provider_confidential_compute=False,
         provider_e2ee=False,
         provider_policy=(
             "NVIDIA's hosted NIM API Catalog endpoints are preview services for "
-            "development and prototyping. NVIDIA requires an NVIDIA AI Enterprise "
-            "entitlement for production use, so TrustedRouter discovers the live "
-            "catalog but does not route customer traffic to this key."
+            "development and prototyping. TrustedRouter exposes chat-capable models "
+            "from its configured API Catalog key as Standard routes. NVIDIA requires "
+            "an NVIDIA AI Enterprise entitlement for production deployments. NVIDIA "
+            "does not publish hosted preview token rates, so TrustedRouter uses a "
+            "conservative fallback price and excludes these routes from price indexing."
         ),
         provider_policy_url="https://docs.api.nvidia.com/nim/docs/run-anywhere",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
@@ -1938,6 +1940,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "sakana",
         "perplexity",
         "krea",
+        "nvidia-nim",
         "jina",
         "nebius",
         "minimax",
