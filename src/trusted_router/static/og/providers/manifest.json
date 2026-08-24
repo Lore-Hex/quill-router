@@ -577,11 +577,11 @@
   },
   "sakana": {
     "card_version": 2,
-    "model_count": 1,
+    "model_count": 0,
     "name": "Sakana AI",
     "privacy": "Policy documented",
-    "route_count": 1,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "sakana"
   },
   "sambanova": {
