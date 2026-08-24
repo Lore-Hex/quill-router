@@ -76,7 +76,7 @@ READY = {
     "io-net",
     "sakana",
 }
-RUNTIME_ONLY_READY = READY - {"io-net", "sakana"}
+RUNTIME_ONLY_READY = (READY - {"io-net", "sakana"}) | {"nscale"}
 ROUTABLE_READY = READY - {"sakana"}
 PENDING = {
     "perceptron",
@@ -151,13 +151,11 @@ def test_failed_live_canaries_stay_dark() -> None:
     assert nextbit_rows["google/gemma-2-27b-it"]["routable"] is False
     assert samba_rows["minimax/minimax-m3"]["routable"] is False
     assert not any(
-        endpoint.provider == "nextbit"
-        and endpoint.model_id == "google/gemma-2-27b-it"
+        endpoint.provider == "nextbit" and endpoint.model_id == "google/gemma-2-27b-it"
         for endpoint in MODEL_ENDPOINTS.values()
     )
     assert not any(
-        endpoint.provider == "sambanova"
-        and endpoint.model_id == "minimax/minimax-m3"
+        endpoint.provider == "sambanova" and endpoint.model_id == "minimax/minimax-m3"
         for endpoint in MODEL_ENDPOINTS.values()
     )
 
@@ -184,7 +182,9 @@ def test_reka_parser_keeps_family_price_on_the_documented_family() -> None:
     assert "reka/reka-edge-2603" not in prices
 
 
-def test_reka_loader_expands_only_the_explicit_version_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reka_loader_expands_only_the_explicit_version_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source = """
     <table>
       <tr><td>Reka Edge</td><td>$0.10</td><td>$0.10</td></tr>
@@ -386,8 +386,7 @@ def test_direct_provider_operator_hold_survives_canary_and_relist(
         result = catalog.fetch()
         catalog.write_provider_manifest(result)
         return {
-            row["id"]: row
-            for row in json.loads(manifest.read_text(encoding="utf-8"))["models"]
+            row["id"]: row for row in json.loads(manifest.read_text(encoding="utf-8"))["models"]
         }
 
     assert refresh()["vendor/held"]["routable_reason"] == "operator-hold"
@@ -416,8 +415,7 @@ def test_direct_provider_normalization_is_the_single_audit_policy() -> None:
         inception: {"mercury-2": "inception/mercury-2"},
     }
     audit_normalizers = {
-        slug: normalize
-        for slug, _url, _env_names, normalize in _DISCOVERABLE_MANIFEST_PROVIDERS
+        slug: normalize for slug, _url, _env_names, normalize in _DISCOVERABLE_MANIFEST_PROVIDERS
     }
     for module, native_cases in cases.items():
         for native_id, expected in native_cases.items():
@@ -639,15 +637,13 @@ def test_wave3_pricing_fixtures_are_captured_from_first_party_sources() -> None:
 
 def test_wave3_secrets_do_not_join_the_all_or_nothing_refresh_block() -> None:
     root = Path(__file__).parents[1]
-    workflow = (
-        root / ".github/workflows/refresh-prices.yml"
-    ).read_text(encoding="utf-8")
+    workflow = (root / ".github/workflows/refresh-prices.yml").read_text(encoding="utf-8")
     secret_setup = (root / "scripts/deploy/secrets.sh").read_text(encoding="utf-8")
     runtime_only = {
         line.strip()
-        for line in (
-            root / "scripts/deploy/runtime_only_provider_secrets.txt"
-        ).read_text(encoding="utf-8").splitlines()
+        for line in (root / "scripts/deploy/runtime_only_provider_secrets.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.strip()
     }
     mandatory_step = workflow.split("- name: Pull PARASAIL_API_KEY", 1)[1]
@@ -656,7 +652,7 @@ def test_wave3_secrets_do_not_join_the_all_or_nothing_refresh_block() -> None:
         f"trustedrouter-{module.SLUG}-api-key"
         for module in MODULES
         if module.SLUG in RUNTIME_ONLY_READY
-    }
+    } | {"trustedrouter-nscale-api-key"}
     assert runtime_only == expected_secrets
     for module in MODULES:
         if module.SLUG not in RUNTIME_ONLY_READY:
@@ -667,7 +663,7 @@ def test_wave3_secrets_do_not_join_the_all_or_nothing_refresh_block() -> None:
 
     assert _RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS == RUNTIME_ONLY_READY
     assert RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS == RUNTIME_ONLY_READY
-    assert READY < EXPIRING_PROVIDER_MANIFEST_SLUGS
+    assert READY | {"nscale"} < EXPIRING_PROVIDER_MANIFEST_SLUGS
     assert PROVIDER_MANIFEST_MAX_AGE_DAYS == 14
     assert RUNTIME_ONLY_PROVIDER_MANIFEST_MAX_AGE_DAYS == 14
 
@@ -675,7 +671,9 @@ def test_wave3_secrets_do_not_join_the_all_or_nothing_refresh_block() -> None:
 def test_runtime_only_provider_routes_expire_without_freezing_other_catalogs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sample = next(endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "upstage")
+    sample = next(
+        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "upstage"
+    )
     now = datetime.now(UTC)
     expired = replace(
         sample,
@@ -697,20 +695,23 @@ def test_runtime_only_provider_routes_expire_without_freezing_other_catalogs(
 
 
 def test_malformed_runtime_only_manifest_expires_every_route() -> None:
-    assert _provider_manifest_valid_until(
-        "upstage",
-        {
-            "generated_at": "2026-08-22T00:00:00Z",
-            "models": [
-                {
-                    "id": "upstage/bad-price",
-                    "routable": True,
-                    "input_token_price_per_m": 0,
-                    "output_token_price_per_m": 100,
-                }
-            ],
-        },
-    ) == _EXPIRED_PROVIDER_MANIFEST
+    assert (
+        _provider_manifest_valid_until(
+            "upstage",
+            {
+                "generated_at": "2026-08-22T00:00:00Z",
+                "models": [
+                    {
+                        "id": "upstage/bad-price",
+                        "routable": True,
+                        "input_token_price_per_m": 0,
+                        "output_token_price_per_m": 100,
+                    }
+                ],
+            },
+        )
+        == _EXPIRED_PROVIDER_MANIFEST
+    )
 
 
 @pytest.mark.parametrize(
@@ -794,21 +795,24 @@ def test_malformed_runtime_only_manifest_expires_every_route() -> None:
     ],
 )
 def test_malformed_price_tiers_expire_provider_manifest(bad_tiers: object) -> None:
-    assert _provider_manifest_valid_until(
-        "upstage",
-        {
-            "generated_at": "2026-08-22T00:00:00Z",
-            "models": [
-                {
-                    "id": "upstage/bad-tiers",
-                    "routable": True,
-                    "input_token_price_per_m": 100,
-                    "output_token_price_per_m": 200,
-                    "price_tiers": bad_tiers,
-                }
-            ],
-        },
-    ) == _EXPIRED_PROVIDER_MANIFEST
+    assert (
+        _provider_manifest_valid_until(
+            "upstage",
+            {
+                "generated_at": "2026-08-22T00:00:00Z",
+                "models": [
+                    {
+                        "id": "upstage/bad-tiers",
+                        "routable": True,
+                        "input_token_price_per_m": 100,
+                        "output_token_price_per_m": 200,
+                        "price_tiers": bad_tiers,
+                    }
+                ],
+            },
+        )
+        == _EXPIRED_PROVIDER_MANIFEST
+    )
 
 
 def test_malformed_snapshot_tiers_create_no_catalog_route(
@@ -873,10 +877,7 @@ def test_malformed_snapshot_tiers_create_no_catalog_route(
     models, endpoints = catalog_ingest._ingested_models_and_endpoints()
 
     assert "google/test-tier-model" not in models
-    assert not any(
-        endpoint.model_id == "google/test-tier-model"
-        for endpoint in endpoints.values()
-    )
+    assert not any(endpoint.model_id == "google/test-tier-model" for endpoint in endpoints.values())
 
 
 def test_every_committed_provider_price_tier_is_structurally_safe() -> None:
@@ -915,20 +916,23 @@ def test_media_fallback_manifests_receive_provider_scoped_expiry() -> None:
 
 
 def test_malformed_media_price_expires_entire_provider_manifest() -> None:
-    assert _provider_manifest_valid_until(
-        "bfl",
-        {
-            "generated_at": "2026-08-22T00:00:00Z",
-            "models": [
-                {
-                    "id": "black-forest-labs/bad-image-price",
-                    "model_type": "image",
-                    "routable": True,
-                    "fixed_output_price_microdollars": {"1k": 0},
-                }
-            ],
-        },
-    ) == _EXPIRED_PROVIDER_MANIFEST
+    assert (
+        _provider_manifest_valid_until(
+            "bfl",
+            {
+                "generated_at": "2026-08-22T00:00:00Z",
+                "models": [
+                    {
+                        "id": "black-forest-labs/bad-image-price",
+                        "model_type": "image",
+                        "routable": True,
+                        "fixed_output_price_microdollars": {"1k": 0},
+                    }
+                ],
+            },
+        )
+        == _EXPIRED_PROVIDER_MANIFEST
+    )
 
 
 def test_free_cache_cost_is_not_mistaken_for_missing_cache_price(
@@ -1005,9 +1009,9 @@ def test_every_deploy_verifies_runtime_only_provider_secret_isolation() -> None:
     root = Path(__file__).parents[1]
     workflow = (root / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     secret_setup = (root / "scripts/deploy/secrets.sh").read_text(encoding="utf-8")
-    revocation = (
-        root / "scripts/deploy/revoke_runtime_only_secret_access.sh"
-    ).read_text(encoding="utf-8")
+    revocation = (root / "scripts/deploy/revoke_runtime_only_secret_access.sh").read_text(
+        encoding="utf-8"
+    )
 
     assert "bash scripts/deploy/revoke_runtime_only_secret_access.sh" in workflow
     assert 'bash "${SCRIPT_DIR}/revoke_runtime_only_secret_access.sh"' not in secret_setup
@@ -1018,7 +1022,7 @@ def test_every_deploy_verifies_runtime_only_provider_secret_isolation() -> None:
     assert '--role="roles/secretmanager.secretAccessor"' in revocation
     assert "still has accessor" in revocation
     assert "has effective access" in revocation
-    assert 'read -r secret_name <&3' in revocation
+    assert "read -r secret_name <&3" in revocation
     assert "MAX_ATTEMPTS" in revocation
     assert "NOT_FOUND|FAILED_PRECONDITION" not in revocation
     assert "secretmanager\\.versions\\.access.*denied" in revocation
@@ -1085,7 +1089,9 @@ esac
         "FAKE_GCLOUD_STATE": str(state_dir),
     }
     script = root / "scripts/deploy/revoke_runtime_only_secret_access.sh"
-    secret_names = [f"trustedrouter-{module.SLUG}-api-key" for module in MODULES]
+    secret_names = [f"trustedrouter-{module.SLUG}-api-key" for module in MODULES] + [
+        "trustedrouter-nscale-api-key"
+    ]
     for secret_name in secret_names:
         state_dir.joinpath(secret_name).touch()
 
@@ -1122,21 +1128,17 @@ esac
     subprocess.run(  # noqa: S603 - checked-in operator remediation path
         [str(script)], cwd=root, env=repair_env, check=True, capture_output=True
     )
-    assert repair_calls.read_text(encoding="utf-8").count(
-        "remove-iam-policy-binding"
-    ) == 1
-    assert "secrets versions access latest" not in repair_calls.read_text(
-        encoding="utf-8"
-    )
+    assert repair_calls.read_text(encoding="utf-8").count("remove-iam-policy-binding") == 1
+    assert "secrets versions access latest" not in repair_calls.read_text(encoding="utf-8")
     subprocess.run(  # noqa: S603 - post-repair effective denial proof
         [str(script)], cwd=root, env=env, check=True, capture_output=True
     )
 
 
 def test_price_coverage_failure_blocks_commit_and_deploy() -> None:
-    workflow = (
-        Path(__file__).parents[1] / ".github/workflows/refresh-prices.yml"
-    ).read_text(encoding="utf-8")
+    workflow = (Path(__file__).parents[1] / ".github/workflows/refresh-prices.yml").read_text(
+        encoding="utf-8"
+    )
 
     audit = workflow.index("- name: Price-source coverage audit")
     blocker = workflow.index("- name: Block unsafe coverage before publication")

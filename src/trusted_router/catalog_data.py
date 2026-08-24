@@ -108,6 +108,8 @@ PROVIDER_JURISDICTION_DE = "DE"
 
 PROVIDER_JURISDICTION_FR = "FR"
 
+PROVIDER_JURISDICTION_GB = "GB"
+
 PROVIDER_JURISDICTION_IL = "IL"
 
 PROVIDER_JURISDICTION_KR = "KR"
@@ -1177,6 +1179,26 @@ PROVIDERS: dict[str, Provider] = {
         # https://wandb.ai/site/terms/
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "nscale": Provider(
+        slug="nscale",
+        name="Nscale",
+        supports_chat=True,
+        supports_embeddings=True,
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=True,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Nscale publishes a general nonlogging statement for serverless "
+            "inference, but TrustedRouter has not verified a contractual "
+            "zero-retention commitment for this account. These routes remain "
+            "Standard and make no confidential-compute or E2EE claim."
+        ),
+        provider_policy_url="https://docs.nscale.com/changelog/changelog",
+        provider_headquarters_country=PROVIDER_JURISDICTION_GB,
+    ),
     "databricks": Provider(
         slug="databricks",
         name="Databricks",
@@ -1650,9 +1672,7 @@ PROVIDERS: dict[str, Provider] = {
             "not a shared token-priced chat endpoint. It remains non-routable until "
             "a dedicated media adapter and billing contract are implemented."
         ),
-        provider_policy_url=(
-            "https://www.riverflow.ai/research/introducing-sourceful-riverflow-1"
-        ),
+        provider_policy_url=("https://www.riverflow.ai/research/introducing-sourceful-riverflow-1"),
     ),
     "io-net": Provider(
         slug="io-net",
@@ -1867,6 +1887,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "bfl",
         "decart",
         "wandb",
+        "nscale",
         "databricks",
         "zero-g",
         "upstage",

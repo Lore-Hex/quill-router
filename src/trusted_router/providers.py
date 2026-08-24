@@ -113,6 +113,7 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "sakana": (("SAKANA_API_KEY",), "https://api.sakana.ai/v1"),
     # W&B Serverless Inference, hosted on CoreWeave infrastructure.
     "wandb": (("WANDB_API_KEY",), "https://api.inference.wandb.ai/v1"),
+    "nscale": (("NSCALE_API_KEY",), "https://inference.api.nscale.com/v1"),
 }
 
 __all__ = [
@@ -453,10 +454,7 @@ class ProviderClient:
     def _provider_extra_headers(model: Model) -> dict[str, str]:
         if model.provider == "zero-g":
             return {"X-0G-Provider-Trust-Mode": "private"}
-        if (
-            model.provider == "wafer"
-            and wafer_zdr_support(model.upstream_id or model.id) is True
-        ):
+        if model.provider == "wafer" and wafer_zdr_support(model.upstream_id or model.id) is True:
             return {"Wafer-ZDR": "required"}
         return {}
 

@@ -440,6 +440,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
+  "nscale": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Nscale",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "nscale"
+  },
   "nvidia-nim": {
     "card_version": 2,
     "model_count": 0,

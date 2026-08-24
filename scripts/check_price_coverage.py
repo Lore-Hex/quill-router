@@ -50,6 +50,7 @@ from scripts.pricing.providers import (
     jina,
     mancer,
     nextbit,
+    nscale,
     nvidia_nim,
     recraft,
     reka,
@@ -463,6 +464,12 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
         io_net.CATALOG.api_key_envs,
         io_net.CATALOG.model_id,
     ),
+    (
+        "nscale",
+        nscale.URL,
+        ("NSCALE_API_KEY",),
+        nscale._canonical_id,
+    ),
 )
 
 _DIRECT_OPENAI_DISCOVERY_MODULES = (
@@ -496,6 +503,7 @@ _STALE_MANIFEST_PROVIDER_MODULES = (
     jina,
     bfl,
     decart,
+    nscale,
     nvidia_nim,
     recraft,
     relace,
@@ -507,13 +515,11 @@ _STALE_MANIFEST_PROVIDER_MODULE_BY_SLUG = {
     for module in _STALE_MANIFEST_PROVIDER_MODULES
     if bool(getattr(module, "MANIFEST_STALE_FALLBACK", False))
 }
-_OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS = frozenset(
-    _STALE_MANIFEST_PROVIDER_MODULE_BY_SLUG
-)
+_OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS = frozenset(_STALE_MANIFEST_PROVIDER_MODULE_BY_SLUG)
 
 _RUNTIME_ONLY_DISCOVERY_SLUGS = RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS
 _DIRECT_OPENAI_DISCOVERY_SLUGS = frozenset(
-    module.SLUG for module in _DIRECT_OPENAI_DISCOVERY_MODULES
+    module.SLUG for module in (*_DIRECT_OPENAI_DISCOVERY_MODULES, nscale)
 )
 
 _DISCOVERABLE_MANIFEST_PROVIDERS = _DISCOVERABLE_MANIFEST_PROVIDERS_BASE + tuple(
@@ -860,8 +866,7 @@ def _model_discovery_audit(
         zai_doc = fetch_text(ZAI_MODEL_DISCOVERY_URL)
     except Exception as exc:  # noqa: BLE001
         warnings.append(
-            f"zai: model discovery fetch failed "
-            f"({_safe_fetch_error(ZAI_MODEL_DISCOVERY_URL, exc)})"
+            f"zai: model discovery fetch failed ({_safe_fetch_error(ZAI_MODEL_DISCOVERY_URL, exc)})"
         )
     else:
         discovered = _discover_zai_coding_plan_models(zai_doc)
@@ -893,9 +898,7 @@ def _model_discovery_audit(
         try:
             payload = fetch_json(url, env_names)
         except Exception as exc:  # noqa: BLE001
-            warnings.append(
-                f"{slug}: model discovery fetch failed ({_safe_fetch_error(url, exc)})"
-            )
+            warnings.append(f"{slug}: model discovery fetch failed ({_safe_fetch_error(url, exc)})")
             continue
         discovered_ids: set[str] = set()
         for row in _json_model_rows(payload):
@@ -965,9 +968,7 @@ def _model_discovery_audit(
                 f"{slug}: GLM model discovery fetch failed ({_safe_fetch_error(url, exc)})"
             )
             continue
-        provider_rows = [
-            row for row in _json_model_rows(payload) if _active_discovery_row(row)
-        ]
+        provider_rows = [row for row in _json_model_rows(payload) if _active_discovery_row(row)]
         if not provider_rows:
             warnings.append(f"{slug}: GLM model discovery returned no model ids")
             continue
@@ -1050,8 +1051,7 @@ def _audit_fallback_manifest(
         )
     return (
         None,
-        f"{slug}: {source_label} {max(age, 0):.0f}d old "
-        f"(within {max_age_days}d) ✓",
+        f"{slug}: {source_label} {max(age, 0):.0f}d old (within {max_age_days}d) ✓",
     )
 
 
@@ -1080,15 +1080,13 @@ def _run_audit(
     )
     if expiry_policy_mismatch:
         warning = (
-            "fallback manifest expiry policy mismatch: "
-            f"{', '.join(sorted(expiry_policy_mismatch))}"
+            f"fallback manifest expiry policy mismatch: {', '.join(sorted(expiry_policy_mismatch))}"
         )
         warnings.append(warning)
         hard_fail_warnings.append(warning)
 
     runtime_only_without_age_gate = _RUNTIME_ONLY_DISCOVERY_SLUGS - (
-        set(GATEWAY_PREPAID_PROVIDER_SLUGS)
-        & set(_OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS)
+        set(GATEWAY_PREPAID_PROVIDER_SLUGS) & set(_OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS)
     )
     if runtime_only_without_age_gate:
         warning = (
@@ -1161,10 +1159,7 @@ def _run_audit(
             warnings.append(warning)
             hard_fail_warnings.append(warning)
         else:
-            info.append(
-                f"{slug}: {source_label} {max(age, 0):.0f}d old "
-                f"(within {max_age_days}d) ✓"
-            )
+            info.append(f"{slug}: {source_label} {max(age, 0):.0f}d old (within {max_age_days}d) ✓")
 
     # Discovery-only providers do not create billable routes. Keep stale or
     # malformed manifests visible as operator warnings, but never let one

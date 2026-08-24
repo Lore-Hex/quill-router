@@ -10,7 +10,10 @@ from scripts.pricing.manifest import guard_fixed_output_prices
 from scripts.pricing.providers import bfl, decart, recraft
 from trusted_router.catalog_data import GATEWAY_PREPAID_PROVIDER_SLUGS
 from trusted_router.catalog_ingest import _supplemental_provider_models_and_endpoints
-from trusted_router.image_generation import FIXED_IMAGE_PRICES_MICRODOLLARS
+from trusted_router.image_generation import (
+    FIXED_IMAGE_PRICES_MICRODOLLARS,
+    IMAGE_MODEL_ID_SET,
+)
 
 MANIFEST_DIR = (
     Path(__file__).resolve().parents[1] / "src" / "trusted_router" / "data" / "provider_models"
@@ -89,7 +92,7 @@ def test_decart_pricing_parser_maps_native_resolutions() -> None:
 
 def test_media_manifests_match_runtime_fixed_price_contract() -> None:
     discovered: dict[str, dict[str, int]] = {}
-    for provider in ("recraft", "bfl", "decart"):
+    for provider in ("recraft", "bfl", "decart", "nscale"):
         discovered.update(_manifest_prices(provider))
     assert discovered == FIXED_IMAGE_PRICES_MICRODOLLARS
     assert _manifest_video_prices("decart") == {
@@ -100,7 +103,7 @@ def test_media_manifests_match_runtime_fixed_price_contract() -> None:
 
 
 def test_media_providers_are_refreshable_prepaid_gateway_routes() -> None:
-    expected = {"recraft", "bfl", "decart"}
+    expected = {"recraft", "bfl", "decart", "nscale"}
     assert expected <= set(refresh.PROVIDER_SLUGS)
     assert expected <= GATEWAY_PREPAID_PROVIDER_SLUGS
 
@@ -112,6 +115,17 @@ def test_media_providers_are_refreshable_prepaid_gateway_routes() -> None:
     ):
         assert model_id in models
         assert f"{model_id}@{provider}/prepaid" in endpoints
+
+    nscale_model = "black-forest-labs/flux.1-schnell"
+    assert nscale_model in IMAGE_MODEL_ID_SET
+    nscale_manifest = json.loads((MANIFEST_DIR / "nscale.json").read_text())
+    nscale_image = next(row for row in nscale_manifest["models"] if row["id"] == nscale_model)
+    if nscale_image.get("routable") is False:
+        assert nscale_model not in models
+        assert f"{nscale_model}@nscale/prepaid" not in endpoints
+    else:
+        assert nscale_model in models
+        assert f"{nscale_model}@nscale/prepaid" in endpoints
 
 
 def test_fixed_media_price_change_fails_before_manifest_write(tmp_path: Path) -> None:
@@ -148,6 +162,22 @@ def test_media_and_discovery_results_do_not_enter_token_price_index() -> None:
         include_in_price_index=False,
     )
     assert refresh._index_provider_prices({"media": result}) == {}
+
+
+def test_mixed_provider_indexes_only_explicit_chat_models() -> None:
+    result = ProviderPricingResult(
+        slug="mixed",
+        prices={
+            "vendor/chat": ModelPrice(10, 20),
+            "vendor/embedding": ModelPrice(5, 0),
+            "vendor/image": ModelPrice(0, 0),
+        },
+        source="api",
+        price_index_model_ids=frozenset({"vendor/chat"}),
+    )
+    assert refresh._index_provider_prices({"mixed": result}) == {
+        "vendor/chat": {"mixed": ModelPrice(10, 20)}
+    }
 
 
 def test_failed_new_provider_recovers_from_committed_manifest(
