@@ -266,6 +266,7 @@ def test_metadata_broadcast_omits_prompt_and_output(
             "authorization_id": authorize.json()["data"]["authorization_id"],
             "actual_input_tokens": 12,
             "actual_output_tokens": 8,
+            "price_tier_input_tokens": 6,
             "request_id": "resp_test",
             "finish_reason": "stop",
             "elapsed_seconds": 0.5,
@@ -288,6 +289,10 @@ def test_metadata_broadcast_omits_prompt_and_output(
     assert "prompt" not in json.dumps(payload).lower()
     assert "output text" not in json.dumps(payload).lower()
     assert all(job.status == "sent" for job in STORE.broadcast_store.delivery_jobs.values())
+    assert all(
+        "price_tier_input_tokens" not in job.settle_body
+        for job in STORE.broadcast_store.delivery_jobs.values()
+    )
 
 
 def test_metadata_broadcast_queues_and_retries_failures(

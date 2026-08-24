@@ -2171,6 +2171,7 @@ def _settle_gateway_authorization(
         # correlation id is useful to them, the client telemetry object is not.
         broadcast_settle_body = dict(settle_body)
         broadcast_settle_body.pop("client", None)
+        broadcast_settle_body.pop("price_tier_input_tokens", None)
         enqueue_metadata_broadcast(generation, settle_body=broadcast_settle_body)
         if should_drain_inline(settings) and background_tasks is not None:
             background_tasks.add_task(
