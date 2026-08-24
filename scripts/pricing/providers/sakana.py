@@ -15,6 +15,8 @@ from scripts.pricing.providers._direct_openai import DirectOpenAIProvider, Direc
 from trusted_router.provider_contracts import (
     SAKANA_FUGU_MODEL_ID,
     SAKANA_FUGU_ROUTE_HOLD_REASON,
+    SAKANA_NAMAZU_MODEL_ID,
+    SAKANA_NAMAZU_ROUTE_HOLD_REASON,
 )
 
 SLUG = "sakana"
@@ -26,9 +28,9 @@ MANIFEST_STALE_FALLBACK = True
 
 MODEL_MAP = {
     "fugu-ultra-v1.1": SAKANA_FUGU_MODEL_ID,
-    "sakana-namazu-v1.0": "sakana-ai/sakana-namazu-v1.0",
+    "sakana-namazu-v1.0": SAKANA_NAMAZU_MODEL_ID,
 }
-EXPECTED_MODELS = ("sakana-ai/sakana-namazu-v1.0",)
+EXPECTED_MODELS = (SAKANA_NAMAZU_MODEL_ID,)
 logger = logging.getLogger("pricing")
 
 
@@ -138,7 +140,7 @@ def _parse_pricing(html: str) -> dict[str, ModelPrice]:
     """Strictly parse every published Sakana chat price for regression tests."""
 
     soup = BeautifulSoup(html, "html.parser")
-    prices = {"sakana-ai/sakana-namazu-v1.0": _parse_namazu_price(soup)}
+    prices = {SAKANA_NAMAZU_MODEL_ID: _parse_namazu_price(soup)}
     fugu = _parse_fugu_price(soup)
     if fugu is not None:
         prices[SAKANA_FUGU_MODEL_ID] = fugu
@@ -147,7 +149,7 @@ def _parse_pricing(html: str) -> dict[str, ModelPrice]:
 
 def _load_prices() -> dict[str, ModelPrice]:
     soup = BeautifulSoup(fetch_html(PRICING_URL), "html.parser")
-    prices = {"sakana-ai/sakana-namazu-v1.0": _parse_namazu_price(soup)}
+    prices = {SAKANA_NAMAZU_MODEL_ID: _parse_namazu_price(soup)}
     try:
         fugu = _parse_fugu_price(soup)
     except RuntimeError as exc:
@@ -224,7 +226,8 @@ CATALOG = DirectOpenAIProvider(
         include=_include,
         normalize_rows=_normalize_rows,
         operator_hold_reasons={
-            SAKANA_FUGU_MODEL_ID: SAKANA_FUGU_ROUTE_HOLD_REASON
+            SAKANA_FUGU_MODEL_ID: SAKANA_FUGU_ROUTE_HOLD_REASON,
+            SAKANA_NAMAZU_MODEL_ID: SAKANA_NAMAZU_ROUTE_HOLD_REASON,
         },
         canary_max_tokens=64,
         canary_expected_content="PONG",
