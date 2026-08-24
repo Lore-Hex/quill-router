@@ -124,11 +124,36 @@ uv run python scripts/marketing_funnel_report.py \
   --days 30
 ```
 
-Use `--format json` for analysis or dashboards. Add `--creative <utm_content>`
+Use `--format json` for analysis or dashboards. JSON reports include a
+measurement-health decision, aggregate Google Ads spend when configured, and
+the creative-level funnel. Add `--creative <utm_content>`
 to inspect one creative cell, or `--landing <path>` to inspect one exact
 destination. Reports retain the landing path as its own dimension and show
 signup, activation, and purchase rates against engaged visitors. Revenue
 remains integer microdollars until the final display conversion.
+
+For Google reports, the command distinguishes a UTM-labeled visit from a real
+Google Ads click. It counts only visits carrying `gclid`, `gbraid`, or `wbraid`
+as eligible for server-side conversion delivery. The report holds scale when
+those identifiers are absent, a click-backed signup was not durably encrypted,
+native spend is unavailable, or paid traffic has spend but no settled purchase
+in the window. Click persistence is reported separately from click capture so
+KMS permission regressions cannot silently empty the conversion outbox.
+
+Native spend uses Google's aggregate reporting API. Configure the report with:
+
+```text
+TR_GOOGLE_ADS_REPORTING_CUSTOMER_ID=<Google Ads customer ID>
+TR_GOOGLE_ADS_REPORTING_LOGIN_CUSTOMER_ID=<manager ID, when applicable>
+TR_GOOGLE_ADS_DEVELOPER_TOKEN=<Google Ads API developer token>
+TR_GOOGLE_ADS_REPORTING_TIME_ZONE=America/Los_Angeles
+```
+
+The reporting identity needs read access to the Google Ads customer. The API
+returns campaign name, impressions, clicks, and `cost_micros`; TrustedRouter
+does not request search text, user identifiers, or audience data. Spend and
+revenue remain integer microdollars. Use `--google-ads-spend required` in a
+decision report so missing credentials or permissions fail closed.
 
 One `utm_content` value is one measurable creative cell. Multiple headlines
 inside one responsive search ad share that cell, so create separately tagged
