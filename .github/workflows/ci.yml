@@ -60,7 +60,12 @@ jobs:
         run: uv run --no-sync python -c "import trusted_router.main"
 
   test:
-    runs-on: ubuntu-latest
+    # Larger runner: this job is ~23 minutes on 4 vCPUs and sits on the
+    # critical path of every deploy (deploy.yml gate-on-ci waits for it).
+    # 8 vCPUs + -n 8 roughly halves the merge-to-production latency. If this
+    # label ever fails to schedule, the job queues forever and every deploy
+    # gate stalls — which is why it was proven on a draft PR before merging.
+    runs-on: ubuntu-latest-8-cores
     env:
       TR_CONFORMANCE_POSTGRES_DSN: postgresql://postgres:tr@localhost:5432/postgres
       # Spanner's PostgreSQL dialect, via PGAdapter + the Spanner emulator.
@@ -104,7 +109,7 @@ jobs:
       # 53/53 with grouping. Per-test id namespacing makes the shared DATABASE
       # order-independent; grouping is what serializes the DDL.
       - name: Tests and coverage
-        run: uv run pytest -q -n 4 --dist loadgroup --cov=trusted_router --cov-report=term-missing --cov-fail-under=70
+        run: uv run pytest -q -n 8 --dist loadgroup --cov=trusted_router --cov-report=term-missing --cov-fail-under=70
 
   # The same suite, run once with the provider-lifecycle clock pinned PAST every
   # scheduled cutover.
