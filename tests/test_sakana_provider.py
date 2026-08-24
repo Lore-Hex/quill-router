@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import pytest
@@ -150,29 +151,52 @@ def test_sakana_routes_are_prepaid_only_and_use_the_operator_secret() -> None:
     fugu = endpoints_for_model("sakana-ai/fugu-ultra-v1.1")
     namazu = endpoints_for_model("sakana-ai/sakana-namazu-v1.0")
     assert not any(endpoint.provider == "sakana" for endpoint in fugu)
-    assert any(endpoint.provider == "sakana" for endpoint in namazu)
+    assert not any(endpoint.provider == "sakana" for endpoint in namazu)
 
 
-def test_sakana_declares_fugu_operator_hold_in_shared_fetcher() -> None:
+def test_sakana_declares_operator_holds_in_shared_fetcher() -> None:
     assert sakana.CATALOG.spec.operator_hold_reasons == {
-        sakana.SAKANA_FUGU_MODEL_ID: sakana.SAKANA_FUGU_ROUTE_HOLD_REASON
+        sakana.SAKANA_FUGU_MODEL_ID: sakana.SAKANA_FUGU_ROUTE_HOLD_REASON,
+        sakana.SAKANA_NAMAZU_MODEL_ID: sakana.SAKANA_NAMAZU_ROUTE_HOLD_REASON,
     }
 
 
-def test_sakana_fugu_is_code_held_even_if_a_manifest_route_is_enabled() -> None:
-    namazu = next(
+@pytest.mark.parametrize(
+    ("model_id", "upstream_id"),
+    [
+        (sakana.SAKANA_FUGU_MODEL_ID, "fugu-ultra-v1.1"),
+        (sakana.SAKANA_NAMAZU_MODEL_ID, "sakana-namazu-v1.0"),
+    ],
+)
+def test_sakana_routes_are_code_held_even_if_a_manifest_route_is_enabled(
+    model_id: str,
+    upstream_id: str,
+) -> None:
+    template = next(
         endpoint
-        for endpoint in endpoints_for_model("sakana-ai/sakana-namazu-v1.0")
-        if endpoint.provider == "sakana"
+        for endpoint in endpoints_for_model("deepseek/deepseek-v4-flash")
+        if endpoint.usage_type == "Credits"
     )
-    fugu = replace(
-        namazu,
-        id="sakana-ai/fugu-ultra-v1.1@sakana/test-enabled",
-        model_id=sakana.SAKANA_FUGU_MODEL_ID,
-        upstream_id="fugu-ultra-v1.1",
+    held = replace(
+        template,
+        id=f"{model_id}@sakana/test-enabled",
+        model_id=model_id,
+        provider="sakana",
+        upstream_id=upstream_id,
     )
 
     assert catalog_ingest._filter_unserved_provider_endpoints(
-        {fugu.id: fugu},
+        {held.id: held},
         explicit_model_ids=frozenset(),
     ) == {}
+
+
+def test_sakana_manifest_keeps_region_restricted_namazu_visible_but_dark() -> None:
+    manifest = json.loads(sakana.MANIFEST_PATH.read_text(encoding="utf-8"))
+    namazu = next(
+        row
+        for row in manifest["models"]
+        if row["id"] == sakana.SAKANA_NAMAZU_MODEL_ID
+    )
+    assert namazu["routable"] is False
+    assert namazu["routable_reason"] == sakana.SAKANA_NAMAZU_ROUTE_HOLD_REASON

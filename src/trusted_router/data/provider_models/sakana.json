@@ -58,7 +58,8 @@
       "upstream_id": "sakana-namazu-v1.0",
       "context_length": 256000,
       "created": 1785715200,
-      "routable": true,
+      "routable": false,
+      "routable_reason": "provider-geographic-restriction",
       "input_token_price_per_m": 950000,
       "output_token_price_per_m": 4000000,
       "cached_input_token_price_per_m": 150000
