@@ -116,6 +116,18 @@ jobs:
       # 53/53 with grouping. Per-test id namespacing makes the shared DATABASE
       # order-independent; grouping is what serializes the DDL.
       - name: Tests and coverage
+        # Balanced by .test_durations, which is why that file is committed.
+        # Without it pytest-split splits by test COUNT, and equal counts are not
+        # equal minutes: measured on the first sharded run, shard 2 finished in
+        # 7m40s while shard 1 took 21m30s and every other runner sat idle
+        # waiting for it. The critical path is the slowest shard, so balance is
+        # the whole point -- 1164s of test time over 4 shards is ~291s each.
+        #
+        # Regenerate after a large test-suite change:
+        #   uv run pytest -n 4 --dist loadgroup --store-durations --clean-durations
+        # Stale durations degrade gracefully: unknown tests are distributed by
+        # count, so a missing entry costs balance, not correctness.
+        #
         # --splits/--group (pytest-split) shards the suite across matrix jobs;
         # -n 4 still uses each runner's 4 vCPUs within a shard. Coverage is
         # collected per shard with NO fail-under: a shard sees only its own
