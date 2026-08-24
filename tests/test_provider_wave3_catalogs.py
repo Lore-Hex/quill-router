@@ -329,6 +329,7 @@ def test_direct_provider_operator_hold_survives_canary_and_relist(
         json.dumps(
             {
                 "provider": "held-provider",
+                "generated_at": "2026-08-01T00:00:00Z",
                 "models": [
                     {
                         "id": model_id,
@@ -387,6 +388,8 @@ def test_direct_provider_operator_hold_survives_canary_and_relist(
         }
 
     assert refresh()["vendor/held"]["routable_reason"] == "operator-hold"
+    first_refresh = json.loads(manifest.read_text(encoding="utf-8"))
+    assert first_refresh["generated_at"] == "2026-08-01T00:00:00Z"
     catalog_rows[:] = [{"id": "vendor/live"}]
     assert refresh()["vendor/held"]["routable_reason"] == "operator-hold"
     assert refresh()["vendor/held"]["routable_reason"] == "operator-hold"

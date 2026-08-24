@@ -295,9 +295,10 @@ def write_discovered_chat_manifest(
     raw["source"] = source_url
     if pricing_source_url is not None:
         raw["pricing_source"] = pricing_source_url
-    raw["generated_at"] = (
-        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    )
+    if not operator_hold_only:
+        raw["generated_at"] = (
+            datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        )
     raw["price_scale"] = "microdollars_per_million"
     raw["model_count"] = len(rebuilt)
     manifest_path.write_text(
