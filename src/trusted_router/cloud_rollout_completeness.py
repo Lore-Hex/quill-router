@@ -432,6 +432,22 @@ ROLLOUT_REGISTRY: dict[str, CloudRollout] = {
         ),
         deploy_scripts=(
             DeployScript("scripts/deploy/azure_control_plane.sh", PROVEN_BY_EXECUTION),
+            DeployScript(
+                "scripts/deploy/azure_clickhouse.sh",
+                NOT_PROVEN,
+                unproven_reason=(
+                    "Provisions the node; it does not run the gate, and recording it as "
+                    "proven would claim a binding it does not have. It NAMES the verifier "
+                    "once, in the operator next-steps it prints, which is why the registry "
+                    "asks about it at all -- _scripts_invoking_the_verifier matches a "
+                    "mention rather than a call, deliberately, so wiring cannot exist that "
+                    "no entry would miss. The gate for this cloud is bound to "
+                    "azure_control_plane.sh above, which does call require_cloud_complete; "
+                    "this script's own behaviour is covered by "
+                    "tests/test_azure_clickhouse_deploy.py, which executes it under the "
+                    "harness and asserts the emitted Azure commands and cloud-init."
+                ),
+            ),
         ),
     ),
 }
