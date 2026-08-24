@@ -50,11 +50,11 @@ def test_phala_retirement_is_provider_scoped(monkeypatch: pytest.MonkeyPatch) ->
     assert "phala" not in glm_providers
     assert glm_providers
     assert "phala" not in qwen_providers
-    # Retirement is provider-scoped: Alibaba still serves this exact Qwen
-    # revision after Phala's route is removed -- until Alibaba retires it too,
-    # at which point no provider serves it and the model leaves the catalog.
+    # Retirement is provider-scoped: Alibaba and W&B still serve this exact
+    # Qwen revision after Phala's route is removed. Their own lifecycle notices
+    # govern those independent routes.
     if catalog_predates(provider_lifecycle.ALIBABA_OCTOBER_2026_RETIREMENT_AT):
-        assert qwen_providers == {"alibaba"}
+        assert qwen_providers == {"alibaba", "wandb"}
 
 
 def test_non_confidential_phala_qwen_route_is_not_published() -> None:
