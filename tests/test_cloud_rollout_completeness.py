@@ -485,19 +485,11 @@ def test_the_limit_of_a_passing_lag_is_printed_on_every_passing_run(tmp_path: Pa
 # ---------------------------------------------------------------------------
 
 
-def test_azure_fails_because_it_has_no_outbox_at_all() -> None:
-    """Pins the state found on 2026-08-17, and the reason it is not benign.
-
-    Azure's control-plane deploy script sets no outbox variable, so settle
-    enqueues nothing. Every published freshness signal for such a cloud is
-    vacuously green. This test flips to the other branch when the outbox is
-    added, which is the point at which it should.
-    """
-    assert crc.declared_outbox_value("azure") is None
-    blockers = crc.outbox_enabled_blockers("azure")
-    assert blockers
-    assert "never sets TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED" in blockers[0]
-    assert "looks perfectly healthy" in blockers[0]
+def test_azure_declares_the_runtime_computed_outbox() -> None:
+    assert crc.declared_outbox_value("azure") == "${OUTBOX_ENABLED}"
+    assert crc.outbox_enabled_blockers("azure") == []
+    note = crc.outbox_note("azure")
+    assert note is not None and "computed at deploy time" in note
 
 
 def test_gcp_and_aws_declare_the_outbox() -> None:
@@ -593,11 +585,16 @@ def test_the_form_the_failure_message_prescribes_is_accepted(tmp_path: Path) -> 
     characters.
     """
     prescription = f"{crc.OUTBOX_ENABLED_ENV}=true"
-    assert prescription in crc.outbox_enabled_blockers("azure")[0]
-
     script_dir = tmp_path / "scripts" / "deploy"
     script_dir.mkdir(parents=True)
-    (script_dir / "azure_control_plane.sh").write_text(
+    target = script_dir / "azure_control_plane.sh"
+    target.write_text(
+        "#!/usr/bin/env bash\n"
+        'az containerapp update --set-env-vars "TR_ENVIRONMENT=canary"\n'
+    )
+    assert prescription in crc.outbox_enabled_blockers("azure", root=tmp_path)[0]
+
+    target.write_text(
         "#!/usr/bin/env bash\n"
         f"# {prescription}   <- a comment is still not a setting\n"
         f"{prescription}\n"
