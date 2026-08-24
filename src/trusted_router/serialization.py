@@ -7,10 +7,14 @@ and resolves cross-entity fields like a member's email."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from trusted_router.catalog import PROVIDERS
-from trusted_router.money import microdollars_to_float
+from trusted_router.money import (
+    microdollars_per_million_tokens_to_token_decimal,
+    microdollars_to_float,
+)
 from trusted_router.spend_windows import WINDOWS, utcnow, window_resets_at
 from trusted_router.storage import (
     STORE,
@@ -18,9 +22,17 @@ from trusted_router.storage import (
     ByokProviderConfig,
     CustomModel,
     Member,
+    User,
+    UserProvidedModel,
     Workspace,
 )
 from trusted_router.storage_custom_models import custom_model_slug
+from trusted_router.user_model_rules import user_model_is_on_the_clock
+
+USER_MODEL_PRIVACY_NOTICE = (
+    "Prompts and outputs are sent to an endpoint operated by the model owner. "
+    "Not attested. Not zero-data-retention."
+)
 
 
 def key_shape(key: ApiKey, *, window_usage: dict[str, int] | None = None) -> dict[str, Any]:
@@ -158,6 +170,108 @@ def custom_model_public_shape(model: CustomModel) -> dict[str, Any]:
         "created_at": model.created_at,
         "updated_at": model.updated_at,
     }
+
+
+def user_model_public_shape(
+    model: UserProvidedModel,
+    *,
+    now: datetime | None = None,
+    owner: User | None = None,
+) -> dict[str, Any]:
+    owner = (
+        owner
+        if owner is not None and owner.id == model.owner_user_id
+        else STORE.get_user(model.owner_user_id)
+    )
+    verified_name = (
+        owner.identity_verified_name
+        if owner is not None and owner.identity_verified and owner.identity_verified_name
+        else None
+    )
+    use_verified_name = model.display_identity == "verified_name" and verified_name is not None
+    privacy_notice = USER_MODEL_PRIVACY_NOTICE
+    if model.kind == "human":
+        privacy_notice += " A live person will read your messages and type the reply."
+    return {
+        "id": model.id,
+        "slug": custom_model_slug(model.id),
+        "name": model.name,
+        "description": model.description,
+        "kind": model.kind,
+        "operator": {
+            "display": verified_name if use_verified_name else model.display_name,
+            "identity": "verified_name" if use_verified_name else "handle",
+            "human_verified": model.human_verified,
+        },
+        "on_the_clock": user_model_is_on_the_clock(
+            model, now or datetime.now(UTC)
+        ),
+        "health": (
+            "degraded"
+            if model.consecutive_dispatch_failures > 0 or model.probe_status == "failed"
+            else "ok"
+        ),
+        "pricing": {
+            "prompt_microdollars_per_million_tokens": (
+                model.prompt_price_microdollars_per_million_tokens
+            ),
+            "completion_microdollars_per_million_tokens": (
+                model.completion_price_microdollars_per_million_tokens
+            ),
+            "prompt_per_token": microdollars_per_million_tokens_to_token_decimal(
+                model.prompt_price_microdollars_per_million_tokens
+            ),
+            "completion_per_token": microdollars_per_million_tokens_to_token_decimal(
+                model.completion_price_microdollars_per_million_tokens
+            ),
+        },
+        "user_provided": True,
+        "privacy_tier": "standard",
+        "attested": False,
+        "zero_data_retention": False,
+        "privacy_notice": privacy_notice,
+    }
+
+
+def user_model_owner_shape(
+    model: UserProvidedModel,
+    *,
+    owner: User | None = None,
+) -> dict[str, Any]:
+    shape = user_model_public_shape(model, owner=owner)
+    shape.update(
+        {
+            "owner_user_id": model.owner_user_id,
+            "owner_workspace_id": model.owner_workspace_id,
+            "display_identity": model.display_identity,
+            "display_name": model.display_name,
+            "endpoint_url": model.endpoint_url,
+            "upstream_model_id": model.upstream_model_id,
+            "endpoint_key_hint": model.endpoint_key_hint,
+            "supports_streaming": model.supports_streaming,
+            "online": model.online,
+            "online_changed_at": model.online_changed_at,
+            "heartbeat_interval_seconds": model.heartbeat_interval_seconds,
+            "heartbeat_expires_at": model.heartbeat_expires_at,
+            "consecutive_dispatch_failures": model.consecutive_dispatch_failures,
+            "max_concurrency": model.max_concurrency,
+            "prompt_price_microdollars_per_million_tokens": (
+                model.prompt_price_microdollars_per_million_tokens
+            ),
+            "completion_price_microdollars_per_million_tokens": (
+                model.completion_price_microdollars_per_million_tokens
+            ),
+            "human_verified": model.human_verified,
+            "enabled": model.enabled,
+            "status": model.status,
+            "revision": model.revision,
+            "probe_status": model.probe_status,
+            "probe_checked_at": model.probe_checked_at,
+            "created_at": model.created_at,
+            "updated_at": model.updated_at,
+        }
+    )
+    return shape
 
 
 def _windowed_money(

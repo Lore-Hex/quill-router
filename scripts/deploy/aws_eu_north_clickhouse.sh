@@ -66,6 +66,7 @@ SECRET_ID="${SECRET_ID:-quill/tr-eu-north-clickhouse-password}"
 INSTANCE_PROFILE="${INSTANCE_PROFILE:-quill-enclave-instance-profile}"
 PEER_WITH_PARIS="${PEER_WITH_PARIS:-1}"            # 0 to bring your own path.
 SCHEMA_FILE="${SCHEMA_FILE:-$(dirname "$0")/../../clickhouse/006_operational_analytics_single_node.sql}"
+CLIENT_SCHEMA_FILE="${CLIENT_SCHEMA_FILE:-$(dirname "$0")/../../clickhouse/009_client_events_single_node.sql}"
 
 log(){ printf '\n=== %s\n' "$*" >&2; }
 
@@ -123,6 +124,7 @@ if [ "$REGION" = "$PARIS_REGION" ]; then
   exit 1
 fi
 [ -r "$SCHEMA_FILE" ] || { echo "schema file not readable: $SCHEMA_FILE" >&2; exit 1; }
+[ -r "$CLIENT_SCHEMA_FILE" ] || { echo "schema file not readable: $CLIENT_SCHEMA_FILE" >&2; exit 1; }
 
 PARIS_VPC_CIDR="$(aws ec2 describe-vpcs --region "$PARIS_REGION" --vpc-ids "$PARIS_VPC_ID" \
   --query 'Vpcs[0].CidrBlock' --output text)"
@@ -249,6 +251,7 @@ log "security group: $SG_ID"
 #    manual step that someone forgets.
 # ---------------------------------------------------------------------------
 OPERATIONAL_SCHEMA="$(cat "$SCHEMA_FILE")"
+CLIENT_SCHEMA="$(cat "$CLIENT_SCHEMA_FILE")"
 
 EXISTING="$(aws ec2 describe-instances --region "$REGION" \
   --filters "Name=tag:Name,Values=$NAME" "Name=instance-state-name,Values=running,pending" \
@@ -320,6 +323,7 @@ systemctl restart clickhouse-server
 # Keeper: this node does not replicate with Paris, the drain writes both.
 cat > /root/operational_schema.sql <<'SQLEOF'
 ${OPERATIONAL_SCHEMA}
+${CLIENT_SCHEMA}
 SQLEOF
 for attempt in \$(seq 1 60); do
   if CLICKHOUSE_PASSWORD='${CH_PASSWORD}' clickhouse-client --user default --database default --query 'SELECT 1' >/dev/null 2>&1; then
@@ -559,12 +563,68 @@ echo "  clickhouse-client --user default --database default --query \\"
 echo "    \"INSERT INTO FUNCTION remote('${PRIVATE_IP}:9000','default','activity_generations','default','<stockholm password>') \\"
 echo "     SELECT * FROM activity_generations\""
 echo
-echo "and again for synthetic_probe_samples. ingest_version is carried through,"
+echo "and again for synthetic_probe_samples, client_request_events, and"
+echo "client_minute_counters. ingest_version is carried through,"
 echo "so re-running it collapses instead of double-counting."
 echo
-echo "COVERAGE: the drain replicates the two tables it drains --"
-echo "activity_generations and synthetic_probe_samples. It does NOT write"
-echo "synthetic_status_rollups or public_analytics_snapshots; on this cloud"
-echo "nothing does today (those are GCP timers), so both nodes hold them empty."
+echo "COVERAGE: the drain replicates activity_generations,"
+echo "synthetic_probe_samples, client_request_events, client_minute_counters,"
+echo "and operational_outbox_quarantine. It does NOT write"
+echo "synthetic_status_rollups, client_availability_rollups, or"
+echo "public_analytics_snapshots; on this cloud nothing does today"
+echo "(those are GCP timers), so both nodes hold them empty."
 echo "If a rollup or snapshot job is ever run against Paris, its output is NOT"
 echo "on this node and this node is not a complete copy until it is."
+
+# ---------------------------------------------------------------------------
+# The exit code, which is the only part of the above a pipeline can read.
+#
+# Everything printed so far is a HUMAN step: it needs a shell on the Paris node
+# and the Stockholm password. Printing it and returning 0 is exactly how the
+# Paris drain came to not exist for fifteen days — a script said its piece,
+# exited successfully, and nothing anywhere disagreed. So this ends by
+# checking the cloud, and then by refusing to claim the replica is wired until
+# somebody says it is.
+#
+# TR_STOCKHOLM_REPLICA_WIRED=1 is that attestation. It is deliberately a
+# statement an operator makes AFTER watching the drain log 'copies=2
+# degraded_targets=-', not something this script can infer: from here, a
+# second node that is provisioned and a second node that is receiving rows
+# look identical.
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/deploy/cloud_complete_gate.sh
+. "${SCRIPT_DIR}/cloud_complete_gate.sh"
+
+COMPLETE=0
+require_cloud_complete aws || COMPLETE=$?
+
+# The gate's answer wins, and it wins FIRST. Written the other way round, this
+# script returned 3 for an unwired replica whatever the gate had said — and
+# since a first-run operator has never set TR_STOCKHOLM_REPLICA_WIRED, that was
+# every first run. The claim "this script's exit status is the gate's" then held
+# only for the fixture in tests/deploy_script_harness.py, which sets the
+# variable so the script can reach its own end. A claim that is true of the test
+# and false of the operator is the shape of defect this whole change is about.
+if [ "$COMPLETE" -ne 0 ]; then
+  exit "$COMPLETE"
+fi
+
+if [ "${TR_STOCKHOLM_REPLICA_WIRED:-0}" != "1" ]; then
+  cat >&2 <<NEXT
+
+STOCKHOLM NOT WIRED. The node exists; the drain does not know about it, so this
+is one copy of the history, not two. Do the steps printed above on the PARIS
+node, watch for 'copies=2 degraded_targets=-' in
+
+  journalctl -u tr-clickhouse-operational-ingest-postgres -f | grep outbox.metrics
+
+and then record it by re-running:
+
+  TR_STOCKHOLM_REPLICA_WIRED=1 bash scripts/deploy/aws_eu_north_clickhouse.sh
+
+NEXT
+  exit 3
+fi
+
+exit "$COMPLETE"

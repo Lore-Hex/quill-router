@@ -1,0 +1,72 @@
+{% extends "console/_layout.html" %}
+{% block body %}
+{% if veriff_done %}<p class="notice">Identity submitted — the decision arrives automatically.</p>{% endif %}
+{% if dev_approved %}<p class="notice ok">Development verification approved.</p>{% endif %}
+{% if error == 'insufficient' %}<p class="notice bad">You need {{ identity_fee_display }} in available credits to start identity verification. <a href="/console/credits?purpose=identity_verification">Add credits</a></p>
+{% elif error == 'veriff_unavailable' %}<p class="notice bad">Identity verification is temporarily unavailable. Try again later.</p>
+{% elif error == 'prereqs' %}<p class="notice bad">Complete email, funding, and phone verification before starting identity verification.</p>{% endif %}
+
+<ol class="verification-checklist" aria-label="Account verification progress">
+  <li class="verification-step {{ 'complete' if current_user.email and current_user.email_verified else 'current' }}" data-step="email" data-step-state="{{ 'complete' if current_user.email and current_user.email_verified else 'incomplete' }}">
+    <div class="verification-step-marker" aria-hidden="true">{{ '✓' if current_user.email and current_user.email_verified else '1' }}</div>
+    <div class="verification-step-content">
+      <div class="verification-step-head">
+        <div><span class="verification-kicker">Step 1</span><h2>Email</h2></div>
+        {% if current_user.email and current_user.email_verified %}<span class="pill good">verified</span>{% elif current_user.email %}<span class="pill warn">unverified</span>{% else %}<span class="pill">missing</span>{% endif %}
+      </div>
+      {% if current_user.email %}<p>{{ current_user.email }}</p>{% else %}<p>Add an email address so verification decisions stay tied to one account.</p>{% endif %}
+      {% if not current_user.email or not current_user.email_verified %}<a class="btn" href="/console/account/preferences">Add or verify email</a>{% endif %}
+    </div>
+  </li>
+
+  <li class="verification-step {{ 'complete' if lifetime_topup >= lifetime_topup_required else '' }}" data-step="funding" data-step-state="{{ 'complete' if lifetime_topup >= lifetime_topup_required else 'incomplete' }}">
+    <div class="verification-step-marker" aria-hidden="true">{{ '✓' if lifetime_topup >= lifetime_topup_required else '2' }}</div>
+    <div class="verification-step-content">
+      <div class="verification-step-head">
+        <div><span class="verification-kicker">Step 2</span><h2>Fund your account</h2></div>
+        {% if lifetime_topup >= lifetime_topup_required %}<span class="pill good">complete</span>{% elif phone_funding_unlocked %}<span class="pill warn">in progress</span>{% else %}<span class="pill">not started</span>{% endif %}
+      </div>
+      <p>$1+ unlocks phone verification; $25 total unlocks identity verification.</p>
+      <div class="verification-funding-progress">
+        <div class="verification-progress-copy"><strong>{{ lifetime_topup_display }}</strong><span>of {{ lifetime_topup_required_display }} cumulative funding</span></div>
+        <div class="verification-progress-track" role="progressbar" aria-label="Lifetime funding progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ lifetime_progress }}"><span style="width: {{ lifetime_progress }}%"></span></div>
+      </div>
+      {% if lifetime_topup < lifetime_topup_required %}<a class="btn" href="/console/credits?purpose=identity_verification">Add credits</a>{% endif %}
+    </div>
+  </li>
+
+  <li class="verification-step {{ 'complete' if current_user.phone_verified else '' }}" data-step="phone" data-step-state="{{ 'complete' if current_user.phone_verified else 'incomplete' }}">
+    <div class="verification-step-marker" aria-hidden="true">{{ '✓' if current_user.phone_verified else '3' }}</div>
+    <div class="verification-step-content">
+      <div class="verification-step-head">
+        <div><span class="verification-kicker">Step 3</span><h2>Phone</h2></div>
+        {% if current_user.phone_verified %}<span class="pill good">verified</span>{% else %}<span class="pill">not verified</span>{% endif %}
+      </div>
+      {% if current_user.phone_verified %}<p>{{ current_user.phone }}</p>{% else %}<p>Verify a phone number using the existing one-time-code flow in Settings.</p><a class="btn" href="/console/settings#phone">Verify phone</a>{% endif %}
+    </div>
+  </li>
+
+  <li class="verification-step {{ 'complete' if current_user.identity_verified else '' }}" data-step="identity" data-step-state="{{ identity_status }}">
+    <div class="verification-step-marker" aria-hidden="true">{{ '✓' if current_user.identity_verified else '4' }}</div>
+    <div class="verification-step-content">
+      <div class="verification-step-head">
+        <div><span class="verification-kicker">Step 4</span><h2>Identity</h2></div>
+        <span class="pill {{ 'good' if current_user.identity_verified else 'danger' if identity_status == 'declined' else 'warn' if identity_status in ['pending', 'resubmission_requested', 'expired'] else '' }}">{{ identity_status_label }}</span>
+      </div>
+      {% if current_user.identity_verified %}
+        <p>Identity approved{% if current_user.identity_verified_name %} for <strong>{{ current_user.identity_verified_name }}</strong>{% endif %}.</p>
+      {% else %}
+        {% if identity_guidance %}
+        <p class="notice {{ 'bad' if identity_status == 'declined' else 'warn' }}"><strong>{{ identity_guidance.headline }}.</strong> {{ identity_guidance.detail }}</p>
+        {% endif %}
+        <p>Each new verification attempt costs {{ identity_fee_display }}. The fee is charged only after a session is created.</p>
+        {% if identity_missing_labels %}<p class="muted">Still needed: {{ identity_missing_labels|join(', ') }}.</p>{% endif %}
+        {% if not veriff_available %}<p class="muted">Identity verification is currently unavailable.</p>{% endif %}
+        <form method="post" action="/console/account/verification/identity/start">
+          <button class="btn primary verification-start" type="submit" {{ '' if identity_action_enabled else 'disabled' }}>{{ identity_action_label }}</button>
+        </form>
+      {% endif %}
+    </div>
+  </li>
+</ol>
+{% endblock %}

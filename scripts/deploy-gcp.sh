@@ -12,7 +12,8 @@
 #   3. image.sh    — Artifact Registry repo + buildx push (linux/amd64)
 #   4. secrets.sh  — Secret Manager + runtime IAM bindings
 #   5. rollout.sh  — parallel multi-region Cloud Run deploy + LB wiring
-#   6. synthetic.sh — US/EU synthetic monitor jobs + schedules
+#   6. regional quota ledger + reconciler (idempotent, feature allowlisted)
+#   7. synthetic.sh — US/EU synthetic monitor jobs + schedules
 
 set -euo pipefail
 
@@ -31,5 +32,8 @@ bash "${SCRIPT_DIR}/deploy/migrate_analytics_outbox.sh"
 bash "${SCRIPT_DIR}/deploy/migrate_operational_analytics_outbox.sh"
 bash "${SCRIPT_DIR}/deploy/image.sh"
 bash "${SCRIPT_DIR}/deploy/secrets.sh"
+bash "${SCRIPT_DIR}/deploy/regional_quota_ledger.sh" \
+  </dev/null
 bash "${SCRIPT_DIR}/deploy/rollout.sh"
+bash "${SCRIPT_DIR}/deploy/regional_quota_reconciler.sh"
 bash "${SCRIPT_DIR}/deploy/synthetic.sh"

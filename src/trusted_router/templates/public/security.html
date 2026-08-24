@@ -24,6 +24,24 @@
   </div>
 </section>
 
+<section class="marketing-split">
+  <div class="marketing-copy">
+    <span class="eyebrow">Provider-attested path</span>
+    <h2>Chutes requests are encrypted to the measured GPU workload.</h2>
+    <p>For Chutes TEE routes, the gateway obtains fresh workload evidence and verifies Intel TDX, NVIDIA confidential-computing claims, the pinned workload measurements, and the exact per-instance encryption key inside the TrustedRouter enclave. Only then does it encrypt the request with ML-KEM-768 and ChaCha20-Poly1305.</p>
+    <p>The verifier sends NVIDIA GPU evidence to <span class="mono">nras.attestation.nvidia.com</span> and fetches Intel TDX collateral from <span class="mono">api.trustedservices.intel.com</span>. Prompt and output content are not sent to either attestation service.</p>
+    <p>If evidence, measurements, freshness, or ciphertext authentication fails, that instance is rejected. The gateway may try another attested instance, but it never falls back to plaintext Chutes transport.</p>
+    <a class="btn" href="https://github.com/Lore-Hex/quill-cloud-proxy/tree/main/enclave-go">Inspect the gateway source</a>
+  </div>
+  <div class="trust-diagram" aria-label="Chutes end-to-end attestation and encryption path">
+    <div>TrustedRouter enclave</div>
+    <span>verify fresh CPU and GPU evidence</span>
+    <div>Attested Chutes workload</div>
+    <span>ML-KEM encrypted request and response</span>
+    <div>Model process</div>
+  </div>
+</section>
+
 <section class="marketing-grid three">
   <div class="marketing-card">
     <span class="card-label">Production path</span>
@@ -51,6 +69,16 @@
   <div>
     <p>AI routers sit between your application and the model provider. Developers should be able to inspect how routing, billing, fallback, content handling, and provider selection work before sending production prompts.</p>
     <p><a href="https://jperla.com/blog/attestation-is-all-you-need">Read the thinking behind this — &ldquo;Attestation is All You Need&rdquo; &rarr;</a></p>
+  </div>
+</section>
+
+<section class="cta-band" aria-label="Confidential AI badge">
+  <div>
+    <strong>Show customers which AI data path you chose.</strong>
+    <span>Add the Confidential AI trust seal to products using the strongest attested route.</span>
+  </div>
+  <div class="cta-band-actions">
+    <a class="btn primary" href="/badge">Get the badge</a>
   </div>
 </section>
 

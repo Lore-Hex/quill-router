@@ -37,6 +37,7 @@ from trusted_router.catalog import (
 )
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
+from trusted_router.image_generation import IMAGE_MODEL_ID_SET
 from trusted_router.types import ErrorType
 
 
@@ -231,6 +232,43 @@ def chat_route_endpoint_candidates(
         raise api_error(
             400,
             "No route candidates match the requested provider filters",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    candidates = _sort_endpoint_candidates(candidates, prefs)
+    if not prefs.allow_fallbacks:
+        return candidates[:1]
+    return candidates
+
+
+def image_route_endpoint_candidates(
+    body: dict[str, Any], settings: Settings
+) -> list[tuple[Model, ModelEndpoint]]:
+    """Resolve only models whose normalized image contract is implemented."""
+
+    raw_ids, prefs = _routing_for_body(body, settings)
+    candidates: list[tuple[Model, ModelEndpoint]] = []
+    seen: set[str] = set()
+    for model_id in raw_ids:
+        model = MODELS.get(model_id)
+        if model is None or model.id not in IMAGE_MODEL_ID_SET:
+            raise api_error(
+                400,
+                f"Model does not support image generation: {model_id}",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        for endpoint in endpoints_for_model(model.id):
+            if endpoint.id in seen:
+                continue
+            candidates.append((model, endpoint))
+            seen.add(endpoint.id)
+
+    candidates = _filter_candidates_soft_data_collection(
+        candidates, prefs, _apply_endpoint_provider_filters
+    )
+    if not candidates:
+        raise api_error(
+            400,
+            "No image route candidates match the requested provider filters",
             ErrorType.MODEL_NOT_SUPPORTED,
         )
     candidates = _sort_endpoint_candidates(candidates, prefs)
@@ -528,7 +566,17 @@ def _requested_model_ids(
             overrides.update(ovr)
         enforced_privacy_tier = ROUTING_MODEL_MIN_PRIVACY_TIERS.get(stripped)
         if enforced_privacy_tier is not None:
-            overrides["min_privacy"] = "e2ee" if enforced_privacy_tier >= 3 else "zdr"
+            alias = "e2ee" if enforced_privacy_tier >= 3 else "zdr"
+            # Strictest wins, not last-seen. `overrides` is one flat dict shared
+            # by every id in `model` + `models[]`, so a plain assignment let a
+            # later, weaker meta-model overwrite a stricter earlier one:
+            # {"model": "trustedrouter/e2e", "models": ["trustedrouter/zdr"]}
+            # resolved to the zdr rank and returned rank-2 endpoints, while the
+            # reverse order resolved to e2ee. A request's privacy guarantee must
+            # not depend on which fallback happens to be listed last.
+            previous = overrides.get("min_privacy")
+            if previous is None or PRIVACY_TIER_ALIASES[alias] > PRIVACY_TIER_ALIASES[previous]:
+                overrides["min_privacy"] = alias
         if stripped == ZDR_MODEL_ID:
             overrides["order"] = (
                 "anthropic,openai,google-vertex,google-ai-studio,tinfoil,venice,phala"

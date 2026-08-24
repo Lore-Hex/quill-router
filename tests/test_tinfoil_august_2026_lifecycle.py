@@ -98,9 +98,17 @@ def test_tinfoil_feed_discovers_kimi_k3_only_when_published(
             },
             {
                 "id": _K3_UPSTREAM,
+                "name": "Kimi K3",
+                "type": "chat",
+                "context_window": 262_144,
+                "endpoints": ["/v1/chat/completions", "/v1/responses"],
+                "reasoning": True,
+                "tool_calling": True,
+                "multimodal": True,
                 "pricing": {
-                    "inputTokenPricePer1M": 3.0,
-                    "outputTokenPricePer1M": 15.0,
+                    "inputTokenPricePer1M": 4.0,
+                    "cachedInputTokenPricePer1M": 0.8,
+                    "outputTokenPricePer1M": 20.0,
                 },
             },
         ]
@@ -109,12 +117,26 @@ def test_tinfoil_feed_discovers_kimi_k3_only_when_published(
 
     result = tinfoil.fetch()
 
-    assert result.prices[_K3].prompt_micro_per_m == 3_000_000
-    assert result.prices[_K3].completion_micro_per_m == 15_000_000
+    assert result.prices[_K3].prompt_micro_per_m == 4_000_000
+    assert result.prices[_K3].completion_micro_per_m == 20_000_000
+    assert result.prices[_K3].tiers[0].prompt_cached_micro_per_m == 800_000
     assert tinfoil.UPSTREAM_ID_MAP[_K3] == _K3_UPSTREAM
+    assert tinfoil._DISCOVERED_MANIFEST_ROWS[_K3] == {
+        "id": _K3,
+        "upstream_id": _K3_UPSTREAM,
+        "display_name": "Kimi K3",
+        "title": _K3,
+        "model_type": "chat",
+        "features": ["reasoning", "function-calling", "multimodal"],
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions", "responses"],
+        "status": 1,
+        "context_length": 262_144,
+    }
 
 
-def test_tinfoil_feed_does_not_advertise_kimi_k3_before_launch(
+def test_tinfoil_feed_marks_launched_kimi_k3_as_expected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = {
@@ -140,4 +162,4 @@ def test_tinfoil_feed_does_not_advertise_kimi_k3_before_launch(
     result = tinfoil.fetch()
 
     assert _K3 not in result.prices
-    assert _K3 not in tinfoil.EXPECTED_MODELS
+    assert _K3 in tinfoil.EXPECTED_MODELS

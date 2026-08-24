@@ -27,6 +27,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
+from clickhouse.ingest_operational_outbox import ACTIVITY_COLUMNS
+
 PROJECT = "quill-cloud-proxy"
 DATABASE = "tr"
 TABLE = "provider_benchmark_samples"
@@ -83,6 +85,8 @@ class DatasetSpec:
     shard_column: str
 
 
+# Raw client_request_events and client_minute_counters are deliberately absent:
+# the telemetry contract retains their rollups, not raw client tables, in Parquet.
 DATASETS: dict[str, DatasetSpec] = {
     "provider_benchmark_samples": DatasetSpec(
         columns=_BENCHMARK_COLUMNS,
@@ -90,37 +94,7 @@ DATASETS: dict[str, DatasetSpec] = {
         shard_column="id",
     ),
     "activity_generations": DatasetSpec(
-        columns=(
-            "generation_id",
-            "request_id",
-            "tenant_id",
-            "key_id",
-            "model",
-            "provider",
-            "provider_name",
-            "app",
-            "tokens_prompt",
-            "tokens_completion",
-            "cached_input_tokens",
-            "reasoning_tokens",
-            "total_cost_microdollars",
-            "usage_type",
-            "speed_tokens_per_second",
-            "finish_reason",
-            "status",
-            "streamed",
-            "usage_estimated",
-            "elapsed_milliseconds",
-            "first_token_milliseconds",
-            "ttfb_milliseconds",
-            "region",
-            "user",
-            "session_id",
-            "http_referer",
-            "app_categories",
-            "tags",
-            "created_at",
-        ),
+        columns=ACTIVITY_COLUMNS,
         time_column="created_at",
         shard_column="generation_id",
     ),
@@ -308,6 +282,10 @@ class ArchiveStore(Protocol):
 
     def put_json_pointer(self, key: str, value: dict[str, Any]) -> None: ...
 
+    # The restore drill reads the archive back through this same store, so a
+    # cloud that can be written but not read would only fail at drill time.
+    def download_file(self, key: str, destination: Path) -> None: ...
+
 
 class ClickHouseDailyExporter:
     def __init__(
@@ -316,10 +294,19 @@ class ClickHouseDailyExporter:
         password: str,
         database: str = DATABASE,
         table: str = TABLE,
+        user: str = "tr",
     ) -> None:
         self._password = password
         self._database = _identifier(database, label="database")
         self._table = _identifier(table, label="table")
+        # The user was hardcoded to "tr" while the database was already a
+        # parameter, so this exporter silently only worked on the GCP cluster --
+        # the same latent bug ClickHouseOperationalWriter carried. The AWS-EU
+        # node authenticates as "default" into database "default" (its schema is
+        # applied unqualified), and an explicit --user beats CLICKHOUSE_USER in
+        # the environment, so this could not have been corrected from the unit
+        # file. Archiving another cloud requires it to be a parameter.
+        self._user = _identifier(user, label="user")
         try:
             self._spec = DATASETS[self._table]
         except KeyError:
@@ -340,7 +327,7 @@ class ClickHouseDailyExporter:
             [
                 "/usr/bin/clickhouse-client",
                 "--user",
-                "tr",
+                self._user,
                 "--database",
                 self._database,
                 "--query",
@@ -429,6 +416,8 @@ class ClickHouseDailyExporter:
 
 
 class GCSArchiveStore:
+    scheme = "gs"
+
     def __init__(self, *, project: str, bucket: str) -> None:
         import google.cloud.storage as gcs_storage
 
@@ -442,6 +431,9 @@ class GCSArchiveStore:
         if not isinstance(value, dict):
             raise RuntimeError(f"archive object {key} is not a JSON object")
         return value
+
+    def download_file(self, key: str, destination: Path) -> None:
+        self._bucket.blob(key).download_to_filename(str(destination))
 
     def put_file_if_absent(
         self,
@@ -496,6 +488,282 @@ class GCSArchiveStore:
             content_type="application/json",
             if_generation_match=generation,
         )
+
+
+class S3ArchiveStore:
+    """The same immutable archive on S3, for the AWS deployment.
+
+    S3's conditional writes carry the same meaning as the GCS store's
+    generation preconditions: ``IfNoneMatch="*"`` is create-if-absent, and a
+    pointer move is a compare-and-set on the current ETag.  So a 412 here is
+    a concurrent writer or a genuine content difference -- never a transport
+    error -- and is resolved by re-reading and comparing, exactly as the GCS
+    store resolves ``PreconditionFailed``, rather than by retrying.
+
+    A retry would be the dangerous choice: retrying an unconditional write is
+    how an "immutable" archive quietly stops being immutable.
+    """
+
+    scheme = "s3"
+
+    def __init__(self, *, bucket: str, region: str | None = None) -> None:
+        import boto3
+
+        self._bucket = bucket
+        self._client = boto3.client("s3", region_name=region)
+
+    def _uri(self, key: str) -> str:
+        return f"s3://{self._bucket}/{key}"
+
+    @staticmethod
+    def _is_precondition_failure(error: Any) -> bool:
+        response = getattr(error, "response", {}) or {}
+        code = str(response.get("Error", {}).get("Code", ""))
+        status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        # ConditionalRequestConflict is S3's 409 for two conditional writes
+        # racing on the same key; it means the same thing as a 412 here.
+        return code in {"PreconditionFailed", "ConditionalRequestConflict"} or status in {409, 412}
+
+    @staticmethod
+    def _is_missing(error: Any) -> bool:
+        response = getattr(error, "response", {}) or {}
+        code = str(response.get("Error", {}).get("Code", ""))
+        status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        return code in {"NoSuchKey", "404", "NotFound"} or status == 404
+
+    def read_json(self, key: str) -> dict[str, Any] | None:
+        from botocore.exceptions import ClientError
+
+        try:
+            body = self._client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
+        except ClientError as error:
+            if self._is_missing(error):
+                return None
+            raise
+        value = json.loads(body)
+        if not isinstance(value, dict):
+            raise RuntimeError(f"archive object {key} is not a JSON object")
+        return value
+
+    def _stored_sha256(self, key: str) -> str | None:
+        # S3 lowercases user metadata keys on the way out.
+        head = self._client.head_object(Bucket=self._bucket, Key=key)
+        metadata = {str(k).lower(): v for k, v in (head.get("Metadata") or {}).items()}
+        return metadata.get("sha256")
+
+    def download_file(self, key: str, destination: Path) -> None:
+        self._client.download_file(self._bucket, key, str(destination))
+
+    def put_file_if_absent(
+        self,
+        key: str,
+        path: Path,
+        *,
+        sha256: str,
+        metadata: dict[str, str],
+    ) -> None:
+        from botocore.exceptions import ClientError
+
+        with path.open("rb") as stream:
+            try:
+                self._client.put_object(
+                    Bucket=self._bucket,
+                    Key=key,
+                    Body=stream,
+                    ContentType="application/vnd.apache.parquet",
+                    Metadata={**metadata, "sha256": sha256},
+                    IfNoneMatch="*",
+                )
+            except ClientError as error:
+                if not self._is_precondition_failure(error):
+                    raise
+                if self._stored_sha256(key) != sha256:
+                    raise RuntimeError(
+                        f"immutable archive object differs: {self._uri(key)}"
+                    ) from None
+
+    def put_json_if_absent(self, key: str, value: dict[str, Any]) -> None:
+        from botocore.exceptions import ClientError
+
+        encoded = _json_bytes(value)
+        try:
+            self._client.put_object(
+                Bucket=self._bucket,
+                Key=key,
+                Body=encoded,
+                ContentType="application/json",
+                IfNoneMatch="*",
+            )
+        except ClientError as error:
+            if not self._is_precondition_failure(error):
+                raise
+            existing = self._client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
+            if existing != encoded:
+                raise RuntimeError(
+                    f"immutable archive manifest differs: {self._uri(key)}"
+                ) from None
+
+    def put_json_pointer(self, key: str, value: dict[str, Any]) -> None:
+        from botocore.exceptions import ClientError
+
+        encoded = _json_bytes(value)
+        try:
+            head = self._client.head_object(Bucket=self._bucket, Key=key)
+        except ClientError as error:
+            if not self._is_missing(error):
+                raise
+            head = None
+        condition = {"IfNoneMatch": "*"} if head is None else {"IfMatch": head["ETag"]}
+        self._client.put_object(
+            Bucket=self._bucket,
+            Key=key,
+            Body=encoded,
+            ContentType="application/json",
+            **condition,
+        )
+
+
+class AzureBlobArchiveStore:
+    """The same immutable archive on Azure Blob Storage.
+
+    ``overwrite=False`` is Azure's create-if-absent, and a pointer move is an
+    ``If-Match`` on the current ETag, so the preconditions line up with the
+    other two stores.  ``ResourceExistsError`` and
+    ``ResourceModifiedError`` are the conflict signals, and both are resolved
+    by comparison rather than retry for the reason given on
+    :class:`S3ArchiveStore`.
+    """
+
+    scheme = "azure"
+
+    def __init__(self, *, account_url: str, container: str) -> None:
+        from azure.identity import DefaultAzureCredential
+        from azure.storage.blob import BlobServiceClient
+
+        self._container_name = container
+        self._container = BlobServiceClient(
+            account_url=account_url,
+            credential=DefaultAzureCredential(),
+        ).get_container_client(container)
+
+    def _uri(self, key: str) -> str:
+        return f"azure://{self._container_name}/{key}"
+
+    def read_json(self, key: str) -> dict[str, Any] | None:
+        from azure.core.exceptions import ResourceNotFoundError
+
+        try:
+            body = self._container.get_blob_client(key).download_blob().readall()
+        except ResourceNotFoundError:
+            return None
+        value = json.loads(body)
+        if not isinstance(value, dict):
+            raise RuntimeError(f"archive object {key} is not a JSON object")
+        return value
+
+    def download_file(self, key: str, destination: Path) -> None:
+        with destination.open("wb") as stream:
+            self._container.get_blob_client(key).download_blob().readinto(stream)
+
+    def put_file_if_absent(
+        self,
+        key: str,
+        path: Path,
+        *,
+        sha256: str,
+        metadata: dict[str, str],
+    ) -> None:
+        from azure.core.exceptions import ResourceExistsError
+        from azure.storage.blob import ContentSettings
+
+        blob = self._container.get_blob_client(key)
+        with path.open("rb") as stream:
+            try:
+                blob.upload_blob(
+                    stream,
+                    overwrite=False,
+                    metadata={**metadata, "sha256": sha256},
+                    content_settings=ContentSettings(
+                        content_type="application/vnd.apache.parquet"
+                    ),
+                )
+            except ResourceExistsError:
+                existing = blob.get_blob_properties().metadata or {}
+                if existing.get("sha256") != sha256:
+                    raise RuntimeError(
+                        f"immutable archive object differs: {self._uri(key)}"
+                    ) from None
+
+    def put_json_if_absent(self, key: str, value: dict[str, Any]) -> None:
+        from azure.core.exceptions import ResourceExistsError
+        from azure.storage.blob import ContentSettings
+
+        encoded = _json_bytes(value)
+        blob = self._container.get_blob_client(key)
+        try:
+            blob.upload_blob(
+                encoded,
+                overwrite=False,
+                content_settings=ContentSettings(content_type="application/json"),
+            )
+        except ResourceExistsError:
+            if blob.download_blob().readall() != encoded:
+                raise RuntimeError(
+                    f"immutable archive manifest differs: {self._uri(key)}"
+                ) from None
+
+    def put_json_pointer(self, key: str, value: dict[str, Any]) -> None:
+        from azure.core import MatchConditions
+        from azure.core.exceptions import ResourceNotFoundError
+        from azure.storage.blob import ContentSettings
+
+        encoded = _json_bytes(value)
+        blob = self._container.get_blob_client(key)
+        settings = ContentSettings(content_type="application/json")
+        try:
+            etag = blob.get_blob_properties().etag
+        except ResourceNotFoundError:
+            blob.upload_blob(encoded, overwrite=False, content_settings=settings)
+            return
+        blob.upload_blob(
+            encoded,
+            overwrite=True,
+            content_settings=settings,
+            etag=etag,
+            match_condition=MatchConditions.IfNotModified,
+        )
+
+
+def build_archive_store(
+    kind: str,
+    *,
+    project: str,
+    bucket: str,
+    region: str | None = None,
+    account_url: str | None = None,
+) -> ArchiveStore:
+    """Select this deployment's object store.
+
+    Each cloud archives to its own object store in its own account.  That is
+    the point rather than an accident: an archive written across a cloud
+    boundary would make the cloud it describes non-recoverable exactly when
+    the *other* cloud is the one that is unreachable.
+    """
+
+    if kind == "gcs":
+        return GCSArchiveStore(project=project, bucket=bucket)
+    # ARCHIVE_BUCKET names a GCP bucket. Reaching another cloud's store while
+    # still carrying it means --bucket was never set, and the useful failure
+    # is here rather than a 404 that reads like a permissions problem.
+    if bucket == ARCHIVE_BUCKET:
+        raise ValueError(f"--bucket must name this deployment's {kind} bucket, not {bucket!r}")
+    if kind == "s3":
+        return S3ArchiveStore(bucket=bucket, region=region)
+    if kind == "azure":
+        if not account_url:
+            raise ValueError("--account-url is required for the azure object store")
+        return AzureBlobArchiveStore(account_url=account_url, container=bucket)
+    raise ValueError(f"unsupported archive object store: {kind}")
 
 
 def _nullable_string(value: Any) -> str | None:
@@ -649,6 +917,11 @@ def archive_day(
         "revision": revision,
         "exported_at": exported_at.isoformat().replace("+00:00", "Z"),
         "source_fingerprint": source.as_dict(),
+        # The exact column list the fingerprint was computed over. Column
+        # additions (activity_generations grew client_* columns) change the
+        # fingerprint expression, so a verifier must recompute against the
+        # columns of THIS revision, not whatever the current schema says.
+        "columns": list(DATASETS[dataset].columns),
         "parts": manifest_parts,
         "parquet_rows": sum(int(part["rows"]) for part in manifest_parts),
     }
@@ -698,25 +971,43 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", default=os.environ.get("GCP_PROJECT_ID", PROJECT))
     parser.add_argument("--bucket", default=os.environ.get("ARCHIVE_BUCKET", ARCHIVE_BUCKET))
-    parser.add_argument("--database", default=DATABASE)
+    parser.add_argument("--database", default=os.environ.get("TR_CLICKHOUSE_DATABASE", DATABASE))
+    # The AWS-EU node authenticates as "default"; see ClickHouseDailyExporter.
+    parser.add_argument("--clickhouse-user", default=os.environ.get("TR_CLICKHOUSE_USER", "tr"))
     parser.add_argument("--table", action="append", choices=tuple(DATASETS))
     parser.add_argument("--date", type=dt.date.fromisoformat)
     parser.add_argument("--lookback-days", type=int, default=7)
     parser.add_argument("--backfill", action="store_true")
     parser.add_argument("--rows-per-part", type=int, default=ROWS_PER_PART)
+    # Which cloud this node archives to. Defaults to gcs so the existing
+    # GCP units keep their current behaviour with no argv change.
+    parser.add_argument(
+        "--object-store",
+        choices=("gcs", "s3", "azure"),
+        default=os.environ.get("TR_ARCHIVE_OBJECT_STORE", "gcs"),
+    )
+    parser.add_argument("--region", default=os.environ.get("AWS_REGION"))
+    parser.add_argument("--account-url", default=os.environ.get("AZURE_STORAGE_ACCOUNT_URL"))
     args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    store = GCSArchiveStore(project=args.project, bucket=args.bucket)
+    store = build_archive_store(
+        args.object_store,
+        project=args.project,
+        bucket=args.bucket,
+        region=args.region,
+        account_url=args.account_url,
+    )
     tables = tuple(dict.fromkeys(args.table or tuple(DATASETS)))
     for table in tables:
         exporter = ClickHouseDailyExporter(
             password=os.environ["CH_PASSWORD"],
             database=args.database,
             table=table,
+            user=args.clickhouse_user,
         )
         backfill_start = (
             exporter.earliest_day() if args.backfill and args.date is None else None
@@ -735,12 +1026,13 @@ def main() -> int:
             )
             log.info(
                 "analytics_archive.completed dataset=%s day=%s rows=%d "
-                "revision=%s skipped=%s manifest=gs://%s/%s",
+                "revision=%s skipped=%s manifest=%s://%s/%s",
                 table,
                 result.day,
                 result.rows,
                 result.revision,
                 result.skipped,
+                getattr(store, "scheme", "gs"),
                 args.bucket,
                 result.manifest_key,
             )

@@ -30,6 +30,196 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="you-are-a-model-provider",
+        title="You are a model provider now",
+        description=(
+            "TrustedRouter now takes user-provided models: register an HTTPS endpoint that speaks the OpenAI chat API, set a price per million tokens, and keep 70% of what callers pay. One npx command puts your local model, your agent, or you personally in front of everyone holding TrustedRouter credits."
+        ),
+        published_date="2026-08-17",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<figure class="blog-hero-image"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="Sell tokens from your laptop: one command, your price, 70% yours">
+  <rect width="1200" height="630" fill="#ffffff"/>
+  <rect x="0" y="0" width="1200" height="8" fill="#0f6e56"/>
+  <text x="72" y="118" font-size="26" font-weight="600" fill="#6b7280" letter-spacing="2">USER-PROVIDED MODELS</text>
+  <text x="72" y="216" font-size="66" font-weight="700" fill="#111827">Sell tokens from your laptop.</text>
+  <text x="72" y="286" font-size="40" font-weight="500" fill="#374151">One command, your price, 70% yours.</text>
+  <rect x="72" y="330" width="1056" height="1" fill="#eef0f2"/>
+  <g>
+    <text x="72" y="410" font-size="52" font-weight="700" fill="#0f6e56">70%</text>
+    <text x="72" y="448" font-size="24" fill="#6b7280">of the price, to you, in credits</text>
+  </g>
+  <g>
+    <text x="492" y="410" font-size="52" font-weight="700" fill="#0f6e56">3 modes</text>
+    <text x="492" y="448" font-size="24" fill="#6b7280">your model, your agent, or you</text>
+  </g>
+  <g>
+    <text x="912" y="410" font-size="52" font-weight="700" fill="#111827">$0</text>
+    <text x="912" y="448" font-size="24" fill="#6b7280">to turn a request down</text>
+  </g>
+  <rect x="72" y="512" width="1056" height="62" rx="8" fill="#111827"/>
+  <text x="600" y="552" font-size="30" fill="#f8fafc" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,monospace">npx reverse-harness --mode proxy</text>
+</svg></figure>
+<p>You can sell tokens on TrustedRouter now, and the seller can be anyone who has an endpoint and a price. You register an HTTPS endpoint that speaks the OpenAI chat API, you set a price per million tokens, and your model appears in the user-provided section with an id that any TrustedRouter customer can call. The model running on your laptop right now qualifies. So does the agent script you wrote last month, the fine-tune sitting on a rented A100, and you personally, answering questions with your hands.</p>
+
+<p>Getting there is one command. Run <code>npx reverse-harness --mode proxy --upstream http://localhost:11434/v1</code> and the ollama instance you already have starts taking paid requests from everybody holding TrustedRouter credits. Point the same flag at llama.cpp, vLLM, or LM Studio and it works the same way. Swap to <code>npx reverse-harness --mode exec --command "python my_agent.py"</code> and the thing you are selling is your program, running on your machine, with your data on the same disk. The third mode is you: <code>npx reverse-harness --mode human</code> drops incoming prompts into a browser queue and waits for you to type. The client verifies every TrustedRouter signature before it hands you a request, opens a tunnel so we can reach you behind your router, keeps your clock, and answers the health canary itself so nobody has to get out of bed for it. It is Apache 2.0, it is on npm, and it lives at <a href="https://github.com/Lore-Hex/reverse-harness">github.com/Lore-Hex/reverse-harness</a>, so you can read all of it before you run any of it.</p>
+
+<p>You set the price the caller pays, and 70% of that price lands in your earnings wallet as TrustedRouter credits, which you can move into any of your workspaces and spend on anything in the catalog. Our 30% comes out of the same number, so the price you publish is the price the buyer sees. Route your own traffic to yourself and you lose 30% on the round trip, which is the correct incentive and stops the obvious game before anyone bothers to play it.</p>
+
+<p>There are three kinds of model you can register, and they differ mostly in patience. A machine model can charge up to $1,000 per million tokens and has thirty seconds to produce a first byte, sixty seconds of idle between bytes, and five minutes on the wall clock. An agent model gets the same ceiling with a minute for the first byte and ten minutes to finish, because agents think and call tools before they talk. Those two are where the volume is: a GPU box in a closet serving a fine-tune, or a retrieval loop sitting next to a corpus nobody is ever going to upload. A human model gets five minutes for the first byte, two minutes of idle, fifteen minutes total, and a ceiling of one dollar per token, which is a million dollars per million tokens. The ceiling is that high because when the model is a person, one sentence can be worth what an hour of that person is worth, and the buyer is a pipeline that would otherwise stop and file a ticket somebody reads on Tuesday.</p>
+
+<p>I went first, with the least serious infrastructure I own, because I wanted to know whether the money would move. My id is <code>trustedrouter/user-joseph-live</code>, the handle on it is jperla, I priced it at ten cents a token, and the endpoint behind it was a cloudflared quick tunnel pointed at the laptop on my desk. Two real requests came in through the production enclave and landed in my terminal. I typed both answers by hand while the gateway held the connection open and streamed my typing back as a completion, and I earned $2.73 in credits, which is 70% of what the caller paid.</p>
+
+<p>Who buys from an endpoint they have never heard of? Nobody, by accident. There is no browsing your way to a user-provided model. You get called by id, so every request that reaches you came from somebody who went looking for you. Two requests and $2.73 is a small pile of money and a large fact: somebody paid a dime a token for sentences a person typed into a text box. The catalog cannot quote that price, because the catalog has no people in it, and it has none of your data in it either. A fine-tune that knows a schema living in four heads, an agent wired into your company's file share, a person who knows why the pipeline broke: those are worth more per token than any commodity model gets paid, and until this week there was no way to charge anybody for one of them.</p>
+
+<p>Serving those calls is bounded work. You POST clock-in, we probe you before we believe you and hand back a 409 if the probe fails, you heartbeat on an interval, and you clock out when you are done. Turning work down is an HTTP error: any 4xx means you looked at the request and judged it, and it costs you nothing at all. Only a 5xx counts against you, because that means you took the job and dropped it, and it takes three consecutive failures of yours to clock you out. A caller who hangs up mid-stream never counts.</p>
+
+<p>The traffic reaching your hardware is fenced on our side. Requests come from an attested enclave over HTTPS with the resolved IP pinned for the life of the connection, redirects refused, and only allowlisted chat fields forwarded, and your credentials are decrypted inside that enclave and nowhere else. Every request carries <code>TR-Signature: t=&lt;unix&gt;,v1=&lt;hex hmac-sha256 of "t." + raw body&gt;</code> with a 300 second skew window, and the harness checks it before your model sees a token. You can tell whether a request is really from us by doing arithmetic.</p>
+
+<p>Buyers get told what they are buying: a user-provided model is not attested and is not covered by zero-data-retention, and we print that on the model page, in the API shape our clients read, and on the public trust page. Getting listed costs you an email on file, one funded top-up of any amount above zero, which is what unlocks phone verification, a phone verified by call or SMS, and then a government ID check through Veriff that wants $25 of lifetime top-ups to attempt and charges $5 against your credits each try. That is enough friction to make a fake seller a losing business and nowhere near enough to stop a motivated one. The morning after my model went live, somebody I have never met signed up, walked every step of that gate alone without asking me a single question, and registered a real hosted Qwen endpoint at forty cents per million tokens, working from nothing but the docs. They were in business before I finished my coffee. Go get paid for the GPU that is idling in your apartment tonight.</p>""",
+    ),
+    BlogPost(
+        slug="proofs-in-production",
+        title="Proofs that find real production bugs",
+        description=(
+            "We wrote property tests and a TLA+ model against the running "
+            "TrustedRouter code and put them in CI. They found fifteen real "
+            "defects, including one that crashed the Swift SDK's process from a "
+            "single response header."
+        ),
+        published_date="2026-08-14",
+        source_label=None,
+        source_url=None,
+        og_image="/static/og/blog/proofs-in-production.png",
+        body_html="""
+<figure class="blog-hero-image"><img src="/static/og/blog/proofs-in-production.png" alt="Proofs that find real production bugs" width="1200" height="630"></figure>
+<p>I spent a week pointing proof tools at TrustedRouter's own source and they found fifteen real defects. Not style problems. A single response header that crashed the Swift SDK's process. An attestation check that could pass without checking anything. An API key that survived our log scrubber because it was a dictionary key instead of a value. All of it in code that was reviewed, tested, and running.</p>
+<p>I want to describe what actually worked, because "formal methods" usually gets discussed as something you do instead of shipping, on a system small enough to fit in a paper. That is not what this was. The control plane is fifty thousand lines of Python with three thousand five hundred tests already passing. The proofs went in on top of that, they run in CI on every push, and the interesting part is not that they passed. It is what they caught on the way.</p>
+<h2>Write the law, not the example</h2>
+<p>A normal test picks an input and asserts an output. A property picks the <em>claim</em> and lets a generator hunt for a counterexample. The difference sounds academic until you see which bugs each one can and cannot see.</p>
+<p>Our attestation verifier checks that the gateway you are talking to is the exact build we published. It had tests. Good ones, with real RSA signatures and crafted JWTs. Every one of them passed. Here is the property instead:</p>
+<p><strong>for every claims set K and policy P, if verification succeeds then K's image digest was in P's accepted set.</strong></p>
+<p>That is false, and it was false for a year. Both image checks were written as <code>if accepted_digests and workload not in accepted_digests: raise</code>. An <em>empty</em> accepted set skips the check rather than failing it. And the policy builder mapped a trust release with no image fields — a truncated response, a CDN error page that happens to parse as JSON — to exactly that empty set. Verification then succeeded against any genuinely-attested workload and reported success. The caller believed it had pinned a build. It had pinned nothing.</p>
+<p>The example tests all passed <em>while the implication was vacuous</em>. That is the whole lesson. They asserted "a matching digest verifies" and "a mismatched digest raises", and both remained true in a world where the check never ran. Only a statement quantified over all policies can notice that the premise had become unreachable.</p>
+<h2>The generator only searches where you let it</h2>
+<p>Properties are not magic, and the way they fail is instructive. We wrote one for the log scrubber that reads well: no declared secret survives, for any Python value shape. It generated dicts, lists, tuples, sets, bytes, nested combinations, planting canary secrets at random leaf positions. It ran fifteen hundred examples per commit and passed.</p>
+<p>It was searching half the space. Every canary went into a <em>value</em>, because the generator drew mapping keys from plain text. And <code>_scrub</code> checked whether a key <em>name</em> looked sensitive but never scrubbed the key's own text, so this shipped a live credential to our log sink:</p>
+<p><code>_scrub({"sk-tr-v1-SECRET": 1}) -&gt; {'sk-tr-v1-SECRET': 1}</code></p>
+<p>A dict keyed by an API key is not exotic. It is what a per-key request counter looks like. An outside reviewer found it by reading; the property that existed to prevent exactly this had never looked. A property test is only as good as the positions its generator can reach, and "I generated containers" is not the same as "I generated every position a string can occupy in a container."</p>
+<h2>Some bugs need a model, not a test</h2>
+<p>Property tests drive code. When the thing you are worried about is a <em>composition</em> that does not exist yet, there is nothing to drive.</p>
+<p>We have a module for regional prepaid quota leases — several regional planes each holding a bounded slice of one workspace's escrow. It is deliberately dark: no migration, no data, no callers. The failure mode that matters is oversubscription, planes collectively spending more than the workspace escrowed, and it lives in the interaction between a granter, several leaseholders, and a reclaimer sweeping expired leases. None of that is code yet.</p>
+<p>So we wrote it in TLA+ and ran a model checker over every interleaving. Eight million states. It found a design gap in six.</p>
+<p>If the reclaimer only sweeps <em>active</em> leases, a lease that gets quarantined and then expires can never be closed, and its escrow is stranded permanently. Quarantine is meant to stop a suspicious lease spending, not to make the customer forfeit the money. The counterexample was six states long and no amount of unit testing would have produced it, because the reclaimer it describes has not been written. We changed the design and left a note in the spec for whoever builds it.</p>
+<p>The property that caught it was a liveness property — eventually this lease is closed — not a safety one. A safety-only spec is perfectly happy with a system that quietly keeps your money forever. Nothing bad happens; nothing happens at all.</p>
+<h2>What the model does not prove</h2>
+<p>I had also written a "stale write" action into the spec to show that our fencing token blocks writes from a superseded leaseholder. A reviewer pointed out that the action was <code>UNCHANGED vars</code> — it did nothing. An action that does nothing is trivially safe, so it proved nothing.</p>
+<p>I made it perform a real write and the check still passed. Then I deleted the fencing guard entirely, and it <em>still</em> passed: four and a half million states, no violation. The accounting bound already prevents overspend regardless of who writes. The hazard fencing actually addresses is lease succession, which this model does not have.</p>
+<p>So the spec now says, in its header, that it does not establish that fencing works and nobody should cite it as if it did. That is the least satisfying paragraph in this post and the most important one. A proof that proves less than its title suggests is worse than no proof, because it reads as evidence. Model checkers do not stop you claiming too much; they only stop you being wrong about the thing you actually wrote down.</p>
+<h2>Put it in CI or it decays</h2>
+<p>The property tests are pytest files, so they run in the existing suite with no new infrastructure. The TLA+ specs needed a job: a JVM, a cached tools jar, one model-checking run per spec, and it blocks the deploy gate like every other check.</p>
+<p>Two details in that runner are doing real work. A spec without a config file is a hard error rather than a skip, and a config that names no invariant or property is also a hard error — otherwise the checker explores the whole state space and reports success having verified nothing at all. Passing vacuously while looking checked is the exact failure this is supposed to prevent, so the build refuses.</p>
+<p>The single highest-value test we wrote is not a proof of anything. It partitions every field on our generation record into "goes to analytics" or "deliberately excluded", and fails the build when a new field belongs to neither. The real risk to a no-content-logging promise was never that somebody writes a leaky projection. It is that somebody adds a field and an existing projection picks it up, while every value-asserting test stays green. That test converts "remember not to leak" into "the build stops until you decide."</p>
+<h2>Was it worth it</h2>
+<p>Fifteen defects across twenty-three merged pull requests. The ones I would have least liked to find in the wild: a <code>Retry-After</code> header of <code>inf</code> crashed the Swift SDK's process outright — an uncatchable runtime trap, which on iOS is an app termination triggered by a response header. The same header hung the Python client forever and parked the Go client for two hundred and ninety-two years. Six SDKs, six different failure modes, one missing bound.</p>
+<p>The obvious objection is that this is expensive and only pays off on aerospace software. I think that gets it backwards. The cheap properties found most of the bugs. Bounds on untrusted numbers, round-trip laws on anything durable, and one classification test that fails when a struct grows a field — none of that requires a background in verification, and together they caught more than the model did.</p>
+<p>The model earned its place for a different reason: it let us check a design before writing it, while changing our minds still cost nothing. That is the cheapest that decision will ever be, and it is the one place where "prove it first" is straightforwardly less work than shipping and finding out.</p>
+<p>Every property, every spec, and all twenty-three pull requests are in <a href="https://github.com/Lore-Hex/quill-router">the open source repo</a>, along with the code they check. If you want to know what our gateway does with your prompts, that is the same answer as always: <a href="/blog/attestation-is-all-you-need">read it, and verify the build that is running</a>.</p>
+""",
+    ),
+    BlogPost(
+        slug="native-swift-harness-no-electron",
+        title="Open Source all native Swift harness (NO Electron!)",
+        description=(
+            "QuillCode is a coding agent written in Swift with a real AppKit UI. "
+            "No Electron, no bundled browser engine, no 400MB app to open a "
+            "text box. 60k lines, 1600 tests, and it is on GitHub."
+        ),
+        published_date="2026-08-10",
+        source_label="Joseph Perla original",
+        source_url="https://www.jperla.com/blog/native-swift-harness-no-electron",
+        og_image="/static/og/blog/native-swift-harness-no-electron.png",
+        body_html="""
+<figure class="blog-hero-image"><img src="/static/og/blog/native-swift-harness-no-electron.png" alt="Quill Cowork running as a native macOS application" width="1200" height="630"></figure>
+<p>The coding agent I use every day is <a href="https://github.com/Lore-Hex/QuillCode">open source</a> now. It is called QuillCode, it is a native Mac app written in Swift, and it runs on my laptop instead of in somebody else's datacenter.</p>
+
+<p>That last part is the whole point. Almost every useful thing I want an agent to do involves my machine. Run the test suite. Open a worktree and try the risky refactor there. Drive a browser and check that the page actually renders. Read the log file that never leaves my disk. An agent living in a web app can do none of that, so it does the one thing it can do — write code into a text box — and hands the hard half back to you. The hard half is the part I wanted help with.</p>
+
+<p>It is also not an Electron app, which I say with some feeling. The current default for shipping a desktop tool is to bundle an entire browser engine so the team can write the interface in the language they already know, and the result is a text box that eats four hundred megabytes of disk and a couple hundred of RAM before it has done anything. Every one of these apps feels the same: a beachball on a window resize, a scroll that is almost but not quite native, a menu bar that is a drawing of a menu bar. QuillCode's interface is Swift and AppKit. It launches immediately, it scrolls the way every other Mac window scrolls, and the file picker is the file picker. That is not nostalgia, it is the difference between a tool you keep open all day and one you quit because it is heavy.</p>
+
+<p>So QuillCode has local tools, real worktrees, computer use, automations, and a plugin system, and it updates itself with verified builds. It is about sixty thousand lines of Swift with sixteen hundred tests behind it and something north of six hundred and eighty merged pull requests. I mention the test count because a coding agent that edits your repo is exactly the kind of software where you want to know somebody was paranoid.</p>
+
+<p>It is backed by <a href="/">TrustedRouter</a>, which means you choose the model instead of inheriting one. That matters more for coding than for chat, because coding is where the gap between models shows up as wasted hours. Sometimes you want the cheap fast one for a rename and the expensive one for the design; I wrote about <a href="/blog/how-to-choose-a-model">how to choose</a> and about the fact that <a href="/blog/the-best-open-models-arent-on-your-leaderboard">the best open models are not on your leaderboard</a>. QuillCode ships with <a href="/blog/socrates-1.1-terminal-bench-hard-72">Socrates 1.1</a> in the recommended list because it scored 72 on Terminal-Bench Hard, and a coding harness should default to something that can actually finish a terminal task.</p>
+
+<p>The obvious objection is that a local agent is a worse agent — no fleet of GPUs behind it, no magic. That gets it backwards. The model still runs remotely; what runs locally is the part that touches your files, and that part should be a program you can read. The frontier is available to me either way. I get <a href="/blog/frontier-smart-cheap-fast-pick-3-open-source">frontier-quality output at open-source prices</a> through the router, and I get to keep the file system access on my side of the wire.</p>
+
+<p>The other objection is privacy, and it is the serious one, because a coding agent reads everything. That is why the prompt path is <a href="/blog/one-api-all-llms-provably-private">verifiable rather than promised</a> and why the gateway <a href="/blog/attestation-is-all-you-need">attests what code is receiving your prompts</a>. If you are going to point an agent at a private repo you should be able to check where the words went.</p>
+
+<p>Everything else I build is open too — the <a href="/blog/open-source-open-source-open-source">router, the evals, the proxy</a>. Take the repo, read the parts you do not trust, and run it against your own key.</p>
+""",
+    ),
+    BlogPost(
+        slug="an-agent-that-hides-the-bill",
+        title="Quill Cowork has confidential mode and trusts you with the bill",
+        description=(
+            "Quill Cowork puts a live token meter in the top bar and a /confidential "
+            "mode that forgets the conversation but keeps the receipt. Private "
+            "should mean private words, not invisible spending."
+        ),
+        published_date="2026-08-10",
+        source_label="Joseph Perla original",
+        source_url="https://www.jperla.com/blog/an-agent-that-hides-the-bill",
+        og_image="/static/og/blog/an-agent-that-hides-the-bill.png",
+        body_html="""
+<figure class="blog-hero-image"><img src="/static/og/blog/an-agent-that-hides-the-bill.png" alt="Quill Cowork with the expanded TrustedRouter cost limits panel" width="1200" height="630"></figure>
+<p>If you hire someone and they will not tell you what they spent, you fire them. Agents get a pass on this for no reason I can defend, so QuillCode has a meter in the top bar: tokens used against the limit, what is left, and where the number came from. It updates while the agent works. You can watch a bad prompt get expensive in real time, which is the only feedback loop that ever made me write better prompts.</p>
+
+<p>The interesting bug showed up when I added the private mode. QuillCode has <code>/confidential</code>, which opens a chat that is never written to disk, never appears in the sidebar, carries no workspace memories, and is pinned to an end-to-end encrypted route. When you leave, the thread is destroyed. Clean.</p>
+
+<p>Except the spend went with it. Destroying the thread destroyed its receipt, so the money spent inside a confidential chat quietly vanished from the period ledger. You could run up a bill in private mode and the books would never know. Nobody designed that; it fell out of "destroy everything about this thread" meeting "the ledger lives on the thread." A private chat should forget your words and keep your receipt. Now it does.</p>
+
+<p>That bug was one of about a dozen. Five rounds of adversarial review on the confidential mode found side doors in places I would not have guessed: subagent stores, attached image bytes, the memory tool, automations, run hooks, computer-use artifacts, OS notification bodies, a settings save that overwrote the pinned model, context refills, fork and compact and duplicate, and an auto-safety-reviewer that shipped the transcript to a different model to summarize it. Every one of those is a path where "not saved" or "always encrypted" quietly stopped being true. The lesson generalizes: every typed slash command bypasses whatever you gated in the menu, so the guard has to live on the model, not the UI.</p>
+
+<p>The mode pins to an end-to-end route because a promise about deletion is worth very little if the words were readable on the way out. I have written about <a href="/blog/how-confidential-computing-protects-ai-prompts">what confidential computing actually gets you</a> and why <a href="/blog/attestation-is-all-you-need">attestation is the part that makes it checkable</a>. You can also constrain a confidential chat to US-only or EU-only models, which sounds like compliance theater until you remember that <a href="/blog/censored-at-the-host-not-the-model">where a model is hosted changes what it will say</a> and that <a href="/blog/the-ai-models-that-go-silent-on-china">some of them go silent on entire topics</a>.</p>
+
+<p>The counterargument is that this is over-engineering for a solo tool. It would be, if the failure were visible. A leaked prompt does not throw an exception and an unbilled thread does not page you; both look exactly like everything working. That is precisely the class of thing you have to go looking for on purpose, which is why it took five rounds and why <a href="/blog/the-models-that-say-no">I keep testing the claims instead of reading the policy page</a>.</p>
+
+<p>Watch the meter, and know when you are off the record.</p>
+""",
+    ),
+    BlogPost(
+        slug="sre-agent-on-three-clouds",
+        title="An SRE Agent on 3 clouds that keeps your site reliably up",
+        description=(
+            "Three AI agents on three clouds, each on a different model, watching "
+            "each other and the product. This did not work a year ago because the "
+            "model underneath was never reliable enough to trust with on-call."
+        ),
+        published_date="2026-08-10",
+        source_label="Joseph Perla original",
+        source_url="https://www.jperla.com/blog/sre-agent-on-three-clouds",
+        og_image="/static/og/blog/sre-agent-on-three-clouds.png",
+        body_html="""
+<figure class="blog-hero-image"><img src="/static/og/blog/sre-agent-on-three-clouds.png" alt="SREChat agents reporting from GCP, AWS, and Azure" width="1200" height="630"></figure>
+<p>My on-call rotation is three AI agents, one on each cloud, and they watch each other. Kimi K3 runs on the GCP box, GLM 5.2-Fast on AWS, DeepSeek 0731 on Azure — three <a href="/blog/the-best-open-models-arent-on-your-leaderboard">open models</a>, none of them the expensive one. I text them from my phone and ask whether anything is broken. It works, and the reason it works now and would not have worked last year is that the model underneath finally stopped being the least reliable component.</p>
+
+<p>Start with the part that is just engineering. The chat backend they live in is <a href="https://github.com/Lore-Hex/SREChat">SREChat</a>, a multi-master chat server where every region takes writes during a partition and the regions converge when it heals. Three equal masters, one per cloud, meshed over WireGuard. I built it so that losing an entire cloud degrades nothing, and then I put an agent on each master, which is where it gets useful.</p>
+
+<p>A monitoring agent that lives on the machine it monitors is a joke. It goes quiet at exactly the moment its silence means something, and you find out from a customer. With one agent per cloud, whoever is still alive reports the one that died. That is not theoretical: while I was deploying, the GCP agent went down, and the AWS and Azure agents both independently noticed and paged me. The watchdog cannot be killed by the thing it is watching, because it is not on it.</p>
+
+<p>They also page me for the product itself. The GCP agent can read TrustedRouter's error logs, its Cloud Run revisions, and its Sentry issues, and it will tell me which revision was serving when the errors started. If I turn on the write flag it can roll traffic back to the previous revision. Asking "any TR errors in the last two hours" from a phone at dinner is a genuinely different experience from opening a laptop and remembering which console tab has the logs.</p>
+
+<p>Now the part that is actually new. The reason nobody sensibly did this before is that a monitoring agent has two failure modes and both were unacceptable. It can be wrong, and it can be unavailable. Wrong got fixed by models getting good enough to read a log and say something true about it. Unavailable is the one people underrate: if your agent talks to a single provider, your alerting inherits that provider's worst day. Your pager goes down during the incident that made you want a pager. Every agent here pins its own model and falls back to <code>trustedrouter/auto</code>, so a provider having weather means the answer comes from somewhere else instead of not coming. The router is doing for the agent's brain what the three clouds do for its body, over <a href="/blog/one-api-all-llms-provably-private">one API whose prompt path you can verify</a>.</p>
+
+<p>That is why I am comfortable pointing this at TrustedRouter itself. It is circular in a way that would bother me if the fallback were not real, and it is the strongest statement I can make about the routing layer: I use it for the thing that has to work when everything else does not. It is the same argument as <a href="/blog/ten-cheap-runs-beat-the-frontier">running several cheap models instead of one expensive one</a> — redundancy at the model layer buys you more than picking a better single model, and <a href="/blog/combo-models-are-model-containers">a combo model is a container you can swap</a>. If you are choosing, <a href="/blog/how-to-choose-a-model">pick two of smart, fast, cheap</a>; for on-call I want fast and cheap and I want three of them, which is exactly the <a href="/blog/frontier-smart-cheap-fast-pick-3-open-source">smart-cheap-fast tradeoff open source finally lets you stop making</a>.</p>
+
+<p>Alerting you never test is decoration, so there is a chaos drill on a timer. Every day one region gets its container restarted; every week the mesh gets partitioned for a minute to prove the other two keep serving. The drill reports pass or fail into the same chat as the real alerts, which is the only place I would notice it. The chat server, the agents, and the drills are <a href="/blog/open-source-open-source-open-source">all open source</a>, like everything else here.</p>
+
+<p>The models are good enough now. The routing is reliable enough now. That combination is what turns an agent from a demo into the thing you let wake you up.</p>
+""",
+    ),
+    BlogPost(
         slug="achieving-99999-uptime-as-a-startup",
         title="Achieving 99.999% Uptime as a Startup",
         description=(

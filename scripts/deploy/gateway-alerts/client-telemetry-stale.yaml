@@ -1,0 +1,17 @@
+displayName: "TR Client Telemetry: pipeline stale"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    The client telemetry snapshot, newest counter, or positive-control canary is
+    stale or missing. Treat zero observed failures as unknown until ingestion and
+    snapshot publication recover. Runbook: docs/client-telemetry.md.
+conditions:
+  - displayName: "Client telemetry pipeline is stale or missing"
+    conditionMatchedLog:
+      filter: 'resource.type = "cloud_run_revision" AND resource.labels.service_name = "trusted-router" AND (textPayload:"client_observed.pipeline_stale" OR textPayload:"client_observed.snapshot_missing")'
+alertStrategy:
+  notificationRateLimit:
+    period: 1800s
+  autoClose: 1800s

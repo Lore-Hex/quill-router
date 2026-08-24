@@ -14,7 +14,7 @@ import json
 import logging
 import os
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -31,6 +31,7 @@ from clickhouse.archive_daily import (
     _run_clickhouse_local,
     _sha256,
     _sql_string,
+    build_archive_store,
 )
 
 log = logging.getLogger("trusted_router.analytics_archive_restore")
@@ -42,25 +43,6 @@ class RestoreStore(Protocol):
     def download_file(self, key: str, destination: Path) -> None: ...
 
 
-class GCSRestoreStore:
-    def __init__(self, *, project: str, bucket: str) -> None:
-        from google.cloud import storage
-
-        self._bucket = storage.Client(project=project).bucket(bucket)
-
-    def read_json(self, key: str) -> dict[str, Any] | None:
-        blob = self._bucket.blob(key)
-        if not blob.exists():
-            return None
-        value = json.loads(blob.download_as_text())
-        if not isinstance(value, dict):
-            raise RuntimeError(f"archive object {key} is not a JSON object")
-        return value
-
-    def download_file(self, key: str, destination: Path) -> None:
-        self._bucket.blob(key).download_to_filename(str(destination))
-
-
 @dataclasses.dataclass(frozen=True)
 class RestoreResult:
     dataset: str
@@ -70,16 +52,24 @@ class RestoreResult:
     revision: str
 
 
-def verify_parquet_part(path: Path, *, dataset: str) -> ExportedPart:
+def verify_parquet_part(
+    path: Path,
+    *,
+    dataset: str,
+    columns: Sequence[str] | None = None,
+) -> ExportedPart:
     try:
         spec = DATASETS[dataset]
     except KeyError:
         raise ValueError(f"unsupported archive dataset: {dataset}") from None
+    # A revision exported before a column was added must be fingerprinted
+    # over the columns it was exported with (recorded in its manifest), or
+    # the recomputation reads columns the Parquet file does not have.
     query = _fingerprint_query(
         f"file({_sql_string(str(path))}, Parquet)",
         where=None,
         final=False,
-        columns=spec.columns,
+        columns=tuple(columns) if columns else spec.columns,
         time_column=spec.time_column,
     )
     fingerprint = _parse_fingerprint(_run_clickhouse_local(query))
@@ -123,6 +113,14 @@ def verify_archived_day(
     if not isinstance(parts_value, list):
         raise RuntimeError("archive manifest parts must be a list")
 
+    manifest_columns = manifest.get("columns")
+    if manifest_columns is not None and not (
+        isinstance(manifest_columns, list)
+        and manifest_columns
+        and all(isinstance(column, str) for column in manifest_columns)
+    ):
+        raise RuntimeError("archive manifest columns must be a non-empty list of names")
+
     verified: list[ExportedPart] = []
     with tempfile.TemporaryDirectory(prefix=f"tr-restore-{dataset}-") as temporary:
         for index, raw_part in enumerate(parts_value):
@@ -135,9 +133,14 @@ def verify_archived_day(
             store.download_file(key, path)
             if _sha256(path) != str(raw_part.get("sha256") or ""):
                 raise RuntimeError(f"archive SHA-256 mismatch: {key}")
-            part = (verifier or (lambda value: verify_parquet_part(value, dataset=dataset)))(
-                path
-            )
+            part = (
+                verifier
+                or (
+                    lambda value: verify_parquet_part(
+                        value, dataset=dataset, columns=manifest_columns
+                    )
+                )
+            )(path)
             expected = (
                 int(raw_part.get("rows", -1)),
                 int(raw_part.get("hash_sum", -1)),
@@ -178,6 +181,15 @@ def main() -> int:
     parser.add_argument("--project", default=os.environ.get("GCP_PROJECT_ID", PROJECT))
     parser.add_argument("--bucket", default=os.environ.get("ARCHIVE_BUCKET", ARCHIVE_BUCKET))
     parser.add_argument("--table", action="append", choices=tuple(DATASETS))
+    # Which cloud's archive to drill. A drill that can only reach GCS would
+    # leave the other clouds writing archives nobody has proven restorable.
+    parser.add_argument(
+        "--object-store",
+        choices=("gcs", "s3", "azure"),
+        default=os.environ.get("TR_ARCHIVE_OBJECT_STORE", "gcs"),
+    )
+    parser.add_argument("--region", default=os.environ.get("AWS_REGION"))
+    parser.add_argument("--account-url", default=os.environ.get("AZURE_STORAGE_ACCOUNT_URL"))
     parser.add_argument("--date", type=dt.date.fromisoformat)
     parser.add_argument(
         "--result-file",
@@ -193,7 +205,13 @@ def main() -> int:
     day = args.date or (dt.datetime.now(dt.UTC).date() - dt.timedelta(days=1))
     if day >= dt.datetime.now(dt.UTC).date():
         raise SystemExit("restore verification only accepts closed UTC days")
-    store = GCSRestoreStore(project=args.project, bucket=args.bucket)
+    store = build_archive_store(
+        args.object_store,
+        project=args.project,
+        bucket=args.bucket,
+        region=args.region,
+        account_url=args.account_url,
+    )
     results = [
         verify_archived_day(store, dataset=dataset, day=day)
         for dataset in tuple(dict.fromkeys(args.table or tuple(DATASETS)))

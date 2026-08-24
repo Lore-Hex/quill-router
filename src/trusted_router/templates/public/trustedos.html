@@ -20,7 +20,7 @@
 {% block body %}
 
 <section class="public-proof-strip" aria-label="Confidential-compute coverage">
-  <div><strong>AMD SEV-SNP</strong><span>Attested confidential VMs on GCP Confidential Space.</span></div>
+  <div><strong>AMD SEV</strong><span>Google-attested confidential VMs in São Paulo.</span></div>
   <div><strong>Intel TDX</strong><span>Trust domains in our live gateway regions.</span></div>
   <div><strong>NVIDIA CC</strong><span>Confidential-computing path for H100/H200-class GPUs.</span></div>
   <div><strong>AWS Nitro Enclaves</strong><span>Same attested code path on a second cloud.</span></div>
@@ -112,7 +112,7 @@ resp = client.chat.completions.create(
   <div class="marketing-copy">
     <span class="eyebrow">Why &ldquo;Trusted&rdquo; OS</span>
     <h2>The name is a claim we can prove.</h2>
-    <p>In the security world, the &ldquo;trusted OS&rdquo; is the operating system inside a trusted execution environment. We picked the name on purpose: TLS terminates inside attested hardware &mdash; AMD SEV-SNP and Intel TDX today, with a confidential-computing path to H100/H200-class GPUs &mdash; and the gateway fails closed if the measurement doesn't match.</p>
+    <p>In the security world, the &ldquo;trusted OS&rdquo; is the operating system inside a trusted execution environment. We picked the name on purpose: TLS terminates inside attested hardware &mdash; AMD SEV and Intel TDX today, with a confidential-computing path to H100/H200-class GPUs &mdash; and the gateway fails closed if the measurement doesn't match.</p>
     <p>Your customers' compliance teams can verify the stack you run for themselves. Don't trust the policy &mdash; verify the code.</p>
     <p>
       <a class="btn" href="https://trust.trustedrouter.com">Live attestation evidence</a>
@@ -183,7 +183,7 @@ curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" \
   </div>
 </section>
 
-<style>
+<style nonce="{{ csp_nonce() }}">
   .inquiry-form { margin-top: 4px; }
   .inquiry-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
   .inquiry-grid label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 650; color: var(--muted); }
@@ -200,7 +200,7 @@ curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" \
   .inquiry-status[data-tone="err"] { color: var(--bad, #ff6b6b); }
   @media (max-width: 640px) { .inquiry-grid { grid-template-columns: 1fr; } }
 </style>
-<script>
+<script nonce="{{ csp_nonce() }}">
   (function () {
     var form = document.getElementById("trustedos-inquiry");
     if (!form) return;

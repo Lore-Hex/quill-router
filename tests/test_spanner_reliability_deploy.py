@@ -26,6 +26,15 @@ def test_every_spanner_alert_reduces_cross_series_fanout() -> None:
         display_names.add(display_name)
 
 
+def test_api_failure_alert_excludes_retry_status_case_variants() -> None:
+    policy = (DEPLOY / "spanner-alerts" / "api-failures.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    for status in ("Aborted", "aborted", "AlreadyExists", "already_exists"):
+        assert f'metric.labels.status != "{status}"' in policy
+
+
 def test_high_priority_cpu_alert_keeps_short_spikes_visible() -> None:
     policy = (DEPLOY / "spanner-alerts" / "high-priority-cpu.yaml").read_text(
         encoding="utf-8"

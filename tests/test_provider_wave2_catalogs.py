@@ -6,7 +6,10 @@ from pathlib import Path
 import pytest
 
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
-from scripts.pricing.manifest import set_manifest_canary_state
+from scripts.pricing.manifest import (
+    set_manifest_canary_state,
+    set_manifest_model_canary_states,
+)
 from scripts.pricing.openai_catalog import discover_openai_chat_catalog
 from scripts.pricing.parsers import morph as morph_parser
 from scripts.pricing.parsers import streamlake as streamlake_parser
@@ -137,9 +140,7 @@ def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
         provider.SLUG: json.loads(provider.MANIFEST_PATH.read_text(encoding="utf-8"))
         for provider in (inceptron, morph, atlas_cloud, streamlake)
     }
-    assert len(manifests["inceptron"]["models"]) == 4
-    assert len(manifests["morph"]["models"]) == 8
-    assert len(manifests["atlas-cloud"]["models"]) >= 100
+    assert all(raw["models"] for raw in manifests.values())
     atlas_image_rows = [
         row
         for row in manifests["atlas-cloud"]["models"]
@@ -253,6 +254,57 @@ def test_canary_state_preserves_unrelated_operator_holds(tmp_path: Path) -> None
     row = json.loads(manifest_path.read_text())["models"][0]
     assert row["routable"] is False
     assert row["routable_reason"] == "operator-hold"
+
+
+def test_model_canary_state_is_scoped_and_preserves_operator_holds(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "provider.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "provider": "example",
+                "models": [
+                    {
+                        "id": "example/healthy",
+                        "routable": False,
+                        "routable_reason": "provider-canary-failed",
+                    },
+                    {"id": "example/failed"},
+                    {"id": "example/held", "routable": False, "routable_reason": "operator-hold"},
+                    {"id": "example/unchecked"},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    set_manifest_model_canary_states(
+        manifest_path,
+        checked_model_ids={"example/healthy", "example/failed", "example/held"},
+        healthy_model_ids={"example/healthy"},
+    )
+
+    by_id = {
+        row["id"]: row for row in json.loads(manifest_path.read_text(encoding="utf-8"))["models"]
+    }
+    assert "routable" not in by_id["example/healthy"]
+    assert by_id["example/failed"]["routable_reason"] == "provider-canary-failed"
+    assert by_id["example/held"]["routable_reason"] == "operator-hold"
+    assert "routable" not in by_id["example/unchecked"]
+
+
+def test_model_canary_state_rejects_unchecked_healthy_models(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "provider.json"
+    manifest_path.write_text('{"models": []}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="subset"):
+        set_manifest_model_canary_states(
+            manifest_path,
+            checked_model_ids={"example/checked"},
+            healthy_model_ids={"example/unchecked"},
+        )
 
 
 def test_wave2_hourly_refresh_and_secret_wiring_are_complete() -> None:

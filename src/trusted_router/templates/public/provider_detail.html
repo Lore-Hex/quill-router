@@ -11,6 +11,7 @@
     <table>
       <tbody>
         <tr><th>Provider</th><td>{{ provider.name }}</td></tr>
+        <tr><th>Routing status</th><td><span class="pill {% if provider.routing_status == 'active' %}good{% endif %}">{{ provider.routing_status_label }}</span></td></tr>
         {% if provider.homepage_url %}<tr><th>Provider website</th><td><a href="{{ provider.homepage_url }}" rel="nofollow noopener">{{ provider.homepage_url }}</a></td></tr>{% endif %}
         <tr><th>Models</th><td>{{ provider.served_model_count }} public model{{ '' if provider.served_model_count == 1 else 's' }}</td></tr>
         <tr><th>Prepaid routes</th><td>{{ provider.prepaid_model_count }}</td></tr>
@@ -42,13 +43,12 @@
     {% if measured.models %}
     <div class="leaderboard-table-wrap" style="margin-top:12px">
       <table class="leaderboard-table">
-        <thead><tr><th>Model</th><th>p50 TTFT</th><th>p50 TTFB</th><th>Effective throughput</th><th>Uptime</th><th>Config excluded</th><th>Availability samples</th></tr></thead>
+        <thead><tr><th>Model</th><th>p50 TTFT</th><th>Effective throughput</th><th>Uptime</th><th>Config excluded</th><th>Availability samples</th></tr></thead>
         <tbody>
           {% for m in measured.models %}
           <tr>
             <td><a href="/models/{{ m.model }}/performance">{{ m.model }}</a></td>
             <td>{% if m.p50_ttft_ms is not none %}{{ m.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
-            <td>{% if m.p50_ttfb_ms is not none %}{{ m.p50_ttfb_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if m.p50_tokens_per_second is not none %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ m.throughput_sample_count }}</span>{% else %}—{% endif %}</td>
             <td>{% if m.sample_count %}{{ '%.2f'|format(m.uptime * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if m.excluded_count %}{{ m.excluded_count }}{% if m.top_excluded %} <code>{{ m.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>

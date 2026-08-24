@@ -90,6 +90,14 @@ def test_region_map_payload_marks_primary() -> None:
     assert primaries[0]["id"] == settings.primary_region
 
 
+def test_default_region_map_marks_sao_paulo_live() -> None:
+    rendered = region_map_payload(Settings(environment="local"))
+
+    sao_paulo = next(row for row in rendered if row["id"] == "southamerica-east1")
+    assert sao_paulo["city"] == "São Paulo"
+    assert sao_paulo["status_label"] == "live"
+
+
 def test_default_region_map_shows_gcp_region_marketing_footprint() -> None:
     settings = Settings(environment="local", regions="us-central1,europe-west4")
     rendered = region_map_payload(settings)
@@ -147,7 +155,7 @@ def test_map_shows_multicloud_deployments_with_honest_serving_flags() -> None:
 
     The serving flag is a factual claim — external_live_regions must only list
     deployments whose own smoke passes — so this pins the shipped default:
-    Dublin and Sydney live, Stockholm (database peer, no compute) staged.
+    Dublin, Paris, and Sydney live; Stockholm (database peer, no compute) staged.
     """
     settings = Settings(environment="local")
     rows = {row["id"]: row for row in region_map_payload(settings)}
@@ -156,13 +164,26 @@ def test_map_shows_multicloud_deployments_with_honest_serving_flags() -> None:
     assert rows["aws-eu-west-1"]["cloud"] == "aws"
     assert rows["aws-eu-west-1"]["serving"] is True
 
+    assert rows["aws-eu-west-3"]["city"] == "Paris"
+    assert rows["aws-eu-west-3"]["cloud"] == "aws"
+    assert rows["aws-eu-west-3"]["serving"] is True
+    assert rows["aws-eu-west-3"]["label_dy"] > 0
+
     assert rows["azure-australiaeast"]["cloud"] == "azure"
     assert rows["azure-australiaeast"]["serving"] is True
+    assert rows["azure-australiaeast"]["label_anchor"] == "end"
 
     # Stockholm replicates the AWS-EU database but has no compute yet. If this
     # assertion starts failing because someone flipped it live, that flip must
     # come with compute actually serving there.
     assert rows["aws-eu-north-1"]["serving"] is False
+
+    assert sum(row["serving"] for row in rows.values()) == 7
+    assert {row["cloud"] for row in rows.values() if row["serving"]} == {
+        "gcp",
+        "aws",
+        "azure",
+    }
 
     # No duplicate cities on the map (Joseph's rule): the Azure Sydney entry
     # must not coexist with GCP's australia-southeast1 Sydney dot.

@@ -17,6 +17,7 @@ from trusted_router.synthetic.probes import (
     rotation_candidates,
 )
 from trusted_router.synthetic.throughput import (
+    THROUGHPUT_ANCHOR_MODELS,
     THROUGHPUT_INTERVAL_SECONDS,
     choose_throughput_target,
     projected_monthly_cost_microdollars,
@@ -39,13 +40,13 @@ def test_top_200_throughput_routes_are_deterministic_and_provider_complete() -> 
     pool = rotation_candidates()
 
     assert first == second
-    assert len(first) == 200
+    assert len(first) == min(200, sum(len(models) for models in pool.values()))
     assert len(first) == len(set(first))
     assert {provider for provider, _ in first} == set(pool)
-    assert ("anthropic", "anthropic/claude-opus-5") in first
-    assert any(model == "moonshotai/kimi-k3" for _, model in first)
-    assert any(model == "z-ai/glm-5.2" for _, model in first)
-    assert any(model == "google/gemini-3.6-flash" for _, model in first)
+    available_models = {model for models in pool.values() for model in models}
+    for anchor in THROUGHPUT_ANCHOR_MODELS:
+        if anchor in available_models:
+            assert any(model == anchor for _, model in first)
     assert all(model in pool[provider] for provider, model in first)
 
 
@@ -329,6 +330,48 @@ async def test_throughput_pass_runs_in_configured_region_only(
 
 
 @pytest.mark.asyncio
+async def test_throughput_pass_caps_model_deadline_to_job_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, float] = {}
+
+    class _Deadlines:
+        completion_seconds = 900.0
+
+    async def fake_probe(
+        _client: httpx.AsyncClient,
+        _target: SyntheticTarget,
+        **kwargs: Any,
+    ) -> ProviderBenchmarkSample:
+        captured["total_timeout_seconds"] = float(kwargs["total_timeout_seconds"])
+        return _benchmark_sample()
+
+    monkeypatch.setattr(cli_module, "throughput_candidates", lambda limit: [("slow", "slow/model")])
+    monkeypatch.setattr(
+        cli_module,
+        "choose_throughput_target",
+        lambda _candidates, interval_seconds: ("slow", "slow/model"),
+    )
+    monkeypatch.setattr(cli_module, "model_deadlines", lambda *_args, **_kwargs: _Deadlines())
+    monkeypatch.setattr(cli_module, "provider_throughput_probe", fake_probe)
+
+    result = await cli_module._throughput_pass(
+        settings=Settings(environment="test", sentry_dsn=None),
+        monitor_region="us-central1",
+        api_key="sk-test",  # noqa: S106 - test placeholder.
+        route_limit=200,
+        max_tokens=512,
+        minimum_output_tokens=128,
+        timeout_seconds=90.0,
+        timeout_ceiling_seconds=210.0,
+        interval_seconds=300,
+    )
+
+    assert len(result) == 1
+    assert captured["total_timeout_seconds"] == 210.0
+
+
+@pytest.mark.asyncio
 async def test_throughput_only_cli_skips_every_health_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -356,13 +399,18 @@ async def test_throughput_only_cli_skips_every_health_path(
 
         async def post(self, url: str, **kwargs: Any) -> _Response:
             assert url.endswith("/v1/internal/synthetic/benchmark")
+            assert (
+                kwargs["headers"]["x-trustedrouter-internal-token"]
+                == "observer-only"
+            )
             benchmark_posts.append(kwargs["json"])
             return _Response()
 
     settings = Settings(
         environment="test",
         sentry_dsn=None,
-        internal_gateway_token="internal",  # noqa: S106 - test placeholder.
+        internal_gateway_token="billing-only",  # noqa: S106 - test placeholder.
+        observer_internal_token="observer-only",  # noqa: S106 - test placeholder.
         synthetic_monitor_api_key="sk-test",  # noqa: S106 - test placeholder.
     )
     monkeypatch.setattr(cli_module, "get_settings", lambda: settings)

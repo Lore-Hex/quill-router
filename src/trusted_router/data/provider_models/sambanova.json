@@ -1,0 +1,166 @@
+{
+  "provider": "sambanova",
+  "models": [
+    {
+      "display_name": "DeepSeek-V3.1",
+      "title": "DeepSeek-V3.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v3.1",
+      "upstream_id": "DeepSeek-V3.1",
+      "context_length": 131072,
+      "max_output_tokens": 7168,
+      "routable": true,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 4500000
+    },
+    {
+      "display_name": "DeepSeek-V3.2",
+      "title": "DeepSeek-V3.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v3.2",
+      "upstream_id": "DeepSeek-V3.2",
+      "context_length": 32768,
+      "max_output_tokens": 7168,
+      "routable": true,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 4500000
+    },
+    {
+      "display_name": "gemma-4-31B-it",
+      "title": "gemma-4-31B-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-31b-it",
+      "upstream_id": "gemma-4-31B-it",
+      "context_length": 131072,
+      "max_output_tokens": 131072,
+      "routable": true,
+      "input_token_price_per_m": 380000,
+      "output_token_price_per_m": 1150000
+    },
+    {
+      "display_name": "Meta-Llama-3.3-70B-Instruct",
+      "title": "Meta-Llama-3.3-70B-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.3-70b-instruct",
+      "upstream_id": "Meta-Llama-3.3-70B-Instruct",
+      "context_length": 131072,
+      "max_output_tokens": 3072,
+      "routable": true,
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 1200000
+    },
+    {
+      "display_name": "MiniMax-M2.7",
+      "title": "MiniMax-M2.7",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m2.7",
+      "upstream_id": "MiniMax-M2.7",
+      "context_length": 196608,
+      "max_output_tokens": 196608,
+      "routable": true,
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 60000
+    },
+    {
+      "display_name": "MiniMax-M3",
+      "title": "MiniMax-M3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m3",
+      "upstream_id": "MiniMax-M3",
+      "context_length": 1048576,
+      "max_output_tokens": 1048576,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 0
+    },
+    {
+      "display_name": "gpt-oss-120b",
+      "title": "gpt-oss-120b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-120b",
+      "upstream_id": "gpt-oss-120b",
+      "context_length": 131072,
+      "max_output_tokens": 131072,
+      "routable": true,
+      "input_token_price_per_m": 220000,
+      "output_token_price_per_m": 590000
+    }
+  ],
+  "source": "https://api.sambanova.ai/v1/models",
+  "generated_at": "2026-08-22T20:14:11Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 7
+}

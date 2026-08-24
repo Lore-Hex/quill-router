@@ -3,9 +3,9 @@
   "provider": "alibaba",
   "source": "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/compatible-mode/v1/models",
   "price_source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
-  "generated_at": "2026-08-07T23:35:48Z",
+  "generated_at": "2026-08-24T16:40:13Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 79,
+  "model_count": 80,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -167,7 +167,7 @@
       "upstream_id": "qwen3.7-max",
       "display_name": "Qwen3.7 Max",
       "title": "qwen3.7-max",
-      "created": 1779362120,
+      "created": 1786420774,
       "context_length": 1048576,
       "input_token_price_per_m": 2500000,
       "output_token_price_per_m": 7500000,
@@ -275,9 +275,11 @@
       "title": "deepseek-v4-flash",
       "created": 1777368120,
       "context_length": 1048576,
-      "input_token_price_per_m": 200000,
-      "output_token_price_per_m": 400000,
-      "cached_input_token_price_per_m": 20000,
+      "input_token_price_per_m": 138000,
+      "output_token_price_per_m": 275000,
+      "cached_input_token_price_per_m": 28000,
+      "retirement_at": "2026-10-09T16:00:00Z",
+      "replacement_model_id": "deepseek/deepseek-v4-flash-0731",
       "model_type": "chat",
       "endpoints": [
         "chat/completions"
@@ -2237,9 +2239,16 @@
         "chat/completions"
       ],
       "created": 1785563363,
-      "routable": false,
-      "routable_reason": "awaiting-price",
-      "unresolved_since": "2026-08-01"
+      "context_length": 1000000,
+      "input_token_price_per_m": 138000,
+      "output_token_price_per_m": 275000,
+      "cached_input_token_price_per_m": 28000,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
     },
     {
       "id": "qwen/qwen3.8-max",
@@ -2264,7 +2273,7 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1786007541,
+      "created": 1786446891,
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-08-07"
@@ -2278,10 +2287,24 @@
       "endpoints": [
         "chat/completions"
       ],
-      "created": 1786069263,
+      "created": 1786446952,
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-08-07"
+    },
+    {
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "kimi-k3",
+      "display_name": "Kimi K3",
+      "title": "kimi-k3",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "created": 1787581727,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-08-21"
     }
   ]
 }

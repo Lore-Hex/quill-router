@@ -736,17 +736,15 @@ def test_bigtable_reads_prefer_bounded_family_and_fall_back_to_legacy(
 
 def test_typed_production_mode_requires_durable_outbox() -> None:
     internal_token = "internal-" + "token"
-    webhook_secret = "whsec_" + "test"
-    stripe_secret = "sk_" + "test"
     with pytest.raises(
         ValidationError,
         match="TR_SETTLE_OUTBOX_ENABLED=true",
     ):
         Settings(
             environment="production",
+            service_surface="internal",
             internal_gateway_token=internal_token,
-            stripe_webhook_secret=webhook_secret,
-            stripe_secret_key=stripe_secret,
+            observer_internal_token="observer-" + "token",
             sentry_dsn="https://example@example.ingest.sentry.io/1",
             storage_backend="spanner-bigtable",
             spanner_instance_id="trusted-router",

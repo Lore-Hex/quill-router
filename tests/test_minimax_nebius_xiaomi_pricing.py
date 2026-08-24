@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
 
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
@@ -8,6 +9,7 @@ from scripts.pricing.parsers import minimax as minimax_parser
 from scripts.pricing.parsers import xiaomi as xiaomi_parser
 from scripts.pricing.providers import minimax, nebius
 from scripts.pricing.providers import xiaomi as xiaomi_provider
+from trusted_router import provider_lifecycle
 
 
 def test_minimax_parser_reads_official_token_plan_tiers() -> None:
@@ -260,6 +262,14 @@ def test_nebius_fetch_uses_verbose_pricing_and_skips_embeddings(
     tmp_path,
     monkeypatch,  # noqa: ANN001
 ) -> None:
+    # This fixture exercises the native-to-canonical mapping while the route
+    # is still live. The separate lifecycle suite owns its August 31 cutoff.
+    monkeypatch.setattr(
+        provider_lifecycle,
+        "_utc_now",
+        lambda: provider_lifecycle.NEBIUS_AUGUST_2026_RETIREMENT_AT
+        - timedelta(microseconds=1),
+    )
     payload = {
         "data": [
             {

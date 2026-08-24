@@ -11,7 +11,10 @@ documentation:
 conditions:
   - displayName: "Unexpected API failures exceed one per minute for 5 minutes"
     conditionThreshold:
-      filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/api/api_request_count" AND metric.labels.status != "OK" AND metric.labels.status != "aborted" AND metric.labels.status != "already_exists"'
+      # Spanner currently emits both title-case and lowercase retry statuses.
+      # Exclude every observed spelling so expected transaction retries do not
+      # page as API failures.
+      filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/api/api_request_count" AND metric.labels.status != "OK" AND metric.labels.status != "Aborted" AND metric.labels.status != "aborted" AND metric.labels.status != "AlreadyExists" AND metric.labels.status != "already_exists"'
       aggregations:
         - alignmentPeriod: 300s
           perSeriesAligner: ALIGN_RATE

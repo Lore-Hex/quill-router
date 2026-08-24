@@ -28,6 +28,24 @@ r = client.chat.completions.create(
   <div class="marketing-card"><span class="card-label">Proof</span><h3>Attestation you can run</h3><p>The gateway source is open and the image digest is published. One curl with a nonce returns a JWT signed by the CPU vendor's root key, bound to the live TLS session. Details at <a href="/security">/security</a>.</p></div>
   <div class="marketing-card"><span class="card-label">Retention</span><h3>No prompt or output logs</h3><p>{{ content_handling_claim }} Zero-Data-Retention routes add contractual guarantees; TEE routes keep prompts sealed even from the hosting provider. See <a href="/llm-zero-data-retention">zero data retention</a>.</p></div>
 </section>
+<section class="marketing-split" aria-label="DeepSeek zero data retention setup">
+  <div class="marketing-copy">
+    <span class="eyebrow">DeepSeek zero data retention</span>
+    <h2>Make downstream retention a hard routing rule.</h2>
+    <p>{{ content_handling_claim }} For ordinary real-time DeepSeek requests, set <span class="mono">provider.min_privacy</span> to <span class="mono">zdr</span> to consider only providers with a recorded zero-data-retention posture.</p>
+    <p>The filter fails closed. If no eligible DeepSeek endpoint is available, the router returns an error instead of silently sending the request to a weaker privacy tier.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Require ZDR</span><span>JSON</span></div>
+    <pre><code>{
+  "model": "deepseek/deepseek-v4-flash",
+  "provider": {"min_privacy": "zdr"},
+  "messages": [
+    {"role": "user", "content": "Summarize this contract."}
+  ]
+}</code></pre>
+  </div>
+</section>
 <section class="compare-matrix" aria-label="api.deepseek.com vs TrustedRouter">
   <div class="matrix-row matrix-head"><span></span><strong>api.deepseek.com</strong><strong>TrustedRouter</strong></div>
   <div class="matrix-row"><span>Model access</span><span>DeepSeek V4, first-party</span><span>deepseek-v4-pro and deepseek-v4-flash, plus 220+ routes across 30+ providers</span></div>
@@ -39,6 +57,6 @@ r = client.chat.completions.create(
 <section class="quote-feature">
   <div><span class="eyebrow">Verify, don't trust</span><h2>Run the attestation check yourself.</h2></div>
   <div><p>Other US hosts also serve DeepSeek outside China with zero-retention policies, and that is a real improvement over first-party routing. They still ask you to take the policy on faith. TrustedRouter's gateway proves it: run <code>curl "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE"</code> and check the returned JWT against the published image digest. Your compliance team gets evidence, plus the <a href="/legal/dpa">DPA</a>, <a href="/legal/subprocessors">subprocessor list</a>, and <a href="/legal/soc2-readiness">SOC 2 readiness</a> documentation to assess it with.</p>
-  <p>Hosting is the control point for Chinese open-weights generally. In our testing, the same GLM weights answered 60 of 60 sensitive questions through TrustedRouter's enclave versus 30 of 60 via the vendor-hosted API; the filtering is host-applied, not in the weights. One anonymized proof point: a document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. And on DeepSeek R2: unreleased as of July 2026. V4 is what ships today, and it is live on TrustedRouter now. Try it in the <a href="/chat">playground</a> or compare latency at <a href="/llm-provider-latency-benchmarks">measured benchmarks</a>.</p></div>
+  <p>Hosting is the control point for Chinese open-weights generally. In our testing, the same GLM weights answered 60 of 60 sensitive questions through TrustedRouter's enclave versus 30 of 60 via the vendor-hosted API; the filtering is host-applied, not in the weights. One anonymized proof point: a document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. Use the <a href="/models?query=deepseek">live model catalog</a> for current DeepSeek model IDs, try one in the <a href="/chat">playground</a>, compare current latency on the <a href="/llm-provider-latency-benchmarks">live leaderboard</a>, and inspect stable history in the <a href="/benchmarks/reports">monthly benchmark reports</a>.</p></div>
 </section>
 {% endblock %}

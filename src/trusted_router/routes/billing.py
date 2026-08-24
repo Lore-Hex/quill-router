@@ -8,10 +8,15 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep, principal_from_request
+from trusted_router.billing_policy import (
+    WALLET_ONLY_STABLECOIN_MESSAGE,
+    is_stablecoin_checkout_method,
+    is_wallet_only_principal,
+)
 from trusted_router.config import Settings
 from trusted_router.domains import request_control_origin
 from trusted_router.errors import api_error, deprecated
-from trusted_router.money import money_pair
+from trusted_router.money import VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS, money_pair
 from trusted_router.routes.helpers import json_body
 from trusted_router.schemas import CheckoutRequest, X402FundingRequest, X402SettleRequest
 from trusted_router.services.adyen_billing import create_adyen_checkout_session
@@ -63,34 +68,56 @@ def register_billing_routes(router: APIRouter) -> None:
         workspace_id = body.workspace_id or principal.workspace.id
         if workspace_id != principal.workspace.id:
             raise api_error(403, "Forbidden", ErrorType.FORBIDDEN)
+        if is_wallet_only_principal(principal) and not is_stablecoin_checkout_method(
+            body.payment_method
+        ):
+            raise api_error(
+                403,
+                WALLET_ONLY_STABLECOIN_MESSAGE,
+                ErrorType.FORBIDDEN,
+            )
         body = _checkout_body_with_first_party_returns(body, request, settings)
         account = STORE.get_credit_account(workspace_id)
-        return JSONResponse(
-            {
-                "data": (
-                    create_adyen_checkout_session(
-                        body=body,
-                        workspace_id=workspace_id,
-                        customer_email=_checkout_customer_email(principal),
-                        settings=settings,
-                    )
-                    if body.payment_method == "adyen"
-                    else create_paypal_checkout_session(
-                        body=body,
-                        workspace_id=workspace_id,
-                        customer_email=_checkout_customer_email(principal),
-                        settings=settings,
-                    )
-                    if body.payment_method == "paypal"
-                    else create_checkout_session(
-                        body=body,
-                        workspace_id=workspace_id,
-                        customer_email=_checkout_customer_email(principal),
-                        customer_id=account.stripe_customer_id if account else None,
-                        settings=settings,
-                    )
+        initiating_user_id = _principal_user_id(principal)
+        checkout_data = (
+            create_adyen_checkout_session(
+                body=body,
+                workspace_id=workspace_id,
+                customer_email=_checkout_customer_email(principal),
+                settings=settings,
+            )
+            if body.payment_method == "adyen"
+            else create_paypal_checkout_session(
+                body=body,
+                workspace_id=workspace_id,
+                initiating_user_id=initiating_user_id,
+                customer_email=_checkout_customer_email(principal),
+                settings=settings,
+            )
+            if body.payment_method == "paypal"
+            else create_checkout_session(
+                body=body,
+                workspace_id=workspace_id,
+                initiating_user_id=initiating_user_id,
+                customer_email=_checkout_customer_email(principal),
+                customer_id=account.stripe_customer_id if account else None,
+                settings=settings,
+            )
+        )
+        if body.purpose == "identity_verification":
+            # Checkout response metadata only; verification gates read strongly.
+            lifetime_topup = STORE.get_lifetime_topup_microdollars(
+                initiating_user_id,
+                allow_stale=True,
+            )
+            checkout_data.update(
+                money_pair(
+                    "verification_topup_remaining",
+                    max(0, VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS - lifetime_topup),
                 )
-            },
+            )
+        return JSONResponse(
+            {"data": checkout_data},
             status_code=201,
         )
 
@@ -100,6 +127,7 @@ def register_billing_routes(router: APIRouter) -> None:
         principal: ManagementPrincipal,
         settings: SettingsDep,
     ) -> dict[str, dict[str, Any]]:
+        _reject_wallet_only_traditional_billing(principal)
         result = capture_paypal_order_for_workspace(
             order_id=order_id,
             workspace_id=principal.workspace.id,
@@ -113,6 +141,8 @@ def register_billing_routes(router: APIRouter) -> None:
                 "credited": result.credited,
                 "status": result.status,
                 **money_pair("amount", result.amount_microdollars),
+                **money_pair("processing_fee", result.processing_fee_microdollars),
+                **money_pair("total", result.charge_amount_microdollars),
             }
         }
 
@@ -143,6 +173,7 @@ def register_billing_routes(router: APIRouter) -> None:
         challenge = create_x402_funding_challenge(
             body=body,
             workspace_id=principal.workspace.id,
+            initiating_user_id=_principal_user_id(principal),
             settings=settings,
         )
         return JSONResponse(
@@ -187,6 +218,7 @@ def register_billing_routes(router: APIRouter) -> None:
         principal: ManagementPrincipal,
         settings: SettingsDep,
     ) -> dict[str, dict[str, str]]:
+        _reject_wallet_only_traditional_billing(principal)
         body = await json_body(request)
         return_url = str(body.get("return_url") or f"{request_control_origin(request, settings)}/billing")
         account = STORE.get_credit_account(principal.workspace.id)
@@ -199,6 +231,7 @@ def register_billing_routes(router: APIRouter) -> None:
         principal: ManagementPrincipal,
         settings: SettingsDep,
     ) -> JSONResponse:
+        _reject_wallet_only_traditional_billing(principal)
         account = STORE.get_credit_account(principal.workspace.id)
         return JSONResponse(
             {
@@ -233,6 +266,23 @@ def _checkout_customer_email(principal: Any) -> str | None:
         if user is not None and user.email and "@" in user.email:
             return user.email
     return None
+
+
+def _principal_user_id(principal: Any) -> str:
+    if principal.user is not None:
+        return str(principal.user.id)
+    if principal.api_key is not None and principal.api_key.creator_user_id:
+        return str(principal.api_key.creator_user_id)
+    return str(principal.workspace.owner_user_id)
+
+
+def _reject_wallet_only_traditional_billing(principal: Any) -> None:
+    if is_wallet_only_principal(principal):
+        raise api_error(
+            403,
+            WALLET_ONLY_STABLECOIN_MESSAGE,
+            ErrorType.FORBIDDEN,
+        )
 
 
 def _checkout_body_with_first_party_returns(

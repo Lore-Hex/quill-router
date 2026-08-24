@@ -26,6 +26,7 @@ def test_reliability_script_provisions_private_archive_and_snapshots() -> None:
     assert "--public-access-prevention" in script
     assert "--versioning" in script
     assert "roles/storage.objectUser" in script
+    _assert_binds_the_dedicated_node_identity(script)
     assert "create snapshot-schedule" in script
     assert "--max-retention-days=30" in script
     assert "--on-source-disk-delete=keep-auto-snapshots" in script
@@ -78,3 +79,29 @@ def test_failover_smoke_has_remote_and_local_restore_guards() -> None:
     assert "wait_for_health 3 3 exact" in script
     assert "for _ in \\$(seq 1 20)" in script
     assert "SYSTEM SYNC REPLICA provider_benchmark_samples" in script
+
+
+def _assert_binds_the_dedicated_node_identity(script: str) -> None:
+    """The archive bucket grant must name the identity the nodes actually use.
+
+    Asserting only that "roles/storage.objectUser" appears is what let NC-005
+    happen: the role was granted, to the wrong member. All three ClickHouse
+    nodes run as tr-clickhouse@, but NODE_SERVICE_ACCOUNT defaulted to the
+    broad compute-default SA, so --apply bound the bucket to a principal the
+    nodes had been moved off. The archiver and the restore drill failed 403 for
+    ten hours, and nothing off-node noticed.
+    """
+
+    default = [
+        line for line in script.splitlines() if line.startswith("NODE_SERVICE_ACCOUNT=")
+    ]
+    assert len(default) == 1, "expected exactly one NODE_SERVICE_ACCOUNT default"
+    assert "tr-clickhouse@" in default[0], (
+        "the archive bucket grant must default to the dedicated node identity"
+    )
+    # The specific regression: the compute-default SA must not be the default
+    # anywhere in this script, or --apply recreates the NC-005 outage.
+    assert "-compute@developer.gserviceaccount.com" not in script
+    # The grant and the metric-writer role must both use that same variable
+    # rather than a second hardcoded principal.
+    assert 'serviceAccount:${NODE_SERVICE_ACCOUNT}' in script

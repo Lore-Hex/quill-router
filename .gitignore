@@ -15,3 +15,6 @@ node_modules/
 artifacts/
 test-results/
 playwright-report/
+proofs/tla2tools.jar
+# TLC writes checkpoints and fingerprint sets here on every run.
+proofs/states/

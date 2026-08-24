@@ -55,7 +55,9 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         params = _oauth_params_from_query(request)
         try:
             principal = principal_from_request(request, settings)
-        except HTTPException:
+        except HTTPException as exc:
+            if exc.status_code != 401:
+                raise
             return HTMLResponse(_signin_html(request, settings, params), status_code=401)
         if not principal.is_management:
             raise api_error(403, "Only management users can delegate credits", ErrorType.FORBIDDEN)
@@ -75,6 +77,8 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         try:
             principal = principal_from_request(request, settings)
         except HTTPException as exc:
+            if exc.status_code != 401:
+                raise
             raise api_error(401, "Sign in is required", ErrorType.UNAUTHORIZED) from exc
         if not principal.is_management:
             raise api_error(403, "Only management users can fund credits", ErrorType.FORBIDDEN)
@@ -97,6 +101,7 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         data = create_checkout_session(
             body=body,
             workspace_id=principal.workspace.id,
+            initiating_user_id=_principal_user_id(principal),
             customer_email=(
                 principal.user.email
                 if principal.user and principal.user.email and "@" in principal.user.email
@@ -118,6 +123,8 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         try:
             principal = principal_from_request(request, settings)
         except HTTPException as exc:
+            if exc.status_code != 401:
+                raise
             raise api_error(401, "Sign in is required", ErrorType.UNAUTHORIZED) from exc
         if not principal.is_management:
             raise api_error(403, "Only management users can delegate credits", ErrorType.FORBIDDEN)
@@ -415,6 +422,8 @@ def _identity_payload(user: Any) -> dict[str, Any] | None:
         "sub": user.id,
         "email": user.email,
         "email_verified": user.email_verified,
+        "phone_verified": user.phone_verified,
+        "identity_verified": user.identity_verified,
         "wallet_address": user.wallet_address,
     }
 

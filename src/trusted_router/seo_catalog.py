@@ -15,7 +15,6 @@ from typing import Any
 from trusted_router.benchmark_scores import scores_for_model
 from trusted_router.catalog import (
     META_MODEL_IDS,
-    MODEL_ENDPOINTS,
     MODELS,
     PROVIDERS,
     Model,
@@ -44,9 +43,11 @@ _DEFAULT_MODEL_IDS: tuple[str, ...] = (
 _PAGE_FOCUS_TERMS: dict[str, tuple[str, ...]] = {
     "azure-openai-alternative": ("gpt-5", "claude-opus", "gemini"),
     "aws-bedrock-alternative": ("claude", "llama", "mistral"),
+    "china-ai-models": ("deepseek", "kimi", "glm", "qwen", "minimax"),
     "chinese-ai-models-us-hosted": ("deepseek", "kimi", "glm", "qwen", "minimax"),
     "claude-api-privacy": ("claude-opus", "claude-sonnet", "claude-haiku"),
     "deepseek-api-privacy": ("deepseek-v4", "deepseek-v3", "deepseek-r1"),
+    "eu-ai-models": ("mistral",),
     "gemini-flash-alternative": ("gemini-3.5-flash", "gemini-3.1-flash", "gemma"),
     "glm-5-api": ("glm-5.2", "glm-5.1", "glm-5"),
     "gpt-oss-120b-api": ("gpt-oss-120b",),
@@ -55,6 +56,7 @@ _PAGE_FOCUS_TERMS: dict[str, tuple[str, ...]] = {
     "llm-document-processing": ("gemini", "deepseek-ocr", "qwen-vl"),
     "minimax-m3-api": ("minimax-m3", "minimax-m2"),
     "tinfoil-alternative": ("glm", "qwen", "deepseek"),
+    "us-ai-models": ("gpt-5", "claude-opus", "gemini", "nemotron", "llama"),
     "vertex-ai-alternative": ("gemini", "claude"),
 }
 
@@ -74,7 +76,9 @@ def seo_catalog_evidence(page_key: str, *, test_mode: bool = False) -> dict[str,
     public_models = [model for model in MODELS.values() if model.id not in META_MODEL_IDS]
     public_model_ids = {model.id for model in public_models}
     public_endpoints = [
-        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.model_id in public_model_ids
+        endpoint
+        for model_id in public_model_ids
+        for endpoint in endpoints_for_model(model_id)
     ]
     snapshot = measured_snapshot(test_mode=test_mode)
     measured_models = _mapping_rows(snapshot.get("models"))

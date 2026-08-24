@@ -14,10 +14,22 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
+from trusted_router.client_context import (
+    ClientArch,
+    ClientContextSource,
+    ClientContextVersion,
+    ClientLang,
+    ClientOs,
+    ClientPrevErrorClass,
+    ClientPrevHost,
+    ClientPrevOutcome,
+    ClientSdk,
+)
 from trusted_router.money import (
     MAX_CHECKOUT_DOLLARS,
     MICRODOLLARS_PER_CENT,
     MICRODOLLARS_PER_DOLLAR,
+    MIN_PAYPAL_CHECKOUT_MICRODOLLARS,
     dollars_to_microdollars,
 )
 
@@ -42,6 +54,7 @@ class SignupRequest(_Strict):
 class CheckoutRequest(_Lenient):
     amount: Decimal | str | int | float = Decimal("20")
     workspace_id: str | None = None
+    purpose: Literal["identity_verification"] | None = None
     success_url: str | None = None
     cancel_url: str | None = None
     payment_method: Literal[
@@ -68,6 +81,15 @@ class CheckoutRequest(_Lenient):
         if microdollars % MICRODOLLARS_PER_CENT != 0:
             raise ValueError("amount must be exactly representable in cents")
         return Decimal(str(value))
+
+    @model_validator(mode="after")
+    def paypal_amount_in_range(self) -> CheckoutRequest:
+        if (
+            self.payment_method == "paypal"
+            and dollars_to_microdollars(self.amount) < MIN_PAYPAL_CHECKOUT_MICRODOLLARS
+        ):
+            raise ValueError("PayPal checkout amount must be at least 10")
+        return self
 
 
 class X402FundingRequest(_Strict):
@@ -189,6 +211,46 @@ class CustomModelPatchRequest(_Strict):
     base_model_id: str | None = Field(default=None, min_length=1, max_length=256)
     hidden_prompt: str | None = Field(default=None, min_length=0, max_length=262_144)
     enabled: bool | None = None
+
+
+class UserModelCreateRequest(_Strict):
+    name: str = Field(min_length=1, max_length=120)
+    slug: str | None = Field(default=None, min_length=3, max_length=96)
+    kind: Literal["machine", "agent", "human"]
+    description: str = Field(default="", max_length=2000)
+    display_identity: Literal["handle", "verified_name"] = "handle"
+    display_name: str = Field(min_length=1, max_length=120)
+    endpoint_url: str = Field(min_length=1, max_length=2048)
+    upstream_model_id: str | None = Field(default=None, min_length=1, max_length=256)
+    endpoint_api_key: str | None = Field(default=None, min_length=1, max_length=8192)
+    supports_streaming: bool = True
+    heartbeat_interval_seconds: int | None = Field(default=None, ge=5, le=3600)
+    max_concurrency: int = Field(default=4, ge=1, le=100)
+    prompt_price_microdollars_per_million_tokens: int = Field(default=0, ge=0)
+    completion_price_microdollars_per_million_tokens: int = Field(default=0, ge=0)
+
+
+class UserModelPatchRequest(_Strict):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    slug: str | None = Field(default=None, min_length=3, max_length=96)
+    kind: Literal["machine", "agent", "human"] | None = None
+    description: str | None = Field(default=None, max_length=2000)
+    display_identity: Literal["handle", "verified_name"] | None = None
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    endpoint_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    upstream_model_id: str | None = Field(default=None, min_length=1, max_length=256)
+    endpoint_api_key: str | None = Field(default=None, min_length=1, max_length=8192)
+    supports_streaming: bool | None = None
+    heartbeat_interval_seconds: int | None = Field(default=None, ge=5, le=3600)
+    max_concurrency: int | None = Field(default=None, ge=1, le=100)
+    prompt_price_microdollars_per_million_tokens: int | None = Field(default=None, ge=0)
+    completion_price_microdollars_per_million_tokens: int | None = Field(default=None, ge=0)
+
+
+class EarningsTransferRequest(_Strict):
+    workspace_id: str = Field(min_length=1, max_length=80)
+    amount_microdollars: int
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class GatewayAuthorizeRequest(_Lenient):
@@ -320,6 +382,30 @@ class ReconcileGenerationActivityRequest(_Strict):
     limit: int = Field(default=1000, ge=1, le=10_000)
 
 
+class GatewayClientContext(_Strict):
+    v: ClientContextVersion | None = None
+    source: ClientContextSource | None = None
+    sdk: ClientSdk | None = None
+    sdk_version: str | None = Field(
+        default=None,
+        pattern=r"^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}([-+][0-9A-Za-z.]{0,20})?$",
+        max_length=32,
+    )
+    lang: ClientLang | None = None
+    runtime: str | None = Field(default=None, pattern=r"^[a-z]{1,10}/[0-9A-Za-z.+-]{1,24}$")
+    os: ClientOs | None = None
+    arch: ClientArch | None = None
+    timeout_ms: int | None = Field(default=None, ge=1, le=3_600_000)
+    attempt: int | None = Field(default=None, ge=0, le=99)
+    prev_outcome: ClientPrevOutcome | None = None
+    prev_error_class: ClientPrevErrorClass | None = None
+    prev_host: ClientPrevHost | None = None
+    prev_elapsed_ms: int | None = Field(default=None, ge=0, le=3_600_000)
+    since_first_ms: int | None = Field(default=None, ge=0, le=3_600_000)
+    stream: bool | None = None
+    failover_used: bool | None = None
+
+
 class GatewaySettleRequest(_Lenient):
     authorization_id: str = Field(min_length=1)
     actual_input_tokens: int | None = Field(default=None, ge=0)
@@ -332,6 +418,9 @@ class GatewaySettleRequest(_Lenient):
     # and Gemini prompt counts INCLUDE the cached subset.
     cache_read_input_tokens: int | None = Field(default=None, ge=0)
     cache_creation_input_tokens: int | None = Field(default=None, ge=0)
+    # Provider-reported initial context used only to choose a context-priced
+    # tier. actual_input_tokens remains the complete billable input count.
+    price_tier_input_tokens: int | None = Field(default=None, ge=0)
     reasoning_tokens: int | None = Field(default=None, ge=0)
     service_tier: str | None = Field(default=None, min_length=1, max_length=20)
     request_id: str | None = None
@@ -356,6 +445,8 @@ class GatewaySettleRequest(_Lenient):
     http_referer: str | None = Field(default=None, max_length=2048)
     app_categories: list[str] | None = None
     route_type: str | None = None
+    client: dict[str, Any] | None = None
+    gateway_request_id: str | None = Field(default=None, max_length=64)
     additional_cost_microdollars: int = Field(default=0, ge=0, le=100_000_000)
     video_input_mode: str | None = Field(default=None, pattern="^(text|image|reference|video)$")
     video_duration_seconds: int | None = Field(default=None, ge=0, le=60)

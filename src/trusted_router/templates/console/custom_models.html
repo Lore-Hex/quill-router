@@ -8,7 +8,17 @@
 {% endblock %}
 {% block body %}
 {% if flash %}
-<div class="console-flash {{ flash.type }}">{{ flash.text }}</div>
+<div class="console-flash {{ flash.type }}">{{ flash.text }}{% if flash.href %} <a href="{{ flash.href }}">{{ flash.link_text }}</a>{% endif %}</div>
+{% endif %}
+{% if not verification.met %}
+<section class="panel">
+  <div class="panel-head"><h2>Verification required</h2><span class="pill warn">action needed</span></div>
+  <div class="panel-body">
+    <p>Complete account verification before creating or editing custom models.</p>
+    <p class="muted">Missing: {{ verification.missing_requirements|join(', ') }}</p>
+    <a class="btn primary" href="{{ verification.url }}">Complete verification</a>
+  </div>
+</section>
 {% endif %}
 <section class="panel">
   <div class="panel-head">
@@ -17,6 +27,7 @@
   </div>
   <div class="panel-body">
     <form class="form" method="post" action="/console/custom-models">
+      <fieldset class="form-gate" {% if not verification.met %}disabled{% endif %}>
       <label>Name
         <input name="name" required maxlength="120" placeholder="Legal reviewer">
       </label>
@@ -45,6 +56,7 @@
         Published
       </label>
       <button class="btn primary" type="submit">Create model</button>
+      </fieldset>
     </form>
   </div>
 </section>
@@ -73,6 +85,7 @@
             </div>
           </div>
           <form class="form" method="post" action="/console/custom-models/{{ model.id }}">
+            <fieldset class="form-gate" {% if not verification.met %}disabled{% endif %}>
             <label>Name
               <input name="name" required maxlength="120" value="{{ model.name }}">
             </label>
@@ -103,6 +116,7 @@
               <button class="btn primary" type="submit">Save</button>
               <span class="muted">Base: <code>{{ model.base_model_id }}</code> · revision {{ model.revision }}</span>
             </div>
+            </fieldset>
           </form>
           <form method="post" action="/console/custom-models/{{ model.id }}/delete">
             <button class="btn danger" type="submit">Delete</button>

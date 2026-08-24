@@ -62,6 +62,81 @@ def test_alias_homepage_uses_attested_api_alias(
 
 
 @pytest.mark.parametrize("domain", ["allyrouter.com", "uptimerouter.com"])
+@pytest.mark.parametrize(
+    ("path", "canonical_path"),
+    [
+        ("/docs", "/docs"),
+        ("/openrouter-alternative", "/openrouter-alternative"),
+        ("/models/minimax/minimax-m3", "/models/minimax/minimax-m3"),
+        ("/providers/minimax", "/providers/minimax"),
+        ("/blog", "/blog"),
+        ("/api/reference?group=models&utm_source=mirror", "/api/reference"),
+    ],
+)
+def test_alias_public_pages_use_primary_canonical(
+    client: TestClient,
+    domain: str,
+    path: str,
+    canonical_path: str,
+) -> None:
+    response = client.get(path, headers={"host": domain})
+
+    assert response.status_code == 200
+    assert response.text.count('rel="canonical"') == 1
+    assert (
+        f'<link rel="canonical" href="https://trustedrouter.com{canonical_path}">'
+        in response.text
+    )
+
+
+@pytest.mark.parametrize("domain", ["allyrouter.com", "uptimerouter.com"])
+def test_alias_status_pages_use_primary_status_canonical(
+    client: TestClient,
+    domain: str,
+) -> None:
+    status = client.get("/", headers={"host": f"status.{domain}"})
+    history = client.get(
+        "/status/history?window=48h&format=html",
+        headers={"host": f"status.{domain}"},
+    )
+
+    assert status.status_code == 200
+    assert (
+        '<link rel="canonical" href="https://trustedrouter.com/status">'
+        in status.text
+    )
+    assert history.status_code == 200
+    assert (
+        '<link rel="canonical" '
+        'href="https://trustedrouter.com/status/history?window=48h">'
+        in history.text
+    )
+
+
+def test_eu_mirror_homepage_uses_primary_eu_canonical(client: TestClient) -> None:
+    response = client.get("/", headers={"host": "eu.trustedrouter.com"})
+
+    assert response.status_code == 200
+    assert '<link rel="canonical" href="https://trustedrouter.com/eu">' in response.text
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/llms.txt", "/docs/llms.txt", "/docs/llms-full.txt"],
+)
+def test_alias_plaintext_docs_publish_primary_canonical_link(
+    client: TestClient,
+    path: str,
+) -> None:
+    response = client.get(path, headers={"host": "allyrouter.com"})
+
+    assert response.status_code == 200
+    assert response.headers["link"] == (
+        f'<https://trustedrouter.com{path}>; rel="canonical"'
+    )
+
+
+@pytest.mark.parametrize("domain", ["allyrouter.com", "uptimerouter.com"])
 def test_alias_status_and_trust_hosts_render(
     client: TestClient,
     domain: str,
@@ -75,7 +150,7 @@ def test_alias_status_and_trust_hosts_render(
     assert trust.status_code == 200
     assert f"https://api.{domain}/v1" in trust.text
     assert f"https://api.{domain}/attestation" in trust.text
-    assert '<link rel="canonical" href="https://trust.trustedrouter.com/">' in trust.text
+    assert '<link rel="canonical" href="https://trustedrouter.com/trust">' in trust.text
 
 
 def test_alias_www_and_status_redirects_stay_on_alias(client: TestClient) -> None:
@@ -411,7 +486,8 @@ def test_alias_oauth_credentials_are_normalized_and_fail_closed() -> None:
 def test_production_oauth_requires_credentials_for_every_backup_domain() -> None:
     values = {
         "environment": "production",
-        "internal_gateway_token": "internal-token",
+        "service_surface": "control",
+        "attribution_cookie_secret": "oauth-attribution-" + "a" * 32,
         "stripe_webhook_secret": "whsec-test",
         "stripe_secret_key": "sk-test",
         "sentry_dsn": "https://example@example.ingest.sentry.io/1",
@@ -441,6 +517,18 @@ def test_production_oauth_requires_credentials_for_every_backup_domain() -> None
         }
         for domain in ("allyrouter.com", "uptimerouter.com")
     }
+    alias_only = dict(values)
+    alias_only.pop("google_client_id")
+    alias_only.pop("google_client_secret")
+    with pytest.raises(
+        ValidationError,
+        match="requires canonical TR_GOOGLE_CLIENT_ID and TR_GOOGLE_CLIENT_SECRET",
+    ):
+        Settings(
+            **alias_only,
+            google_alias_credentials_json=json.dumps(alias_credentials),
+        )
+
     settings = Settings(
         **values,
         google_alias_credentials_json=json.dumps(alias_credentials),

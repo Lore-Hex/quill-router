@@ -271,3 +271,6 @@ class SpannerIO:
     list_entities: Callable[..., list[Any]]
     delete_entities: Callable[[str, list[str]], None]
     delete_entities_tx: Callable[[Any, str, list[str]], None]
+    # Optional for feature adapters that never issue typed SQL. Production and
+    # the user-model slot adapter always provide the real param-types module.
+    param_types: Any = None

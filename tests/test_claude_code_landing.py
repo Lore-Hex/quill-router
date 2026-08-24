@@ -48,7 +48,7 @@ def test_vibe_coders_landing_is_indexed_and_claude_alias_redirects(
     assert alias.headers["location"] == "/vibe-coders"
 
 
-def test_api_key_reveal_builds_a_streaming_agent_chat_message_without_reconfiguration(
+def test_api_key_reveal_leads_with_a_complete_agent_chat_message(
     client: TestClient,
 ) -> None:
     user = STORE.ensure_user("claude-code-landing@example.com")
@@ -70,8 +70,16 @@ def test_api_key_reveal_builds_a_streaming_agent_chat_message_without_reconfigur
         "Paste this short message into a Claude Code, Codex, or your favorite agent chat."
         in response.text
     )
-    assert "Use TrustedRouter with the key below to ask DeepSeek" in response.text
-    assert "stream the answer into this chat as it arrives" in response.text
+    assert (
+        'Use TrustedRouter.com with the key below to ask DeepSeek: "What is the capital '
+        'of France?"'
+        in response.text
+    )
+    assert response.text.index("Paste this short message") < response.text.index(
+        "Your TrustedRouter API key"
+    )
+    assert "Call https://api.trustedrouter.com/v1" not in response.text
+    assert "stream the answer into this chat as it arrives" not in response.text
     assert "Keep this agent's model" not in response.text
     assert "Use it in memory for this request" not in response.text
     assert "stream=true" not in response.text

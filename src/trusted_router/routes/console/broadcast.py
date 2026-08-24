@@ -26,7 +26,7 @@ from trusted_router.storage import STORE, BroadcastDestination
 
 def register(app: FastAPI) -> None:
     @app.get("/console/broadcast")
-    async def console_broadcast(ctx: ConsoleDep, settings: SettingsDep) -> Response:
+    def console_broadcast(ctx: ConsoleDep, settings: SettingsDep) -> Response:
         destinations = [
             public_destination_shape(destination)
             for destination in STORE.list_broadcast_destinations(ctx.workspace.id)
@@ -43,7 +43,7 @@ def register(app: FastAPI) -> None:
         ))
 
     @app.post("/console/broadcast")
-    async def console_create_broadcast(
+    def console_create_broadcast(
         ctx: ConsoleDep,
         settings: SettingsDep,
         name: str = Form(..., min_length=1, max_length=120),
@@ -87,7 +87,7 @@ def register(app: FastAPI) -> None:
         return RedirectResponse(url="/console/broadcast", status_code=303)
 
     @app.post("/console/broadcast/{destination_id}/delete")
-    async def console_delete_broadcast(ctx: ConsoleDep, destination_id: str) -> Response:
+    def console_delete_broadcast(ctx: ConsoleDep, destination_id: str) -> Response:
         STORE.delete_broadcast_destination(ctx.workspace.id, destination_id)
         return RedirectResponse(url="/console/broadcast", status_code=303)
 

@@ -36,5 +36,7 @@ jobs:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: beta
       - name: Reconcile gateway reliability alerts
         run: bash scripts/deploy/gateway_reliability.sh --apply

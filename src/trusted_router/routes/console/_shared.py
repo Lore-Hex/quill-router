@@ -21,6 +21,7 @@ from trusted_router.auth import SESSION_COOKIE_NAME, SettingsDep
 from trusted_router.config import Settings
 from trusted_router.domains import request_api_base_url
 from trusted_router.money import format_money_display
+from trusted_router.request_limits import enforce_authenticated_rate_limit
 from trusted_router.storage import (
     STORE,
     AuthSession,
@@ -39,6 +40,7 @@ class ConsoleContext:
     session: AuthSession
     workspace: Workspace
     workspaces: list[Workspace]
+    can_manage: bool
     api_base_url: str
 
 
@@ -46,13 +48,24 @@ def require_console_context(request: Request, settings: SettingsDep) -> ConsoleC
     """FastAPI dependency. Resolves the active console session or raises a
     302 redirect to the marketing page so it can pop the sign-in modal."""
     cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
-    session = STORE.get_auth_session_by_raw(cookie_token) if cookie_token else None
-    if session is None or session.state != "active":
+    context = (
+        STORE.session_auth_context(cookie_token, requested_workspace_id=None)
+        if cookie_token
+        else None
+    )
+    if context is None or context.session.state != "active":
         raise HTTPException(status_code=302, headers={"Location": "/?reason=signin"})
-    user = STORE.get_user(session.user_id)
+    session = context.session
+    user = context.user
     if user is None:
         raise HTTPException(status_code=302, headers={"Location": "/?reason=signin"})
-    workspaces = STORE.list_workspaces_for_user(user.id)
+    enforce_authenticated_rate_limit(
+        request,
+        settings,
+        credential_kind="session",
+        stable_subject=session.lookup_hash,
+    )
+    workspaces = list(context.workspaces)
     if not workspaces:
         raise HTTPException(status_code=302, headers={"Location": "/?reason=signin"})
     workspace = _selected_console_workspace(session, workspaces)
@@ -61,6 +74,7 @@ def require_console_context(request: Request, settings: SettingsDep) -> ConsoleC
         session=session,
         workspace=workspace,
         workspaces=workspaces,
+        can_manage=workspace.id in context.management_workspace_ids,
         api_base_url=request_api_base_url(request, settings),
     )
 
@@ -114,12 +128,15 @@ def _console_path_for_active(active: str) -> str:
         "api-keys": "/console/api-keys",
         "byok": "/console/byok",
         "custom-models": "/console/custom-models",
+        "user-models": "/console/user-models",
+        "earnings": "/console/earnings",
         "routing": "/console/routing",
         "activity": "/console/activity",
         "broadcast": "/console/broadcast",
         "settings": "/console/settings",
         "credits": "/console/credits",
         "preferences": "/console/account/preferences",
+        "verification": "/console/account/verification",
     }.get(active, "/console/api-keys")
 
 

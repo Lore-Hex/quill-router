@@ -63,7 +63,7 @@ enabled as its historical control. `enterprise_platform_rsa1` and
 |---|---|---|---|
 | Privacy | `msg_never_logged_r1` | Your Prompts Are Never Logged | No prompt or output storage |
 | Reliability | `msg_provider_failover_r1` | Provider Failover Built In | Automatic independent-provider rollover |
-| Price | `msg_five_percent_r1` | 5% Fee. No Subscription. | Transparent usage pricing |
+| Price | `msg_five_point_five_percent_r1` | 5.5% Fee. No Subscription. | Transparent usage pricing |
 | Verification | `msg_code_saw_prompt_r1` | Know What Code Saw Your Prompt | Live attestation of the open source gateway |
 
 Run the cells in three waves:

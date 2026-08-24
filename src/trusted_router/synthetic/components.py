@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from trusted_router.config import Settings
 from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup
+
+if TYPE_CHECKING:
+    from trusted_router.config import Settings
 
 # Target name of the billing/settlement and provider-fallback probes. Unlike
 # the gateway targets these do not come from the region topology — every
@@ -33,18 +35,36 @@ MONITOR_CONFIGURATION_ERROR_TYPES = frozenset(
         "monitor_workspace_paused",
     }
 )
+# Liveness/ops probe types (synthetic/fleet.py): scheduler heartbeats and
+# cross-cloud peer policing. They ride the synthetic-sample pipeline for
+# storage and streak alerts but are NOT evidence about this deployment's
+# service, so they must stay out of every component, every SLO, and — most
+# importantly — the monitor-freshness clock: a heartbeat from a loop that is
+# not the probe fleet must never make a dead probe fleet look fresh.
+OPS_PROBE_TYPES = frozenset(
+    {"client_telemetry_ingest", "heartbeat", "peer_monitor", "remediation"}
+)
+# Deep end-to-end model calls: a real OpenAI-SDK chat completion and a real
+# Responses round-trip, output-verified. These probes previously fed NO
+# component: they could fail 100% (as they did on AWS and Azure on
+# 2026-08-10, every pong failing with 402) while the page rendered green. A
+# probe that is recorded but surfaced nowhere is a signal that reports
+# success without measuring — this set is what makes the model path render.
+MODEL_INFERENCE_PROBES = {"openai_sdk_pong", "responses_pong"}
 
 COMPONENT_PROBES: dict[str, set[str]] = {
     "canonical_api": REGIONAL_GATEWAY_PROBES,
     "us_central1_regional_api": REGIONAL_GATEWAY_PROBES,
     "us_east4_regional_api": REGIONAL_GATEWAY_PROBES,
     "eu_regional_api": REGIONAL_GATEWAY_PROBES,
+    "sa_regional_api": REGIONAL_GATEWAY_PROBES,
     "eu_west_1_gateway": REGIONAL_GATEWAY_PROBES,
     "eu_west_3_gateway": REGIONAL_GATEWAY_PROBES,
     "attestation": {"attestation_nonce"},
     "billing_settlement": BILLING_PROBES,
     "provider_fallback": {"provider_fallback"},
     "image_generation": IMAGE_GENERATION_PROBES,
+    "model_inference": MODEL_INFERENCE_PROBES,
 }
 
 SLO_DEFINITIONS: tuple[dict[str, str], ...] = (
@@ -89,6 +109,11 @@ COMPONENT_DEFINITIONS: tuple[dict[str, str], ...] = (
         "id": "eu_regional_api",
         "name": "EU Regional API",
         "description": "EU attested TLS reachability and trust checks.",
+    },
+    {
+        "id": "sa_regional_api",
+        "name": "South America Regional API",
+        "description": "São Paulo attested TLS reachability and trust checks.",
     },
     # Per-REGION components. Unlike the regional entries above they do not
     # have their own hostname: every AWS EU request goes to one anycast name
@@ -145,12 +170,12 @@ COMPONENT_DEFINITIONS: tuple[dict[str, str], ...] = (
         ),
     },
     {
-        "id": "southeastasia_gateway",
-        "name": "Southeast Asia Gateway (Singapore)",
+        "id": "australiaeast_gateway",
+        "name": "Australia East Gateway (Sydney)",
         "description": (
             "Azure confidential container addressed directly: publicly-trusted "
             "TLS minted inside the TEE and SEV-SNP attestation through MAA "
-            "from a healthy Southeast Asia enclave behind it."
+            "from a healthy Australia East enclave behind it."
         ),
     },
     {
@@ -173,6 +198,14 @@ COMPONENT_DEFINITIONS: tuple[dict[str, str], ...] = (
         "name": "Image Generation",
         "description": "Public attested Gemini image generation and binary image validation.",
     },
+    {
+        "id": "model_inference",
+        "name": "Model Inference",
+        "description": (
+            "End-to-end model calls through the attested gateway: OpenAI SDK and "
+            "Responses round-trips with verified output."
+        ),
+    },
 )
 
 # Which probe target has to exist for a catalogue component to be
@@ -185,6 +218,7 @@ COMPONENT_PROBE_TARGETS: dict[str, str] = {
     "us_central1_regional_api": "us-central1",
     "us_east4_regional_api": "us-east4",
     "eu_regional_api": "europe-west4",
+    "sa_regional_api": "southamerica-east1",
     # These names are the TR_SYNTHETIC_GATEWAY_REGION_TARGETS entry names the
     # AWS EU control plane configures; nothing publishes them anywhere else.
     "eu_west_1_gateway": "eu-west-1",
@@ -193,11 +227,16 @@ COMPONENT_PROBE_TARGETS: dict[str, str] = {
     # (scripts/deploy/azure_control_plane.sh). Absent everywhere else, which is
     # what keeps this row off the AWS and GCP status pages.
     "uaenorth_gateway": "uaenorth",
-    "southeastasia_gateway": "southeastasia",
+    "australiaeast_gateway": "australiaeast",
     "attestation": "canonical",
     "billing_settlement": CONTROL_PLANE_TARGET,
     "provider_fallback": CONTROL_PLANE_TARGET,
     "image_generation": "canonical",
+    # Pongs only run against non-pinned targets holding the monitor's live
+    # API key (probes.py: `api_key and target.paid_probes and not
+    # target.connect_host`), which in practice is the canonical target every
+    # deployment configures.
+    "model_inference": "canonical",
 }
 
 # Components fed by a target PINNED to one region's endpoint
@@ -214,7 +253,7 @@ GATEWAY_REGION_COMPONENT_IDS: frozenset[str] = frozenset(
         "eu_west_1_gateway",
         "eu_west_3_gateway",
         "uaenorth_gateway",
-        "southeastasia_gateway",
+        "australiaeast_gateway",
     }
 )
 # Regional API components also feed deploy automation through
@@ -223,7 +262,12 @@ GATEWAY_REGION_COMPONENT_IDS: frozenset[str] = frozenset(
 # overall-status banner for pinned failover gateways, while these GCP rows
 # must remain diagnostic and outside the router-core SLO.
 REGIONAL_API_COMPONENT_IDS: frozenset[str] = frozenset(
-    {"us_central1_regional_api", "us_east4_regional_api", "eu_regional_api"}
+    {
+        "us_central1_regional_api",
+        "us_east4_regional_api",
+        "eu_regional_api",
+        "sa_regional_api",
+    }
 )
 MACHINE_REGION_COMPONENT_IDS: frozenset[str] = (
     GATEWAY_REGION_COMPONENT_IDS | REGIONAL_API_COMPONENT_IDS
@@ -243,6 +287,10 @@ GATEWAY_REGION_TARGET_NAMES: frozenset[str] = frozenset(
 # schedules the job at all.
 COMPONENT_REQUIRED_CAPABILITIES: dict[str, Callable[[Settings], bool]] = {
     "image_generation": lambda settings: settings.synthetic_image_probe_enabled,
+    # Pongs are billable calls gated on the monitor key being configured; a
+    # deployment without one never samples the model path, so publishing the
+    # row there would be a permanent "unknown".
+    "model_inference": lambda settings: bool(settings.synthetic_monitor_api_key),
 }
 
 
@@ -264,9 +312,9 @@ def applicable_component_definitions(settings: Settings) -> tuple[dict[str, str]
     """Catalogue components this deployment can produce samples for.
 
     A public status page must only assert things it measures. The AWS EU
-    cloud has no us-central1, us-east4, or europe-west4 anything, so
-    publishing those components there produced three permanent "unknown"
-    rows — which reads as "we are not sure our own service works" and is
+    cloud has no us-central1, us-east4, europe-west4, or southamerica-east1
+    gateway, so publishing those components there would produce permanent
+    "unknown" rows — which reads as "we are not sure our own service works" and is
     worse than not listing them at all. Scope comes from configuration
     (regions + synthetic_regional_probes_enabled), never a per-cloud list.
     """
@@ -327,14 +375,16 @@ def sample_component_ids(sample: SyntheticProbeSample) -> list[str]:
         ids.append("us_east4_regional_api")
     if sample.target == "europe-west4" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
         ids.append("eu_regional_api")
+    if sample.target == "southamerica-east1" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
+        ids.append("sa_regional_api")
     if sample.target == "eu-west-1" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
         ids.append("eu_west_1_gateway")
     if sample.target == "eu-west-3" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
         ids.append("eu_west_3_gateway")
     if sample.target == "uaenorth" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
         ids.append("uaenorth_gateway")
-    if sample.target == "southeastasia" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
-        ids.append("southeastasia_gateway")
+    if sample.target == "australiaeast" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
+        ids.append("australiaeast_gateway")
     # "Attestation" is a SHARED, service-wide row that predates the pinned
     # targets, and it is scoped to the addresses customers actually resolve.
     # Folding the pinned per-region probes in here averaged a public number
@@ -353,6 +403,16 @@ def sample_component_ids(sample: SyntheticProbeSample) -> list[str]:
         ids.append("provider_fallback")
     if sample.target == "canonical" and sample.probe_type in IMAGE_GENERATION_PROBES:
         ids.append("image_generation")
+    # Any non-pinned target: each deployment's pongs prove that deployment's
+    # model path. Deliberately NOT part of the router_core SLO class — a pong
+    # failure can be a provider brownout, and the July scoping decision
+    # (provider-effective failures do not burn router availability) stands.
+    # Visibility is the component's job; the SLO math is unchanged.
+    if (
+        sample.probe_type in MODEL_INFERENCE_PROBES
+        and sample.target not in GATEWAY_REGION_TARGET_NAMES
+    ):
+        ids.append("model_inference")
     return ids
 
 
@@ -366,10 +426,7 @@ def is_router_origin_error(error_type: str | None) -> bool:
     """Return whether a benchmark failure happened before provider invocation."""
     return bool(
         error_type
-        and (
-            error_type in MONITOR_CONFIGURATION_ERROR_TYPES
-            or error_type.startswith("router_")
-        )
+        and (error_type in MONITOR_CONFIGURATION_ERROR_TYPES or error_type.startswith("router_"))
     )
 
 
@@ -395,12 +452,8 @@ def rollup_slo_class_ids(rollup: SyntheticRollup) -> list[str]:
 
 def _slo_class_ids(*, probe_type: str, target: str) -> list[str]:
     ids: list[str] = []
-    if (
-        (target == "canonical" and probe_type in REGIONAL_GATEWAY_PROBES)
-        or (
-            target == "control-plane"
-            and probe_type in BILLING_PROBES | {"provider_fallback"}
-        )
+    if (target == "canonical" and probe_type in REGIONAL_GATEWAY_PROBES) or (
+        target == "control-plane" and probe_type in BILLING_PROBES | {"provider_fallback"}
     ):
         ids.append("router_core")
     if probe_type in CONTROL_PLANE_PROBES:

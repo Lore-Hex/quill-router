@@ -8,6 +8,17 @@ Type=simple
 User=tr-clickhouse-ingest
 Group=tr-clickhouse-ingest
 WorkingDirectory=/opt/tr-clickhouse
+# libpq resolves a client certificate at $HOME/.postgresql/postgresql.crt on
+# every connect. ProtectHome=true (below) makes /home unreadable, and libpq
+# treats "Permission denied" on that path as FATAL -- unlike a missing file,
+# which it ignores. Without this line the drain authenticated fine and then
+# failed every single connection with
+#   could not open certificate file "/home/tr-clickhouse-ingest/.postgresql/postgresql.crt"
+# reporting failed_shards=32, rows=0 while the unit sat "active". HOME must
+# therefore point inside ReadWritePaths, which is also what the archive
+# sibling does. DSQL uses an IAM token, never a client cert, so the file is
+# expected to be absent -- it just must be absent READABLY.
+Environment=HOME=/var/lib/tr-clickhouse-ingest
 # The venv MUST be built on Python >= 3.11. trusted_router.types imports
 # StrEnum, which is 3.11+. The AWS-EU ClickHouse node runs Ubuntu 22.04 whose
 # system python is 3.10, so `python3 -m venv` there produces an interpreter

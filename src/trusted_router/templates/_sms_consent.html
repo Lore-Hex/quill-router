@@ -1,0 +1,24 @@
+{#- The SMS consent sentence, defined ONCE.
+
+  It is rendered in two places that must agree word for word:
+
+    * the checkbox in the console at Settings -> Notifications, which is where a
+      number is actually collected;
+    * the public /sms page, which tells a 10DLC campaign vetter "these are the
+      exact steps and the exact consent language shown".
+
+  When those two drifted, the page and the campaign submission both described a
+  checkbox that the console did not have at all — and campaign 30909 was rejected
+  for a Call to Action that could not be verified. A vetter comparing the public
+  claim against the live form is the whole point of the review, so the two cannot
+  be allowed to differ again.
+
+  Keep it CTIA-shaped: who is sending, what is sent, frequency, cost, how to
+  stop, how to get help, and links to both policies.
+-#}
+I agree to receive account alerts and one-time verification codes from Trusted
+Router at this number. Message frequency varies. Message and data rates may
+apply. Reply STOP to unsubscribe or HELP for help. See the
+<a href="/terms"{% if consent_links_new_tab %} target="_blank" rel="noopener"{% endif %}>Terms of Service</a>
+and
+<a href="/privacy"{% if consent_links_new_tab %} target="_blank" rel="noopener"{% endif %}>Privacy Policy</a>.

@@ -10,7 +10,7 @@
      doesn't flash light. Dark is the default; only a stored "light"
      preference adds the attribute. See public/_base.html for the matching
      marketing-chrome script + the toggle that writes localStorage. #}
-  <script>
+  <script nonce="{{ csp_nonce() }}">
     (function () {
       try {
         if (localStorage.getItem("tr-theme") === "light") {
@@ -77,6 +77,8 @@
         <a href="/console/api-keys" class="sidebar-link {{ 'active' if active == 'api-keys' else '' }}">API Keys</a>
         <a href="/console/byok" class="sidebar-link {{ 'active' if active == 'byok' else '' }}">BYOK</a>
         <a href="/console/custom-models" class="sidebar-link {{ 'active' if active == 'custom-models' else '' }}">Custom Models</a>
+        <a href="/console/user-models" class="sidebar-link {{ 'active' if active == 'user-models' else '' }}">User-provided Models</a>
+        <a href="/console/earnings" class="sidebar-link {{ 'active' if active == 'earnings' else '' }}">Earnings</a>
         <a href="/console/routing" class="sidebar-link {{ 'active' if active == 'routing' else '' }}">Routing</a>
         <a href="/console/activity" class="sidebar-link {{ 'active' if active == 'activity' else '' }}">Observability</a>
         <a href="/console/broadcast" class="sidebar-link {{ 'active' if active == 'broadcast' else '' }}">Broadcast</a>
@@ -85,6 +87,7 @@
       <div class="sidebar-group">
         <div class="sidebar-label">Account</div>
         <a href="/console/credits" class="sidebar-link {{ 'active' if active == 'credits' else '' }}">Credits</a>
+        <a href="/console/account/verification" class="sidebar-link {{ 'active' if active == 'verification' else '' }}">Verification</a>
         <a href="/console/account/preferences" class="sidebar-link {{ 'active' if active == 'preferences' else '' }}">Preferences</a>
         <form class="sidebar-link sidebar-signout" method="post" action="/auth/logout">
           <button type="submit">Sign out</button>

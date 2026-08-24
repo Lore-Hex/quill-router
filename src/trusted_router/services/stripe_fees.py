@@ -20,6 +20,7 @@ class ProcessingFee:
     charge_amount_cents: int
     variable_basis_points: int
     fixed_fee_cents: int
+    minimum_fee_cents: int = 0
     max_fee_cents: int | None = None
 
     @property
@@ -91,6 +92,7 @@ class ProcessingFee:
         *,
         workspace_id: str,
         payment_method: str,
+        initiating_user_id: str | None = None,
     ) -> dict[str, str]:
         metadata = {
             "workspace_id": workspace_id,
@@ -100,9 +102,12 @@ class ProcessingFee:
             "charge_amount_cents": str(self.charge_amount_cents),
             "fee_variable_basis_points": str(self.variable_basis_points),
             "fee_fixed_cents": str(self.fixed_fee_cents),
+            "fee_minimum_cents": str(self.minimum_fee_cents),
         }
         if self.max_fee_cents is not None:
             metadata["fee_max_cents"] = str(self.max_fee_cents)
+        if initiating_user_id is not None:
+            metadata["initiating_user_id"] = initiating_user_id
         return metadata
 
 
@@ -111,6 +116,7 @@ def processing_fee(
     credit_amount_cents: int,
     variable_basis_points: int,
     fixed_fee_cents: int,
+    minimum_fee_cents: int = 0,
     max_fee_cents: int | None = None,
 ) -> ProcessingFee:
     """Gross up a USD-cent principal so it survives the configured fee.
@@ -126,8 +132,12 @@ def processing_fee(
         raise ValueError("variable_basis_points must be between 0 and 9999")
     if fixed_fee_cents < 0:
         raise ValueError("fixed_fee_cents cannot be negative")
+    if minimum_fee_cents < 0:
+        raise ValueError("minimum_fee_cents cannot be negative")
     if max_fee_cents is not None and max_fee_cents < 0:
         raise ValueError("max_fee_cents cannot be negative")
+    if max_fee_cents is not None and minimum_fee_cents > max_fee_cents:
+        raise ValueError("minimum_fee_cents cannot exceed max_fee_cents")
 
     denominator = 10_000 - variable_basis_points
     uncapped_charge_amount_cents = _ceil_div(
@@ -141,13 +151,18 @@ def processing_fee(
         charge_amount_cents = credit_amount_cents + max_fee_cents
     else:
         charge_amount_cents = uncapped_charge_amount_cents
-    processing_fee_cents = charge_amount_cents - credit_amount_cents
+    processing_fee_cents = max(
+        charge_amount_cents - credit_amount_cents,
+        minimum_fee_cents,
+    )
+    charge_amount_cents = credit_amount_cents + processing_fee_cents
     return ProcessingFee(
         credit_amount_cents=credit_amount_cents,
         processing_fee_cents=processing_fee_cents,
         charge_amount_cents=charge_amount_cents,
         variable_basis_points=variable_basis_points,
         fixed_fee_cents=fixed_fee_cents,
+        minimum_fee_cents=minimum_fee_cents,
         max_fee_cents=max_fee_cents,
     )
 

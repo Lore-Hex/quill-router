@@ -4,9 +4,43 @@
 # trustedrouter.com routes to the nearest healthy region. Finally ensures the
 # HTTP -> HTTPS redirect on :80.
 
+# Temporary compatibility bridge for the legacy all-routes service.  Requiring
+# an explicit caller opt-in keeps a direct invocation fail-closed before it can
+# read or mutate cloud state; the guarded deploy workflow is the sole
+# production caller that supplies it.  Delete this block and both emitted env
+# vars when the six-service cutover in #712 lands.
+ALLOW_DEPLOYED_COMBINED_SURFACE="${TR_ALLOW_DEPLOYED_COMBINED_SURFACE:-false}"
+if [ "$ALLOW_DEPLOYED_COMBINED_SURFACE" != "true" ]; then
+  echo "refusing legacy combined rollout: set TR_ALLOW_DEPLOYED_COMBINED_SURFACE=true" >&2
+  exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
+# shellcheck source=scripts/deploy/deploy_mutex.sh
+source "${SCRIPT_DIR}/deploy_mutex.sh"
+# shellcheck source=scripts/deploy/regional_quota_rollout.sh
+source "${SCRIPT_DIR}/regional_quota_rollout.sh"
+
+release_rollout_deploy_mutex() {
+  local rollout_status=$?
+  # Finish the release uninterrupted; a signal here would leak the mutex
+  # until its TTL.
+  trap '' INT TERM
+  trap - EXIT
+  if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
+    deploy_mutex_release
+  fi
+  exit "$rollout_status"
+}
+trap release_rollout_deploy_mutex EXIT
+
+# The workflow exports its outer lock through GITHUB_ENV. A direct operator
+# invocation has no such operation and owns this script-level scope instead.
+if [ -z "${TR_DEPLOY_MUTEX_OPERATION:-}" ]; then
+  deploy_mutex_acquire
+fi
 
 TRUST_SOURCE_COMMIT=""
 TRUST_IMAGE_REFERENCE=""
@@ -22,6 +56,7 @@ if [ -n "$TRUST_JSON" ]; then
   TRUST_IMAGE_REFERENCE="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("image_reference", ""))' <<<"$TRUST_JSON")"
   TRUST_IMAGE_DIGEST="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("image_digest", ""))' <<<"$TRUST_JSON")"
 fi
+
 
 SECRET_ENVS=(
   "TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest"
@@ -48,6 +83,19 @@ add_secret_env_if_exists() {
     return 1
   fi
 }
+# Carrier credentials for /v1/notify. Optional bindings: if the secrets are
+# absent the notify channels report themselves unconfigured rather than the
+# revision failing to start, which is the right failure for a feature nobody
+# has enabled yet.
+add_secret_env_if_exists "TR_TELNYX_API_KEY" "trustedrouter-telnyx-api-key"
+add_secret_env_if_exists "TR_VERIFF_API_KEY" "trustedrouter-veriff-api-key"
+add_secret_env_if_exists \
+  "TR_VERIFF_SHARED_SECRET_KEY" \
+  "trustedrouter-veriff-shared-secret-key"
+add_secret_env_if_exists "TR_TWILIO_ACCOUNT_SID" "trustedrouter-twilio-account-sid"
+add_secret_env_if_exists "TR_TWILIO_API_KEY_SID" "trustedrouter-twilio-api-key-sid"
+add_secret_env_if_exists "TR_TWILIO_API_KEY_SECRET" "trustedrouter-twilio-api-key-secret"
+add_secret_env_if_exists "TR_TWILIO_AUTH_TOKEN" "trustedrouter-twilio-auth-token"
 add_secret_env_if_exists "ANTHROPIC_API_KEY" "trustedrouter-anthropic-api-key"
 add_secret_env_if_exists "OPENAI_API_KEY" "trustedrouter-openai-api-key"
 add_secret_env_if_exists "GEMINI_API_KEY" "trustedrouter-gemini-api-key"
@@ -293,6 +341,109 @@ if [ "$ANALYTICS_READ_MODE" = "clickhouse" ] && {
   ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 fi
 
+# Regional quota capability and traffic issuance are separate switches. Resolve
+# preserved values from the one revision receiving 100% of primary traffic,
+# never the latest candidate or service template: both still point at a rejected
+# revision after rollback. Only an exact missing-service response represents a
+# fresh environment; every other control-plane read error aborts the rollout.
+REGIONAL_QUOTA_PRIMARY_FRESH=false
+REGIONAL_QUOTA_PRIMARY_REVISION_JSON=""
+if REGIONAL_QUOTA_PRIMARY_REVISION_JSON="$(
+  regional_quota_active_revision_json "$TR_PRIMARY_REGION" true
+)"; then
+  :
+else
+  regional_quota_primary_status=$?
+  if [ "$regional_quota_primary_status" -eq 3 ]; then
+    REGIONAL_QUOTA_PRIMARY_FRESH=true
+  else
+    exit "$regional_quota_primary_status"
+  fi
+fi
+
+read_primary_regional_quota_env() {
+  local name="$1"
+  local default_value="${2:-}"
+  if [ "$REGIONAL_QUOTA_PRIMARY_FRESH" = "true" ]; then
+    printf '%s\n' "$default_value"
+    return 0
+  fi
+  regional_quota_revision_env \
+    "$REGIONAL_QUOTA_PRIMARY_REVISION_JSON" \
+    "$name" \
+    "$default_value"
+}
+
+LIVE_REGIONAL_QUOTA_LEASES_ENABLED="$(
+  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASES_ENABLED" "false"
+)"
+REGIONAL_QUOTA_LEASES_ENABLED="${TR_REGIONAL_QUOTA_LEASES_ENABLED:-${LIVE_REGIONAL_QUOTA_LEASES_ENABLED:-false}}"
+case "$REGIONAL_QUOTA_LEASES_ENABLED" in
+  true|false) ;;
+  *)
+    log "refusing rollout: TR_REGIONAL_QUOTA_LEASES_ENABLED must be true or false"
+    exit 1
+    ;;
+esac
+
+# workflow_dispatch passes one of preserve/false/true through unchanged. The
+# deploy shell, not GitHub's expression coercion, turns that raw operator intent
+# into the boolean written on the Cloud Run revision. A missing marker on the
+# first compatibility deploy defaults OFF.
+LIVE_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
+  read_primary_regional_quota_env \
+    "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" \
+    "false"
+)"
+REGIONAL_QUOTA_LEASE_ISSUANCE_CONTROL="${TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED:-}"
+REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED="$(
+  regional_quota_normalize_issuance_control \
+    "$REGIONAL_QUOTA_LEASE_ISSUANCE_CONTROL" \
+    "$LIVE_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED"
+)"
+if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ] &&
+   [ "$REGIONAL_QUOTA_LEASES_ENABLED" != "true" ]; then
+  log "refusing rollout: regional quota issuance requires lease capability"
+  exit 1
+fi
+
+REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS="${TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS:-$(
+  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"
+)}"
+REGIONAL_QUOTA_BIGTABLE_TABLE="${TR_REGIONAL_QUOTA_BIGTABLE_TABLE:-$(
+  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_BIGTABLE_TABLE" "trustedrouter-regional-quota"
+)}"
+REGIONAL_QUOTA_BIGTABLE_APP_PROFILES="${TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES:-$(
+  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"
+)}"
+REGIONAL_QUOTA_LEASE_TTL_SECONDS="${TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS:-$(
+  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS" "60"
+)}"
+REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS="${TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS:-$(
+  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS" "10000000"
+)}"
+REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS="${TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS:-$(
+  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS" "1000"
+)}"
+REGIONAL_QUOTA_LEASE_SHARD_COUNT="${TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT:-$(
+  read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT" "16"
+)}"
+if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ] && {
+  [ -z "$REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS" ] ||
+  [ -z "$REGIONAL_QUOTA_BIGTABLE_APP_PROFILES" ];
+}; then
+  log "refusing rollout: regional quota issuance requires pilot workspaces and fixed Bigtable app profiles"
+  exit 1
+fi
+
+# This executes before gcloud run deploy can create any issuance-enabled
+# revision. Every currently active fleet member must already be settlement-
+# capable and must explicitly carry the new boolean marker. That creates a
+# compatibility phase between landing the code and enabling issuance.
+if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ]; then
+  regional_quota_preflight_issuance_fleet
+fi
+
 # Prefer the private three-replica ClickHouse load balancer once provisioned.
 # The direct node-1 address remains only as a migration fallback for projects
 # that have not run clickhouse_cluster.sh yet.
@@ -309,7 +460,17 @@ fi
 
 ENV_VARS=(
   "TR_ENVIRONMENT=production"
+  "TR_SERVICE_SURFACE=combined"
+  "TR_ALLOW_DEPLOYED_COMBINED_SURFACE=${ALLOW_DEPLOYED_COMBINED_SURFACE}"
+  # The legacy backend does not yet receive a trusted, edge-overwritten client
+  # identity. The #714 process-local limiter would collapse all Internet users
+  # into one 240/min bucket. #712 removes this exception while installing each
+  # split service's edge identity and independent capacity policy.
+  "TR_RATE_LIMIT_ENABLED=false"
   "TR_RELEASE=${TR_DEPLOY_RELEASE_ID:-$(git rev-parse --short HEAD 2>/dev/null || echo local)}"
+  # Request-based Cloud Run CPU can pause background coroutines. The scheduled
+  # synthetic job invokes /internal/synthetic/remediate instead.
+  "TR_REMEDIATOR_IN_PROCESS_ENABLED=false"
   "TR_ENABLE_LIVE_PROVIDERS=false"
   "TR_API_BASE_URL=https://api.trustedrouter.com/v1"
   "TR_TRUSTED_DOMAIN=trustedrouter.com"
@@ -319,6 +480,43 @@ ENV_VARS=(
   # accounts stay at $0. Keep this explicit so stale env cannot change policy.
   "TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=300000"
   "TR_GCP_PROJECT_ID=${PROJECT_ID}"
+  # Owner notifications. The identifiers here are not secrets — the numbers are
+  # public and the ids name resources, not authorise them — so they live in
+  # plain env alongside the credentials in Secret Manager.
+  #
+  # Telnyx voice needs BOTH ids: the account id is the ORGANISATION id from
+  # /v2/whoami (the connection id and application id both 404 there), and the
+  # application id is what carries the outbound voice profile. Missing either
+  # one is a 422 or a 403 on every call.
+  "TR_NOTIFY_ENABLED=true"
+  "TR_NOTIFY_SMS_AVAILABLE=false"
+  # Identity verification and the custom-model verification gate are a PAIR
+  # and must flip together: enabling the gate without a reachable Veriff
+  # would 403 every custom-model create/edit with an unsatisfiable
+  # "identity_verified" — a silent lockout, not a boot failure. Activated
+  # 2026-08-16 once trustedrouter-veriff-{api-key,shared-secret-key} existed
+  # in Secret Manager (the deploy SA reads them via add_secret_env_if_exists
+  # above; it cannot create them). The config validator refuses
+  # TR_VERIFF_ENABLED=true without both secrets, so a rollout that lost them
+  # fails loud at boot rather than serving broken. To go dark again, set BOTH
+  # back to false in one commit.
+  "TR_VERIFF_ENABLED=true"
+  "TR_CUSTOM_MODELS_REQUIRE_VERIFICATION=true"
+  # User-provided models serve from here. The half that made this unsafe —
+  # settle/refund of the synthetic user-model endpoint, and the exactly-once
+  # payout — shipped in #608, and the attested enclave that dispatches them
+  # shipped in quill-cloud-proxy 7925a4f. Registration, probing and the public
+  # section always worked; this is the switch that lets the gateway AUTHORIZE
+  # and route to one. Off again = the gateway 404s user-model ids; in-flight
+  # holds still settle, because settle does not read this flag.
+  "TR_USER_MODELS_DISPATCH_ENABLED=true"
+  "TR_VERIFF_BASE_URL=https://stationapi.veriff.com"
+  "TR_TELNYX_FROM_NUMBER=+17869471547"
+  "TR_TELNYX_TEXML_ACCOUNT_ID=1eea716a-02e0-4d4f-96fa-36d1f556edca"
+  "TR_TELNYX_TEXML_APPLICATION_ID=3026758434193146987"
+  # The 10DLC-registered sender. SMS defaults to Twilio because registration is
+  # per carrier and Telnyx is not registered — it rejects US SMS outright.
+  "TR_TWILIO_FROM_NUMBER=+15055313623"
   "TR_SPANNER_INSTANCE_ID=${SPANNER_INSTANCE_ID}"
   "TR_SPANNER_DATABASE_ID=${SPANNER_DATABASE_ID}"
   "TR_BIGTABLE_INSTANCE_ID=${BIGTABLE_INSTANCE_ID}"
@@ -326,8 +524,10 @@ ENV_VARS=(
   "TR_BIGTABLE_MIRROR_WRITES_ENABLED=${BIGTABLE_MIRROR_WRITES_ENABLED}"
   "TR_GENERATION_RECORDS_ENABLED=${GENERATION_RECORDS_ENABLED}"
   "TR_BYOK_KMS_KEY_NAME=${BYOK_KMS_KEY_NAME}"
+  "TR_GOOGLE_DATA_MANAGER_KMS_KEY_NAME=${GOOGLE_ADS_KMS_KEY_NAME}"
   "TR_REGIONS=${TR_REGIONS}"
   "TR_PRIMARY_REGION=${TR_PRIMARY_REGION}"
+  "TR_SPANNER_POOL_SIZE=${TR_SPANNER_POOL_SIZE}"
   "VERTEX_PROJECT_ID=${PROJECT_ID}"
   "VERTEX_LOCATION=${REGION}"
   "TR_TRUST_GCP_SOURCE_COMMIT=${TRUST_SOURCE_COMMIT}"
@@ -335,6 +535,15 @@ ENV_VARS=(
   "TR_TRUST_GCP_IMAGE_DIGEST=${TRUST_IMAGE_DIGEST}"
   "TR_TRUST_GCP_RELEASE_URL=${TRUST_FILE_URL}"
   "TR_TRUST_GCP_RELEASE_FALLBACK_URLS=https://raw.githubusercontent.com/Lore-Hex/quill-cloud-proxy/main/trust-page/gcp-release.json"
+  # AWS and Azure measurements are NOT injected here any more. Each plane
+  # publishes its own record, produced from a live attestation by
+  # quill-cloud-proxy's tools/capture-plane-measurements.py, and the control
+  # plane mirrors it from the URL below. Pinning them here made this one
+  # GCP-region rollout script the authority for what three independent planes
+  # were running — one place to falsify, one place to fail, and one more value
+  # to remember to update on every enclave rebuild.
+  "TR_TRUST_AWS_RELEASE_URL=https://trust.trustedrouter.com/trust/aws-release.json"
+  "TR_TRUST_AZURE_RELEASE_URL=https://trust.trustedrouter.com/trust/azure-release.json"
   "TR_GOOGLE_OAUTH_REDIRECT_URL=https://trustedrouter.com/google_oauth_callback"
   "TR_GITHUB_OAUTH_REDIRECT_URL=https://trustedrouter.com/github_oauth_callback"
   "TR_SIWE_DOMAIN=trustedrouter.com"
@@ -344,7 +553,10 @@ ENV_VARS=(
   "TR_SES_ALERT_FROM_EMAIL=alerts@alerts.trustedrouter.com"
   "TR_SES_ALERT_FROM_NAME=TrustedRouter Alerts"
   "TR_SES_ALERT_CONFIGURATION_SET=trustedrouter-alerts"
-  "TR_ACTIVATION_REMINDER_INTERVAL_SECONDS=60"
+  # Reputation brake: keep optional activation nudges off until SES class-level
+  # telemetry has a clean observation window. Login and verification email are
+  # unaffected because they are sent synchronously by their auth routes.
+  "TR_ACTIVATION_REMINDER_INTERVAL_SECONDS=0"
   "TR_SUPPORT_EMAIL=help@trustedrouter.com"
   # Adyen ships dark. Activating checkout is an intentional one-line release
   # after the merchant, HMAC webhook, and test-payment canary are green.
@@ -356,6 +568,7 @@ ENV_VARS=(
   # Replace these zeros with the signed Adyen commercial terms before launch.
   "TR_ADYEN_CARD_FEE_BASIS_POINTS=0"
   "TR_ADYEN_CARD_FEE_FIXED_CENTS=0"
+  "TR_CHECKOUT_CARD_FEE_MINIMUM_CENTS=80"
   "TR_OPS_CHAT_WEBHOOK_URLS=https://a.uptimerouter.com,https://b.trustedrouter.com,https://c.allyrouter.com"
   # /trustedos partner-inquiry form leads. Plain env (an address, not a
   # secret); without it the handler falls back to TR_SES_FROM_EMAIL, which
@@ -380,6 +593,16 @@ ENV_VARS=(
   # ClickHouse remains asynchronous and never participates in inference.
   "TR_ANALYTICS_OUTBOX_ENABLED=true"
   "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true"
+  # Client-observed reliability beacons (docs/client-telemetry.md §4): SDKs
+  # POST content-free per-request outcomes + exact minute counters to
+  # /v1/client-events; one operational-outbox row per batch; the ClickHouse
+  # node fans it out (DDL 008 applied on all replicas 2026-08-16, ingester
+  # quarantines poison rows, rollup timer live). Flipped 2026-08-17 per the
+  # approved plan after the local 200 POST/s x 64 KB smoke (all 202, p99 134
+  # ms) and R-PR4's canary probe + corroborated alerts landed. Off = the route
+  # answers 202 + `x-tr-telemetry: off` + pause 86400 before reading a body,
+  # so removing this line stops every SDK within one flush.
+  "TR_CLIENT_EVENTS_ENABLED=true"
   # Private provider operations portal. Direct VPC egress below reaches this
   # RFC1918 address; ClickHouse has no public IP and the credential is a
   # SELECT-only account scoped to the benchmark table.
@@ -399,9 +622,17 @@ ENV_VARS=(
   # operator overrides it. This prevents routine rollouts from reopening the
   # unbounded generic write path.
   "TR_REQUEST_RECORD_WRITE_MODE=${REQUEST_RECORD_WRITE_MODE}"
-  # Dark foundation only. Do not let a stale service-level env var activate a
-  # second billing authority during an ordinary production rollout.
-  "TR_REGIONAL_QUOTA_LEASES_ENABLED=false"
+  # Bounded regional escrow. Capability keeps settlement/reconciliation ready;
+  # the independent issuance marker stays off through the compatibility phase.
+  "TR_REGIONAL_QUOTA_LEASES_ENABLED=${REGIONAL_QUOTA_LEASES_ENABLED}"
+  "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED=${REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED}"
+  "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS=${REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS}"
+  "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS=${REGIONAL_QUOTA_LEASE_TTL_SECONDS}"
+  "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS=${REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS}"
+  "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS=${REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS}"
+  "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT=${REGIONAL_QUOTA_LEASE_SHARD_COUNT}"
+  "TR_REGIONAL_QUOTA_BIGTABLE_TABLE=${REGIONAL_QUOTA_BIGTABLE_TABLE}"
+  "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=${REGIONAL_QUOTA_BIGTABLE_APP_PROFILES}"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 
@@ -457,6 +688,28 @@ is_warm_region() {
   esac
 }
 
+cloud_run_min_instances_for_region() {
+  local target="$1"
+  local entry
+  local region
+  local count
+  local entries=()
+  IFS=',' read -ra entries <<<"$TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION"
+  for entry in "${entries[@]}"; do
+    region="${entry%%=*}"
+    count="${entry#*=}"
+    if [ "$region" = "$target" ] && [[ "$count" =~ ^[0-9]+$ ]]; then
+      printf '%s\n' "$count"
+      return 0
+    fi
+  done
+  if is_warm_region "$target"; then
+    printf '1\n'
+  else
+    printf '0\n'
+  fi
+}
+
 deploy_one_region() {
   local target="$1"
   local logfile="${2:-/dev/null}"
@@ -473,18 +726,19 @@ deploy_one_region() {
   else
     log "deploying Cloud Run service ${SERVICE} to ${target}"
   fi
+  if [ "${TR_DEPLOY_NO_TRAFFIC:-0}" = "1" ]; then
+    SERVICE="$SERVICE" PROJECT_ID="$PROJECT_ID" \
+      bash "${SCRIPT_DIR}/normalize_staged_traffic.sh" "$target" \
+      >>"$logfile" 2>&1
+  fi
   prune_failed_revisions "$target" >>"$logfile" 2>&1 || true
-  # Cold regions (not in TR_WARM_REGIONS) scale to zero. The first request
-  # pays a ~5-10s cold-start tax; subsequent requests within the
-  # keep-warm window are fast. Explicit override via
-  # TR_CLOUD_RUN_MIN_INSTANCES wins for either kind.
+  # A global override wins. Otherwise use the per-region service minimum;
+  # unknown warm regions retain one instance and unknown cold regions scale to
+  # zero. Service-level minimums remain allocated while staged revisions split
+  # traffic, unlike revision-level minimums which can double or disappear.
   local min_instances="${TR_CLOUD_RUN_MIN_INSTANCES:-}"
   if [ -z "$min_instances" ]; then
-    if is_warm_region "$target"; then
-      min_instances=1
-    else
-      min_instances=0
-    fi
+    min_instances="$(cloud_run_min_instances_for_region "$target")"
   fi
   # /chat and /synth stream through /chat-proxy/v1 for browser CORS.
   # Synth can legitimately take several model calls before final output, so
@@ -495,8 +749,9 @@ deploy_one_region() {
       --allow-unauthenticated \
       --port 8080 \
       --memory "${TR_CLOUD_RUN_MEMORY:-1Gi}" \
-      --concurrency "${TR_CLOUD_RUN_CONCURRENCY:-2}" \
-      --min-instances "$min_instances" \
+      --concurrency "$TR_CLOUD_RUN_CONCURRENCY" \
+      --min "$min_instances" \
+      --min-instances default \
       --timeout "${TR_CLOUD_RUN_TIMEOUT_SECONDS:-300}" \
       --network "${TR_CLOUD_RUN_NETWORK:-default}" \
       --subnet "${TR_CLOUD_RUN_SUBNET:-default}" \

@@ -37,6 +37,7 @@ from trusted_router.oauth_provider import (
     exchange_code,
     fetch_user,
 )
+from trusted_router.signup_gate import require_new_account_creation
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
@@ -184,6 +185,9 @@ async def _handle_callback(
     # displayed" on every first login. See PENDING_REVEAL_COOKIE above.
     pending_reveal_raw_key: str | None = None
     if existing_user is None:
+        # Creation-only global brake: provider login/state/profile validation
+        # still runs, and returning users never enter this branch.
+        require_new_account_creation(settings)
         if delegated_signup:
             # An app-originated signup receives no promotional credit and no
             # management API key. The app gets an inference-only key after
@@ -201,6 +205,7 @@ async def _handle_callback(
                 request,
                 workspace_id=workspace.id,
                 signup_provider=provider.slug,
+                starter_credit_microdollars=0,
             )
         else:
             # signup() returns None only on a TOCTOU race; fall back to a
@@ -217,6 +222,7 @@ async def _handle_callback(
                     request,
                     workspace_id=result.workspace.id,
                     signup_provider=provider.slug,
+                    starter_credit_microdollars=result.trial_credit_microdollars,
                 )
             else:
                 concurrent = STORE.find_user_by_email(info.email)
@@ -252,7 +258,7 @@ async def _handle_callback(
             value=pending_reveal_raw_key,
             max_age=PENDING_REVEAL_COOKIE_MAX_AGE,
             httponly=True,
-            secure=settings.environment.lower() == "production",
+            secure=settings.environment.lower() not in {"local", "test"},
             samesite="lax",
             path="/console/welcome",
         )
@@ -337,7 +343,11 @@ def _provider_redirect_uri(
     configured = getattr(settings, f"{provider.slug}_oauth_redirect_url", None)
     if configured:
         return configured
-    scheme = "https" if settings.environment.lower() == "production" else request.url.scheme
+    scheme = (
+        request.url.scheme
+        if settings.environment.lower() in {"local", "test"}
+        else "https"
+    )
     host = request.headers.get("host", request.url.netloc)
     return f"{scheme}://{host}/{provider.slug}_oauth_callback"
 
@@ -420,7 +430,7 @@ def _set_state_cookie(response: Response, state: str, settings: Settings) -> Non
         value=state,
         max_age=OAUTH_STATE_COOKIE_MAX_AGE,
         httponly=True,
-        secure=settings.environment.lower() == "production",
+        secure=settings.environment.lower() not in {"local", "test"},
         samesite="lax",
         path="/",
     )
@@ -435,7 +445,7 @@ def _set_next_cookie(response: Response, next_path: str | None, settings: Settin
         value=safe,
         max_age=OAUTH_STATE_COOKIE_MAX_AGE,
         httponly=True,
-        secure=settings.environment.lower() == "production",
+        secure=settings.environment.lower() not in {"local", "test"},
         samesite="lax",
         path="/",
     )
@@ -463,6 +473,6 @@ def _is_credit_delegation_target(value: str | None) -> bool:
 
 
 def _clear_state_and_next_cookies(response: Response, settings: Settings) -> None:
-    secure = settings.environment.lower() == "production"
+    secure = settings.environment.lower() not in {"local", "test"}
     response.delete_cookie(key=OAUTH_STATE_COOKIE, path="/", secure=secure, samesite="lax")
     response.delete_cookie(key=OAUTH_NEXT_COOKIE, path="/", secure=secure, samesite="lax")

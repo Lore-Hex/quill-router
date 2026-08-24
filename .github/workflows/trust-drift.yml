@@ -1,0 +1,110 @@
+name: Trust Measurement Drift
+
+# Compares every measurement we PUBLISH against a live attestation from the
+# plane that is supposed to be running it — GCP Confidential Space, the AWS
+# Nitro fleet, and both Azure regions.
+#
+# This workflow is the point of the exercise. scripts/verify_trust_measurements.py
+# existed and was invoked by nothing: its only mentions in the repo were two
+# comments naming it as the thing that catches drift, in
+# src/trusted_router/config.py and src/trusted_router/trust.py. A drift check nobody is
+# required to run has the reliability of a note in a drawer, and the failure it
+# guards against — a published measurement that no longer matches the enclave —
+# is invisible from the inside. It only ever shows up as a stranger concluding
+# our gateway was tampered with.
+on:
+  # DAILY, plus the events that can actually cause drift. This shipped hourly
+  # and that was wrong. The reasoning written here at the time argued that a
+  # drifted record is a STICKY failure and that the value "changes only on an
+  # enclave rebuild" — both true, and both arguments for a LONGER interval than
+  # the one they were used to justify. Nothing was gained by sampling a
+  # weekly-scale signal 24 times a day except a runner boot and a `uv sync` per
+  # run, and it was copied off prod-smoke's */30 without noticing that
+  # prod-smoke watches liveness, which genuinely changes minute to minute.
+  #
+  # Drift is created by exactly two things: a control-plane deploy that changes
+  # how records are mirrored, and an enclave rebuild republishing a
+  # measurement. The first is covered by the `workflow_run` trigger below. The
+  # second happens in quill-cloud-proxy, which cannot trigger a workflow here,
+  # and is what the daily run is for — it bounds detection latency for the one
+  # cause no event reaches.
+  #
+  # 07:23 UTC keeps it clear of the top-of-hour price-refresh and deploy rush,
+  # the same reasoning as daily-embeddings-probe.yml's 13:17.
+  schedule:
+    - cron: "23 7 * * *"
+  # A control-plane deploy can change how the records are MIRRORED (that is
+  # exactly what added the Azure `regions` array the checker enumerates), so
+  # re-check as soon as one lands rather than waiting up to an hour.
+  workflow_run:
+    workflows: ["Deploy TR control plane"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      control_plane:
+        description: "Control plane to read published records from"
+        type: string
+        default: "https://trustedrouter.com"
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: published vs running
+    runs-on: ubuntu-latest
+    # Same rule as prod-smoke: never fail a PR on the state of production. PRs
+    # get the offline proofs (tests/test_trust_measurement_drift.py) via ci.yml,
+    # which is what keeps this script honest without depending on prod being up.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Sync
+        run: uv sync --frozen
+      # --strict is the whole reason this runs here rather than only on a
+      # laptop: locally an unpublished plane is ordinary (staging mirrors,
+      # bring-up branches), but on a schedule "we stopped publishing a
+      # measurement" and "everything matches" must not be the same green tick.
+      #
+      # HISTORY, kept because the sequencing lesson is the point: this check
+      # merged while the control-plane deploy pipeline had been red for a day
+      # (an IAP permission on a step #574 added to migrate-schema), so for its
+      # first hours no run of it could pass — the code fix was on main and the
+      # serving fix it produces was stuck behind a broken deploy. An enforcing
+      # check must not merge ahead of the thing that lets it pass. The deploy
+      # was repaired on 2026-08-16 and the first strict run against production
+      # then exited 0 with all four endpoints contacted.
+      #
+      # Measured 2026-08-15 against production, before that deploy: the mirror
+      # was still dropping azure-release.json's `regions` array, so the checker
+      # could reach UAE North and not Southeast Asia and reported a [GAP] for
+      # the MAA issuer no contacted endpoint presented. That is the correct
+      # verdict for that state, not a flake.
+      #
+      # What turns it green is the deploy this workflow_run triggers on. Stated
+      # as precisely as it was actually established, because the first version
+      # of this comment overclaimed here: the fix is in TWO places, and only one
+      # of them is on the serving route. trusted_router.trust.azure_release
+      # mirrors the array through, and
+      # trusted_router.services.trust_release.validated_azure_metadata — the
+      # validator the route interposes ahead of it, which used to whitelist
+      # three scalar keys — validates and carries it. With only the former, the
+      # served record was byte-identical to before the change and this job would
+      # have been red forever.
+      #
+      # The evidence is offline and reproducible, NOT a live measurement:
+      # tests/test_trust_measurement_drift.py drives the real FastAPI route with
+      # a mocked upstream, asserts the served record carries both region URLs,
+      # then feeds that served record to the checker and asserts both endpoints
+      # were fetched. Nobody has yet observed the deployed control plane serving
+      # a regions[] array; that is what the first green run of this job will be.
+      - name: Published measurements vs live attestations
+        run: >
+          uv run python scripts/verify_trust_measurements.py
+          --strict
+          --control-plane "${{ inputs.control_plane || 'https://trustedrouter.com' }}"

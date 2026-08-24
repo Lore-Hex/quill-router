@@ -163,7 +163,7 @@ Capture the following first-party attribution fields:
 
 - `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`
 - keyed, non-reversible fingerprints derived from `gclid`, `gbraid`, `wbraid`,
-  and `twclid`; discard the raw click identifiers immediately
+  and `twclid`; retain Google click IDs only in the encrypted conversion path
 - first landing page and first-touch timestamp
 - last-touch source before signup
 
@@ -176,16 +176,18 @@ Persist attribution through these product events:
 5. `credit_purchase_completed`
 6. `retained_api_usage_7d`
 
-Do not send product events, user or workspace data, prompts, outputs, API keys,
-BYOK secrets, payment data, or request bodies to an ad platform. Google and X
-remain sources of impression, click, and spend reports only.
+Send Google only signup, first successful API call, and settled purchase
+conversions through the metadata-only Data Manager worker. Never send user or
+workspace data, prompts, outputs, API keys, BYOK secrets, payment credentials,
+model or provider choices, or request bodies. X remains a source of impression,
+click, and spend reports only.
 
 Report signup CAC and activated CAC internally; signup CAC alone is easy to
 make look good. Compare campaign and creative UTMs against first-party signup,
 activation, purchase, and retention records, then adjust budgets manually.
-Without downstream conversion uploads, ad-platform automated bidding cannot
-optimize for TrustedRouter activation or purchases and must not be treated as
-the source of truth.
+Google automated bidding may use the reported activation and purchase signals
+after those actions are verified as recording. Google remains an optimization
+input; the first-party ledger remains the source of truth.
 
 ## Raw Inputs
 

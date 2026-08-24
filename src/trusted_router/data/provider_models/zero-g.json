@@ -161,11 +161,11 @@
       "tee_verifier": "dstack",
       "private_provider_count": 1,
       "pricing_policy": "maximum-active-private-route",
-      "input_token_price_per_m": 80000,
-      "output_token_price_per_m": 480000,
-      "cached_input_token_price_per_m": 26667
+      "input_token_price_per_m": 536000,
+      "output_token_price_per_m": 3216000,
+      "cached_input_token_price_per_m": 178667
     }
   ],
   "model_count": 3,
-  "generated_at": "2026-08-07T23:35:48Z"
+  "generated_at": "2026-08-24T16:40:13Z"
 }

@@ -62,6 +62,101 @@
     {% endfor %}
   </section>
 
+  {% if public_client_observed_enabled and snapshot.client_observed is defined %}
+  {% set client_observed = snapshot.client_observed %}
+  {% if client_observed.reason != 'insufficient_real_data' %}
+  <section class="status-section" id="client-observed">
+    {% if client_observed.available %}
+    <div class="status-section-head">
+      <div>
+        <h2>Client-observed availability</h2>
+        {% if client_observed.gated_available %}
+        <p>Logical requests reported from inside customer processes.</p>
+        {% else %}
+        <p>Calibration only; no customer traffic has been measured yet.</p>
+        {% endif %}
+      </div>
+      <span class="component-status status-{{ 'up' if client_observed.state == 'published' else 'degraded' }}">{{ client_observed.state }}</span>
+    </div>
+    <div class="component-list">
+      {% if client_observed.gated_available %}
+      <div class="component-row">
+        <div class="slo-grid" aria-label="Client-observed availability windows">
+          {% for name in ["5m", "1h", "24h", "7d", "30d"] %}
+          {% set window = client_observed.windows[name] %}
+          <article class="slo-card">
+            <div class="slo-card-head">
+              <div>
+                <h3>{{ name }}</h3>
+                <p>{{ window.requests }} requests · {{ window.successes }} successes · {{ window.tr_fault }} faults</p>
+              </div>
+            </div>
+            <div class="slo-metrics">
+              {% if window.availability_percent is not none %}
+              <span>Availability <strong>{{ '%.4f'|format(window.availability_percent) }}%</strong></span>
+              {% else %}
+              <span>Availability <strong>insufficient data — {{ window.requests }} requests from {{ window.distinct_tenants }} tenants</strong></span>
+              {% endif %}
+              <span>Coverage <strong>{% if window.coverage is not none %}{{ '%.1f'|format(window.coverage * 100) }}%{% else %}n/a{% endif %}</strong></span>
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      {% if client_observed.all_traffic %}
+      {% set all_traffic_24h = client_observed.all_traffic.windows["24h"] %}
+      <div class="component-row" data-calibration-view>
+        <div class="component-main">
+          <div>
+            <h3>24h all traffic</h3>
+            <p>calibration view — includes synthetic canary traffic; not the published number</p>
+          </div>
+          <span class="component-status status-unknown">calibration</span>
+        </div>
+        <div class="slo-metrics" aria-label="Client-observed all-traffic calibration view, 24h">
+          <span>Availability <strong>{% if all_traffic_24h.availability_percent is not none %}{{ '%.4f'|format(all_traffic_24h.availability_percent) }}%{% else %}n/a{% endif %}</strong></span>
+          <span>Requests <strong>{{ all_traffic_24h.requests }}</strong></span>
+          <span>p50 total <strong>{% if all_traffic_24h.p50_total_ms is not none %}{{ all_traffic_24h.p50_total_ms }} ms{% else %}n/a{% endif %}</strong></span>
+          <span>p95 total <strong>{% if all_traffic_24h.p95_total_ms is not none %}{{ all_traffic_24h.p95_total_ms }} ms{% else %}n/a{% endif %}</strong></span>
+        </div>
+      </div>
+      {% endif %}
+      {% if client_observed.by_host_24h %}
+      <div class="component-row">
+        <div class="component-main">
+          <div>
+            <h3>24h host paths</h3>
+            <p>Attempt-level faults are diagnostic and do not change the logical-request availability above.</p>
+          </div>
+        </div>
+        <div class="burn-list">
+          {% for host, row in client_observed.by_host_24h.items() %}
+          <div class="burn-row">
+            <strong>{{ host|replace('_', '-') }}</strong>
+            <span><meter min="0" max="{{ row.attempts if row.attempts else 1 }}" value="{{ row.attempt_tr_fault }}">{{ row.attempt_tr_fault }} / {{ row.attempts }}</meter></span>
+            <small>{{ row.attempt_tr_fault }} faults / {{ row.attempts }} attempts{% if client_observed.state == 'published' and row.rate is not none %} · {{ '%.2f'|format(row.rate * 100) }}%{% endif %}</small>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      <div class="component-row">
+        <p class="muted">Not part of the 99.99 % Router Core SLO. Reported by TrustedRouter SDKs from inside customer processes; counts logical requests after SDK retries; excludes 4xx and caller aborts; includes client-side network failures TrustedRouter cannot otherwise see; sampled diagnostics, exact counters. Opt out: see the <a href="/docs/telemetry">client telemetry contract</a>.</p>
+      </div>
+    </div>
+    {% else %}
+    <div class="status-section-head">
+      <div>
+        <h2>Client-observed availability: {% if client_observed.reason == 'stale' %}stale{% else %}no data yet{% endif %}</h2>
+      </div>
+      <span class="component-status status-unknown">{% if client_observed.reason == 'stale' %}stale{% else %}no data{% endif %}</span>
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+  {% endif %}
+
   {% if snapshot.headline_metrics.latency_anatomy %}
   <section class="status-section">
     <div class="status-section-head">

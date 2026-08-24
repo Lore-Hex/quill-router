@@ -47,13 +47,20 @@ set -euo pipefail
 STACK="${STACK:-tr-azure}"
 RG="${RG:-$STACK}"
 LOCATION="${LOCATION:-uaenorth}"
-APP="${APP:-$STACK}"
-APP_ENV="${APP_ENV:-$STACK-env}"
+# The live app and environment carry a -vnet suffix; the pre-vnet names have
+# not existed since the VNet migration. These defaults were still $STACK and
+# $STACK-env, which meant this script targeted a container app and a managed
+# environment that do not exist -- see the preflight below for what that cost.
+APP="${APP:-$STACK-vnet}"
+APP_ENV="${APP_ENV:-$STACK-env-vnet}"
 PG_NAME="${PG_NAME:-$STACK-pg}"
 PG_ADMIN="${PG_ADMIN:-tradmin}"
 PG_DB="${PG_DB:-trustedrouter}"
 ACR="${ACR:-$(echo "${STACK}${LOCATION}acr" | tr -cd "[:alnum:]")}"
 IMAGE_TAG="${IMAGE_TAG:-azure}"
+# TR_RELEASE was IMAGE_TAG, the constant "azure", so this plane reported the
+# same release string on every deploy and staleness could not be measured.
+RELEASE_COMMIT="${RELEASE_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
 STATE_DIR="${STATE_DIR:-$HOME/.config/$STACK}"
 PW_FILE="${PW_FILE:-$STATE_DIR/pgpw}"
 
@@ -68,17 +75,17 @@ STATUS_HOST="${STATUS_HOST:-https://azure.trustedrouter.com}"
 # renaming one without the other silently unpublishes it.
 # Both Azure enclave regions. A region missing here is not probed at all, and
 # its component silently reports nothing rather than reporting down.
-# southeastasia carries an explicit @public_host. The two Azure regions serve
+# australiaeast carries an explicit @public_host. The two Azure regions serve
 # DIFFERENT public names, because the shared ACME cache is disabled on Azure
 # (no "tr-cross-cloud-sa-key" in the bundle), so each region completes ACME for
-# its own hostname only. Probing southeastasia with the canonical SNI
+# its own hostname only. Probing australiaeast with the canonical SNI
 # api-azure.trustedrouter.com asks it for a certificate it does not hold: the
 # handshake fails and a healthy region publishes as DOWN.
 #
 # uaenorth needs no override — it IS the canonical name. When the shared cache
 # lands and both regions serve one name, drop the @suffix and this returns to
 # the plain shared-name form that GCP and AWS use.
-GATEWAY_REGION_TARGETS="${GATEWAY_REGION_TARGETS:-uaenorth=quill-enclave-uaenorth.uaenorth.azurecontainer.io,southeastasia=quill-enclave-southeastasia.southeastasia.azurecontainer.io@api-azure-sea.trustedrouter.com}"
+GATEWAY_REGION_TARGETS="${GATEWAY_REGION_TARGETS:-uaenorth=quill-enclave-uaenorth.uaenorth.azurecontainer.io,australiaeast=quill-enclave-australiaeast.australiaeast.azurecontainer.io@api-azure-syd.trustedrouter.com}"
 
 # Secrets resolved from the operator's own files, exactly like every other
 # cloud (quill-cloud-proxy tools/quill_secret_sources.py). No cloud reads
@@ -90,16 +97,32 @@ SECRETS_DIR="${SECRETS_DIR:-$HOME/.quill-secrets}"
 # Federation + deferred settlement. Identity federates from the GCP home plane
 # (a peer token grants directory reads only); credits do not. Deferred
 # settlement stays OFF until its token is present AND explicitly enabled.
-FEDERATION_HOME_BASE_URL="${FEDERATION_HOME_BASE_URL:-https://trustedrouter.com}"
-DEFERRED_SETTLEMENT_ENABLED="${DEFERRED_SETTLEMENT_ENABLED:-false}"
 # 120s, not 300s: the status page calls the monitor stale at 300s, so an
 # interval equal to the threshold flaps in and out of a stale banner.
 SYNTHETIC_INTERVAL_SECONDS="${SYNTHETIC_INTERVAL_SECONDS:-120}"
 SYNTHETIC_ROTATION_COUNT="${SYNTHETIC_ROTATION_COUNT:-8}"
+# Azure does not yet have an approved external scheduled worker. Both loops
+# therefore remain in this process, and the observer service MUST remain a
+# singleton: every additional replica would repeat paid inference and
+# remediation. These are source-of-truth literals rather than operator knobs;
+# changing ownership is a separately reviewed resource/cost migration.
+OBSERVER_REMEDIATOR_IN_PROCESS_ENABLED="true"
+OBSERVER_REMEDIATOR_MODE="observe"
+OBSERVER_MAX_REPLICAS_EFFECTIVE=1
 
 log() { printf '\n=== %s\n' "$*" >&2; }
 exists() { "$@" >/dev/null 2>&1; }
 die() { echo "[FAIL] $*" >&2; exit 1; }
+
+case "$SYNTHETIC_INTERVAL_SECONDS" in
+  ''|*[!0-9]*) die "SYNTHETIC_INTERVAL_SECONDS must be a positive integer" ;;
+esac
+[ "$SYNTHETIC_INTERVAL_SECONDS" -gt 0 ] \
+  || die "Azure has no external synthetic owner; the in-process scheduler cannot be disabled"
+[ "$OBSERVER_REMEDIATOR_IN_PROCESS_ENABLED" = "true" ] \
+  || die "Azure has no external remediation owner; the in-process remediator cannot be disabled"
+[ "$OBSERVER_REMEDIATOR_MODE" != "off" ] \
+  || die "Azure has no external remediation owner; remediator mode cannot be off"
 
 read_secret() {
   # A file in the secrets dir wins; otherwise the env file's own name.
@@ -130,20 +153,18 @@ exists az containerapp env show -g "$RG" -n "$APP_ENV" \
 PG_HOST="$(az postgres flexible-server show -g "$RG" -n "$PG_NAME" --query fullyQualifiedDomainName -o tsv)"
 ACR_SERVER="$(az acr show -g "$RG" -n "$ACR" --query loginServer -o tsv)"
 
-INTERNAL_TOKEN="$(read_secret trustedrouter-internal-gateway-token TR_INTERNAL_GATEWAY_TOKEN)"
+OBSERVER_TOKEN="$(read_secret trustedrouter-observer-internal-token TR_OBSERVER_INTERNAL_TOKEN)"
 MONITOR_KEY="$(read_secret trustedrouter-synthetic-monitor-api-key TR_SYNTHETIC_MONITOR_API_KEY)"
-FEDERATION_TOKEN="$(read_secret trustedrouter-federation-peer-token TR_FEDERATION_PEER_TOKEN)"
-SETTLEMENT_TOKEN="$(read_secret trustedrouter-federation-settlement-token-azure-uae UNSET_ON_PURPOSE)"
-[ -n "$INTERNAL_TOKEN" ] || die "no internal gateway token in $SECRETS_DIR or $KEYS_FILE"
+[ -n "$OBSERVER_TOKEN" ] || die "no observer internal token in $SECRETS_DIR or $KEYS_FILE"
 [ -n "$MONITOR_KEY" ] || die "no synthetic monitor key: the leaderboard cannot run without it"
+LEGACY_GATEWAY_TOKEN="$(read_secret trustedrouter-internal-gateway-token TR_INTERNAL_GATEWAY_TOKEN)"
+if [ -n "$LEGACY_GATEWAY_TOKEN" ] && [ "$OBSERVER_TOKEN" = "$LEGACY_GATEWAY_TOKEN" ]; then
+  die "observer internal token must differ from the billing gateway token"
+fi
+unset LEGACY_GATEWAY_TOKEN
 # The monitor key is what makes the leaderboard green: rotation calls the
 # gateway as a CUSTOMER of itself. Without it there is a status page with no
 # model rows, which reads as "no data" rather than "not measured".
-
-if [ -z "$SETTLEMENT_TOKEN" ] || [ "$DEFERRED_SETTLEMENT_ENABLED" != "true" ]; then
-  log "deferred settlement OFF (token present: $([ -n "$SETTLEMENT_TOKEN" ] && echo yes || echo no))"
-  DEFERRED_SETTLEMENT_ENABLED="false"
-fi
 
 if exists az containerapp show -g "$RG" -n "$APP"; then
   PG_PASSWORD="$(az containerapp secret show -g "$RG" -n "$APP" --secret-name pg-password --query value -o tsv)"
@@ -152,6 +173,55 @@ else
   PG_PASSWORD="$(cat "$PW_FILE")"
 fi
 DSN="postgresql://${PG_ADMIN}:${PG_PASSWORD}@${PG_HOST}:5432/${PG_DB}?sslmode=require"
+
+# PREFLIGHT. Runs before the ACR build because the build takes minutes and this
+# takes seconds, and the whole point is to fail while the operator still has
+# options.
+#
+# MEASURED 2026-08-23: with the pre-vnet defaults this script targeted
+# containerapp "tr-azure" in environment "tr-azure-env". Neither exists. The
+# live control plane -- the one azure.trustedrouter.com resolves to and which
+# answers 200 -- is "tr-azure-vnet" in "tr-azure-env-vnet", and that name
+# appears nowhere in this repository. So an Azure deploy failed at the
+# `containerapp create` step, AFTER the image build, having changed nothing.
+# In an emergency that is minutes spent to arrive at a confusing error.
+preflight() {
+  local problems=0
+  if ! exists az group show -n "$RG"; then
+    echo "resource group ${RG} not found" >&2
+    problems=1
+  fi
+  if ! exists az containerapp env show -g "$RG" -n "$APP_ENV"; then
+    echo "managed environment ${APP_ENV} not found in ${RG}. Available:" >&2
+    az containerapp env list -g "$RG" --query "[].name" -o tsv 2>/dev/null | sed 's/^/  /' >&2
+    problems=1
+  fi
+  if ! exists az containerapp show -g "$RG" -n "$APP"; then
+    # Not fatal on its own: first-run genuinely creates the app. It IS fatal
+    # when something is already serving the public hostname, because then this
+    # run would build a second app beside the real one and report success.
+    echo "container app ${APP} not found in ${RG}. Available:" >&2
+    az containerapp list -g "$RG" --query "[].name" -o tsv 2>/dev/null | sed 's/^/  /' >&2
+    # Distinguish a genuine first run from drift WITHOUT a network call. The
+    # first version curled the public hostname, which is wrong twice over: a
+    # deploy preflight that needs the public internet fails for its own reasons
+    # offline, and it made an ordinary unit test reach production. The resource
+    # group already knows. Empty means first run and creating is correct.
+    # Non-empty means something here is already the deployment, and creating
+    # would stand up a second app beside it.
+    local existing
+    existing="$(az containerapp list -g "$RG" --query "[].name" -o tsv 2>/dev/null | tr "\n" " ")"
+    if [ -n "${existing// /}" ]; then
+      echo "refusing: ${RG} already contains container app(s): ${existing}" >&2
+      echo "Creating ${APP} would stand up a second app beside one of those." >&2
+      echo "Set APP= and APP_ENV= to the deployment that is actually serving." >&2
+      problems=1
+    fi
+  fi
+  [ "$problems" -eq 0 ] || die "preflight failed; nothing was built or changed"
+  log "preflight ok: ${APP} in ${APP_ENV} (${RG})"
+}
+preflight
 
 log "building linux/amd64 image in ACR ${ACR}"
 az acr build --registry "$ACR" --platform linux/amd64 \
@@ -171,7 +241,18 @@ log "deploying by digest: ${IMAGE_DIGEST}"
 
 ENV_VARS=(
   "TR_ENVIRONMENT=canary"
-  "TR_RELEASE=${IMAGE_TAG}"
+  "TR_SERVICE_SURFACE=observer"
+  "TR_NEW_SIGNUPS_ENABLED=false"
+  # Container Apps cannot safely overwrite the trusted client-IP header while
+  # this service is directly exposed. Ignore any caller-supplied value and use
+  # the conservative aggregate application bucket; the platform scale cap is
+  # the cost boundary until the documented Front Door/Private Link migration.
+  "TR_RATE_LIMIT_CLIENT_IP_MODE=untrusted"
+  "TR_MAX_REQUEST_BODY_BYTES=4194304"
+  "TR_MAX_IN_FLIGHT_REQUEST_BODY_BYTES=8388608"
+  "TR_MAX_CONCURRENT_REQUEST_BODIES=2"
+  "TR_REQUEST_BODY_READ_TIMEOUT_SECONDS=10"
+  "TR_RELEASE=${RELEASE_COMMIT}"
   "TR_STORAGE_BACKEND=postgres"
   "TR_POSTGRES_DSN=secretref:pg-dsn"
   "TR_ENABLE_LIVE_PROVIDERS=false"
@@ -195,8 +276,6 @@ ENV_VARS=(
   # Flip this and the enclave's own env together, never separately.
   "TR_SYNTHETIC_CONTROL_PLANE_BASE_URL=https://trustedrouter.com"
 
-  "TR_FEDERATION_HOME_BASE_URL=${FEDERATION_HOME_BASE_URL}"
-  "TR_FEDERATION_DEFERRED_SETTLEMENT_ENABLED=${DEFERRED_SETTLEMENT_ENABLED}"
 
   # The monitor runs IN THIS PROCESS. Azure has no Cloud Scheduler and no
   # EventBridge, and Container Apps Jobs cannot carry a `python -c` argv
@@ -211,28 +290,36 @@ ENV_VARS=(
   # no sample shows no verdict at all - not green, not red, absent.
   "TR_SYNTHETIC_SCHEDULER_INTERVAL_SECONDS=${SYNTHETIC_INTERVAL_SECONDS}"
   "TR_SYNTHETIC_SCHEDULER_ROTATION_COUNT=${SYNTHETIC_ROTATION_COUNT}"
+  "TR_REMEDIATOR_IN_PROCESS_ENABLED=${OBSERVER_REMEDIATOR_IN_PROCESS_ENABLED}"
+  "TR_REMEDIATOR_MODE=${OBSERVER_REMEDIATOR_MODE}"
 
-  "TR_INTERNAL_GATEWAY_TOKEN=secretref:internal-token"
+  "TR_OBSERVER_INTERNAL_TOKEN=secretref:observer-token"
   "TR_SYNTHETIC_MONITOR_API_KEY=secretref:monitor-key"
-  "TR_FEDERATION_HOME_TOKEN=secretref:federation-token"
 )
 SECRET_ARGS=(
   "pg-password=${PG_PASSWORD}"
   "pg-dsn=${DSN}"
-  "internal-token=${INTERNAL_TOKEN}"
+  "observer-token=${OBSERVER_TOKEN}"
   "monitor-key=${MONITOR_KEY}"
-  "federation-token=${FEDERATION_TOKEN}"
 )
-if [ "$DEFERRED_SETTLEMENT_ENABLED" = "true" ]; then
-  ENV_VARS+=("TR_FEDERATION_SETTLEMENT_HOME_TOKEN=secretref:settlement-token")
-  SECRET_ARGS+=("settlement-token=${SETTLEMENT_TOKEN}")
-fi
+RETIRED_OBSERVER_ENV_VARS=(
+  TR_INTERNAL_GATEWAY_TOKEN
+  TR_FEDERATION_HOME_TOKEN
+  TR_FEDERATION_SETTLEMENT_HOME_TOKEN
+  TR_FEDERATION_DEFERRED_SETTLEMENT_ENABLED
+  TR_FEDERATION_HOME_BASE_URL
+)
 
 if exists az containerapp show -g "$RG" -n "$APP"; then
   log "updating $APP"
   az containerapp secret set -g "$RG" -n "$APP" --secrets "${SECRET_ARGS[@]}" -o none
   az containerapp update -g "$RG" -n "$APP" \
-    --image "$IMAGE_REF" --set-env-vars "${ENV_VARS[@]}" -o none
+    --image "$IMAGE_REF" --set-env-vars "${ENV_VARS[@]}" \
+    --remove-env-vars "${RETIRED_OBSERVER_ENV_VARS[@]}" \
+    --min-replicas 1 --max-replicas "$OBSERVER_MAX_REPLICAS_EFFECTIVE" \
+    --scale-rule-name observer-http \
+    --scale-rule-type http \
+    --scale-rule-http-concurrency "${OBSERVER_HTTP_CONCURRENCY:-10}" -o none
 else
   log "creating $APP"
   ACR_USER="$(az acr credential show -n "$ACR" --query username -o tsv)"
@@ -246,8 +333,44 @@ else
     --secrets "${SECRET_ARGS[@]}" \
     --env-vars "${ENV_VARS[@]}" \
     --target-port 8080 --ingress external \
-    --min-replicas 1 --max-replicas 3 \
+    --min-replicas 1 --max-replicas "$OBSERVER_MAX_REPLICAS_EFFECTIVE" \
+    --scale-rule-name observer-http \
+    --scale-rule-type http \
+    --scale-rule-http-concurrency "${OBSERVER_HTTP_CONCURRENCY:-10}" \
     --cpu 1.0 --memory 2.0Gi -o none
+fi
+
+configured_env_names="$(az containerapp show -g "$RG" -n "$APP" \
+  --query 'properties.template.containers[0].env[].name' -o tsv)"
+configured_env_names="${configured_env_names//$'\t'/$'\n'}"
+while IFS= read -r configured_env_name; do
+  for retired_env_name in "${RETIRED_OBSERVER_ENV_VARS[@]}"; do
+    if [ "$configured_env_name" = "$retired_env_name" ]; then
+      die "observer retains forbidden legacy env ${retired_env_name}"
+    fi
+  done
+done <<<"$configured_env_names"
+
+# Scale limits are revision-scoped. Only switch to single mode after the
+# bounded replacement revision has deployed successfully, so an old staged
+# revision cannot keep serving outside this cap and a pre-existing staged
+# revision cannot be promoted before the known image is ready.
+az containerapp revision set-mode -g "$RG" -n "$APP" --mode single -o none
+active_revision_mode="$(az containerapp show -g "$RG" -n "$APP" \
+  --query properties.configuration.activeRevisionsMode -o tsv)"
+configured_max_replicas="$(az containerapp show -g "$RG" -n "$APP" \
+  --query properties.template.scale.maxReplicas -o tsv)"
+configured_http_concurrency="$(az containerapp show -g "$RG" -n "$APP" \
+  --query "properties.template.scale.rules[?name=='observer-http'].http.metadata.concurrentRequests | [0]" \
+  -o tsv)"
+case "$active_revision_mode" in
+  Single|single) mode_verified=1 ;;
+  *) mode_verified=0 ;;
+esac
+if [ "$mode_verified" != "1" ] \
+    || [ "$configured_max_replicas" != "$OBSERVER_MAX_REPLICAS_EFFECTIVE" ] \
+    || [ "$configured_http_concurrency" != "${OBSERVER_HTTP_CONCURRENCY:-10}" ]; then
+  die "observer scale verification failed: mode=${active_revision_mode:-unset} max=${configured_max_replicas:-unset} concurrency=${configured_http_concurrency:-unset}"
 fi
 
 FQDN="$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)"
@@ -326,3 +449,46 @@ cat >&2 <<NOTE
                 model — which is the whole point of measuring it here.
   verify        bash scripts/deploy/verify_deployment.sh (cloud-agnostic)
 NOTE
+
+# ---------------------------------------------------------------------------
+# ...and then the part that is NOT a note.
+#
+# Everything above provisions a control plane that serves, measures itself, and
+# publishes a status page. None of it gives this cloud an operational-analytics
+# pipeline: the ENV_VARS block sets no TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED,
+# so settle enqueues nothing, there is no outbox to drain, and no drain. On AWS
+# that same gap ran for fifteen days behind an entirely green status page
+# because the only alarm is emitted by the missing process.
+#
+# So this deploy now ends by asking whether the CLOUD works rather than whether
+# the script finished, and today, on Azure, it says no. That is the correct
+# answer, and no variable this script inherits changes it: the verifier's bound
+# is a constant in src/ and its URL comes from the fleet registry, and the two
+# variables it reads at all -- TR_MAX_DRAIN_LAG_SECONDS and TR_STATUS_URL -- it
+# reads only in order to print that they are being IGNORED. (An earlier version
+# of this comment said the verifier "reads no environment variable at all",
+# which was a tidier sentence and not true.) It takes no flags either.
+#
+# The only way to make this exit 0 is to build the pipeline. There is no
+# exemption, no waiver and no registry field that excuses a stage: a cloud that
+# cannot be checked is NOT VERIFIED and this script exits non-zero.
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/deploy/cloud_complete_gate.sh
+. "${SCRIPT_DIR}/cloud_complete_gate.sh"
+
+require_cloud_complete azure "$(cat <<'NEXT'
+The Azure app is deployed and serving. The Azure CLOUD is not complete: it has
+no operational-analytics pipeline at all. To finish it:
+
+  1. give it somewhere to drain TO (a ClickHouse this cloud owns, mirroring
+     scripts/deploy/aws_eu_clickhouse.sh) — this is a COST decision, so it is
+     not made by a deploy script;
+  2. add to the ENV_VARS block in this file:
+       TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true
+       TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=...  (+ user/database/password)
+  3. install a drain against it, mirroring
+     scripts/deploy/aws_eu_clickhouse_drain_install.sh;
+  4. bash scripts/deploy/verify_cloud_complete.sh azure
+NEXT
+)"

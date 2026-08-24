@@ -571,6 +571,7 @@ def test_unset_configuration_is_exactly_todays_target_list() -> None:
         "us-central1",
         "us-east4",
         "europe-west4",
+        "southamerica-east1",
     ]
     assert all(target.connect_host is None for target in gcp)
     assert all(target.paid_probes is True for target in gcp)
@@ -860,6 +861,7 @@ def test_unconfigured_deployments_publish_none_of_them() -> None:
         "us_central1_regional_api",
         "us_east4_regional_api",
         "eu_regional_api",
+        "sa_regional_api",
         "attestation",
         "billing_settlement",
         "provider_fallback",
@@ -1239,7 +1241,7 @@ def test_azure_deploy_probes_every_azure_gateway_component() -> None:
         for c in mod.COMPONENT_DEFINITIONS
         if c["id"].endswith("_gateway")
         and c["id"] in mod.COMPONENT_PROBE_TARGETS
-        and mod.COMPONENT_PROBE_TARGETS[c["id"]] in {"uaenorth", "southeastasia"}
+        and mod.COMPONENT_PROBE_TARGETS[c["id"]] in {"uaenorth", "australiaeast"}
     }
     unprobed = sorted(azure_regions - probed)
     assert not unprobed, (
@@ -1254,12 +1256,13 @@ def test_azure_deploy_probes_every_azure_gateway_component() -> None:
 # Every regional target used to inherit the canonical api_base_url, so SNI and
 # Host were always the shared public name. That is correct wherever every
 # replica serves one name (GCP, AWS) and WRONG on Azure, whose two regions
-# serve api-azure and api-azure-sea because the shared ACME cache is disabled
-# there. Probing southeastasia with the canonical SNI asks it for a certificate
+# serve api-azure and api-azure-syd because the shared ACME cache is disabled
+# there. Probing australiaeast with the canonical SNI asks it for a certificate
 # it does not hold: the handshake fails and a healthy region publishes as DOWN.
 #
-# Reproduced live 2026-08-07 — southeastasia was serving 200 on its own name
-# while the status page called it down.
+# Reproduced live 2026-08-07 in southeastasia, the region australiaeast
+# replaced: it was serving 200 on its own name while the status page called it
+# down. The region changed; the failure mode did not.
 
 
 def test_no_override_leaves_the_canonical_url_untouched() -> None:
@@ -1278,9 +1281,9 @@ def test_an_override_swaps_only_the_host() -> None:
     """
     assert (
         _region_api_base_url(
-            "https://api-azure.trustedrouter.com/v1", "api-azure-sea.trustedrouter.com"
+            "https://api-azure.trustedrouter.com/v1", "api-azure-syd.trustedrouter.com"
         )
-        == "https://api-azure-sea.trustedrouter.com/v1"
+        == "https://api-azure-syd.trustedrouter.com/v1"
     )
     assert (
         _region_api_base_url("https://api.example.com:8443/v1", "sea.example.com")
@@ -1288,7 +1291,7 @@ def test_an_override_swaps_only_the_host() -> None:
     )
 
 
-def test_azure_southeastasia_is_probed_at_its_own_public_name() -> None:
+def test_azure_australiaeast_is_probed_at_its_own_public_name() -> None:
     """The deploy script must carry the override, not just the connect host.
 
     Without it the probe is a false alarm generator, and a status page that
@@ -1299,8 +1302,8 @@ def test_azure_southeastasia_is_probed_at_its_own_public_name() -> None:
         _deploy_script_region_targets("scripts/deploy/azure_control_plane.sh")
     )
     by_name = {entry.name: entry for entry in entries}
-    assert "southeastasia" in by_name, "southeastasia is not configured at all"
-    assert by_name["southeastasia"].public_host == "api-azure-sea.trustedrouter.com"
+    assert "australiaeast" in by_name, "australiaeast is not configured at all"
+    assert by_name["australiaeast"].public_host == "api-azure-syd.trustedrouter.com"
     # uaenorth IS the canonical name, so it must NOT carry an override —
     # one would be a second place to keep the same hostname in sync.
     assert by_name["uaenorth"].public_host == ""
@@ -1320,7 +1323,7 @@ def test_every_azure_region_target_resolves_to_a_distinct_public_name() -> None:
 def test_an_empty_public_host_after_the_separator_is_rejected() -> None:
     """`region=host@` reads as an override and silently is not one."""
     with pytest.raises(ValueError, match="public host after '@' must not"):
-        parse_gateway_region_targets("southeastasia=host.example.com@")
+        parse_gateway_region_targets("australiaeast=host.example.com@")
 
 
 def test_the_probe_actually_uses_the_override() -> None:
@@ -1343,20 +1346,20 @@ def test_the_probe_actually_uses_the_override() -> None:
                 synthetic_regional_probes_enabled=False,
                 synthetic_gateway_region_targets=(
                     "uaenorth=quill-enclave-uaenorth.uaenorth.azurecontainer.io,"
-                    "southeastasia=quill-enclave-southeastasia.southeastasia.azurecontainer.io"
-                    "@api-azure-sea.trustedrouter.com"
+                    "australiaeast=quill-enclave-australiaeast.australiaeast.azurecontainer.io"
+                    "@api-azure-syd.trustedrouter.com"
                 ),
             )
         )
     }
 
-    assert targets["southeastasia"].api_base_url == (
-        "https://api-azure-sea.trustedrouter.com/v1"
-    ), "southeastasia is probed with a certificate name it does not hold"
+    assert targets["australiaeast"].api_base_url == (
+        "https://api-azure-syd.trustedrouter.com/v1"
+    ), "australiaeast is probed with a certificate name it does not hold"
     # ...while still DIALLING its own region, or one dead region could hide
     # behind whatever DNS happens to return for the shared name.
-    assert targets["southeastasia"].connect_host == (
-        "quill-enclave-southeastasia.southeastasia.azurecontainer.io"
+    assert targets["australiaeast"].connect_host == (
+        "quill-enclave-australiaeast.australiaeast.azurecontainer.io"
     )
     # uaenorth has no override and must keep the canonical name.
     assert targets["uaenorth"].api_base_url == "https://api-azure.trustedrouter.com/v1"

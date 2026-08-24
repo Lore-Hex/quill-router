@@ -1,0 +1,188 @@
+{
+  "provider": "arcee",
+  "models": [
+    {
+      "display_name": "Trinity Large Thinking",
+      "title": "trinity-large-thinking",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "arcee-ai/trinity-large-thinking",
+      "upstream_id": "trinity-large-thinking",
+      "context_length": 262144,
+      "routable": true,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 800000,
+      "cached_input_token_price_per_m": 60000
+    },
+    {
+      "display_name": "DeepSeek V4 Flash Latest",
+      "title": "deepseek/deepseek-v4-flash-latest",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-latest",
+      "upstream_id": "deepseek/deepseek-v4-flash-latest",
+      "context_length": 1048576,
+      "routable": false,
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 28000,
+      "missing_since": "2026-08-22",
+      "routable_reason": "delisted-upstream"
+    },
+    {
+      "display_name": "DeepSeek V4 Pro",
+      "title": "deepseek/deepseek-v4-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-pro",
+      "upstream_id": "deepseek/deepseek-v4-pro",
+      "context_length": 512000,
+      "routable": true,
+      "input_token_price_per_m": 1740000,
+      "output_token_price_per_m": 3480000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "DeepSeek V4 Pro 0813",
+      "title": "deepseek/deepseek-v4-pro-0813",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-pro-0813",
+      "upstream_id": "deepseek/deepseek-v4-pro-0813",
+      "context_length": 1048576,
+      "routable": true,
+      "input_token_price_per_m": 1320000,
+      "output_token_price_per_m": 3960000,
+      "cached_input_token_price_per_m": 44000
+    },
+    {
+      "display_name": "Kimi K3",
+      "title": "moonshotai/kimi-k3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "moonshotai/kimi-k3",
+      "context_length": 1048576,
+      "routable": true,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Inkling Small",
+      "title": "thinkingmachines/inkling-small",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "thinkingmachines/inkling-small",
+      "upstream_id": "thinkingmachines/inkling-small",
+      "context_length": 262144,
+      "routable": true,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "GLM 5.2",
+      "title": "zai-org/glm-5.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "zai-org/glm-5.2",
+      "context_length": 262144,
+      "routable": true,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000
+    },
+    {
+      "display_name": "DeepSeek V4 Flash Latest",
+      "title": "deepseek/deepseek-v4-flash-latest",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash",
+      "upstream_id": "deepseek/deepseek-v4-flash-latest",
+      "context_length": 1048576,
+      "routable": true,
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 28000
+    }
+  ],
+  "source": "https://api.arcee.ai/api/v1/models",
+  "pricing_source": "https://api.arcee.ai/api/v1/models",
+  "generated_at": "2026-08-22T22:30:44Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 8
+}

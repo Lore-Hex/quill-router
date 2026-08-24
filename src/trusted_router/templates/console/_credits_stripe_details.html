@@ -1,0 +1,9 @@
+<div data-credits-saved-payment-method-fragment>
+  {% include "console/_credits_saved_payment_method.html" %}
+</div>
+<span data-credits-payment-history-count-fragment>
+  {{ payments|length ~ ' recent' if payments_available else 'unavailable' }}
+</span>
+<div data-credits-payment-history-fragment>
+  {% include "console/_credits_payment_history.html" %}
+</div>

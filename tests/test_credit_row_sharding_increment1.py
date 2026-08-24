@@ -239,6 +239,28 @@ def test_typed_direct_grant_rolls_back_when_active_shard_is_missing() -> None:
     assert ("stripe_event", "evt-missing") not in database.rows
 
 
+def test_guarded_debit_rebalances_to_shard_zero_once_before_retry() -> None:
+    store, database, _ = make_fake_store()
+    workspace_id = "ws-debit-rebalance"
+    _seed_sharded_credit(store, database, workspace_id, [10, 90])
+
+    assert (
+        store.debit_workspace_guarded(
+            workspace_id,
+            80,
+            "evt-debit-rebalance",
+            kind="verification_fee",
+        )
+        == "accepted"
+    )
+
+    rows = database.typed[CREDIT_BALANCE_TABLE]
+    assert rows[(workspace_id, 0)]["total_credits"] == 0
+    assert rows[(workspace_id, 1)]["total_credits"] == 20
+    movement = store.list_credit_movements(workspace_id)[0]
+    assert movement.amount_microdollars == -80
+
+
 def test_typed_credit_snapshot_sums_only_configured_shards() -> None:
     store, database, _ = make_fake_store()
     workspace_id = "ws-summary-shards"

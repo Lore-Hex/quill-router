@@ -25,7 +25,7 @@ log = logging.getLogger("trusted_router.analytics_reconciler")
 
 CLICKHOUSE_COLUMNS = (
     "id, created_at, provider, model, provider_name, status, usage_type, source, "
-    "streamed, input_tokens, output_tokens, total_cost_microdollars, "
+    "workspace_id, streamed, input_tokens, output_tokens, total_cost_microdollars, "
     "speed_tokens_per_second, elapsed_milliseconds, first_token_milliseconds, "
     "ttfb_milliseconds, finish_reason, error_type, error_status, error_message, "
     "region, app"

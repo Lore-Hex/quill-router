@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Never, TypeVar, cast
 
 import psycopg
+from psycopg.types.numeric import Int8
 from psycopg_pool import ConnectionPool
 
 from trusted_router import credit_transfer
@@ -27,7 +28,16 @@ from trusted_router.credit_transfer import (
     validate_outcome,
     validate_transfer_id,
 )
+from trusted_router.custom_model_billing import (
+    user_model_authorization_id_from_payout_event_id,
+)
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
+from trusted_router.operational_analytics_freshness import (
+    BACKEND_POSTGRES,
+    REASON_NOT_CONFIGURED,
+    REASON_UNREACHABLE,
+    OutboxFreshness,
+)
 from trusted_router.postgres_dsn import (
     aws_dsql_connection_details,
     dsql_token_is_admin,
@@ -41,12 +51,21 @@ from trusted_router.security import (
     new_key_id,
     verify_api_key,
 )
-from trusted_router.spend_windows import KeyWindowLimitExceeded, window_floors
+from trusted_router.spend_windows import (
+    KeyLimitExceeded,
+    KeyWindowLimitDecision,
+    KeyWindowLimitExceeded,
+    decide_key_window_limits,
+    window_floors,
+)
+from trusted_router.storage_auth_context import build_session_auth_context
 from trusted_router.storage_codec import json_body
+from trusted_router.storage_custom_models import normalize_custom_model_id
 from trusted_router.storage_errors import (
     DeferredSettlementCapReached,
     StoreConflict,
     StoreUnavailable,
+    is_duplicate_key_error,
 )
 from trusted_router.storage_gcp_codec import (
     byok_id,
@@ -54,11 +73,15 @@ from trusted_router.storage_gcp_codec import (
     normalize_email,
     workspace_key_id,
 )
+from trusted_router.storage_gcp_counters import credit_shard_count, distribute_credit_amount
+from trusted_router.storage_key_usage import api_key_from_json, api_key_usage_snapshot
 from trusted_router.storage_models import (
     FUTURE_SAMPLE_SKEW_SECONDS,
     AcquisitionAttribution,
     ActivationReminderTask,
     ApiKey,
+    ApiKeyAuthContext,
+    ApiKeyUsageSnapshot,
     AuthSession,
     BedrockGroupBuyAggregate,
     BedrockGroupBuyPledge,
@@ -67,22 +90,26 @@ from trusted_router.storage_models import (
     BroadcastDestination,
     ByokProviderConfig,
     CreditAccount,
+    CreditMovement,
     CreditTransfer,
     CustomModel,
     EmailSendBlock,
     EncryptedSecretEnvelope,
     GatewayAuthorization,
     Generation,
+    GoogleAdsConversion,
     Member,
     OAuthAuthorizationCode,
     ProviderAccessGrant,
     ProviderBenchmarkSample,
     RateLimitHit,
     Reservation,
+    SessionAuthContext,
     SignupResult,
     SyntheticProbeSample,
     SyntheticRollup,
     User,
+    UserProvidedModel,
     VerificationToken,
     VideoJob,
     WalletChallenge,
@@ -106,6 +133,14 @@ from trusted_router.storage_video_jobs import (
     _is_due,
     _iso_after_seconds,
 )
+from trusted_router.storage_wallet_challenges import (
+    WALLET_CHALLENGE_SCOPE_KIND,
+    normalize_wallet_address,
+    parse_siwe_challenge_scope,
+    reusable_wallet_challenge_nonce,
+    wallet_challenge_nonce_is_valid,
+    wallet_challenge_scope_id,
+)
 from trusted_router.synthetic.rollups import (
     RAW_SYNTHETIC_RETENTION_DAYS,
     ROLLUP_RETENTION_MONTHS,
@@ -113,13 +148,63 @@ from trusted_router.synthetic.rollups import (
     new_rollup_for_sample,
     sample_rollup_ids,
 )
-from trusted_router.types import UsageType
+from trusted_router.types import IdentityVerificationStatus, UsageType
 
 T = TypeVar("T")
 
 log = logging.getLogger(__name__)
 
 _AWS_DSQL_IAM_AUTH = "aws-dsql"
+
+# SQLSTATEs meaning "the server rolled your transaction back whole; replaying
+# it is the correct response". _run_transaction retries exactly these.
+#
+# Keyed on the SQLSTATE string rather than on a psycopg exception class, and
+# that is the entire point. psycopg generates ONE FLAT CLASS PER SQLSTATE, each
+# deriving straight from its DB-API base, so `SerializationFailure` (40001) and
+# `DeadlockDetected` (40P01) are SIBLINGS of `TransactionRollback` (40000), not
+# subclasses of it. `except psycopg.errors.TransactionRollback` therefore
+# caught only a bare 40000 -- which no server in this fleet emits -- and every
+# real abort fell through to the generic handler as a caller-visible
+# StoreUnavailable. That is how a routine concurrent reserve came back as
+# "Postgres could not service the storage operation" instead of retrying and
+# reporting "insufficient credits" (CI run 31996299784). SQLSTATE is the
+# DATABASE's contract; psycopg's class layout is not.
+#
+# The other two class-40 codes are deliberately absent:
+#   40002 transaction_integrity_constraint_violation -- deterministic, so a
+#         replay fails identically forever.
+#   40003 statement_completion_unknown -- the statement may in fact have
+#         COMMITTED, so replaying it could double-apply money.
+_RETRYABLE_ROLLBACK_SQLSTATES = frozenset(
+    {
+        "40000",  # transaction_rollback
+        "40001",  # serialization_failure -- Spanner ABORTED, DSQL OCC abort
+        "40P01",  # deadlock_detected -- ordinary Postgres lock ordering
+    }
+)
+
+
+#: Hard cap on the /status.json outbox-lag read, applied to BOTH the pool wait
+#: and the statement. Matches `readiness_check`'s 3s, and for the same reason:
+#: a public page must degrade rather than wait. It is far above the read's real
+#: cost -- an index seek on tr_operational_analytics_outbox_enqueued_at_idx --
+#: so hitting it means the database is not answering, which is exactly the
+#: state that should publish `unreachable` instead of hanging the event loop.
+OUTBOX_FRESHNESS_TIMEOUT_SECONDS = 3.0
+
+
+def _int8_param(value: int | None) -> Int8 | None:
+    """Bind a BIGINT value with the wire width PGAdapter expects.
+
+    Psycopg normally chooses the smallest integer type that can hold a Python
+    ``int``. PostgreSQL widens that value for a BIGINT column, but PGAdapter's
+    INT64 parser rejects the resulting two-byte binary payload for values such
+    as 1_000. The explicit Int8 wrapper is portable to PostgreSQL and keeps the
+    Spanner PostgreSQL-dialect bind eight bytes wide.
+    """
+
+    return None if value is None else Int8(value)
 
 
 class _IamTokenConnectionPool(ConnectionPool):
@@ -224,6 +309,86 @@ _CREDIT_TRANSFER_CLAIM_KIND = "credit_transfer_claim"
 # only place the module's own conservation claim was false.
 _CREDIT_TRANSFER_RESOLUTION_KIND = "credit_transfer_resolution"
 
+_SESSION_AUTH_CONTEXT_SQL = """
+    /* auth_session_context */
+    WITH resolved_session AS (
+      SELECT
+        session_record.body AS session_body,
+        session_record.body ->> 'user_id' AS user_id
+      FROM tr_entities AS lookup_record
+      JOIN tr_entities AS session_record
+        ON session_record.kind = 'auth_session'
+       AND session_record.id = lookup_record.body ->> 'session_id'
+      WHERE lookup_record.kind = 'auth_session_lookup'
+        AND lookup_record.id = %s
+    )
+    SELECT
+      resolved.session_body,
+      user_record.body,
+      workspace_record.body,
+      member_record.body
+    FROM resolved_session AS resolved
+    LEFT JOIN tr_entities AS user_record
+      ON user_record.kind = 'user' AND user_record.id = resolved.user_id
+    LEFT JOIN tr_entities AS member_record
+      ON member_record.kind = 'member'
+     AND member_record.body ->> 'user_id' = resolved.user_id
+     AND member_record.id = ((member_record.body ->> 'workspace_id') || '#' || resolved.user_id)
+    LEFT JOIN tr_entities AS workspace_record
+      ON workspace_record.kind = 'workspace'
+     AND workspace_record.id = member_record.body ->> 'workspace_id'
+    ORDER BY member_record.id
+"""
+
+_API_KEY_AUTH_CONTEXT_SQL = """
+    /* api_key_auth_context */
+    SELECT key_record.body, workspace_record.body
+    FROM tr_entities AS lookup_record
+    JOIN tr_entities AS key_record
+      ON key_record.kind = 'api_key'
+     AND key_record.id = lookup_record.body ->> 'key_id'
+    LEFT JOIN tr_entities AS workspace_record
+      ON workspace_record.kind = 'workspace'
+     AND workspace_record.id = key_record.body ->> 'workspace_id'
+    WHERE lookup_record.kind = 'api_key_lookup'
+      AND lookup_record.id = %s
+"""
+
+_CONSOLE_API_KEYS_SQL = """
+    /* console_api_keys */
+    SELECT
+      key_record.body,
+      key_limit.shard,
+      key_limit.usage,
+      key_limit.byok_usage,
+      key_limit.reserved,
+      key_limit.day_usage,
+      key_limit.day_start,
+      key_limit.week_usage,
+      key_limit.week_start,
+      key_limit.month_usage,
+      key_limit.month_start
+    FROM tr_entities AS key_index
+    JOIN tr_entities AS key_record
+      ON key_record.kind = 'api_key'
+     AND key_record.id = key_index.body ->> 'key_id'
+     AND key_record.body ->> 'hash' = key_record.id
+    LEFT JOIN tr_key_limit AS key_limit
+      ON key_limit.workspace_id = %s
+     AND key_limit.key_hash = key_record.id
+     AND key_limit.shard >= 0
+     AND key_limit.shard < COALESCE(
+       CAST(key_record.body ->> 'usage_shard_count' AS BIGINT),
+       1
+     )
+    WHERE key_index.kind = 'api_key_by_workspace'
+      AND key_index.id = (%s || '#' || key_record.id)
+      AND key_record.body ->> 'workspace_id' = %s
+    ORDER BY key_record.body ->> 'created_at' DESC,
+             key_record.id,
+             key_limit.shard
+"""
+
 
 def _split_sql_statements(schema: str) -> list[str]:
     """Split a schema file into statements, ignoring semicolons in comments.
@@ -276,6 +441,17 @@ class PostgresStore:
         if transaction_attempts < 1:
             raise ValueError("transaction_attempts must be positive")
         self._transaction_attempts = transaction_attempts
+        # Aurora DSQL refuses the GUC outright -- `SET LOCAL statement_timeout`
+        # answers `ERROR: setting configuration parameter "statement_timeout"
+        # not supported` -- so issuing it does not merely fail to bound the
+        # query, it raises and takes the whole read with it. That is how the
+        # AWS-EU control plane published
+        # `analytics: {available: false, reason: "unreachable"}` for an outbox
+        # it could in fact read: the timeout added to make the read safe was
+        # the only reason it failed. What still bounds these reads on DSQL is
+        # the pool-acquire timeout below and, for the status page, the
+        # caller-side wait in routes/public.py.
+        self._supports_statement_timeout = postgres_iam_auth != _AWS_DSQL_IAM_AUTH
         if not postgres_iam_auth:
             self._pool = ConnectionPool(
                 conninfo=dsn,
@@ -326,12 +502,23 @@ class PostgresStore:
         """Close the connection pool."""
         self._pool.close()
 
+    def _bound_statement(self, conn: Any, seconds: float) -> None:
+        """Cap one statement server-side where the backend allows it.
+
+        Silent on DSQL by design, not by accident: see
+        `_supports_statement_timeout`. Callers must still hold their own bound
+        (a pool-acquire timeout, and a caller-side wait for anything on a
+        request path), because on DSQL this call does nothing.
+        """
+        if self._supports_statement_timeout:
+            conn.execute(f"SET LOCAL statement_timeout = '{seconds:g}s'")
+
     def readiness_check(self) -> None:
         """Verify the billing database without permitting an unbounded wait."""
 
         with self._pool.connection(timeout=3.0) as conn:
             with conn.transaction():
-                conn.execute("SET LOCAL statement_timeout = '3s'")
+                self._bound_statement(conn, 3.0)
                 conn.execute("SELECT 1 FROM tr_credit_balance LIMIT 1").fetchone()
 
     def apply_schema(self) -> None:
@@ -398,22 +585,20 @@ class PostgresStore:
                 with self._pool.connection() as conn:
                     with conn.transaction():
                         return operation(conn)
-            except psycopg.errors.TransactionRollback as exc:
-                # Covers SerializationFailure (40001) *and* DeadlockDetected
-                # (40P01). Both mean "the server rolled you back, try again",
-                # and both are routine: 40001 is how Aurora DSQL reports every
-                # optimistic-concurrency abort, and 40P01 is ordinary Postgres
-                # lock ordering. Retrying only the first would surface
-                # deadlocks to callers as hard failures.
+            except psycopg.Error as exc:
+                # Retry on SQLSTATE, NOT on psycopg's exception classes. See
+                # _RETRYABLE_ROLLBACK_SQLSTATES: psycopg gives every SQLSTATE
+                # its own flat class, so the obvious `except TransactionRollback`
+                # silently caught neither 40001 nor 40P01.
                 #
                 # Safe to retry because the transaction rolled back whole: an
                 # idempotency row inserted on the failed attempt is gone, so
                 # the retry re-inserts and credits exactly once.
-                last_serialization_error = exc
-                continue
-            except psycopg.IntegrityError as exc:
-                raise StoreConflict("Postgres write conflict") from exc
-            except psycopg.Error as exc:
+                if exc.sqlstate in _RETRYABLE_ROLLBACK_SQLSTATES:
+                    last_serialization_error = exc
+                    continue
+                if isinstance(exc, psycopg.IntegrityError):
+                    raise StoreConflict("Postgres write conflict") from exc
                 raise StoreUnavailable("Postgres could not service the storage operation") from exc
         raise StoreConflict(
             "Postgres transaction repeatedly rolled back (serialization failure or deadlock)"
@@ -833,9 +1018,43 @@ class PostgresStore:
     ) -> AcquisitionAttribution | None:
         self._not_implemented("record_acquisition_purchase")
 
-    def list_activation_reminders(
-        self, *, limit: int = 100
-    ) -> list[ActivationReminderTask]:
+    def repair_google_ads_delivery_queue(self, *, since: str, limit: int) -> int:
+        self._not_implemented("repair_google_ads_delivery_queue")
+
+    def purge_expired_google_ads_click_ids(self, *, before: str, limit: int) -> int:
+        self._not_implemented("purge_expired_google_ads_click_ids")
+
+    def claim_google_ads_deliveries(
+        self,
+        *,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[GoogleAdsConversion]:
+        self._not_implemented("claim_google_ads_deliveries")
+
+    def mark_google_ads_delivery_submitted(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        request_id: str,
+    ) -> GoogleAdsConversion | None:
+        self._not_implemented("mark_google_ads_delivery_submitted")
+
+    def mark_google_ads_delivery_failed(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        error: str,
+        retryable: bool,
+        max_attempts: int,
+    ) -> GoogleAdsConversion | None:
+        self._not_implemented("mark_google_ads_delivery_failed")
+
+    def list_activation_reminders(self, *, limit: int = 100) -> list[ActivationReminderTask]:
         self._not_implemented("list_activation_reminders")
 
     def delete_activation_reminders(self, reminder_ids: list[str]) -> None:
@@ -948,6 +1167,62 @@ class PostgresStore:
     def mark_user_email_verified(self, user_id: str) -> User | None:
         self._not_implemented("mark_user_email_verified")
 
+    def set_user_identity_status(
+        self,
+        user_id: str,
+        *,
+        status: str,
+        session_id: str | None = None,
+        session_url: str | None = None,
+        decision_code: int | None = None,
+        decision_reason: str | None = None,
+        decision_reason_code: int | None = None,
+        verified_name: str | None = None,
+        increment_attempts: bool = False,
+    ) -> User | None:
+        def txn(conn: Any) -> User | None:
+            user = self._read_entity_tx(conn, "user", user_id, User, for_update=True)
+            if user is None:
+                return None
+            normalized = IdentityVerificationStatus.coerce(status)
+            if normalized is IdentityVerificationStatus.APPROVED and not user.identity_verified_at:
+                user.identity_verified_at = iso_now()
+            user.identity_status = normalized.value
+            if session_id is not None:
+                if session_id != user.veriff_session_id or not user.veriff_session_created_at:
+                    user.veriff_session_created_at = iso_now()
+                user.veriff_session_id = session_id
+            if session_url is not None:
+                user.veriff_session_url = session_url
+            if decision_code is not None:
+                user.veriff_decision_code = decision_code
+            if decision_reason is not None:
+                user.veriff_decision_reason = decision_reason
+            if decision_reason_code is not None:
+                user.veriff_decision_reason_code = decision_reason_code
+            if verified_name is not None:
+                user.identity_verified_name = verified_name
+            if increment_attempts:
+                user.veriff_attempt_count += 1
+            self._write_entity_tx(conn, "user", user.id, user)
+            return user
+
+        return self._run_transaction(txn)
+
+    def begin_phone_verification(
+        self, user_id: str, phone: str, channel: str | None = None
+    ) -> tuple[str, User] | None:
+        self._not_implemented("begin_phone_verification")
+
+    def confirm_phone_verification(self, user_id: str, code: str) -> tuple[str, User | None]:
+        self._not_implemented("confirm_phone_verification")
+
+    def cancel_phone_verification(self, user_id: str) -> User | None:
+        self._not_implemented("cancel_phone_verification")
+
+    def clear_user_phone(self, user_id: str) -> User | None:
+        self._not_implemented("clear_user_phone")
+
     # Auth sessions ----------------------------------------------------------
 
     def create_auth_session(
@@ -1052,6 +1327,51 @@ class PostgresStore:
 
         return self._run_transaction(delete)
 
+    def session_auth_context(
+        self,
+        raw_token: str,
+        *,
+        requested_workspace_id: str | None = None,
+    ) -> SessionAuthContext | None:
+        """Resolve session principal state in one portable SQL statement."""
+        lookup_hash = lookup_hash_api_key(raw_token)
+
+        def resolve(conn: Any) -> SessionAuthContext | None:
+            rows = conn.execute(
+                _SESSION_AUTH_CONTEXT_SQL,
+                (lookup_hash,),
+            ).fetchall()
+            if not rows:
+                return None
+            session = _dataclass_from_json(rows[0][0], AuthSession)
+            if _is_expired(session.expires_at):
+                self._delete_entity_tx(conn, "auth_session", session.hash)
+                self._delete_entity_tx(conn, "auth_session_lookup", lookup_hash)
+                return None
+            if not verify_api_key(raw_token, session.salt, session.secret_hash):
+                return None
+
+            user = (
+                _dataclass_from_json(rows[0][1], User)
+                if rows[0][1] is not None
+                else None
+            )
+            memberships: list[tuple[Member, Workspace]] = []
+            for _session_body, _user_body, workspace_body, member_body in rows:
+                if workspace_body is None or member_body is None:
+                    continue
+                member = _dataclass_from_json(member_body, Member)
+                workspace = _dataclass_from_json(workspace_body, Workspace)
+                memberships.append((member, workspace))
+            return build_session_auth_context(
+                session=session,
+                user=user,
+                memberships=memberships,
+                requested_workspace_id=requested_workspace_id,
+            )
+
+        return self._run_transaction(resolve)
+
     # Wallet, verification, and OAuth one-shot secrets ----------------------
 
     def create_wallet_challenge(
@@ -1062,19 +1382,73 @@ class PostgresStore:
         ttl_seconds: int,
         raw_nonce: str | None = None,
     ) -> tuple[str, WalletChallenge]:
-        raw = raw_nonce or secrets.token_urlsafe(32)
+        normalized_address = normalize_wallet_address(address)
+        parsed = parse_siwe_challenge_scope(message)
+        if raw_nonce is None:
+            raw = parsed[1] if parsed is not None else secrets.token_urlsafe(32)
+        else:
+            raw = raw_nonce
+        if parsed is not None and parsed[1] != raw:
+            raise ValueError("SIWE message nonce does not match raw_nonce")
+        scope_id = wallet_challenge_scope_id(normalized_address, message)
         challenge = WalletChallenge(
             hash=new_key_id(prefix="siwe"),
             salt=new_hash_salt(),
             secret_hash="",
             lookup_hash=lookup_hash_api_key(raw),
-            address=address.strip().lower(),
+            address=normalized_address,
             message=message,
             expires_at=self._expires_at(ttl_seconds),
         )
         challenge.secret_hash = hash_api_key(raw, challenge.salt)
 
-        def create(conn: Any) -> None:
+        def create(conn: Any) -> tuple[str, WalletChallenge]:
+            # The permanent scope row is also the first-issuance lock. An
+            # INSERT .. ON CONFLICT followed by SELECT FOR UPDATE serializes
+            # two issuers even when neither saw a previous challenge.
+            self._insert_entity_once_tx(
+                conn,
+                WALLET_CHALLENGE_SCOPE_KIND,
+                scope_id,
+                {},
+            )
+            active = self._read_entity_tx(
+                conn,
+                WALLET_CHALLENGE_SCOPE_KIND,
+                scope_id,
+                dict,
+                for_update=True,
+            )
+            if active:
+                previous_id = active.get("challenge_id")
+                previous = (
+                    self._read_entity_tx(
+                        conn,
+                        "wallet_challenge",
+                        previous_id,
+                        WalletChallenge,
+                    )
+                    if isinstance(previous_id, str)
+                    else None
+                )
+                if previous is not None and isinstance(previous_id, str):
+                    reusable_nonce = reusable_wallet_challenge_nonce(
+                        previous,
+                        scope_id=scope_id,
+                    )
+                    if reusable_nonce is not None:
+                        return reusable_nonce, previous
+                    self._delete_entity_tx(conn, "wallet_challenge", previous_id)
+                previous_lookup_hash = active.get("lookup_hash")
+                if (
+                    isinstance(previous_lookup_hash, str)
+                    and previous_lookup_hash != challenge.lookup_hash
+                ):
+                    self._delete_entity_tx(
+                        conn,
+                        "wallet_challenge_lookup",
+                        previous_lookup_hash,
+                    )
             self._write_entity_tx(
                 conn,
                 "wallet_challenge",
@@ -1085,21 +1459,80 @@ class PostgresStore:
                 conn,
                 "wallet_challenge_lookup",
                 challenge.lookup_hash,
-                {"challenge_id": challenge.hash},
+                {"challenge_id": challenge.hash, "scope_id": scope_id},
             )
+            self._write_entity_tx(
+                conn,
+                WALLET_CHALLENGE_SCOPE_KIND,
+                scope_id,
+                {
+                    "challenge_id": challenge.hash,
+                    "lookup_hash": challenge.lookup_hash,
+                },
+            )
+            return raw, challenge
 
-        self._run_transaction(create)
-        return raw, challenge
+        return self._run_transaction(create)
 
     def consume_wallet_challenge(self, raw_nonce: str) -> WalletChallenge | None:
-        return self._consume_secret(
-            raw_secret=raw_nonce,
-            lookup_kind="wallet_challenge_lookup",
-            lookup_field="challenge_id",
-            entity_kind="wallet_challenge",
-            cls=WalletChallenge,
-            expiry_field="expires_at",
-        )
+        lookup_hash = lookup_hash_api_key(raw_nonce)
+
+        def consume(conn: Any) -> WalletChallenge | None:
+            lookup = self._read_entity_tx(
+                conn,
+                "wallet_challenge_lookup",
+                lookup_hash,
+                dict,
+            )
+            if not lookup:
+                return None
+            scope_id = lookup.get("scope_id")
+            challenge_id = lookup.get("challenge_id")
+            if not isinstance(scope_id, str) or not isinstance(challenge_id, str):
+                return None
+            # Issuance takes this same lock before replacing either secondary
+            # row, so consume and replace cannot both accept different
+            # generations for one address.
+            active = self._read_entity_tx(
+                conn,
+                WALLET_CHALLENGE_SCOPE_KIND,
+                scope_id,
+                dict,
+                for_update=True,
+            )
+            if not active:
+                return None
+            if active.get("challenge_id") != challenge_id:
+                return None
+            if active.get("lookup_hash") != lookup_hash:
+                return None
+            record = self._read_entity_tx(
+                conn,
+                "wallet_challenge",
+                challenge_id,
+                WalletChallenge,
+                for_update=True,
+            )
+            if record is None or record.consumed_at is not None:
+                return None
+            if record.lookup_hash != lookup_hash:
+                return None
+            if not wallet_challenge_nonce_is_valid(
+                record,
+                raw_nonce=raw_nonce,
+                scope_id=scope_id,
+            ):
+                return None
+            record.consumed_at = iso_now()
+            self._write_entity_tx(
+                conn,
+                "wallet_challenge",
+                record.hash,
+                record,
+            )
+            return record
+
+        return self._run_transaction(consume)
 
     def create_verification_token(
         self,
@@ -1247,6 +1680,16 @@ class PostgresStore:
             )
         )
 
+    def record_webhook_event_once(self, source: str, event_id: str) -> bool:
+        return self._run_transaction(
+            lambda conn: self._insert_entity_once_tx(
+                conn,
+                "webhook_event",
+                f"{source}#{event_id}",
+                {"created_at": iso_now()},
+            )
+        )
+
     # API keys ---------------------------------------------------------------
 
     def create_api_key(
@@ -1314,11 +1757,11 @@ class PostgresStore:
                 (
                     workspace_id,
                     key.hash,
-                    limit_microdollars,
+                    _int8_param(limit_microdollars),
                     include_byok_in_limit,
-                    limit_daily_microdollars,
-                    limit_weekly_microdollars,
-                    limit_monthly_microdollars,
+                    _int8_param(limit_daily_microdollars),
+                    _int8_param(limit_weekly_microdollars),
+                    _int8_param(limit_monthly_microdollars),
                 ),
             )
 
@@ -1328,7 +1771,12 @@ class PostgresStore:
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:
         return self._read_entity("api_key", key_hash, ApiKey)
 
-    def typed_key_usage(self, key_hash: str) -> dict[str, Any] | None:
+    def typed_key_usage(
+        self,
+        key_hash: str,
+        *,
+        allow_stale: bool = False,
+    ) -> dict[str, Any] | None:
         self._not_implemented("typed_key_usage")
 
     def upsert_federated_api_key(self, record: dict[str, Any]) -> ApiKey:
@@ -1439,8 +1887,56 @@ class PostgresStore:
             return key
         return None
 
+    def api_key_auth_context(self, raw_key: str) -> ApiKeyAuthContext | None:
+        """Resolve and verify an API key with its workspace in one query."""
+        lookup_hash = lookup_hash_api_key(raw_key)
+
+        def resolve(conn: Any) -> ApiKeyAuthContext | None:
+            row = conn.execute(
+                _API_KEY_AUTH_CONTEXT_SQL,
+                (lookup_hash,),
+            ).fetchone()
+            if row is None:
+                return None
+            api_key = _dataclass_from_json(row[0], ApiKey)
+            if not verify_api_key(raw_key, api_key.salt, api_key.secret_hash):
+                return None
+            workspace = (
+                _dataclass_from_json(row[1], Workspace)
+                if row[1] is not None
+                else None
+            )
+            if workspace is not None and workspace.deleted:
+                workspace = None
+            return ApiKeyAuthContext(api_key=api_key, workspace=workspace)
+
+        return self._run_transaction(resolve)
+
     def list_keys(self, workspace_id: str) -> list[ApiKey]:
         self._not_implemented("list_keys")
+
+    def list_api_keys_with_usage(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]:
+        """Portable one-statement key-management page projection."""
+
+        def read(conn: Any) -> list[ApiKeyUsageSnapshot]:
+            rows = conn.execute(
+                _CONSOLE_API_KEYS_SQL,
+                (workspace_id, workspace_id, workspace_id),
+            ).fetchall()
+            grouped: dict[str, tuple[ApiKey, list[list[Any]]]] = {}
+            for row in rows:
+                api_key = api_key_from_json(row[0])
+                if api_key.workspace_id != workspace_id:
+                    continue
+                entry = grouped.setdefault(api_key.hash, (api_key, []))
+                if row[1] is not None:
+                    entry[1].append(list(row[1:]))
+            return [
+                api_key_usage_snapshot(api_key, usage_rows)
+                for api_key, usage_rows in grouped.values()
+            ]
+
+        return self._run_transaction(read)
 
     def delete_key(self, key_hash: str) -> bool:
         def delete(conn: Any) -> bool:
@@ -1478,7 +1974,7 @@ class PostgresStore:
         amount_microdollars: int,
         *,
         usage_type: UsageType | str,
-    ) -> None:
+    ) -> KeyWindowLimitDecision | None:
         """Hold `amount` against this key's caps, or raise.
 
         Mirrors InMemoryApiKeys.reserve_limit (storage_keys.py), which is the
@@ -1487,8 +1983,8 @@ class PostgresStore:
           * BYOK spend on a key that excludes BYOK is a NO-OP — lifetime cap
             and windows both.
           * Window limits are checked FIRST and independently of the lifetime
-            cap, raising KeyWindowLimitExceeded(window) so the gateway can
-            answer 429 with a Retry-After derived from that window's reset.
+            cap, raising KeyWindowLimitExceeded with the authoritative verdict
+            so the gateway can answer 429 without re-reading the window.
             In-flight `reserved` is deliberately not counted toward windows,
             matching the typed authorize check.
           * A key with no lifetime limit is uncapped: no-op after windows.
@@ -1500,9 +1996,10 @@ class PostgresStore:
         hot row and loses the race with a 40001 abort, which _run_transaction
         retries.
         """
-        window_floor_map = window_floors(utcnow())
+        decision_now = utcnow()
+        window_floor_map = window_floors(decision_now)
 
-        def reserve(conn: Any) -> None:
+        def reserve(conn: Any) -> KeyWindowLimitDecision | None:
             row = conn.execute(
                 "SELECT limit_micro, usage, byok_usage, reserved, include_byok,"
                 " day_limit_micro, week_limit_micro, month_limit_micro,"
@@ -1514,7 +2011,7 @@ class PostgresStore:
             if row is None:
                 # No typed row: nothing to enforce here. The gateway's own
                 # KEY_MISSING handling covers the typed-authorize path.
-                return
+                return None
             (
                 limit_micro,
                 _usage,
@@ -1533,7 +2030,7 @@ class PostgresStore:
             ) = row
 
             if _is_byok(usage_type) and not include_byok:
-                return
+                return None
 
             # Lazy windows: a NULL or stale *_start means the window has not
             # started in this period, so its usage reads as ZERO. No reset job
@@ -1543,16 +2040,26 @@ class PostgresStore:
                 ("weekly", week_limit, week_usage, week_start),
                 ("monthly", month_limit, month_usage, month_start),
             )
+            window_limits: dict[str, int] = {}
+            used_by_window: dict[str, int] = {}
             for name, limit, used, started in windows:
                 if limit is None:
                     continue
                 floor = window_floor_map[name]
                 current = 0 if started is None or _as_utc(started) < floor else int(used or 0)
-                if current + amount_microdollars > int(limit):
-                    raise KeyWindowLimitExceeded(name)
+                window_limits[name] = int(limit)
+                used_by_window[name] = current
+            decision = decide_key_window_limits(
+                window_limits,
+                used_by_window,
+                amount_microdollars,
+                now=decision_now,
+            )
+            if decision is not None and not decision.allowed:
+                raise KeyWindowLimitExceeded(decision)
 
             if limit_micro is None:
-                return
+                return decision
 
             updated = conn.execute(
                 "UPDATE tr_key_limit"
@@ -1566,9 +2073,10 @@ class PostgresStore:
                 prepare=False,
             ).rowcount
             if updated == 0:
-                raise ValueError("key limit exceeded")
+                raise KeyLimitExceeded(decision)
+            return decision
 
-        self._run_transaction(reserve)
+        return self._run_transaction(reserve)
 
     def settle_key_limit(
         self,
@@ -2034,6 +2542,136 @@ class PostgresStore:
     ) -> bool:
         self._not_implemented("delete_custom_model")
 
+    # User-provided models ---------------------------------------------------
+
+    def create_user_model(
+        self,
+        *,
+        owner_user_id: str,
+        owner_workspace_id: str,
+        name: str,
+        kind: str,
+        description: str = "",
+        display_identity: str = "handle",
+        display_name: str = "",
+        endpoint_url: str,
+        upstream_model_id: str | None = None,
+        encrypted_endpoint_api_key: EncryptedSecretEnvelope | None = None,
+        endpoint_key_hint: str | None = None,
+        encrypted_signing_secret: EncryptedSecretEnvelope | None = None,
+        supports_streaming: bool = True,
+        heartbeat_interval_seconds: int | None = None,
+        max_concurrency: int = 4,
+        prompt_price_microdollars_per_million_tokens: int = 0,
+        completion_price_microdollars_per_million_tokens: int = 0,
+        human_verified: bool = False,
+        enabled: bool = True,
+        status: str = "active",
+        slug: str | None = None,
+    ) -> UserProvidedModel:
+        self._not_implemented("create_user_model")
+
+    def list_user_models_for_user(self, owner_user_id: str) -> list[UserProvidedModel]:
+        self._not_implemented("list_user_models_for_user")
+
+    def get_user_model(self, model_id: str) -> UserProvidedModel | None:
+        return self._read_entity("user_provided_model", model_id, UserProvidedModel)
+
+    def get_user_models_by_ids(
+        self,
+        model_ids: list[str],
+    ) -> dict[str, UserProvidedModel]:
+        unique_ids = list(
+            dict.fromkeys(normalize_custom_model_id(model_id) for model_id in model_ids)
+        )
+        if not unique_ids:
+            return {}
+
+        def operation(conn: Any) -> dict[str, UserProvidedModel]:
+            rows = conn.execute(
+                "SELECT id, body FROM tr_entities "
+                "WHERE kind = %s AND id = ANY(%s)",
+                ("user_provided_model", unique_ids),
+            ).fetchall()
+            result: dict[str, UserProvidedModel] = {}
+            known = {field.name for field in dataclasses.fields(UserProvidedModel)}
+            for row in rows:
+                raw = row[1]
+                data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                model = UserProvidedModel(
+                    **{key: value for key, value in data.items() if key in known}
+                )
+                result[str(row[0])] = model
+            return result
+
+        return self._run_transaction(operation)
+
+    def update_user_model(
+        self,
+        model_id: str,
+        *,
+        owner_user_id: str,
+        patch: dict[str, Any],
+    ) -> UserProvidedModel:
+        self._not_implemented("update_user_model")
+
+    def delete_user_model(self, model_id: str, *, owner_user_id: str) -> bool:
+        self._not_implemented("delete_user_model")
+
+    def set_user_model_online(
+        self,
+        model_id: str,
+        *,
+        owner_user_id: str,
+        online: bool,
+    ) -> UserProvidedModel:
+        self._not_implemented("set_user_model_online")
+
+    def record_user_model_heartbeat(
+        self,
+        model_id: str,
+        *,
+        expires_at: str,
+    ) -> UserProvidedModel:
+        self._not_implemented("record_user_model_heartbeat")
+
+    def record_user_model_probe(
+        self,
+        model_id: str,
+        *,
+        status: str,
+        checked_at: str,
+    ) -> UserProvidedModel:
+        self._not_implemented("record_user_model_probe")
+
+    def record_user_model_dispatch_result(
+        self,
+        model_id: str,
+        *,
+        success: bool,
+    ) -> UserProvidedModel:
+        self._not_implemented("record_user_model_dispatch_result")
+
+    def acquire_user_model_slot(
+        self,
+        model_id: str,
+        authorization_id: str,
+        *,
+        limit: int,
+        ttl_seconds: int,
+    ) -> bool:
+        self._not_implemented("acquire_user_model_slot")
+
+    def release_user_model_slot(self, model_id: str, authorization_id: str) -> None:
+        self._not_implemented("release_user_model_slot")
+
+    def list_public_user_models(
+        self,
+        *,
+        kind: str | None = None,
+    ) -> list[UserProvidedModel]:
+        self._not_implemented("list_public_user_models")
+
     # Broadcast destinations ------------------------------------------------
 
     def create_broadcast_destination(
@@ -2259,9 +2897,7 @@ class PostgresStore:
         lease_until = _iso_after_seconds(lease_seconds)
 
         claimed: list[VideoJob] = []
-        for pointer in self._list_entities(
-            "video_job_due", dict, limit=max(limit * 10, limit)
-        ):
+        for pointer in self._list_entities("video_job_due", dict, limit=max(limit * 10, limit)):
             if len(claimed) >= limit:
                 break
             # Ids sort as "<next_poll_at>#<job_id>", so the scan is in due
@@ -2375,6 +3011,8 @@ class PostgresStore:
         workspace_id: str,
         amount_microdollars: int,
         event_id: str,
+        *,
+        lifetime_topup_user_id: str | None = None,
     ) -> bool:
         def credit(conn: Any) -> bool:
             won = self._insert_entity_once_tx(
@@ -2388,17 +3026,21 @@ class PostgresStore:
             )
             if not won:
                 return False
-            cursor = conn.execute(
-                "UPDATE tr_credit_balance "
-                "SET total_credits = total_credits + %s, "
-                "source_updated_at = CURRENT_TIMESTAMP, "
-                "updated_at = CURRENT_TIMESTAMP "
-                "WHERE workspace_id = %s AND shard = 0",
-                (int(amount_microdollars), workspace_id),
+            self._credit_workspace_balance_tx(
+                conn,
+                workspace_id,
+                int(amount_microdollars),
             )
-            if cursor.rowcount != 1:
-                raise ValueError(
-                    f"missing authoritative tr_credit_balance for workspace {workspace_id}"
+            if lifetime_topup_user_id is not None:
+                conn.execute(
+                    "INSERT INTO tr_user_lifetime_topup "
+                    "(user_id, total_microdollars, updated_at) "
+                    "VALUES (%s, %s, CURRENT_TIMESTAMP) "
+                    "ON CONFLICT (user_id) DO UPDATE SET "
+                    "total_microdollars = "
+                    "tr_user_lifetime_topup.total_microdollars + EXCLUDED.total_microdollars, "
+                    "updated_at = CURRENT_TIMESTAMP",
+                    (lifetime_topup_user_id, int(amount_microdollars)),
                 )
             return True
 
@@ -2415,6 +3057,374 @@ class PostgresStore:
             amount_microdollars,
             event_id,
         )
+
+    # Earnings & movement primitives -----------------------------------------
+
+    @staticmethod
+    def _positive_money_amount(amount_microdollars: int) -> int:
+        amount = int(amount_microdollars)
+        if amount <= 0:
+            raise ValueError("amount_must_be_positive")
+        return amount
+
+    def _credit_workspace_balance_tx(
+        self,
+        conn: Any,
+        workspace_id: str,
+        amount_microdollars: int,
+    ) -> None:
+        account = self._read_entity_tx(conn, "credit", workspace_id, CreditAccount)
+        if account is None:
+            raise ValueError("credit_account_not_found")
+        deltas = distribute_credit_amount(
+            int(amount_microdollars),
+            credit_shard_count(account),
+        )
+        for shard, delta in enumerate(deltas):
+            cursor = conn.execute(
+                "UPDATE tr_credit_balance "
+                "SET total_credits = total_credits + %s, "
+                "source_updated_at = CURRENT_TIMESTAMP, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE workspace_id = %s AND shard = %s",
+                (delta, workspace_id, shard),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("credit_balance_shard_missing")
+
+    @staticmethod
+    def _insert_credit_movement_tx(conn: Any, movement: CreditMovement) -> None:
+        conn.execute(
+            "INSERT INTO tr_credit_movement "
+            "(account_id, movement_id, kind, amount_microdollars, "
+            "counterparty_account_id, custom_model_id, authorization_id, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                movement.account_id,
+                movement.movement_id,
+                movement.kind,
+                movement.amount_microdollars,
+                movement.counterparty_account_id,
+                movement.custom_model_id,
+                movement.authorization_id,
+                _parse_timestamp(movement.created_at),
+            ),
+        )
+
+    def debit_workspace_guarded(
+        self,
+        workspace_id: str,
+        amount_microdollars: int,
+        event_id: str,
+        *,
+        kind: str,
+        custom_model_id: str | None = None,
+        authorization_id: str | None = None,
+    ) -> str:
+        amount = self._positive_money_amount(amount_microdollars)
+
+        def debit(conn: Any) -> str:
+            won = self._insert_entity_once_tx(
+                conn,
+                "stripe_event",
+                event_id,
+                {"created_at": iso_now(), "workspace_id": workspace_id},
+            )
+            if not won:
+                return "duplicate"
+            cursor = conn.execute(
+                "UPDATE tr_credit_balance "
+                "SET total_credits = total_credits - %s, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE workspace_id = %s AND shard = 0 "
+                "AND (total_credits - total_usage - reserved) >= %s",
+                (amount, workspace_id, amount),
+            )
+            if cursor.rowcount != 1:
+                self._delete_entity_tx(conn, "stripe_event", event_id)
+                return "insufficient"
+            self._insert_credit_movement_tx(
+                conn,
+                CreditMovement(
+                    account_id=workspace_id,
+                    movement_id=event_id,
+                    kind=kind,
+                    amount_microdollars=-amount,
+                    custom_model_id=custom_model_id,
+                    authorization_id=authorization_id,
+                ),
+            )
+            return "accepted"
+
+        return self._run_transaction(debit)
+
+    def credit_user_earnings(
+        self,
+        user_id: str,
+        amount_microdollars: int,
+        event_id: str,
+        *,
+        custom_model_id: str | None = None,
+        payer_workspace_id: str | None = None,
+    ) -> bool:
+        amount = self._positive_money_amount(amount_microdollars)
+
+        def credit(conn: Any) -> bool:
+            won = self._insert_entity_once_tx(
+                conn,
+                "stripe_event",
+                event_id,
+                {"created_at": iso_now(), "user_id": user_id},
+            )
+            if not won:
+                return False
+            conn.execute(
+                "INSERT INTO tr_earnings_balance "
+                "(user_id, shard, total_earned, total_transferred, updated_at) "
+                "VALUES (%s, 0, %s, 0, CURRENT_TIMESTAMP) "
+                "ON CONFLICT (user_id, shard) DO UPDATE SET "
+                "total_earned = tr_earnings_balance.total_earned + EXCLUDED.total_earned, "
+                "updated_at = CURRENT_TIMESTAMP",
+                (user_id, amount),
+            )
+            self._insert_credit_movement_tx(
+                conn,
+                CreditMovement(
+                    account_id=f"user:{user_id}",
+                    movement_id=event_id,
+                    kind="custom_model_payout",
+                    amount_microdollars=amount,
+                    counterparty_account_id=payer_workspace_id,
+                    custom_model_id=custom_model_id,
+                    authorization_id=(
+                        user_model_authorization_id_from_payout_event_id(event_id)
+                    ),
+                ),
+            )
+            return True
+
+        return self._run_transaction(credit)
+
+    def transfer_earnings_to_workspace(
+        self,
+        user_id: str,
+        workspace_id: str,
+        amount_microdollars: int,
+        event_id: str,
+    ) -> str:
+        amount = self._positive_money_amount(amount_microdollars)
+        user_account_id = f"user:{user_id}"
+
+        def transfer(conn: Any) -> str:
+            won = self._insert_entity_once_tx(
+                conn,
+                "stripe_event",
+                event_id,
+                {"created_at": iso_now(), "user_id": user_id},
+            )
+            if not won:
+                return "duplicate"
+            cursor = conn.execute(
+                "UPDATE tr_earnings_balance "
+                "SET total_transferred = total_transferred + %s, "
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE user_id = %s AND shard = 0 "
+                "AND (total_earned - total_transferred) >= %s",
+                (amount, user_id, amount),
+            )
+            if cursor.rowcount != 1:
+                self._delete_entity_tx(conn, "stripe_event", event_id)
+                return "insufficient"
+            self._credit_workspace_balance_tx(conn, workspace_id, amount)
+            created_at = iso_now()
+            self._insert_credit_movement_tx(
+                conn,
+                CreditMovement(
+                    account_id=user_account_id,
+                    movement_id=event_id,
+                    kind="earnings_transfer_out",
+                    amount_microdollars=-amount,
+                    counterparty_account_id=workspace_id,
+                    created_at=created_at,
+                ),
+            )
+            self._insert_credit_movement_tx(
+                conn,
+                CreditMovement(
+                    account_id=workspace_id,
+                    movement_id=event_id,
+                    kind="earnings_transfer_in",
+                    amount_microdollars=amount,
+                    counterparty_account_id=user_account_id,
+                    created_at=created_at,
+                ),
+            )
+            return "accepted"
+
+        return self._run_transaction(transfer)
+
+    def ensure_earnings_account(self, user_id: str) -> None:
+        def ensure(conn: Any) -> None:
+            conn.execute(
+                "INSERT INTO tr_earnings_balance "
+                "(user_id, shard, total_earned, total_transferred, updated_at) "
+                "VALUES (%s, 0, 0, 0, CURRENT_TIMESTAMP) "
+                "ON CONFLICT (user_id, shard) DO NOTHING",
+                (user_id,),
+            )
+
+        self._run_transaction(ensure)
+
+    def earnings_summary(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = False,
+    ) -> dict[str, int]:
+        def read(conn: Any) -> dict[str, int]:
+            row = conn.execute(
+                "SELECT total_earned, total_transferred "
+                "FROM tr_earnings_balance WHERE user_id = %s AND shard = 0",
+                (user_id,),
+            ).fetchone()
+            earned, transferred = (0, 0) if row is None else (int(row[0]), int(row[1]))
+            return {
+                "total_earned": earned,
+                "total_transferred": transferred,
+                "available": earned - transferred,
+            }
+
+        return self._run_transaction(read)
+
+    def list_credit_movements(
+        self,
+        account_id: str,
+        *,
+        kinds: list[str] | None = None,
+        limit: int = 50,
+        before: str | None = None,
+    ) -> list[CreditMovement]:
+        if kinds == []:
+            return []
+        query = (
+            "SELECT account_id, movement_id, kind, amount_microdollars, "
+            "counterparty_account_id, custom_model_id, authorization_id, created_at "
+            "FROM tr_credit_movement WHERE account_id = %s"
+        )
+        params: list[Any] = [account_id]
+        if kinds is not None:
+            query += " AND kind IN (" + ", ".join(["%s"] * len(kinds)) + ")"
+            params.extend(kinds)
+        if before is not None:
+            query += " AND created_at < %s"
+            params.append(_parse_timestamp(before))
+        query += " ORDER BY created_at DESC, movement_id DESC LIMIT %s"
+        params.append(max(0, int(limit)))
+
+        def read(conn: Any) -> list[CreditMovement]:
+            rows = conn.execute(query, tuple(params)).fetchall()
+            return [
+                CreditMovement(
+                    account_id=str(row[0]),
+                    movement_id=str(row[1]),
+                    kind=str(row[2]),
+                    amount_microdollars=int(row[3]),
+                    counterparty_account_id=(None if row[4] is None else str(row[4])),
+                    custom_model_id=None if row[5] is None else str(row[5]),
+                    authorization_id=None if row[6] is None else str(row[6]),
+                    created_at=_timestamp_string(row[7]),
+                )
+                for row in rows
+            ]
+
+        return self._run_transaction(read)
+
+    def custom_model_earnings_by_model(
+        self,
+        user_id: str,
+        *,
+        since: str,
+    ) -> dict[str, int]:
+        def read(conn: Any) -> dict[str, int]:
+            rows = conn.execute(
+                "SELECT custom_model_id, SUM(amount_microdollars) "
+                "FROM tr_credit_movement "
+                "WHERE account_id = %s AND kind = 'custom_model_payout' "
+                "AND custom_model_id IS NOT NULL AND created_at >= %s "
+                "GROUP BY custom_model_id",
+                (f"user:{user_id}", _parse_timestamp(since)),
+            ).fetchall()
+            return {str(row[0]): int(row[1]) for row in rows}
+
+        return self._run_transaction(read)
+
+    def get_lifetime_topup_microdollars(
+        self,
+        user_id: str,
+        *,
+        allow_stale: bool = False,
+    ) -> int:
+        def read(conn: Any) -> int:
+            row = conn.execute(
+                "SELECT total_microdollars FROM tr_user_lifetime_topup WHERE user_id = %s",
+                (user_id,),
+            ).fetchone()
+            return 0 if row is None else int(row[0])
+
+        return self._run_transaction(read)
+
+    def add_lifetime_topup(
+        self,
+        user_id: str,
+        amount_microdollars: int,
+        event_id: str,
+    ) -> bool:
+        amount = self._positive_money_amount(amount_microdollars)
+
+        def add(conn: Any) -> bool:
+            won = self._insert_entity_once_tx(
+                conn,
+                "stripe_event",
+                event_id,
+                {"created_at": iso_now(), "lifetime_topup_user_id": user_id},
+            )
+            if not won:
+                return False
+            conn.execute(
+                "INSERT INTO tr_user_lifetime_topup "
+                "(user_id, total_microdollars, updated_at) "
+                "VALUES (%s, %s, CURRENT_TIMESTAMP) "
+                "ON CONFLICT (user_id) DO UPDATE SET "
+                "total_microdollars = "
+                "tr_user_lifetime_topup.total_microdollars + EXCLUDED.total_microdollars, "
+                "updated_at = CURRENT_TIMESTAMP",
+                (user_id, amount),
+            )
+            return True
+
+        return self._run_transaction(add)
+
+    def typed_credit_snapshot(self, workspace_id: str) -> tuple[int, int, int] | None:
+        def read(conn: Any) -> tuple[int, int, int] | None:
+            account = self._read_entity_tx(conn, "credit", workspace_id, CreditAccount)
+            if account is None:
+                return None
+            shard_count = credit_shard_count(account)
+            rows = conn.execute(
+                "SELECT shard, total_credits, total_usage, reserved "
+                "FROM tr_credit_balance WHERE workspace_id = %s "
+                "AND shard >= 0 AND shard < %s ORDER BY shard",
+                (workspace_id, shard_count),
+            ).fetchall()
+            if [int(row[0]) for row in rows] != list(range(shard_count)):
+                raise ValueError("credit_balance_shard_missing")
+            return (
+                sum(int(row[1]) for row in rows),
+                sum(int(row[2]) for row in rows),
+                sum(int(row[3]) for row in rows),
+            )
+
+        return self._run_transaction(read)
 
     def reserve(
         self,
@@ -2897,6 +3907,7 @@ class PostgresStore:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
+        authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
         region: str | None = None,
@@ -2907,6 +3918,11 @@ class PostgresStore:
         idempotency_fingerprint: str | None = None,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
+        user_provided_model_id: str | None = None,
+        user_provided_model_revision: int | None = None,
+        user_model_prompt_price_microdollars_per_m: int | None = None,
+        user_model_completion_price_microdollars_per_m: int | None = None,
+        user_model_owner_user_id: str | None = None,
         additional_cost_reservation_microdollars: int = 0,
         native_batch_eligible: bool = False,
         settlement: str = "local",
@@ -2934,7 +3950,7 @@ class PostgresStore:
         admit.
         """
         authorization = GatewayAuthorization(
-            id=f"gwauth_{uuid.uuid4().hex}",
+            id=authorization_id or f"gwauth_{uuid.uuid4().hex}",
             workspace_id=workspace_id,
             key_hash=key_hash,
             model_id=model_id,
@@ -2952,6 +3968,15 @@ class PostgresStore:
             idempotency_fingerprint=idempotency_fingerprint,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
+            user_provided_model_id=user_provided_model_id,
+            user_provided_model_revision=user_provided_model_revision,
+            user_model_prompt_price_microdollars_per_m=(
+                user_model_prompt_price_microdollars_per_m
+            ),
+            user_model_completion_price_microdollars_per_m=(
+                user_model_completion_price_microdollars_per_m
+            ),
+            user_model_owner_user_id=user_model_owner_user_id,
             additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
             native_batch_eligible=native_batch_eligible,
             settlement=settlement,
@@ -3395,6 +4420,39 @@ class PostgresStore:
     def add_generation(self, generation: Generation) -> None:
         self._not_implemented("add_generation")
 
+    def record_client_events_batch(self, payload: dict[str, Any]) -> None:
+        outbox = self._operational_analytics_outbox
+        if outbox is None:
+            log.warning(
+                "postgres.client_events_outbox_disabled_drop",
+                extra={
+                    "tenant": str(payload["tenant_id"])[:12],
+                    "batch_id": payload["batch_id"],
+                },
+            )
+            return
+        try:
+            outbox.enqueue_client_events(payload)
+        except Exception as exc:
+            if is_duplicate_key_error(exc):
+                log.info(
+                    "postgres.client_events_duplicate",
+                    extra={
+                        "tenant": str(payload["tenant_id"])[:12],
+                        "batch_id": payload["batch_id"],
+                    },
+                )
+                return
+            log.exception(
+                "postgres.client_events_enqueue_failed",
+                extra={
+                    "tenant": str(payload["tenant_id"])[:12],
+                    "batch_id": payload["batch_id"],
+                    "error_class": type(exc).__name__,
+                },
+            )
+            raise
+
     def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None:
         self._run_transaction(
             lambda conn: self._write_entity_tx(
@@ -3562,6 +4620,57 @@ class PostgresStore:
 
         return self._run_transaction(list_samples)
 
+    def operational_analytics_outbox_freshness(self) -> OutboxFreshness:
+        """The age of the oldest row the drain has not delivered yet.
+
+        This is the AWS and Azure answer, and it is the one the outage of
+        2026-08-02..17 needed: on AWS-EU the outbox held 470,370 rows and the
+        only process that could have said so had never been installed. The
+        control plane already holds the DSQL connection, so publishing this
+        costs one index seek behind the status cache and needs no new IAM, no
+        new unit, and no reachability into the VPC.
+
+        BOUNDED ON BOTH AXES, the same way `readiness_check` above is, and for
+        a sharper reason: this read sits on the PUBLIC /status.json build path,
+        inside an async handler. A blocking call there does not tie up one
+        worker thread, it stops the event loop, so an unbounded wait on a hung
+        DSQL cluster would take the status page -- and every other request this
+        process is serving -- down with it. Two separate waits have to be
+        capped, because either one alone is unbounded:
+
+        * `connection(timeout=)`  -- the wait for a pool slot. An exhausted or
+          unreachable pool blocks here having issued no SQL at all, so a
+          statement timeout never gets the chance to fire.
+        * `SET LOCAL statement_timeout` -- the server-side cap on the query,
+          which is what covers a connection that is up but a cluster that is
+          not answering.
+
+        Deliberately NOT run through `_run_transaction`: that retries
+        serialization failures, and a retry loop is the one thing that turns a
+        bounded read back into an unbounded one.
+
+        Every failure -- timeout included -- degrades to `unreachable`. It must
+        never raise: the caller publishes this section unconditionally, and an
+        exception escaping here would drop the key, which the fleet checker
+        reads as "this deployment is running code too old to publish drain
+        lag" and answers by telling somebody to redeploy a healthy service.
+        """
+        outbox = self._operational_analytics_outbox
+        if outbox is None:
+            return OutboxFreshness.unavailable(BACKEND_POSTGRES, REASON_NOT_CONFIGURED)
+        try:
+            with self._pool.connection(timeout=OUTBOX_FRESHNESS_TIMEOUT_SECONDS) as conn:
+                with conn.transaction():
+                    self._bound_statement(conn, OUTBOX_FRESHNESS_TIMEOUT_SECONDS)
+                    oldest = outbox.oldest_enqueued_at_tx(conn)
+        except Exception as exc:
+            log.exception(
+                "postgres.operational_analytics_outbox_freshness_failed",
+                extra={"error_class": type(exc).__name__, "error_message": str(exc)[:500]},
+            )
+            return OutboxFreshness.unavailable(BACKEND_POSTGRES, REASON_UNREACHABLE)
+        return OutboxFreshness(backend=BACKEND_POSTGRES, oldest_enqueued_at=oldest)
+
     def synthetic_rollups(
         self,
         *,
@@ -3714,6 +4823,11 @@ def _parse_timestamp(value: str) -> dt.datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=dt.UTC)
     return parsed.astimezone(dt.UTC)
+
+
+def _timestamp_string(value: dt.datetime | str) -> str:
+    parsed = _parse_timestamp(value) if isinstance(value, str) else _as_utc(value)
+    return parsed.isoformat().replace("+00:00", "Z")
 
 
 def _rollup_retention_cutoff(now: dt.datetime) -> dt.datetime:

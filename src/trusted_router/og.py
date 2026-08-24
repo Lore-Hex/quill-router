@@ -253,8 +253,8 @@ def choose_og_image_svg(_settings: Settings) -> str:
 def pricing_og_image_svg(_settings: Settings) -> str:
     """Social card for /pricing with the customer-visible prepaid rate."""
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" viewBox="0 0 {OG_IMAGE_WIDTH} {OG_IMAGE_HEIGHT}" role="img" aria-label="TrustedRouter pricing">
-  <title>TrustedRouter pricing: 5% markup, no subscription</title>
-  <desc>Provider cost plus 5% for prepaid routes, with no monthly subscription.</desc>
+  <title>TrustedRouter pricing: 5.5% markup, no subscription</title>
+  <desc>Provider cost plus 5.5% for prepaid routes, with no monthly subscription.</desc>
   <rect width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" fill="#07100a"/>
   <path d="M80 80 H1120 M80 550 H1120" stroke="#314036" stroke-width="1"/>
 
@@ -266,7 +266,7 @@ def pricing_og_image_svg(_settings: Settings) -> str:
 
   <g transform="translate(80 145)">
     <text x="0" y="0" font-family="Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="2" fill="#91ad98">PRICING</text>
-    <text x="0" y="84" font-family="Georgia, serif" font-size="68" fill="#edf1e9">5% markup.</text>
+    <text x="0" y="84" font-family="Georgia, serif" font-size="68" fill="#edf1e9">5.5% markup.</text>
     <text x="0" y="162" font-family="Georgia, serif" font-size="68" fill="#edf1e9">No subscription.</text>
     <text x="0" y="220" font-family="Arial, sans-serif" font-size="25" fill="#a8b4a8">Cheaper. Smarter. More reliable. More secure.</text>
   </g>
@@ -276,7 +276,7 @@ def pricing_og_image_svg(_settings: Settings) -> str:
     <text x="28" y="42" font-size="14" font-weight="700" letter-spacing="1.4" fill="#8ca092">PLATFORM CHARGE</text>
     <path d="M28 62 H332" stroke="#2d3b31"/>
     <text x="28" y="112" font-size="22" fill="#cbd4cb">TrustedRouter</text>
-    <text x="332" y="112" text-anchor="end" font-family="Georgia, serif" font-size="36" fill="#edf1e9">5%</text>
+    <text x="332" y="112" text-anchor="end" font-family="Georgia, serif" font-size="36" fill="#edf1e9">5.5%</text>
     <text x="28" y="150" font-size="15" fill="#8fa092">on prepaid model cost</text>
     <path d="M28 174 H332" stroke="#2d3b31"/>
     <text x="28" y="210" font-size="17" fill="#9db0a0">OpenRouter credit fee</text>

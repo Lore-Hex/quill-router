@@ -1,0 +1,65 @@
+"""Featherless current-plan chat catalog with exact authenticated prices."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote
+
+from scripts.pricing.base import fetch_json
+from scripts.pricing.providers._direct_openai import (
+    DirectOpenAIProvider,
+    DirectOpenAIProviderSpec,
+)
+
+SLUG = "featherless"
+BASE_URL = "https://api.featherless.ai/v1"
+URL = f"{BASE_URL}/models"
+MANIFEST_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "src/trusted_router/data/provider_models/featherless.json"
+)
+MANIFEST_STALE_FALLBACK = True
+
+CURATED_NATIVE_MODELS = (
+    "deepseek-ai/DeepSeek-V4-Flash-0731",
+    "moonshotai/Kimi-K3",
+    "zai-org/GLM-5.2",
+)
+
+
+def _load_rows(api_key: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for native_id in CURATED_NATIVE_MODELS:
+        payload = fetch_json(
+            f"{URL}/{quote(native_id, safe='')}",
+            extra_headers={"Authorization": f"Bearer {api_key}"},
+        )
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"featherless: invalid model detail for {native_id}")
+        if payload.get("available_on_current_plan") is not True:
+            raise RuntimeError(f"featherless: {native_id} is not available on current plan")
+        rows.append(payload)
+    return rows
+
+CATALOG = DirectOpenAIProvider(
+    DirectOpenAIProviderSpec(
+        slug=SLUG,
+        base_url=BASE_URL,
+        api_key_env="FEATHERLESS_API_KEY",
+        explicit_model_map={},
+        expected_models=(
+            "deepseek/deepseek-v4-flash-0731",
+            "moonshotai/kimi-k3",
+            "z-ai/glm-5.2",
+        ),
+        catalog_url=URL,
+        catalog_loader=_load_rows,
+        pricing_source_url="https://featherless.ai/pricing",
+        canary_max_tokens=32,
+    ),
+    manifest_path=MANIFEST_PATH,
+)
+UPSTREAM_ID_MAP = CATALOG.upstream_id_map
+fetch = CATALOG.fetch
+write_provider_manifest = CATALOG.write_provider_manifest

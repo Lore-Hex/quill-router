@@ -209,6 +209,93 @@ node, waits for 3/3 health, and synchronizes the replica.
 Parquet is the cross-version and cross-cloud recovery source. Disk snapshots
 are the faster same-platform recovery source.
 
+## Drain freshness: the out-of-band signal
+
+Every in-band signal for the outbox drain — the metrics line, `degraded_targets=`,
+and the `backlog_alarm` that is the only bound on outbox growth — is emitted by
+the drain process itself. A drain that was never installed cannot alarm about
+not existing. That is not hypothetical: on AWS-EU no unit had ever been
+installed, 470,370 rows accumulated in `tr_operational_analytics_outbox` between
+2026-08-02 and 2026-08-17, and nothing reported it. GCP was healthy throughout,
+so the fleet looked healthy.
+
+So every control plane publishes the signal itself, in its already-public
+`/status.json`:
+
+```json
+"analytics": {
+  "available": true,
+  "backend": "postgres",
+  "drain_lag_seconds": 12.5,
+  "outbox_depth": null,
+  "generated_at": "2026-08-17T12:00:00Z"
+}
+```
+
+Those five keys are the whole contract, pinned by a test. The oldest row's own
+timestamp is deliberately not among them: nothing read it, and it is
+`generated_at` minus the lag in any case.
+
+`drain_lag_seconds` is the age of the oldest **undelivered** outbox row. Rows
+are deleted only after every configured ClickHouse target has accepted them, so
+this is an end-to-end statement about the whole pipeline, and it is observable
+from outside the VPC — which the private ClickHouse nodes are not. A read
+failure publishes `{"available": false, "reason": ...}`; the key is never
+omitted and a stale number is never re-served.
+
+Cost: one index seek per status-cache miss. Postgres/DSQL uses
+`tr_operational_analytics_outbox_enqueued_at_idx`; Spanner reads the head of
+each of the 32 shards on the key prefix. `outbox_depth` is deliberately
+optional — `count(*)` over a large backlog is the expensive question and the
+lag already answers the important one.
+
+`.github/workflows/check-analytics-freshness.yml` reads it with no credentials
+for **every** cloud in
+`src/trusted_router/operational_analytics_fleet.py:ANALYTICS_FRESHNESS_FLEET`.
+`tests/test_analytics_freshness_registry.py` fails if that registry disagrees,
+in either direction, with the union of every table in this repo that declares a
+deployment (`deployment_sources()`: the BYOK attestation tables,
+`regions.MULTICLOUD_REGION_GEO`, the `external_live_regions` /
+`marketing_regions` settings, and the `synthetic_fleet_peers` list every cloud
+already polls), so a fourth deployment cannot exist without a drain-freshness
+signal or a written reason it has none — whichever of those tables it lands in
+first. Each source must also be non-empty, since a union over an empty source
+is satisfied by anything. Missing section, unavailable, stale, unreachable,
+over-lag, a plane answering with the wrong storage backend, and a run that
+measured no cloud at all are all failures — never skips.
+
+Values read back off a remote page (`reason`, `backend`) are narrowed through
+the publisher's own vocabulary before they are printed. The problems file is
+pasted verbatim into a public GitHub issue, so an unnarrowed value would let
+whatever answered choose text in an issue in this repository.
+
+**It ships with `workflow_dispatch` as its only trigger, on purpose.**
+Publishing the field in this repo is not the same as serving it: merging main
+auto-deploys the GCP control plane only, while AWS-EU and Azure are hand-run
+scripts. A cron enabled before those deploys land files an issue every morning
+about clouds nobody redeployed, and a check that cries wolf is a check people
+learn to ignore (the same failure the client-telemetry check's
+`CANARY_COUNT_GATE_FROM` ramp-up guard exists to avoid). A `push:` trigger is
+the same hazard with a shorter fuse — it fires on the merge that lands the
+publisher, when no plane serves the section yet, and opens that issue an hour
+after merge instead of a morning after. Deploy all three, confirm each
+`/status.json` returns an `analytics` object, run the job once by
+`workflow_dispatch`, then enable both triggers in the one commit the workflow
+header spells out.
+
+Two states are neither pass nor fail, and are printed as `(unchecked)` on every
+run rather than skipped: a cloud with no public status page (`reason=`), and a
+cloud that legitimately runs no outbox (`expects_outbox=False` — Azure today,
+whose deploy script sets no `TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED`). The
+second one becomes a **failure** the day that cloud publishes a real lag, which
+is the day it needs watching.
+
+To ask about one cloud during an incident:
+
+```bash
+PYTHONPATH=src python3 -m clickhouse.check_fleet_analytics_freshness --cloud aws
+```
+
 ## Alerts and capacity
 
 Cloud Monitoring pages on node unavailability and disk use at 75 percent.

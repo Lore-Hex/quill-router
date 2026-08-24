@@ -31,6 +31,7 @@ import threading
 import pytest
 
 from trusted_router.store_protocol import Store
+from trusted_router.typed_balance import live_credit_summary
 
 from .conftest import BACKENDS, make_benchmark_sample, make_synthetic_probe_sample
 
@@ -67,6 +68,268 @@ def test_credit_workspace_once_distinguishes_events(
     assert store.credit_workspace_once(workspace_id, 5_000, f"evt-{unique}-A") is True
     assert store.credit_workspace_once(workspace_id, 5_000, f"evt-{unique}-A") is False
     assert store.credit_workspace_once(workspace_id, 5_000, f"evt-{unique}-B") is True
+
+
+def test_guarded_debit_is_exactly_once_and_writes_one_negative_movement(
+    store: Store,
+    workspace_id: str,
+    unique: str,
+) -> None:
+    assert store.credit_workspace_once(workspace_id, 100, f"evt-fund-debit-{unique}")
+    event_id = f"evt-debit-{unique}"
+
+    assert (
+        store.debit_workspace_guarded(
+            workspace_id,
+            60,
+            event_id,
+            kind="verification_fee",
+            authorization_id=f"auth-{unique}",
+        )
+        == "accepted"
+    )
+    assert (
+        store.debit_workspace_guarded(
+            workspace_id,
+            60,
+            event_id,
+            kind="verification_fee",
+        )
+        == "duplicate"
+    )
+    summary = live_credit_summary(workspace_id, store=store)
+    assert summary is not None
+    assert summary["total_credits"] == 40
+    movements = store.list_credit_movements(workspace_id)
+    assert [(movement.kind, movement.amount_microdollars) for movement in movements] == [
+        ("verification_fee", -60)
+    ]
+    assert movements[0].authorization_id == f"auth-{unique}"
+
+
+def test_guarded_debit_never_overdraws_or_records_a_rejected_attempt(
+    store: Store,
+    workspace_id: str,
+    unique: str,
+) -> None:
+    assert store.credit_workspace_once(workspace_id, 100, f"evt-fund-overdraw-{unique}")
+    assert (
+        store.debit_workspace_guarded(
+            workspace_id,
+            101,
+            f"evt-overdraw-{unique}",
+            kind="adjustment",
+        )
+        == "insufficient"
+    )
+    summary = live_credit_summary(workspace_id, store=store)
+    assert summary is not None
+    assert summary["available"] == 100
+    assert store.list_credit_movements(workspace_id) == []
+
+
+def test_user_earnings_seed_and_payout_are_idempotent(
+    store: Store,
+    user_id: str,
+    unique: str,
+) -> None:
+    store.ensure_earnings_account(user_id)
+    assert store.earnings_summary(user_id) == {
+        "total_earned": 0,
+        "total_transferred": 0,
+        "available": 0,
+    }
+    event_id = f"custom_model_payout:auth-{unique}"
+    assert store.credit_user_earnings(
+        user_id,
+        75,
+        event_id,
+        custom_model_id="model-a",
+        payer_workspace_id="ws-payer",
+    )
+    assert not store.credit_user_earnings(user_id, 75, event_id)
+    assert store.earnings_summary(user_id) == {
+        "total_earned": 75,
+        "total_transferred": 0,
+        "available": 75,
+    }
+    movement = store.list_credit_movements(f"user:{user_id}")[0]
+    assert movement.kind == "custom_model_payout"
+    assert movement.amount_microdollars == 75
+    assert movement.counterparty_account_id == "ws-payer"
+    assert movement.custom_model_id == "model-a"
+    assert movement.authorization_id == f"auth-{unique}"
+
+
+def test_user_earnings_credit_seeds_an_absent_account(
+    store: Store,
+    user_id: str,
+    unique: str,
+) -> None:
+    assert store.credit_user_earnings(user_id, 9, f"evt-bare-payout-{unique}")
+    assert store.earnings_summary(user_id)["available"] == 9
+
+
+def test_transfer_earnings_is_atomic_idempotent_and_visible_in_workspace(
+    store: Store,
+    user_id: str,
+    workspace_id: str,
+    unique: str,
+) -> None:
+    assert store.credit_user_earnings(user_id, 100, f"evt-transfer-fund-{unique}")
+    event_id = f"evt-transfer-{unique}"
+    assert store.transfer_earnings_to_workspace(user_id, workspace_id, 60, event_id) == "accepted"
+    assert store.transfer_earnings_to_workspace(user_id, workspace_id, 60, event_id) == "duplicate"
+    assert store.earnings_summary(user_id) == {
+        "total_earned": 100,
+        "total_transferred": 60,
+        "available": 40,
+    }
+    summary = live_credit_summary(workspace_id, store=store)
+    assert summary is not None
+    assert summary["total_credits"] == 60
+    user_movements = store.list_credit_movements(f"user:{user_id}", kinds=["earnings_transfer_out"])
+    workspace_movements = store.list_credit_movements(workspace_id, kinds=["earnings_transfer_in"])
+    assert len(user_movements) == len(workspace_movements) == 1
+    assert user_movements[0].amount_microdollars == -60
+    assert user_movements[0].counterparty_account_id == workspace_id
+    assert workspace_movements[0].amount_microdollars == 60
+    assert workspace_movements[0].counterparty_account_id == f"user:{user_id}"
+
+
+def test_insufficient_earnings_transfer_leaves_both_accounts_unchanged(
+    store: Store,
+    user_id: str,
+    workspace_id: str,
+    unique: str,
+) -> None:
+    assert store.credit_user_earnings(user_id, 20, f"evt-low-fund-{unique}")
+    assert (
+        store.transfer_earnings_to_workspace(
+            user_id,
+            workspace_id,
+            21,
+            f"evt-low-transfer-{unique}",
+        )
+        == "insufficient"
+    )
+    assert store.earnings_summary(user_id)["available"] == 20
+    summary = live_credit_summary(workspace_id, store=store)
+    assert summary is not None
+    assert summary["total_credits"] == 0
+    assert store.list_credit_movements(f"user:{user_id}", kinds=["earnings_transfer_out"]) == []
+    assert store.list_credit_movements(workspace_id, kinds=["earnings_transfer_in"]) == []
+
+
+def test_custom_model_earnings_aggregate_groups_only_payouts_by_model(
+    store: Store,
+    user_id: str,
+    unique: str,
+) -> None:
+    assert store.credit_user_earnings(
+        user_id,
+        30,
+        f"evt-model-a1-{unique}",
+        custom_model_id="model-a",
+    )
+    assert store.credit_user_earnings(
+        user_id,
+        12,
+        f"evt-model-a2-{unique}",
+        custom_model_id="model-a",
+    )
+    assert store.credit_user_earnings(
+        user_id,
+        8,
+        f"evt-model-b-{unique}",
+        custom_model_id="model-b",
+    )
+    assert store.custom_model_earnings_by_model(
+        user_id,
+        since="1970-01-01T00:00:00Z",
+    ) == {"model-a": 42, "model-b": 8}
+
+
+def test_credit_movement_listing_is_newest_first_filterable_and_bounded(
+    store: Store,
+    user_id: str,
+    unique: str,
+) -> None:
+    first_id = f"evt-list-a-{unique}"
+    second_id = f"evt-list-b-{unique}"
+    assert store.credit_user_earnings(
+        user_id,
+        1,
+        first_id,
+        custom_model_id="model-a",
+    )
+    assert store.credit_user_earnings(
+        user_id,
+        2,
+        second_id,
+        custom_model_id="model-b",
+    )
+
+    account_id = f"user:{user_id}"
+    movements = store.list_credit_movements(
+        account_id,
+        kinds=["custom_model_payout"],
+        limit=1,
+    )
+    assert [movement.movement_id for movement in movements] == [second_id]
+    assert store.list_credit_movements(account_id, kinds=[]) == []
+    all_movements = store.list_credit_movements(account_id)
+    assert (
+        store.list_credit_movements(
+            account_id,
+            before=min(movement.created_at for movement in all_movements),
+        )
+        == []
+    )
+
+
+def test_lifetime_topup_is_part_of_the_grant_claim(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+    unique: str,
+) -> None:
+    assert store.get_lifetime_topup_microdollars(f"unknown-{unique}") == 0
+    event_id = f"evt-lifetime-{unique}"
+    assert store.credit_workspace_typed_direct(
+        workspace_id,
+        25,
+        event_id,
+        lifetime_topup_user_id=user_id,
+    )
+    assert not store.credit_workspace_typed_direct(
+        workspace_id,
+        25,
+        event_id,
+        lifetime_topup_user_id=user_id,
+    )
+    assert store.credit_workspace_typed_direct(
+        workspace_id,
+        10,
+        f"{event_id}-second",
+        lifetime_topup_user_id=user_id,
+    )
+    assert store.get_lifetime_topup_microdollars(user_id) == 35
+
+
+def test_lifetime_topup_support_override_is_idempotent_without_crediting(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+    unique: str,
+) -> None:
+    before = live_credit_summary(workspace_id, store=store)
+    event_id = f"evt-lifetime-override-{unique}"
+
+    assert store.add_lifetime_topup(user_id, 25, event_id)
+    assert not store.add_lifetime_topup(user_id, 25, event_id)
+    assert store.get_lifetime_topup_microdollars(user_id) == 25
+    assert live_credit_summary(workspace_id, store=store) == before
 
 
 def _credit_and_key(
@@ -202,6 +465,13 @@ def test_concurrent_reserves_cannot_oversubscribe(
     assert all(not thread.is_alive() for thread in threads), "reserve threads hung"
     assert len(reservations) == 1
     assert len(errors) == 1
+    # The loser gets the DOMAIN's refusal, never an infrastructure error. On a
+    # backend that resolves the race by ABORTING the loser rather than by
+    # blocking it -- Spanner PG and Aurora DSQL both do -- the store owes the
+    # caller a replay, not a StoreUnavailable. This assertion is the contract,
+    # so if it ever goes flaky again the bug is in the retry policy
+    # (PostgresStore._RETRYABLE_ROLLBACK_SQLSTATES, covered by
+    # tests/test_postgres_transaction_retry.py), NOT in this line.
     assert isinstance(errors[0], ValueError)
     assert str(errors[0]) == "insufficient credits"
     with pytest.raises(ValueError, match="insufficient credits"):
@@ -230,6 +500,49 @@ def test_record_sns_message_once_is_idempotent(store: Store, unique: str) -> Non
     assert store.record_sns_message_once(f"msg-{unique}-2") is True
 
 
+def test_record_webhook_event_once_is_idempotent_and_source_scoped(
+    store: Store, unique: str
+) -> None:
+    event_id = f"event-{unique}"
+    assert store.record_webhook_event_once("veriff", event_id) is True
+    assert store.record_webhook_event_once("veriff", event_id) is False
+    assert store.record_webhook_event_once("another-source", event_id) is True
+
+
+def test_user_identity_status_transitions_persist_and_stamp_approval_once(
+    store: Store, user_id: str
+) -> None:
+    pending = store.set_user_identity_status(
+        user_id,
+        status="pending",
+        session_id="session-one",
+        session_url="https://example.test/session-one",
+        increment_attempts=True,
+    )
+    assert pending is not None
+    assert pending.identity_status == "pending"
+    assert pending.identity_verified is False
+    assert pending.veriff_session_created_at is not None
+    assert pending.veriff_attempt_count == 1
+
+    approved = store.set_user_identity_status(
+        user_id,
+        status="approved",
+        decision_code=9001,
+        verified_name="Ada Lovelace",
+    )
+    assert approved is not None
+    assert approved.identity_verified is True
+    assert approved.identity_verified_at is not None
+    first_verified_at = approved.identity_verified_at
+
+    approved_again = store.set_user_identity_status(user_id, status="approved")
+    assert approved_again is not None
+    assert approved_again.identity_verified_at == first_verified_at
+    assert approved_again.identity_verified_name == "Ada Lovelace"
+    assert approved_again.veriff_attempt_count == 1
+
+
 # --------------------------------------------------------------------------
 # Single-use secrets
 # --------------------------------------------------------------------------
@@ -245,6 +558,98 @@ def test_wallet_challenge_is_single_use(store: Store) -> None:
     )
     assert store.consume_wallet_challenge(raw_nonce) is not None
     assert store.consume_wallet_challenge(raw_nonce) is None
+
+
+def test_reissuing_active_wallet_challenge_reuses_same_nonce(
+    store: Store,
+    unique: str,
+) -> None:
+    """Reissuing for a known wallet cannot invalidate its displayed prompt.
+
+    Challenge issuance is unauthenticated, so replacement-on-request lets an
+    attacker race a legitimate wallet forever. The same address/domain slot
+    must instead return its still-live nonce without another durable record.
+    """
+    address = f"wallet-{unique}"
+    first_raw = f"old-{unique}"
+    first_message = (
+        "trusted.example wants you to sign in with your Ethereum account:\n"
+        f"{address}\n\nNonce: {first_raw}"
+    )
+    first_nonce, first = store.create_wallet_challenge(
+        address=address,
+        message=first_message,
+        ttl_seconds=300,
+        raw_nonce=first_raw,
+    )
+    proposed_raw = f"new-{unique}"
+    proposed_message = (
+        "trusted.example wants you to sign in with your Ethereum account:\n"
+        f"{address}\n\nNonce: {proposed_raw}"
+    )
+    returned_nonce, returned = store.create_wallet_challenge(
+        address=f"  {address.upper()}  ",
+        message=proposed_message,
+        ttl_seconds=300,
+        raw_nonce=proposed_raw,
+    )
+
+    assert first_nonce == first_raw
+    assert returned_nonce == first_raw
+    assert returned.hash == first.hash
+    assert returned.message == first_message
+    assert store.consume_wallet_challenge(proposed_raw) is None
+    consumed = store.consume_wallet_challenge(first_nonce)
+    assert consumed is not None
+    assert consumed.hash == first.hash
+    assert consumed.address == address
+
+    fresh_raw = f"after-consume-{unique}"
+    fresh_nonce, fresh = store.create_wallet_challenge(
+        address=address,
+        message=(
+            "trusted.example wants you to sign in with your Ethereum account:\n"
+            f"{address}\n\nNonce: {fresh_raw}"
+        ),
+        ttl_seconds=300,
+        raw_nonce=fresh_raw,
+    )
+    assert fresh_nonce == fresh_raw
+    assert fresh.hash != first.hash
+    assert store.consume_wallet_challenge(fresh_nonce) is not None
+
+
+def test_wallet_challenge_scope_isolated_by_siwe_domain(
+    store: Store,
+    unique: str,
+) -> None:
+    address = f"wallet-domain-{unique}"
+    first_nonce = f"first-domain-{unique}"
+    second_nonce = f"second-domain-{unique}"
+    first_returned, first = store.create_wallet_challenge(
+        address=address,
+        message=(
+            "trusted.example wants you to sign in with your Ethereum account:\n"
+            f"{address}\n\nNonce: {first_nonce}"
+        ),
+        ttl_seconds=300,
+        raw_nonce=first_nonce,
+    )
+    second_returned, second = store.create_wallet_challenge(
+        address=address,
+        message=(
+            "ally.example wants you to sign in with your Ethereum account:\n"
+            f"{address}\n\nNonce: {second_nonce}"
+        ),
+        ttl_seconds=300,
+        raw_nonce=second_nonce,
+    )
+
+    assert first_returned == first_nonce
+    assert second_returned == second_nonce
+    assert first.hash != second.hash
+    assert store.consume_wallet_challenge(first_nonce) is not None
+    assert store.consume_wallet_challenge(second_nonce) is not None
 
 
 def test_unknown_wallet_challenge_returns_none(store: Store, unique: str) -> None:
@@ -332,6 +737,31 @@ def test_api_key_lookups_agree_and_delete_revokes(store: Store, workspace_id: st
     assert store.get_key_by_raw(raw_key) is None
     assert store.get_key_by_hash(created.hash) is None
     assert store.get_key_by_lookup_hash(created.lookup_hash) is None
+
+
+def test_api_key_usage_projection_is_immediate_and_scoped(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+    unique: str,
+) -> None:
+    """The console projection is a portable read-your-write Store contract."""
+    _raw_key, created = store.create_api_key(
+        workspace_id=workspace_id,
+        name=f"projection-{unique}",
+        creator_user_id=user_id,
+        limit_daily_microdollars=1_000,
+    )
+
+    projected = store.list_api_keys_with_usage(workspace_id)
+
+    assert len(projected) == 1
+    assert projected[0].api_key.hash == created.hash
+    assert projected[0].usage_microdollars == 0
+    assert projected[0].windows == {"daily": 0, "weekly": 0, "monthly": 0}
+    assert store.list_api_keys_with_usage(f"other-{unique}") == []
+    assert store.delete_key(created.hash) is True
+    assert store.list_api_keys_with_usage(workspace_id) == []
 
 
 def test_auth_session_lifecycle(store: Store, user_id: str) -> None:
@@ -753,8 +1183,17 @@ def test_reserve_key_limit_window_blocks_before_lifetime(store: Store, unique: s
     with pytest.raises(KeyWindowLimitExceeded) as excinfo:
         store.reserve_key_limit(kh, 10, usage_type="Credits")
     assert excinfo.value.window == "daily"
+    assert excinfo.value.decision.limit == 100
+    assert excinfo.value.decision.remaining == 5
+    assert excinfo.value.decision.allowed is False
+    assert excinfo.value.decision.reset_seconds >= 1
     # Under the window cap still succeeds against the same row.
-    store.reserve_key_limit(kh, 5, usage_type="Credits")
+    decision = store.reserve_key_limit(kh, 5, usage_type="Credits")
+    assert decision is not None
+    assert decision.window == "daily"
+    assert decision.limit == 100
+    assert decision.remaining == 5
+    assert decision.allowed is True
 
 
 def test_stale_window_start_reads_as_zero(store: Store, unique: str) -> None:
@@ -1269,6 +1708,10 @@ def test_concurrent_transfers_cannot_overdraw(store: Store, workspace_id: str, u
         pytest.skip("backend does not implement cross-plane credit transfer")
 
     moved: list[bool] = []
+    # Anything that is neither "moved" nor the domain's refusal. Without this
+    # an escaping exception just left the tally SHORT, and the failure read
+    # `assert 0 == 1` with no hint that a store error had reached the caller.
+    escaped: list[BaseException] = []
     lock = threading.Lock()
 
     def attempt(index: int) -> None:
@@ -1282,6 +1725,10 @@ def test_concurrent_transfers_cannot_overdraw(store: Store, workspace_id: str, u
             outcome = True
         except ValueError:
             outcome = False
+        except BaseException as exc:  # noqa: BLE001 - reported, then re-asserted below
+            with lock:
+                escaped.append(exc)
+            return
         with lock:
             moved.append(outcome)
 
@@ -1291,4 +1738,9 @@ def test_concurrent_transfers_cannot_overdraw(store: Store, workspace_id: str, u
     for thread in threads:
         thread.join(timeout=30)
 
+    # Same contract as the concurrent-reserve race: a loser gets the domain's
+    # refusal, never an infrastructure error. A backend that resolves the race
+    # by ABORTING owes the caller a replay -- see
+    # PostgresStore._RETRYABLE_ROLLBACK_SQLSTATES.
+    assert not escaped, f"store errors reached the caller: {escaped}"
     assert moved.count(True) == 1, f"oversubscribed the balance: {moved}"

@@ -3,6 +3,7 @@ from __future__ import annotations
 from scripts.pricing.model_ids import (
     canonicalize_native_model_id,
     canonicalize_unqualified_model_id,
+    mapped_or_canonical_model_id,
 )
 from scripts.pricing.parsers import kimi
 from scripts.pricing.providers import tinfoil
@@ -24,6 +25,17 @@ def test_canonicalize_unqualified_aggregator_model_families() -> None:
     )
     assert canonicalize_unqualified_model_id("phala/qwen3.7-max") == ("qwen/qwen3.7-max")
     assert canonicalize_unqualified_model_id("unrelated-model") is None
+
+
+def test_nvidia_native_brand_prefix_does_not_create_duplicate_public_model() -> None:
+    native_id = "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B"
+
+    assert canonicalize_native_model_id(native_id) == (
+        "nvidia/nemotron-3-ultra-550b-a55b"
+    )
+    assert mapped_or_canonical_model_id(native_id, {}) == (
+        "nvidia/nemotron-3-ultra-550b-a55b"
+    )
 
 
 def test_kimi_parser_accepts_new_kimi_family_ids_without_hand_map() -> None:

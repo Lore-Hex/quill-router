@@ -23,6 +23,11 @@
       <span class="pill warn">one time reveal</span>
     </div>
     <div class="panel-body">
+      <div class="activation-code-panel activation-onboarding-agent">
+        <div class="activation-code-head"><strong>Paste this short message into a Claude Code, Codex, or your favorite agent chat.</strong><button class="btn" type="button" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key" aria-describedby="welcome-agent-copy-status">Copy message</button></div>
+        <pre id="welcome-agent-message" data-copy-lines>{{ agent_chat_prompt(revealed_key) }}</pre>
+        <p class="copy-status" id="welcome-agent-copy-status" role="status" aria-live="polite"></p>
+      </div>
       {{ api_key_reveal(revealed_key, "welcome", workspace_name, False) }}
       <p class="activation-security-note">This one-time reveal contains the complete key. TrustedRouter stores its salted hash.</p>
     </div>
@@ -96,19 +101,12 @@
     </div>
     <div class="panel-body">
       <div class="activation-tabs" role="tablist" aria-label="Setup method">
-        <button class="activation-tab" id="setup-agent-tab" type="button" role="tab" aria-selected="true" aria-controls="setup-agent" data-setup-tab="setup-agent">Claude Code / Codex / agent</button>
-        <button class="activation-tab" id="setup-python-tab" type="button" role="tab" aria-selected="false" aria-controls="setup-python" tabindex="-1" data-setup-tab="setup-python">Python</button>
+        <button class="activation-tab" id="setup-python-tab" type="button" role="tab" aria-selected="true" aria-controls="setup-python" data-setup-tab="setup-python">Python</button>
         <button class="activation-tab" id="setup-js-tab" type="button" role="tab" aria-selected="false" aria-controls="setup-js" tabindex="-1" data-setup-tab="setup-js">JavaScript</button>
         <button class="activation-tab" id="setup-curl-tab" type="button" role="tab" aria-selected="false" aria-controls="setup-curl" tabindex="-1" data-setup-tab="setup-curl">curl</button>
       </div>
 
-      <div class="activation-code-panel" id="setup-agent" role="tabpanel" aria-labelledby="setup-agent-tab" data-setup-panel>
-        <div class="activation-code-head"><strong>Paste this short message into a Claude Code, Codex, or your favorite agent chat.</strong><button class="btn" type="button" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key" aria-describedby="welcome-agent-copy-status">Copy message</button></div>
-        <pre id="welcome-agent-message" data-copy-lines>{{ agent_chat_prompt(revealed_key) }}</pre>
-        <p class="copy-status" id="welcome-agent-copy-status" role="status" aria-live="polite"></p>
-      </div>
-
-      <div class="activation-code-panel" id="setup-python" role="tabpanel" aria-labelledby="setup-python-tab" data-setup-panel hidden>
+      <div class="activation-code-panel" id="setup-python" role="tabpanel" aria-labelledby="setup-python-tab" data-setup-panel>
         <div class="activation-code-head"><strong>OpenAI Python SDK</strong><button class="btn" type="button" data-copy-template-target="welcome-python-code" data-secret-source="welcome-api-key" aria-describedby="welcome-python-copy-status">Copy code</button></div>
         <pre id="welcome-python-code">from openai import OpenAI
 

@@ -70,6 +70,40 @@ CREATE TABLE IF NOT EXISTS tr_credit_balance (
     PRIMARY KEY (workspace_id, shard)
 );
 
+CREATE TABLE IF NOT EXISTS tr_earnings_balance (
+    user_id TEXT NOT NULL,
+    shard BIGINT NOT NULL DEFAULT 0,
+    total_earned BIGINT NOT NULL DEFAULT 0,
+    total_transferred BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, shard)
+);
+
+CREATE TABLE IF NOT EXISTS tr_credit_movement (
+    account_id TEXT NOT NULL,
+    movement_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    amount_microdollars BIGINT NOT NULL,
+    counterparty_account_id TEXT,
+    custom_model_id TEXT,
+    authorization_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (account_id, movement_id)
+);
+
+-- Postgres has no Spanner-style row deletion policy. A future sweep must
+-- delete tr_credit_movement rows older than 400 days.
+-- Ascending keeps this index portable to Aurora DSQL; reverse scans serve the
+-- newest-first read path without an explicit DESC key.
+CREATE INDEX IF NOT EXISTS tr_credit_movement_by_time
+    ON tr_credit_movement (account_id, created_at);
+
+CREATE TABLE IF NOT EXISTS tr_user_lifetime_topup (
+    user_id TEXT NOT NULL PRIMARY KEY,
+    total_microdollars BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS tr_key_limit (
     workspace_id TEXT NOT NULL,
     key_hash TEXT NOT NULL,

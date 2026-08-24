@@ -5,7 +5,7 @@
   {% set meta_description = description|seo_meta_description %}
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script>
+  <script nonce="{{ csp_nonce() }}">
     (function () {
       try {
         if (localStorage.getItem("tr-theme") === "light") {
@@ -18,7 +18,7 @@
   <meta name="description" content="{{ meta_description }}">
   {% include "_favicon.html" %}
   {% if robots_meta %}<meta name="robots" content="{{ robots_meta }}">{% endif %}
-  <link rel="canonical" href="{{ site_url }}">
+  <link rel="canonical" href="{{ canonical_url|default(site_url, true) }}">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="TrustedRouter">
   <meta property="og:title" content="{{ meta_title }}">
@@ -42,7 +42,7 @@
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
   {% block head_extra %}{% endblock %}
-  {% if json_ld_blob %}<script type="application/ld+json">{{ json_ld_blob|safe }}</script>{% endif %}
+  {% if json_ld_blob %}<script type="application/ld+json" nonce="{{ csp_nonce() }}">{{ json_ld_blob|safe }}</script>{% endif %}
 </head>
 <body>
   {% include "public/_nav.html" %}
@@ -83,7 +83,7 @@
   </main>
   {% include "public/_footer.html" %}
   {% include "public/_signin.html" %}
-  <script>window.__TR__ = {"apiBaseUrl": "{{ api_base_url }}"};</script>
+  <script nonce="{{ csp_nonce() }}">window.__TR__ = {"apiBaseUrl": "{{ api_base_url }}"};</script>
   <script src="/static/dashboard.js?v={{ static_version|default('local') }}"></script>
   {% block body_scripts %}{% endblock %}
 </body>

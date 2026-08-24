@@ -37,13 +37,17 @@ def _lease(*, grant: int = 1_000, expires_in: int = 60) -> RegionalQuotaLease:
 
 
 def test_reserve_settle_and_refund_preserve_exact_integer_accounting() -> None:
-    first = _lease().reserve(
-        hold_id="a",
-        fingerprint="fp-a",
-        amount_microdollars=400,
-        fencing_token=7,
-        now=NOW,
-    ).lease
+    first = (
+        _lease()
+        .reserve(
+            hold_id="a",
+            fingerprint="fp-a",
+            amount_microdollars=400,
+            fencing_token=7,
+            now=NOW,
+        )
+        .lease
+    )
     second = first.reserve(
         hold_id="b",
         fingerprint="fp-b",
@@ -52,9 +56,7 @@ def test_reserve_settle_and_refund_preserve_exact_integer_accounting() -> None:
         now=NOW,
     ).lease
 
-    settled = second.settle(
-        hold_id="a", actual_microdollars=275, fencing_token=7
-    ).lease
+    settled = second.settle(hold_id="a", actual_microdollars=275, fencing_token=7).lease
     refunded = settled.refund(hold_id="b", fencing_token=7).lease
 
     assert refunded.spent_microdollars == 275
@@ -82,12 +84,8 @@ def test_reservation_and_terminal_transitions_are_idempotent() -> None:
     assert replay.replayed is True
     assert replay.lease is transition.lease
 
-    settled = replay.lease.settle(
-        hold_id="a", actual_microdollars=250, fencing_token=7
-    )
-    settled_replay = settled.lease.settle(
-        hold_id="a", actual_microdollars=250, fencing_token=7
-    )
+    settled = replay.lease.settle(hold_id="a", actual_microdollars=250, fencing_token=7)
+    settled_replay = settled.lease.settle(hold_id="a", actual_microdollars=250, fencing_token=7)
     assert settled_replay.replayed is True
     assert settled_replay.lease is settled.lease
 
@@ -96,16 +94,18 @@ def test_reservation_and_terminal_transitions_are_idempotent() -> None:
     ("fingerprint", "amount"),
     [("different", 400), ("fp", 401)],
 )
-def test_idempotency_reuse_with_changed_inputs_fails(
-    fingerprint: str, amount: int
-) -> None:
-    lease = _lease().reserve(
-        hold_id="a",
-        fingerprint="fp",
-        amount_microdollars=400,
-        fencing_token=7,
-        now=NOW,
-    ).lease
+def test_idempotency_reuse_with_changed_inputs_fails(fingerprint: str, amount: int) -> None:
+    lease = (
+        _lease()
+        .reserve(
+            hold_id="a",
+            fingerprint="fp",
+            amount_microdollars=400,
+            fencing_token=7,
+            now=NOW,
+        )
+        .lease
+    )
     with pytest.raises(LeaseIdempotencyConflictError):
         lease.reserve(
             hold_id="a",
@@ -144,13 +144,17 @@ def test_lease_fails_closed_on_expiry_exhaustion_and_stale_fence() -> None:
 
 
 def test_settlement_cannot_exceed_hold_or_cross_refund_boundary() -> None:
-    lease = _lease().reserve(
-        hold_id="a",
-        fingerprint="fp",
-        amount_microdollars=100,
-        fencing_token=7,
-        now=NOW,
-    ).lease
+    lease = (
+        _lease()
+        .reserve(
+            hold_id="a",
+            fingerprint="fp",
+            amount_microdollars=100,
+            fencing_token=7,
+            now=NOW,
+        )
+        .lease
+    )
     with pytest.raises(LeaseSettlementError, match="fit inside"):
         lease.settle(hold_id="a", actual_microdollars=101, fencing_token=7)
     refunded = lease.refund(hold_id="a", fencing_token=7).lease
@@ -159,13 +163,17 @@ def test_settlement_cannot_exceed_hold_or_cross_refund_boundary() -> None:
 
 
 def test_drain_blocks_new_work_and_close_waits_for_open_holds() -> None:
-    lease = _lease().reserve(
-        hold_id="a",
-        fingerprint="fp",
-        amount_microdollars=100,
-        fencing_token=7,
-        now=NOW,
-    ).lease
+    lease = (
+        _lease()
+        .reserve(
+            hold_id="a",
+            fingerprint="fp",
+            amount_microdollars=100,
+            fencing_token=7,
+            now=NOW,
+        )
+        .lease
+    )
     draining = lease.begin_drain(fencing_token=7)
     assert draining.state == LeaseState.DRAINING
     with pytest.raises(LeaseUnavailableError, match="draining"):
@@ -178,9 +186,7 @@ def test_drain_blocks_new_work_and_close_waits_for_open_holds() -> None:
         )
     with pytest.raises(LeaseUnavailableError, match="open reservations"):
         draining.close(fencing_token=7)
-    closed = draining.refund(hold_id="a", fencing_token=7).lease.close(
-        fencing_token=7
-    )
+    closed = draining.refund(hold_id="a", fencing_token=7).lease.close(fencing_token=7)
     assert closed.state == LeaseState.CLOSED
 
 
@@ -299,22 +305,91 @@ def test_invalid_construction_and_grant_inputs_fail_closed() -> None:
         )
 
 
-def test_regional_leases_are_dark_and_fail_closed_outside_tests() -> None:
-    assert Settings(environment="test").regional_quota_leases_enabled is False
+def test_regional_leases_default_off_and_fail_closed_without_dependencies() -> None:
+    defaults = Settings(environment="test")
+    assert defaults.regional_quota_leases_enabled is False
+    assert defaults.regional_quota_lease_issuance_enabled is False
+    assert defaults.regional_quota_lease_shard_count == 16
+    capability_only = Settings(environment="test", regional_quota_leases_enabled=True)
+    assert capability_only.regional_quota_lease_issuance_enabled is False
+    with pytest.raises(ValidationError, match="requires TR_REGIONAL_QUOTA_LEASES_ENABLED"):
+        Settings(environment="test", regional_quota_lease_issuance_enabled=True)
     with pytest.raises(ValidationError, match="PILOT_WORKSPACE_IDS"):
-        Settings(environment="test", regional_quota_leases_enabled=True)
-    with pytest.raises(ValidationError, match="not production-ready"):
+        Settings(
+            environment="test",
+            regional_quota_leases_enabled=True,
+            regional_quota_lease_issuance_enabled=True,
+        )
+    with pytest.raises(ValidationError, match="Spanner GCP backend"):
         Settings(
             environment="staging",
+            service_surface="internal",
+            regional_quota_leases_enabled=True,
+            regional_quota_lease_pilot_workspace_ids="workspace-1",
+        )
+    with pytest.raises(ValidationError, match="typed request records"):
+        Settings(
+            environment="staging",
+            service_surface="internal",
+            storage_backend="spanner-bigtable",
             regional_quota_leases_enabled=True,
             regional_quota_lease_pilot_workspace_ids="workspace-1",
         )
     settings = Settings(
         environment="test",
         regional_quota_leases_enabled=True,
+        regional_quota_lease_issuance_enabled=True,
         regional_quota_lease_pilot_workspace_ids=" workspace-1,workspace-2 ",
     )
     assert settings.regional_quota_lease_pilot_workspaces == {
         "workspace-1",
         "workspace-2",
     }
+
+
+@pytest.mark.parametrize("count", [0, 65])
+def test_regional_lease_shard_count_is_bounded(count: int) -> None:
+    with pytest.raises(ValidationError, match="LEASE_SHARD_COUNT"):
+        Settings(environment="test", regional_quota_lease_shard_count=count)
+
+
+def test_regional_lease_production_config_requires_fixed_profiles_and_outbox() -> None:
+    common = {
+        "environment": "staging",
+        "service_surface": "internal",
+        "internal_gateway_token": "staging-gateway-" + "g" * 32,
+        "observer_internal_token": "staging-observer-" + "o" * 32,
+        "storage_backend": "spanner-bigtable",
+        "bigtable_instance_id": "trusted-router-logs",
+        "request_record_write_mode": "typed",
+        "regional_quota_leases_enabled": True,
+        "regional_quota_lease_issuance_enabled": True,
+        "regional_quota_lease_pilot_workspace_ids": "workspace-1",
+    }
+    with pytest.raises(ValidationError, match="settle outbox"):
+        Settings(**common)
+    with pytest.raises(ValidationError, match="fixed regional Bigtable app profiles"):
+        Settings(**common, settle_outbox_enabled=True)
+    settings = Settings(
+        **common,
+        settle_outbox_enabled=True,
+        regional_quota_bigtable_app_profiles=(
+            "us-central1=tr-quota-us-central1,europe-west4=tr-quota-europe-west4"
+        ),
+    )
+    assert settings.regional_quota_bigtable_app_profile_map == {
+        "us-central1": "tr-quota-us-central1",
+        "europe-west4": "tr-quota-europe-west4",
+    }
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["missing-separator", "=profile", "region=", "region=a,region=b"],
+)
+def test_regional_profile_map_rejects_ambiguous_entries(value: str) -> None:
+    with pytest.raises(ValueError):
+        _ = Settings(
+            environment="test",
+            regional_quota_bigtable_app_profiles=value,
+        ).regional_quota_bigtable_app_profile_map

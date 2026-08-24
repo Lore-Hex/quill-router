@@ -36,12 +36,46 @@ class UsageType(StrEnum):
         return self is UsageType.BYOK
 
 
+class IdentityVerificationStatus(StrEnum):
+    """Current state of a user's identity-verification attempt."""
+
+    NONE = "none"
+    PENDING = "pending"
+    APPROVED = "approved"
+    DECLINED = "declined"
+    RESUBMISSION_REQUESTED = "resubmission_requested"
+    EXPIRED = "expired"
+
+    @classmethod
+    def coerce(
+        cls, value: str | IdentityVerificationStatus
+    ) -> IdentityVerificationStatus:
+        if isinstance(value, cls):
+            return value
+        try:
+            return cls(str(value).strip().lower())
+        except ValueError:
+            return cls.NONE
+
+
 class ErrorType(StrEnum):
     """Stable error type strings shared across the API surface."""
 
     BAD_REQUEST = "bad_request"
     UNAUTHORIZED = "unauthorized"
+    # A credential the customer PRESENTED that the plane definitively rejects:
+    # unknown, disabled, or expired. Split from the generic UNAUTHORIZED so the
+    # enclave's negative auth cache can discriminate this -- and only this --
+    # from every 401 that might mean the enclave's own internal credential is
+    # broken. Caching the generic type would turn one control-plane auth
+    # misconfiguration into every customer locked out for the cache TTL. This
+    # string is a WIRE CONTRACT with enclave-go/internal/authcache; both sides
+    # pin it with a test.
+    INVALID_API_KEY = "invalid_api_key"
     FORBIDDEN = "forbidden"
+    VERIFICATION_REQUIRED = "verification_required"
+    MODEL_OFF_THE_CLOCK = "model_off_the_clock"
+    USER_MODEL_TIMEOUT = "user_model_timeout"
     NOT_FOUND = "not_found"
     CONFLICT = "conflict"
     ALREADY_REGISTERED = "already_registered"
