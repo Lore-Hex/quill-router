@@ -58,6 +58,11 @@ from trusted_router.request_limits import (
     rate_limit_headers,
 )
 from trusted_router.security import constant_time_equal
+from trusted_router.spend_windows import (
+    SPEND_WINDOW_DECISION_STATE,
+    KeyWindowLimitDecision,
+    spend_window_headers,
+)
 from trusted_router.storage_rate_limits import InMemoryRateLimits
 from trusted_router.types import ErrorType
 
@@ -148,6 +153,20 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         if denied is not None:
             return denied
         return await call_next(request)
+
+    @app.middleware("http")
+    async def spend_window_headers_middleware(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Publish only the verdict produced by an applied spend limiter."""
+        response = await call_next(request)
+        decision = getattr(request.state, SPEND_WINDOW_DECISION_STATE, None)
+        if isinstance(decision, KeyWindowLimitDecision):
+            response.headers.update(
+                spend_window_headers(decision, retry_after=response.status_code == 429)
+            )
+        return response
 
     @app.middleware("http")
     async def request_id_middleware(

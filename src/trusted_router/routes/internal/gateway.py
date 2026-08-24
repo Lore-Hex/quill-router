@@ -589,8 +589,9 @@ def _authorize_gateway_sync(
 
         from trusted_router.spend_windows import (
             enforced_window_limits,
-            utcnow,
-            window_resets_at,
+            remember_spend_window_decision,
+            spend_window_headers,
+            spend_window_limit_error_message,
         )
         from trusted_router.storage_gcp_authorize import AuthorizeOutcome
         from trusted_router.storage_gcp_counters import key_usage_shard_count
@@ -725,22 +726,21 @@ def _authorize_gateway_sync(
         except BaseException:
             release_user_model_slot_after_error()
             raise
+        window_decision = getattr(outcome, "rate_limit", None)
+        remember_spend_window_decision(request, window_decision)
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
             release_user_model_slot_after_error()
             record_free_credit_exhausted_safely(workspace.id)
             raise _insufficient_credits_error(workspace)
         if outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED):
             release_user_model_slot_after_error()
-            _, _, window = outcome.partition(":")
-            window = window or "daily"
-            resets_at = window_resets_at(window, utcnow())
-            retry_after = max(1, int((resets_at - utcnow()).total_seconds()))
+            if window_decision is None:
+                raise RuntimeError("typed window rejection omitted its rate-limit verdict")
             raise api_error(
                 429,
-                f"API key {window} spend limit exceeded; resets at "
-                f"{resets_at.isoformat().replace('+00:00', 'Z')}",
+                spend_window_limit_error_message(window_decision),
                 ErrorType.KEY_WINDOW_LIMIT_EXCEEDED,
-                headers={"Retry-After": str(retry_after)},
+                headers=spend_window_headers(window_decision, retry_after=True),
             )
         if outcome in (AuthorizeOutcome.KEY_LIMIT_EXCEEDED, AuthorizeOutcome.KEY_MISSING):
             release_user_model_slot_after_error()
@@ -764,24 +764,35 @@ def _authorize_gateway_sync(
         credit_reservation_id = authorization.credit_reservation_id
     else:
         from trusted_router.spend_windows import (
+            KeyLimitExceeded,
             KeyWindowLimitExceeded,
-            utcnow,
-            window_resets_at,
+            remember_spend_window_decision,
+            spend_window_headers,
+            spend_window_limit_error_message,
         )
 
         try:
-            STORE.reserve_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
+            window_decision = STORE.reserve_key_limit(
+                api_key.hash,
+                estimate,
+                usage_type=reservation_usage_type,
+            )
+            remember_spend_window_decision(request, window_decision)
         except KeyWindowLimitExceeded as exc:
             release_user_model_slot_after_error()
+            remember_spend_window_decision(request, exc.decision)
             # InMemory twin of the typed window rejection (same 429 shape).
-            resets_at = window_resets_at(exc.window, utcnow())
-            retry_after = max(1, int((resets_at - utcnow()).total_seconds()))
             raise api_error(
                 429,
-                f"API key {exc.window} spend limit exceeded; resets at "
-                f"{resets_at.isoformat().replace('+00:00', 'Z')}",
+                spend_window_limit_error_message(exc.decision),
                 ErrorType.KEY_WINDOW_LIMIT_EXCEEDED,
-                headers={"Retry-After": str(retry_after)},
+                headers=spend_window_headers(exc.decision, retry_after=True),
+            ) from exc
+        except KeyLimitExceeded as exc:
+            release_user_model_slot_after_error()
+            remember_spend_window_decision(request, exc.decision)
+            raise api_error(
+                402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
             ) from exc
         except ValueError as exc:
             release_user_model_slot_after_error()
