@@ -201,6 +201,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "azure",
         "scaleway",
         "featherless",
+        "sakana",
         "jina",
     }
 )
@@ -845,6 +846,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "io-net",
         "scaleway",
         "featherless",
+        "sakana",
         "meta",
         "openrouter-exclusive",
     ):

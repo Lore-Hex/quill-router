@@ -1567,14 +1567,14 @@ PROVIDERS: dict[str, Provider] = {
     "sakana": Provider(
         slug="sakana",
         name="Sakana AI",
-        supports_prepaid=False,
+        supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
             "No contractual zero-retention, confidential-compute, or E2EE claim "
-            "is tracked for TrustedRouter's Sakana account. The authenticated model "
-            "catalog does not publish exact prices, so routes remain dark."
+            "is tracked for TrustedRouter's Sakana account. Version-pinned routes "
+            "use Sakana's first-party token prices and authenticated availability."
         ),
-        provider_policy_url="https://api.sakana.ai/",
+        provider_policy_url="https://console.sakana.ai/pricing",
     ),
     # These providers are recorded so their public provider pages and compliance
     # posture are explicit, but they are not admitted to the chat gateway. Their
@@ -1860,6 +1860,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "io-net",
         "scaleway",
         "featherless",
+        "sakana",
         "jina",
         "nebius",
         "minimax",

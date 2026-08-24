@@ -31,6 +31,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS | frozen
         "io-net",
         "scaleway",
         "featherless",
+        "sakana",
         "jina",
         "nvidia-nim",
         "recraft",

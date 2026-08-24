@@ -173,7 +173,8 @@ jobs:
                       IONET_API_KEY:trustedrouter-io-net-api-key \
                       SCALEWAY_SECRET_KEY:trustedrouter-scaleway-api-key \
                       FEATHERLESS_API_KEY:trustedrouter-featherless-api-key \
-                      JINA_API_KEY:trustedrouter-jina-api-key; do
+                      JINA_API_KEY:trustedrouter-jina-api-key \
+                      SAKANA_API_KEY:trustedrouter-sakana-api-key; do
             env="${pair%%:*}"
             secret="${pair#*:}"
             KEY=$(gcloud secrets versions access latest --secret="${secret}" --project=quill-cloud-proxy)

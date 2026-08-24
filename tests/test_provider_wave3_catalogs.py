@@ -26,6 +26,7 @@ from scripts.pricing.providers import (
     perplexity,
     reka,
     sail_research,
+    sakana,
     sambanova,
     upstage,
 )
@@ -68,12 +69,12 @@ READY = {
     "arcee",
     "inception",
     "io-net",
+    "sakana",
 }
-RUNTIME_ONLY_READY = READY - {"io-net"}
+RUNTIME_ONLY_READY = READY - {"io-net", "sakana"}
 PENDING = {
     "perceptron",
     "perplexity",
-    "sakana",
     "krea",
     "modal",
     "byteplus",
@@ -92,6 +93,7 @@ MODULES = (
     arcee,
     inception,
     io_net,
+    sakana,
 )
 
 
