@@ -76,6 +76,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -149,6 +150,83 @@ _STUB = r"""#!/usr/bin/env bash
 # stub is not in a pipeline.
 cat >/dev/null 2>&1 || true
 joined="${0##*/} $*"
+
+# The operator-run AWS and Azure control-plane scripts share the real
+# generation-fenced GCS mutex. Model that one object instead of letting the
+# generic success fallback invent an invalid generation or unreadable record.
+if [ "${0##*/}" = "gcloud" ] \
+    && [[ " $* " == *"trusted-router-production.json"* ]]; then
+  case "$1 $2 $3" in
+    "storage cp "*)
+      source_path="$3"
+      destination_path="$4"
+      if [[ "$destination_path" == gs://* ]]; then
+        if [ -f "$HARNESS_DEPLOY_MUTEX_STATE" ]; then
+          exit 1
+        fi
+        cp "$source_path" "$HARNESS_DEPLOY_MUTEX_STATE"
+      else
+        [ -f "$HARNESS_DEPLOY_MUTEX_STATE" ] || exit 1
+        cp "$HARNESS_DEPLOY_MUTEX_STATE" "$destination_path"
+      fi
+      exit 0
+      ;;
+    "storage objects describe")
+      [ -f "$HARNESS_DEPLOY_MUTEX_STATE" ] || exit 1
+      printf '1\n'
+      exit 0
+      ;;
+    "storage rm "*)
+      [ -f "$HARNESS_DEPLOY_MUTEX_STATE" ] || exit 1
+      rm -f "$HARNESS_DEPLOY_MUTEX_STATE"
+      exit 0
+      ;;
+  esac
+fi
+
+# Some execution tests need the real bake gate to pass so they can exercise
+# the artifact checks immediately after it. Feed every discovery CLI the same
+# old, merged commit from the isolated harness repository.
+if [ -n "${HARNESS_CLOUD_BAKE_SHA:-}" ]; then
+  case "${0##*/}:$1:$2" in
+    gcloud:run:services)
+      printf '%s\n' \
+        '{"status":{"traffic":[{"revisionName":"harness-serving","percent":100}]}}'
+      exit 0
+      ;;
+    gcloud:run:revisions)
+      printf 'harness.invalid/trusted-router:%s\n' "$HARNESS_CLOUD_BAKE_SHA"
+      exit 0
+      ;;
+    az:containerapp:revision)
+      printf '[{"name":"harness-serving","properties":{"createdTime":"2026-01-01T00:00:00Z","trafficWeight":100,"healthState":"Healthy","template":{"containers":[{"image":"harness.invalid/trusted-router@sha256:%064d","env":[{"name":"TR_RELEASE","value":"%s"}]}]}}}]\n' \
+        0 "$HARNESS_CLOUD_BAKE_SHA"
+      exit 0
+      ;;
+    aws:apprunner:list-services)
+      printf '%s\n' 'arn:aws:apprunner:eu-west-3:123456789012:service/tr-eu/harness'
+      exit 0
+      ;;
+    aws:apprunner:list-operations)
+      printf '%s\n' 'SUCCEEDED'
+      exit 0
+      ;;
+    aws:apprunner:describe-service)
+      if [[ " $* " == *"Service.Status"* ]]; then
+        printf '%s\n' 'RUNNING'
+      elif [[ " $* " == *"ImageIdentifier"* ]]; then
+        printf 'harness.invalid/trusted-router@sha256:%064d\n' 0
+      else
+        printf '%s\n' "$HARNESS_CLOUD_BAKE_SHA"
+      fi
+      exit 0
+      ;;
+    curl:--fail:--silent)
+      printf '%s\n' '{"data":{"overall_status":"up"}}'
+      exit 0
+      ;;
+  esac
+fi
 
 if { [ "${0##*/}" = "gcloud" ] || [ "${0##*/}" = "gc" ]; } \
     && [[ " $* " == *" run services describe "* ]] \
@@ -810,7 +888,15 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
     "scripts/deploy/aws_eu_control_plane.sh": ScriptFixture(
         # PCR0 is a required operator input: the script refuses to run without
         # the enclave measurement to pin, which is the point of the probe.
-        env={"ATTESTATION_PCR0": "0" * 96},
+        env={
+            "ATTESTATION_PCR0": "0" * 96,
+            # The mirrored harness checkout deliberately has no .git. Supply
+            # the source tag and exercise the real gate in break-glass mode;
+            # its cloud/status reads remain stubbed and it still prints their
+            # real (UNKNOWN) results before proceeding.
+            "TAG": "abcdef0",
+            "TR_CLOUD_BAKE_OVERRIDE": "deploy-script harness isolation",
+        },
         responses=(
             # It deploys by DIGEST and then refuses to believe App Runner until
             # the service reports it is serving that exact digest.
@@ -863,6 +949,7 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             # It waits for the EventBridge API-key connection to authorize.
             (r"events describe-connection", "AUTHORIZED"),
         ),
+        cleanup_after_gate=(r"gcloud storage rm .*trusted-router-production[.]json",),
     ),
     "scripts/deploy/aws_eu_north_clickhouse.sh": ScriptFixture(
         env={"TR_STOCKHOLM_REPLICA_WIRED": "1"},
@@ -879,7 +966,10 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
         ),
     ),
     "scripts/deploy/azure_control_plane.sh": ScriptFixture(
-        env={},
+        env={
+            "IMAGE_TAG": "abcdef0",
+            "TR_CLOUD_BAKE_OVERRIDE": "deploy-script harness isolation",
+        },
         home_files={
             # Credential-shaped inputs the script requires. Fake values in a
             # temp $HOME; nothing here is or resembles a real token.
@@ -917,7 +1007,10 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
         # The only thing this script does after the gate is the EXIT trap it
         # armed to remove the temporary Postgres firewall rule it opened to
         # apply the schema. Cleanup, not provisioning.
-        cleanup_after_gate=(r"firewall-rule delete",),
+        cleanup_after_gate=(
+            r"firewall-rule delete",
+            r"gcloud storage rm .*trusted-router-production[.]json",
+        ),
     ),
     "scripts/deploy/azure_canary_app.sh": ScriptFixture(
         responses=(
@@ -1027,6 +1120,9 @@ class DeployScriptHarness:
             stub = self.bin / name
             stub.write_text(_STUB)
             stub.chmod(0o755)
+        # Deploy helpers use datetime.UTC, so bind python3 to the interpreter
+        # running this suite instead of macOS's legacy Xcode Python 3.9.
+        (self.bin / "python3").symlink_to(sys.executable)
         for directory in ("/bin", "/usr/bin"):
             source = Path(directory)
             if not source.is_dir():
@@ -1147,6 +1243,7 @@ class DeployScriptHarness:
             "HARNESS_PROBE_TAG_REMOVE_FAILURES_STATE": str(
                 probe_tag_remove_failures
             ),
+            "HARNESS_DEPLOY_MUTEX_STATE": str(run_dir / "deploy-mutex.json"),
             "HARNESS_VERIFIER_RC": str(verifier_rc),
             **{k: v for k, v in fixture.env.items() if k not in omit_env},
             **(extra_env or {}),

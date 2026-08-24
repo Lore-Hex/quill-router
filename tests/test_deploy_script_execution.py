@@ -37,8 +37,11 @@ that list ever grows without a reason, or if the docs stop saying so.
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import subprocess
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -57,6 +60,7 @@ from .deploy_script_harness import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+GIT = shutil.which("git") or "/usr/bin/git"
 
 PROVEN = crc.scripts_proven_by_execution()
 UNPROVEN = crc.scripts_not_proven()
@@ -169,6 +173,256 @@ def _gcloud_calls(run: HarnessRun, *command: str) -> list[list[str]]:
         for call in run.calls
         if call[0] == "gcloud" and call[3 : 3 + len(command)] == list(command)
     ]
+
+
+def _initialize_bake_harness_repo(harness: DeployScriptHarness) -> str:
+    def run_git(*args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603 - fixed git operations in a temp repo
+            [GIT, *args],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+    run_git("init", "--initial-branch=main", str(harness.mirror))
+    for key, value in (
+        ("user.email", "deploy-harness@example.test"),
+        ("user.name", "Deploy Harness"),
+    ):
+        run_git("-C", str(harness.mirror), "config", key, value)
+    run_git("-C", str(harness.mirror), "add", ".")
+    timestamp = int(time.time()) - 2 * 3600
+    run_git(
+        "-C",
+        str(harness.mirror),
+        "commit",
+        "-m",
+        "harness candidate",
+        env={
+            **os.environ,
+            "GIT_AUTHOR_DATE": f"@{timestamp} +0000",
+            "GIT_COMMITTER_DATE": f"@{timestamp} +0000",
+        },
+    )
+    origin = harness.root / "origin.git"
+    run_git("init", "--bare", str(origin))
+    run_git("-C", str(harness.mirror), "remote", "add", "origin", str(origin))
+    run_git("-C", str(harness.mirror), "push", "-u", "origin", "main")
+    return run_git(
+        "-C", str(harness.mirror), "rev-parse", "--short", "HEAD"
+    ).stdout.strip()
+
+
+@pytest.mark.parametrize(
+    ("script", "cloud", "mutation_prefix"),
+    (
+        (
+            "scripts/deploy/aws_eu_control_plane.sh",
+            "aws",
+            ("docker", "buildx", "build"),
+        ),
+        (
+            "scripts/deploy/azure_control_plane.sh",
+            "azure",
+            ("az", "acr", "build"),
+        ),
+    ),
+)
+def test_operator_control_plane_holds_fleet_mutex_through_its_deploy(
+    harness: DeployScriptHarness,
+    script: str,
+    cloud: str,
+    mutation_prefix: tuple[str, ...],
+) -> None:
+    run = harness.run(script, verifier_rc=0)
+    assert run.returncode == 0, summarise(run)
+
+    create = next(
+        index
+        for index, call in enumerate(run.calls)
+        if call[0:3] == ["gcloud", "storage", "cp"]
+        and "--if-generation-match=0" in call
+    )
+    mutation = next(
+        index
+        for index, call in enumerate(run.calls)
+        if tuple(call[: len(mutation_prefix)]) == mutation_prefix
+    )
+    gate = next(
+        index
+        for index, call in enumerate(run.calls)
+        if call == ["verify_cloud_complete.sh", cloud]
+    )
+    release = next(
+        index
+        for index, call in enumerate(run.calls)
+        if call[0:3] == ["gcloud", "storage", "rm"]
+    )
+
+    assert create < mutation < gate < release
+    assert f"deploy_mutex.acquired cloud={cloud}" in run.stderr
+
+
+@pytest.mark.parametrize(
+    ("script", "mutation_prefix"),
+    (
+        ("scripts/deploy/aws_eu_control_plane.sh", ("docker", "buildx", "build")),
+        ("scripts/deploy/azure_control_plane.sh", ("az", "acr", "build")),
+    ),
+)
+def test_operator_bake_gate_refusal_aborts_and_releases_mutex(
+    harness: DeployScriptHarness,
+    script: str,
+    mutation_prefix: tuple[str, ...],
+) -> None:
+    run = harness.run(script, omit_env=("TR_CLOUD_BAKE_OVERRIDE",))
+
+    assert run.returncode != 0
+    assert "serving commit: UNKNOWN" in run.stderr
+    assert "fleet health: FAIL" in run.stderr
+    assert not any(
+        tuple(call[: len(mutation_prefix)]) == mutation_prefix for call in run.calls
+    )
+    assert not any(
+        call[:3]
+        in (
+            ["aws", "apprunner", "create-service"],
+            ["aws", "apprunner", "update-service"],
+            ["az", "containerapp", "create"],
+            ["az", "containerapp", "update"],
+        )
+        for call in run.calls
+    )
+    assert any(call[:3] == ["gcloud", "storage", "rm"] for call in run.calls)
+
+
+@pytest.mark.parametrize(
+    ("script", "tag_name", "mutation_prefix"),
+    (
+        (
+            "scripts/deploy/aws_eu_control_plane.sh",
+            "TAG",
+            ("docker", "buildx", "build"),
+        ),
+        (
+            "scripts/deploy/azure_control_plane.sh",
+            "IMAGE_TAG",
+            ("az", "acr", "build"),
+        ),
+    ),
+)
+def test_operator_deploy_refuses_dirty_tree_after_gate(
+    tmp_path: Path,
+    script: str,
+    tag_name: str,
+    mutation_prefix: tuple[str, ...],
+) -> None:
+    isolated = DeployScriptHarness(tmp_path / f"dirty-{tag_name.lower()}")
+    short_head = _initialize_bake_harness_repo(isolated)
+    dirty = isolated.mirror / "dirty-after-bake-gate.txt"
+    dirty.write_text("unvalidated\n", encoding="utf-8")
+
+    run = isolated.run(
+        script,
+        omit_env=("TR_CLOUD_BAKE_OVERRIDE",),
+        extra_env={
+            "HARNESS_CLOUD_BAKE_SHA": short_head,
+            "TR_CLOUD_BAKE_HOURS": "1",
+            tag_name: short_head,
+        },
+    )
+
+    assert run.returncode != 0
+    assert "the gate validated HEAD; a dirty tree deploys unvalidated code" in run.stderr
+    assert not any(
+        tuple(call[: len(mutation_prefix)]) == mutation_prefix for call in run.calls
+    )
+    assert any(call[:3] == ["gcloud", "storage", "rm"] for call in run.calls)
+
+
+@pytest.mark.parametrize(
+    ("script", "tag_name", "mutation_prefix"),
+    (
+        (
+            "scripts/deploy/aws_eu_control_plane.sh",
+            "TAG",
+            ("docker", "buildx", "build"),
+        ),
+        (
+            "scripts/deploy/azure_control_plane.sh",
+            "IMAGE_TAG",
+            ("az", "acr", "build"),
+        ),
+    ),
+)
+def test_operator_deploy_refuses_tag_that_does_not_match_validated_head(
+    tmp_path: Path,
+    script: str,
+    tag_name: str,
+    mutation_prefix: tuple[str, ...],
+) -> None:
+    isolated = DeployScriptHarness(tmp_path / f"tag-mismatch-{tag_name.lower()}")
+    short_head = _initialize_bake_harness_repo(isolated)
+
+    run = isolated.run(
+        script,
+        omit_env=("TR_CLOUD_BAKE_OVERRIDE",),
+        extra_env={
+            "HARNESS_CLOUD_BAKE_SHA": short_head,
+            "TR_CLOUD_BAKE_HOURS": "1",
+            tag_name: "deadbee",
+        },
+    )
+
+    assert run.returncode != 0
+    assert "does not match the validated short HEAD" in run.stderr
+    assert not any(
+        tuple(call[: len(mutation_prefix)]) == mutation_prefix for call in run.calls
+    )
+    assert any(call[:3] == ["gcloud", "storage", "rm"] for call in run.calls)
+
+
+@pytest.mark.parametrize(
+    ("script", "tag_name", "message"),
+    (
+        (
+            "scripts/deploy/aws_eu_control_plane.sh",
+            "TAG",
+            "not a git checkout: set TAG=<short-sha>",
+        ),
+        (
+            "scripts/deploy/azure_control_plane.sh",
+            "IMAGE_TAG",
+            "not a git checkout: set IMAGE_TAG=<short-sha>",
+        ),
+    ),
+)
+def test_operator_deploy_tag_fallback_explains_non_git_checkout(
+    harness: DeployScriptHarness,
+    script: str,
+    tag_name: str,
+    message: str,
+) -> None:
+    run = harness.run(script, omit_env=(tag_name,))
+
+    assert run.returncode != 0
+    assert message in run.stderr
+
+
+def test_azure_canary_app_cannot_target_production_side_door(
+    tmp_path: Path,
+) -> None:
+    isolated = DeployScriptHarness(tmp_path / "azure-canary-production-guard")
+
+    run = isolated.run(
+        "scripts/deploy/azure_canary_app.sh",
+        extra_env={"RG": "tr-azure", "APP": "tr-azure-vnet"},
+    )
+
+    assert run.returncode != 0
+    assert "use scripts/deploy/azure_control_plane.sh" in run.stderr
+    assert not any(call[0] == "az" for call in run.calls)
 
 
 def test_regional_quota_reconciler_preserves_a_paused_scheduler(
@@ -484,7 +738,10 @@ def test_aws_observer_rejects_reused_billing_gateway_credential_before_mutation(
     assert run.returncode != 0
     assert "must differ from the billing gateway token" in run.stderr
     assert not any(call[0] == "docker" for call in run.calls)
-    assert not any(call[:2] == ["aws", "apprunner"] for call in run.calls)
+    assert not any(
+        call[:3] in (["aws", "apprunner", "create-service"], ["aws", "apprunner", "update-service"])
+        for call in run.calls
+    )
     assert not run.verifier_calls
 
 
@@ -517,7 +774,10 @@ def test_aws_observer_fails_closed_when_legacy_credential_cannot_be_inspected(
     assert run.returncode != 0
     assert "could not inspect the legacy billing gateway token" in run.stderr
     assert not any(call[0] == "docker" for call in run.calls)
-    assert not any(call[:2] == ["aws", "apprunner"] for call in run.calls)
+    assert not any(
+        call[:3] in (["aws", "apprunner", "create-service"], ["aws", "apprunner", "update-service"])
+        for call in run.calls
+    )
     assert not run.verifier_calls
 
 

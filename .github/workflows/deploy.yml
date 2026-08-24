@@ -386,9 +386,10 @@ jobs:
       # Staged regional deploy. Deploy us-central1 first, gate on a
       # 3-min single-region synthetic watch; only proceed to the
       # secondary warm regions if us-central1 stays up. Once the image has
-      # passed that primary-region gate, every secondary rolls sequentially.
-      # All regions share Spanner, so overlapping revision warmups and traffic
-      # ramps can amplify billing transaction contention.
+      # passed the primary's full ramp and 3-minute canary, secondary revisions
+      # warm in parallel without traffic, then ramp serially. Incident #695
+      # (billing 5xx, 2026-08-20) showed that overlapping revision warmups and
+      # traffic ramps can amplify billing transaction contention.
       #
       # Hotfix mode (workflow_dispatch input `hotfix: true`): the
       # watchdogs skip baseline + use --skip-baseline so a sick prod
@@ -536,7 +537,7 @@ jobs:
             exit 1
           fi
 
-      - name: Roll secondary warm regions sequentially
+      - name: Warm secondaries in parallel, ramp serially
         env:
           IMAGE_TAG: ${{ needs.build-image.outputs.sha }}
           PREV_EU: ${{ steps.prev.outputs.europe_west4_revision }}
@@ -577,12 +578,9 @@ jobs:
               --to-revisions="${previous}=100" --quiet
           }
 
-          deploy_secondary() {
+          warm_secondary() {
             local region="$1"
-            local previous
-            local rollout_started_at
-            previous="$(previous_revision "${region}")"
-            rollout_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            local revision_file="$2"
             echo "deploying ${region} no-traffic"
             if ! TR_DEPLOY_TARGET_REGIONS="${region}" \
                 TR_DEPLOY_NO_TRAFFIC="1" \
@@ -593,14 +591,31 @@ jobs:
             fi
 
             local revision
-            revision="$(gcloud run services describe "${SERVICE}" \
-              --region="${region}" --project="${PROJECT_ID}" \
-              --format='value(status.latestCreatedRevisionName)')"
+            if ! revision="$(gcloud run services describe "${SERVICE}" \
+                --region="${region}" --project="${PROJECT_ID}" \
+                --format='value(status.latestCreatedRevisionName)')"; then
+              echo "${region} revision lookup failed after its no-traffic deploy"
+              return 1
+            fi
             if [ -z "${revision}" ]; then
               echo "${region} deploy did not create a revision"
               return 1
             fi
             echo "new ${region} revision: ${revision}"
+            printf '%s\n' "${revision}" >"${revision_file}"
+          }
+
+          ramp_secondary() {
+            local region="$1"
+            local revision_file="$2"
+            local previous
+            local revision
+            local rollout_started_at
+            previous="$(previous_revision "${region}")"
+            revision="$(cat "${revision_file}")"
+            # The billing window belongs to this region's traffic ramp, not to
+            # the earlier parallel warmup or a sibling's ramp.
+            rollout_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
             if ! bash scripts/deploy/staged_traffic.sh \
                 "${region}" "${revision}" "${previous}"; then
@@ -609,15 +624,19 @@ jobs:
             fi
 
             local active_traffic
-            active_traffic="$(gcloud run services describe "${SERVICE}" \
-              --region="${region}" --project="${PROJECT_ID}" \
-              --format=json | jq -r --arg revision "${revision}" '
-                [
-                  .status.traffic[]?
-                  | select(.percent == 100 and .revisionName == $revision)
-                ]
-                | length
-              ')"
+            if ! active_traffic="$(gcloud run services describe "${SERVICE}" \
+                --region="${region}" --project="${PROJECT_ID}" \
+                --format=json | jq -r --arg revision "${revision}" '
+                  [
+                    .status.traffic[]?
+                    | select(.percent == 100 and .revisionName == $revision)
+                  ]
+                  | length
+                ')"; then
+              echo "${region} traffic verification failed"
+              rollback_region "${region}" || true
+              return 1
+            fi
             if [ "${active_traffic}" != "1" ]; then
               echo "${region} staged rollout did not put 100% on ${revision}"
               rollback_region "${region}" || true
@@ -641,18 +660,70 @@ jobs:
             fi
           }
 
-          # The image has already passed the full us-central1 ramp and canary.
-          # Roll one region at a time because every control-plane region shares
-          # Spanner and its billing indexes. Each region retains its own traffic
-          # ramp, router-core watchdog, billing-path gate, and local rollback.
+          # Incident containment from #695 (billing 5xx, 2026-08-20):
+          # overlapping revision warmups and traffic ramps can amplify billing
+          # transaction contention. Warm all no-traffic revisions in parallel,
+          # but never overlap a traffic ramp with another region's warmup or
+          # ramp. TR_DEPLOY_MUTEX_OPERATION is inherited by every warmup
+          # subshell, so rollout.sh remains inside the fleet mutex.
           regions=(europe-west4 us-east4 southamerica-east1)
-          for region in "${regions[@]}"; do
-            echo "starting sequential rollout for ${region}"
-            if ! deploy_secondary "${region}"; then
-              echo "::error::${region} rollout failed and was rolled back. Later regions were not touched."
-              exit 1
+          logs=(
+            "${RUNNER_TEMP}/secondary-warmup-europe-west4.log"
+            "${RUNNER_TEMP}/secondary-warmup-us-east4.log"
+            "${RUNNER_TEMP}/secondary-warmup-southamerica-east1.log"
+          )
+          revision_files=(
+            "${RUNNER_TEMP}/secondary-revision-europe-west4"
+            "${RUNNER_TEMP}/secondary-revision-us-east4"
+            "${RUNNER_TEMP}/secondary-revision-southamerica-east1"
+          )
+          pids=()
+
+          (warm_secondary "europe-west4" "${revision_files[0]}") >"${logs[0]}" 2>&1 &
+          pids+=("$!")
+          (warm_secondary "us-east4" "${revision_files[1]}") >"${logs[1]}" 2>&1 &
+          pids+=("$!")
+          (warm_secondary "southamerica-east1" "${revision_files[2]}") >"${logs[2]}" 2>&1 &
+          pids+=("$!")
+
+          statuses=()
+          for idx in "${!pids[@]}"; do
+            if wait "${pids[$idx]}"; then
+              statuses[$idx]=0
+            else
+              statuses[$idx]=$?
             fi
           done
+
+          failed=0
+          for idx in "${!regions[@]}"; do
+            printf '\n=== %s ===\n' "${regions[$idx]}"
+            cat "${logs[$idx]}"
+            if [ "${statuses[$idx]}" -ne 0 ]; then
+              echo "::error::${regions[$idx]} no-traffic warmup failed."
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::Secondary warmup failed; no secondary traffic moved. Successful warm revisions remain at zero traffic."
+            exit 1
+          fi
+
+          # Phase 2 is deliberately explicit and serial. A failure rolls back
+          # that region inside ramp_secondary and exits before a later warm
+          # revision can receive traffic.
+          if ! ramp_secondary "europe-west4" "${revision_files[0]}"; then
+            echo "::error::europe-west4 ramp failed and was rolled back. Later regions remain warm at zero traffic and never received traffic."
+            exit 1
+          fi
+          if ! ramp_secondary "us-east4" "${revision_files[1]}"; then
+            echo "::error::us-east4 ramp failed and was rolled back. Later regions remain warm at zero traffic and never received traffic."
+            exit 1
+          fi
+          if ! ramp_secondary "southamerica-east1" "${revision_files[2]}"; then
+            echo "::error::southamerica-east1 ramp failed and was rolled back. Later regions remain warm at zero traffic and never received traffic."
+            exit 1
+          fi
 
       - name: Deploy synthetic monitor Cloud Run Job
         if: ${{ steps.optional.outputs.deploy_synthetic_monitor == 'true' }}

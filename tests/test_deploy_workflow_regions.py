@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_every_load_balanced_control_plane_region_is_staged() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
-    start = workflow.index("- name: Roll secondary warm regions sequentially")
+    start = workflow.index("- name: Warm secondaries in parallel, ramp serially")
     end = workflow.index("- name: Deploy synthetic monitor Cloud Run Job", start)
     rollout = workflow[start:end]
 
@@ -59,10 +59,10 @@ def test_public_snapshot_worker_swap_is_verified_and_rollbackable() -> None:
     assert r'mv \"\$previous_builder\" \"\$builder\"' in script
 
 
-def test_warm_secondary_regions_roll_sequentially_after_primary_canary() -> None:
+def test_warm_secondary_regions_warm_in_parallel_then_ramp_serially() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     primary_canary = workflow.index("- name: Canary gate — watch us-central1 only")
-    start = workflow.index("- name: Roll secondary warm regions sequentially")
+    start = workflow.index("- name: Warm secondaries in parallel, ramp serially")
     end = workflow.index("- name: Deploy synthetic monitor Cloud Run Job", start)
     rollout = workflow[start:end]
 
@@ -70,25 +70,63 @@ def test_warm_secondary_regions_roll_sequentially_after_primary_canary() -> None
     assert "regions=(europe-west4 us-east4 southamerica-east1)" in rollout
     assert "PREV_SOUTHAMERICA_EAST1" in rollout
     assert "southamerica-east1)" in rollout
-    assert 'for region in "${regions[@]}"; do' in rollout
-    assert 'if ! deploy_secondary "${region}"; then' in rollout
     assert 'if ! TR_DEPLOY_TARGET_REGIONS="${region}"' in rollout
     assert 'if ! bash scripts/deploy/staged_traffic.sh \\' in rollout
-    assert 'active_traffic="$(gcloud run services describe' in rollout
+    assert 'if ! active_traffic="$(gcloud run services describe' in rollout
     assert '[ "${active_traffic}" != "1" ]' in rollout
-    assert "pids=()" not in rollout
-    assert 'pids+=("$!")' not in rollout
-    assert 'if wait "${pids[$idx]}"; then' not in rollout
+    first_wait = rollout.index('if wait "${pids[$idx]}"; then')
+    for region, log_index in (
+        ("europe-west4", 0),
+        ("us-east4", 1),
+        ("southamerica-east1", 2),
+    ):
+        invocation = (
+            f'(warm_secondary "{region}" "${{revision_files[{log_index}]}}") '
+            f'>"${{logs[{log_index}]}}" 2>&1 &'
+        )
+        assert rollout.index(invocation) < first_wait
+    assert rollout.count('pids+=("$!")') == 3
+    assert 'printf \'\\n=== %s ===\\n\' "${regions[$idx]}"' in rollout
+    assert 'cat "${logs[$idx]}"' in rollout
+    assert 'if [ "$failed" -ne 0 ]; then' in rollout
     assert 'rollback_region "${region}"' in rollout
     assert 'TR_DEPLOY_RECONCILE_LB: "0"' in rollout
+    assert "TR_DEPLOY_MUTEX_OPERATION is inherited by every warmup" in rollout
+    assert "#695 (billing 5xx, 2026-08-20)" in rollout
+    assert (
+        "overlapping revision warmups and traffic ramps can amplify billing\n"
+        "          # transaction contention"
+    ) in rollout
     assert "assert_no_billing_5xx.sh" in rollout
     assert "--slo-class router_core" in rollout
+
+    warmup_failure = rollout.index(
+        "Secondary warmup failed; no secondary traffic moved"
+    )
+    ramp_eu = rollout.index('ramp_secondary "europe-west4"')
+    ramp_us = rollout.index('ramp_secondary "us-east4"')
+    ramp_sa = rollout.index('ramp_secondary "southamerica-east1"')
+    assert first_wait < warmup_failure < ramp_eu < ramp_us < ramp_sa
+    assert "Later regions remain warm at zero traffic and never received traffic" in rollout
+
+    staged_call = rollout.index("bash scripts/deploy/staged_traffic.sh")
+    staged_line = rollout[staged_call : rollout.index("\n", staged_call)]
+    assert "&" not in staged_line
+    ramp_start = rollout.index("ramp_secondary()")
+    staged_call = rollout.index("bash scripts/deploy/staged_traffic.sh", ramp_start)
+    stamp = rollout.index(
+        'rollout_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"',
+        ramp_start,
+    )
+    billing_gate = rollout.index("assert_no_billing_5xx.sh", ramp_start)
+    assert ramp_start < stamp < staged_call < billing_gate
+    assert "secondary-started-" not in rollout
 
 
 def test_primary_rollout_gates_on_router_core_and_billing_path_errors() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     primary = workflow.index("- name: Deploy us-central1 (no-traffic)")
-    secondary = workflow.index("- name: Roll secondary warm regions sequentially")
+    secondary = workflow.index("- name: Warm secondaries in parallel, ramp serially")
     rollout = workflow[primary:secondary]
 
     assert "TR_WATCHDOG_SLO_CLASS: router_core" in rollout
