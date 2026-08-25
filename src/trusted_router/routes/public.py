@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import (
@@ -2255,8 +2256,8 @@ def _leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
     if settings.environment != "test":
         try:
             precomputed = _precomputed_public_analytics_snapshot("leaderboard")
-        except Exception:
-            log.exception("public_analytics_snapshot_read_failed name=leaderboard")
+        except Exception as exc:
+            _log_public_analytics_snapshot_read_failure("leaderboard", exc)
             if _LEADERBOARD_CACHE is not None:
                 return _LEADERBOARD_CACHE[1]
         else:
@@ -2306,8 +2307,8 @@ def _video_leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
     if settings.environment != "test":
         try:
             precomputed = _precomputed_public_analytics_snapshot("video_leaderboard")
-        except Exception:
-            log.exception("public_analytics_snapshot_read_failed name=video_leaderboard")
+        except Exception as exc:
+            _log_public_analytics_snapshot_read_failure("video_leaderboard", exc)
             if _VIDEO_LEADERBOARD_CACHE is not None:
                 return _VIDEO_LEADERBOARD_CACHE[1]
         else:
@@ -2357,8 +2358,8 @@ def _apps_snapshot(settings: Settings) -> dict[str, Any]:
     if settings.environment != "test":
         try:
             precomputed = _precomputed_public_analytics_snapshot("apps")
-        except Exception:
-            log.exception("public_analytics_snapshot_read_failed name=apps")
+        except Exception as exc:
+            _log_public_analytics_snapshot_read_failure("apps", exc)
             if _APPS_CACHE is not None:
                 return _APPS_CACHE[1]
         else:
@@ -2387,6 +2388,27 @@ def _precomputed_public_analytics_snapshot(name: str) -> dict[str, Any] | None:
     )
 
 
+def _log_public_analytics_snapshot_read_failure(name: str, exc: Exception) -> None:
+    """Keep cacheable dependency blips visible without paging twice.
+
+    Every public analytics surface has a stale or live fallback, and the fleet
+    freshness workflow separately pages on sustained snapshot unavailability.
+    A connect/read timeout here therefore degrades one cache fill; it is not an
+    unhandled application error. Unexpected response/schema defects remain
+    ERRORs with tracebacks because those require a code or data repair.
+    """
+    context = {
+        "snapshot_name": name,
+        "error_class": type(exc).__name__,
+        "error_message": str(exc)[:500],
+        "retryable": isinstance(exc, (httpx.TimeoutException, httpx.NetworkError)),
+    }
+    if context["retryable"]:
+        log.warning("public_analytics_snapshot_read_degraded", extra=context)
+        return
+    log.exception("public_analytics_snapshot_read_failed", extra=context)
+
+
 def _merge_client_observed_status(
     payload: dict[str, Any],
     *,
@@ -2397,8 +2419,8 @@ def _merge_client_observed_status(
     if settings.environment != "test":
         try:
             snapshot = _precomputed_public_analytics_snapshot("client_reliability")
-        except Exception:
-            log.exception("public_analytics_snapshot_read_failed name=client_reliability")
+        except Exception as exc:
+            _log_public_analytics_snapshot_read_failure("client_reliability", exc)
     result["client_observed"] = client_observed_status_section(
         snapshot,
         now=dt.datetime.now(dt.UTC),
@@ -2544,8 +2566,8 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
     if settings.environment != "test":
         try:
             precomputed = _precomputed_public_analytics_snapshot("status_inputs")
-        except Exception:
-            log.exception("public_analytics_snapshot_read_failed name=status_inputs")
+        except Exception as exc:
+            _log_public_analytics_snapshot_read_failure("status_inputs", exc)
             if _STATUS_CACHE is not None:
                 # The rest of the payload may be served stale; the analytics
                 # section may NOT. Re-read it, so this path publishes the drain

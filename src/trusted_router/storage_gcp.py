@@ -75,7 +75,7 @@ from trusted_router.storage_activity import (
     usage_bucket_key,
 )
 from trusted_router.storage_auth_context import build_session_auth_context
-from trusted_router.storage_errors import is_duplicate_key_error
+from trusted_router.storage_errors import is_duplicate_key_error, is_transient_store_error
 from trusted_router.storage_gcp_analytics_outbox import SpannerAnalyticsOutbox
 from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
 from trusted_router.storage_gcp_auth_sessions import SpannerAuthSessions
@@ -3756,10 +3756,27 @@ class SpannerBigtableStore:
         try:
             oldest = outbox.oldest_enqueued_at(timeout=OUTBOX_FRESHNESS_TIMEOUT_SECONDS)
         except Exception as exc:
-            log.exception(
-                "spanner.operational_analytics_outbox_freshness_failed",
-                extra={"error_class": type(exc).__name__, "error_message": str(exc)[:500]},
-            )
+            context = {
+                "error_class": type(exc).__name__,
+                "error_message": str(exc)[:500],
+                "retryable": is_transient_store_error(exc),
+            }
+            if context["retryable"]:
+                # This read is advisory and fail-closed: /status.json publishes
+                # `unreachable`, while the fleet freshness checker owns paging
+                # after a sustained failure. A cold regional Spanner session can
+                # exceed this deliberately short budget without breaking a
+                # customer request, so do not manufacture two Error Reporting
+                # groups from gRPC's chained timeout traceback.
+                log.warning(
+                    "spanner.operational_analytics_outbox_freshness_degraded",
+                    extra=context,
+                )
+            else:
+                log.exception(
+                    "spanner.operational_analytics_outbox_freshness_failed",
+                    extra=context,
+                )
             return OutboxFreshness.unavailable(BACKEND_SPANNER, REASON_UNREACHABLE)
         return OutboxFreshness(backend=BACKEND_SPANNER, oldest_enqueued_at=oldest)
 
