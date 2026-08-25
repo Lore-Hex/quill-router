@@ -924,6 +924,16 @@ def test_public_bearer_does_not_authenticate_or_use_durable_limiter(
 
 def test_rate_limit_does_not_touch_store_and_remains_local_on_store_error(monkeypatch) -> None:
     """Request admission must not depend on or amplify a storage outage."""
+    from trusted_router import storage_rate_limits
+
+    # Both requests must exercise one tumbling window. Without a fixed clock,
+    # the test can cross a wall-clock minute between requests and correctly
+    # start a fresh bucket, making this storage-independence assertion flaky.
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: dt.datetime(2026, 8, 25, 13, 39, 30, tzinfo=dt.UTC),
+    )
 
     def boom(self, *_args, **_kwargs):
         del self
