@@ -739,10 +739,10 @@
   },
   "wandb": {
     "card_version": 2,
-    "model_count": 28,
+    "model_count": 24,
     "name": "Weights & Biases",
     "privacy": "Policy documented",
-    "route_count": 28,
+    "route_count": 24,
     "route_mode": "Prepaid",
     "slug": "wandb"
   },
