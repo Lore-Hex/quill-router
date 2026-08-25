@@ -101,21 +101,24 @@ def no_network_probes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return captured
 
 
+async def _drain_background_runs() -> None:
+    while tasks := tuple(synthetic_route._BACKGROUND_RUNS):  # noqa: SLF001
+        await asyncio.gather(*tasks)
+
+
 def _post_run(settings: Settings, body: dict[str, Any]) -> Any:
-    # detach=true dispatches the pass with asyncio.create_task (synthetic.py:420)
-    # and only tracks it in _BACKGROUND_RUNS. A bare TestClient does NOT drive
-    # that task to completion before .post() returns, so asserting its effects
-    # straight afterwards is a race: it wins on an idle machine and loses under
-    # a loaded CI run (-n 4 plus coverage), which is why
-    # test_eventbridge_tick_runs_one_bounded_remediator_pass intermittently saw
-    # events == []. Entering the client as a context manager runs lifespan and,
-    # on exit, drains the portal so detached tasks have actually completed.
+    # detach=true dispatches the pass with asyncio.create_task and tracks it in
+    # _BACKGROUND_RUNS. TestClient shutdown can cancel that task, so explicitly
+    # await it through the client's portal while its event loop is still alive.
     with TestClient(create_app(settings, init_observability=False)) as client:
-        return client.post(
+        response = client.post(
             "/v1/internal/synthetic/run",
             json=body,
             headers={"x-trustedrouter-internal-token": OBSERVER_TOKEN},
         )
+        assert client.portal is not None
+        client.portal.call(_drain_background_runs)
+        return response
 
 
 class TestRotation:
