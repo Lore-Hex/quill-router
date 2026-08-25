@@ -146,7 +146,7 @@ jobs:
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
 
       - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@v3
 
       - name: Build image via Cloud Build
         # Use an explicit build config instead of `gcloud builds submit
@@ -218,7 +218,7 @@ jobs:
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
@@ -284,7 +284,7 @@ jobs:
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
       - name: Verify deploy isolation from runtime-only provider keys
         run: bash scripts/deploy/revoke_runtime_only_secret_access.sh
       - name: Validate required SES credentials
@@ -375,7 +375,7 @@ jobs:
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
 
       - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@v3
 
       - name: Acquire production deployment mutex
         env:
@@ -955,7 +955,7 @@ jobs:
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
 
       - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@v3
 
       - name: Resolve fail-closed public deployment stage
         id: public_stage
