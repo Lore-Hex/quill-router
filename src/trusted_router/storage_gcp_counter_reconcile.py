@@ -125,6 +125,12 @@ class InvariantReport:
     #: JSON cleanup has already run against.
     usage_unauditable: int = 0
     samples: dict[str, dict] = field(default_factory=dict)
+    #: Kept OUT of `samples` because callers label everything in there as a
+    #: violation -- scripts/audit_typed_counters.py passes a single
+    #: `sample_label` for the whole dict. Sharing it printed 643 lines reading
+    #: "VIOLATION usage-unauditable:..." underneath a summary that said CLEAN,
+    #: which is a worse read than either fact alone.
+    unauditable: dict[str, dict] = field(default_factory=dict)
 
     @property
     def clean(self) -> bool:
@@ -295,6 +301,10 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
         if len(report.samples) < max_samples:
             report.samples[key] = value
 
+    def _unauditable(key: str, value: dict) -> None:
+        if len(report.unauditable) < max_samples:
+            report.unauditable[key] = value
+
     def _check(typed: dict, holds: dict, kind: str) -> tuple[int, int]:
         violations = 0
         # forward: every typed row's reserved must equal its open holds, and >= 0.
@@ -325,7 +335,7 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
         booked = settled_actuals.get(workspace_id, 0) + federated_applied.get(workspace_id, 0)
         if baseline is None:
             report.usage_unauditable += 1
-            _sample(
+            _unauditable(
                 f"usage-unauditable:{workspace_id}",
                 {
                     "typed_total_usage": actual_usage,

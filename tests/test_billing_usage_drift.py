@@ -180,7 +180,13 @@ def test_a_missing_baseline_is_unauditable_not_a_violation() -> None:
     assert report.clean
     assert not report.fully_audited
     assert "(PARTIAL)" in report.summary()
-    assert report.samples[f"usage-unauditable:{ws}"]["baseline"] is None
+
+    # Reported OUT of `samples`. Callers label that dict wholesale --
+    # scripts/audit_typed_counters.py passes one `sample_label` for all of it --
+    # so an unauditable row left in there prints as "VIOLATION" underneath a
+    # summary that says CLEAN. Production's first run printed 643 such lines.
+    assert report.unauditable[f"usage-unauditable:{ws}"]["baseline"] is None
+    assert not report.samples, "unauditable rows must not sit in the violation samples"
 
 
 def test_booked_usage_with_no_typed_row_is_a_violation() -> None:
