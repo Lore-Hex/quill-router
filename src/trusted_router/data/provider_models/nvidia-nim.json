@@ -2,8 +2,8 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-08-25T07:46:00Z",
-  "model_count": 102,
+  "generated_at": "2026-08-25T08:44:22Z",
+  "model_count": 101,
   "models": [
     {
       "id": "01-ai/yi-large",
@@ -864,15 +864,6 @@
       "id": "stepfun-ai/step-3.7-flash",
       "upstream_id": "stepfun-ai/step-3.7-flash",
       "display_name": "stepfun-ai/step-3.7-flash",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
-    },
-    {
-      "id": "thinkingmachines/inkling",
-      "upstream_id": "thinkingmachines/inkling",
-      "display_name": "thinkingmachines/inkling",
       "model_type": "discovery",
       "routable": false,
       "routable_reason": "production-entitlement-required",
