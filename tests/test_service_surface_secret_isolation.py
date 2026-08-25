@@ -204,8 +204,6 @@ _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
         (
             "clickhouse_url",
             "clickhouse_password",
-            "byok_kms_key_name",
-            "byok_envelope_key_b64",
         ),
     ),
     (
@@ -213,6 +211,8 @@ _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
         (
             "provider_analytics_clickhouse_url",
             "provider_analytics_clickhouse_password",
+            "byok_kms_key_name",
+            "byok_envelope_key_b64",
             "google_data_manager_enabled",
             "google_data_manager_kms_key_name",
             "stripe_webhook_secret",
@@ -291,6 +291,8 @@ _UNAUTHORIZED_SENSITIVE_CASES = tuple(
 
 def _production(surface: str, **overrides: object) -> Settings:
     values: dict[str, object] = {**_PRODUCTION_STORAGE, "service_surface": surface}
+    if surface == "internal":
+        values["settle_outbox_enabled"] = True
     values.update(overrides)
     return Settings(**values)
 
@@ -317,6 +319,18 @@ def _full_combined_bridge_production() -> dict[str, object]:
         # The test credential fixtures contain exactly this alias.
         "trusted_domain_aliases": "allyrouter.com",
     }
+
+
+def test_production_internal_surface_requires_durable_settle_outbox() -> None:
+    with pytest.raises(ValidationError, match="TR_SETTLE_OUTBOX_ENABLED=true"):
+        Settings(
+            **_PRODUCTION_STORAGE,
+            service_surface="internal",
+            internal_gateway_token=_GATEWAY_SECRET,
+            observer_internal_token=_SENSITIVE_TEST_VALUES["observer_internal_token"],
+            sentry_dsn="https://example@example.ingest.sentry.io/1",
+            settle_outbox_enabled=False,
+        )
 
 
 def test_production_combined_rejects_full_bindings_without_the_bridge() -> None:

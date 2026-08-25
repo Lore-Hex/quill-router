@@ -93,7 +93,17 @@ def test_split_surface_route_inventory_is_total_and_has_one_owner() -> None:
     control = _signatures(_app("control"))
     internal = _signatures(_app("internal"))
 
-    assert combined == public | actions | control | internal
+    # During this cutover the existing broadcast worker remains on the legacy
+    # combined control backend because decrypt authority must not move to the
+    # internal surface. Exact URL-map ownership is locked by
+    # test_broadcast_drain_is_control_worker_owned_not_internal_mounted.
+    combined_control_bridge = {
+        ("POST", "/internal/broadcast/drain"),
+        ("POST", "/v1/internal/broadcast/drain"),
+    }
+    split = public | actions | control | internal
+    assert combined == split | combined_control_bridge
+    assert combined_control_bridge.isdisjoint(split)
     owned = [public, actions, control, internal]
     for index, left in enumerate(owned):
         for right in owned[index + 1 :]:

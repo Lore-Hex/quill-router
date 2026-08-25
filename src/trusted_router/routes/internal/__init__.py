@@ -37,7 +37,6 @@ def register_control_internal_routes(router: APIRouter) -> None:
 
 def register_gateway_internal_routes(router: APIRouter) -> None:
     """Register token-authenticated billing and federation authority routes."""
-    broadcast_queue.register(router)
     gateway.register(router)
     video_jobs.register(router)
     fetch_image.register(router)
@@ -57,6 +56,9 @@ def register_internal_routes(router: APIRouter) -> None:
     register_control_internal_routes(router)
     register_gateway_internal_routes(router)
     register_observer_internal_routes(router)
+    # The current combined control plane retains the existing gateway-token
+    # worker route. The split internal surface never mounts or receives it.
+    broadcast_queue.register(router)
 
 
 __all__ = [

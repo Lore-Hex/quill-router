@@ -257,6 +257,16 @@ if table_exists tr_settle_outbox; then log "tr_settle_outbox exists, skip"; else
     created_at TIMESTAMP,
     updated_at TIMESTAMP,
     terminal_at TIMESTAMP,
+    auto_refill_workspace_id STRING(64),
+    auto_refill_status STRING(24),
+    auto_refill_attempts INT64 NOT NULL DEFAULT (0),
+    auto_refill_last_error STRING(MAX),
+    auto_refill_next_attempt_at TIMESTAMP,
+    auto_refill_lease_owner STRING(64),
+    auto_refill_leased_until TIMESTAMP,
+    auto_refill_enqueued_at TIMESTAMP,
+    auto_refill_updated_at TIMESTAMP,
+    auto_refill_terminal_at TIMESTAMP,
     queue_shard INT64 NOT NULL AS (
       MOD(
         MOD(FARM_FINGERPRINT(CONCAT(authorization_id, '#', intent_kind)), 16) + 16,
@@ -287,5 +297,28 @@ if index_exists tr_settle_outbox_due_v2; then log "tr_settle_outbox_due_v2 exist
     ON tr_settle_outbox (queue_shard, next_attempt_at)"
 fi
 wait_index_read_write tr_settle_outbox_due_v2
+
+# Control-owned auto-refill delivery. The successful internal credit settle
+# attaches this sub-state to the same durable row it already has to enqueue;
+# Stripe remains absent from the machine-to-machine service. Additive columns
+# keep old revisions rolling-compatible, and the sparse index contains only
+# refill work that still needs a control worker.
+ensure_column tr_settle_outbox auto_refill_workspace_id "STRING(64)"
+ensure_column tr_settle_outbox auto_refill_status "STRING(24)"
+ensure_column tr_settle_outbox auto_refill_attempts "INT64 NOT NULL DEFAULT (0)"
+ensure_column tr_settle_outbox auto_refill_last_error "STRING(MAX)"
+ensure_column tr_settle_outbox auto_refill_next_attempt_at "TIMESTAMP"
+ensure_column tr_settle_outbox auto_refill_lease_owner "STRING(64)"
+ensure_column tr_settle_outbox auto_refill_leased_until "TIMESTAMP"
+ensure_column tr_settle_outbox auto_refill_enqueued_at "TIMESTAMP"
+ensure_column tr_settle_outbox auto_refill_updated_at "TIMESTAMP"
+ensure_column tr_settle_outbox auto_refill_terminal_at "TIMESTAMP"
+if index_exists tr_settle_outbox_auto_refill_due; then
+  log "tr_settle_outbox_auto_refill_due exists, skip"
+else
+  apply_ddl "CREATE NULL_FILTERED INDEX tr_settle_outbox_auto_refill_due
+    ON tr_settle_outbox (queue_shard, auto_refill_next_attempt_at)"
+fi
+wait_index_read_write tr_settle_outbox_auto_refill_due
 
 log "done"
