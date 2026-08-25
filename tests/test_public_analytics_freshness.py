@@ -11,10 +11,13 @@ that will not answer does not hold the status page open.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import time
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
+from google.api_core.exceptions import DeadlineExceeded
 
 from trusted_router.config import Settings
 from trusted_router.operational_analytics_freshness import (
@@ -31,6 +34,7 @@ from trusted_router.operational_analytics_freshness import (
 )
 from trusted_router.routes import public as public_routes
 from trusted_router.storage import STORE
+from trusted_router.storage_gcp import SpannerBigtableStore
 
 
 def _snapshot(monkeypatch) -> dict[str, object]:
@@ -38,6 +42,120 @@ def _snapshot(monkeypatch) -> dict[str, object]:
     monkeypatch.setattr(public_routes, "_status_rollups", lambda _window: [])
     monkeypatch.setattr(public_routes, "_STATUS_CACHE", None)
     return public_routes._status_snapshot(Settings(environment="local"))
+
+
+def test_transient_public_snapshot_timeout_is_a_single_warning(caplog) -> None:
+    with caplog.at_level(logging.WARNING, logger=public_routes.__name__):
+        public_routes._log_public_analytics_snapshot_read_failure(
+            "status_inputs",
+            httpx.ConnectTimeout("timed out"),
+        )
+
+    [record] = [
+        record
+        for record in caplog.records
+        if record.message == "public_analytics_snapshot_read_degraded"
+    ]
+    assert record.levelno == logging.WARNING
+    assert record.exc_info is None
+    assert record.snapshot_name == "status_inputs"
+    assert record.error_class == "ConnectTimeout"
+    assert record.retryable is True
+
+
+def test_unexpected_public_snapshot_failure_remains_an_error(caplog) -> None:
+    with caplog.at_level(logging.ERROR, logger=public_routes.__name__):
+        try:
+            raise ValueError("invalid snapshot schema")
+        except ValueError as exc:
+            public_routes._log_public_analytics_snapshot_read_failure("leaderboard", exc)
+
+    [record] = [
+        record
+        for record in caplog.records
+        if record.message == "public_analytics_snapshot_read_failed"
+    ]
+    assert record.levelno == logging.ERROR
+    assert record.exc_info is not None
+    assert record.snapshot_name == "leaderboard"
+    assert record.retryable is False
+
+
+def test_status_snapshot_connect_timeout_falls_back_without_error(
+    caplog,
+    monkeypatch,
+) -> None:
+    def timeout(_name: str) -> dict[str, object] | None:
+        raise httpx.ConnectTimeout("cold ClickHouse connection timed out")
+
+    monkeypatch.setattr(public_routes, "_precomputed_public_analytics_snapshot", timeout)
+    monkeypatch.setattr(public_routes, "_status_samples", lambda **_kwargs: [])
+    monkeypatch.setattr(public_routes, "_status_rollups", lambda _window: [])
+    monkeypatch.setattr(public_routes, "_STATUS_CACHE", None)
+    monkeypatch.setattr(
+        STORE.target,
+        "operational_analytics_outbox_freshness",
+        lambda: OutboxFreshness(backend=BACKEND_POSTGRES, oldest_enqueued_at=None),
+        raising=False,
+    )
+
+    with caplog.at_level(logging.WARNING, logger=public_routes.__name__):
+        payload = public_routes._status_snapshot(Settings(environment="local"))
+
+    assert ANALYTICS_STATUS_KEY in payload
+    assert any(
+        record.message == "public_analytics_snapshot_read_degraded"
+        and record.snapshot_name == "status_inputs"
+        for record in caplog.records
+    )
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+
+
+class _FailingOutbox:
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def oldest_enqueued_at(self, *, timeout: float) -> dt.datetime | None:
+        _ = timeout
+        raise self._exc
+
+
+def _freshness_with_failure(exc: Exception) -> OutboxFreshness:
+    store = object.__new__(SpannerBigtableStore)
+    store._operational_analytics_outbox = _FailingOutbox(exc)  # type: ignore[assignment]
+    return store.operational_analytics_outbox_freshness()
+
+
+def test_transient_spanner_freshness_timeout_is_a_single_warning(caplog) -> None:
+    with caplog.at_level(logging.WARNING, logger="trusted_router.storage_gcp"):
+        reading = _freshness_with_failure(DeadlineExceeded("deadline exceeded"))
+
+    [record] = [
+        record
+        for record in caplog.records
+        if record.message == "spanner.operational_analytics_outbox_freshness_degraded"
+    ]
+    assert reading.available is False
+    assert reading.reason == REASON_UNREACHABLE
+    assert record.levelno == logging.WARNING
+    assert record.exc_info is None
+    assert record.error_class == "DeadlineExceeded"
+    assert record.retryable is True
+
+
+def test_unexpected_spanner_freshness_failure_remains_an_error(caplog) -> None:
+    with caplog.at_level(logging.ERROR, logger="trusted_router.storage_gcp"):
+        reading = _freshness_with_failure(RuntimeError("bad query shape"))
+
+    [record] = [
+        record
+        for record in caplog.records
+        if record.message == "spanner.operational_analytics_outbox_freshness_failed"
+    ]
+    assert reading.available is False
+    assert record.levelno == logging.ERROR
+    assert record.exc_info is not None
+    assert record.retryable is False
 
 
 def test_status_snapshot_publishes_the_analytics_section(monkeypatch) -> None:
