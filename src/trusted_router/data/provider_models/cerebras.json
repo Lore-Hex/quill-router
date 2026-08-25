@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement generated from Cerebras's public model catalog. Canonical model IDs and cerebras/* provider aliases are included when the upstream catalog exposes them.",
   "provider": "cerebras",
   "source": "https://api.cerebras.ai/public/v1/models",
-  "generated_at": "2026-08-25T08:44:22Z",
+  "generated_at": "2026-08-25T10:35:21Z",
   "model_count": 6,
   "models": [
     {

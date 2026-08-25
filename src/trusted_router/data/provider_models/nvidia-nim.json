@@ -2,8 +2,8 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-08-25T08:44:22Z",
-  "model_count": 101,
+  "generated_at": "2026-08-25T10:35:21Z",
+  "model_count": 95,
   "models": [
     {
       "id": "01-ai/yi-large",
@@ -36,15 +36,6 @@
       "id": "aisingapore/sea-lion-7b-instruct",
       "upstream_id": "aisingapore/sea-lion-7b-instruct",
       "display_name": "aisingapore/sea-lion-7b-instruct",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
-    },
-    {
-      "id": "baai/bge-m3",
-      "upstream_id": "baai/bge-m3",
-      "display_name": "baai/bge-m3",
       "model_type": "discovery",
       "routable": false,
       "routable_reason": "production-entitlement-required",
@@ -564,15 +555,6 @@
       "status": 1
     },
     {
-      "id": "nvidia/llama-nemotron-embed-1b-v2",
-      "upstream_id": "nvidia/llama-nemotron-embed-1b-v2",
-      "display_name": "nvidia/llama-nemotron-embed-1b-v2",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
-    },
-    {
       "id": "nvidia/llama-nemotron-embed-vl-1b-v2",
       "upstream_id": "nvidia/llama-nemotron-embed-vl-1b-v2",
       "display_name": "nvidia/llama-nemotron-embed-vl-1b-v2",
@@ -594,15 +576,6 @@
       "id": "nvidia/mistral-nemo-minitron-8b-8k-instruct",
       "upstream_id": "nvidia/mistral-nemo-minitron-8b-8k-instruct",
       "display_name": "nvidia/mistral-nemo-minitron-8b-8k-instruct",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
-    },
-    {
-      "id": "nvidia/nemoretriever-parse",
-      "upstream_id": "nvidia/nemoretriever-parse",
-      "display_name": "nvidia/nemoretriever-parse",
       "model_type": "discovery",
       "routable": false,
       "routable_reason": "production-entitlement-required",
@@ -729,33 +702,6 @@
       "id": "nvidia/neva-22b",
       "upstream_id": "nvidia/neva-22b",
       "display_name": "nvidia/neva-22b",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
-    },
-    {
-      "id": "nvidia/nv-embed-v1",
-      "upstream_id": "nvidia/nv-embed-v1",
-      "display_name": "nvidia/nv-embed-v1",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
-    },
-    {
-      "id": "nvidia/nv-embedcode-7b-v1",
-      "upstream_id": "nvidia/nv-embedcode-7b-v1",
-      "display_name": "nvidia/nv-embedcode-7b-v1",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
-    },
-    {
-      "id": "nvidia/nv-embedqa-e5-v5",
-      "upstream_id": "nvidia/nv-embedqa-e5-v5",
-      "display_name": "nvidia/nv-embedqa-e5-v5",
       "model_type": "discovery",
       "routable": false,
       "routable_reason": "production-entitlement-required",
