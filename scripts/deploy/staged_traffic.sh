@@ -30,15 +30,29 @@ LEGACY_PROBE_RETRY_SECONDS="${TR_LEGACY_PROBE_RETRY_SECONDS:-2}"
 LEGACY_PROBE_TAG="staged-probe"
 LEGACY_PROBE_TAG_READY=0
 LEGACY_PROBE_TAG_CLEANUP_REQUIRED=0
+WATCHDOG_PID=""
+WATCHDOG_GATE_DIR=""
+WATCHDOG_GATE_FILE=""
+FINAL_BASELINE_PID=""
 
 log() { echo "[staged-traffic ${REGION}] $*"; }
 
 configure_probe_tag() {
-  log "tagging ${NEW_REV} for a revision-direct regional probe"
+  local resolved
   # From this point onward the fixed name belongs to this invocation. Cleanup
   # is required even when reconciliation fails, because the pre-existing tag
   # may still point at an older rollout.
   LEGACY_PROBE_TAG_CLEANUP_REQUIRED=1
+  if resolved="$(cloud_run_probe_tag_revision \
+      "$SERVICE" "$REGION" "$PROJECT_ID" "$LEGACY_PROBE_TAG")" &&
+     [ "$resolved" = "$NEW_REV" ]; then
+    # rollout.sh normally assigned this during the no-traffic warm. Keep this
+    # ramp-time path as a cheap idempotent verification for direct/manual use.
+    log "probe tag already resolves to warmed revision ${NEW_REV}"
+    LEGACY_PROBE_TAG_READY=1
+    return 0
+  fi
+  log "tagging ${NEW_REV} for a revision-direct regional probe"
   if cloud_run_probe_tag_reconcile \
       "$SERVICE" "$REGION" "$PROJECT_ID" "$LEGACY_PROBE_TAG" "$NEW_REV"; then
     LEGACY_PROBE_TAG_READY=1
@@ -65,6 +79,8 @@ cleanup_staged_traffic() {
   # leaking the mutex until its TTL. Finish cleanup uninterrupted.
   trap '' INT TERM
   trap - EXIT
+  stop_watchdog
+  stop_final_baseline
   if ! cleanup_probe_tag && [ "$staged_status" -eq 0 ]; then
     staged_status=1
   fi
@@ -72,6 +88,29 @@ cleanup_staged_traffic() {
     deploy_mutex_release
   fi
   exit "$staged_status"
+}
+
+stop_watchdog() {
+  if [ -n "$WATCHDOG_PID" ] && kill -0 "$WATCHDOG_PID" 2>/dev/null; then
+    kill "$WATCHDOG_PID" 2>/dev/null || true
+    wait "$WATCHDOG_PID" 2>/dev/null || true
+  fi
+  WATCHDOG_PID=""
+  if [ -n "$WATCHDOG_GATE_DIR" ]; then
+    rm -f "$WATCHDOG_GATE_FILE"
+    rmdir "$WATCHDOG_GATE_DIR" 2>/dev/null || true
+  fi
+  WATCHDOG_GATE_DIR=""
+  WATCHDOG_GATE_FILE=""
+}
+
+stop_final_baseline() {
+  if [ -n "$FINAL_BASELINE_PID" ] &&
+     kill -0 "$FINAL_BASELINE_PID" 2>/dev/null; then
+    kill "$FINAL_BASELINE_PID" 2>/dev/null || true
+    wait "$FINAL_BASELINE_PID" 2>/dev/null || true
+  fi
+  FINAL_BASELINE_PID=""
 }
 
 # The workflow owns one mutex across every regional ramp. A direct manual
@@ -190,17 +229,91 @@ probe_legacy_surface_or_rollback() {
   log "legacy surface probe passed after ${stage_pct}% shift at ${base_url} (console=${console_code}, auth/session=${session_code})"
 }
 
-watch_or_rollback() {
+start_watchdog() {
   local stage_pct="$1"
-  probe_legacy_surface_or_rollback "$stage_pct"
-  log "watching ${REGION} for 1 min after ${stage_pct}% shift"
-  if ! python3 "${SCRIPT_DIR}/watchdog.py" \
+  WATCHDOG_GATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tr-watchdog-gate.XXXXXX")"
+  WATCHDOG_GATE_FILE="${WATCHDOG_GATE_DIR}/traffic-shift-complete"
+  # watchdog.py's default 30-second baseline grace was the serialized startup
+  # seen in deploy logs. Start it before update-traffic so grace + baseline
+  # capture overlap Cloud Run routing, while --start-gate-file keeps every
+  # configured polling minute strictly after the shift completes.
+  log "starting watchdog baseline concurrently with ${stage_pct}% traffic shift"
+  python3 "${SCRIPT_DIR}/watchdog.py" \
       --regions "$REGION" \
       --duration-min 1 \
       --rollback-after 1 \
-      --slo-class "$WATCHDOG_SLO_CLASS"; then
+      --slo-class "$WATCHDOG_SLO_CLASS" \
+      --start-gate-file "$WATCHDOG_GATE_FILE" &
+  WATCHDOG_PID=$!
+}
+
+shift_and_watch() {
+  local stage_pct="$1"
+  local watchdog_status
+  start_watchdog "$stage_pct"
+  if ! shift_traffic "$stage_pct"; then
+    stop_watchdog
+    return 1
+  fi
+  : >"$WATCHDOG_GATE_FILE"
+  probe_legacy_surface_or_rollback "$stage_pct"
+  log "watching ${REGION} for 1 min after ${stage_pct}% shift"
+  if wait "$WATCHDOG_PID"; then
+    watchdog_status=0
+  else
+    watchdog_status=$?
+  fi
+  WATCHDOG_PID=""
+  rm -f "$WATCHDOG_GATE_FILE"
+  rmdir "$WATCHDOG_GATE_DIR" 2>/dev/null || true
+  WATCHDOG_GATE_DIR=""
+  WATCHDOG_GATE_FILE=""
+  if [ "$watchdog_status" -ne 0 ]; then
     rollback_to_old "synthetics tripped at ${stage_pct}%"
     exit 1
+  fi
+}
+
+start_final_baseline() {
+  local output_file="${TR_STAGED_WATCHDOG_BASELINE_FILE:-}"
+  [ -n "$output_file" ] || return 0
+  rm -f "$output_file"
+  log "starting final-canary baseline concurrently with 100% traffic shift"
+  if [ "${TR_STAGED_WATCHDOG_SKIP_BASELINE:-0}" = "1" ]; then
+    python3 "${SCRIPT_DIR}/watchdog.py" \
+      --regions "$REGION" \
+      --duration-min 0 \
+      --slo-class "$WATCHDOG_SLO_CLASS" \
+      --baseline-output "$output_file" \
+      --skip-baseline \
+      --baseline-grace-sec 0 &
+  else
+    python3 "${SCRIPT_DIR}/watchdog.py" \
+      --regions "$REGION" \
+      --duration-min 0 \
+      --slo-class "$WATCHDOG_SLO_CLASS" \
+      --baseline-output "$output_file" &
+  fi
+  FINAL_BASELINE_PID=$!
+}
+
+finish_final_baseline() {
+  local output_file="${TR_STAGED_WATCHDOG_BASELINE_FILE:-}"
+  local baseline_status
+  [ -n "$FINAL_BASELINE_PID" ] || return 0
+  if wait "$FINAL_BASELINE_PID"; then
+    baseline_status=0
+  else
+    baseline_status=$?
+  fi
+  FINAL_BASELINE_PID=""
+  if [ "$baseline_status" -ne 0 ] || [ ! -s "$output_file" ]; then
+    if [ -n "$OLD_REV" ]; then
+      rollback_to_old "final canary baseline capture failed"
+    else
+      log "final canary baseline capture failed; no prior revision exists to restore"
+    fi
+    return 1
   fi
 }
 
@@ -209,24 +322,32 @@ if [ -z "$OLD_REV" ]; then
   # split traffic with. Skip staging; flip straight to 100% on the new
   # revision so the deploy completes. Subsequent deploys stage normally.
   log "no prior revision recorded; flipping straight to 100% ${NEW_REV}"
-  gcloud run services update-traffic "$SERVICE" \
-    --region="$REGION" --project="$PROJECT_ID" \
-    --to-revisions="${NEW_REV}=100" \
-    --quiet
+  start_final_baseline
+  if ! gcloud run services update-traffic "$SERVICE" \
+      --region="$REGION" --project="$PROJECT_ID" \
+      --to-revisions="${NEW_REV}=100" \
+      --quiet; then
+    stop_final_baseline
+    exit 1
+  fi
+  finish_final_baseline
   exit 0
 fi
 
 # 10% canary
 configure_probe_tag
-shift_traffic 10
-watch_or_rollback 10
+shift_and_watch 10
 
 # 50% midstage
-shift_traffic 50
-watch_or_rollback 50
+shift_and_watch 50
 
 # Final cut over
-shift_traffic 100
+start_final_baseline
+if ! shift_traffic 100; then
+  stop_final_baseline
+  exit 1
+fi
+finish_final_baseline
 probe_legacy_surface_or_rollback 100
 if ! cleanup_probe_tag; then
   exit 1

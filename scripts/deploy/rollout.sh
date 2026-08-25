@@ -20,8 +20,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_lib.sh"
 # shellcheck source=scripts/deploy/deploy_mutex.sh
 source "${SCRIPT_DIR}/deploy_mutex.sh"
+# shellcheck source=scripts/deploy/_cloud_run_revision_probe.sh
+source "${SCRIPT_DIR}/_cloud_run_revision_probe.sh"
 # shellcheck source=scripts/deploy/regional_quota_rollout.sh
 source "${SCRIPT_DIR}/regional_quota_rollout.sh"
+
+WARM_PROBE_TAG="staged-probe"
+WARM_PROBE_REGIONS=()
+WARM_PROBE_CLEANUP_REQUIRED=0
 
 release_rollout_deploy_mutex() {
   local rollout_status=$?
@@ -29,12 +35,31 @@ release_rollout_deploy_mutex() {
   # until its TTL.
   trap '' INT TERM
   trap - EXIT
+  # A failed no-traffic warm must not leave its immutable revision minimum
+  # activated by a tag. Once untagged and absent from the traffic split, Cloud
+  # Run allocates zero instances to the failed candidate.
+  if [ "$rollout_status" -ne 0 ] &&
+     [ "$WARM_PROBE_CLEANUP_REQUIRED" -eq 1 ]; then
+    local cleanup_region
+    for cleanup_region in "${WARM_PROBE_REGIONS[@]}"; do
+      if ! cloud_run_probe_tag_remove \
+          "$SERVICE" "$cleanup_region" "$PROJECT_ID" "$WARM_PROBE_TAG"; then
+        log "CRITICAL: failed warm left ${WARM_PROBE_TAG} cleanup required in ${cleanup_region}"
+      fi
+    done
+  fi
   if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
     deploy_mutex_release
   fi
   exit "$rollout_status"
 }
 trap release_rollout_deploy_mutex EXIT
+# Funnel signals through EXIT: a SIGTERM from workflow cancellation (or Ctrl-C
+# on a manual run) must still run the trap, which now also owns removing the
+# staged-probe tag from a failed warm — a tagged candidate keeps its baked
+# revision minimum allocated at 0% traffic, which is paid capacity.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # The workflow exports its outer lock through GITHUB_ENV. A direct operator
 # invocation has no such operation and owns this script-level scope instead.
@@ -734,11 +759,29 @@ deploy_one_region() {
   prune_failed_revisions "$target" >>"$logfile" 2>&1 || true
   # A global override wins. Otherwise use the per-region service minimum;
   # unknown warm regions retain one instance and unknown cold regions scale to
-  # zero. Service-level minimums remain allocated while staged revisions split
-  # traffic, unlike revision-level minimums which can double or disappear.
+  # zero.
   local min_instances="${TR_CLOUD_RUN_MIN_INSTANCES:-}"
   if [ -z "$min_instances" ]; then
     min_instances="$(cloud_run_min_instances_for_region "$target")"
+  fi
+  local revision_min_instances="default"
+  if [ "${TR_DEPLOY_NO_TRAFFIC:-0}" = "1" ]; then
+    # Cloud Run revisions are immutable: clearing a temporary revision minimum
+    # would create a second cold revision and recreate the 100% cutover stall.
+    # Instead the candidate carries the same minimum as the existing service.
+    # The probe tag assigned below activates it at 0% traffic. Cloud Run uses
+    # the larger (not the sum) of service/revision minimums, so after convergence
+    # capacity is still the original service minimum. On rollback, removing the
+    # tag and traffic reference deactivates this revision minimum completely.
+    revision_min_instances="$min_instances"
+    # CAVEAT (review F5): this bakes today's service minimum into the revision
+    # forever — effective capacity is max(service, revision), so LOWERING a
+    # region's TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION later changes nothing
+    # until the next deploy replaces the serving revision. Capacity
+    # reductions therefore require a redeploy to take effect. The max-not-sum
+    # and tag-activation semantics are platform behavior asserted here, not
+    # testable against stubs — verify billing once after the first prod run.
+    log "capacity before ${target}: service min=${min_instances}; candidate revision min=${revision_min_instances}"
   fi
   # /chat and /synth stream through /chat-proxy/v1 for browser CORS.
   # Synth can legitimately take several model calls before final output, so
@@ -751,7 +794,7 @@ deploy_one_region() {
       --memory "${TR_CLOUD_RUN_MEMORY:-1Gi}" \
       --concurrency "$TR_CLOUD_RUN_CONCURRENCY" \
       --min "$min_instances" \
-      --min-instances default \
+      --min-instances "$revision_min_instances" \
       --timeout "${TR_CLOUD_RUN_TIMEOUT_SECONDS:-300}" \
       --network "${TR_CLOUD_RUN_NETWORK:-default}" \
       --subnet "${TR_CLOUD_RUN_SUBNET:-default}" \
@@ -844,6 +887,45 @@ latest_ready_revision_for_region() {
     --format='value(metadata.name,status.conditions[0].status)' 2>/dev/null \
     | awk '$2 == "True" { print $1; exit }'
 }
+
+warm_no_traffic_candidate() {
+  local target="$1"
+  local revision="$2"
+  local min_instances="$3"
+  local base_url
+
+  # The tag mutation itself is traffic-free. Mark cleanup required before the
+  # call because a failed reconciliation can still have applied the tag.
+  WARM_PROBE_REGIONS+=("$target")
+  WARM_PROBE_CLEANUP_REQUIRED=1
+  log "assigning ${WARM_PROBE_TAG} to ${revision} during the no-traffic warm"
+  cloud_run_probe_tag_reconcile \
+    "$SERVICE" "$target" "$PROJECT_ID" "$WARM_PROBE_TAG" "$revision"
+  base_url="$(cloud_run_probe_tagged_base_url \
+    "$SERVICE" "$target" "$PROJECT_ID" "$WARM_PROBE_TAG" "$revision")"
+  # The revision minimum is activated by the tag. A direct readiness request
+  # proves the tagged route has reached a started candidate before this warm
+  # process reports success; it never moves production traffic.
+  curl -fsS --max-time 30 --retry 5 --retry-all-errors \
+    "${base_url}/ready" >/dev/null
+  log "capacity after ${target} warm: ${revision} ready at revision min=${min_instances}; service min unchanged"
+}
+
+if [ "${TR_DEPLOY_NO_TRAFFIC:-0}" = "1" ]; then
+  for warm_target in "${TARGETS[@]}"; do
+    warm_revision="$(latest_ready_revision_for_region "$warm_target")"
+    if [ -z "$warm_revision" ]; then
+      echo "ERROR: could not find warmed Ready revision for ${warm_target}" >&2
+      exit 1
+    fi
+    warm_min_instances="${TR_CLOUD_RUN_MIN_INSTANCES:-}"
+    if [ -z "$warm_min_instances" ]; then
+      warm_min_instances="$(cloud_run_min_instances_for_region "$warm_target")"
+    fi
+    warm_no_traffic_candidate \
+      "$warm_target" "$warm_revision" "$warm_min_instances"
+  done
+fi
 
 if [ "${TR_DEPLOY_NO_TRAFFIC:-0}" != "1" ]; then
   # Defense against a real 2026-06-05 rollout bug: Cloud Run created Ready

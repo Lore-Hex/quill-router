@@ -43,6 +43,7 @@ import sys
 import time
 import urllib.request
 from collections.abc import Iterable
+from pathlib import Path
 
 # Worst-of: the per-region effective_status is the worst over its checks.
 # `unknown` is treated as severity 0 for ranking but reported separately
@@ -142,6 +143,50 @@ def write_output(key: str, value: str) -> None:
         print(f"::output::{key}={value}", flush=True)
 
 
+def wait_for_start_gate(path: str, timeout_sec: int) -> None:
+    """Wait until the traffic-shift caller releases the polling window.
+
+    Baseline grace and capture happen before this wait, so callers can overlap
+    that fixed startup cost with a Cloud Run traffic update. The minute loop
+    remains behind the gate, preserving the complete configured watch window
+    after the traffic update has finished.
+    """
+    gate = Path(path)
+    deadline = time.monotonic() + timeout_sec
+    while not gate.exists():
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"watchdog start gate was not released within {timeout_sec}s: {gate}"
+            )
+        time.sleep(0.1)
+
+
+def read_baseline(path: str, regions: Iterable[str]) -> dict[str, str]:
+    """Read a baseline snapshot captured by an earlier watchdog process."""
+    with Path(path).open(encoding="utf-8") as handle:
+        document = json.load(handle)
+    if not isinstance(document, dict):
+        raise ValueError("baseline document must be an object")
+    baseline: dict[str, str] = {}
+    for region in regions:
+        status = document.get(region, "unknown")
+        normalized = normalize_watchdog_status(status)
+        if normalized == "unknown" and status != "unknown":
+            raise ValueError(f"invalid baseline status for {region}: {status!r}")
+        baseline[region] = normalized
+    return baseline
+
+
+def write_baseline(path: str, baseline: dict[str, str]) -> None:
+    """Atomically persist a baseline for a post-shift watchdog invocation."""
+    destination = Path(path)
+    temporary = destination.with_name(destination.name + f".tmp.{os.getpid()}")
+    with temporary.open("w", encoding="utf-8") as handle:
+        json.dump(baseline, handle, separators=(",", ":"), sort_keys=True)
+        handle.write("\n")
+    temporary.replace(destination)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--duration-min", type=int, default=10)
@@ -188,7 +233,40 @@ def main() -> int:
             "regardless of pre-existing badness."
         ),
     )
+    parser.add_argument(
+        "--start-gate-file",
+        default="",
+        help=(
+            "Optional path that must exist before the minute polling window starts. "
+            "Baseline grace/capture still runs immediately, allowing staged traffic "
+            "updates to overlap the 30-second startup cost."
+        ),
+    )
+    parser.add_argument(
+        "--start-gate-timeout-sec",
+        type=int,
+        default=600,
+        help="Maximum wait for --start-gate-file before failing closed.",
+    )
+    parser.add_argument(
+        "--baseline-input",
+        default="",
+        help=(
+            "Read a baseline captured before the traffic shift instead of paying "
+            "the baseline grace in this process. Ignored with --skip-baseline."
+        ),
+    )
+    parser.add_argument(
+        "--baseline-output",
+        default="",
+        help=(
+            "Atomically write the captured baseline for a later watchdog process. "
+            "Use --duration-min 0 for a baseline-only invocation."
+        ),
+    )
     args = parser.parse_args()
+    if args.baseline_input and args.baseline_output:
+        parser.error("--baseline-input and --baseline-output are mutually exclusive")
 
     regions = [r.strip() for r in args.regions.split(",") if r.strip()]
     consecutive_down = {region: 0 for region in regions}
@@ -203,13 +281,21 @@ def main() -> int:
     # blame the deploy for them).
     baseline_down: set[str] = set()
     if not args.skip_baseline:
-        if args.baseline_grace_sec > 0:
-            time.sleep(args.baseline_grace_sec)
-        baseline_snapshot = fetch_per_region(
-            args.status_url,
-            regions,
-            slo_class=args.slo_class,
-        )
+        if args.baseline_input:
+            try:
+                baseline_snapshot = read_baseline(args.baseline_input, regions)
+            except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                print(f"watchdog: invalid baseline input: {exc}", file=sys.stderr)
+                write_output("rollback_regions", ",".join(sorted(regions)))
+                return 1
+        else:
+            if args.baseline_grace_sec > 0:
+                time.sleep(args.baseline_grace_sec)
+            baseline_snapshot = fetch_per_region(
+                args.status_url,
+                regions,
+                slo_class=args.slo_class,
+            )
         baseline_down = {r for r, s in baseline_snapshot.items() if s == "down"}
         if baseline_down:
             print(
@@ -217,6 +303,30 @@ def main() -> int:
                 f"{sorted(baseline_down)}",
                 flush=True,
             )
+    else:
+        baseline_snapshot = {region: "unknown" for region in regions}
+
+    if args.baseline_output:
+        try:
+            write_baseline(args.baseline_output, baseline_snapshot)
+        except OSError as exc:
+            print(f"watchdog: could not write baseline output: {exc}", file=sys.stderr)
+            write_output("rollback_regions", ",".join(sorted(regions)))
+            return 1
+
+    if args.start_gate_file:
+        if args.start_gate_timeout_sec <= 0:
+            parser.error("--start-gate-timeout-sec must be positive")
+        print(
+            "watchdog: baseline ready; waiting for traffic shift to complete",
+            flush=True,
+        )
+        try:
+            wait_for_start_gate(args.start_gate_file, args.start_gate_timeout_sec)
+        except TimeoutError as exc:
+            print(f"watchdog: {exc}", file=sys.stderr, flush=True)
+            write_output("rollback_regions", ",".join(sorted(regions)))
+            return 1
 
     print(
         f"watchdog: polling {args.status_url} every 60s for {args.duration_min} min; "

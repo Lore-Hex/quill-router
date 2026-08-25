@@ -348,14 +348,16 @@ jobs:
     outputs:
       TR_DEPLOY_MUTEX_OPERATION: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_OPERATION }}
       TR_DEPLOY_MUTEX_GENERATION: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_GENERATION }}
+      TR_DEPLOY_MUTEX_CREATED_AT: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_CREATED_AT }}
       sha: ${{ needs.build-image.outputs.sha }}
       image: ${{ needs.build-image.outputs.image }}
+      primary_live_seconds: ${{ steps.primary_live.outputs.primary_live_seconds }}
       previous_europe_west4_revision: ${{ steps.prev.outputs.europe_west4_revision }}
       previous_us_east4_revision: ${{ steps.prev.outputs.us_east4_revision }}
       previous_southamerica_east1_revision: ${{ steps.prev.outputs.southamerica_east1_revision }}
-      europe_west4_revision: ${{ steps.warm_all.outputs.europe_west4_revision }}
-      us_east4_revision: ${{ steps.warm_all.outputs.us_east4_revision }}
-      southamerica_east1_revision: ${{ steps.warm_all.outputs.southamerica_east1_revision }}
+      europe_west4_revision: ${{ steps.wait_secondary_warms.outputs.europe_west4_revision }}
+      us_east4_revision: ${{ steps.wait_secondary_warms.outputs.us_east4_revision }}
+      southamerica_east1_revision: ${{ steps.wait_secondary_warms.outputs.southamerica_east1_revision }}
     # The mutex TTL is 90 minutes. The two lock-owning job bounds total
     # 25 + 55 = 80 minutes, leaving 10 minutes for the job handoff queue gap.
     timeout-minutes: 25
@@ -401,10 +403,12 @@ jobs:
           printf '%s\n' "$fence" >> "$GITHUB_ENV"
           printf '%s\n' "$fence" >> "$GITHUB_OUTPUT"
 
-      # Staged regional deploy. Warm all four no-traffic revisions together,
-      # then gate primary-live on us-central1's unchanged 10/50/100 ramp and
-      # 3-minute single-region synthetic watch. The follow-on job inherits the
-      # same mutex fence and ramps the already-warm secondaries serially.
+      # Staged regional deploy. Launch all four no-traffic revisions together,
+      # but gate primary-live only on us-central1's warm plus its unchanged
+      # 10/50/100 ramp and 3-minute single-region synthetic watch. Secondary
+      # warms continue through those primary ramp/canary steps and are joined
+      # before this job can succeed. Warm processes never move traffic, so the
+      # serial traffic containment required by #695 is unchanged.
       #
       # Hotfix mode (workflow_dispatch input `hotfix: true`): the
       # watchdogs skip baseline + use --skip-baseline so a sick prod
@@ -476,6 +480,19 @@ jobs:
             printf '%s\n' "${revision}" >"${revision_file}"
           }
 
+          run_warm() {
+            local status_file="$1"
+            shift
+            local status
+            set +e
+            warm_region "$@"
+            status=$?
+            set -e
+            printf '%s\n' "${status}" >"${status_file}.tmp.$$"
+            mv "${status_file}.tmp.$$" "${status_file}"
+            return "${status}"
+          }
+
           # rollout.sh gates global load-balancer mutation on
           # TR_DEPLOY_RECONCILE_LB. Only the primary process receives 1; all
           # concurrent secondary processes receive 0 and cannot mutate the LB.
@@ -493,46 +510,51 @@ jobs:
             "${RUNNER_TEMP}/revision-us-east4"
             "${RUNNER_TEMP}/revision-southamerica-east1"
           )
+          status_files=(
+            "${RUNNER_TEMP}/warmup-status-us-central1"
+            "${RUNNER_TEMP}/warmup-status-europe-west4"
+            "${RUNNER_TEMP}/warmup-status-us-east4"
+            "${RUNNER_TEMP}/warmup-status-southamerica-east1"
+          )
+          secondary_state="${RUNNER_TEMP}/secondary-warms.tsv"
+          rm -f "${secondary_state}" "${status_files[@]}" "${revision_files[@]}"
           pids=()
           primary_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-          (warm_region "us-central1" "1" "${revision_files[0]}") >"${logs[0]}" 2>&1 &
+          (run_warm "${status_files[0]}" "us-central1" "1" "${revision_files[0]}") >"${logs[0]}" 2>&1 &
           pids+=("$!")
-          (warm_region "europe-west4" "0" "${revision_files[1]}") >"${logs[1]}" 2>&1 &
+          (run_warm "${status_files[1]}" "europe-west4" "0" "${revision_files[1]}") >"${logs[1]}" 2>&1 &
           pids+=("$!")
-          (warm_region "us-east4" "0" "${revision_files[2]}") >"${logs[2]}" 2>&1 &
+          (run_warm "${status_files[2]}" "us-east4" "0" "${revision_files[2]}") >"${logs[2]}" 2>&1 &
           pids+=("$!")
-          (warm_region "southamerica-east1" "0" "${revision_files[3]}") >"${logs[3]}" 2>&1 &
+          (run_warm "${status_files[3]}" "southamerica-east1" "0" "${revision_files[3]}") >"${logs[3]}" 2>&1 &
           pids+=("$!")
 
-          statuses=()
-          for idx in "${!pids[@]}"; do
-            if wait "${pids[$idx]}"; then
-              statuses[$idx]=0
-            else
-              statuses[$idx]=$?
-            fi
+          # A new GitHub step cannot use bash `wait` on a child from this
+          # shell, so persist PID + atomic status paths for the end-of-job
+          # collector. The processes themselves continue on this same runner.
+          for idx in 1 2 3; do
+            printf '%s\t%s\t%s\t%s\t%s\n' \
+              "${regions[$idx]}" "${pids[$idx]}" "${logs[$idx]}" \
+              "${status_files[$idx]}" "${revision_files[$idx]}" \
+              >>"${secondary_state}"
           done
 
-          failed=0
-          for idx in "${!regions[@]}"; do
-            printf '\n=== warmup: %s ===\n' "${regions[$idx]}"
-            cat "${logs[$idx]}"
-            if [ "${statuses[$idx]}" -ne 0 ]; then
-              echo "::error::${regions[$idx]} no-traffic warmup failed."
-              failed=1
-            fi
-          done
-          if [ "$failed" -ne 0 ]; then
-            echo "::error::Regional warmup failed; no traffic moved. Successful warm revisions remain at zero traffic."
-            exit 1
+          primary_status=0
+          if wait "${pids[0]}"; then
+            primary_status=0
+          else
+            primary_status=$?
+          fi
+          printf '\n=== warmup: %s ===\n' "${regions[0]}"
+          cat "${logs[0]}"
+          if [ "${primary_status}" -ne 0 ]; then
+            echo "::error::us-central1 no-traffic warmup failed; no traffic moved."
+            exit "${primary_status}"
           fi
 
           echo "primary_started_at=${primary_started_at}" >> "$GITHUB_OUTPUT"
           echo "us_central1_revision=$(<"${revision_files[0]}")" >> "$GITHUB_OUTPUT"
-          echo "europe_west4_revision=$(<"${revision_files[1]}")" >> "$GITHUB_OUTPUT"
-          echo "us_east4_revision=$(<"${revision_files[2]}")" >> "$GITHUB_OUTPUT"
-          echo "southamerica_east1_revision=$(<"${revision_files[3]}")" >> "$GITHUB_OUTPUT"
 
       - name: Stage traffic 10/50/100 (us-central1)
         # Ramps the new revision from 10% → 50% → 100% with a 1-min
@@ -541,6 +563,8 @@ jobs:
         # fails before any secondary receives traffic.
         env:
           TR_WATCHDOG_SLO_CLASS: router_core
+          TR_STAGED_WATCHDOG_BASELINE_FILE: ${{ runner.temp }}/final-watchdog-baseline-us-central1.json
+          TR_STAGED_WATCHDOG_SKIP_BASELINE: ${{ inputs.hotfix == true && '1' || '0' }}
         run: bash scripts/deploy/staged_traffic.sh us-central1 "${{ steps.warm_all.outputs.us_central1_revision }}" "${{ steps.prev.outputs.us_central1_revision }}"
 
       - name: Canary gate — watch us-central1 only (3 min)
@@ -550,7 +574,7 @@ jobs:
         # contained to us-central1.
         id: canary_us
         continue-on-error: true
-        run: python3 scripts/deploy/watchdog.py --regions us-central1 --duration-min 3 --rollback-after 2 --slo-class router_core ${{ steps.wd_args.outputs.extra }}
+        run: python3 scripts/deploy/watchdog.py --regions us-central1 --duration-min 3 --rollback-after 2 --slo-class router_core --baseline-input "${RUNNER_TEMP}/final-watchdog-baseline-us-central1.json" ${{ steps.wd_args.outputs.extra }}
 
       - name: Rollback us-central1 + abort (canary tripped)
         if: ${{ steps.canary_us.outcome == 'failure' && steps.canary_us.outputs.rollback_regions != '' }}
@@ -586,6 +610,96 @@ jobs:
             exit 1
           fi
 
+      - name: Record primary-live timing
+        id: primary_live
+        env:
+          MUTEX_CREATED_AT: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_CREATED_AT }}
+        run: |
+          set -euo pipefail
+          primary_live_seconds="$(python3 - "${MUTEX_CREATED_AT}" <<'PY'
+          from datetime import datetime, timezone
+          import sys
+
+          raw = sys.argv[1]
+          acquired = datetime.fromisoformat(
+              raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+          )
+          if acquired.tzinfo is None:
+              raise SystemExit("mutex created_at must include a timezone")
+          print(max(0, int((datetime.now(timezone.utc) - acquired).total_seconds())))
+          PY
+          )"
+          echo "primary_live_seconds=${primary_live_seconds}" >> "$GITHUB_OUTPUT"
+          echo "primary live after ${primary_live_seconds}s from mutex acquisition"
+
+      - name: Wait for secondary no-traffic warms
+        id: wait_secondary_warms
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          secondary_state="${RUNNER_TEMP}/secondary-warms.tsv"
+          if [ ! -s "${secondary_state}" ]; then
+            echo "::error::secondary warm state is missing"
+            exit 1
+          fi
+
+          failed=0
+          while IFS=$'\t' read -r region pid log_file status_file revision_file; do
+            # Background processes persist across steps on the same runner,
+            # but they are no longer children of this shell. Wait by polling
+            # their atomic status file and use the PID to detect an abnormal
+            # exit that could not write one.
+            # Bounded poll: a warm that neither writes status nor dies
+            # (or whose PID was recycled by an unrelated process, defeating
+            # kill -0) must become a named per-region failure here, not a
+            # generic job timeout with the mutex still held.
+            poll_deadline=$((SECONDS + 900))
+            while [ ! -s "${status_file}" ]; do
+              if ! kill -0 "${pid}" 2>/dev/null; then
+                # kill -0 losing a race with the status write is benign:
+                # the warm may finish and exit between our two checks. Give
+                # the atomic mv a moment and trust the FILE, not the PID.
+                sleep 1
+                if [ -s "${status_file}" ]; then
+                  break
+                fi
+                echo "::error::${region} warm exited without recording status"
+                failed=1
+                break
+              fi
+              if [ "$SECONDS" -ge "$poll_deadline" ]; then
+                echo "::error::${region} warm produced no status within 15 minutes"
+                failed=1
+                break
+              fi
+              sleep 1
+            done
+
+            printf '\n=== warmup: %s ===\n' "${region}"
+            cat "${log_file}" || true
+            if [ ! -s "${status_file}" ]; then
+              continue
+            fi
+            status="$(<"${status_file}")"
+            if [[ ! "${status}" =~ ^[0-9]+$ ]] || [ "${status}" -ne 0 ]; then
+              echo "::error::${region} no-traffic warmup failed with status ${status:-missing}."
+              failed=1
+              continue
+            fi
+            if [ ! -s "${revision_file}" ]; then
+              echo "::error::${region} warm succeeded without a revision result"
+              failed=1
+              continue
+            fi
+            key="${region//-/_}_revision"
+            echo "${key}=$(<"${revision_file}")" >> "$GITHUB_OUTPUT"
+          done <"${secondary_state}"
+
+          if [ "${failed}" -ne 0 ]; then
+            echo "::error::Regional warmup failed; no secondary traffic moved. Successful warm revisions remain at zero traffic."
+            exit 1
+          fi
+
       # Mutex release ownership:
       # - deploy fails/cancels: this conditional release runs promptly.
       # - deploy succeeds and rollout-secondaries runs: ownership transfers,
@@ -593,6 +707,22 @@ jobs:
       # - deploy succeeds but GitHub never schedules rollout-secondaries: no
       #   release runs; the 90-minute TTL recovers. Queued deploys fail closed
       #   during that freeze, so production mutations never overlap.
+      - name: Sweep staged-probe tags from never-ramped regions
+        if: ${{ failure() || cancelled() }}
+        # A warmed-but-never-ramped candidate keeps the staged-probe tag, and
+        # the tag keeps its baked revision minimum allocated at 0% traffic —
+        # paid instances that survive until some future deploy reconciles the
+        # tag. Ramps remove the tag themselves; every abort path lands here.
+        # Removal is idempotent, and a region whose ramp already cleaned up is
+        # a no-op.
+        run: |
+          for region in us-central1 europe-west4 us-east4 southamerica-east1; do
+            gcloud run services update-traffic "trusted-router" \
+              --region "$region" --project "$PROJECT_ID" \
+              --remove-tags staged-probe --quiet \
+              && echo "swept $region" || echo "sweep $region: nothing to remove or call failed (non-fatal)"
+          done
+
       - name: Release production deployment mutex after primary-live failure
         if: ${{ failure() || cancelled() }}
         run: bash scripts/deploy/deploy_mutex.sh release
@@ -616,14 +746,18 @@ jobs:
         env:
           DEPLOY_MUTEX_OPERATION: ${{ needs.deploy.outputs.TR_DEPLOY_MUTEX_OPERATION }}
           DEPLOY_MUTEX_GENERATION: ${{ needs.deploy.outputs.TR_DEPLOY_MUTEX_GENERATION }}
+          DEPLOY_MUTEX_CREATED_AT: ${{ needs.deploy.outputs.TR_DEPLOY_MUTEX_CREATED_AT }}
         run: |
           set -euo pipefail
-          if [ -z "${DEPLOY_MUTEX_OPERATION}" ] || [ -z "${DEPLOY_MUTEX_GENERATION}" ]; then
+          if [ -z "${DEPLOY_MUTEX_OPERATION}" ] || \
+             [ -z "${DEPLOY_MUTEX_GENERATION}" ] || \
+             [ -z "${DEPLOY_MUTEX_CREATED_AT}" ]; then
             echo "::error::deploy did not export a complete mutex fence"
             exit 1
           fi
           echo "TR_DEPLOY_MUTEX_OPERATION=${DEPLOY_MUTEX_OPERATION}" >> "$GITHUB_ENV"
           echo "TR_DEPLOY_MUTEX_GENERATION=${DEPLOY_MUTEX_GENERATION}" >> "$GITHUB_ENV"
+          echo "TR_DEPLOY_MUTEX_CREATED_AT=${DEPLOY_MUTEX_CREATED_AT}" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v4
         with:
@@ -697,6 +831,7 @@ jobs:
           NEW_SOUTHAMERICA_EAST1: ${{ needs.deploy.outputs.southamerica_east1_revision }}
           WD_EXTRA: ${{ steps.wd_args.outputs.extra }}
           TR_WATCHDOG_SLO_CLASS: router_core
+          TR_STAGED_WATCHDOG_SKIP_BASELINE: ${{ inputs.hotfix == true && '1' || '0' }}
           TR_BILLING_5XX_GATE_SKIP: ${{ inputs.hotfix == true && 'true' || 'false' }}
         run: |
           set -euo pipefail
@@ -734,12 +869,15 @@ jobs:
             local revision="$2"
             local previous
             local rollout_started_at
+            local watchdog_baseline
             previous="$(previous_revision "${region}")"
             # The billing window belongs to this region's traffic ramp, not to
             # the earlier parallel warmup or a sibling's ramp.
             rollout_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            watchdog_baseline="${RUNNER_TEMP}/final-watchdog-baseline-${region}.json"
 
-            if ! bash scripts/deploy/staged_traffic.sh \
+            if ! TR_STAGED_WATCHDOG_BASELINE_FILE="${watchdog_baseline}" \
+              bash scripts/deploy/staged_traffic.sh \
                 "${region}" "${revision}" "${previous}"; then
               rollback_region "${region}" || true
               return 1
@@ -770,6 +908,7 @@ jobs:
               --duration-min 3 \
               --rollback-after 2 \
               --slo-class router_core \
+              --baseline-input "${watchdog_baseline}" \
               "${watchdog_extra[@]}"; then
               rollback_region "${region}"
               return 1
@@ -782,10 +921,11 @@ jobs:
             fi
           }
 
-          # Incident containment from #695 (billing 5xx, 2026-08-20): all
-          # revision warmups completed in deploy before primary traffic moved.
-          # Keep the three secondary 10/50/100 ramps explicit, serial, and
-          # stop-on-failure; no ramp overlaps a sibling ramp.
+          # Incident containment from #695 (billing 5xx, 2026-08-20): every
+          # secondary no-traffic warm was joined successfully by the deploy job
+          # before this job was scheduled. Keep the three secondary 10/50/100
+          # ramps explicit, serial, and stop-on-failure; no traffic move ever
+          # overlaps a sibling traffic move.
           reconciler_log="${RUNNER_TEMP}/regional-quota-reconciler.log"
           bash scripts/deploy/regional_quota_reconciler.sh >"${reconciler_log}" 2>&1 &
           reconciler_pid=$!
@@ -1010,6 +1150,76 @@ jobs:
           SPANNER_INSTANCE_ID: trusted-router-nam6
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/retire_settle_outbox_hot_index.sh
+
+      - name: Sweep staged-probe tags from never-ramped regions
+        if: ${{ failure() || cancelled() }}
+        # A warmed-but-never-ramped candidate keeps the staged-probe tag, and
+        # the tag keeps its baked revision minimum allocated at 0% traffic —
+        # paid instances that survive until some future deploy reconciles the
+        # tag. Ramps remove the tag themselves; every abort path lands here.
+        # Removal is idempotent, and a region whose ramp already cleaned up is
+        # a no-op.
+        run: |
+          for region in us-central1 europe-west4 us-east4 southamerica-east1; do
+            gcloud run services update-traffic "trusted-router" \
+              --region "$region" --project "$PROJECT_ID" \
+              --remove-tags staged-probe --quiet \
+              && echo "swept $region" || echo "sweep $region: nothing to remove or call failed (non-fatal)"
+          done
+
+      - name: Report full convergence timing
+        # Observability only, after all traffic has moved: a metrics
+        # formatting problem must never turn a converged deploy red or block
+        # the companion job behind it.
+        continue-on-error: true
+        if: ${{ success() }}
+        env:
+          MUTEX_CREATED_AT: ${{ needs.deploy.outputs.TR_DEPLOY_MUTEX_CREATED_AT }}
+          PRIMARY_LIVE_SECONDS: ${{ needs.deploy.outputs.primary_live_seconds }}
+        run: |
+          set -euo pipefail
+          full_convergence_seconds="$(python3 - "${MUTEX_CREATED_AT}" <<'PY'
+          from datetime import datetime, timezone
+          import sys
+
+          raw = sys.argv[1]
+          acquired = datetime.fromisoformat(
+              raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+          )
+          if acquired.tzinfo is None:
+              raise SystemExit("mutex created_at must include a timezone")
+          print(max(0, int((datetime.now(timezone.utc) - acquired).total_seconds())))
+          PY
+          )"
+          if [[ ! "${PRIMARY_LIVE_SECONDS}" =~ ^[0-9]+$ ]]; then
+            echo "::error::primary-live timing is missing or invalid"
+            exit 1
+          fi
+
+          metric_line="deploy.full_convergence_seconds=${full_convergence_seconds} primary_live_seconds=${PRIMARY_LIVE_SECONDS}"
+          echo "================================================================"
+          echo "${metric_line}"
+          echo "================================================================"
+          {
+            echo "## Deployment convergence"
+            echo
+            echo "- \`deploy.full_convergence_seconds=${full_convergence_seconds}\`"
+            echo "- \`primary_live_seconds=${PRIMARY_LIVE_SECONDS}\`"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+          payload="$(jq -cn \
+            --arg event "deploy.full_convergence" \
+            --arg sha "${SHA}" \
+            --arg run_id "${GITHUB_RUN_ID}" \
+            --argjson full_convergence_seconds "${full_convergence_seconds}" \
+            --argjson primary_live_seconds "${PRIMARY_LIVE_SECONDS}" \
+            '{event: $event, source_commit: $sha, github_run_id: $run_id,
+              full_convergence_seconds: $full_convergence_seconds,
+              primary_live_seconds: $primary_live_seconds}')"
+          if ! gcloud logging write tr-deploy-metrics "${payload}" \
+              --project="${PROJECT_ID}" --severity=NOTICE --payload-type=json; then
+            echo "::warning::failed to write deploy convergence metadata to Cloud Logging"
+          fi
 
       - name: Release production deployment mutex
         if: always()

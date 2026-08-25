@@ -214,6 +214,67 @@ def _initialize_bake_harness_repo(harness: DeployScriptHarness) -> str:
     ).stdout.strip()
 
 
+def test_gcp_no_traffic_warm_preprovisions_and_tags_candidate(
+    harness: DeployScriptHarness,
+) -> None:
+    run = harness.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+
+    deploy = next(
+        call
+        for call in run.calls
+        if call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+        and call[4:7] == ["deploy", "trusted-router", "--region"]
+    )
+    assert deploy[deploy.index("--min") + 1] == "2"
+    assert deploy[deploy.index("--min-instances") + 1] == "2"
+    assert "--no-traffic" in deploy
+
+    tag_index = next(
+        index
+        for index, call in enumerate(run.calls)
+        if "--update-tags=staged-probe=trusted-router-candidate" in call
+    )
+    warm_index = next(
+        index
+        for index, call in enumerate(run.calls)
+        if call[0] == "curl"
+        and call[-1]
+        == "https://staged-probe---trusted-router-hash-uc.a.run.app/ready"
+    )
+    assert tag_index < warm_index
+    assert not any("--remove-tags=staged-probe" in call for call in run.calls)
+
+
+def test_gcp_failed_candidate_warm_restores_zero_traffic_capacity(
+    harness: DeployScriptHarness,
+) -> None:
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"HARNESS_PUBLIC_SMOKE_TRANSPORT_PATH": "/ready"},
+    )
+    assert run.returncode != 0
+
+    deploy = next(
+        call
+        for call in run.calls
+        if call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+        and call[4:7] == ["deploy", "trusted-router", "--region"]
+    )
+    assert deploy[deploy.index("--min-instances") + 1] == "2"
+    tag_index = next(
+        index
+        for index, call in enumerate(run.calls)
+        if "--update-tags=staged-probe=trusted-router-candidate" in call
+    )
+    restore_index = next(
+        index
+        for index, call in enumerate(run.calls)
+        if "--remove-tags=staged-probe" in call
+    )
+    assert tag_index < restore_index
+
+
 @pytest.mark.parametrize(
     ("script", "cloud", "mutation_prefix"),
     (

@@ -420,6 +420,9 @@ def test_cloud_metadata_is_written_and_printed_in_status(
 
     assert acquired.returncode == 0, acquired.stderr
     assert mutex.record()["cloud"] == "azure"
+    assert _exported(acquired.stdout)["TR_DEPLOY_MUTEX_CREATED_AT"] == mutex.record()[
+        "created_at"
+    ]
     assert "deploy_mutex.acquired cloud=azure" in acquired.stderr
 
     status = mutex.run("status", "manual:inspector@test")
@@ -499,6 +502,9 @@ def test_workflow_and_manual_scripts_share_the_mutex_scope() -> None:
         secondary_job:secondary_release
     ]
     assert "needs.deploy.outputs.TR_DEPLOY_MUTEX_GENERATION" in workflow[
+        secondary_job:secondary_release
+    ]
+    assert "needs.deploy.outputs.TR_DEPLOY_MUTEX_CREATED_AT" in workflow[
         secondary_job:secondary_release
     ]
     assert "if: always()" in workflow[secondary_release : secondary_release + 180]

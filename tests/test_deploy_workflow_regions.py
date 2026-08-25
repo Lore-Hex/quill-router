@@ -64,7 +64,7 @@ def test_public_snapshot_worker_swap_is_verified_and_rollbackable() -> None:
     assert r'mv \"\$previous_builder\" \"\$builder\"' in script
 
 
-def test_all_regions_warm_in_parallel_before_primary_traffic_moves() -> None:
+def test_all_regions_launch_together_but_only_primary_warm_gates_traffic() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     deploy = workflow.split("\n  deploy:\n", 1)[1].split(
         "\n  rollout-secondaries:\n", 1
@@ -75,7 +75,7 @@ def test_all_regions_warm_in_parallel_before_primary_traffic_moves() -> None:
 
     assert "regions=(us-central1 europe-west4 us-east4 southamerica-east1)" in warm
     assert 'if ! TR_DEPLOY_TARGET_REGIONS="${region}"' in warm
-    first_wait = warm.index('if wait "${pids[$idx]}"; then')
+    primary_wait = warm.index('if wait "${pids[0]}"; then')
     for region, reconcile_lb, log_index in (
         ("us-central1", "1", 0),
         ("europe-west4", "0", 1),
@@ -83,21 +83,39 @@ def test_all_regions_warm_in_parallel_before_primary_traffic_moves() -> None:
         ("southamerica-east1", "0", 3),
     ):
         invocation = (
-            f'(warm_region "{region}" "{reconcile_lb}" '
+            f'(run_warm "${{status_files[{log_index}]}}" '
+            f'"{region}" "{reconcile_lb}" '
             f'"${{revision_files[{log_index}]}}") '
             f'>"${{logs[{log_index}]}}" 2>&1 &'
         )
-        assert warm.index(invocation) < first_wait
+        assert warm.index(invocation) < primary_wait
     assert warm.count('pids+=("$!")') == 4
-    assert 'printf \'\\n=== warmup: %s ===\\n\' "${regions[$idx]}"' in warm
-    assert 'cat "${logs[$idx]}"' in warm
-    assert "Regional warmup failed; no traffic moved" in warm
+    assert "secondary-warms.tsv" in warm
+    assert '>>"${secondary_state}"' in warm
+    assert 'printf \'\\n=== warmup: %s ===\\n\' "${regions[0]}"' in warm
+    assert 'cat "${logs[0]}"' in warm
+    assert "us-central1 no-traffic warmup failed; no traffic moved" in warm
     assert "TR_DEPLOY_RECONCILE_LB" in warm
     assert "Only the primary process receives 1" in warm
 
     primary_ramp = deploy.index("- name: Stage traffic 10/50/100 (us-central1)")
     primary_canary = deploy.index("- name: Canary gate — watch us-central1 only")
-    assert first_wait < primary_ramp < primary_canary
+    secondary_wait = deploy.index("- name: Wait for secondary no-traffic warms")
+    assert primary_wait < primary_ramp < primary_canary < secondary_wait
+    collector = deploy[
+        secondary_wait : deploy.index(
+            "- name: Release production deployment mutex after primary-live failure",
+            secondary_wait,
+        )
+    ]
+    assert "if: ${{ always() }}" in collector
+    assert 'kill -0 "${pid}"' in collector
+    assert 'done <"${secondary_state}"' in collector
+    assert 'key="${region//-/_}_revision"' in collector
+    for region in ("europe-west4", "us-east4", "southamerica-east1"):
+        key = region.replace("-", "_") + "_revision"
+        assert f"steps.wait_secondary_warms.outputs.{key}" in deploy
+    assert "no secondary traffic moved" in collector
     assert 'staged_traffic.sh europe-west4' not in deploy
     assert 'staged_traffic.sh us-east4' not in deploy
     assert 'staged_traffic.sh southamerica-east1' not in deploy
@@ -240,10 +258,59 @@ def test_runtime_secret_validation_is_parallel_and_does_not_restore_stale_ses_ke
 def test_shared_load_balancer_is_reconciled_once_per_workflow() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
 
-    assert workflow.count('(warm_region "us-central1" "1"') == 1
+    assert workflow.count('"us-central1" "1" "${revision_files[0]}"') == 1
     for region in ("europe-west4", "us-east4", "southamerica-east1"):
-        assert workflow.count(f'(warm_region "{region}" "0"') == 1
+        assert workflow.count(f'"{region}" "0"') == 1
     assert 'TR_DEPLOY_RECONCILE_LB="${reconcile_lb}"' in workflow
+
+
+def test_probe_tag_is_hoisted_and_watchdog_baseline_overlaps_traffic_shift() -> None:
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text(encoding="utf-8")
+    staged = (ROOT / "scripts/deploy/staged_traffic.sh").read_text(encoding="utf-8")
+
+    assert "warm_no_traffic_candidate" in rollout
+    assert "cloud_run_probe_tag_reconcile" in rollout
+    assert '"${base_url}/ready"' in rollout
+    verify = staged.index("probe tag already resolves to warmed revision")
+    reconcile = staged.index("cloud_run_probe_tag_reconcile")
+    assert verify < reconcile
+
+    watchdog_start = staged.index('python3 "${SCRIPT_DIR}/watchdog.py"')
+    watchdog_background = staged.index("&", watchdog_start)
+    shift = staged.index('shift_traffic "$stage_pct"', watchdog_background)
+    gate = staged.index(': >"$WATCHDOG_GATE_FILE"', shift)
+    wait = staged.index('wait "$WATCHDOG_PID"', gate)
+    assert watchdog_start < watchdog_background < shift < gate < wait
+    assert "--start-gate-file" in staged[watchdog_start:shift]
+    final_baseline = staged.index("start_final_baseline")
+    final_shift = staged.rindex("shift_traffic 100")
+    assert final_baseline < final_shift
+
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    assert "final-watchdog-baseline-us-central1.json" in workflow
+    assert (
+        '--baseline-input "${RUNNER_TEMP}/final-watchdog-baseline-us-central1.json"'
+        in workflow
+    )
+    assert '--baseline-input "${watchdog_baseline}"' in workflow
+
+
+def test_full_convergence_metrics_are_reported_before_mutex_release() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    rollout = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
+        "\n  public-surface-companion:\n", 1
+    )[0]
+
+    report = rollout.index("- name: Report full convergence timing")
+    release = rollout.index("- name: Release production deployment mutex", report)
+    metric = rollout[report:release]
+    assert report < release
+    assert "if: ${{ success() }}" in metric
+    assert "deploy.full_convergence_seconds=${full_convergence_seconds}" in metric
+    assert "primary_live_seconds=${PRIMARY_LIVE_SECONDS}" in metric
+    assert '>>"$GITHUB_STEP_SUMMARY"' in metric
+    assert "gcloud logging write tr-deploy-metrics" in metric
+    assert "--payload-type=json" in metric
 
 
 def test_mutex_acquire_step_cannot_swallow_a_blocked_exit() -> None:

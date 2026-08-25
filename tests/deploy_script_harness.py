@@ -1199,6 +1199,60 @@ class ScriptFixture:
 
 
 SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
+    "scripts/deploy/rollout.sh": ScriptFixture(
+        env={
+            "TR_ALLOW_DEPLOYED_COMBINED_SURFACE": "true",
+            "TR_DEPLOY_MUTEX_OPERATION": "harness-rollout-operation",
+            "TR_DEPLOY_MUTEX_GENERATION": "1",
+            "TR_DEPLOY_TARGET_REGIONS": "us-central1",
+            "TR_DEPLOY_NO_TRAFFIC": "1",
+            "TR_DEPLOY_RECONCILE_LB": "0",
+            "IMAGE_TAG": "harness-candidate",
+            "TR_REQUEST_RECORD_WRITE_MODE": "typed",
+            "TR_STORAGE_BACKEND": "spanner-bigtable",
+            "TR_GENERATION_RECORDS_ENABLED": "false",
+            "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "true",
+            "TR_ANALYTICS_READ_MODE": "bigtable",
+            "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false",
+            "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "false",
+            # Reuse the stateful legacy-service tag behavior in the harness.
+            "HARNESS_PUBLIC_SURFACE_SMOKE": "1",
+        },
+        responses=(
+            (
+                r"run revisions describe trusted-router-active .*--format=json",
+                json.dumps(
+                    {
+                        "spec": {
+                            "containers": [
+                                {
+                                    "env": [
+                                        {
+                                            "name": "TR_REGIONAL_QUOTA_LEASES_ENABLED",
+                                            "value": "false",
+                                        },
+                                        {
+                                            "name": "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED",
+                                            "value": "false",
+                                        },
+                                    ]
+                                }
+                            ]
+                        }
+                    },
+                    separators=(",", ":"),
+                ),
+            ),
+            (
+                r"run revisions list .*--limit=10",
+                "trusted-router-candidate True",
+            ),
+            (
+                r"run services describe trusted-router .*status.url",
+                "https://trusted-router-hash-uc.a.run.app",
+            ),
+        ),
+    ),
     "scripts/deploy/internal_surface.sh": ScriptFixture(
         env={"HARNESS_INTERNAL_SURFACE_SMOKE": "1"},
         responses=(
