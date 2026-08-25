@@ -428,9 +428,30 @@ def test_nscale_catalog_is_fail_closed_and_privacy_is_not_overclaimed() -> None:
         "embedding",
         "image",
     }
-    for row in raw["models"]:
-        assert row["routable"] is False
-        assert row["routable_reason"] == "provider-canary-failed"
+    routable = [row for row in raw["models"] if row.get("routable") is not False]
+    blocked = [row for row in raw["models"] if row.get("routable") is False]
+    assert routable
+    assert blocked
+    assert all(
+        row.get("routable_reason") == "provider-canary-failed" for row in blocked
+    )
+    assert all(
+        row["input_token_price_per_m"] > 0
+        and row["output_token_price_per_m"] > 0
+        for row in routable
+        if row["model_type"] == "chat"
+    )
+    assert all(
+        row["input_token_price_per_m"] > 0
+        and row["output_token_price_per_m"] == 0
+        for row in routable
+        if row["model_type"] == "embedding"
+    )
+    assert all(
+        row["fixed_output_price_microdollars"] == {"1k": 1_364}
+        for row in routable
+        if row["model_type"] == "image"
+    )
 
     provider = PROVIDERS[nscale.SLUG]
     assert provider.supports_prepaid is True
