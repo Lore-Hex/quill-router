@@ -53,6 +53,12 @@ def _print_report(name: str, sample_label: str, report: AuditReport) -> None:
     print(f"{name}: {report.summary()}")
     for scope, detail in report.samples.items():
         print(f"  {sample_label} {scope}: {detail}")
+    # Rows that could not be checked at all are NOT violations and must not be
+    # printed as though they were. They are the difference between "nothing is
+    # wrong" and "nothing was looked at", which is the whole reason the report
+    # separates `clean` from `fully_audited`.
+    for scope, detail in getattr(report, "unauditable", {}).items():
+        print(f"  UNAUDITABLE {scope}: {detail}")
 
 
 def run_audit(
