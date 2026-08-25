@@ -1,0 +1,235 @@
+{
+  "provider": "near-ai",
+  "models": [
+    {
+      "display_name": "deepseek-ai/DeepSeek-V4-Flash",
+      "title": "deepseek-ai/DeepSeek-V4-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash",
+      "upstream_id": "deepseek-ai/DeepSeek-V4-Flash",
+      "confidential_compute": true,
+      "context_length": 1048576,
+      "input_token_price_per_m": 170000,
+      "output_token_price_per_m": 350000,
+      "cached_input_token_price_per_m": 35000
+    },
+    {
+      "display_name": "google/gemma-4-31B-it",
+      "title": "google/gemma-4-31B-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-31b-it",
+      "upstream_id": "google/gemma-4-31B-it",
+      "confidential_compute": true,
+      "context_length": 262144,
+      "input_token_price_per_m": 130000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 26000
+    },
+    {
+      "display_name": "openai/gpt-oss-120b",
+      "title": "openai/gpt-oss-120b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-120b",
+      "upstream_id": "openai/gpt-oss-120b",
+      "confidential_compute": true,
+      "context_length": 131072,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 550000,
+      "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+      "title": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-vl-30b-a3b-instruct",
+      "upstream_id": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+      "confidential_compute": true,
+      "context_length": 16384,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 550000,
+      "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "Qwen/Qwen3.5-122B-A10B",
+      "title": "Qwen/Qwen3.5-122B-A10B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-122b-a10b",
+      "upstream_id": "Qwen/Qwen3.5-122B-A10B",
+      "confidential_compute": true,
+      "context_length": 262144,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 3200000,
+      "cached_input_token_price_per_m": 80000
+    },
+    {
+      "display_name": "Qwen/Qwen3.6-27B-FP8",
+      "title": "Qwen/Qwen3.6-27B-FP8",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.6-27b",
+      "upstream_id": "Qwen/Qwen3.6-27B-FP8",
+      "confidential_compute": true,
+      "context_length": 262144,
+      "input_token_price_per_m": 325000,
+      "output_token_price_per_m": 3250000,
+      "cached_input_token_price_per_m": 160000
+    },
+    {
+      "display_name": "Qwen/Qwen3.6-35B-A3B-FP8",
+      "title": "Qwen/Qwen3.6-35B-A3B-FP8",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.6-35b-a3b",
+      "upstream_id": "Qwen/Qwen3.6-35B-A3B-FP8",
+      "confidential_compute": true,
+      "context_length": 262144,
+      "input_token_price_per_m": 170000,
+      "output_token_price_per_m": 1100000,
+      "cached_input_token_price_per_m": 56000
+    },
+    {
+      "display_name": "Qwen/Qwen3.8-27B",
+      "title": "Qwen/Qwen3.8-27B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-27b",
+      "upstream_id": "Qwen/Qwen3.8-27B",
+      "confidential_compute": true,
+      "context_length": 262144,
+      "input_token_price_per_m": 440000,
+      "output_token_price_per_m": 3300000,
+      "cached_input_token_price_per_m": 44000
+    },
+    {
+      "display_name": "zai-org/GLM-5.1-FP8",
+      "title": "zai-org/GLM-5.1-FP8",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.1",
+      "upstream_id": "zai-org/GLM-5.1-FP8",
+      "confidential_compute": true,
+      "context_length": 202752,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000
+    },
+    {
+      "display_name": "z-ai/glm-5.2",
+      "title": "z-ai/glm-5.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "z-ai/glm-5.2",
+      "confidential_compute": true,
+      "context_length": 1048576,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 300000
+    }
+  ],
+  "source": "https://completions.near.ai/endpoints",
+  "pricing_source": "https://cloud-api.near.ai/v1/models",
+  "generated_at": "2026-08-25T06:21:57Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 10
+}

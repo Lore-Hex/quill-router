@@ -31,7 +31,10 @@ from trusted_router.catalog import (
     ZDR_MODEL_ID,
     Model,
     ModelEndpoint,
+    endpoint_confidential_compute,
+    endpoint_e2ee,
     endpoint_privacy_tier,
+    endpoint_stores_content,
     endpoint_zero_data_retention,
     endpoints_for_model,
     model_open_weights,
@@ -221,7 +224,10 @@ def _endpoint_row(
         "usage_type": endpoint.usage_type,
         "privacy_tier": tier,
         "privacy_tier_label": PRIVACY_TIER_LABELS[tier],
+        "stores_content": endpoint_stores_content(endpoint),
         "zero_data_retention": endpoint_zero_data_retention(endpoint),
+        "confidential_compute": endpoint_confidential_compute(endpoint),
+        "e2ee": endpoint_e2ee(endpoint),
         "provider_policy_url": model_provider_policy_url(model_id, endpoint.provider),
         "prompt_price_microdollars_per_million_tokens": (
             endpoint.prompt_price_microdollars_per_million_tokens

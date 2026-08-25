@@ -1,17 +1,17 @@
 """Property tests for the routing privacy floor.
 
-The floor is the flagship privacy invariant: a customer asking for zdr or e2e
-routing must not have their prompt dispatched to a provider below that tier.
-The law:
+The privacy requirement is the flagship invariant: a customer asking for ZDR
+or E2EE must not have their prompt dispatched to a route without that exact
+posture. Those postures are orthogonal, so a request naming both must satisfy
+both. The law:
 
     for every request body B,
-        resolved floor >= max(explicit body floor,
-                              max over every requested meta-model of its
-                              enforced tier)
+        resolved requirements == explicit body requirement
+                                 union every requested meta-model requirement
 
 and, as a corollary that is easier to falsify:
 
-    the resolved floor does not depend on the ORDER of `model` + `models[]`.
+    the resolved requirements do not depend on model order.
 
 Both were false. `_requested_model_ids` accumulates into one flat `overrides`
 dict shared by every id, and stored the enforced tier as a plain assignment:
@@ -66,11 +66,11 @@ def _floor_of(model_id: str) -> int:
     return ROUTING_MODEL_MIN_PRIVACY_TIERS.get(model_id, 0)
 
 
-def _expected_floor(model_ids: list[str], explicit: str | None) -> int:
-    """The floor the request is entitled to: the strictest thing it asked for."""
-    enforced = max((_floor_of(m) for m in model_ids), default=0)
-    body_floor = PRIVACY_TIER_ALIASES[explicit] if explicit else 0
-    return max(enforced, body_floor)
+def _expected_requirements(model_ids: list[str], explicit: str | None) -> frozenset[int]:
+    requirements = {_floor_of(model_id) for model_id in model_ids if _floor_of(model_id)}
+    if explicit and PRIVACY_TIER_ALIASES[explicit]:
+        requirements.add(PRIVACY_TIER_ALIASES[explicit])
+    return frozenset(requirements)
 
 
 def _resolve(model_ids: list[str], explicit: str | None = None) -> int:
@@ -81,6 +81,16 @@ def _resolve(model_ids: list[str], explicit: str | None = None) -> int:
         body["provider"] = {"min_privacy": explicit}
     _, prefs = _routing_for_body(body, SETTINGS)
     return int(prefs.min_privacy_rank)
+
+
+def _resolve_requirements(model_ids: list[str], explicit: str | None = None) -> frozenset[int]:
+    body: dict[str, Any] = {"model": model_ids[0]}
+    if len(model_ids) > 1:
+        body["models"] = list(model_ids[1:])
+    if explicit:
+        body["provider"] = {"min_privacy": explicit}
+    _, prefs = _routing_for_body(body, SETTINGS)
+    return prefs.privacy_requirements
 
 
 # ------------------------------------------------------------- the law ---
@@ -112,11 +122,11 @@ def test_resolved_floor_dominates_everything_requested(
     narrow the candidate set, so a floor *above* what was asked is safe. A
     floor below it is the breach.
     """
-    resolved = _resolve(model_ids, explicit)
-    expected = _expected_floor(model_ids, explicit)
-    assert resolved >= expected, (
-        f"floor {resolved} is below the strictest requested tier {expected} "
-        f"for models={model_ids!r} explicit={explicit!r}"
+    resolved = _resolve_requirements(model_ids, explicit)
+    expected = _expected_requirements(model_ids, explicit)
+    assert resolved == expected, (
+        f"requirements {resolved} differ from {expected} for "
+        f"models={model_ids!r} explicit={explicit!r}"
     )
 
 
@@ -129,8 +139,13 @@ def test_floor_is_independent_of_model_order(model_ids: list[str]) -> None:
     one worth keeping: a request's privacy guarantee cannot depend on which
     fallback happens to be listed last.
     """
-    floors = {tuple(p): _resolve(list(p)) for p in itertools.permutations(model_ids)}
-    assert len(set(floors.values())) == 1, f"floor depends on ordering: {floors!r}"
+    requirements = {
+        tuple(permutation): _resolve_requirements(list(permutation))
+        for permutation in itertools.permutations(model_ids)
+    }
+    assert len(set(requirements.values())) == 1, (
+        f"requirements depend on ordering: {requirements!r}"
+    )
 
 
 @given(
@@ -144,11 +159,10 @@ def test_adding_a_model_never_lowers_the_floor(model_ids: list[str], extra: str)
     This is the property a caller reasons with when adding a fallback — that
     doing so cannot quietly downgrade the privacy of the whole request.
     """
-    before = _resolve(model_ids)
-    after = _resolve([*model_ids, extra])
-    assert after >= before, (
-        f"adding {extra!r} lowered the floor from {before} to {after} "
-        f"(models={model_ids!r})"
+    before = _resolve_requirements(model_ids)
+    after = _resolve_requirements([*model_ids, extra])
+    assert before <= after, (
+        f"adding {extra!r} dropped requirements from {before} to {after} (models={model_ids!r})"
     )
 
 
@@ -162,6 +176,9 @@ def test_the_two_orderings_that_used_to_disagree() -> None:
 
     assert e2e_first == zdr_first
     assert e2e_first == PRIVACY_TIER_ALIASES["e2ee"]
+    assert _resolve_requirements([E2E_MODEL_ID, ZDR_MODEL_ID]) == frozenset(
+        {PRIVACY_TIER_ALIASES["e2ee"], PRIVACY_TIER_ALIASES["zdr"]}
+    )
 
 
 def test_a_plain_model_does_not_dilute_a_meta_model_floor() -> None:

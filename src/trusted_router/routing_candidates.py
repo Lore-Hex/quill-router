@@ -83,8 +83,17 @@ from trusted_router.catalog_data import (
     ZEUS_MODEL_ID,
     Model,
 )
-from trusted_router.catalog_privacy import endpoint_privacy_tier
+from trusted_router.catalog_privacy import (
+    endpoint_meets_privacy_requirement,
+)
+from trusted_router.catalog_privacy import (
+    endpoint_privacy_tier as _endpoint_privacy_tier,
+)
 from trusted_router.catalog_registry import MODEL_ENDPOINTS, MODELS
+
+# Compatibility re-export. Privacy remains the leaf implementation; older
+# callers import this symbol from routing_candidates and rely on object identity.
+endpoint_privacy_tier = _endpoint_privacy_tier
 
 
 class InvalidAutoModelOrder(ValueError):
@@ -219,15 +228,17 @@ def monitor_candidate_models(limit: int = 12) -> list[Model]:
 
 def _privacy_candidate_models(
     *,
-    min_tier: int,
+    requirement: int,
     preferred_providers: tuple[str, ...] = (),
     allowed_providers: frozenset[str] | None = None,
     limit: int = 12,
 ) -> list[Model]:
-    """Unique chat models with at least one endpoint clearing min_tier.
+    """Unique chat models with an endpoint meeting one privacy requirement.
 
     This builds the model-level rollover ladder. The routing layer forces the
-    same privacy floor, so the gateway still picks only qualifying endpoints.
+    same exact requirement, so the gateway still picks only qualifying
+    endpoints. Retention and confidential-compute guarantees are orthogonal;
+    the integer values are API vocabulary, not an implication ladder.
     """
     provider_rank = {provider: index for index, provider in enumerate(preferred_providers)}
     eligible: list[tuple[int, int, int, str, Model]] = []
@@ -242,7 +253,7 @@ def _privacy_candidate_models(
             or model is None
             or not _is_regular_chat_model(model)
             or model.id.endswith(":free")
-            or endpoint_privacy_tier(endpoint) < min_tier
+            or not endpoint_meets_privacy_requirement(endpoint, requirement)
         ):
             continue
         if allowed_providers is not None and endpoint.provider not in allowed_providers:
@@ -286,7 +297,7 @@ def _privacy_candidate_models(
 
 def eu_candidate_models(limit: int = 12) -> list[Model]:
     return _privacy_candidate_models(
-        min_tier=PRIVACY_TIER_STANDARD,
+        requirement=PRIVACY_TIER_STANDARD,
         preferred_providers=EU_FOCUSED_PROVIDER_ORDER,
         allowed_providers=frozenset(EU_FOCUSED_PROVIDER_ORDER),
         limit=limit,
@@ -295,7 +306,7 @@ def eu_candidate_models(limit: int = 12) -> list[Model]:
 
 def zdr_candidate_models(limit: int = 12) -> list[Model]:
     return _privacy_candidate_models(
-        min_tier=PRIVACY_TIER_ZERO_RETENTION,
+        requirement=PRIVACY_TIER_ZERO_RETENTION,
         preferred_providers=(
             "anthropic",
             "openai",
@@ -311,7 +322,7 @@ def zdr_candidate_models(limit: int = 12) -> list[Model]:
 
 def e2e_candidate_models(limit: int = 12) -> list[Model]:
     return _privacy_candidate_models(
-        min_tier=PRIVACY_TIER_CONFIDENTIAL,
+        requirement=PRIVACY_TIER_CONFIDENTIAL,
         preferred_providers=("tinfoil", "phala"),
         limit=limit,
     )

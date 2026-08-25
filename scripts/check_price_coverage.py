@@ -49,6 +49,7 @@ from scripts.pricing.providers import (
     io_net,
     jina,
     mancer,
+    near_ai,
     nextbit,
     nscale,
     nvidia_nim,
@@ -445,6 +446,12 @@ _DISCOVERABLE_MANIFEST_PROVIDERS_BASE: tuple[
         "https://wharf.neurometric.ai/v1/models",
         ("NEUROMETRIC_API_KEY",),
         _identity_model_id,
+    ),
+    (
+        "near-ai",
+        near_ai.CATALOG_URL,
+        ("NEAR_API_KEY",),
+        near_ai.canonical_model_id,
     ),
     (
         "engy",

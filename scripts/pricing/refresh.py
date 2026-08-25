@@ -96,6 +96,7 @@ PROVIDER_SLUGS = [
     "phala",
     "siliconflow",
     "tinfoil",
+    "near_ai",
     "venice",
     # 2026-05-11 batch — three new providers that all serve
     # google/gemma-4-31b-it. Lightning + GMI publish per-model
@@ -176,6 +177,7 @@ _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
     "sail_research": ("sail-research",),
     "aion_labs": ("aion-labs",),
     "io_net": ("io-net",),
+    "near_ai": ("near-ai",),
 }
 
 # These providers run a pricing-page parser (Kimi has a custom multi-page

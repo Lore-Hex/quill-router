@@ -78,6 +78,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "nvidia-nim": ProviderBrand("https://build.nvidia.com/"),
     "novita": ProviderBrand("https://novita.ai/"),
     "nscale": ProviderBrand("https://www.nscale.com/"),
+    "near-ai": ProviderBrand("https://near.ai/"),
     "openai": ProviderBrand("https://openai.com/"),
     "openrouter-exclusive": ProviderBrand("https://openrouter.ai/stealth/ox-alpha"),
     "ovhcloud": ProviderBrand("https://www.ovhcloud.com/"),
