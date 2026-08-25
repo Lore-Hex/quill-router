@@ -70,10 +70,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     runs-on: ubuntu-latest
     env:
-      TEST_SHARDS: "4"
+      TEST_SHARDS: "6"
       TR_CONFORMANCE_POSTGRES_DSN: postgresql://postgres:tr@localhost:5432/postgres
       # Spanner's PostgreSQL dialect, via PGAdapter + the Spanner emulator.
       # Needs no GCP credentials, so it runs on every PR like any other
@@ -219,10 +219,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     runs-on: ubuntu-latest
     env:
-      TEST_SHARDS: "4"
+      TEST_SHARDS: "6"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v7
