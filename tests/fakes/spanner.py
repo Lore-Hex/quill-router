@@ -1651,7 +1651,9 @@ def _execute_sql(
                 continue
         return out
 
-    def _settled_credit_actuals(workspace_id: str | None) -> dict[str, int]:
+    def _settled_credit_actuals(
+        workspace_id: str | None, *, shard_zero_only: bool = True
+    ) -> dict[str, int]:
         # Mirrors the real predicates rather than reimplementing intent: only a
         # SETTLED reservation on shard 0 whose settled_usage_type is Credits ever
         # reached tr_credit_balance.total_usage (storage_gcp_authorize passes 0
@@ -1662,7 +1664,7 @@ def _execute_sql(
                 continue
             if rec.get("settled_usage_type") != "Credits":
                 continue
-            if int(rec.get("ws_shard") or 0) != 0:
+            if shard_zero_only and int(rec.get("ws_shard") or 0) != 0:
                 continue
             ws = rec.get("workspace_id")
             if ws is None or (workspace_id is not None and ws != workspace_id):
@@ -1737,8 +1739,20 @@ def _execute_sql(
     if "SUM(actual_micro)" in sql and "GROUP BY workspace_id" in sql:
         _require_pred(sql, "settled=true", "settled-actuals settled filter")
         _require_pred(sql, "settled_usage_type='Credits'", "settled-actuals usage-type filter")
-        _require_pred(sql, "ws_shard=0", "settled-actuals shard filter")
-        return [[ws, amount] for ws, amount in sorted(_settled_credit_actuals(None).items())]
+        # Deliberately NOT requiring ws_shard=0: the counter sums every shard,
+        # so this must too. Requiring the filter here is what let the asymmetry
+        # look correct in tests.
+        if "ws_shard=0" in sql:
+            raise AssertionError(
+                "fleet-wide settled-actuals must not filter ws_shard: total_usage "
+                "is summed across shards and the ledger has to match"
+            )
+        return [
+            [ws, amount]
+            for ws, amount in sorted(
+                _settled_credit_actuals(None, shard_zero_only=False).items()
+            )
+        ]
     if "SUM(actual_micro)" in sql:
         _require_pred(sql, "settled=true", "settled-actuals settled filter")
         _require_pred(sql, "settled_usage_type='Credits'", "settled-actuals usage-type filter")

@@ -55,6 +55,11 @@ _OPEN_REGIONAL_QUOTA_STATES = frozenset({"pending", "active", "draining", "quara
 #
 # Summing only (1) -- which is what the retired PR #89 did -- reads every
 # federated microdollar as drift. Both arms are required.
+#: Shard-0 only, unlike the fleet-wide form above, because its only caller --
+#: repair_typed_usage -- refuses a sharded workspace outright. Keeping the
+#: filter also makes it fail SAFE if one ever slipped through: booked would come
+#: out low, the computed target would fall below the current counter, and the
+#: monotonic guard would refuse the write rather than lower it.
 _SETTLED_CREDIT_ACTUALS = (
     "SELECT COALESCE(SUM(actual_micro), 0) FROM tr_reservation "
     "WHERE workspace_id=@ws AND ws_shard=0 AND settled=true "
@@ -100,9 +105,16 @@ _RECORDED_USAGE_BASELINES = (
 assert f"kind='{USAGE_BASELINE_KIND}'" in _RECORDED_USAGE_BASELINES
 #: Fleet-wide forms of the two ledger arms, grouped so the audit stays ONE
 #: snapshot rather than two queries per workspace.
+#: NOT filtered to ws_shard=0, unlike the repair path. `typed_usage` sums
+#: total_usage over every shard of a workspace, so the ledger has to as well.
+#: Filtering one side and not the other charged sharded workspaces for their own
+#: non-zero-shard settles: production has 638,484 settled reservations off
+#: shard 0 across 30 workspaces, and the mismatch reported 42 workspaces as
+#: needing a recorded baseline when 13 do. Recording those would have written
+#: fictitious history for 29 of them.
 _SETTLED_CREDIT_ACTUALS_BY_WS = (
     "SELECT workspace_id, COALESCE(SUM(actual_micro), 0) FROM tr_reservation "
-    "WHERE ws_shard=0 AND settled=true AND settled_usage_type='Credits' "
+    "WHERE settled=true AND settled_usage_type='Credits' "
     "GROUP BY workspace_id"
 )
 _FEDERATED_SETTLEMENT_APPLIED_BY_WS = (
@@ -139,6 +151,16 @@ class InvariantReport:
     #: coverage, and calling them violations would cry wolf on every workspace the
     #: JSON cleanup has already run against.
     usage_unauditable: int = 0
+    #: Counter below its ledger. Reported, NOT faulted, and deliberately so.
+    #: A settle credits the balance and marks its reservation in separate
+    #: transactions, so a continuously-loaded workspace is ALWAYS a little
+    #: behind -- production reads it at -3780, -1537, -856, -173 on consecutive
+    #: snapshots of one monitoring workspace while another sits at exactly -9
+    #: in every one. Two reads mostly separate those, but not reliably: two
+    #: snapshots can coincide. Failing the nightly audit on a fluctuating
+    #: fraction of a cent is the cry-wolf shape this repo has already paid for
+    #: once, so the number is surfaced and a human decides.
+    usage_behind_ledger: int = 0
     samples: dict[str, dict] = field(default_factory=dict)
     #: Kept OUT of `samples` because callers label everything in there as a
     #: violation -- scripts/audit_typed_counters.py passes a single
@@ -159,6 +181,12 @@ class InvariantReport:
         )
 
     @property
+    def behind_ledger_clean(self) -> bool:
+        """No counter sits below its ledger. Separate from `clean` because a
+        busy workspace is transiently behind by construction."""
+        return self.usage_behind_ledger == 0
+
+    @property
     def fully_audited(self) -> bool:
         """Every row was checkable. CLEAN with unauditable rows is a narrower
         claim than it looks, and an operator reading only `clean` would not see
@@ -169,6 +197,8 @@ class InvariantReport:
         usage = f"usage: {self.usage_violations}/{self.usage_rows}"
         if self.usage_unauditable:
             usage += f" ({self.usage_unauditable} unauditable)"
+        if self.usage_behind_ledger:
+            usage += f" ({self.usage_behind_ledger} behind ledger)"
         return (
             f"credit: {self.credit_violations}/{self.credit_rows} | "
             f"key: {self.key_violations}/{self.key_rows} | "
@@ -349,6 +379,7 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
     # Both directions again, in the same spirit as _check: a federated claim or a
     # settled actual for a workspace with NO typed row is a booking that landed
     # nowhere, and iterating typed rows alone cannot see it.
+    behind_candidates: dict[str, tuple[int, int]] = {}
     for workspace_id, actual_usage in typed_usage.items():
         report.usage_rows += 1
         booked = settled_actuals.get(workspace_id, 0) + federated_applied.get(workspace_id, 0)
@@ -360,20 +391,16 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
             # baseline is usage booked BEFORE the ledger began, so it can never
             # be negative, and the two decidable cases follow from that alone.
             if actual_usage < booked:
-                # No baseline could make this hold -- the counter is behind
-                # spend the ledger says was booked. Real, and previously
-                # invisible, because "no baseline" used to end the check here.
-                report.usage_violations += 1
-                _sample(
-                    f"usage-behind-ledger:{workspace_id}",
-                    {
-                        "typed_total_usage": actual_usage,
-                        "ledger_booked": booked,
-                        "shortfall": booked - actual_usage,
-                        "why": "counter is BELOW booked spend; no baseline can be "
-                        "negative, so this is drift rather than missing history",
-                    },
-                )
+                # Candidate only. A settle marks its reservation and credits the
+                # balance in SEPARATE transactions, so at any instant a busy
+                # workspace has settles counted in the ledger and not yet in the
+                # counter. Measured on production: one workspace read -3780 and
+                # then -1537 microdollars seconds apart under load, while
+                # another sat at exactly -9 across both reads. The transient
+                # kind resolves in milliseconds; the real kind does not, so
+                # these are confirmed against a second snapshot below rather
+                # than reported now.
+                behind_candidates[workspace_id] = (actual_usage, booked)
                 continue
             if actual_usage == booked:
                 # Baseline is zero, and reconciled rather than assumed: the
@@ -426,11 +453,77 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
                 },
             )
 
+    if behind_candidates:
+        for workspace_id, still_behind in _confirm_behind_ledger(
+            store, behind_candidates
+        ).items():
+            if not still_behind:
+                continue
+            actual_usage, booked = still_behind
+            report.usage_behind_ledger += 1
+            _unauditable(
+                f"usage-behind-ledger:{workspace_id}",
+                {
+                    "typed_total_usage": actual_usage,
+                    "ledger_booked": booked,
+                    "shortfall": booked - actual_usage,
+                    "why": "counter is BELOW booked spend by the SAME amount in "
+                    "two consecutive snapshots. An in-flight settle moves; this "
+                    "did not. No baseline can be negative, so this is drift "
+                    "rather than missing history",
+                },
+            )
+
     report.regional_lease_rows = len(regional_rows)
     report.regional_lease_violations = len(regional_errors)
     for index_id, error in regional_errors.items():
         _sample(f"regional-lease:{index_id}", {"error": error})
     return report
+
+
+def _confirm_behind_ledger(
+    store: Any, candidates: dict[str, tuple[int, int]]
+) -> dict[str, tuple[int, int] | None]:
+    """Re-read the candidates once. ``None`` means the shortfall MOVED.
+
+    The discriminator is stability, not disappearance. A continuously-loaded
+    workspace always has settles between their two transactions, so its
+    shortfall never reaches zero -- it just changes. Production shows both
+    shapes plainly: one workspace read -3780, then -1537, then -856 across
+    consecutive snapshots while another sat at exactly -9 in every one. A gap
+    that holds the SAME value while the fleet keeps settling is not in flight.
+    """
+    if not candidates:
+        return {}
+    with store._database.snapshot(multi_use=True) as snap:
+        typed: dict[str, int] = {}
+        for row in snap.execute_sql(_TYPED_USAGE_ROWS):
+            key = str(row[0])
+            if key in candidates:
+                typed[key] = typed.get(key, 0) + int(row[2] or 0)
+        settled = {
+            str(r[0]): int(r[1] or 0)
+            for r in snap.execute_sql(_SETTLED_CREDIT_ACTUALS_BY_WS)
+            if str(r[0]) in candidates
+        }
+        federated = {
+            str(r[0]): int(r[1] or 0)
+            for r in snap.execute_sql(_FEDERATED_SETTLEMENT_APPLIED_BY_WS)
+            if r[0] is not None and str(r[0]) in candidates
+        }
+    confirmed: dict[str, tuple[int, int] | None] = {}
+    for workspace_id, (first_usage, first_booked) in candidates.items():
+        usage = typed.get(workspace_id, 0)
+        booked = settled.get(workspace_id, 0) + federated.get(workspace_id, 0)
+        if usage >= booked:
+            confirmed[workspace_id] = None
+            continue
+        if booked - usage != first_booked - first_usage:
+            # Moved between snapshots: settles in flight, not drift.
+            confirmed[workspace_id] = None
+            continue
+        confirmed[workspace_id] = (usage, booked)
+    return confirmed
 
 
 # ── Repair: clobbered typed `reserved` ──────────────────────────────────────
