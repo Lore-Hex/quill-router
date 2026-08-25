@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Venice models whose live /v1/models feed is ahead of the shared snapshot. Verified against https://api.venice.ai/api/v1/models on 2026-06-22.",
   "provider": "venice",
   "source": "https://api.venice.ai/api/v1/models?type=text",
-  "generated_at": "2026-08-25T14:48:00Z",
+  "generated_at": "2026-08-25T15:44:30Z",
   "model_count": 42,
   "models": [
     {
