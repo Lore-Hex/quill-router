@@ -699,6 +699,14 @@ def test_stale_auto_refill_queue_emits_page_worthy_signal(
     assert any("ALERT auto-refill outbox stale" in message for message in alerts)
 
 
+def test_auto_refill_freshness_reads_only_the_sparse_pending_index(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, _db, _bt = fake_store
+
+    assert _outbox(store).auto_refill_pending_freshness() == (None, 0)
+
+
 def test_settle_emits_timing_line(
     fake_store: tuple[Any, Any, Any],
     caplog: pytest.LogCaptureFixture,

@@ -1466,6 +1466,31 @@ def _execute_settle_outbox_sql(
         if rec is None or rec.get("auto_refill_status") != "pending":
             return []
         return [[rec.get("auto_refill_attempts", 0), rec.get("auto_refill_lease_owner")]]
+    if sql.startswith("SELECT MIN(auto_refill_enqueued_at), COUNT(*)"):
+        _require_pred(
+            sql,
+            "FORCE_INDEX=tr_settle_outbox_auto_refill_due",
+            "auto-freshness-index",
+        )
+        _require_pred(sql, "queue_shard IS NOT NULL", "auto-freshness-shard")
+        _require_pred(
+            sql,
+            "auto_refill_next_attempt_at IS NOT NULL",
+            "auto-freshness-sparse",
+        )
+        _require_pred(sql, "auto_refill_status='pending'", "auto-freshness-status")
+        pending = [
+            rec
+            for rec in db.settle_outbox.values()
+            if rec.get("auto_refill_status") == "pending"
+            and rec.get("queue_shard") is not None
+            and rec.get("auto_refill_next_attempt_at") is not None
+        ]
+        oldest = min(
+            (rec.get("auto_refill_enqueued_at") for rec in pending),
+            default=None,
+        )
+        return [[oldest, len(pending)]]
     if "FORCE_INDEX=tr_settle_outbox_auto_refill_due" in sql:
         _require_pred(sql, "queue_shard IS NOT NULL", "auto-due-shard")
         _require_pred(
@@ -1492,17 +1517,6 @@ def _execute_settle_outbox_sql(
             [rec.get(column) for column in AUTO_REFILL_COLUMNS]
             for rec in rows[: int(p.get("limit", 100))]
         ]
-    if sql.startswith("SELECT MIN(auto_refill_enqueued_at), COUNT(*)"):
-        pending = [
-            rec
-            for rec in db.settle_outbox.values()
-            if rec.get("auto_refill_status") == "pending"
-        ]
-        oldest = min(
-            (rec.get("auto_refill_enqueued_at") for rec in pending),
-            default=None,
-        )
-        return [[oldest, len(pending)]]
     if "auto_refill_status IS NOT NULL" in sql:
         _require_pred(sql, "authorization_id=@aid", "auto-get")
         _require_pred(sql, "intent_kind='settle'", "auto-get")
