@@ -178,7 +178,11 @@ jobs:
                       WANDB_API_KEY:trustedrouter-wandb-api-key; do
             env="${pair%%:*}"
             secret="${pair#*:}"
-            KEY=$(gcloud secrets versions access latest --secret="${secret}" --project=quill-cloud-proxy)
+            if ! KEY=$(gcloud secrets versions access latest \
+              --secret="${secret}" --project=quill-cloud-proxy); then
+              echo "::error title=Provider refresh secret unavailable::${env} cannot access ${secret}; reconcile its per-secret tr-deploy accessor binding with scripts/deploy/secrets.sh"
+              exit 1
+            fi
             echo "::add-mask::${KEY}"
             echo "${env}=${KEY}" >> "$GITHUB_ENV"
           done
