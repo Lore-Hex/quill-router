@@ -134,6 +134,11 @@ if [[ " $* " == *" scheduler jobs describe "* ]]; then
   exit "${HARNESS_SCHEDULER_DESCRIBE_RC:-0}"
 fi
 
+if [[ " $* " == *" run jobs list "* ]] && \
+   [ "${HARNESS_VERSIONED_JOB_EXISTS:-false}" = "true" ]; then
+  printf '%s\n' "$HARNESS_VERSIONED_JOB_NAME"
+fi
+
 if [[ " $* " == *" projects describe "* ]]; then
   printf '%s\n' '123456789'
 fi
@@ -148,6 +153,7 @@ def _run_regional_quota_reconciler(
     state: str = "",
     describe_rc: int = 0,
     describe_stderr: str = "",
+    versioned_job_exists: bool = False,
 ) -> HarnessRun:
     monkeypatch.setitem(
         SCRIPT_FIXTURES,
@@ -157,6 +163,15 @@ def _run_regional_quota_reconciler(
                 "HARNESS_SCHEDULER_STATE": state,
                 "HARNESS_SCHEDULER_DESCRIBE_RC": str(describe_rc),
                 "HARNESS_SCHEDULER_DESCRIBE_STDERR": describe_stderr,
+                "HARNESS_VERSIONED_JOB_EXISTS": str(versioned_job_exists).lower(),
+                "HARNESS_VERSIONED_JOB_NAME": (
+                    "trusted-router-regional-quota-reconciler-existing"
+                ),
+                "TR_REGIONAL_QUOTA_RECONCILER_JOB": (
+                    "trusted-router-regional-quota-reconciler-existing"
+                    if versioned_job_exists
+                    else ""
+                ),
             }
         ),
     )
@@ -450,6 +465,32 @@ def test_regional_quota_reconciler_verifies_updates_and_resumes_enabled_schedule
     assert len(_gcloud_calls(run, "scheduler", "jobs", "update")) == 1
     assert not _gcloud_calls(run, "scheduler", "jobs", "create")
     assert len(_gcloud_calls(run, "scheduler", "jobs", "resume")) == 1
+    assert len(_gcloud_calls(run, "run", "jobs", "create")) == 1
+    assert not _gcloud_calls(run, "run", "jobs", "deploy")
+    update = _gcloud_calls(run, "scheduler", "jobs", "update")[0]
+    assert "--max-retry-attempts=3" in update
+    assert "--max-retry-duration=45s" in update
+    assert "--min-backoff=5s" in update
+    assert "--max-backoff=15s" in update
+    assert "--max-doublings=1" in update
+
+
+def test_regional_quota_reconciler_updates_existing_version_without_get_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _run_regional_quota_reconciler(
+        tmp_path,
+        monkeypatch,
+        state="ENABLED",
+        versioned_job_exists=True,
+    )
+
+    assert run.returncode == 0, summarise(run)
+    assert len(_gcloud_calls(run, "run", "jobs", "list")) >= 1
+    assert len(_gcloud_calls(run, "run", "jobs", "update")) == 1
+    assert not _gcloud_calls(run, "run", "jobs", "create")
+    assert not _gcloud_calls(run, "run", "jobs", "deploy")
 
 
 def test_regional_quota_reconciler_creates_only_when_scheduler_is_not_found(

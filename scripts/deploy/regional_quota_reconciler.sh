@@ -77,7 +77,29 @@ env_vars=(
 set_env_vars="$(IFS='|'; echo "^|^${env_vars[*]}")"
 
 log "deploying regional quota reconciliation job ${JOB_NAME}"
-gc run jobs deploy "$JOB_NAME" \
+versioned_job_exists=false
+while IFS= read -r deployed_job; do
+  if [ "$deployed_job" = "$JOB_NAME" ]; then
+    versioned_job_exists=true
+    break
+  fi
+done < <(
+  gc run jobs list \
+    --region "$JOB_REGION" \
+    --filter="metadata.name:${JOB_PREFIX}" \
+    --format='value(metadata.name)'
+)
+
+# `gcloud run jobs deploy` probes a new version with GetJob before creating it.
+# Cloud Audit Logs records that expected NOT_FOUND as ERROR, which can page
+# operators even though the subsequent create succeeds. List first, then use
+# the explicit mutation so normal release discovery stays out of error logs.
+if [ "$versioned_job_exists" = true ]; then
+  job_mutation=update
+else
+  job_mutation=create
+fi
+gc run jobs "$job_mutation" "$JOB_NAME" \
   --region "$JOB_REGION" \
   --image "$IMAGE" \
   --command="/app/.venv/bin/python" \
@@ -121,9 +143,14 @@ common_args=(
   --http-method=POST
   --oauth-service-account-email="$RUN_SERVICE_ACCOUNT"
   --attempt-deadline=30s
-  --max-retry-attempts=0
+  # Starting this job is idempotent and the worker takes a distributed lock.
+  # Retry transient Google control-plane failures inside the current minute
+  # instead of dropping a reconciliation cycle.
+  --max-retry-attempts=3
+  --max-retry-duration=45s
   --min-backoff=5s
-  --max-backoff=30s
+  --max-backoff=15s
+  --max-doublings=1
   --quiet
 )
 
