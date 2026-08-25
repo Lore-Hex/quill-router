@@ -1,0 +1,41 @@
+name: Refresh test durations
+
+# .test_durations balances the sharded CI matrix (pytest-split). It MUST be
+# recorded on the CI runner class: durations recorded on a developer machine
+# mark the server-backed conformance suites as ~0s (they are SKIPPED locally,
+# run for real on CI), so pytest-split scatters them by count and loadgroup
+# pins whole serial groups into one shard — measured: shard 1 at 21m37 while
+# shards 2-4 idled after 3-8m, on a durations file totalling 19.4 recorded
+# minutes for a 22-minute-per-shard reality.
+#
+# Dispatch this after large test-suite changes; download the artifact and
+# commit it (or let the follow-up automation do so).
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+      - name: Sync
+        run: uv sync --frozen
+      - name: Run the full suite recording real CI durations
+        # Same execution shape as the sharded jobs (-n 4 --dist loadgroup) so
+        # recorded times reflect how tests actually run in the matrix.
+        # --clean-durations drops entries for deleted tests.
+        run: >-
+          uv run pytest -q -n 4 --dist loadgroup
+          --store-durations --clean-durations
+      - name: Upload durations artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-durations
+          path: .test_durations
+          if-no-files-found: error
