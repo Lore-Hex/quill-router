@@ -116,6 +116,12 @@ jobs:
       # 53/53 with grouping. Per-test id namespacing makes the shared DATABASE
       # order-independent; grouping is what serializes the DDL.
       - name: Tests and coverage
+        # least_duration is greedy per-test bin-packing. The default
+        # duration_based_chunks cuts CONTIGUOUS slices of collection order,
+        # and with one 18.5-minute conformance file early in the ordering the
+        # cumulative boundaries left shard 6 EMPTY (pytest exit 5, red run).
+        # Bin-packing also spreads that file's tests across shards instead of
+        # clumping them into whichever chunk swallows the file whole.
         # Balanced by .test_durations, which is why that file is committed.
         # Without it pytest-split splits by test COUNT, and equal counts are not
         # equal minutes: measured on the first sharded run, shard 2 finished in
@@ -136,6 +142,7 @@ jobs:
         run: >-
           uv run pytest -q -n 4 --dist loadgroup
           --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
+          --splitting-algorithm least_duration
           --cov=trusted_router --cov-report=
       - name: Stash this shard's coverage
         # Renamed off the dotfile before upload. `.coverage` is hidden, and
@@ -250,6 +257,7 @@ jobs:
         run: >-
           uv run pytest -q -n 4 --dist loadgroup
           --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
+          --splitting-algorithm least_duration
 
   browser:
     runs-on: ubuntu-latest

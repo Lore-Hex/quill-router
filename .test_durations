@@ -350,7 +350,7 @@
     "tests/conformance/test_store_semantics.py::test_workspace_is_readable_immediately_after_creation[backend=spanner-emulator]@conformance-spanner-emulator": 0.001163654999999153,
     "tests/conformance/test_store_semantics.py::test_workspace_is_readable_immediately_after_creation[backend=spanner-fake]": 0.0021793559999991885,
     "tests/conformance/test_store_semantics.py::test_workspace_is_readable_immediately_after_creation[backend=spanner-pg]@conformance-spanner-pg": 0.0008508309999939456,
-    "tests/conformance/test_user_model_segregation.py::test_user_models_are_absent_from_every_frozen_catalog_surface": 1111.5487321780001,
+    "tests/conformance/test_user_model_segregation.py::test_user_models_are_absent_from_every_frozen_catalog_surface": 1.0,
     "tests/conformance/test_user_model_segregation.py::test_user_models_exist_only_in_dedicated_api_and_direct_detail_pages": 0.485704645999931,
     "tests/conformance/test_user_model_store.py::test_gateway_authorization_round_trips_frozen_user_model_fields[memory]": 0.0013100689999845372,
     "tests/conformance/test_user_model_store.py::test_gateway_authorization_round_trips_frozen_user_model_fields[spanner]": 0.0014815499999940585,

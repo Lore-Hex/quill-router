@@ -152,3 +152,31 @@ def test_user_models_exist_only_in_dedicated_api_and_direct_detail_pages(
         assert html_detail.status_code == 200, html_detail.text
         assert "operated by a community member, not TrustedRouter" in html_detail.text
         assert 'meta name="robots" content="noindex"' in html_detail.text
+
+
+def test_catalog_surfaces_make_no_outbound_fetches_in_test_mode(
+    client: TestClient,
+    segregated_models: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 18.5-minute CI test, pinned shut.
+
+    docs_llms_full_txt once called _llms_model_rows() without test_mode, so
+    every model row attempted a live AI-IQ fetch; with failures uncached,
+    ~550 rows each paid the 2-second timeout — 0.9s on a laptop where the
+    connect fails instantly, 18.5 minutes on CI where it does not. A catalog
+    surface rendered under test settings must attempt ZERO outbound fetches.
+    """
+    import urllib.request
+
+    calls: list[str] = []
+
+    def _no_network(*args: Any, **kwargs: Any) -> Any:
+        calls.append(str(args[:1]))
+        raise AssertionError("outbound fetch attempted during test-mode render")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _no_network)
+    for path in ("/docs/llms-full.txt", "/llms.txt", "/compare/models"):
+        response = client.get(path)
+        assert response.status_code == 200, path
+    assert calls == []
