@@ -67,7 +67,7 @@ PY
 _deploy_mutex_expired() {
   local expires_at="$1"
   python3 - "$expires_at" <<'PY'
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import sys
 
 try:
@@ -77,7 +77,7 @@ try:
         raise ValueError("timezone required")
 except ValueError:
     raise SystemExit(2)
-raise SystemExit(0 if parsed <= datetime.now(UTC) else 1)
+raise SystemExit(0 if parsed <= datetime.now(timezone.utc) else 1)
 PY
 }
 
@@ -91,7 +91,7 @@ _deploy_mutex_write_record() {
   local cloud="$7"
   python3 - \
     "$path" "$owner" "$operation_id" "$ttl_seconds" "$tool" "$pid" "$cloud" <<'PY'
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import sys
 
@@ -107,7 +107,7 @@ try:
     pid = int(pid_raw)
 except ValueError:
     raise SystemExit("ttl and pid must be integers") from None
-created = datetime.now(UTC).replace(microsecond=0)
+created = datetime.now(timezone.utc).replace(microsecond=0)
 record = {
     "cloud": cloud,
     "owner": owner,
