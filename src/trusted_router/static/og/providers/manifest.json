@@ -719,6 +719,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "wafer"
   },
+  "wandb": {
+    "card_version": 2,
+    "model_count": 28,
+    "name": "Weights & Biases",
+    "privacy": "Policy documented",
+    "route_count": 28,
+    "route_mode": "Prepaid",
+    "slug": "wandb"
+  },
   "xiaomi": {
     "card_version": 2,
     "model_count": 3,

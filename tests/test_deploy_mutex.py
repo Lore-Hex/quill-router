@@ -409,6 +409,59 @@ def test_status_prints_generation_and_reports_unlocked(mutex: MutexHarness) -> N
     assert status.stdout == "unlocked\n"
 
 
+def test_cloud_metadata_is_written_and_printed_in_status(
+    mutex: MutexHarness,
+) -> None:
+    acquired = mutex.run(
+        "acquire",
+        "manual:azure@test",
+        TR_DEPLOY_MUTEX_CLOUD="azure",
+    )
+
+    assert acquired.returncode == 0, acquired.stderr
+    assert mutex.record()["cloud"] == "azure"
+    assert "deploy_mutex.acquired cloud=azure" in acquired.stderr
+
+    status = mutex.run("status", "manual:inspector@test")
+    assert status.returncode == 0, status.stderr
+    assert json.loads(status.stdout)["cloud"] == "azure"
+
+
+def test_different_cloud_is_blocked_by_the_same_lock_object(
+    mutex: MutexHarness,
+) -> None:
+    aws = mutex.run("acquire", "manual:aws@test", TR_DEPLOY_MUTEX_CLOUD="aws")
+    assert aws.returncode == 0, aws.stderr
+
+    azure = mutex.run(
+        "acquire",
+        "manual:azure@test",
+        TR_DEPLOY_MUTEX_CLOUD="azure",
+    )
+
+    assert azure.returncode == 1
+    assert "deploy_mutex.blocked cloud=aws" in azure.stderr
+    assert mutex.record()["cloud"] == "aws"
+    assert len([item for item in mutex.mutations() if item["action"] == "create"]) == 1
+
+
+def test_status_treats_older_records_without_cloud_as_gcp(
+    mutex: MutexHarness,
+) -> None:
+    acquired = mutex.run("acquire", "manual:legacy@test")
+    assert acquired.returncode == 0, acquired.stderr
+    legacy_record = mutex.record()
+    legacy_record.pop("cloud")
+    (mutex.state_dir / "object.json").write_text(
+        json.dumps(legacy_record), encoding="utf-8"
+    )
+
+    status = mutex.run("status", "manual:inspector@test")
+
+    assert status.returncode == 0, status.stderr
+    assert json.loads(status.stdout)["cloud"] == "gcp"
+
+
 def test_workflow_and_manual_scripts_share_the_mutex_scope() -> None:
     workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text(
         encoding="utf-8"
@@ -434,6 +487,43 @@ def test_workflow_and_manual_scripts_share_the_mutex_scope() -> None:
         assert 'if [ -z "${TR_DEPLOY_MUTEX_OPERATION:-}" ]; then' in script
         assert "deploy_mutex_acquire" in script
         assert "deploy_mutex_release" in script
+
+
+@pytest.mark.parametrize(
+    ("relative", "cloud", "trap_line", "first_cloud_access"),
+    (
+        (
+            "scripts/deploy/aws_eu_control_plane.sh",
+            "aws",
+            "trap release_aws_control_plane_deploy_mutex EXIT",
+            "aws secretsmanager describe-secret",
+        ),
+        (
+            "scripts/deploy/azure_control_plane.sh",
+            "azure",
+            "trap cleanup_azure_control_plane EXIT",
+            "exists az containerapp env show",
+        ),
+    ),
+)
+def test_operator_control_planes_acquire_the_fleet_mutex_before_cloud_access(
+    relative: str,
+    cloud: str,
+    trap_line: str,
+    first_cloud_access: str,
+) -> None:
+    script = (ROOT / relative).read_text(encoding="utf-8")
+
+    source = script.index('source "${SCRIPT_DIR}/deploy_mutex.sh"')
+    trap = script.index(trap_line)
+    cloud_export = script.index(f"export TR_DEPLOY_MUTEX_CLOUD={cloud}")
+    acquire = script.index("deploy_mutex_acquire", cloud_export)
+    cloud_access = script.index(first_cloud_access)
+
+    assert source < trap < acquire < cloud_access
+    assert source < cloud_export < acquire
+    assert "trap '' INT TERM" in script[source:trap]
+    assert "deploy_mutex_release" in script[source:trap]
 
 
 def test_infra_provisions_a_private_short_lived_mutex_bucket() -> None:

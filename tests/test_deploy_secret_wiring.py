@@ -225,7 +225,7 @@ def test_production_deploy_provisions_and_schedules_regional_quota_reconciliatio
         "bash scripts/deploy/rollout.sh"
     )
     assert workflow.index("bash scripts/deploy/regional_quota_reconciler.sh") > workflow.index(
-        "- name: Roll secondary warm regions sequentially"
+        "- name: Warm secondaries in parallel, ramp serially"
     )
     assert "--transactional-writes" in provisioner
     assert "trusted-router-logs-c1" in library

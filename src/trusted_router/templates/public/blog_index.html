@@ -10,6 +10,28 @@
     margin: 4px 0 10px; max-width: none; color: var(--inkstrong); }
   .blog-index-head p { color: var(--muted); font-size: 18px; line-height: 1.55;
     margin: 0 0 8px; max-width: 620px; }
+  /* Featured: a two-up card row, deliberately unlike the list below it. Same
+     visual weight as the list and the reader cannot tell which to start with,
+     which is the whole problem this section exists to fix. */
+  .blog-featured { margin: 18px 0 6px; }
+  .blog-featured-label { font-family: var(--font-mono); font-size: 12.5px;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+    margin: 0 0 12px; }
+  .blog-featured-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 22px; }
+  .blog-feature { border: 1px solid var(--line); border-radius: var(--r-panel);
+    background: var(--panel); overflow: hidden; display: flex; flex-direction: column; }
+  .blog-feature .blog-thumb { border: none; border-radius: 0;
+    border-bottom: 1px solid var(--line); }
+  .blog-feature-copy { padding: 16px 18px 18px; }
+  .blog-feature h2 { font-size: 22px; line-height: 1.25; margin: 6px 0 8px; }
+  .blog-feature h2 a { color: var(--inkstrong); text-decoration: none; }
+  .blog-feature h2 a:hover { color: var(--blue); }
+  .blog-feature .blog-dek { font-family: var(--font-display); font-size: 16.5px;
+    line-height: 1.55; color: var(--ink); margin: 0 0 10px; }
+  .blog-all-label { font-family: var(--font-mono); font-size: 12.5px;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+    margin: 34px 0 0; padding-top: 26px; border-top: 1px solid var(--line); }
   .blog-list { margin-top: 14px; }
   .blog-list-item { display: grid; grid-template-columns: minmax(190px, 260px) minmax(0, 1fr);
     gap: 22px; align-items: start; padding: 26px 0; border-top: 1px solid var(--line); }
@@ -31,6 +53,7 @@
   .blog-list-item .blog-src a { color: var(--muted); }
   @media (max-width: 700px) {
     .blog-index-head h1 { font-size: 32px; }
+    .blog-featured-grid { grid-template-columns: 1fr; }
     .blog-list-item { grid-template-columns: 1fr; gap: 12px; }
     .blog-list-item h2 { font-size: 23px; }
   }
@@ -40,6 +63,33 @@
     <h1>{{ heading }}</h1>
     <p>{{ description }}</p>
   </div>
+  {% if featured %}
+  <section class="blog-featured" aria-labelledby="featured-heading">
+    <p class="blog-featured-label" id="featured-heading">Start here</p>
+    <div class="blog-featured-grid">
+      {% for item in featured %}
+      <article class="blog-feature">
+        <a class="blog-thumb" href="{{ item.post.href }}" aria-label="Read {{ item.post.title }}">
+          <img
+            src="{{ item.image }}"
+            alt="{{ item.post.title }} visual summary"
+            loading="eager"
+            decoding="async"
+            fetchpriority="high"
+          >
+        </a>
+        <div class="blog-feature-copy">
+          <div class="blog-date">{{ item.post.published_date }}</div>
+          <h2><a href="{{ item.post.href }}">{{ item.post.title }}</a></h2>
+          <p class="blog-dek">{{ item.post.description }}</p>
+          <a class="blog-readmore" href="{{ item.post.href }}">Read &rarr;</a>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  <p class="blog-all-label">All posts</p>
+  {% endif %}
   <div class="blog-list">
     {% for item in posts %}
     <article class="blog-list-item">
@@ -47,9 +97,9 @@
         <img
           src="{{ item.image }}"
           alt="{{ item.post.title }} visual summary"
-          loading="{{ 'eager' if loop.first else 'lazy' }}"
+          loading="{{ 'eager' if loop.first and not featured else 'lazy' }}"
           decoding="async"
-          {% if loop.first %}fetchpriority="high"{% endif %}
+          {% if loop.first and not featured %}fetchpriority="high"{% endif %}
         >
       </a>
       <div class="blog-copy">

@@ -98,6 +98,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "voyage": ProviderBrand("https://www.voyageai.com/"),
     "vultr": ProviderBrand("https://www.vultr.com/"),
     "wafer": ProviderBrand("https://wafer.ai/"),
+    "wandb": ProviderBrand("https://wandb.ai/site/inference/"),
     "xiaomi": ProviderBrand("https://www.mi.com/"),
     "zai": ProviderBrand("https://z.ai/"),
     "zero-g": ProviderBrand("https://0g.ai/"),

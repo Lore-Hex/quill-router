@@ -39,13 +39,12 @@
     const API_BASE =
         CHAT_CONFIG.apiBaseUrl ||
         "/chat-proxy/v1";
-    // Public catalog endpoint — TR control plane serves /v1/models
-    // anonymously, so the picker can load without any browser key /
-    // proxy hop. Avoids hitting the attested gateway's 401 for an
-    // unauthenticated catalog list.
+    // Public catalog endpoint on the canonical API origin. The attested
+    // gateway serves GET /v1/models anonymously with public CORS headers,
+    // so the picker and SDKs use the same documented hostname.
     const CATALOG_BASE =
         CHAT_CONFIG.catalogBaseUrl ||
-        "/v1";
+        "https://api.trustedrouter.com/v1";
     const ISSUE_KEY_PATH =
         CHAT_CONFIG.issueKeyPath ||
         "/internal/chat/issue-browser-key";

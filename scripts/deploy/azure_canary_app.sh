@@ -29,6 +29,18 @@ ATTRIBUTION_SECRET_NAME="attribution-cookie-secret"
 log() { printf '\n=== %s\n' "$*" >&2; }
 exists() { "$@" >/dev/null 2>&1; }
 
+if [ "$RG" = "tr-azure" ] || [[ "$APP" == *-vnet ]]; then
+  if [ -z "${TR_CLOUD_BAKE_OVERRIDE:-}" ]; then
+    echo "refusing production target RG=${RG} APP=${APP}; use scripts/deploy/azure_control_plane.sh so the fleet bake gate and mutex run" >&2
+    exit 1
+  fi
+  printf '%s\n' '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!' >&2
+  printf '%s\n' \
+    "CLOUD BAKE OVERRIDE: azure_canary_app.sh is targeting production-like RG=${RG} APP=${APP}" >&2
+  printf 'reason: %s\n' "$TR_CLOUD_BAKE_OVERRIDE" >&2
+  printf '%s\n' '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!' >&2
+fi
+
 PG_HOST="$(az postgres flexible-server show -g "$RG" -n "$PG_NAME" --query fullyQualifiedDomainName -o tsv)"
 ACR_SERVER="$(az acr show -g "$RG" -n "$ACR" --query loginServer -o tsv)"
 ACR_USER="$(az acr credential show -n "$ACR" --query username -o tsv)"

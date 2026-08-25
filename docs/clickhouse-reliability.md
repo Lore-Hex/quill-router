@@ -283,12 +283,13 @@ after merge instead of a morning after. Deploy all three, confirm each
 `workflow_dispatch`, then enable both triggers in the one commit the workflow
 header spells out.
 
-Two states are neither pass nor fail, and are printed as `(unchecked)` on every
-run rather than skipped: a cloud with no public status page (`reason=`), and a
-cloud that legitimately runs no outbox (`expects_outbox=False` — Azure today,
-whose deploy script sets no `TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED`). The
-second one becomes a **failure** the day that cloud publishes a real lag, which
-is the day it needs watching.
+Two registry states are neither pass nor fail, and are printed as `(unchecked)`
+on every run rather than skipped: a cloud with no public status page
+(`reason=`), and a cloud deliberately declared to run no outbox
+(`expects_outbox=False`). All deployed clouds currently expect an outbox,
+including Azure; Azure's deploy refuses to replace that live pipeline with an
+outbox-off revision when discovery fails. A future outbox-free entry becomes a
+**failure** the day it publishes a real lag, which is the day it needs watching.
 
 To ask about one cloud during an incident:
 

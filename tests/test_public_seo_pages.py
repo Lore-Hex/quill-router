@@ -277,7 +277,7 @@ def test_openrouter_experiment_router_is_sticky_and_preserves_campaign_query(
 
     rendered = client.get(first.headers["location"])
     assert rendered.status_code == 200
-    assert '<meta name="robots" content="noindex,follow">' in rendered.text
+    assert 'data-action="open-signin"' in rendered.text
 
 
 @pytest.mark.parametrize(
@@ -330,6 +330,19 @@ def test_openrouter_experiment_assignment_reaches_every_arm() -> None:
     )
 
 
+def test_openrouter_experiment_v2_has_exactly_two_activation_arms() -> None:
+    assert OPENROUTER_PAID_LANDING_PATHS == (
+        "/openai-compatible-llm-api",
+        "/openrouter-alternative/quickstart",
+    )
+    assignments = [
+        assigned_openrouter_landing_path(f"balance-check-{index}")
+        for index in range(1_000)
+    ]
+    for path in OPENROUTER_PAID_LANDING_PATHS:
+        assert 450 <= assignments.count(path) <= 550
+
+
 def test_openrouter_experiment_honors_global_privacy_control(
     client: TestClient,
 ) -> None:
@@ -341,7 +354,7 @@ def test_openrouter_experiment_honors_global_privacy_control(
 
     assert response.status_code == 307
     assert response.headers["location"].startswith(
-        "/openrouter-alternative/quickstart?"
+        "/openai-compatible-llm-api?"
     )
     assert "tr_attribution=" not in response.headers.get("set-cookie", "")
 
@@ -367,6 +380,15 @@ def test_public_footer_links_to_canonical_trust_page(client: TestClient) -> None
     assert response.status_code == 200
     assert '<a href="/trust">Attestation</a>' in response.text
     assert '<a href="https://trust.trustedrouter.com">Attestation</a>' not in response.text
+
+
+def test_models_reference_executes_against_canonical_api_host(
+    client: TestClient,
+) -> None:
+    operation = client.get("/openapi.json").json()["paths"]["/v1/models"]["get"]
+
+    assert operation["servers"] == [{"url": "https://api.trustedrouter.com"}]
+    assert "No API key is required" in operation["description"]
 
 
 @pytest.mark.parametrize(
@@ -464,7 +486,7 @@ def test_llms_text_files_are_public_and_do_not_leak_secret_material(
     assert "lower-cost open-weight models" in root_llms.text
     assert "trustedrouter/e2e" in root_llms.text
     assert "trustedrouter/confidential" in root_llms.text
-    assert "https://trustedrouter.com/v1/models" in root_llms.text
+    assert "https://api.trustedrouter.com/v1/models" in root_llms.text
     assert "not an exhaustive model list" in root_llms.text
 
     catalog = client.get("/v1/models")
@@ -1743,3 +1765,25 @@ def test_blog_index_uses_recent_product_images(client: TestClient) -> None:
     ):
         assert f'src="https://trustedrouter.com/static/og/blog/{slug}.png"' in response.text
     assert "Quill Cowork has confidential mode and trusts you with the bill" in response.text
+
+
+def test_organization_same_as_only_lists_profiles_we_own() -> None:
+    """sameAs is an identity claim, so every entry has to be a profile we hold.
+
+    A sameAs pointing at a page that does not exist is worse than publishing
+    nothing: it asks a search engine or agent to resolve an identity that will
+    404, which muddies disambiguation instead of sharpening it. There is no
+    Wikipedia article and no Wikidata entity for TrustedRouter as of
+    2026-08-24, so neither is listed; this test exists so adding one is a
+    deliberate act taken after the entity actually exists.
+    """
+    from trusted_router.config import Settings
+    from trusted_router.dashboard import _organization_node
+
+    node = _organization_node(Settings(environment="test", trusted_domain="trustedrouter.com"))
+    same_as = node["sameAs"]
+    assert isinstance(same_as, list)
+    assert "https://github.com/Lore-Hex" in same_as
+    assert "https://x.com/trustedrouter" in same_as
+    assert not any("wikipedia.org" in url for url in same_as)
+    assert not any("wikidata.org" in url for url in same_as)

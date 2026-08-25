@@ -42,7 +42,23 @@
 # Prerequisite: scripts/deploy/azure_canary.sh has provisioned the resource
 # group, Flexible Server, ACR and Container Apps environment (CANARY=tr-azure
 # LOCATION=uaenorth APP_LOCATION=uaenorth).
+# Also required: an authenticated gcloud CLI with object access to the shared
+# production deployment-mutex bucket. The mutex serializes this Azure rollout
+# against GCP and AWS control-plane deploys.
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/deploy/deploy_mutex.sh
+source "${SCRIPT_DIR}/deploy_mutex.sh"
+# shellcheck source=scripts/deploy/cloud_bake_gate.sh
+source "${SCRIPT_DIR}/cloud_bake_gate.sh"
+
+command -v gcloud >/dev/null 2>&1 || {
+  echo "gcloud is required to acquire the fleet deployment mutex" >&2
+  exit 1
+}
+
+die() { echo "[FAIL] $*" >&2; exit 1; }
 
 STACK="${STACK:-tr-azure}"
 RG="${RG:-$STACK}"
@@ -57,12 +73,19 @@ PG_NAME="${PG_NAME:-$STACK-pg}"
 PG_ADMIN="${PG_ADMIN:-tradmin}"
 PG_DB="${PG_DB:-trustedrouter}"
 ACR="${ACR:-$(echo "${STACK}${LOCATION}acr" | tr -cd "[:alnum:]")}"
-IMAGE_TAG="${IMAGE_TAG:-azure}"
-# TR_RELEASE was IMAGE_TAG, the constant "azure", so this plane reported the
-# same release string on every deploy and staleness could not be measured.
-RELEASE_COMMIT="${RELEASE_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
+# Immutable source tag: the serving configuration carries it in TR_RELEASE
+# while the actual image reference stays pinned by digest. The bake gate
+# reads it back as this cloud's serving commit, so a wrong value here
+# poisons fleet-wide bake evidence — die rather than stamp 'unknown'.
+IMAGE_TAG="${IMAGE_TAG:-$(git -C "${SCRIPT_DIR}/../.." rev-parse --short HEAD 2>/dev/null || true)}"
+[ -n "$IMAGE_TAG" ] || die "not a git checkout: set IMAGE_TAG=<short-sha>"
+# #768's staleness detector reads RELEASE_COMMIT; same truth as the tag,
+# and the bake gate asserts the tag equals HEAD below.
+RELEASE_COMMIT="${RELEASE_COMMIT:-$IMAGE_TAG}"
 STATE_DIR="${STATE_DIR:-$HOME/.config/$STACK}"
 PW_FILE="${PW_FILE:-$STATE_DIR/pgpw}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # The attested Azure gateway this control plane fronts, and the health host the
 # status page is published under.
@@ -94,6 +117,25 @@ GATEWAY_REGION_TARGETS="${GATEWAY_REGION_TARGETS:-uaenorth=quill-enclave-uaenort
 KEYS_FILE="${KEYS_FILE:-$HOME/.quill_cloud_keys.private}"
 SECRETS_DIR="${SECRETS_DIR:-$HOME/.quill-secrets}"
 
+# Operational analytics. These are the resources provisioned for the live
+# uaenorth pipeline. The app reaches the node by its private VNet address and
+# reads the password through a Container Apps Key Vault reference backed by the
+# node's existing user-assigned identity. The password value never enters this
+# process, argv, cloud-init, or an operator-visible log.
+CLICKHOUSE_NODE="${CLICKHOUSE_NODE:-tr-azure-clickhouse-$LOCATION}"
+CLICKHOUSE_VAULT="${CLICKHOUSE_VAULT:-tr-azure-analytics-kv}"
+CLICKHOUSE_SECRET_NAME="${CLICKHOUSE_SECRET_NAME:-clickhouse-default-password}"
+CLICKHOUSE_IDENTITY="${CLICKHOUSE_IDENTITY:-tr-azure-analytics-$LOCATION-id}"
+CLICKHOUSE_USER="${CLICKHOUSE_USER:-default}"
+CLICKHOUSE_DATABASE="${CLICKHOUSE_DATABASE:-default}"
+
+# This is deliberately a decision, not a boolean that could be inherited by
+# accident. The only accepted opt-out reads as an operator action in shell
+# history:
+#
+#   AZURE_ANALYTICS_OPERATOR_DECISION=disable bash scripts/deploy/azure_control_plane.sh
+AZURE_ANALYTICS_OPERATOR_DECISION="${AZURE_ANALYTICS_OPERATOR_DECISION:-}"
+
 # Federation + deferred settlement. Identity federates from the GCP home plane
 # (a peer token grants directory reads only); credits do not. Deferred
 # settlement stays OFF until its token is present AND explicitly enabled.
@@ -112,7 +154,29 @@ OBSERVER_MAX_REPLICAS_EFFECTIVE=1
 
 log() { printf '\n=== %s\n' "$*" >&2; }
 exists() { "$@" >/dev/null 2>&1; }
-die() { echo "[FAIL] $*" >&2; exit 1; }
+
+AZURE_TEMP_FIREWALL_RULE=""
+cleanup_azure_control_plane() {
+  local deploy_status=$?
+  # Finish cloud cleanup and mutex release uninterrupted; a signal here would
+  # leak either the firewall rule or the mutex until an operator intervenes.
+  trap '' INT TERM
+  trap - EXIT
+  if [ -n "${AZURE_TEMP_FIREWALL_RULE:-}" ]; then
+    az postgres flexible-server firewall-rule delete \
+      -g "$RG" -s "$PG_NAME" --name "$AZURE_TEMP_FIREWALL_RULE" \
+      --yes -o none 2>/dev/null || true
+  fi
+  if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
+    deploy_mutex_release
+  fi
+  exit "$deploy_status"
+}
+
+trap cleanup_azure_control_plane EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+export TR_DEPLOY_MUTEX_CLOUD=azure
 
 case "$SYNTHETIC_INTERVAL_SECONDS" in
   ''|*[!0-9]*) die "SYNTHETIC_INTERVAL_SECONDS must be a positive integer" ;;
@@ -123,6 +187,25 @@ esac
   || die "Azure has no external remediation owner; the in-process remediator cannot be disabled"
 [ "$OBSERVER_REMEDIATOR_MODE" != "off" ] \
   || die "Azure has no external remediation owner; remediator mode cannot be off"
+
+# Local source-of-truth validation above must fail before any cloud access.
+# The mutex still precedes the first az read below and every later mutation.
+deploy_mutex_acquire
+cloud_bake_gate azure
+if [ -n "$(git -C "${SCRIPT_DIR}/../.." status --porcelain 2>/dev/null || true)" ]; then
+  die "the gate validated HEAD; a dirty tree deploys unvalidated code"
+fi
+HEAD_IMAGE_TAG="$(git -C "${SCRIPT_DIR}/../.." rev-parse --short HEAD 2>/dev/null || true)"
+if [ "$IMAGE_TAG" != "$HEAD_IMAGE_TAG" ]; then
+  if [ -z "${TR_CLOUD_BAKE_OVERRIDE:-}" ]; then
+    die "IMAGE_TAG=${IMAGE_TAG} does not match the validated short HEAD ${HEAD_IMAGE_TAG:-UNKNOWN}; set TR_CLOUD_BAKE_OVERRIDE only for break glass"
+  fi
+  printf '%s\n' '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!' >&2
+  printf '%s\n' \
+    "CLOUD BAKE OVERRIDE: IMAGE_TAG=${IMAGE_TAG} does not match validated HEAD ${HEAD_IMAGE_TAG:-UNKNOWN}" >&2
+  printf 'reason: %s\n' "$TR_CLOUD_BAKE_OVERRIDE" >&2
+  printf '%s\n' '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!' >&2
+fi
 
 read_secret() {
   # A file in the secrets dir wins; otherwise the env file's own name.
@@ -147,11 +230,89 @@ if path.exists():
 PY
 }
 
-exists az containerapp env show -g "$RG" -n "$APP_ENV" \
-  || die "no Container Apps environment '$APP_ENV' in '$RG' — run: CANARY=$STACK LOCATION=$LOCATION APP_LOCATION=$LOCATION bash scripts/deploy/azure_canary.sh"
+registry_expects_outbox() {
+  # Read the deployment contract without importing the application (a deploy
+  # host need not have its Python dependencies installed). Both the dataclass
+  # default and Azure's fleet entry are parsed, so omitting expects_outbox from
+  # the entry still means whatever the registry class says it means.
+  python3 - "$REPO_ROOT/src/trusted_router/operational_analytics_fleet.py" azure <<'PY'
+import ast
+import sys
+from pathlib import Path
 
-PG_HOST="$(az postgres flexible-server show -g "$RG" -n "$PG_NAME" --query fullyQualifiedDomainName -o tsv)"
-ACR_SERVER="$(az acr show -g "$RG" -n "$ACR" --query loginServer -o tsv)"
+path = Path(sys.argv[1])
+cloud = sys.argv[2]
+tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+default = None
+fleet_value = None
+for statement in tree.body:
+    if isinstance(statement, ast.ClassDef) and statement.name == "FleetAnalyticsEndpoint":
+        for field in statement.body:
+            if (
+                isinstance(field, ast.AnnAssign)
+                and isinstance(field.target, ast.Name)
+                and field.target.id == "expects_outbox"
+                and isinstance(field.value, ast.Constant)
+                and isinstance(field.value.value, bool)
+            ):
+                default = field.value.value
+    if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+        if statement.target.id == "ANALYTICS_FRESHNESS_FLEET":
+            fleet_value = statement.value
+
+if default is None or fleet_value is None:
+    raise SystemExit(f"cannot read expects_outbox contract from {path}")
+
+matches = []
+for node in ast.walk(fleet_value):
+    if not isinstance(node, ast.Call):
+        continue
+    function_name = node.func.id if isinstance(node.func, ast.Name) else None
+    if function_name != "FleetAnalyticsEndpoint":
+        continue
+    keywords = {item.arg: item.value for item in node.keywords if item.arg is not None}
+    cloud_node = keywords.get("cloud")
+    if not isinstance(cloud_node, ast.Constant) or cloud_node.value != cloud:
+        continue
+    expected_node = keywords.get("expects_outbox")
+    if expected_node is None:
+        matches.append(default)
+    elif isinstance(expected_node, ast.Constant) and isinstance(expected_node.value, bool):
+        matches.append(expected_node.value)
+    else:
+        raise SystemExit(f"{cloud}: expects_outbox is not a literal bool in {path}")
+
+if len(matches) != 1:
+    raise SystemExit(f"expected exactly one fleet entry for {cloud}, found {len(matches)}")
+print("true" if matches[0] else "false")
+PY
+}
+
+print_analytics_discovery_failure() {
+  cat >&2 <<FAIL
+[FAIL] refusing to deploy: Azure analytics discovery was incomplete.
+
+The fleet registry says azure expects_outbox=${ANALYTICS_EXPECTS_OUTBOX_DISPLAY}. A failed
+lookup must not turn a working production outbox off.
+
+Looked for:
+  private IP   VM ${CLICKHOUSE_NODE} in resource group ${RG}: ${CLICKHOUSE_HOST:-not found}
+  password     Key Vault ${CLICKHOUSE_VAULT}, secret ${CLICKHOUSE_SECRET_NAME}: $([ -n "$CLICKHOUSE_SECRET_ID" ] && echo reference found || echo not found)
+  identity     ${CLICKHOUSE_IDENTITY} in resource group ${RG}: $([ -n "$CLICKHOUSE_IDENTITY_ID" ] && echo found || echo not found)
+  location     ${LOCATION}
+
+Verify the active account and each lookup by hand:
+  az account show --query '{name:name,id:id,tenantId:tenantId}' -o json
+  az vm list-ip-addresses -g ${RG} -n ${CLICKHOUSE_NODE} --query '[0].virtualMachine.network.privateIpAddresses[0]' -o tsv
+  az keyvault secret show --vault-name ${CLICKHOUSE_VAULT} -n ${CLICKHOUSE_SECRET_NAME} --query id -o tsv
+  az identity show -g ${RG} -n ${CLICKHOUSE_IDENTITY} --query id -o tsv
+
+If disabling this live pipeline is an explicit operator decision, say so in
+shell history and re-run with:
+  AZURE_ANALYTICS_OPERATOR_DECISION=disable bash scripts/deploy/azure_control_plane.sh
+FAIL
+}
 
 OBSERVER_TOKEN="$(read_secret trustedrouter-observer-internal-token TR_OBSERVER_INTERNAL_TOKEN)"
 MONITOR_KEY="$(read_secret trustedrouter-synthetic-monitor-api-key TR_SYNTHETIC_MONITOR_API_KEY)"
@@ -165,6 +326,55 @@ unset LEGACY_GATEWAY_TOKEN
 # The monitor key is what makes the leaderboard green: rotation calls the
 # gateway as a CUSTOMER of itself. Without it there is a status page with no
 # model rows, which reads as "no data" rather than "not measured".
+
+case "$AZURE_ANALYTICS_OPERATOR_DECISION" in
+  ""|disable) ;;
+  *) die "AZURE_ANALYTICS_OPERATOR_DECISION must be unset or exactly 'disable'" ;;
+esac
+
+ANALYTICS_EXPECTS_OUTBOX="$(registry_expects_outbox)"
+case "$ANALYTICS_EXPECTS_OUTBOX" in
+  true) ANALYTICS_EXPECTS_OUTBOX_DISPLAY=True ;;
+  false) ANALYTICS_EXPECTS_OUTBOX_DISPLAY=False ;;
+  *) die "fleet registry returned invalid expects_outbox=${ANALYTICS_EXPECTS_OUTBOX}" ;;
+esac
+
+# Resolve all three non-secret pieces before any build or Container App
+# mutation. A private address without a usable Key Vault reference and identity
+# is not a partial success: the new revision would start, then fail on first use.
+CLICKHOUSE_HOST="$(az vm list-ip-addresses -g "$RG" -n "$CLICKHOUSE_NODE" \
+  --query "[0].virtualMachine.network.privateIpAddresses[0]" -o tsv 2>/dev/null || true)"
+CLICKHOUSE_SECRET_ID="$(az keyvault secret show --vault-name "$CLICKHOUSE_VAULT" \
+  -n "$CLICKHOUSE_SECRET_NAME" --query id -o tsv 2>/dev/null || true)"
+CLICKHOUSE_IDENTITY_ID="$(az identity show -g "$RG" -n "$CLICKHOUSE_IDENTITY" \
+  --query id -o tsv 2>/dev/null || true)"
+
+ANALYTICS_DISCOVERED=true
+case "$CLICKHOUSE_HOST" in ""|None) ANALYTICS_DISCOVERED=false ;; esac
+case "$CLICKHOUSE_SECRET_ID" in ""|None) ANALYTICS_DISCOVERED=false ;; esac
+case "$CLICKHOUSE_IDENTITY_ID" in ""|None) ANALYTICS_DISCOVERED=false ;; esac
+
+if [ "$AZURE_ANALYTICS_OPERATOR_DECISION" = "disable" ]; then
+  OUTBOX_ENABLED=false
+  CLICKHOUSE_URL_EFFECTIVE=""
+  log "operator explicitly decided to disable Azure analytics; outbox OFF"
+elif [ "$ANALYTICS_DISCOVERED" = "true" ] && [ "$ANALYTICS_EXPECTS_OUTBOX" = "true" ]; then
+  OUTBOX_ENABLED=true
+  CLICKHOUSE_URL_EFFECTIVE="http://${CLICKHOUSE_HOST}:8123"
+  log "analytics ON: ${CLICKHOUSE_NODE} at ${CLICKHOUSE_URL_EFFECTIVE}; password remains in Key Vault"
+else
+  print_analytics_discovery_failure
+  if [ "$ANALYTICS_EXPECTS_OUTBOX" = "false" ]; then
+    echo "The registry does not expect an outbox, but disabling still requires the explicit operator decision above." >&2
+  fi
+  exit 1
+fi
+
+exists az containerapp env show -g "$RG" -n "$APP_ENV" \
+  || die "no Container Apps environment '$APP_ENV' in '$RG' — run: CANARY=$STACK LOCATION=$LOCATION APP_LOCATION=$LOCATION bash scripts/deploy/azure_canary.sh"
+
+PG_HOST="$(az postgres flexible-server show -g "$RG" -n "$PG_NAME" --query fullyQualifiedDomainName -o tsv)"
+ACR_SERVER="$(az acr show -g "$RG" -n "$ACR" --query loginServer -o tsv)"
 
 if exists az containerapp show -g "$RG" -n "$APP"; then
   PG_PASSWORD="$(az containerapp secret show -g "$RG" -n "$APP" --secret-name pg-password --query value -o tsv)"
@@ -293,6 +503,11 @@ ENV_VARS=(
   "TR_REMEDIATOR_IN_PROCESS_ENABLED=${OBSERVER_REMEDIATOR_IN_PROCESS_ENABLED}"
   "TR_REMEDIATOR_MODE=${OBSERVER_REMEDIATOR_MODE}"
 
+  "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=${OUTBOX_ENABLED}"
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=${CLICKHOUSE_URL_EFFECTIVE}"
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=${CLICKHOUSE_USER}"
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=${CLICKHOUSE_DATABASE}"
+
   "TR_OBSERVER_INTERNAL_TOKEN=secretref:observer-token"
   "TR_SYNTHETIC_MONITOR_API_KEY=secretref:monitor-key"
 )
@@ -302,6 +517,12 @@ SECRET_ARGS=(
   "observer-token=${OBSERVER_TOKEN}"
   "monitor-key=${MONITOR_KEY}"
 )
+if [ "$OUTBOX_ENABLED" = "true" ]; then
+  ENV_VARS+=("TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD=secretref:clickhouse-password")
+  SECRET_ARGS+=(
+    "clickhouse-password=keyvaultref:${CLICKHOUSE_SECRET_ID},identityref:${CLICKHOUSE_IDENTITY_ID}"
+  )
+fi
 RETIRED_OBSERVER_ENV_VARS=(
   TR_INTERNAL_GATEWAY_TOKEN
   TR_FEDERATION_HOME_TOKEN
@@ -309,9 +530,18 @@ RETIRED_OBSERVER_ENV_VARS=(
   TR_FEDERATION_DEFERRED_SETTLEMENT_ENABLED
   TR_FEDERATION_HOME_BASE_URL
 )
+if [ "$OUTBOX_ENABLED" = "false" ]; then
+  # Remove a previously configured reference as part of the explicit opt-out.
+  # The Key Vault value remains untouched and recoverable.
+  RETIRED_OBSERVER_ENV_VARS+=(TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD)
+fi
 
 if exists az containerapp show -g "$RG" -n "$APP"; then
   log "updating $APP"
+  if [ "$OUTBOX_ENABLED" = "true" ]; then
+    az containerapp identity assign -g "$RG" -n "$APP" \
+      --user-assigned "$CLICKHOUSE_IDENTITY_ID" -o none
+  fi
   az containerapp secret set -g "$RG" -n "$APP" --secrets "${SECRET_ARGS[@]}" -o none
   az containerapp update -g "$RG" -n "$APP" \
     --image "$IMAGE_REF" --set-env-vars "${ENV_VARS[@]}" \
@@ -324,12 +554,17 @@ else
   log "creating $APP"
   ACR_USER="$(az acr credential show -n "$ACR" --query username -o tsv)"
   ACR_PASS="$(az acr credential show -n "$ACR" --query 'passwords[0].value' -o tsv)"
+  IDENTITY_CREATE_ARGS=()
+  if [ "$OUTBOX_ENABLED" = "true" ]; then
+    IDENTITY_CREATE_ARGS=(--user-assigned "$CLICKHOUSE_IDENTITY_ID")
+  fi
   az containerapp create -g "$RG" -n "$APP" \
     --environment "$APP_ENV" \
     --image "$IMAGE_REF" \
     --registry-server "$ACR_SERVER" \
     --registry-username "$ACR_USER" \
     --registry-password "$ACR_PASS" \
+    "${IDENTITY_CREATE_ARGS[@]}" \
     --secrets "${SECRET_ARGS[@]}" \
     --env-vars "${ENV_VARS[@]}" \
     --target-port 8080 --ingress external \
@@ -397,8 +632,7 @@ if command -v psql >/dev/null 2>&1; then
     az postgres flexible-server firewall-rule create -g "$RG" -s "$PG_NAME" \
       --name "tmp-schema-$$" --start-ip-address "$MYIP" --end-ip-address "$MYIP" \
       -o none 2>/dev/null || true
-    # shellcheck disable=SC2064
-    trap "az postgres flexible-server firewall-rule delete -g '$RG' -s '$PG_NAME' --name 'tmp-schema-$$' --yes -o none 2>/dev/null || true" EXIT
+    AZURE_TEMP_FIREWALL_RULE="tmp-schema-$$"
     sleep 5
   fi
   PGPASSWORD="$PG_PASSWORD" psql \
@@ -418,25 +652,21 @@ else
 fi
 
 log "DNS: point azure.trustedrouter.com at this app"
-if command -v gcloud >/dev/null 2>&1; then
-  CURRENT="$(gcloud dns record-sets describe azure.trustedrouter.com. \
+CURRENT="$(gcloud dns record-sets describe azure.trustedrouter.com. \
+  --project "${DNS_PROJECT:-quill-cloud-proxy}" --zone "${DNS_ZONE:-trustedrouter-com}" \
+  --type CNAME --format 'value(rrdatas[0])' 2>/dev/null || true)"
+if [ "$CURRENT" = "${FQDN}." ]; then
+  log "dns: azure.trustedrouter.com already -> ${FQDN}"
+elif [ -n "$CURRENT" ]; then
+  gcloud dns record-sets update azure.trustedrouter.com. \
     --project "${DNS_PROJECT:-quill-cloud-proxy}" --zone "${DNS_ZONE:-trustedrouter-com}" \
-    --type CNAME --format 'value(rrdatas[0])' 2>/dev/null || true)"
-  if [ "$CURRENT" = "${FQDN}." ]; then
-    log "dns: azure.trustedrouter.com already -> ${FQDN}"
-  elif [ -n "$CURRENT" ]; then
-    gcloud dns record-sets update azure.trustedrouter.com. \
-      --project "${DNS_PROJECT:-quill-cloud-proxy}" --zone "${DNS_ZONE:-trustedrouter-com}" \
-      --type CNAME --ttl 300 --rrdatas "${FQDN}." >/dev/null
-    log "dns: reconciled azure.trustedrouter.com ${CURRENT} -> ${FQDN}."
-  else
-    gcloud dns record-sets create azure.trustedrouter.com. \
-      --project "${DNS_PROJECT:-quill-cloud-proxy}" --zone "${DNS_ZONE:-trustedrouter-com}" \
-      --type CNAME --ttl 300 --rrdatas "${FQDN}." >/dev/null
-    log "dns: created azure.trustedrouter.com -> ${FQDN}."
-  fi
+    --type CNAME --ttl 300 --rrdatas "${FQDN}." >/dev/null
+  log "dns: reconciled azure.trustedrouter.com ${CURRENT} -> ${FQDN}."
 else
-  log "gcloud absent: point azure.trustedrouter.com CNAME at ${FQDN} yourself"
+  gcloud dns record-sets create azure.trustedrouter.com. \
+    --project "${DNS_PROJECT:-quill-cloud-proxy}" --zone "${DNS_ZONE:-trustedrouter-com}" \
+    --type CNAME --ttl 300 --rrdatas "${FQDN}." >/dev/null
+  log "dns: created azure.trustedrouter.com -> ${FQDN}."
 fi
 
 cat >&2 <<NOTE
@@ -454,41 +684,36 @@ NOTE
 # ...and then the part that is NOT a note.
 #
 # Everything above provisions a control plane that serves, measures itself, and
-# publishes a status page. None of it gives this cloud an operational-analytics
-# pipeline: the ENV_VARS block sets no TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED,
-# so settle enqueues nothing, there is no outbox to drain, and no drain. On AWS
-# that same gap ran for fifteen days behind an entirely green status page
-# because the only alarm is emitted by the missing process.
+# connects to Azure's existing operational-analytics pipeline. Before the first
+# mutation it derives expects_outbox from the fleet registry and discovers the
+# node, Key Vault reference, and managed identity. If any lookup fails while the
+# registry expects the pipeline, the deploy refuses instead of translating a
+# transient CLI failure into OUTBOX_ENABLED=false.
 #
-# So this deploy now ends by asking whether the CLOUD works rather than whether
-# the script finished, and today, on Azure, it says no. That is the correct
-# answer, and no variable this script inherits changes it: the verifier's bound
+# This deploy still ends by asking whether the CLOUD works rather than whether
+# the script finished. No variable this script inherits changes the verifier's
+# answer: its bound
 # is a constant in src/ and its URL comes from the fleet registry, and the two
 # variables it reads at all -- TR_MAX_DRAIN_LAG_SECONDS and TR_STATUS_URL -- it
 # reads only in order to print that they are being IGNORED. (An earlier version
 # of this comment said the verifier "reads no environment variable at all",
 # which was a tidier sentence and not true.) It takes no flags either.
 #
-# The only way to make this exit 0 is to build the pipeline. There is no
-# exemption, no waiver and no registry field that excuses a stage: a cloud that
-# cannot be checked is NOT VERIFIED and this script exits non-zero.
+# There is no exemption, no waiver and no registry field that excuses a stage:
+# a cloud that cannot be checked is NOT VERIFIED and this script exits non-zero.
 # ---------------------------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/cloud_complete_gate.sh
 . "${SCRIPT_DIR}/cloud_complete_gate.sh"
 
 require_cloud_complete azure "$(cat <<'NEXT'
-The Azure app is deployed and serving. The Azure CLOUD is not complete: it has
-no operational-analytics pipeline at all. To finish it:
+The Azure app, ClickHouse target, outbox configuration, and drain now exist.
+What remains is live verification of the revision just deployed:
 
-  1. give it somewhere to drain TO (a ClickHouse this cloud owns, mirroring
-     scripts/deploy/aws_eu_clickhouse.sh) — this is a COST decision, so it is
-     not made by a deploy script;
-  2. add to the ENV_VARS block in this file:
-       TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true
-       TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=...  (+ user/database/password)
-  3. install a drain against it, mirroring
-     scripts/deploy/aws_eu_clickhouse_drain_install.sh;
-  4. bash scripts/deploy/verify_cloud_complete.sh azure
+  1. wait for https://azure.trustedrouter.com/status.json to publish
+     analytics.available=true, backend=postgres, and a bounded drain lag;
+  2. bash scripts/deploy/verify_cloud_complete.sh azure
+
+If either check fails, fix the reported live stage. Do not disable the outbox to
+make a failed freshness check disappear.
 NEXT
 )"

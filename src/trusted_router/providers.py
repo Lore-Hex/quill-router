@@ -111,6 +111,8 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
         "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/compatible-mode/v1",
     ),
     "sakana": (("SAKANA_API_KEY",), "https://api.sakana.ai/v1"),
+    # W&B Serverless Inference, hosted on CoreWeave infrastructure.
+    "wandb": (("WANDB_API_KEY",), "https://api.inference.wandb.ai/v1"),
 }
 
 __all__ = [

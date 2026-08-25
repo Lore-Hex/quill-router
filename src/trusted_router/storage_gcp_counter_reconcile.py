@@ -40,6 +40,65 @@ _OPEN_REGIONAL_QUOTA_ESCROW = (
     "ORDER BY open_index.id"
 )
 _OPEN_REGIONAL_QUOTA_STATES = frozenset({"pending", "active", "draining", "quarantined"})
+# ── Typed `total_usage` ledger reconstruction ───────────────────────────────
+# `total_usage` has exactly TWO writers on this store, and both leave a durable
+# row, so the counter is reconstructible rather than merely trusted:
+#
+#   1. the typed settle (storage_gcp_counter_dml.release_credit) adds `actual`,
+#      and only for Credits traffic -- storage_gcp_authorize passes
+#      `book_actual if settled_usage_type == "Credits" else 0`, so a non-Credits
+#      settle bumps nothing. Its row is the settled tr_reservation.
+#   2. deferred federated settlement (storage_gcp_federated_settlement) adds a
+#      peer plane's debt straight to `total_usage`, with NO reservation in this
+#      plane -- the authorize happened elsewhere. Its row is the insert-once
+#      federated_settlement_claim.
+#
+# Summing only (1) -- which is what the retired PR #89 did -- reads every
+# federated microdollar as drift. Both arms are required.
+_SETTLED_CREDIT_ACTUALS = (
+    "SELECT COALESCE(SUM(actual_micro), 0) FROM tr_reservation "
+    "WHERE workspace_id=@ws AND ws_shard=0 AND settled=true "
+    "AND settled_usage_type='Credits'"
+)
+_FEDERATED_SETTLEMENT_APPLIED = (
+    "/* federated_settlement_applied */ "
+    "SELECT COALESCE(SUM(CAST(JSON_VALUE(body, '$.cost_microdollars') AS INT64)), 0) "
+    "FROM tr_entities WHERE kind='federated_settlement_claim' "
+    "AND JSON_VALUE(body, '$.workspace_id')=@ws"
+)
+#: The pre-flip baseline typed `total_usage` was seeded from. Rows created after
+#: the flip omit `total_usage` at insert (storage_gcp_counters.CREDIT_BALANCE_COLUMNS)
+#: so they start at the Spanner default 0 and need no baseline at all.
+#:
+#: This field is REMOVED by the reviewed cleanup migration
+#: (storage_gcp_credit_json_cleanup.LEGACY_CREDIT_MONEY_FIELDS) and its value is
+#: not archived anywhere. So absent means one of two things we cannot tell apart:
+#: a post-flip workspace whose baseline is genuinely 0, or a pre-flip workspace
+#: whose baseline was deleted. The audit reports those as UNAUDITABLE rather than
+#: guessing 0, because guessing 0 would report every pre-flip workspace's entire
+#: historical spend as drift.
+_JSON_USAGE_BASELINE = (
+    "/* json_usage_baseline */ "
+    "SELECT id, JSON_VALUE(body, '$.total_usage_microdollars') "
+    "FROM tr_entities WHERE kind='credit'"
+)
+_TYPED_USAGE_ROWS = "SELECT workspace_id, shard, total_usage FROM tr_credit_balance"
+#: Fleet-wide forms of the two ledger arms, grouped so the audit stays ONE
+#: snapshot rather than two queries per workspace.
+_SETTLED_CREDIT_ACTUALS_BY_WS = (
+    "SELECT workspace_id, COALESCE(SUM(actual_micro), 0) FROM tr_reservation "
+    "WHERE ws_shard=0 AND settled=true AND settled_usage_type='Credits' "
+    "GROUP BY workspace_id"
+)
+_FEDERATED_SETTLEMENT_APPLIED_BY_WS = (
+    "/* federated_settlement_applied_by_ws */ "
+    "SELECT JSON_VALUE(body, '$.workspace_id'), "
+    "COALESCE(SUM(CAST(JSON_VALUE(body, '$.cost_microdollars') AS INT64)), 0) "
+    "FROM tr_entities WHERE kind='federated_settlement_claim' "
+    "GROUP BY JSON_VALUE(body, '$.workspace_id')"
+)
+
+
 _NONCLOSED_REGIONAL_QUOTA_LEASES_FOR_REPAIR = (
     "/* nonclosed_regional_quota_leases_for_repair */ "
     "SELECT COUNT(*) FROM tr_entities "
@@ -58,22 +117,44 @@ class InvariantReport:
     credit_violations: int = 0  # reserved != open-hold sum, or reserved < 0
     key_violations: int = 0
     regional_lease_violations: int = 0
+    usage_rows: int = 0
+    usage_violations: int = 0  # total_usage != baseline + settled actuals + federated
+    #: Rows whose baseline is unrecoverable, so usage can be neither confirmed nor
+    #: faulted. Counted apart from violations: calling them clean would overstate
+    #: coverage, and calling them violations would cry wolf on every workspace the
+    #: JSON cleanup has already run against.
+    usage_unauditable: int = 0
     samples: dict[str, dict] = field(default_factory=dict)
 
     @property
     def clean(self) -> bool:
+        """No violated invariant. Says nothing about `usage_unauditable` -- see
+        `fully_audited` for whether the sweep actually covered everything."""
         return (
             self.credit_violations == 0
             and self.key_violations == 0
             and self.regional_lease_violations == 0
+            and self.usage_violations == 0
         )
 
+    @property
+    def fully_audited(self) -> bool:
+        """Every row was checkable. CLEAN with unauditable rows is a narrower
+        claim than it looks, and an operator reading only `clean` would not see
+        the difference."""
+        return self.usage_unauditable == 0
+
     def summary(self) -> str:
+        usage = f"usage: {self.usage_violations}/{self.usage_rows}"
+        if self.usage_unauditable:
+            usage += f" ({self.usage_unauditable} unauditable)"
         return (
             f"credit: {self.credit_violations}/{self.credit_rows} | "
             f"key: {self.key_violations}/{self.key_rows} | "
             f"regional lease: {self.regional_lease_violations}/{self.regional_lease_rows} | "
+            f"{usage} | "
             f"{'CLEAN' if self.clean else 'VIOLATIONS'}"
+            f"{'' if self.fully_audited else ' (PARTIAL)'}"
         )
 
 
@@ -180,6 +261,31 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
             credit_holds[scope] = credit_holds.get(scope, 0) + int(row[3] or 0)
         key_holds = {(r[0], r[1]): int(r[2] or 0) for r in snap.execute_sql(_OPEN_KEY_HOLDS)}
         regional_rows = list(snap.execute_sql(_OPEN_REGIONAL_QUOTA_ESCROW))
+        # Usage arm, read in the SAME snapshot: a settle that lands between two
+        # reads would otherwise show as drift equal to its own actual.
+        # Summed ACROSS shards, unlike the reserved arm. `reserved` is compared
+        # per (scope, shard) because each shard holds its own reservations, but
+        # both usage ledgers are per-WORKSPACE -- a settled reservation and a
+        # federated claim name a workspace, not a shard. Comparing shard 0 alone
+        # against a whole-workspace ledger would report every sharded workspace's
+        # other shards as missing usage.
+        typed_usage: dict[str, int] = {}
+        for row in snap.execute_sql(_TYPED_USAGE_ROWS):
+            workspace = str(row[0])
+            typed_usage[workspace] = typed_usage.get(workspace, 0) + int(row[2] or 0)
+        settled_actuals = {
+            str(r[0]): int(r[1] or 0)
+            for r in snap.execute_sql(_SETTLED_CREDIT_ACTUALS_BY_WS)
+        }
+        federated_applied = {
+            str(r[0]): int(r[1] or 0)
+            for r in snap.execute_sql(_FEDERATED_SETTLEMENT_APPLIED_BY_WS)
+            if r[0] is not None
+        }
+        usage_baselines = {
+            str(r[0]): (None if r[1] is None else int(r[1]))
+            for r in snap.execute_sql(_JSON_USAGE_BASELINE)
+        }
 
     regional_holds, regional_errors = _regional_quota_escrow(regional_rows)
     for scope, held in regional_holds.items():
@@ -209,6 +315,58 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
 
     report.credit_rows, report.credit_violations = _check(typed_credit, credit_holds, "credit")
     report.key_rows, report.key_violations = _check(typed_key, key_holds, "api_key")
+    # ── usage: total_usage must equal everything the ledger says was booked ──
+    # Both directions again, in the same spirit as _check: a federated claim or a
+    # settled actual for a workspace with NO typed row is a booking that landed
+    # nowhere, and iterating typed rows alone cannot see it.
+    for workspace_id, actual_usage in typed_usage.items():
+        report.usage_rows += 1
+        baseline = usage_baselines.get(workspace_id)
+        booked = settled_actuals.get(workspace_id, 0) + federated_applied.get(workspace_id, 0)
+        if baseline is None:
+            report.usage_unauditable += 1
+            _sample(
+                f"usage-unauditable:{workspace_id}",
+                {
+                    "typed_total_usage": actual_usage,
+                    "ledger_booked": booked,
+                    "baseline": None,
+                    "why": "no JSON total_usage_microdollars: pre-flip baseline "
+                    "deleted by the credit-JSON cleanup, or a post-flip row that "
+                    "never had one. Those are indistinguishable, so neither "
+                    "confirmed nor faulted.",
+                },
+            )
+            continue
+        expected = baseline + booked
+        if actual_usage != expected or actual_usage < 0:
+            report.usage_violations += 1
+            _sample(
+                f"usage:{workspace_id}",
+                {
+                    "typed_total_usage": actual_usage,
+                    "expected": expected,
+                    "baseline": baseline,
+                    "settled_actuals": settled_actuals.get(workspace_id, 0),
+                    "federated_applied": federated_applied.get(workspace_id, 0),
+                    "delta": actual_usage - expected,
+                },
+            )
+    for workspace_id in set(settled_actuals) | set(federated_applied):
+        if workspace_id in typed_usage:
+            continue
+        booked = settled_actuals.get(workspace_id, 0) + federated_applied.get(workspace_id, 0)
+        if booked > 0:
+            report.usage_violations += 1
+            _sample(
+                f"usage-orphan-booking:{workspace_id}",
+                {
+                    "typed_total_usage": None,
+                    "settled_actuals": settled_actuals.get(workspace_id, 0),
+                    "federated_applied": federated_applied.get(workspace_id, 0),
+                },
+            )
+
     report.regional_lease_rows = len(regional_rows)
     report.regional_lease_violations = len(regional_errors)
     for index_id, error in regional_errors.items():
@@ -379,4 +537,190 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
         return res
     res.applied = True
     res.keys_repaired = result["keys"]
+    return res
+
+
+# ── Repair: typed `total_usage` ─────────────────────────────────────────────
+# Companion to repair_typed_reserved, and deliberately stricter. `reserved` is
+# derived from state that is still open, so recomputing it is safe whenever the
+# workspace is quiesced. `total_usage` is a MONOTONIC lifetime total: writing it
+# rewrites history, and writing it DOWN destroys the record of spend that was
+# really booked. So this refuses to lower it unless the caller says so in as
+# many words, and refuses entirely unless every hold is drained -- an open hold
+# is a settle that has not yet added its actual, which would read as an
+# over-count and "repair" the counter backwards.
+
+
+@dataclass
+class UsageRepairResult:
+    workspace_id: str
+    ready: bool
+    reasons: list[str] = field(default_factory=list)
+    applied: bool = False
+    total_usage_before: int | None = None
+    total_usage_after: int | None = None
+    baseline: int | None = None
+    settled_actuals: int = 0
+    federated_applied: int = 0
+
+    @property
+    def delta(self) -> int | None:
+        if self.total_usage_before is None or self.total_usage_after is None:
+            return None
+        return self.total_usage_after - self.total_usage_before
+
+
+def repair_typed_usage(
+    store: Any,
+    workspace_id: str,
+    *,
+    apply: bool = False,
+    allow_decrease: bool = False,
+) -> UsageRepairResult:
+    """Set typed `total_usage` = JSON baseline + settled Credits actuals +
+    federated settlement claims, for a fully drained PAUSED workspace.
+
+    Read-only when apply=False (reports before/after). Fail-closed: refuses
+    unless billing_paused, unsharded, fully drained, and the JSON baseline still
+    exists. Refuses to LOWER the counter unless allow_decrease=True."""
+    pt = store._param_types
+    res = UsageRepairResult(workspace_id=workspace_id, ready=False)
+    usage_row_sql = (
+        "SELECT total_usage FROM tr_credit_balance WHERE workspace_id=@pk AND shard=0"
+    )
+    open_holds_sql = (
+        "SELECT COUNT(*) FROM tr_reservation WHERE workspace_id=@ws AND settled=false"
+    )
+    baseline_sql = (
+        "/* json_usage_baseline_one */ "
+        "SELECT JSON_VALUE(body, '$.total_usage_microdollars') FROM tr_entities "
+        "WHERE kind='credit' AND id=@ws"
+    )
+
+    workspace = store.get_workspace(workspace_id)
+    credit_account = store.get_credit_account(workspace_id)
+    ws_param = {"ws": workspace_id}
+    ws_type = {"ws": pt.STRING}
+    with store._database.snapshot(multi_use=True) as snap:
+        usage_row = list(snap.execute_sql(
+            usage_row_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING},
+        ))
+        open_holds = list(snap.execute_sql(
+            open_holds_sql, params=ws_param, param_types=ws_type,
+        ))[0][0]
+        baseline_row = list(snap.execute_sql(
+            baseline_sql, params=ws_param, param_types=ws_type,
+        ))
+        settled = list(snap.execute_sql(
+            _SETTLED_CREDIT_ACTUALS, params=ws_param, param_types=ws_type,
+        ))[0][0]
+        federated = list(snap.execute_sql(
+            _FEDERATED_SETTLEMENT_APPLIED, params=ws_param, param_types=ws_type,
+        ))[0][0]
+
+    baseline = None
+    if baseline_row and baseline_row[0][0] is not None:
+        baseline = int(baseline_row[0][0])
+
+    if workspace is None or not getattr(workspace, "billing_paused", False):
+        res.reasons.append("workspace not billing-paused — pause it before repair")
+    if credit_account is not None and credit_shard_count(credit_account) != 1:
+        res.reasons.append("credit ledger is sharded — consolidate before shard-zero repair")
+    if not usage_row:
+        res.reasons.append("no typed credit row")
+    if int(open_holds) != 0:
+        res.reasons.append(
+            f"{open_holds} holds still open — drain them first, or their actuals "
+            "land after this write and the counter is wrong again"
+        )
+    if baseline is None:
+        res.reasons.append(
+            "no JSON total_usage_microdollars baseline — it was removed by the "
+            "credit-JSON cleanup and is not archived, so the pre-flip total "
+            "cannot be reconstructed and this workspace is not repairable here"
+        )
+
+    res.baseline = baseline
+    res.settled_actuals = int(settled)
+    res.federated_applied = int(federated)
+    if usage_row:
+        res.total_usage_before = int(usage_row[0][0])
+    if baseline is not None:
+        res.total_usage_after = baseline + int(settled) + int(federated)
+
+    if (
+        res.total_usage_before is not None
+        and res.total_usage_after is not None
+        and res.total_usage_after < res.total_usage_before
+        and not allow_decrease
+    ):
+        res.reasons.append(
+            f"refusing to lower total_usage "
+            f"{res.total_usage_before} -> {res.total_usage_after}: it is monotonic, "
+            "so a decrease means the ledger is missing rows rather than the "
+            "counter being wrong. Investigate first; pass allow_decrease=True "
+            "only once you know why"
+        )
+
+    res.ready = not res.reasons
+    if not res.ready or not apply:
+        return res
+
+    cts = store._spanner.COMMIT_TIMESTAMP
+    target = res.total_usage_after
+
+    def _txn(transaction: Any) -> dict | None:
+        # Re-read and re-validate the whole plan inside the txn, same discipline
+        # as repair_typed_reserved: a workspace unpaused, a hold opened, or the
+        # baseline cleaned up between the snapshot and here must abort.
+        ws = store._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
+        if ws is None or not ws.billing_paused:
+            return None
+        credit = store._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
+        if credit is not None and credit_shard_count(credit) != 1:
+            return None
+        if int(list(transaction.execute_sql(
+            open_holds_sql, params=ws_param, param_types=ws_type,
+        ))[0][0]) != 0:
+            return None
+        current = list(transaction.execute_sql(
+            usage_row_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING},
+        ))
+        if not current:
+            return None  # typed row vanished — never re-create it as a partial row
+        fresh_baseline = list(transaction.execute_sql(
+            baseline_sql, params=ws_param, param_types=ws_type,
+        ))
+        if not fresh_baseline or fresh_baseline[0][0] is None:
+            return None
+        recomputed = (
+            int(fresh_baseline[0][0])
+            + int(list(transaction.execute_sql(
+                _SETTLED_CREDIT_ACTUALS, params=ws_param, param_types=ws_type,
+            ))[0][0])
+            + int(list(transaction.execute_sql(
+                _FEDERATED_SETTLEMENT_APPLIED, params=ws_param, param_types=ws_type,
+            ))[0][0])
+        )
+        if recomputed != target:
+            return None  # the ledger moved under us — abort rather than write a stale total
+        if recomputed < int(current[0][0]) and not allow_decrease:
+            return None
+        transaction.insert_or_update(
+            table="tr_credit_balance",
+            columns=("workspace_id", "shard", "total_usage", "updated_at"),
+            values=[(workspace_id, 0, recomputed, cts)],
+        )
+        return {"total_usage": recomputed}
+
+    result = store._run_in_transaction(_txn)
+    if result is None:
+        res.ready = False
+        res.reasons.append(
+            "aborted: not paused / sharded / a hold opened / typed row missing / "
+            "baseline gone / the ledger moved between plan and write"
+        )
+        return res
+    res.applied = True
+    res.total_usage_after = result["total_usage"]
     return res

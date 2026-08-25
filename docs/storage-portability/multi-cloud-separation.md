@@ -498,11 +498,12 @@ under it, and this paragraph has already been wrong once. Ask:
 The last reading taken while editing this section: `gcp` VERIFIED, `aws` and
 `azure` both 5. That is a note about a moment, not a claim about now.
 
-**Azure has no operational-analytics outbox.** `azure_control_plane.sh` sets no
-`TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED` at all, so the cloud enqueues nothing,
-has nothing to drain, and stage (e) fails. It is a canary
-(`aws-eu-and-azure-canary.md` §3) and it still counts: a canary whose operational
-history is unrecorded cannot answer the question canaries exist to answer.
+**Azure now has a live operational-analytics outbox and drain.** Its public
+status reports the Postgres-backed lag, and `azure_control_plane.sh` discovers
+the private ClickHouse target plus its Key Vault reference before enabling the
+outbox. Because the fleet registry expects this pipeline, failed discovery
+refuses the deploy instead of silently replacing the live revision with an
+outbox-off one. An explicit operator decision is required to disable it.
 
 ### Checklist for the next cloud
 

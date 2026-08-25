@@ -119,6 +119,8 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
                 {"id": "sakana-namazu-v1.0"},
             ]
         }
+    if "api.inference.wandb.ai" in url:
+        return {"data": [{"id": "zai-org/GLM-5.2"}]}
     return {"data": []}
 
 

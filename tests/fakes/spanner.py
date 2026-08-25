@@ -1639,6 +1639,108 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+
+    def _claim_bodies() -> list[dict]:
+        out = []
+        for (row_kind, _eid), row in db.rows.items():
+            if row_kind != "federated_settlement_claim":
+                continue
+            try:
+                out.append(json.loads(row.body))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def _settled_credit_actuals(workspace_id: str | None) -> dict[str, int]:
+        # Mirrors the real predicates rather than reimplementing intent: only a
+        # SETTLED reservation on shard 0 whose settled_usage_type is Credits ever
+        # reached tr_credit_balance.total_usage (storage_gcp_authorize passes 0
+        # for every other usage type).
+        totals: dict[str, int] = {}
+        for rec in db.reservations.values():
+            if not rec.get("settled"):
+                continue
+            if rec.get("settled_usage_type") != "Credits":
+                continue
+            if int(rec.get("ws_shard") or 0) != 0:
+                continue
+            ws = rec.get("workspace_id")
+            if ws is None or (workspace_id is not None and ws != workspace_id):
+                continue
+            totals[str(ws)] = totals.get(str(ws), 0) + int(rec.get("actual_micro") or 0)
+        return totals
+
+    if "/* json_usage_baseline_one */" in sql:
+        _require_pred(sql, "kind='credit'", "usage baseline kind")
+        _require_pred(sql, "$.total_usage_microdollars", "usage baseline field")
+        row = db.rows.get(("credit", str(params["ws"])))
+        if row is None:
+            return []
+        body = json.loads(row.body)
+        raw = body.get("total_usage_microdollars")
+        return [[None if raw is None else str(raw)]]
+    if "/* json_usage_baseline */" in sql:
+        _require_pred(sql, "kind='credit'", "usage baseline kind")
+        _require_pred(sql, "$.total_usage_microdollars", "usage baseline field")
+        out: list[list[Any]] = []
+        for (row_kind, entity_id), row in sorted(db.rows.items()):
+            if row_kind != "credit":
+                continue
+            try:
+                body = json.loads(row.body)
+            except (TypeError, ValueError):
+                continue
+            raw = body.get("total_usage_microdollars")
+            out.append([entity_id, None if raw is None else str(raw)])
+        return out
+    if "/* federated_settlement_applied_by_ws */" in sql:
+        _require_pred(sql, "kind='federated_settlement_claim'", "federated claim kind")
+        _require_pred(sql, "$.cost_microdollars", "federated claim amount")
+        totals: dict[str, int] = {}
+        for body in _claim_bodies():
+            ws = body.get("workspace_id")
+            if ws is None:
+                continue
+            totals[str(ws)] = totals.get(str(ws), 0) + int(body.get("cost_microdollars") or 0)
+        return [[ws, amount] for ws, amount in sorted(totals.items())]
+    if "/* federated_settlement_applied */" in sql:
+        _require_pred(sql, "kind='federated_settlement_claim'", "federated claim kind")
+        _require_pred(sql, "$.cost_microdollars", "federated claim amount")
+        workspace_id = str(params["ws"])
+        return [[sum(
+            int(body.get("cost_microdollars") or 0)
+            for body in _claim_bodies()
+            if body.get("workspace_id") == workspace_id
+        )]]
+    if "SELECT workspace_id, shard, total_usage FROM tr_credit_balance" in sql:
+        return [
+            [pk[0], pk[1], int(rec.get("total_usage") or 0)]
+            for pk, rec in sorted(db.typed.get("tr_credit_balance", {}).items())
+        ]
+    if "SUM(actual_micro)" in sql and "GROUP BY workspace_id" in sql:
+        _require_pred(sql, "settled=true", "settled-actuals settled filter")
+        _require_pred(sql, "settled_usage_type='Credits'", "settled-actuals usage-type filter")
+        _require_pred(sql, "ws_shard=0", "settled-actuals shard filter")
+        return [[ws, amount] for ws, amount in sorted(_settled_credit_actuals(None).items())]
+    if "SUM(actual_micro)" in sql:
+        _require_pred(sql, "settled=true", "settled-actuals settled filter")
+        _require_pred(sql, "settled_usage_type='Credits'", "settled-actuals usage-type filter")
+        _require_pred(sql, "ws_shard=0", "settled-actuals shard filter")
+        workspace_id = str(params["ws"])
+        return [[_settled_credit_actuals(workspace_id).get(workspace_id, 0)]]
+    if (
+        "SELECT COUNT(*) FROM tr_reservation WHERE workspace_id=@ws AND settled=false" in sql
+        # repair_typed_reserved's nonzero-shard probe is a SUPERSTRING of this
+        # one; matching loosely would answer it with the all-shard count and
+        # silently turn its shard check into a no-op.
+        and "ws_shard!=0" not in sql
+    ):
+        workspace_id = str(params["ws"])
+        return [[sum(
+            1
+            for rec in db.reservations.values()
+            if rec.get("workspace_id") == workspace_id and not rec.get("settled")
+        )]]
     if "/* nonclosed_regional_quota_leases_for_repair */" in sql:
         workspace_id = str(params["ws"])
         count = 0

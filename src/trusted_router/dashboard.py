@@ -63,7 +63,12 @@ from trusted_router.competitor_comparisons import (
     VERIFIED_ON as COMPETITOR_COMPARISONS_VERIFIED_ON,
 )
 from trusted_router.config import Settings
-from trusted_router.content.blog import BLOG_POSTS, BLOG_POSTS_BY_SLUG, BlogPost
+from trusted_router.content.blog import (
+    BLOG_POSTS,
+    BLOG_POSTS_BY_SLUG,
+    FEATURED_SLUGS,
+    BlogPost,
+)
 from trusted_router.content.legal import (
     hipaa_readiness_packet,
     legal_entity,
@@ -101,6 +106,7 @@ from trusted_router.storage_models import BedrockGroupBuyPledge
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 DEV_USER_FALLBACK = "alpha@trustedrouter.local"
+PUBLIC_MODELS_URL = "https://api.trustedrouter.com/v1/models"
 MODEL_SEO_SECTIONS: tuple[str, ...] = (
     "benchmarks",
     "providers",
@@ -698,16 +704,17 @@ OPENROUTER_PAID_LANDING_VARIANTS: dict[str, OpenRouterLandingVariant] = {
 }
 
 OPENROUTER_PAID_LANDING_PATHS: tuple[str, ...] = (
+    "/openai-compatible-llm-api",
     "/openrouter-alternative/quickstart",
-    *tuple(f"/openrouter-alternative/lp/{slug}" for slug in OPENROUTER_PAID_LANDING_VARIANTS),
 )
+OPENROUTER_LANDING_EXPERIMENT_ID = "openrouter-lp-v2"
 
 
 def assigned_openrouter_landing_path(seed: str | None) -> str:
     """Choose one stable experiment arm without retaining visitor identity."""
     if not seed:
         return OPENROUTER_PAID_LANDING_PATHS[0]
-    digest = hashlib.sha256(f"openrouter-lp-v1:{seed}".encode()).digest()
+    digest = hashlib.sha256(f"{OPENROUTER_LANDING_EXPERIMENT_ID}:{seed}".encode()).digest()
     index = int.from_bytes(digest[:8], "big") % len(OPENROUTER_PAID_LANDING_PATHS)
     return OPENROUTER_PAID_LANDING_PATHS[index]
 
@@ -2232,6 +2239,27 @@ def _blog_index_posts(settings: Settings) -> tuple[BlogIndexPost, ...]:
     )
 
 
+def _featured_blog_posts(settings: Settings) -> tuple[BlogIndexPost, ...]:
+    """The featured posts, in FEATURED_SLUGS order.
+
+    Ordered by the tuple rather than by date: the point of the section is an
+    editorial running order, and sorting it chronologically would hand that
+    decision back to the calendar.
+
+    A slug that matches no post is skipped here and fails a test instead. The
+    blog index should not 500 because somebody renamed a post, but it also
+    should not silently show one card where two were intended.
+    """
+    return tuple(
+        BlogIndexPost(
+            post=BLOG_POSTS_BY_SLUG[slug],
+            image=_blog_og_image(settings, BLOG_POSTS_BY_SLUG[slug]),
+        )
+        for slug in FEATURED_SLUGS
+        if slug in BLOG_POSTS_BY_SLUG
+    )
+
+
 def _json_ld_graph(settings: Settings, *nodes: dict[str, object] | None) -> str:
     """Every page's graph, with the operating company always in it.
 
@@ -2397,8 +2425,17 @@ def _organization_node(settings: Settings) -> dict[str, object]:
                 "availableLanguage": ["en"],
             },
         ],
+        # Profiles that identify this organization somewhere OTHER than this
+        # site, so a search engine or agent can disambiguate "TrustedRouter"
+        # from similarly named entities. Only add a URL that actually resolves
+        # to a profile we own: a sameAs pointing at a page that does not exist
+        # is a broken identity claim, which is worse for disambiguation than
+        # publishing nothing. There is no Wikipedia article and no Wikidata
+        # entity as of 2026-08-24 (checked: article 404s, wbsearchentities
+        # returns zero results) — add the Wikidata URI here once one exists.
         "sameAs": [
             "https://github.com/Lore-Hex",
+            "https://x.com/trustedrouter",
             f"https://{domain}/trust",
         ],
     }
@@ -2856,6 +2893,7 @@ def public_blog_index_html(settings: Settings) -> str:
                 "Read TrustedRouter engineering notes on attested AI routing, model evaluations, "
                 "provider privacy, confidential compute, reliability, and open source infrastructure."
             ),
+            featured=_featured_blog_posts(settings),
             posts=_blog_index_posts(settings),
             json_ld_blob=_blog_index_json_ld(settings),
             google_enabled=settings.google_oauth_enabled,
@@ -3619,6 +3657,7 @@ def public_chat_html(
             # provider response headers are visible without any CORS
             # expose-headers work, so "via {provider}" lights up.
             api_base_url="/chat-proxy/v1",
+            catalog_base_url="https://api.trustedrouter.com/v1",
             site_url=f"https://{settings.trusted_domain}/chat",
             title="Chat | TrustedRouter",
             heading="Chat",
@@ -3642,6 +3681,7 @@ def public_fusion_html(settings: Settings) -> str:
         .get_template("public/fusion_playground.html")
         .render(
             api_base_url="/chat-proxy/v1",
+            catalog_base_url="https://api.trustedrouter.com/v1",
             site_url=f"https://{settings.trusted_domain}/synth",
             title="Synth | TrustedRouter",
             heading="Synth",
@@ -4243,7 +4283,7 @@ def llms_txt(settings: Settings) -> str:
         "## API",
         "- [OpenAI compatible base URL](https://api.trustedrouter.com/v1)",
         "- [EU regional base URL](https://api-europe-west4.quillrouter.com/v1)",
-        f"- [Canonical live model catalog (public, no API key)](https://{domain}/v1/models)",
+        f"- [Canonical live model catalog (public, no API key)]({PUBLIC_MODELS_URL})",
         (
             "- Read the live model catalog before naming current model IDs, prices, "
             "context windows, or provider availability. This concise llms.txt is a "
@@ -4380,7 +4420,7 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- SOC 2 readiness: https://{domain}/legal/soc2-readiness",
             f"- HIPAA readiness: https://{domain}/legal/hipaa-readiness",
             f"- Model catalog: https://{domain}/models",
-            f"- Canonical live model API (public, no API key): https://{domain}/v1/models",
+            f"- Canonical live model API (public, no API key): {PUBLIC_MODELS_URL}",
             f"- Provider transparency: https://{domain}/providers",
             f"- Provider marketplace: https://{domain}/providers/marketplace",
             f"- EU routing: https://{domain}/eu",
@@ -4390,7 +4430,7 @@ def docs_llms_txt(settings: Settings) -> str:
             "",
             "Use https://api.trustedrouter.com/v1 as the OpenAI compatible API base URL.",
             (
-                f"Fetch https://{domain}/v1/models before recommending a current model. "
+                f"Fetch {PUBLIC_MODELS_URL} before recommending a current model. "
                 "This compact document is not an exhaustive model list."
             ),
             (
@@ -4460,7 +4500,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "## Canonical URLs",
         f"- Homepage: https://{domain}/",
         "- API base: https://api.trustedrouter.com/v1",
-        f"- Live model catalog (public, no API key): https://{domain}/v1/models",
+        f"- Live model catalog (public, no API key): {PUBLIC_MODELS_URL}",
         f"- AI gateway comparison directory: https://{domain}/compare",
         "- EU regional API base: https://api-europe-west4.quillrouter.com/v1",
         "- Trust: https://trust.trustedrouter.com/",

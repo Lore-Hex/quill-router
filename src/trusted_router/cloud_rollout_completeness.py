@@ -426,14 +426,9 @@ ROLLOUT_REGISTRY: dict[str, CloudRollout] = {
     "azure": CloudRollout(
         cloud="azure",
         control_plane_script="scripts/deploy/azure_control_plane.sh",
-        # No such script exists yet: Azure has no operational-analytics outbox
-        # at all, which is the point. The stage that fails says so and names
-        # what has to be built, rather than pointing at a file that is not there.
         drain_install_command=(
-            "write it — Azure has no operational-analytics drain yet; the outbox "
-            "must be enabled in scripts/deploy/azure_control_plane.sh and a drain "
-            "installed against its ClickHouse, mirroring "
-            "scripts/deploy/aws_eu_clickhouse_drain_install.sh"
+            "confirm the existing Azure drain is live, then bash "
+            "scripts/deploy/verify_cloud_complete.sh azure"
         ),
         deploy_scripts=(
             DeployScript("scripts/deploy/azure_control_plane.sh", PROVEN_BY_EXECUTION),
@@ -976,9 +971,9 @@ def declared_outbox_value(cloud: str, root: Path | None = None) -> str | None:
     comment or in operator instructions does not count, see
     :data:`_OUTBOX_DECLARATION_PATTERNS`. These scripts say in their own headers
     that they are THE SOURCE OF TRUTH for the service environment, so the
-    absence of the variable is the absence of the setting — which is exactly
-    Azure's state: ``azure_control_plane.sh`` sets no outbox variable at all,
-    and Azure therefore enqueues nothing to drain.
+    absence of the variable is the absence of the setting. Azure and AWS now
+    both declare a deploy-time value; their runtime evidence comes from the
+    public freshness stages rather than this static read.
 
     Read as text on purpose. This must run from a laptop with no cloud
     credentials, and a check that needs ``az``/``aws`` to run is a check that
@@ -1064,10 +1059,8 @@ def outbox_fact(cloud: str, root: Path | None = None) -> str:
 def outbox_note(cloud: str, root: Path | None = None) -> str | None:
     """The extra line a stage (e) that passes on a COMPUTED value needs.
 
-    ``aws_eu_control_plane.sh`` writes ``"${OUTBOX_ENABLED}"``, which it sets to
-    ``false`` when no ClickHouse secret exists in the region. Statically that is
-    "enabled"; at runtime it may not be. Say so rather than imply more than was
-    measured.
+    AWS and Azure write ``"${OUTBOX_ENABLED}"``. Statically that is "enabled";
+    at runtime it may not be. Say so rather than imply more than was measured.
     """
     value = declared_outbox_value(cloud, root=root)
     if value is None or not value.startswith("$"):

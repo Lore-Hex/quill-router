@@ -49,17 +49,15 @@ WHY A ``reason`` FIELD AND NOT AN OMISSION
     can fix is a check people learn to ignore.
 
 WHY ``expects_outbox`` AND NOT A SECOND ``reason``
-    Azure is reachable, publishes a status page, and has no operational-analytics
-    outbox at all: ``scripts/deploy/azure_control_plane.sh`` never sets
-    ``TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED``, so the flag defaults off and
-    ``PostgresStore`` holds no outbox to read. Its section says
-    ``not_configured`` and would say so forever. Retiring it behind ``reason=``
-    would work, and would also throw away the ability to notice the day it
-    changes: an outbox that gets enabled on Azure would go unwatched exactly as
-    AWS-EU's was. ``expects_outbox=False`` instead keeps fetching the page and
-    asserts the ABSENCE -- unchecked while it publishes ``not_configured``, a
-    FAILURE the moment it publishes a real lag, which is the moment somebody
-    needs to come back here and start watching it.
+    Azure originally published ``not_configured`` because its deploy script did
+    not set ``TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED``. ``expects_outbox=False``
+    kept fetching that page and asserted the absence, so enabling the pipeline
+    could not leave it unwatched. Azure now publishes a live Postgres lag and
+    keeps the default ``expects_outbox=True``; its deploy script reads this same
+    registry before mutation and refuses to turn the outbox off when resource
+    discovery fails. The false state remains for a future cloud that deliberately
+    runs no pipeline: it is explicitly unchecked while ``not_configured``, and a
+    FAILURE the moment a real lag appears.
 
 NOTHING HERE DOES IO. :mod:`clickhouse.check_fleet_analytics_freshness` fetches.
 """

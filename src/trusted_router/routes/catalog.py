@@ -446,7 +446,16 @@ def register_catalog_routes(router: APIRouter) -> None:
             if _public_model_matches_filters(shape, request)
         ]
 
-    @router.get("/models", response_model=dict[str, list[dict[str, Any]]])
+    @router.get(
+        "/models",
+        response_model=dict[str, list[dict[str, Any]]],
+        summary="List public models",
+        description=(
+            "Returns the live public model catalog. No API key is required. "
+            "The canonical production URL is https://api.trustedrouter.com/v1/models."
+        ),
+        openapi_extra={"servers": [{"url": "https://api.trustedrouter.com"}]},
+    )
     async def models(request: Request) -> Response:
         if not _has_public_model_filters(request):
             return _cached_json_response(

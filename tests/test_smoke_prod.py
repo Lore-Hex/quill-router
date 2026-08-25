@@ -114,10 +114,14 @@ def test_api_catalog_and_regions_are_publicly_reachable(
     client: httpx.Client,
     model_catalog: list[dict[str, Any]],
 ) -> None:
-    """The catalog (models / providers / regions) lives on the control
-    plane and must be readable without auth — SDKs call these BEFORE the
-    user has a key. The attested gateway at api.trustedrouter.com only
-    handles chat; it has no catalog routes."""
+    """The catalog (models / providers / regions) must be readable without
+    auth — SDKs call these BEFORE the user has a key.
+
+    Both origins serve it: verified 2026-08-24, api.trustedrouter.com/v1/models
+    and trustedrouter.com/v1/models each returned 617 models. api is the
+    canonical one SDKs are pointed at, and the control-plane path stays as a
+    compatibility mirror. An earlier version of this docstring said the
+    attested gateway had no catalog routes; that is no longer true."""
     providers = client.get("/v1/providers")
     regions = client.get("/v1/regions")
 
@@ -138,6 +142,16 @@ def test_api_catalog_and_regions_are_publicly_reachable(
         "azure",
     }.issubset({item["id"] for item in providers.json()["data"]})
     assert "europe-west4" in {item["id"] for item in regions.json()["data"]}
+
+
+def test_attested_api_catalog_is_publicly_reachable(api_client: httpx.Client) -> None:
+    """GET /v1/models is the sole anonymous API metadata route. It must
+    work before users have a key and expose public CORS for browser demos."""
+    response = api_client.get("/models")
+
+    assert response.status_code == 200, response.text
+    assert response.headers.get("access-control-allow-origin") == "*"
+    assert any(item["id"] == "trustedrouter/auto" for item in response.json()["data"])
 
 
 def test_embeddings_catalog_lists_embedding_models(client: httpx.Client) -> None:
@@ -243,9 +257,8 @@ def test_status_pages_are_publicly_reachable(
 
 
 def test_attested_gateway_rejects_unauthenticated_chat(api_client: httpx.Client) -> None:
-    """api.trustedrouter.com is the attested chat gateway. Every path other
-    than /attestation must require a bearer token; if it ever serves an
-    unauthenticated 200, billing and key-limit gating are bypassed."""
+    """The public health, attestation, and model-catalog routes are narrow
+    exceptions. Prompt-bearing routes must still require a bearer token."""
     response = api_client.post(
         "/chat/completions",
         headers={"content-type": "application/json"},
