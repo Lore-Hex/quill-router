@@ -56,6 +56,7 @@ WORKFLOW = ROOT / ".github/workflows/check-analytics-freshness.yml"
 
 NOW = dt.datetime(2026, 8, 17, 12, 0, tzinfo=dt.UTC)
 
+
 #: Which clouds the parametrised fleet tests run over, DERIVED from the
 #: registry and split by property rather than by name. A hardcoded
 #: ["aws", "gcp"] would give a fourth registry entry strictly less coverage
@@ -614,7 +615,8 @@ def test_every_deployed_cloud_with_a_live_outbox_is_measured() -> None:
 
     for cloud in ("aws", "gcp"):
         entry = fleet_endpoint(cloud)
-        assert entry is not None and entry.expects_outbox is True
+        assert entry is not None, cloud
+        assert entry.expects_outbox is True, cloud
 
 
 def test_a_cloud_declared_outbox_free_that_grows_one_FAILS() -> None:

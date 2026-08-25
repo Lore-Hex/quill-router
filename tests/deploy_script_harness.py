@@ -230,6 +230,20 @@ if [ -n "${HARNESS_CLOUD_BAKE_SHA:-}" ]; then
   esac
 fi
 
+# Some deploy tests need to inspect the exact cloud-init document handed to
+# Azure. Capture the file at the command boundary, before the script's EXIT
+# trap removes its temporary copy.
+if [ "${0##*/}" = "az" ] && [ -n "${HARNESS_CAPTURE_CUSTOM_DATA:-}" ]; then
+  previous=""
+  for argument in "$@"; do
+    if [ "$previous" = "custom-data" ]; then
+      cp "$argument" "$HARNESS_CAPTURE_CUSTOM_DATA"
+      break
+    fi
+    [ "$argument" = "--custom-data" ] && previous="custom-data" || previous=""
+  done
+fi
+
 if { [ "${0##*/}" = "gcloud" ] || [ "${0##*/}" = "gc" ]; } \
     && [[ " $* " == *" run services describe "* ]] \
     && [[ " $* " == *"status.traffic[?tag="* ]]; then

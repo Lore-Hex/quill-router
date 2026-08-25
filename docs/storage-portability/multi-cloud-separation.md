@@ -344,6 +344,7 @@ and the second move is a diff a reviewer reads.
 
 <!-- NOT_PROVEN:begin -->
 - `scripts/deploy/aws_eu_clickhouse_drain_install.sh`
+- `scripts/deploy/azure_clickhouse.sh`
 <!-- NOT_PROVEN:end -->
 
 Its middle ships a tarball to the node in base64 chunks over SSM and then reads
@@ -355,6 +356,17 @@ about it is that the shared fragment it calls —
 `scripts/deploy/cloud_complete_gate.sh` — returns the gate's exit status
 unaltered for every code the gate can produce. What is not proven is that a real
 run reaches that call.
+
+`azure_clickhouse.sh` is unproven for a different and smaller reason: it does
+not run the gate at all. It provisions the node, and the gate for the Azure
+cloud is bound to `azure_control_plane.sh`, which does call
+`require_cloud_complete`. It appears in this list only because it NAMES the
+verifier once, in the operator next-steps it prints, and
+`_scripts_invoking_the_verifier` matches a mention rather than a call —
+deliberately, so wiring cannot exist that no registry entry would miss. Claiming
+it as proven would assert a binding it does not have. What *is* covered is its
+own behaviour: `tests/test_azure_clickhouse_deploy.py` executes it under the
+harness and asserts the Azure commands and cloud-init it emits.
 
 A smaller true claim beats a larger false one; that is the whole thesis here, so
 it applies to this section too.
