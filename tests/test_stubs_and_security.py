@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from tests.route_inventory import route_methods
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
@@ -1063,11 +1064,12 @@ def test_production_control_plane_does_not_register_inference_routes() -> None:
         configure_store_arg=False,
         init_observability=False,
     )
-    registered = {
-        (route.path_format, method)
-        for route in prod_app.routes
-        for method in getattr(route, "methods", set())
-    }
+    # route_methods, not a walk of prod_app.routes: FastAPI 0.141 stopped
+    # flattening included routers, so the plain walk sees a handful of entries
+    # and every "not in registered" below passes because there is nothing in
+    # `registered` to find. The positive assertion further down is what catches
+    # that -- it is the control on this test, and it is the one that failed.
+    registered = route_methods(prod_app)
     assert ("/v1/chat/completions", "POST") not in registered
     assert ("/v1/messages", "POST") not in registered
     assert ("/v1/responses", "POST") not in registered

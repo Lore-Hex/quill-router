@@ -43,6 +43,15 @@ def register(router: APIRouter) -> None:
         raw = await request.body()
         sig = request.headers.get("stripe-signature")
         if settings.stripe_webhook_secret:
+            # Reject a missing header instead of handing None to signature
+            # verification. stripe-python's types now say so out loud -- the
+            # parameter is `str`, not `str | None` -- but the guard is the point
+            # rather than the annotation: an unsigned request must not reach
+            # construct_event at all.
+            if sig is None:
+                raise api_error(
+                    400, "Missing Stripe signature", ErrorType.BAD_REQUEST
+                )
             try:
                 constructed = stripe.Webhook.construct_event(
                     raw, sig, settings.stripe_webhook_secret

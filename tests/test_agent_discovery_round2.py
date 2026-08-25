@@ -16,6 +16,7 @@ import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+from tests.route_inventory import effective_route_objects, route_paths
 from trusted_router.config import Settings
 from trusted_router.dashboard import llms_txt
 from trusted_router.domains import configured_control_domains
@@ -182,8 +183,8 @@ def test_oauth_authorization_server_metadata_resolves_to_mounted_routes(
         path = parsed.path or "/"
         assert any(
             route.path == path and method in (route.methods or set())
-            for route in client.app.routes
-            if isinstance(route, APIRoute)
+            for route in effective_route_objects(client.app)
+            if isinstance(route.unwrapped, APIRoute)
         ), field
 
     assert document["response_types_supported"] == ["code"]
@@ -228,7 +229,7 @@ def test_oauth_metadata_is_mounted_on_the_public_surface() -> None:
         configure_store_arg=False,
         init_observability=False,
     )
-    paths = {route.path for route in public_app.routes}
+    paths = route_paths(public_app)
 
     assert "/.well-known/oauth-authorization-server" in paths
     response = TestClient(public_app).get("/.well-known/oauth-authorization-server")

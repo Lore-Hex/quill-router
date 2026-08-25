@@ -7,8 +7,20 @@ from types import ModuleType
 
 import pytest
 
+from tests.route_inventory import effective_route_objects, route_paths
 from trusted_router.config import SERVICE_SURFACE_SECRET_OWNERS, Settings
 from trusted_router.main import create_app
+
+
+def _routes_of(app):
+    """Leaf routes, each with ``.path`` set to the path actually served.
+
+    A raw child of an include reports its path relative to that include, so
+    reading ``route.path`` straight off one yields ``/gateway/validate`` where
+    this test means ``/internal/gateway/validate``.
+    """
+    return effective_route_objects(app)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -90,11 +102,11 @@ def test_every_combined_route_sent_to_public_is_mounted_by_public() -> None:
         configure_store_arg=False,
         init_observability=False,
     )
-    public_paths = {route.path for route in public.routes}
+    public_paths = route_paths(public)
     emitted = _emitted_map()
     violations = {
         route.path
-        for route in combined.routes
+        for route in _routes_of(combined)
         if _emitted_backend(emitted, _concrete(route.path)) == PUBLIC_BACKEND
         and route.path not in public_paths
     }
@@ -126,8 +138,8 @@ def test_broadcast_drain_is_control_worker_owned_not_internal_mounted() -> None:
         init_observability=False,
     )
 
-    internal_paths = {route.path for route in internal.routes}
-    combined_paths = {route.path for route in combined.routes}
+    internal_paths = route_paths(internal)
+    combined_paths = route_paths(combined)
     assert "/internal/broadcast/drain" not in internal_paths
     assert "/v1/internal/broadcast/drain" not in internal_paths
     assert "/internal/broadcast/drain" in combined_paths
@@ -185,7 +197,7 @@ def test_internal_surface_route_inventory_matches_capability_audit() -> None:
     }
     actual = {
         (method, route.path)
-        for route in internal.routes
+        for route in _routes_of(internal)
         if not route.path.startswith("/v1")
         for method in (route.methods or set())
     }
@@ -193,7 +205,7 @@ def test_internal_surface_route_inventory_matches_capability_audit() -> None:
     assert actual == expected
     assert {
         (method, route.path.removeprefix("/v1"))
-        for route in internal.routes
+        for route in _routes_of(internal)
         if route.path.startswith("/v1")
         for method in (route.methods or set())
     } == expected

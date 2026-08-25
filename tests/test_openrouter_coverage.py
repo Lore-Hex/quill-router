@@ -5,6 +5,7 @@ import os
 import httpx
 from fastapi.testclient import TestClient
 
+from tests.route_inventory import route_methods
 from trusted_router.main import app
 from trusted_router.openrouter_coverage import ROUTE_COVERAGE, coverage_map
 
@@ -119,10 +120,9 @@ def test_every_known_openrouter_method_is_classified() -> None:
 
 def test_classified_routes_are_registered_under_v1() -> None:
     registered = {
-        (route.path_format.removeprefix("/v1"), method)
-        for route in app.routes
-        for method in getattr(route, "methods", set())
-        if route.path_format.startswith("/v1/")
+        (path.removeprefix("/v1"), method)
+        for path, method in route_methods(app)
+        if path.startswith("/v1/")
     }
     missing = set(coverage_map()) - registered
     assert not missing
@@ -130,10 +130,9 @@ def test_classified_routes_are_registered_under_v1() -> None:
 
 def test_classified_routes_are_registered_without_v1_for_openrouter_compatibility() -> None:
     registered = {
-        (route.path_format, method)
-        for route in app.routes
-        for method in getattr(route, "methods", set())
-        if not route.path_format.startswith("/v1/")
+        (path, method)
+        for path, method in route_methods(app)
+        if not path.startswith("/v1/")
     }
     missing = set(coverage_map()) - registered
     assert not missing
