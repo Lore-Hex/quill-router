@@ -47,8 +47,15 @@ def test_ci_runs_the_suite_again_past_every_scheduled_cutover() -> None:
     override has to be there.
     """
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    # Comment lines stripped, for the same reason the coverage assertion above
+    # strips them: the workflow DOCUMENTS how to regenerate .test_durations,
+    # and that comment contains `uv run pytest`. Counting raw occurrences made
+    # this fail on the documentation rather than on a third real invocation.
+    commands = "\n".join(
+        line for line in workflow.splitlines() if not line.lstrip().startswith("#")
+    )
 
-    assert workflow.count("uv run pytest") == 2
+    assert commands.count("uv run pytest") == 2
     assert "test-post-cutover:" in workflow
     assert "TR_LIFECYCLE_CLOCK_OVERRIDE=" in workflow
     # Derived from _RETIREMENTS at run time, never a hard-coded date that would
