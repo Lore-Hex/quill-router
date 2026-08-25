@@ -33,12 +33,22 @@ from trusted_router.synthetic.components import (
 )
 from trusted_router.synthetic.rollups import merge_rollups, new_rollup_for_sample
 
-CURRENT_SAMPLE_TTL_SECONDS = 5 * 60
-# Regional monitor jobs run every three minutes so normal Cloud Run startup
-# latency remains inside this five-minute freshness contract. A sample that
-# crosses the contract is degraded; only two missed freshness windows plus a
-# small scheduling allowance are a silent-probe failure.
-SILENT_PROBE_TTL_SECONDS = (2 * CURRENT_SAMPLE_TTL_SECONDS) + 60
+# Regional monitor jobs run every three minutes. The freshness contract must
+# be sized in CADENCES, not wall-clock feel: the previous 5-minute contract was
+# 1.67 cadences, which left the slowest probe key peaking ~275s old at STEADY
+# STATE and flapping the public banner "Degraded" on ~25s of ordinary
+# scheduling jitter -- the 2026-08-23..25 GCP status history's recurring
+# one-hour "Degraded 98.7%" buckets, and a morning of banner flaps during a
+# healthy fleet, were exactly this. Two full cadences plus the startup
+# allowance means one missed cycle is tolerated and a sample midway into its
+# second missed cycle is degraded -- a contract the cadence can actually keep.
+MONITOR_CADENCE_SECONDS = 3 * 60
+CURRENT_SAMPLE_TTL_SECONDS = (2 * MONITOR_CADENCE_SECONDS) + 60
+# Unchanged at 660s: a probe silent past ~11 minutes (3+ cadences) stopped
+# emitting while its siblings kept going -- the silent-disappearance outage.
+# Kept as an absolute rather than re-derived from the widened contract so the
+# "down" boundary does not silently move with it.
+SILENT_PROBE_TTL_SECONDS = 11 * 60
 IMAGE_GENERATION_SAMPLE_TTL_SECONDS = 7 * 60 * 60
 STATUS_HISTORY_HOURS = 48
 # Uptime thresholds for per-bucket coloring. Single-sample blips
