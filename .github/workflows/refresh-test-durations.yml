@@ -39,3 +39,7 @@ jobs:
           name: test-durations
           path: .test_durations
           if-no-files-found: error
+          # .test_durations is a dotfile; upload-artifact v4 silently excludes
+          # hidden files unless told otherwise — the first run recorded a full
+          # suite and then uploaded nothing.
+          include-hidden-files: true
