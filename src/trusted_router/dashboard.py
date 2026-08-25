@@ -4499,7 +4499,7 @@ def docs_llms_txt(settings: Settings) -> str:
 
 def docs_llms_full_txt(settings: Settings) -> str:
     domain = settings.trusted_domain
-    models = _llms_model_rows()
+    models = _llms_model_rows(test_mode=settings.environment == "test")
     providers = [_provider_view(provider) for provider in providers_for_display()]
     lines = [
         "# TrustedRouter Full LLM Context",

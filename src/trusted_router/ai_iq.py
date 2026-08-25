@@ -21,6 +21,9 @@ AI_IQ_BASE_URL = "https://aiiq.org"
 AI_IQ_API_MODELS_URL = f"{AI_IQ_BASE_URL}/api/models"
 AI_IQ_CACHE_TTL_SECONDS = 6 * 60 * 60
 AI_IQ_TIMEOUT_SECONDS = 2.0
+#: How long a FAILED fetch suppresses retries. Short: the upstream may recover
+#: any moment, and the only cost of expiry is one 2-second attempt.
+AI_IQ_FAILURE_TTL_SECONDS = 60.0
 
 
 class AiIqModel(TypedDict, total=False):
@@ -245,6 +248,16 @@ def _models_payload(*, test_mode: bool) -> dict[str, Any]:
         with _CACHE_LOCK:
             if _CACHE is not None:
                 return _CACHE[1]
+            # Cache the FAILURE too, briefly. Without this, every caller pays
+            # the full fetch timeout while the upstream is down — measured as
+            # one 18.5-minute CI test (~550 model rows x the 2s timeout each,
+            # retried per row because nothing was cached), and the same shape
+            # threatens every catalog page render in production during an
+            # AI-IQ outage. One timeout per TTL window, not one per row.
+            _CACHE = (
+                time.monotonic() - AI_IQ_CACHE_TTL_SECONDS + AI_IQ_FAILURE_TTL_SECONDS,
+                dict(_FALLBACK_PAYLOAD),
+            )
         return dict(_FALLBACK_PAYLOAD)
     with _CACHE_LOCK:
         _CACHE = (time.monotonic(), payload)
