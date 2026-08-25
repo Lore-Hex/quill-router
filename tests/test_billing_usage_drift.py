@@ -28,6 +28,7 @@ from typing import Any
 from tests.fakes.spanner import make_fake_store
 from trusted_router.storage import Workspace
 from trusted_router.storage_gcp_counter_reconcile import (
+    USAGE_BASELINE_KIND,
     audit_typed_invariants,
     repair_typed_usage,
 )
@@ -185,7 +186,10 @@ def test_a_missing_baseline_is_unauditable_not_a_violation() -> None:
     # scripts/audit_typed_counters.py passes one `sample_label` for all of it --
     # so an unauditable row left in there prints as "VIOLATION" underneath a
     # summary that says CLEAN. Production's first run printed 643 such lines.
-    assert report.unauditable[f"usage-unauditable:{ws}"]["baseline"] is None
+    sample = report.unauditable[f"usage-unauditable:{ws}"]
+    # The remainder IS the number to record, so the report hands it over rather
+    # than only saying it could not check.
+    assert sample["unexplained"] == 9_999_999 - 1_000
     assert not report.samples, "unauditable rows must not sit in the violation samples"
 
 
@@ -315,3 +319,204 @@ def test_usage_is_summed_across_shards() -> None:
 
     assert report.usage_rows == 1, "one workspace, not one row per shard"
     assert report.usage_violations == 0, report.samples
+
+
+def test_a_counter_the_ledger_explains_exactly_needs_no_baseline() -> None:
+    """604 of 643 production workspaces are this shape.
+
+    An absent baseline is not automatically unknowable. A baseline is usage
+    booked BEFORE the ledger existed, so when the ledger accounts for the
+    counter exactly the baseline is zero -- reconciled, not assumed. Treating
+    these as uncheckable reported 94% of the fleet as uncovered.
+    """
+    store, db, _ = make_fake_store()
+    ws = "ws_postflip"
+    _credit(store, db, ws, baseline=None, total_usage=450_000)
+    _settled(db, "r1", ws, 300_000)
+    _settled(db, "r2", ws, 150_000)
+
+    report = audit_typed_invariants(store)
+
+    assert report.usage_violations == 0
+    assert report.usage_unauditable == 0, report.unauditable
+    assert report.clean and report.fully_audited
+
+
+def test_a_counter_BELOW_the_ledger_is_surfaced_even_with_no_baseline() -> None:
+    """The case no baseline can excuse -- surfaced, but not faulted.
+
+    A baseline is pre-ledger usage and cannot be negative, so a counter below
+    booked spend is money booked and not counted. Before this, "no baseline"
+    ended the check and it was invisible entirely.
+
+    It is REPORTED rather than failed because a settle credits the balance and
+    marks its reservation in separate transactions: a continuously-loaded
+    workspace is always slightly behind, and production reads one at -3780,
+    -1537, -856, -173 on consecutive snapshots. Failing nightly on that is the
+    cry-wolf shape this repo has already paid for once.
+    """
+    store, db, _ = make_fake_store()
+    ws = "ws_behind"
+    _credit(store, db, ws, baseline=None, total_usage=100_000)
+    _settled(db, "r1", ws, 900_000)
+
+    report = audit_typed_invariants(store)
+
+    assert report.usage_behind_ledger == 1
+    assert report.usage_violations == 0
+    assert report.clean, "surfaced, not faulted"
+    assert not report.behind_ledger_clean
+    assert report.unauditable[f"usage-behind-ledger:{ws}"]["shortfall"] == 800_000
+
+
+def test_a_recorded_baseline_makes_a_pre_ledger_workspace_auditable() -> None:
+    """The 39 production workspaces whose JSON baseline was deleted.
+
+    Recorded under its own entity kind, not back in the credit body -- that body
+    is exactly what the credit-JSON cleanup empties, so returning it there would
+    arrange the same loss a second time.
+    """
+    store, db, _ = make_fake_store()
+    ws = "ws_preledger"
+    _credit(store, db, ws, baseline=None, total_usage=5_000_000)
+    _settled(db, "r1", ws, 1_000_000)
+
+    assert audit_typed_invariants(store).usage_unauditable == 1
+
+    store._write_entity(
+        USAGE_BASELINE_KIND,
+        ws,
+        {"workspace_id": ws, "baseline_microdollars": 4_000_000},
+    )
+    report = audit_typed_invariants(store)
+
+    assert report.usage_unauditable == 0
+    assert report.usage_violations == 0
+    assert report.clean and report.fully_audited
+
+
+def test_repair_works_with_no_baseline_when_the_ledger_explains_the_counter() -> None:
+    """The 604-workspace shape, on the repair side.
+
+    Refusing these for lack of a baseline would have made the repair tool
+    unusable on 94% of the fleet, for a number that is knowably zero.
+    """
+    store, db, _ = make_fake_store()
+    ws = "ws_reconciled"
+    _workspace(store, ws)
+    _credit(store, db, ws, baseline=None, total_usage=200_000)
+    _settled(db, "r1", ws, 500_000)  # counter behind the ledger
+
+    result = repair_typed_usage(store, ws, apply=True)
+
+    assert result.ready and result.applied, result.reasons
+    assert result.baseline == 0
+    assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["total_usage"] == 500_000
+
+
+def test_repair_still_refuses_when_history_is_genuinely_missing() -> None:
+    """And says what to record, rather than only that it will not proceed."""
+    store, db, _ = make_fake_store()
+    ws = "ws_history"
+    _workspace(store, ws)
+    _credit(store, db, ws, baseline=None, total_usage=5_000_000)
+    _settled(db, "r1", ws, 1_000_000)
+
+    result = repair_typed_usage(store, ws, apply=True)
+
+    assert not result.ready and not result.applied
+    assert any("4000000" in r for r in result.reasons), result.reasons
+    assert any(USAGE_BASELINE_KIND in r for r in result.reasons)
+
+
+def test_settles_on_a_nonzero_shard_are_not_mistaken_for_lost_history() -> None:
+    """The asymmetry that nearly wrote fictitious baselines into production.
+
+    `typed_usage` sums total_usage over every shard of a workspace. When the
+    ledger sum filtered ws_shard=0 and the counter did not, every non-zero-shard
+    settle looked like usage the ledger could not account for -- which reads as
+    pre-ledger history. Production has 638,484 settled reservations off shard 0
+    across 30 workspaces; the mismatch reported 42 workspaces as needing a
+    recorded baseline where 13 do.
+    """
+    store, db, _ = make_fake_store()
+    ws = "ws_sharded_ledger"
+    _credit(store, db, ws, baseline=None, total_usage=300_000)  # shard 0 row
+    db.typed[CREDIT_BALANCE_TABLE][(ws, 1)] = {
+        "workspace_id": ws, "shard": 1, "total_credits": 0,
+        "total_usage": 700_000, "reserved": 0,
+    }
+    # The matching ledger lives on the same shards.
+    _settled(db, "r0", ws, 300_000)
+    db.reservations["r1"] = {
+        "reservation_id": "r1", "workspace_id": ws, "ws_shard": 1,
+        "settled": True, "settled_usage_type": "Credits",
+        "actual_micro": 700_000, "credit_reserved_micro": 700_000,
+    }
+
+    report = audit_typed_invariants(store)
+
+    assert report.usage_violations == 0, report.samples
+    assert report.usage_unauditable == 0, report.unauditable
+    assert report.clean and report.fully_audited
+
+
+def test_a_settle_in_flight_is_not_reported_as_drift() -> None:
+    """A settle credits the balance and marks its reservation in SEPARATE
+    transactions, so a busy workspace always has some counted in the ledger and
+    not yet in the counter. Measured on production, one workspace read -3780 and
+    then -1537 microdollars seconds apart while another sat at exactly -9 in
+    both. Only the second kind is drift.
+
+    Here the shortfall resolves before the confirming read, exactly as an
+    in-flight settle does.
+    """
+    store, db, _ = make_fake_store()
+    ws = "ws_inflight"
+    _credit(store, db, ws, baseline=None, total_usage=400_000)
+    _settled(db, "r1", ws, 500_000)  # ledger ahead of the counter
+
+    original = audit_typed_invariants
+
+    def _land_the_settle() -> None:
+        # Partially landed, as a continuously-loaded workspace looks: the
+        # shortfall MOVED rather than vanished, which is the tell.
+        db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["total_usage"] = 460_000
+
+    # The confirming snapshot sees the balance credited, as it would in
+    # production milliseconds later.
+    import trusted_router.storage_gcp_counter_reconcile as mod
+
+    real_confirm = mod._confirm_behind_ledger
+
+    def _confirm(store_arg, candidates):
+        _land_the_settle()
+        return real_confirm(store_arg, candidates)
+
+    mod._confirm_behind_ledger = _confirm
+    try:
+        report = original(store)
+    finally:
+        mod._confirm_behind_ledger = real_confirm
+
+    assert report.usage_behind_ledger == 0, report.unauditable
+    assert report.clean
+
+
+def test_a_shortfall_that_persists_IS_reported() -> None:
+    """The stable kind. One production workspace sits at exactly -9
+    microdollars across consecutive reads; that is real and must not be
+    excused by the in-flight tolerance."""
+    store, db, _ = make_fake_store()
+    ws = "ws_persistent"
+    _credit(store, db, ws, baseline=None, total_usage=400_000)
+    _settled(db, "r1", ws, 500_000)
+
+    report = audit_typed_invariants(store)
+
+    # Reported, not faulted: `clean` stays true so the nightly audit does not
+    # flap on a workspace that is transiently behind by construction.
+    assert report.usage_behind_ledger == 1
+    assert report.usage_violations == 0
+    assert not report.behind_ledger_clean
+    assert report.unauditable[f"usage-behind-ledger:{ws}"]["shortfall"] == 100_000
