@@ -7,7 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -2233,30 +2233,40 @@ def _blog_og_image(settings: Settings, post: BlogPost) -> str:
     return f"https://{settings.trusted_domain}/og.png"
 
 
+def _newest_first(posts: Iterable[BlogPost]) -> list[BlogPost]:
+    """Reverse-chronological, enforced here rather than trusted upstream.
+
+    BLOG_POSTS is a hand-maintained tuple and had drifted: the-models-that-say-no
+    (2026-06-16) sat above a 2026-06-17 post. Sorting at render time makes the
+    order a property of the code instead of a thing every future author has to
+    remember, and `published_date` is ISO so the string compare is the date
+    compare.
+    """
+    return sorted(posts, key=lambda post: post.published_date, reverse=True)
+
+
 def _blog_index_posts(settings: Settings) -> tuple[BlogIndexPost, ...]:
     return tuple(
-        BlogIndexPost(post=post, image=_blog_og_image(settings, post)) for post in BLOG_POSTS
+        BlogIndexPost(post=post, image=_blog_og_image(settings, post))
+        for post in _newest_first(BLOG_POSTS)
     )
 
 
 def _featured_blog_posts(settings: Settings) -> tuple[BlogIndexPost, ...]:
-    """The featured posts, in FEATURED_SLUGS order.
+    """The featured posts, newest first.
 
-    Ordered by the tuple rather than by date: the point of the section is an
-    editorial running order, and sorting it chronologically would hand that
-    decision back to the calendar.
+    FEATURED_SLUGS chooses WHICH posts are featured; it does not choose their
+    order. Both sections on this page read newest-first, so a reader does not
+    have to work out that one of them follows a different rule.
 
     A slug that matches no post is skipped here and fails a test instead. The
     blog index should not 500 because somebody renamed a post, but it also
     should not silently show one card where two were intended.
     """
+    featured = [BLOG_POSTS_BY_SLUG[slug] for slug in FEATURED_SLUGS if slug in BLOG_POSTS_BY_SLUG]
     return tuple(
-        BlogIndexPost(
-            post=BLOG_POSTS_BY_SLUG[slug],
-            image=_blog_og_image(settings, BLOG_POSTS_BY_SLUG[slug]),
-        )
-        for slug in FEATURED_SLUGS
-        if slug in BLOG_POSTS_BY_SLUG
+        BlogIndexPost(post=post, image=_blog_og_image(settings, post))
+        for post in _newest_first(featured)
     )
 
 

@@ -35,11 +35,12 @@ class BlogPost:
 #: tell the two posts that explain what this company is from the twenty-six
 #: that report a benchmark result.
 #:
-#: Slugs rather than a flag on BlogPost, so the running order lives in one
-#: place and is read in one glance. `test_featured_slugs_all_resolve` fails if
-#: one stops matching a post -- a typo or a rename would otherwise empty this
-#: section in silence, and an empty featured section looks exactly like a
-#: design choice.
+#: Slugs rather than a flag on BlogPost, so the selection lives in one place and
+#: is read in one glance. This chooses WHICH posts are featured, not their
+#: order -- the section renders newest-first, like the archive below it.
+#: `test_featured_slugs_all_resolve` fails if one stops matching a post: a typo
+#: or a rename would otherwise empty this section in silence, and an empty
+#: featured section looks exactly like a design choice.
 FEATURED_SLUGS: tuple[str, ...] = (
     "synth-iris-prometheus-zeus",
     "they-are-still-training-on-your-data",
