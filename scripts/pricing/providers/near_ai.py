@@ -157,7 +157,10 @@ def fetch() -> ProviderPricingResult:
     transport = httpx.HTTPTransport(retries=PROVIDER_FETCH_TRANSPORT_RETRIES)
     with httpx.Client(
         timeout=PROVIDER_FETCH_TIMEOUT,
-        follow_redirects=True,
+        # The authenticated catalog has one pinned authority. A redirect is
+        # provider drift, not something the refresh job should follow while
+        # carrying a production bearer credential.
+        follow_redirects=False,
         transport=transport,
         headers={"Accept": "application/json", "User-Agent": PROVIDER_FETCH_UA},
     ) as client:
