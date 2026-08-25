@@ -83,6 +83,21 @@ _JSON_USAGE_BASELINE = (
     "FROM tr_entities WHERE kind='credit'"
 )
 _TYPED_USAGE_ROWS = "SELECT workspace_id, shard, total_usage FROM tr_credit_balance"
+#: Entity kind holding a RECORDED pre-ledger baseline, for the workspaces whose
+#: JSON one was deleted before anyone needed it. Its own kind rather than a key
+#: back in the credit body, because the credit body is precisely what
+#: storage_gcp_credit_json_cleanup empties -- putting it back there would set up
+#: the same loss again.
+USAGE_BASELINE_KIND = "typed_usage_baseline"
+_RECORDED_USAGE_BASELINES = (
+    "/* recorded_usage_baselines */ "
+    "SELECT JSON_VALUE(body, '$.workspace_id'), "
+    "JSON_VALUE(body, '$.baseline_microdollars') "
+    "FROM tr_entities WHERE kind='typed_usage_baseline'"
+)
+#: Spelled literally above so the query is a constant rather than an
+#: interpolation; this keeps the two from drifting apart silently.
+assert f"kind='{USAGE_BASELINE_KIND}'" in _RECORDED_USAGE_BASELINES
 #: Fleet-wide forms of the two ledger arms, grouped so the audit stays ONE
 #: snapshot rather than two queries per workspace.
 _SETTLED_CREDIT_ACTUALS_BY_WS = (
@@ -292,6 +307,11 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
             str(r[0]): (None if r[1] is None else int(r[1]))
             for r in snap.execute_sql(_JSON_USAGE_BASELINE)
         }
+        recorded_baselines = {
+            str(r[0]): int(r[1])
+            for r in snap.execute_sql(_RECORDED_USAGE_BASELINES)
+            if r[0] is not None and r[1] is not None
+        }
 
     regional_holds, regional_errors = _regional_quota_escrow(regional_rows)
     for scope, held in regional_holds.items():
@@ -331,20 +351,49 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
     # nowhere, and iterating typed rows alone cannot see it.
     for workspace_id, actual_usage in typed_usage.items():
         report.usage_rows += 1
-        baseline = usage_baselines.get(workspace_id)
         booked = settled_actuals.get(workspace_id, 0) + federated_applied.get(workspace_id, 0)
+        baseline = recorded_baselines.get(workspace_id)
         if baseline is None:
+            baseline = usage_baselines.get(workspace_id)
+        if baseline is None:
+            # No baseline anywhere. That is not automatically unknowable: a
+            # baseline is usage booked BEFORE the ledger began, so it can never
+            # be negative, and the two decidable cases follow from that alone.
+            if actual_usage < booked:
+                # No baseline could make this hold -- the counter is behind
+                # spend the ledger says was booked. Real, and previously
+                # invisible, because "no baseline" used to end the check here.
+                report.usage_violations += 1
+                _sample(
+                    f"usage-behind-ledger:{workspace_id}",
+                    {
+                        "typed_total_usage": actual_usage,
+                        "ledger_booked": booked,
+                        "shortfall": booked - actual_usage,
+                        "why": "counter is BELOW booked spend; no baseline can be "
+                        "negative, so this is drift rather than missing history",
+                    },
+                )
+                continue
+            if actual_usage == booked:
+                # Baseline is zero, and reconciled rather than assumed: the
+                # ledger accounts for the counter exactly. Fleet-wide this is
+                # 604 of 643 workspaces, which used to report as uncheckable.
+                continue
+            # Counter exceeds the ledger by an amount only pre-ledger history
+            # explains. Genuinely uncheckable until that number is recorded --
+            # and the remainder below IS the number to record.
             report.usage_unauditable += 1
             _unauditable(
                 f"usage-unauditable:{workspace_id}",
                 {
                     "typed_total_usage": actual_usage,
                     "ledger_booked": booked,
-                    "baseline": None,
-                    "why": "no JSON total_usage_microdollars: pre-flip baseline "
-                    "deleted by the credit-JSON cleanup, or a post-flip row that "
-                    "never had one. Those are indistinguishable, so neither "
-                    "confirmed nor faulted.",
+                    "unexplained": actual_usage - booked,
+                    "why": "usage predates the ledger and no baseline is "
+                    "recorded. `unexplained` is the value to record as "
+                    f"kind={USAGE_BASELINE_KIND!r} to make this workspace "
+                    "auditable.",
                 },
             )
             continue
@@ -621,6 +670,9 @@ def repair_typed_usage(
         baseline_row = list(snap.execute_sql(
             baseline_sql, params=ws_param, param_types=ws_type,
         ))
+        recorded_row = [
+            r for r in snap.execute_sql(_RECORDED_USAGE_BASELINES) if str(r[0]) == workspace_id
+        ]
         settled = list(snap.execute_sql(
             _SETTLED_CREDIT_ACTUALS, params=ws_param, param_types=ws_type,
         ))[0][0]
@@ -629,7 +681,9 @@ def repair_typed_usage(
         ))[0][0]
 
     baseline = None
-    if baseline_row and baseline_row[0][0] is not None:
+    if recorded_row and recorded_row[0][1] is not None:
+        baseline = int(recorded_row[0][1])
+    elif baseline_row and baseline_row[0][0] is not None:
         baseline = int(baseline_row[0][0])
 
     if workspace is None or not getattr(workspace, "billing_paused", False):
@@ -643,11 +697,21 @@ def repair_typed_usage(
             f"{open_holds} holds still open — drain them first, or their actuals "
             "land after this write and the counter is wrong again"
         )
+    booked_total = int(settled) + int(federated)
+    current_usage = int(usage_row[0][0]) if usage_row else None
+    if baseline is None and current_usage is not None and current_usage <= booked_total:
+        # Reconciled to zero rather than assumed: a baseline is pre-ledger
+        # usage, so it cannot be negative, and a counter at or below booked
+        # spend leaves nothing for one to explain. Repairing to `booked` can
+        # only raise the counter, which is the direction it is allowed to move.
+        baseline = 0
     if baseline is None:
         res.reasons.append(
-            "no JSON total_usage_microdollars baseline — it was removed by the "
-            "credit-JSON cleanup and is not archived, so the pre-flip total "
-            "cannot be reconstructed and this workspace is not repairable here"
+            f"usage exceeds the ledger by {(current_usage or 0) - booked_total} "
+            "and no baseline is recorded. That remainder is history from before "
+            "the ledger; the JSON copy was removed by the credit-JSON cleanup "
+            "without being archived. Record it as "
+            f"kind={USAGE_BASELINE_KIND!r} first, then repair"
         )
 
     res.baseline = baseline
@@ -698,20 +762,31 @@ def repair_typed_usage(
         ))
         if not current:
             return None  # typed row vanished — never re-create it as a partial row
-        fresh_baseline = list(transaction.execute_sql(
+        fresh_booked = int(list(transaction.execute_sql(
+            _SETTLED_CREDIT_ACTUALS, params=ws_param, param_types=ws_type,
+        ))[0][0]) + int(list(transaction.execute_sql(
+            _FEDERATED_SETTLEMENT_APPLIED, params=ws_param, param_types=ws_type,
+        ))[0][0])
+        # Same three-way resolution as the plan above, re-derived in the txn so
+        # a baseline recorded or a credit body cleaned between plan and write
+        # aborts rather than writing a total computed from the other one.
+        fresh_recorded = [
+            r
+            for r in transaction.execute_sql(_RECORDED_USAGE_BASELINES)
+            if str(r[0]) == workspace_id and r[1] is not None
+        ]
+        fresh_json = list(transaction.execute_sql(
             baseline_sql, params=ws_param, param_types=ws_type,
         ))
-        if not fresh_baseline or fresh_baseline[0][0] is None:
+        if fresh_recorded:
+            fresh_base = int(fresh_recorded[0][1])
+        elif fresh_json and fresh_json[0][0] is not None:
+            fresh_base = int(fresh_json[0][0])
+        elif int(current[0][0]) <= fresh_booked:
+            fresh_base = 0
+        else:
             return None
-        recomputed = (
-            int(fresh_baseline[0][0])
-            + int(list(transaction.execute_sql(
-                _SETTLED_CREDIT_ACTUALS, params=ws_param, param_types=ws_type,
-            ))[0][0])
-            + int(list(transaction.execute_sql(
-                _FEDERATED_SETTLEMENT_APPLIED, params=ws_param, param_types=ws_type,
-            ))[0][0])
-        )
+        recomputed = fresh_base + fresh_booked
         if recomputed != target:
             return None  # the ledger moved under us — abort rather than write a stale total
         if recomputed < int(current[0][0]) and not allow_decrease:
@@ -734,3 +809,115 @@ def repair_typed_usage(
     res.applied = True
     res.total_usage_after = result["total_usage"]
     return res
+
+
+# ── Recording a pre-ledger usage baseline ───────────────────────────────────
+# For the workspaces whose JSON baseline was deleted before anything needed it.
+# The value is not invented: it is the remainder the ledger cannot account for,
+# which is by definition the usage booked before the ledger began. Recording it
+# makes the workspace auditable from then on; it changes no counter and moves no
+# money.
+
+
+@dataclass
+class UsageBaselineProposal:
+    workspace_id: str
+    typed_total_usage: int
+    ledger_booked: int
+    baseline_microdollars: int
+    already_recorded: int | None = None
+
+    @property
+    def needed(self) -> bool:
+        return self.already_recorded is None and self.baseline_microdollars > 0
+
+
+def propose_usage_baselines(store: Any) -> list[UsageBaselineProposal]:
+    """Every workspace whose counter exceeds its ledger, with the value to record.
+
+    Read-only. A workspace whose ledger already explains its counter is absent:
+    its baseline is zero and needs no row.
+    """
+    report_rows: list[UsageBaselineProposal] = []
+    with store._database.snapshot(multi_use=True) as snap:
+        typed: dict[str, int] = {}
+        for row in snap.execute_sql(_TYPED_USAGE_ROWS):
+            key = str(row[0])
+            typed[key] = typed.get(key, 0) + int(row[2] or 0)
+        settled = {
+            str(r[0]): int(r[1] or 0)
+            for r in snap.execute_sql(_SETTLED_CREDIT_ACTUALS_BY_WS)
+        }
+        federated = {
+            str(r[0]): int(r[1] or 0)
+            for r in snap.execute_sql(_FEDERATED_SETTLEMENT_APPLIED_BY_WS)
+            if r[0] is not None
+        }
+        recorded = {
+            str(r[0]): int(r[1])
+            for r in snap.execute_sql(_RECORDED_USAGE_BASELINES)
+            if r[0] is not None and r[1] is not None
+        }
+    for workspace_id, usage in sorted(typed.items()):
+        booked = settled.get(workspace_id, 0) + federated.get(workspace_id, 0)
+        if usage <= booked:
+            continue
+        report_rows.append(
+            UsageBaselineProposal(
+                workspace_id=workspace_id,
+                typed_total_usage=usage,
+                ledger_booked=booked,
+                baseline_microdollars=usage - booked,
+                already_recorded=recorded.get(workspace_id),
+            )
+        )
+    return report_rows
+
+
+def record_usage_baseline(
+    store: Any,
+    proposal: UsageBaselineProposal,
+    *,
+    recorded_at: str,
+    apply: bool = False,
+) -> bool:
+    """Write ONE baseline row. Read-only when apply=False.
+
+    Refuses to overwrite an existing row: a baseline is a statement about
+    history, so a second, different value for the same workspace means one of
+    them is wrong and a human should decide which.
+    """
+    if proposal.already_recorded is not None:
+        return False
+    if not apply:
+        return proposal.needed
+    if not proposal.needed:
+        return False
+
+    def _txn(transaction: Any) -> bool:
+        existing = [
+            r
+            for r in transaction.execute_sql(_RECORDED_USAGE_BASELINES)
+            if str(r[0]) == proposal.workspace_id
+        ]
+        if existing:
+            return False
+        store._write_entity_tx(
+            transaction,
+            USAGE_BASELINE_KIND,
+            proposal.workspace_id,
+            {
+                "workspace_id": proposal.workspace_id,
+                "baseline_microdollars": proposal.baseline_microdollars,
+                "recorded_at": recorded_at,
+                "reason": (
+                    "usage booked before the typed ledger; the JSON copy was "
+                    "removed by the credit-JSON cleanup without being archived"
+                ),
+                "typed_total_usage_at_record": proposal.typed_total_usage,
+                "ledger_booked_at_record": proposal.ledger_booked,
+            },
+        )
+        return True
+
+    return bool(store._run_in_transaction(_txn))

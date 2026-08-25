@@ -28,6 +28,7 @@ from typing import Any
 from tests.fakes.spanner import make_fake_store
 from trusted_router.storage import Workspace
 from trusted_router.storage_gcp_counter_reconcile import (
+    USAGE_BASELINE_KIND,
     audit_typed_invariants,
     repair_typed_usage,
 )
@@ -185,7 +186,10 @@ def test_a_missing_baseline_is_unauditable_not_a_violation() -> None:
     # scripts/audit_typed_counters.py passes one `sample_label` for all of it --
     # so an unauditable row left in there prints as "VIOLATION" underneath a
     # summary that says CLEAN. Production's first run printed 643 such lines.
-    assert report.unauditable[f"usage-unauditable:{ws}"]["baseline"] is None
+    sample = report.unauditable[f"usage-unauditable:{ws}"]
+    # The remainder IS the number to record, so the report hands it over rather
+    # than only saying it could not check.
+    assert sample["unexplained"] == 9_999_999 - 1_000
     assert not report.samples, "unauditable rows must not sit in the violation samples"
 
 
@@ -315,3 +319,104 @@ def test_usage_is_summed_across_shards() -> None:
 
     assert report.usage_rows == 1, "one workspace, not one row per shard"
     assert report.usage_violations == 0, report.samples
+
+
+def test_a_counter_the_ledger_explains_exactly_needs_no_baseline() -> None:
+    """604 of 643 production workspaces are this shape.
+
+    An absent baseline is not automatically unknowable. A baseline is usage
+    booked BEFORE the ledger existed, so when the ledger accounts for the
+    counter exactly the baseline is zero -- reconciled, not assumed. Treating
+    these as uncheckable reported 94% of the fleet as uncovered.
+    """
+    store, db, _ = make_fake_store()
+    ws = "ws_postflip"
+    _credit(store, db, ws, baseline=None, total_usage=450_000)
+    _settled(db, "r1", ws, 300_000)
+    _settled(db, "r2", ws, 150_000)
+
+    report = audit_typed_invariants(store)
+
+    assert report.usage_violations == 0
+    assert report.usage_unauditable == 0, report.unauditable
+    assert report.clean and report.fully_audited
+
+
+def test_a_counter_BELOW_the_ledger_is_a_violation_even_with_no_baseline() -> None:
+    """The case no baseline can excuse.
+
+    A baseline is pre-ledger usage; it cannot be negative. So a counter sitting
+    below booked spend is drift no matter what history is missing -- money
+    booked and never counted. Before this, "no baseline" ended the check and
+    this was invisible.
+    """
+    store, db, _ = make_fake_store()
+    ws = "ws_behind"
+    _credit(store, db, ws, baseline=None, total_usage=100_000)
+    _settled(db, "r1", ws, 900_000)
+
+    report = audit_typed_invariants(store)
+
+    assert report.usage_violations == 1
+    assert not report.clean
+    assert report.samples[f"usage-behind-ledger:{ws}"]["shortfall"] == 800_000
+
+
+def test_a_recorded_baseline_makes_a_pre_ledger_workspace_auditable() -> None:
+    """The 39 production workspaces whose JSON baseline was deleted.
+
+    Recorded under its own entity kind, not back in the credit body -- that body
+    is exactly what the credit-JSON cleanup empties, so returning it there would
+    arrange the same loss a second time.
+    """
+    store, db, _ = make_fake_store()
+    ws = "ws_preledger"
+    _credit(store, db, ws, baseline=None, total_usage=5_000_000)
+    _settled(db, "r1", ws, 1_000_000)
+
+    assert audit_typed_invariants(store).usage_unauditable == 1
+
+    store._write_entity(
+        USAGE_BASELINE_KIND,
+        ws,
+        {"workspace_id": ws, "baseline_microdollars": 4_000_000},
+    )
+    report = audit_typed_invariants(store)
+
+    assert report.usage_unauditable == 0
+    assert report.usage_violations == 0
+    assert report.clean and report.fully_audited
+
+
+def test_repair_works_with_no_baseline_when_the_ledger_explains_the_counter() -> None:
+    """The 604-workspace shape, on the repair side.
+
+    Refusing these for lack of a baseline would have made the repair tool
+    unusable on 94% of the fleet, for a number that is knowably zero.
+    """
+    store, db, _ = make_fake_store()
+    ws = "ws_reconciled"
+    _workspace(store, ws)
+    _credit(store, db, ws, baseline=None, total_usage=200_000)
+    _settled(db, "r1", ws, 500_000)  # counter behind the ledger
+
+    result = repair_typed_usage(store, ws, apply=True)
+
+    assert result.ready and result.applied, result.reasons
+    assert result.baseline == 0
+    assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["total_usage"] == 500_000
+
+
+def test_repair_still_refuses_when_history_is_genuinely_missing() -> None:
+    """And says what to record, rather than only that it will not proceed."""
+    store, db, _ = make_fake_store()
+    ws = "ws_history"
+    _workspace(store, ws)
+    _credit(store, db, ws, baseline=None, total_usage=5_000_000)
+    _settled(db, "r1", ws, 1_000_000)
+
+    result = repair_typed_usage(store, ws, apply=True)
+
+    assert not result.ready and not result.applied
+    assert any("4000000" in r for r in result.reasons), result.reasons
+    assert any(USAGE_BASELINE_KIND in r for r in result.reasons)

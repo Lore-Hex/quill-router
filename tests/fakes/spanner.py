@@ -1670,6 +1670,23 @@ def _execute_sql(
             totals[str(ws)] = totals.get(str(ws), 0) + int(rec.get("actual_micro") or 0)
         return totals
 
+    if "/* recorded_usage_baselines */" in sql:
+        _require_pred(sql, "kind='typed_usage_baseline'", "recorded usage baseline kind")
+        _require_pred(sql, "$.baseline_microdollars", "recorded usage baseline amount")
+        out: list[list[Any]] = []
+        for (row_kind, _eid), row in sorted(db.rows.items()):
+            if row_kind != "typed_usage_baseline":
+                continue
+            try:
+                body = json.loads(row.body)
+            except (TypeError, ValueError):
+                continue
+            ws = body.get("workspace_id")
+            amount = body.get("baseline_microdollars")
+            if ws is None or amount is None:
+                continue
+            out.append([str(ws), str(amount)])
+        return out
     if "/* json_usage_baseline_one */" in sql:
         _require_pred(sql, "kind='credit'", "usage baseline kind")
         _require_pred(sql, "$.total_usage_microdollars", "usage baseline field")
