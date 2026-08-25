@@ -60,8 +60,20 @@ jobs:
         run: uv run --no-sync python -c "import trusted_router.main"
 
   test:
+    # Sharded across runners because deploy latency IS CI latency: the deploy
+    # workflow's gate-on-ci step waits for this run, and it was measured at
+    # 29 minutes of a ~35 minute pipeline. When pushes land more often than
+    # that, every deploy reaches its supersede gate already obsolete and skips,
+    # so main silently stops reaching production -- 11 hours of it on
+    # 2026-08-23, with every run green. This repository is public, so extra
+    # standard runners cost nothing but concurrency.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     runs-on: ubuntu-latest
     env:
+      TEST_SHARDS: "4"
       TR_CONFORMANCE_POSTGRES_DSN: postgresql://postgres:tr@localhost:5432/postgres
       # Spanner's PostgreSQL dialect, via PGAdapter + the Spanner emulator.
       # Needs no GCP credentials, so it runs on every PR like any other
@@ -104,7 +116,87 @@ jobs:
       # 53/53 with grouping. Per-test id namespacing makes the shared DATABASE
       # order-independent; grouping is what serializes the DDL.
       - name: Tests and coverage
-        run: uv run pytest -q -n 4 --dist loadgroup --cov=trusted_router --cov-report=term-missing --cov-fail-under=70
+        # Balanced by .test_durations, which is why that file is committed.
+        # Without it pytest-split splits by test COUNT, and equal counts are not
+        # equal minutes: measured on the first sharded run, shard 2 finished in
+        # 7m40s while shard 1 took 21m30s and every other runner sat idle
+        # waiting for it. The critical path is the slowest shard, so balance is
+        # the whole point -- 1164s of test time over 4 shards is ~291s each.
+        #
+        # Regenerate after a large test-suite change:
+        #   uv run pytest -n 4 --dist loadgroup --store-durations --clean-durations
+        # Stale durations degrade gracefully: unknown tests are distributed by
+        # count, so a missing entry costs balance, not correctness.
+        #
+        # --splits/--group (pytest-split) shards the suite across matrix jobs;
+        # -n 4 still uses each runner's 4 vCPUs within a shard. Coverage is
+        # collected per shard with NO fail-under: a shard sees only its own
+        # slice, so enforcing 70% there would fail on a perfectly covered
+        # suite. The `coverage` job below combines them and enforces once.
+        run: >-
+          uv run pytest -q -n 4 --dist loadgroup
+          --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
+          --cov=trusted_router --cov-report=
+      - name: Stash this shard's coverage
+        # Renamed off the dotfile before upload. `.coverage` is hidden, and
+        # upload-artifact only stopped skipping hidden files behind an opt-in
+        # added in a recent version -- a silently empty artifact here would
+        # make the combine job compute the floor from fewer shards than it
+        # thinks it has.
+        run: mv .coverage coverage-${{ matrix.shard }}.dat
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.shard }}
+          path: coverage-${{ matrix.shard }}.dat
+          retention-days: 1
+
+  coverage:
+    # The 70% gate, enforced once over the combined shards.
+    #
+    # This job is why sharding does not quietly weaken the coverage floor. Each
+    # shard measures only the lines its own slice touched, so a per-shard
+    # --cov-fail-under=70 would fail on a suite that covers 95% overall. Moving
+    # the threshold here keeps the same number meaning the same thing.
+    #
+    # It runs even when a shard fails, so a red suite reports BOTH the failing
+    # tests and the coverage number rather than hiding one behind the other --
+    # but it still fails if any shard did, because coverage computed from a
+    # partial run is not a measurement of this commit.
+    needs: test
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Sync
+        run: uv sync --frozen
+      - name: Collect every shard's coverage
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: shards
+      - name: Combine and enforce the floor
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "a test shard did not pass; coverage over a partial run is not"
+            echo "a measurement of this commit"
+            exit 1
+          fi
+          # download-artifact gives one directory per artifact; coverage
+          # combine wants distinct file names in one place.
+          i=0
+          for f in shards/coverage-*/coverage-*.dat; do
+            [ -f "$f" ] || continue
+            i=$((i + 1))
+            cp "$f" ".coverage.${i}"
+          done
+          echo "combining ${i} shard(s)"
+          test "$i" -gt 0 || { echo "no coverage artifacts found"; exit 1; }
+          uv run coverage combine
+          uv run coverage report --show-missing --skip-covered --fail-under=70
 
   # The same suite, run once with the provider-lifecycle clock pinned PAST every
   # scheduled cutover.
@@ -121,7 +213,16 @@ jobs:
   # than a second step in `test` so the two clocks report separately -- a red
   # here means "this will break on <date>", not "this is broken".
   test-post-cutover:
+    # Sharded for the same reason as `test`: gate-on-ci waits for the whole
+    # run, so the slowest job sets deploy latency. Leaving this one unsharded
+    # would just move the bottleneck here.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     runs-on: ubuntu-latest
+    env:
+      TEST_SHARDS: "4"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
@@ -146,7 +247,9 @@ jobs:
           print(f"lifecycle clock pinned to {stamp}")
           '
       - name: Tests with every scheduled cutover already past
-        run: uv run pytest -q -n 4 --dist loadgroup
+        run: >-
+          uv run pytest -q -n 4 --dist loadgroup
+          --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
 
   browser:
     runs-on: ubuntu-latest
