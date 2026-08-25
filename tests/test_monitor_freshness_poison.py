@@ -20,6 +20,7 @@ from trusted_router.storage_models import FUTURE_SAMPLE_SKEW_SECONDS, SyntheticP
 from trusted_router.synthetic.rollups import raw_sample_is_within_retention
 from trusted_router.synthetic.status import (
     CURRENT_SAMPLE_TTL_SECONDS,
+    MONITOR_CADENCE_SECONDS,
     SILENT_PROBE_TTL_SECONDS,
     _current_status,
     _monitor_freshness,
@@ -29,7 +30,9 @@ from trusted_router.synthetic.status import (
 NOW = dt.datetime(2026, 8, 2, 12, 0, 0, tzinfo=dt.UTC)
 
 
-def _sample(created_at: dt.datetime, *, status: str = "up", sample_id: str = "s1") -> SyntheticProbeSample:
+def _sample(
+    created_at: dt.datetime, *, status: str = "up", sample_id: str = "s1"
+) -> SyntheticProbeSample:
     return SyntheticProbeSample(
         id=sample_id,
         probe_type="tls_health",
@@ -233,8 +236,14 @@ class TestSilentProbeDisappearance:
         assert current["by_region"]["us-central1"]["status"] == "degraded"
         assert current["by_region"]["us-central1"]["status"] != "down"
 
-    def test_silent_probe_threshold_covers_two_monitor_cycles(self) -> None:
-        assert SILENT_PROBE_TTL_SECONDS > 2 * CURRENT_SAMPLE_TTL_SECONDS
+    def test_silent_probe_threshold_exceeds_degraded_by_a_full_cycle(self) -> None:
+        # The contract is denominated in monitor CADENCES (status.py sizes the
+        # degraded boundary at two cadences + startup allowance). "Down" must
+        # stay a stronger claim than "degraded" by at least one further full
+        # cycle, and must itself cover 3+ cycles of silence -- the
+        # silent-disappearance outage, not one late burst.
+        assert SILENT_PROBE_TTL_SECONDS >= CURRENT_SAMPLE_TTL_SECONDS + MONITOR_CADENCE_SECONDS
+        assert SILENT_PROBE_TTL_SECONDS >= 3 * MONITOR_CADENCE_SECONDS + 60
 
     def test_whole_monitor_stale_stays_unknown_not_false_outage(self) -> None:
         """Cold start / monitor down: every probe stale. monitor_freshness
