@@ -2380,7 +2380,11 @@ def _organization_node(settings: Settings) -> dict[str, object]:
         "legalName": settings.legal_entity_name,
         "url": f"https://{domain}/",
         "mainEntityOfPage": f"https://{domain}/about",
-        "logo": _absolute_url(settings, "/static/logo.png"),
+        # apple-touch-icon.png, not logo.png: the latter was asserted without
+        # being checked and 404s in production, and a logo a consumer cannot
+        # fetch is worse than omitting the field -- it is a broken claim inside
+        # the node that exists to establish this company is real. 180x180 PNG.
+        "logo": _absolute_url(settings, "/static/apple-touch-icon.png"),
         # EIN and DUNS are already published on /legal for procurement. Repeating
         # them here in the machine-readable node is the difference between a
         # human being able to verify the company and an assistant being able to.
@@ -2435,6 +2439,10 @@ def _organization_node(settings: Settings) -> dict[str, object]:
         # returns zero results) — add the Wikidata URI here once one exists.
         "sameAs": [
             "https://github.com/Lore-Hex",
+            # Verified 2026-08-24 rather than assumed: LinkedIn answers 200 for
+            # company slugs that do not exist, so a status check proves nothing.
+            # This one's og:title is "TrustedRouter | LinkedIn".
+            "https://www.linkedin.com/company/trustedrouter",
             "https://x.com/trustedrouter",
             f"https://{domain}/trust",
         ],

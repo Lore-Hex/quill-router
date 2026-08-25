@@ -279,3 +279,52 @@ def test_no_sdk_link_points_at_a_moved_repository(client: TestClient) -> None:
     html = client.get("/docs", headers={"accept": "text/html"}).text
 
     assert "github.com/jperla/" not in html
+
+
+def test_the_server_card_icon_actually_resolves(client: TestClient) -> None:
+    """The card names an icon; nothing checked it could be fetched.
+
+    An icon a client cannot load renders as a broken image, which reads worse
+    than no icon at all. This asserts the URL the card publishes actually
+    serves an image, rather than that the field is non-empty.
+    """
+    card = client.get("/.well-known/mcp/server-card.json").json()
+    path = "/" + card["iconUrl"].split("/", 3)[3]
+
+    response = client.get(path)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/")
+
+
+def test_the_organization_logo_actually_exists(client: TestClient) -> None:
+    """Regression. The Organization node advertised /static/logo.png, which
+    404s in production -- a broken claim inside the node whose whole job is
+    establishing that this company is real."""
+    import json as _json
+    import re as _re
+
+    html = client.get("/", headers={"accept": "text/html"}).text
+    blob = _re.search(r"application/ld\+json[^>]*>(.*?)</script>", html, _re.S)
+    assert blob
+    graph = _json.loads(blob.group(1))
+    node = next(n for n in graph.get("@graph", [graph]) if n.get("@type") == "Organization")
+    path = "/" + node["logo"].split("/", 3)[3]
+
+    assert client.get(path).status_code == 200
+
+
+def test_sameAs_lists_the_profiles_we_actually_own(client: TestClient) -> None:
+    """LinkedIn answers 200 for company slugs that do not exist, so presence in
+    this list is a claim that was checked, not a URL that returned a status."""
+    import json as _json
+    import re as _re
+
+    html = client.get("/", headers={"accept": "text/html"}).text
+    blob = _re.search(r"application/ld\+json[^>]*>(.*?)</script>", html, _re.S)
+    assert blob
+    graph = _json.loads(blob.group(1))
+    node = next(n for n in graph.get("@graph", [graph]) if n.get("@type") == "Organization")
+
+    assert "https://github.com/Lore-Hex" in node["sameAs"]
+    assert "https://www.linkedin.com/company/trustedrouter" in node["sameAs"]
