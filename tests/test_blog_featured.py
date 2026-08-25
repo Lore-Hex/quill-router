@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.content.blog import BLOG_POSTS_BY_SLUG, FEATURED_SLUGS
-from trusted_router.dashboard import _featured_blog_posts
+from trusted_router.dashboard import _blog_index_posts, _featured_blog_posts
 
 
 def test_featured_slugs_all_resolve() -> None:
@@ -34,26 +34,43 @@ def test_the_featured_section_is_not_empty() -> None:
     assert all(item.image for item in featured)
 
 
-def test_featured_order_follows_the_tuple_not_the_calendar() -> None:
-    """The running order is editorial. Sorting by date would hand the decision
-    back to the calendar, which is what the chronological list below already
-    does."""
-    featured = _featured_blog_posts(Settings(environment="test"))
+def test_featured_is_newest_first_regardless_of_slug_order() -> None:
+    """FEATURED_SLUGS chooses WHICH posts are featured, not their order.
 
-    assert [item.post.slug for item in featured] == list(FEATURED_SLUGS)
+    Both sections on the page read newest-first so a reader does not have to
+    work out that one follows a different rule. The assertion is meaningful
+    only because the slug order and the date order currently DISAGREE -- if
+    they ever coincide this test would pass without exercising the sort, so it
+    checks that too.
+    """
+    featured = _featured_blog_posts(Settings(environment="test"))
     dates = [item.post.published_date for item in featured]
-    assert dates != sorted(dates, reverse=True), (
-        "featured order coincides with newest-first, so this test proves nothing; "
-        "pick a case where editorial order and date order differ"
+
+    assert dates == sorted(dates, reverse=True)
+    slug_order = [BLOG_POSTS_BY_SLUG[s].published_date for s in FEATURED_SLUGS]
+    assert slug_order != dates, (
+        "FEATURED_SLUGS order now coincides with newest-first, so this test no "
+        "longer proves the sort runs; reorder the tuple or pick another case"
     )
+
+
+def test_the_archive_is_always_newest_first() -> None:
+    """BLOG_POSTS is hand-maintained and had drifted: the-models-that-say-no
+    (2026-06-16) sat above a 2026-06-17 post. The order is sorted at render
+    time now, so this asserts the rendered list rather than the tuple."""
+    posts = _blog_index_posts(Settings(environment="test"))
+    dates = [item.post.published_date for item in posts]
+
+    assert dates == sorted(dates, reverse=True)
+    assert len(posts) == len(BLOG_POSTS_BY_SLUG)
 
 
 def test_the_blog_index_shows_featured_above_the_archive(client: TestClient) -> None:
     html = client.get("/blog", headers={"accept": "text/html"}).text
 
-    assert "Start here" in html
+    assert "Featured" in html
     assert "All posts" in html
-    assert html.index("Start here") < html.index("All posts")
+    assert html.index("Featured") < html.index("All posts")
     for slug in FEATURED_SLUGS:
         assert f'href="/blog/{slug}"' in html, slug
 
