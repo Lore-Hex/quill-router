@@ -768,17 +768,32 @@ deploy_one_region() {
   if [ "${TR_DEPLOY_NO_TRAFFIC:-0}" = "1" ]; then
     # Cloud Run revisions are immutable: clearing a temporary revision minimum
     # would create a second cold revision and recreate the 100% cutover stall.
-    # Instead the candidate carries the same minimum as the existing service.
-    # The probe tag assigned below activates it at 0% traffic. Cloud Run uses
-    # the larger (not the sum) of service/revision minimums, so after convergence
-    # capacity is still the original service minimum. On rollback, removing the
-    # tag and traffic reference deactivates this revision minimum completely.
-    revision_min_instances="$min_instances"
-    # CAVEAT (review F5): this bakes today's service minimum into the revision
-    # forever — effective capacity is max(service, revision), so LOWERING a
-    # region's TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION later changes nothing
-    # until the next deploy replaces the serving revision. Capacity
-    # reductions therefore require a redeploy to take effect. The max-not-sum
+    # The candidate therefore bakes a revision minimum, activated at 0% by the
+    # probe tag below; effective capacity is max(service, revision), so
+    # convergence is cost-neutral and rollback deactivates it.
+    #
+    # PRIMER, not full capacity (measured 2026-08-25): matching the service
+    # minimum made `gcloud run deploy` WAIT for that many instances to go
+    # Ready at warm time — us-east4 pins 8, and the parallel warm step ran
+    # 7m37 instead of ~2m; the 100%-stall cost moved into the warm and grew.
+    # A small primer absorbs the 10% step instantly, and the staged
+    # 10/50/100 ramp itself gives Cloud Run scale time for the rest.
+    local prewarm_floor="${TR_CLOUD_RUN_PREWARM_MIN_INSTANCES:-2}"
+    if [[ ! "$prewarm_floor" =~ ^[0-9]+$ ]]; then
+      log "invalid TR_CLOUD_RUN_PREWARM_MIN_INSTANCES=${prewarm_floor}; using 2"
+      prewarm_floor=2
+    fi
+    if [ "$min_instances" != "default" ] && [ "$prewarm_floor" -gt "$min_instances" ]; then
+      # Never prime ABOVE the service minimum: a cold region (min 0/1) should
+      # not pay for primer instances its steady state never runs.
+      prewarm_floor="$min_instances"
+    fi
+    revision_min_instances="$prewarm_floor"
+    # CAVEAT (review F5): this bakes today's primer into the revision
+    # forever — effective capacity is max(service, revision). With the primer
+    # capped at min(2, service minimum), a later reduction of a region's
+    # service minimum below the primer still needs a redeploy to fully take
+    # effect, but the exposure is at most 2 instances. The max-not-sum
     # and tag-activation semantics are platform behavior asserted here, not
     # testable against stubs — verify billing once after the first prod run.
     log "capacity before ${target}: service min=${min_instances}; candidate revision min=${revision_min_instances}"

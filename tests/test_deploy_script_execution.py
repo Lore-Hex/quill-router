@@ -245,6 +245,52 @@ def test_gcp_no_traffic_warm_preprovisions_and_tags_candidate(
     assert deploy[deploy.index("--min-instances") + 1] == "2"
     assert "--no-traffic" in deploy
 
+
+def test_warm_primer_caps_below_a_high_service_minimum(
+    harness: DeployScriptHarness,
+) -> None:
+    """The pre-warm regression, pinned (measured 2026-08-25).
+
+    Priming the candidate with the FULL service minimum made the no-traffic
+    deploy wait for that many instances to go Ready — us-east4 pins 8, and
+    the parallel warm step ran 7m37 instead of ~2m. The revision minimum must
+    be the small primer, capped by the service minimum, never the service
+    minimum itself.
+    """
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_CLOUD_RUN_MIN_INSTANCES": "8"},
+    )
+    assert run.returncode == 0, summarise(run)
+    deploy = next(
+        call
+        for call in run.calls
+        if call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+        and call[4:7] == ["deploy", "trusted-router", "--region"]
+    )
+    assert deploy[deploy.index("--min") + 1] == "8"
+    assert deploy[deploy.index("--min-instances") + 1] == "2"
+
+
+def test_warm_primer_never_exceeds_a_cold_service_minimum(
+    harness: DeployScriptHarness,
+) -> None:
+    """A cold region (service min below the primer) must not pay for primer
+    instances its steady state never runs."""
+    run = harness.run(
+        "scripts/deploy/rollout.sh",
+        extra_env={"TR_CLOUD_RUN_MIN_INSTANCES": "1"},
+    )
+    assert run.returncode == 0, summarise(run)
+    deploy = next(
+        call
+        for call in run.calls
+        if call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+        and call[4:7] == ["deploy", "trusted-router", "--region"]
+    )
+    assert deploy[deploy.index("--min") + 1] == "1"
+    assert deploy[deploy.index("--min-instances") + 1] == "1"
+
     tag_index = next(
         index
         for index, call in enumerate(run.calls)

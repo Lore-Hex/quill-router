@@ -903,9 +903,13 @@ jobs:
               return 1
             fi
 
+            # 1 minute, not 3 (Joseph, 2026-08-25): by the time a secondary
+            # reaches 100%, the image has served the primary's full ramp AND
+            # its 3-minute canary, plus this region's own two gated windows.
+            # Measured: the 3-minute version was 9 of 39 total deploy minutes.
             if ! python3 scripts/deploy/watchdog.py \
               --regions "${region}" \
-              --duration-min 3 \
+              --duration-min 1 \
               --rollback-after 2 \
               --slo-class router_core \
               --baseline-input "${watchdog_baseline}" \
