@@ -467,16 +467,44 @@ def test_workflow_and_manual_scripts_share_the_mutex_scope() -> None:
         encoding="utf-8"
     )
     acquire = workflow.index("- name: Acquire production deployment mutex")
-    rollout = workflow.index("- name: Deploy us-central1 (no-traffic)")
-    release = workflow.index("- name: Release production deployment mutex")
+    rollout = workflow.index("- name: Warm all four regions in parallel (no traffic)")
+    primary_release = workflow.index(
+        "- name: Release production deployment mutex after primary-live failure"
+    )
+    secondary_job = workflow.index("\n  rollout-secondaries:")
+    secondary_release = workflow.index(
+        "- name: Release production deployment mutex", secondary_job
+    )
 
-    assert acquire < rollout < release
-    assert 'deploy_mutex.sh acquire >> "$GITHUB_ENV"' in workflow[acquire:rollout]
+    assert acquire < rollout < primary_release < secondary_job < secondary_release
+    assert "id: acquire_mutex" in workflow[acquire:rollout]
+    acquire_step = workflow[acquire:rollout]
+    # The fence must reach BOTH files, and acquire must never sit on the left
+    # of a pipe: GitHub's default run shell lacks pipefail, so a blocked
+    # acquire would exit 0 through tee and the deploy would proceed WITHOUT
+    # holding the lock. The command-substitution form propagates the exit.
+    assert 'fence="$(bash scripts/deploy/deploy_mutex.sh acquire)"' in acquire_step
+    assert 'printf \'%s\\n\' "$fence" >> "$GITHUB_ENV"' in acquire_step
+    assert 'printf \'%s\\n\' "$fence" >> "$GITHUB_OUTPUT"' in acquire_step
     assert "${{ github.server_url }}/${{ github.repository }}/actions/runs/" in workflow[
         acquire:rollout
     ]
-    assert "if: always()" in workflow[release : release + 180]
-    assert "deploy_mutex.sh release" in workflow[release : release + 180]
+    assert "if: ${{ failure() || cancelled() }}" in workflow[
+        primary_release : primary_release + 240
+    ]
+    assert "deploy_mutex.sh release" in workflow[
+        primary_release : primary_release + 240
+    ]
+    assert "needs.deploy.outputs.TR_DEPLOY_MUTEX_OPERATION" in workflow[
+        secondary_job:secondary_release
+    ]
+    assert "needs.deploy.outputs.TR_DEPLOY_MUTEX_GENERATION" in workflow[
+        secondary_job:secondary_release
+    ]
+    assert "if: always()" in workflow[secondary_release : secondary_release + 180]
+    assert "deploy_mutex.sh release" in workflow[
+        secondary_release : secondary_release + 180
+    ]
 
     # These large scripts need unrelated Cloud Run/watchdog fixtures to finish;
     # the generation-aware behavioral tests above execute their shared helper,
@@ -608,20 +636,31 @@ deploy_mutex_acquire >/dev/null
     assert "deploy_mutex.reentrant" not in result.stderr
 
 
-def test_deploy_job_timeout_stays_under_the_mutex_ttl() -> None:
-    """Review finding M3: a deploy job outliving the lease invites a legal
-    expired-lock takeover while the run is still shifting traffic."""
+def test_lock_owning_job_timeouts_stay_under_the_mutex_ttl() -> None:
+    """Both lock-owning jobs plus their handoff fit inside the lease."""
     import re
 
     workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text(
         encoding="utf-8"
     )
-    deploy_job = workflow.split("\n  deploy:\n", 1)[1].split("\n  public-surface", 1)[0]
-    match = re.search(r"timeout-minutes:\s*(\d+)", deploy_job)
-    assert match is not None, "deploy job must bound its runtime"
+    deploy_job = workflow.split("\n  deploy:\n", 1)[1].split(
+        "\n  rollout-secondaries:\n", 1
+    )[0]
+    rollout_job = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
+        "\n  public-surface-companion:\n", 1
+    )[0]
+    deploy_match = re.search(r"timeout-minutes:\s*(\d+)", deploy_job)
+    rollout_match = re.search(r"timeout-minutes:\s*(\d+)", rollout_job)
+    assert deploy_match is not None, "deploy job must bound its runtime"
+    assert rollout_match is not None, "rollout-secondaries must bound its runtime"
     ttl_match = re.search(
         r"TR_DEPLOY_MUTEX_TTL_SECONDS:-(\d+)",
         (ROOT / "scripts" / "deploy" / "deploy_mutex.sh").read_text(encoding="utf-8"),
     )
     assert ttl_match is not None
-    assert int(match.group(1)) * 60 < int(ttl_match.group(1))
+    deploy_minutes = int(deploy_match.group(1))
+    rollout_minutes = int(rollout_match.group(1))
+    ttl_seconds = int(ttl_match.group(1))
+    assert deploy_minutes == 25
+    assert rollout_minutes == 55
+    assert (deploy_minutes + rollout_minutes) * 60 < ttl_seconds

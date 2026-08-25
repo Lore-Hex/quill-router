@@ -812,15 +812,21 @@ def test_an_unbound_script_must_carry_a_named_reason_and_a_real_control() -> Non
             "`exit 0` and a call sealed in `if false` all used to pass here, which is "
             "the defect this shape closes."
         )
-        # The prose in multi-cloud-separation.md and the runbook says this check
-        # reads the job's `needs` and its `if:`. It did not, until now.
-        assert "deploy" in str(job.get("needs", "")), (
-            f"{cloud}: {control.workflow} job {control.job!r} does not depend on `deploy`, "
-            "so it can run before the thing it is supposed to check"
+        # The completeness gate follows full convergence, whose dependency on
+        # primary-live is also pinned. Checking only either edge would allow
+        # the gate to run before one half of the rollout it is meant to assess.
+        assert "rollout-secondaries" in str(job.get("needs", "")), (
+            f"{cloud}: {control.workflow} job {control.job!r} does not depend on "
+            "`rollout-secondaries`, so it can run before full convergence"
+        )
+        convergence_job = workflow["jobs"].get("rollout-secondaries", {})
+        assert "deploy" in str(convergence_job.get("needs", "")), (
+            f"{cloud}: {control.workflow} job 'rollout-secondaries' does not depend "
+            "on `deploy`, so it can run before primary-live"
         )
         assert "always()" in str(job.get("if", "")), (
             f"{cloud}: {control.workflow} job {control.job!r} has no `if: always()`, so it "
-            "is skipped exactly when the deploy it follows failed"
+            "is skipped exactly when secondary convergence failed"
         )
 
     gcp = crc.ROLLOUT_REGISTRY["gcp"]

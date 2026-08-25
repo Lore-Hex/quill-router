@@ -345,11 +345,20 @@ jobs:
     needs: [build-image, migrate-schema, sync-runtime-secrets, confirm-current-main]
     if: ${{ needs.confirm-current-main.outputs.proceed == 'true' }}
     runs-on: ubuntu-latest
-    # Must stay UNDER the deployment mutex TTL (deploy_mutex.sh, 5400s): a job
-    # that outlives the lease invites a legal expired-lock takeover while this
-    # run is still shifting traffic — the exact overlap the mutex exists to
-    # prevent. GitHub's default 360-minute bound is four TTLs too generous.
-    timeout-minutes: 85
+    outputs:
+      TR_DEPLOY_MUTEX_OPERATION: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_OPERATION }}
+      TR_DEPLOY_MUTEX_GENERATION: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_GENERATION }}
+      sha: ${{ needs.build-image.outputs.sha }}
+      image: ${{ needs.build-image.outputs.image }}
+      previous_europe_west4_revision: ${{ steps.prev.outputs.europe_west4_revision }}
+      previous_us_east4_revision: ${{ steps.prev.outputs.us_east4_revision }}
+      previous_southamerica_east1_revision: ${{ steps.prev.outputs.southamerica_east1_revision }}
+      europe_west4_revision: ${{ steps.warm_all.outputs.europe_west4_revision }}
+      us_east4_revision: ${{ steps.warm_all.outputs.us_east4_revision }}
+      southamerica_east1_revision: ${{ steps.warm_all.outputs.southamerica_east1_revision }}
+    # The mutex TTL is 90 minutes. The two lock-owning job bounds total
+    # 25 + 55 = 80 minutes, leaving 10 minutes for the job handoff queue gap.
+    timeout-minutes: 25
     env:
       PROJECT_ID: quill-cloud-proxy
       REGION: us-central1
@@ -378,18 +387,24 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
 
       - name: Acquire production deployment mutex
+        id: acquire_mutex
         env:
           TR_DEPLOY_MUTEX_OWNER: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TR_DEPLOY_MUTEX_TOOL: workflow
-        run: bash scripts/deploy/deploy_mutex.sh acquire >> "$GITHUB_ENV"
+        # No pipeline here: GitHub's default run shell is `bash -e` WITHOUT
+        # pipefail, so `acquire | tee` would exit with tee's 0 and a BLOCKED
+        # acquire would let the deploy proceed without holding the lock. The
+        # command substitution propagates acquire's exit code under -e, and
+        # the fence reaches ENV and OUTPUT only when acquisition succeeded.
+        run: |
+          fence="$(bash scripts/deploy/deploy_mutex.sh acquire)"
+          printf '%s\n' "$fence" >> "$GITHUB_ENV"
+          printf '%s\n' "$fence" >> "$GITHUB_OUTPUT"
 
-      # Staged regional deploy. Deploy us-central1 first, gate on a
-      # 3-min single-region synthetic watch; only proceed to the
-      # secondary warm regions if us-central1 stays up. Once the image has
-      # passed the primary's full ramp and 3-minute canary, secondary revisions
-      # warm in parallel without traffic, then ramp serially. Incident #695
-      # (billing 5xx, 2026-08-20) showed that overlapping revision warmups and
-      # traffic ramps can amplify billing transaction contention.
+      # Staged regional deploy. Warm all four no-traffic revisions together,
+      # then gate primary-live on us-central1's unchanged 10/50/100 ramp and
+      # 3-minute single-region synthetic watch. The follow-on job inherits the
+      # same mutex fence and ramps the already-warm secondaries serially.
       #
       # Hotfix mode (workflow_dispatch input `hotfix: true`): the
       # watchdogs skip baseline + use --skip-baseline so a sick prod
@@ -424,6 +439,214 @@ jobs:
             echo "${key}=${rev}" >> "$GITHUB_OUTPUT"
             echo "  pre-deploy ${region}: ${rev}"
           done
+
+      - name: Warm all four regions in parallel (no traffic)
+        id: warm_all
+        env:
+          IMAGE_TAG: ${{ needs.build-image.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          warm_region() {
+            local region="$1"
+            local reconcile_lb="$2"
+            local revision_file="$3"
+            echo "deploying ${region} no-traffic"
+            if ! TR_DEPLOY_TARGET_REGIONS="${region}" \
+                TR_DEPLOY_NO_TRAFFIC="1" \
+                TR_DEPLOY_RECONCILE_LB="${reconcile_lb}" \
+                IMAGE_TAG="${IMAGE_TAG}" \
+                bash scripts/deploy/rollout.sh; then
+              echo "${region} no-traffic deploy failed"
+              return 1
+            fi
+
+            local revision
+            if ! revision="$(gcloud run services describe "${SERVICE}" \
+                --region="${region}" --project="${PROJECT_ID}" \
+                --format='value(status.latestCreatedRevisionName)')"; then
+              echo "${region} revision lookup failed after its no-traffic deploy"
+              return 1
+            fi
+            if [ -z "${revision}" ]; then
+              echo "${region} deploy did not create a revision"
+              return 1
+            fi
+            echo "new ${region} revision: ${revision}"
+            printf '%s\n' "${revision}" >"${revision_file}"
+          }
+
+          # rollout.sh gates global load-balancer mutation on
+          # TR_DEPLOY_RECONCILE_LB. Only the primary process receives 1; all
+          # concurrent secondary processes receive 0 and cannot mutate the LB.
+          # Every rollout inherits TR_DEPLOY_MUTEX_OPERATION from this job.
+          regions=(us-central1 europe-west4 us-east4 southamerica-east1)
+          logs=(
+            "${RUNNER_TEMP}/warmup-us-central1.log"
+            "${RUNNER_TEMP}/warmup-europe-west4.log"
+            "${RUNNER_TEMP}/warmup-us-east4.log"
+            "${RUNNER_TEMP}/warmup-southamerica-east1.log"
+          )
+          revision_files=(
+            "${RUNNER_TEMP}/revision-us-central1"
+            "${RUNNER_TEMP}/revision-europe-west4"
+            "${RUNNER_TEMP}/revision-us-east4"
+            "${RUNNER_TEMP}/revision-southamerica-east1"
+          )
+          pids=()
+          primary_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          (warm_region "us-central1" "1" "${revision_files[0]}") >"${logs[0]}" 2>&1 &
+          pids+=("$!")
+          (warm_region "europe-west4" "0" "${revision_files[1]}") >"${logs[1]}" 2>&1 &
+          pids+=("$!")
+          (warm_region "us-east4" "0" "${revision_files[2]}") >"${logs[2]}" 2>&1 &
+          pids+=("$!")
+          (warm_region "southamerica-east1" "0" "${revision_files[3]}") >"${logs[3]}" 2>&1 &
+          pids+=("$!")
+
+          statuses=()
+          for idx in "${!pids[@]}"; do
+            if wait "${pids[$idx]}"; then
+              statuses[$idx]=0
+            else
+              statuses[$idx]=$?
+            fi
+          done
+
+          failed=0
+          for idx in "${!regions[@]}"; do
+            printf '\n=== warmup: %s ===\n' "${regions[$idx]}"
+            cat "${logs[$idx]}"
+            if [ "${statuses[$idx]}" -ne 0 ]; then
+              echo "::error::${regions[$idx]} no-traffic warmup failed."
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::Regional warmup failed; no traffic moved. Successful warm revisions remain at zero traffic."
+            exit 1
+          fi
+
+          echo "primary_started_at=${primary_started_at}" >> "$GITHUB_OUTPUT"
+          echo "us_central1_revision=$(<"${revision_files[0]}")" >> "$GITHUB_OUTPUT"
+          echo "europe_west4_revision=$(<"${revision_files[1]}")" >> "$GITHUB_OUTPUT"
+          echo "us_east4_revision=$(<"${revision_files[2]}")" >> "$GITHUB_OUTPUT"
+          echo "southamerica_east1_revision=$(<"${revision_files[3]}")" >> "$GITHUB_OUTPUT"
+
+      - name: Stage traffic 10/50/100 (us-central1)
+        # Ramps the new revision from 10% → 50% → 100% with a 1-min
+        # synthetic watch between stages. On any watch trip, traffic
+        # is reverted to 100% on the old revision and the workflow
+        # fails before any secondary receives traffic.
+        env:
+          TR_WATCHDOG_SLO_CLASS: router_core
+        run: bash scripts/deploy/staged_traffic.sh us-central1 "${{ steps.warm_all.outputs.us_central1_revision }}" "${{ steps.prev.outputs.us_central1_revision }}"
+
+      - name: Canary gate — watch us-central1 only (3 min)
+        # Single-region 3-min canary. Down × 2 in a row trips it
+        # (faster reaction than the final watch). The secondaries have
+        # warm revisions but remain at zero traffic, so the bad change is
+        # contained to us-central1.
+        id: canary_us
+        continue-on-error: true
+        run: python3 scripts/deploy/watchdog.py --regions us-central1 --duration-min 3 --rollback-after 2 --slo-class router_core ${{ steps.wd_args.outputs.extra }}
+
+      - name: Rollback us-central1 + abort (canary tripped)
+        if: ${{ steps.canary_us.outcome == 'failure' && steps.canary_us.outputs.rollback_regions != '' }}
+        env:
+          PREV_US: ${{ steps.prev.outputs.us_central1_revision }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PREV_US}" ]; then
+            echo "no prior us-central1 revision recorded; cannot rollback"
+            exit 1
+          fi
+          echo "us-central1 canary failed; rolling traffic back to ${PREV_US}"
+          gcloud run services update-traffic "${SERVICE}" \
+            --region=us-central1 --project="${PROJECT_ID}" \
+            --to-revisions="${PREV_US}=100" --quiet
+          echo "secondaries remain warm at zero traffic; safe."
+          exit 1
+
+      - name: Billing-path gate + rollback (us-central1)
+        env:
+          PREV_US: ${{ steps.prev.outputs.us_central1_revision }}
+          TR_BILLING_5XX_GATE_SKIP: ${{ inputs.hotfix == true && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          if ! bash scripts/deploy/assert_no_billing_5xx.sh \
+              us-central1 \
+              "${{ steps.warm_all.outputs.primary_started_at }}" \
+              "${{ steps.warm_all.outputs.us_central1_revision }}"; then
+            echo "us-central1 emitted billing-path 5xx; rolling back to ${PREV_US}"
+            gcloud run services update-traffic "${SERVICE}" \
+              --region=us-central1 --project="${PROJECT_ID}" \
+              --to-revisions="${PREV_US}=100" --quiet
+            exit 1
+          fi
+
+      # Mutex release ownership:
+      # - deploy fails/cancels: this conditional release runs promptly.
+      # - deploy succeeds and rollout-secondaries runs: ownership transfers,
+      #   and that job releases on success or failure.
+      # - deploy succeeds but GitHub never schedules rollout-secondaries: no
+      #   release runs; the 90-minute TTL recovers. Queued deploys fail closed
+      #   during that freeze, so production mutations never overlap.
+      - name: Release production deployment mutex after primary-live failure
+        if: ${{ failure() || cancelled() }}
+        run: bash scripts/deploy/deploy_mutex.sh release
+
+  rollout-secondaries:
+    needs: [deploy]
+    if: ${{ success() }}
+    runs-on: ubuntu-latest
+    # The mutex TTL is 90 minutes. The two lock-owning job bounds total
+    # 25 + 55 = 80 minutes, leaving 10 minutes for the job handoff queue gap.
+    timeout-minutes: 55
+    env:
+      PROJECT_ID: quill-cloud-proxy
+      REGION: us-central1
+      REPO: trusted-router
+      SERVICE: trusted-router
+      SHA: ${{ needs.deploy.outputs.sha }}
+      IMAGE: ${{ needs.deploy.outputs.image }}
+    steps:
+      - name: Import production deployment mutex fence
+        env:
+          DEPLOY_MUTEX_OPERATION: ${{ needs.deploy.outputs.TR_DEPLOY_MUTEX_OPERATION }}
+          DEPLOY_MUTEX_GENERATION: ${{ needs.deploy.outputs.TR_DEPLOY_MUTEX_GENERATION }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_MUTEX_OPERATION}" ] || [ -z "${DEPLOY_MUTEX_GENERATION}" ]; then
+            echo "::error::deploy did not export a complete mutex fence"
+            exit 1
+          fi
+          echo "TR_DEPLOY_MUTEX_OPERATION=${DEPLOY_MUTEX_OPERATION}" >> "$GITHUB_ENV"
+          echo "TR_DEPLOY_MUTEX_GENERATION=${DEPLOY_MUTEX_GENERATION}" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Compute watchdog args (hotfix vs normal)
+        id: wd_args
+        run: |
+          if [ "${{ inputs.hotfix }}" = "true" ]; then
+            echo "extra=--skip-baseline --rollback-after 99 --baseline-grace-sec 0" >> "$GITHUB_OUTPUT"
+            echo "::warning::HOTFIX MODE — watchdog gating disabled. Synthetic 'down' will not block this deploy."
+          else
+            echo "extra=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Detect optional deploy surfaces
         id: optional
@@ -464,88 +687,16 @@ jobs:
           echo "deploy_google_data_manager=${deploy_google_data_manager}" >> "$GITHUB_OUTPUT"
           echo "deploy_google_data_manager=${deploy_google_data_manager}"
 
-      - name: Deploy us-central1 (no-traffic)
-        id: deploy_us
+      - name: Ramp secondaries serially while reconciler deploys
         env:
-          IMAGE_TAG: ${{ needs.build-image.outputs.sha }}
-          TR_DEPLOY_TARGET_REGIONS: us-central1
-          TR_DEPLOY_NO_TRAFFIC: "1"
-          # Global LB topology is shared by every region. Reconcile it exactly
-          # once here; concurrent secondary rollouts must not race on it.
-          TR_DEPLOY_RECONCILE_LB: "1"
-        run: |
-          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-          bash scripts/deploy/rollout.sh
-
-      - name: Resolve us-central1 new revision
-        id: new_us
-        run: |
-          rev=$(gcloud run services describe "${SERVICE}" \
-            --region=us-central1 --project="${PROJECT_ID}" \
-            --format='value(status.latestCreatedRevisionName)')
-          echo "revision=${rev}" >> "$GITHUB_OUTPUT"
-          echo "  new us-central1 revision: ${rev}"
-
-      - name: Stage traffic 10/50/100 (us-central1)
-        # Ramps the new revision from 10% → 50% → 100% with a 1-min
-        # synthetic watch between stages. On any watch trip, traffic
-        # is reverted to 100% on the old revision and the workflow
-        # fails before ever shipping anything to europe-west4.
-        env:
-          TR_WATCHDOG_SLO_CLASS: router_core
-        run: bash scripts/deploy/staged_traffic.sh us-central1 "${{ steps.new_us.outputs.revision }}" "${{ steps.prev.outputs.us_central1_revision }}"
-
-      - name: Canary gate — watch us-central1 only (3 min)
-        # Single-region 3-min canary. Down × 2 in a row trips it
-        # (faster reaction than the final watch). europe-west4 hasn't
-        # received the new image yet, so the bad change is contained.
-        id: canary_us
-        continue-on-error: true
-        run: python3 scripts/deploy/watchdog.py --regions us-central1 --duration-min 3 --rollback-after 2 --slo-class router_core ${{ steps.wd_args.outputs.extra }}
-
-      - name: Rollback us-central1 + abort (canary tripped)
-        if: ${{ steps.canary_us.outcome == 'failure' && steps.canary_us.outputs.rollback_regions != '' }}
-        env:
-          PREV_US: ${{ steps.prev.outputs.us_central1_revision }}
-        run: |
-          set -euo pipefail
-          if [ -z "${PREV_US}" ]; then
-            echo "no prior us-central1 revision recorded; cannot rollback"
-            exit 1
-          fi
-          echo "us-central1 canary failed; rolling traffic back to ${PREV_US}"
-          gcloud run services update-traffic "${SERVICE}" \
-            --region=us-central1 --project="${PROJECT_ID}" \
-            --to-revisions="${PREV_US}=100" --quiet
-          echo "europe-west4 NEVER received the bad image; safe."
-          exit 1
-
-      - name: Billing-path gate + rollback (us-central1)
-        env:
-          PREV_US: ${{ steps.prev.outputs.us_central1_revision }}
-          TR_BILLING_5XX_GATE_SKIP: ${{ inputs.hotfix == true && 'true' || 'false' }}
-        run: |
-          set -euo pipefail
-          if ! bash scripts/deploy/assert_no_billing_5xx.sh \
-              us-central1 \
-              "${{ steps.deploy_us.outputs.started_at }}" \
-              "${{ steps.new_us.outputs.revision }}"; then
-            echo "us-central1 emitted billing-path 5xx; rolling back to ${PREV_US}"
-            gcloud run services update-traffic "${SERVICE}" \
-              --region=us-central1 --project="${PROJECT_ID}" \
-              --to-revisions="${PREV_US}=100" --quiet
-            exit 1
-          fi
-
-      - name: Warm secondaries in parallel, ramp serially
-        env:
-          IMAGE_TAG: ${{ needs.build-image.outputs.sha }}
-          PREV_EU: ${{ steps.prev.outputs.europe_west4_revision }}
-          PREV_US_EAST4: ${{ steps.prev.outputs.us_east4_revision }}
-          PREV_SOUTHAMERICA_EAST1: ${{ steps.prev.outputs.southamerica_east1_revision }}
+          PREV_EU: ${{ needs.deploy.outputs.previous_europe_west4_revision }}
+          PREV_US_EAST4: ${{ needs.deploy.outputs.previous_us_east4_revision }}
+          PREV_SOUTHAMERICA_EAST1: ${{ needs.deploy.outputs.previous_southamerica_east1_revision }}
+          NEW_EU: ${{ needs.deploy.outputs.europe_west4_revision }}
+          NEW_US_EAST4: ${{ needs.deploy.outputs.us_east4_revision }}
+          NEW_SOUTHAMERICA_EAST1: ${{ needs.deploy.outputs.southamerica_east1_revision }}
           WD_EXTRA: ${{ steps.wd_args.outputs.extra }}
           TR_WATCHDOG_SLO_CLASS: router_core
-          TR_DEPLOY_RECONCILE_LB: "0"
           TR_BILLING_5XX_GATE_SKIP: ${{ inputs.hotfix == true && 'true' || 'false' }}
         run: |
           set -euo pipefail
@@ -578,41 +729,12 @@ jobs:
               --to-revisions="${previous}=100" --quiet
           }
 
-          warm_secondary() {
-            local region="$1"
-            local revision_file="$2"
-            echo "deploying ${region} no-traffic"
-            if ! TR_DEPLOY_TARGET_REGIONS="${region}" \
-                TR_DEPLOY_NO_TRAFFIC="1" \
-                IMAGE_TAG="${IMAGE_TAG}" \
-                bash scripts/deploy/rollout.sh; then
-              echo "${region} no-traffic deploy failed"
-              return 1
-            fi
-
-            local revision
-            if ! revision="$(gcloud run services describe "${SERVICE}" \
-                --region="${region}" --project="${PROJECT_ID}" \
-                --format='value(status.latestCreatedRevisionName)')"; then
-              echo "${region} revision lookup failed after its no-traffic deploy"
-              return 1
-            fi
-            if [ -z "${revision}" ]; then
-              echo "${region} deploy did not create a revision"
-              return 1
-            fi
-            echo "new ${region} revision: ${revision}"
-            printf '%s\n' "${revision}" >"${revision_file}"
-          }
-
           ramp_secondary() {
             local region="$1"
-            local revision_file="$2"
+            local revision="$2"
             local previous
-            local revision
             local rollout_started_at
             previous="$(previous_revision "${region}")"
-            revision="$(cat "${revision_file}")"
             # The billing window belongs to this region's traffic ramp, not to
             # the earlier parallel warmup or a sibling's ramp.
             rollout_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -660,69 +782,45 @@ jobs:
             fi
           }
 
-          # Incident containment from #695 (billing 5xx, 2026-08-20):
-          # overlapping revision warmups and traffic ramps can amplify billing
-          # transaction contention. Warm all no-traffic revisions in parallel,
-          # but never overlap a traffic ramp with another region's warmup or
-          # ramp. TR_DEPLOY_MUTEX_OPERATION is inherited by every warmup
-          # subshell, so rollout.sh remains inside the fleet mutex.
-          regions=(europe-west4 us-east4 southamerica-east1)
-          logs=(
-            "${RUNNER_TEMP}/secondary-warmup-europe-west4.log"
-            "${RUNNER_TEMP}/secondary-warmup-us-east4.log"
-            "${RUNNER_TEMP}/secondary-warmup-southamerica-east1.log"
-          )
-          revision_files=(
-            "${RUNNER_TEMP}/secondary-revision-europe-west4"
-            "${RUNNER_TEMP}/secondary-revision-us-east4"
-            "${RUNNER_TEMP}/secondary-revision-southamerica-east1"
-          )
-          pids=()
+          # Incident containment from #695 (billing 5xx, 2026-08-20): all
+          # revision warmups completed in deploy before primary traffic moved.
+          # Keep the three secondary 10/50/100 ramps explicit, serial, and
+          # stop-on-failure; no ramp overlaps a sibling ramp.
+          reconciler_log="${RUNNER_TEMP}/regional-quota-reconciler.log"
+          bash scripts/deploy/regional_quota_reconciler.sh >"${reconciler_log}" 2>&1 &
+          reconciler_pid=$!
 
-          (warm_secondary "europe-west4" "${revision_files[0]}") >"${logs[0]}" 2>&1 &
-          pids+=("$!")
-          (warm_secondary "us-east4" "${revision_files[1]}") >"${logs[1]}" 2>&1 &
-          pids+=("$!")
-          (warm_secondary "southamerica-east1" "${revision_files[2]}") >"${logs[2]}" 2>&1 &
-          pids+=("$!")
-
-          statuses=()
-          for idx in "${!pids[@]}"; do
-            if wait "${pids[$idx]}"; then
-              statuses[$idx]=0
-            else
-              statuses[$idx]=$?
-            fi
-          done
-
-          failed=0
-          for idx in "${!regions[@]}"; do
-            printf '\n=== %s ===\n' "${regions[$idx]}"
-            cat "${logs[$idx]}"
-            if [ "${statuses[$idx]}" -ne 0 ]; then
-              echo "::error::${regions[$idx]} no-traffic warmup failed."
-              failed=1
-            fi
-          done
-          if [ "$failed" -ne 0 ]; then
-            echo "::error::Secondary warmup failed; no secondary traffic moved. Successful warm revisions remain at zero traffic."
-            exit 1
-          fi
-
-          # Phase 2 is deliberately explicit and serial. A failure rolls back
-          # that region inside ramp_secondary and exits before a later warm
-          # revision can receive traffic.
-          if ! ramp_secondary "europe-west4" "${revision_files[0]}"; then
+          ramp_status=0
+          if ! ramp_secondary "europe-west4" "${NEW_EU}"; then
             echo "::error::europe-west4 ramp failed and was rolled back. Later regions remain warm at zero traffic and never received traffic."
-            exit 1
+            ramp_status=1
           fi
-          if ! ramp_secondary "us-east4" "${revision_files[1]}"; then
+          if [ "${ramp_status}" -eq 0 ] && \
+             ! ramp_secondary "us-east4" "${NEW_US_EAST4}"; then
             echo "::error::us-east4 ramp failed and was rolled back. Later regions remain warm at zero traffic and never received traffic."
-            exit 1
+            ramp_status=1
           fi
-          if ! ramp_secondary "southamerica-east1" "${revision_files[2]}"; then
-            echo "::error::southamerica-east1 ramp failed and was rolled back. Later regions remain warm at zero traffic and never received traffic."
-            exit 1
+          if [ "${ramp_status}" -eq 0 ] && \
+             ! ramp_secondary "southamerica-east1" "${NEW_SOUTHAMERICA_EAST1}"; then
+            echo "::error::southamerica-east1 ramp failed and was rolled back."
+            ramp_status=1
+          fi
+
+          reconciler_status=0
+          if wait "${reconciler_pid}"; then
+            reconciler_status=0
+          else
+            reconciler_status=$?
+          fi
+          printf '\n=== regional quota reconciler deploy ===\n'
+          cat "${reconciler_log}"
+
+          if [ "${ramp_status}" -ne 0 ]; then
+            exit "${ramp_status}"
+          fi
+          if [ "${reconciler_status}" -ne 0 ]; then
+            echo "::error::Regional quota reconciler deploy failed with status ${reconciler_status}."
+            exit "${reconciler_status}"
           fi
 
       - name: Deploy synthetic monitor Cloud Run Job
@@ -749,12 +847,6 @@ jobs:
         # deploy leaves conversions durably queued, but this workflow stays red
         # so ad spend is never scaled under silently broken attribution.
         run: bash scripts/deploy/google_data_manager.sh
-
-      - name: Deploy regional quota reconciler
-        # The worker cannot authorize traffic. It continues draining already
-        # issued bounded escrow even when serving issuance is disabled, and is
-        # mandatory once a workspace canary has ever been enabled.
-        run: bash scripts/deploy/regional_quota_reconciler.sh
 
       # No cross-region "final watchdog" step. Each region's health is
       # gated by its own per-region canary above (us-central1 first,
@@ -929,12 +1021,12 @@ jobs:
     # owner cutover it deploys the smokeable run.app companion; after cutover
     # it detects the public backend in the live map and preserves routed-mode
     # ingress/header trust on every later automatic deploy.
-    needs: [deploy]
+    needs: [rollout-secondaries]
     continue-on-error: false
     runs-on: ubuntu-latest
     # Four sequential regional Cloud Run deploys normally finish in 12-20
     # minutes. Thirty allows cold image pulls and bounded smoke retries.
-    # NOTE: this job runs AFTER the deploy job has released the production
+    # NOTE: this job runs AFTER rollout-secondaries has released the production
     # deployment mutex, and does not hold it. That is deliberate scope: the
     # mutex fences trusted-router revisions/traffic, which manual rollout
     # scripts also mutate; the T1 companion touches only its own service and
@@ -1031,27 +1123,24 @@ jobs:
   # below to be an exact invocation of a script the registry proves by
   # execution -- not a mention of one.
   #
-  # Out of band by construction: it runs after the deploy job, so it can make
-  # the run red and can never leave GCP half-deployed. Read-only -- one public
-  # GET, no credentials, no cloud SDK.
+  # Out of band by construction: it runs after rollout-secondaries has finished
+  # and released the mutex, so it gates full convergence without extending the
+  # mutation lock. Read-only -- one public GET, no credentials, no cloud SDK.
   #
   # `if: always()` is load-bearing and was missing. With a bare `needs:
-  # [deploy]`, GitHub SKIPS this job when deploy fails -- and a deploy that
-  # failed PARTWAY has already mutated production, which is exactly the state
-  # somebody needs to know the completeness of. The check would have been absent
-  # from every run where it mattered most.
+  # [rollout-secondaries]`, GitHub SKIPS this job when the follow-on fails --
+  # and a secondary rollout that failed PARTWAY has already mutated production.
   #
   # What it still does NOT cover, stated because a comment here once claimed it
   # ran "after every production mutation" and that is false: `migrate-schema`
-  # and `sync-runtime-secrets` mutate production BEFORE `deploy`, and this job
-  # is skipped when `deploy` is skipped -- which is exactly what happens when
-  # `confirm-current-main` says do not proceed. A run can therefore migrate the
-  # schema, rotate runtime secrets, skip the deploy, and never reach this check.
-  # The coverage is: every run in which the deploy job ran, whatever its result.
+  # and `sync-runtime-secrets` mutate production BEFORE `deploy`. It also does
+  # not run when primary-live fails, because rollout-secondaries never schedules.
+  # The coverage is: every run in which rollout-secondaries ran, whatever its
+  # result; that is the workflow's full-convergence gate.
   # ---------------------------------------------------------------------------
   verify-cloud-complete:
-    needs: [deploy]
-    if: ${{ always() && needs.deploy.result != 'skipped' }}
+    needs: [rollout-secondaries]
+    if: ${{ always() && needs.rollout-secondaries.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

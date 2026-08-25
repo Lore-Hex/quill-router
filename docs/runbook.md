@@ -320,6 +320,17 @@ gcloud storage rm \
 Normal recovery does not require manual removal: locks expire after 90 minutes,
 and the next acquirer can take over an expired generation safely.
 
+In deploy workflow status, **deployed** now means the primary is live: all four
+regional revisions are warm, and `us-central1` has completed its 10/50/100 ramp
+and unchanged three-minute canary (normally about nine minutes). The
+`rollout-secondaries` follow-on job imports the same generation fence, keeps the
+same lock held while the three secondary ramps and regional-quota reconciler
+converge, and releases it only after that work finishes or fails. Thus another
+cloud's rollout cannot interleave in the middle of GCP convergence.
+`verify-cloud-complete` still gates full-cloud convergence after the follow-on;
+the public-surface companion remains outside the mutex and starts only after
+the locked convergence job finishes.
+
 ---
 
 ## <a id="cloud-bake-ladder"></a>Canary-cloud bake ladder
