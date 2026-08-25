@@ -20,6 +20,13 @@ PASSTHROUGH_RETAIL_PROVIDER_MODELS = frozenset(
         ("sakana", SAKANA_FUGU_MODEL_ID),
     }
 )
+UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL = {
+    # Sakana's API terms exclude the EEA, UK, and Switzerland, and the provider
+    # may enforce that boundary by source IP. The Europe gateway therefore
+    # cannot authorize Fugu until Sakana expands its supported regions.
+    ("sakana", SAKANA_FUGU_MODEL_ID): frozenset({"europe-west4"}),
+    ("sakana", SAKANA_NAMAZU_MODEL_ID): frozenset({"europe-west4"}),
+}
 
 # Fugu reports additive provider-side orchestration tokens only after a call.
 # They are included in exact settlement, but may exceed the caller-derived
@@ -50,3 +57,15 @@ def provider_model_uses_passthrough_retail_price(
     model_id: str,
 ) -> bool:
     return (provider_slug, model_id) in PASSTHROUGH_RETAIL_PROVIDER_MODELS
+
+
+def provider_model_available_from_gateway_region(
+    provider_slug: str,
+    model_id: str,
+    gateway_region: str,
+) -> bool:
+    unsupported = UNSUPPORTED_GATEWAY_REGIONS_BY_PROVIDER_MODEL.get(
+        (provider_slug, model_id),
+        frozenset(),
+    )
+    return gateway_region not in unsupported

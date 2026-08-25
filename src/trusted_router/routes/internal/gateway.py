@@ -71,6 +71,7 @@ from trusted_router.pricing import resolve_request_rates
 from trusted_router.provider_compat import byok_storage_provider_candidates
 from trusted_router.provider_contracts import (
     SAKANA_FUGU_MODEL_ID,
+    provider_model_available_from_gateway_region,
     provider_model_requires_exact_global_settlement,
 )
 from trusted_router.provider_types import estimate_tokens_from_text
@@ -398,6 +399,16 @@ def _authorize_gateway_sync(
             raise api_error(
                 400, "Model does not support chat completions", ErrorType.MODEL_NOT_SUPPORTED
             )
+    region = choose_region(settings, body.region or None)
+    endpoint_candidates = [
+        (candidate_model, candidate_endpoint)
+        for candidate_model, candidate_endpoint in endpoint_candidates
+        if provider_model_available_from_gateway_region(
+            candidate_endpoint.provider,
+            candidate_endpoint.model_id,
+            region,
+        )
+    ]
     endpoint_candidates = _eligible_gateway_endpoint_candidates(endpoint_candidates, workspace.id)
     input_tokens = body.estimated_input_tokens
     if custom_model is not None and custom_model.hidden_prompt.strip():
@@ -430,7 +441,6 @@ def _authorize_gateway_sync(
             ErrorType.PROVIDER_NOT_SUPPORTED,
         )
     model, endpoint = endpoint_candidates[0]
-    region = choose_region(settings, body.region or None)
 
     output_tokens = body.output_estimate
     model_estimate = (

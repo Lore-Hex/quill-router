@@ -14,6 +14,7 @@ from trusted_router.catalog import (
     PROVIDERS,
     endpoints_for_model,
 )
+from trusted_router.provider_contracts import provider_model_available_from_gateway_region
 from trusted_router.services.inference_errors import default_provider_secret_ref
 
 SAKANA_PRICING = """
@@ -171,6 +172,19 @@ def test_sakana_declares_operator_holds_in_shared_fetcher() -> None:
     assert sakana.CATALOG.spec.operator_hold_reasons == {
         sakana.SAKANA_NAMAZU_MODEL_ID: sakana.SAKANA_NAMAZU_ROUTE_HOLD_REASON,
     }
+
+
+def test_sakana_fugu_gateway_region_contract_is_fail_closed_for_europe() -> None:
+    assert provider_model_available_from_gateway_region(
+        "sakana",
+        sakana.SAKANA_FUGU_MODEL_ID,
+        "us-central1",
+    )
+    assert not provider_model_available_from_gateway_region(
+        "sakana",
+        sakana.SAKANA_FUGU_MODEL_ID,
+        "europe-west4",
+    )
 
 
 @pytest.mark.parametrize(

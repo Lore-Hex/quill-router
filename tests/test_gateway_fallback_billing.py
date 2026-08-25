@@ -173,6 +173,44 @@ def test_sakana_fugu_uses_exact_global_settlement_not_regional_escrow() -> None:
     assert authorization.settlement == "local"
 
 
+def test_sakana_fugu_fails_closed_from_unsupported_europe_gateway() -> None:
+    store, _db, _ = make_fake_store(request_record_write_mode="typed")
+    workspace = store.create_workspace(
+        "owner",
+        "sakana-fugu-europe",
+        trial_credit_microdollars=100_000_000,
+    )
+    _raw, api_key = store.create_api_key(
+        workspace_id=workspace.id,
+        name="sakana-fugu-europe",
+        creator_user_id="owner",
+    )
+    configure_store(store)
+    client = TestClient(
+        create_app(
+            Settings(environment="test"),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    response = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": api_key.hash,
+            "model": "sakana-ai/fugu-ultra-v1.1",
+            "estimated_input_tokens": 1_000,
+            "max_output_tokens": 100,
+            "region": "europe-west4",
+            "route_type": "chat.completions",
+            "idempotency_key": "sakana-fugu-europe",
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["type"] == "provider_not_supported"
+
+
 def test_capability_only_revision_keeps_uncapped_key_on_exact_global_path() -> None:
     store, _db, _ = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
