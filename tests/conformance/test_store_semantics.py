@@ -29,6 +29,7 @@ import datetime as dt
 import threading
 
 import pytest
+from psycopg.types.numeric import Int8
 
 from trusted_router.store_protocol import Store
 from trusted_router.typed_balance import live_credit_summary
@@ -1091,6 +1092,23 @@ def _seed_key_limit(store: Store, key_hash: str, **columns: object) -> None:
     cols = {"workspace_id": "ws-keylimit", "key_hash": key_hash, "shard": 0, **columns}
     names = ", ".join(cols)
     marks = ", ".join(["%s"] * len(cols))
+    bigint_columns = {
+        "shard",
+        "limit_micro",
+        "usage",
+        "byok_usage",
+        "reserved",
+        "day_limit_micro",
+        "week_limit_micro",
+        "month_limit_micro",
+        "day_usage",
+        "week_usage",
+        "month_usage",
+    }
+    values = tuple(
+        Int8(value) if name in bigint_columns and value is not None else value
+        for name, value in cols.items()
+    )
     with pool.connection() as conn:
         conn.execute("DELETE FROM tr_key_limit WHERE key_hash = %s", (key_hash,), prepare=False)
         # noqa justified: column names come from this function's own
@@ -1098,7 +1116,7 @@ def _seed_key_limit(store: Store, key_hash: str, **columns: object) -> None:
         # still bound as parameters.
         conn.execute(
             f"INSERT INTO tr_key_limit ({names}) VALUES ({marks})",  # noqa: S608
-            tuple(cols.values()),
+            values,
             prepare=False,
         )
 

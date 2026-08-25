@@ -1825,11 +1825,11 @@ class PostgresStore:
                 (
                     key.workspace_id,
                     key.hash,
-                    key.limit_microdollars,
+                    _int8_param(key.limit_microdollars),
                     key.include_byok_in_limit,
-                    key.limit_daily_microdollars,
-                    key.limit_weekly_microdollars,
-                    key.limit_monthly_microdollars,
+                    _int8_param(key.limit_daily_microdollars),
+                    _int8_param(key.limit_weekly_microdollars),
+                    _int8_param(key.limit_monthly_microdollars),
                 ),
                 prepare=False,
             )
@@ -2069,7 +2069,11 @@ class PostgresStore:
                 " AND limit_micro - usage"
                 "     - CASE WHEN include_byok THEN byok_usage ELSE 0 END"
                 "     - reserved >= %s",
-                (amount_microdollars, key_hash, amount_microdollars),
+                (
+                    _int8_param(amount_microdollars),
+                    key_hash,
+                    _int8_param(amount_microdollars),
+                ),
                 prepare=False,
             ).rowcount
             if updated == 0:
@@ -2428,20 +2432,20 @@ class PostgresStore:
             " , updated_at = CURRENT_TIMESTAMP"
             " WHERE key_hash = %s AND shard = 0",
             (
-                reserved_microdollars,
+                _int8_param(reserved_microdollars),
                 floors["daily"],
-                window_amount,
-                window_amount,
+                _int8_param(window_amount),
+                _int8_param(window_amount),
                 floors["daily"],
                 floors["daily"],
                 floors["weekly"],
-                window_amount,
-                window_amount,
+                _int8_param(window_amount),
+                _int8_param(window_amount),
                 floors["weekly"],
                 floors["weekly"],
                 floors["monthly"],
-                window_amount,
-                window_amount,
+                _int8_param(window_amount),
+                _int8_param(window_amount),
                 floors["monthly"],
                 floors["monthly"],
                 key_hash,
@@ -4159,7 +4163,7 @@ class PostgresStore:
                         f"UPDATE tr_key_limit SET {column} = {column} + %s"  # noqa: S608
                         " , updated_at = CURRENT_TIMESTAMP"
                         " WHERE key_hash = %s AND shard = 0",
-                        (booked, authorization.key_hash),
+                        (_int8_param(booked), authorization.key_hash),
                         prepare=False,
                     )
                 if generation is not None:
@@ -4274,7 +4278,7 @@ class PostgresStore:
                     f"UPDATE tr_key_limit SET {column} = {column} + %s"  # noqa: S608
                     " , updated_at = CURRENT_TIMESTAMP"
                     " WHERE key_hash = %s AND shard = 0",
-                    (booked, authorization.key_hash),
+                    (_int8_param(booked), authorization.key_hash),
                     prepare=False,
                 )
 
