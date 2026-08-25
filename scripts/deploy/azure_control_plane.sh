@@ -42,7 +42,23 @@
 # Prerequisite: scripts/deploy/azure_canary.sh has provisioned the resource
 # group, Flexible Server, ACR and Container Apps environment (CANARY=tr-azure
 # LOCATION=uaenorth APP_LOCATION=uaenorth).
+# Also required: an authenticated gcloud CLI with object access to the shared
+# production deployment-mutex bucket. The mutex serializes this Azure rollout
+# against GCP and AWS control-plane deploys.
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/deploy/deploy_mutex.sh
+source "${SCRIPT_DIR}/deploy_mutex.sh"
+# shellcheck source=scripts/deploy/cloud_bake_gate.sh
+source "${SCRIPT_DIR}/cloud_bake_gate.sh"
+
+command -v gcloud >/dev/null 2>&1 || {
+  echo "gcloud is required to acquire the fleet deployment mutex" >&2
+  exit 1
+}
+
+die() { echo "[FAIL] $*" >&2; exit 1; }
 
 STACK="${STACK:-tr-azure}"
 RG="${RG:-$STACK}"
@@ -57,10 +73,15 @@ PG_NAME="${PG_NAME:-$STACK-pg}"
 PG_ADMIN="${PG_ADMIN:-tradmin}"
 PG_DB="${PG_DB:-trustedrouter}"
 ACR="${ACR:-$(echo "${STACK}${LOCATION}acr" | tr -cd "[:alnum:]")}"
-IMAGE_TAG="${IMAGE_TAG:-azure}"
-# TR_RELEASE was IMAGE_TAG, the constant "azure", so this plane reported the
-# same release string on every deploy and staleness could not be measured.
-RELEASE_COMMIT="${RELEASE_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
+# Immutable source tag: the serving configuration carries it in TR_RELEASE
+# while the actual image reference stays pinned by digest. The bake gate
+# reads it back as this cloud's serving commit, so a wrong value here
+# poisons fleet-wide bake evidence — die rather than stamp 'unknown'.
+IMAGE_TAG="${IMAGE_TAG:-$(git -C "${SCRIPT_DIR}/../.." rev-parse --short HEAD 2>/dev/null || true)}"
+[ -n "$IMAGE_TAG" ] || die "not a git checkout: set IMAGE_TAG=<short-sha>"
+# #768's staleness detector reads RELEASE_COMMIT; same truth as the tag,
+# and the bake gate asserts the tag equals HEAD below.
+RELEASE_COMMIT="${RELEASE_COMMIT:-$IMAGE_TAG}"
 STATE_DIR="${STATE_DIR:-$HOME/.config/$STACK}"
 PW_FILE="${PW_FILE:-$STATE_DIR/pgpw}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -133,7 +154,29 @@ OBSERVER_MAX_REPLICAS_EFFECTIVE=1
 
 log() { printf '\n=== %s\n' "$*" >&2; }
 exists() { "$@" >/dev/null 2>&1; }
-die() { echo "[FAIL] $*" >&2; exit 1; }
+
+AZURE_TEMP_FIREWALL_RULE=""
+cleanup_azure_control_plane() {
+  local deploy_status=$?
+  # Finish cloud cleanup and mutex release uninterrupted; a signal here would
+  # leak either the firewall rule or the mutex until an operator intervenes.
+  trap '' INT TERM
+  trap - EXIT
+  if [ -n "${AZURE_TEMP_FIREWALL_RULE:-}" ]; then
+    az postgres flexible-server firewall-rule delete \
+      -g "$RG" -s "$PG_NAME" --name "$AZURE_TEMP_FIREWALL_RULE" \
+      --yes -o none 2>/dev/null || true
+  fi
+  if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
+    deploy_mutex_release
+  fi
+  exit "$deploy_status"
+}
+
+trap cleanup_azure_control_plane EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+export TR_DEPLOY_MUTEX_CLOUD=azure
 
 case "$SYNTHETIC_INTERVAL_SECONDS" in
   ''|*[!0-9]*) die "SYNTHETIC_INTERVAL_SECONDS must be a positive integer" ;;
@@ -144,6 +187,25 @@ esac
   || die "Azure has no external remediation owner; the in-process remediator cannot be disabled"
 [ "$OBSERVER_REMEDIATOR_MODE" != "off" ] \
   || die "Azure has no external remediation owner; remediator mode cannot be off"
+
+# Local source-of-truth validation above must fail before any cloud access.
+# The mutex still precedes the first az read below and every later mutation.
+deploy_mutex_acquire
+cloud_bake_gate azure
+if [ -n "$(git -C "${SCRIPT_DIR}/../.." status --porcelain 2>/dev/null || true)" ]; then
+  die "the gate validated HEAD; a dirty tree deploys unvalidated code"
+fi
+HEAD_IMAGE_TAG="$(git -C "${SCRIPT_DIR}/../.." rev-parse --short HEAD 2>/dev/null || true)"
+if [ "$IMAGE_TAG" != "$HEAD_IMAGE_TAG" ]; then
+  if [ -z "${TR_CLOUD_BAKE_OVERRIDE:-}" ]; then
+    die "IMAGE_TAG=${IMAGE_TAG} does not match the validated short HEAD ${HEAD_IMAGE_TAG:-UNKNOWN}; set TR_CLOUD_BAKE_OVERRIDE only for break glass"
+  fi
+  printf '%s\n' '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!' >&2
+  printf '%s\n' \
+    "CLOUD BAKE OVERRIDE: IMAGE_TAG=${IMAGE_TAG} does not match validated HEAD ${HEAD_IMAGE_TAG:-UNKNOWN}" >&2
+  printf 'reason: %s\n' "$TR_CLOUD_BAKE_OVERRIDE" >&2
+  printf '%s\n' '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!' >&2
+fi
 
 read_secret() {
   # A file in the secrets dir wins; otherwise the env file's own name.
@@ -570,8 +632,7 @@ if command -v psql >/dev/null 2>&1; then
     az postgres flexible-server firewall-rule create -g "$RG" -s "$PG_NAME" \
       --name "tmp-schema-$$" --start-ip-address "$MYIP" --end-ip-address "$MYIP" \
       -o none 2>/dev/null || true
-    # shellcheck disable=SC2064
-    trap "az postgres flexible-server firewall-rule delete -g '$RG' -s '$PG_NAME' --name 'tmp-schema-$$' --yes -o none 2>/dev/null || true" EXIT
+    AZURE_TEMP_FIREWALL_RULE="tmp-schema-$$"
     sleep 5
   fi
   PGPASSWORD="$PG_PASSWORD" psql \
@@ -591,25 +652,21 @@ else
 fi
 
 log "DNS: point azure.trustedrouter.com at this app"
-if command -v gcloud >/dev/null 2>&1; then
-  CURRENT="$(gcloud dns record-sets describe azure.trustedrouter.com. \
+CURRENT="$(gcloud dns record-sets describe azure.trustedrouter.com. \
+  --project "${DNS_PROJECT:-quill-cloud-proxy}" --zone "${DNS_ZONE:-trustedrouter-com}" \
+  --type CNAME --format 'value(rrdatas[0])' 2>/dev/null || true)"
+if [ "$CURRENT" = "${FQDN}." ]; then
+  log "dns: azure.trustedrouter.com already -> ${FQDN}"
+elif [ -n "$CURRENT" ]; then
+  gcloud dns record-sets update azure.trustedrouter.com. \
     --project "${DNS_PROJECT:-quill-cloud-proxy}" --zone "${DNS_ZONE:-trustedrouter-com}" \
-    --type CNAME --format 'value(rrdatas[0])' 2>/dev/null || true)"
-  if [ "$CURRENT" = "${FQDN}." ]; then
-    log "dns: azure.trustedrouter.com already -> ${FQDN}"
-  elif [ -n "$CURRENT" ]; then
-    gcloud dns record-sets update azure.trustedrouter.com. \
-      --project "${DNS_PROJECT:-quill-cloud-proxy}" --zone "${DNS_ZONE:-trustedrouter-com}" \
-      --type CNAME --ttl 300 --rrdatas "${FQDN}." >/dev/null
-    log "dns: reconciled azure.trustedrouter.com ${CURRENT} -> ${FQDN}."
-  else
-    gcloud dns record-sets create azure.trustedrouter.com. \
-      --project "${DNS_PROJECT:-quill-cloud-proxy}" --zone "${DNS_ZONE:-trustedrouter-com}" \
-      --type CNAME --ttl 300 --rrdatas "${FQDN}." >/dev/null
-    log "dns: created azure.trustedrouter.com -> ${FQDN}."
-  fi
+    --type CNAME --ttl 300 --rrdatas "${FQDN}." >/dev/null
+  log "dns: reconciled azure.trustedrouter.com ${CURRENT} -> ${FQDN}."
 else
-  log "gcloud absent: point azure.trustedrouter.com CNAME at ${FQDN} yourself"
+  gcloud dns record-sets create azure.trustedrouter.com. \
+    --project "${DNS_PROJECT:-quill-cloud-proxy}" --zone "${DNS_ZONE:-trustedrouter-com}" \
+    --type CNAME --ttl 300 --rrdatas "${FQDN}." >/dev/null
+  log "dns: created azure.trustedrouter.com -> ${FQDN}."
 fi
 
 cat >&2 <<NOTE

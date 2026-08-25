@@ -22,24 +22,42 @@
 # env vars. describe-service returns RuntimeEnvironmentVariables in
 # cleartext to any caller with apprunner:DescribeService; it masks
 # RuntimeEnvironmentSecrets.
+#
+# Prerequisite: an authenticated gcloud CLI with object access to the shared
+# production deployment-mutex bucket. The mutex serializes this AWS rollout
+# against GCP and Azure control-plane deploys.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/deploy/deploy_mutex.sh
+source "${SCRIPT_DIR}/deploy_mutex.sh"
+# shellcheck source=scripts/deploy/cloud_bake_gate.sh
+source "${SCRIPT_DIR}/cloud_bake_gate.sh"
 # shellcheck source=scripts/deploy/_aws_app_runner_security.sh
 source "${SCRIPT_DIR}/_aws_app_runner_security.sh"
 # shellcheck source=scripts/deploy/_aws_waf.sh
 source "${SCRIPT_DIR}/_aws_waf.sh"
 
+command -v gcloud >/dev/null 2>&1 || {
+  echo "gcloud is required to acquire the fleet deployment mutex" >&2
+  exit 1
+}
+
+die() { echo "[FAIL] $*" >&2; exit 1; }
+
 REGION="${REGION:-eu-west-3}"                       # Paris. Dublin is GONE.
 ACCOUNT="${ACCOUNT:-330422590279}"
 CLUSTER_ID="${CLUSTER_ID:-tnt642i3ofzpn5z62msacutpuu}"
 ECR="${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/trusted-router"
-TAG="${TAG:-eu}"
-# TR_RELEASE was TAG, a constant ("eu"), so this plane reported the same
-# release string forever and nothing could tell a fresh deploy from a
-# six-month-old one. GCP has always published the commit; AWS and Azure did
-# not, which is why drift here was invisible until somebody went looking.
-RELEASE_COMMIT="${RELEASE_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
+# Immutable source tag: the serving configuration carries it in TR_RELEASE
+# while the actual image reference stays pinned by digest. The bake gate
+# reads it back as this cloud's serving commit, so a wrong value here
+# poisons fleet-wide bake evidence — die rather than stamp 'unknown'.
+TAG="${TAG:-$(git -C "${SCRIPT_DIR}/../.." rev-parse --short HEAD 2>/dev/null || true)}"
+[ -n "$TAG" ] || die "not a git checkout: set TAG=<short-sha>"
+# #768's staleness detector reads RELEASE_COMMIT; same truth as the tag,
+# and the bake gate asserts the tag equals HEAD below.
+RELEASE_COMMIT="${RELEASE_COMMIT:-$TAG}"
 SVC="${SVC:-tr-eu}"
 # DSQL endpoint region is INDEPENDENT of the App Runner region.
 #
@@ -86,6 +104,39 @@ ATTESTATION_PCR0="${ATTESTATION_PCR0:?set ATTESTATION_PCR0 to the published encl
 # component in src/trusted_router/synthetic/components.py — renaming one here
 # silently unpublishes its component, so change both together.
 GATEWAY_REGION_TARGETS="${GATEWAY_REGION_TARGETS:-eu-west-1=quill-enclave-nlb-6ed55aa238055cfc.elb.eu-west-1.amazonaws.com,eu-west-3=quill-enclave-nlb-aa2d3be423fa9027.elb.eu-west-3.amazonaws.com}"
+
+release_aws_control_plane_deploy_mutex() {
+  local deploy_status=$?
+  # Finish the release uninterrupted; a signal here would leak the mutex
+  # until its TTL.
+  trap '' INT TERM
+  trap - EXIT
+  if [ "${DEPLOY_MUTEX_SCOPE_OWNS_LOCK:-0}" -eq 1 ]; then
+    deploy_mutex_release
+  fi
+  exit "$deploy_status"
+}
+
+trap release_aws_control_plane_deploy_mutex EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+export TR_DEPLOY_MUTEX_CLOUD=aws
+deploy_mutex_acquire
+cloud_bake_gate aws
+if [ -n "$(git -C "${SCRIPT_DIR}/../.." status --porcelain 2>/dev/null || true)" ]; then
+  die "the gate validated HEAD; a dirty tree deploys unvalidated code"
+fi
+HEAD_TAG="$(git -C "${SCRIPT_DIR}/../.." rev-parse --short HEAD 2>/dev/null || true)"
+if [ "$TAG" != "$HEAD_TAG" ]; then
+  if [ -z "${TR_CLOUD_BAKE_OVERRIDE:-}" ]; then
+    die "TAG=${TAG} does not match the validated short HEAD ${HEAD_TAG:-UNKNOWN}; set TR_CLOUD_BAKE_OVERRIDE only for break glass"
+  fi
+  printf '%s\n' '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!' >&2
+  printf '%s\n' \
+    "CLOUD BAKE OVERRIDE: TAG=${TAG} does not match validated HEAD ${HEAD_TAG:-UNKNOWN}" >&2
+  printf 'reason: %s\n' "$TR_CLOUD_BAKE_OVERRIDE" >&2
+  printf '%s\n' '!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!' >&2
+fi
 
 # Secrets Manager ARNs (eu-west-3 — App Runner requires same-region secrets).
 # The observer credential authorizes only observer-owned ingestion/remediation;

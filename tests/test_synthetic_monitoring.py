@@ -6,7 +6,6 @@ import contextlib
 import datetime as dt
 import json
 import random
-import socket
 import threading
 import time
 from collections.abc import AsyncIterator
@@ -89,17 +88,10 @@ from trusted_router.synthetic.route_health import (
 )
 from trusted_router.synthetic.status import history_payload, status_snapshot
 
-
-def _closed_local_port() -> int:
-    """A localhost port nothing listens on: connections are refused at once."""
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
-
-
-# The SDK sessions' beacon destination in these tests. A refused port keeps
-# the reporter's close-time flush instant and off the network.
-_NO_CONTROL_PLANE = f"http://127.0.0.1:{_closed_local_port()}"
+# The SDK sessions' beacon destination in these tests. TCP port zero is
+# reserved and can never be a listening service, so the reporter's close-time
+# flush fails instantly without an import-time socket bind or a port race.
+_NO_CONTROL_PLANE = "http://127.0.0.1:0"
 
 
 @contextlib.asynccontextmanager
