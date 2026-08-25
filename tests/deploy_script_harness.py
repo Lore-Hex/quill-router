@@ -1734,11 +1734,26 @@ class DeployScriptHarness:
             f"{(extra_env or {}).get('HARNESS_PROBE_TAG_REMOVE_FAILURES', '0')}\n"
         )
 
+        trust_fixture = self.root / "trust-release.json"
+        if not trust_fixture.exists():
+            trust_fixture.write_text(
+                '{"source_commit": "harness-trust-commit", '
+                '"image_reference": "harness.invalid/trusted-router:harness", '
+                '"image_digest": "sha256:%s"}' % ("0" * 64),
+                encoding="utf-8",
+            )
         env = {
             "PATH": str(self.bin),
             "HOME": str(home),
             "TMPDIR": str(tmp),
             "LANG": "C",
+            # rollout.sh's TRUST_FILE default is an operator-laptop path
+            # (_lib.sh): present on that machine, absent on CI, where the
+            # fallback curl hits the stub and returns a bare status code
+            # that json-parses to an int. Pin a harness-owned fixture so
+            # the test is identical on every machine.
+            "TRUST_FILE": str(trust_fixture),
+            "TRUST_FILE_URL": "",
             "HARNESS_ARGV_LOG": str(argv_log),
             "HARNESS_FIXTURES": str(fixtures_file),
             "HARNESS_FAILURES": str(failures_file),

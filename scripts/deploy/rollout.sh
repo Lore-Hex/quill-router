@@ -77,9 +77,9 @@ elif [ -n "${TRUST_FILE_URL:-}" ]; then
   TRUST_JSON="$(curl -fsSL --max-time 10 "$TRUST_FILE_URL" 2>/dev/null || true)"
 fi
 if [ -n "$TRUST_JSON" ]; then
-  TRUST_SOURCE_COMMIT="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit", ""))' <<<"$TRUST_JSON")"
-  TRUST_IMAGE_REFERENCE="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("image_reference", ""))' <<<"$TRUST_JSON")"
-  TRUST_IMAGE_DIGEST="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("image_digest", ""))' <<<"$TRUST_JSON")"
+  TRUST_SOURCE_COMMIT="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("source_commit", "") if isinstance(d, dict) else "")' <<<"$TRUST_JSON")"
+  TRUST_IMAGE_REFERENCE="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("image_reference", "") if isinstance(d, dict) else "")' <<<"$TRUST_JSON")"
+  TRUST_IMAGE_DIGEST="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("image_digest", "") if isinstance(d, dict) else "")' <<<"$TRUST_JSON")"
 fi
 
 
