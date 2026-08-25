@@ -685,8 +685,15 @@ def test_fireworks_catalog_exposes_glm_52_fast_router() -> None:
         "accounts/fireworks/routers/glm-5p2-fast"
     }
     assert {endpoint.prompt_price_microdollars_per_million_tokens for endpoint in fireworks} == {
-        2_954_000
+        2_215_500
     }
+    assert {
+        endpoint.completion_price_microdollars_per_million_tokens for endpoint in fireworks
+    } == {6_963_000}
+    assert {
+        endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+        for endpoint in fireworks
+    } == {221_550}
 
 
 def test_baseten_catalog_exposes_glm_52_fast_router() -> None:
