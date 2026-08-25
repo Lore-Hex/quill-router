@@ -65,8 +65,14 @@ SG_NAME="${SG_NAME:-tr-eu-north-clickhouse-sg}"
 SECRET_ID="${SECRET_ID:-quill/tr-eu-north-clickhouse-password}"
 INSTANCE_PROFILE="${INSTANCE_PROFILE:-quill-enclave-instance-profile}"
 PEER_WITH_PARIS="${PEER_WITH_PARIS:-1}"            # 0 to bring your own path.
-SCHEMA_FILE="${SCHEMA_FILE:-$(dirname "$0")/../../clickhouse/006_operational_analytics_single_node.sql}"
-CLIENT_SCHEMA_FILE="${CLIENT_SCHEMA_FILE:-$(dirname "$0")/../../clickhouse/009_client_events_single_node.sql}"
+# The standalone schema is DERIVED, not listed. These were pinned to exactly
+# 006 and 009 -- the same two files Paris's glob happened to match -- so this
+# node was built without 011 or 013 and therefore without the workspace_id
+# column the drain inserts. That is silent: the insert fails, shard failures are
+# contained, and the unit stays active reporting healthy while this node, whose
+# entire job is being a SECOND copy of the history, receives nothing.
+# shellcheck source=scripts/deploy/_clickhouse_single_node_schema.sh
+. "$(dirname "$0")/_clickhouse_single_node_schema.sh"
 
 log(){ printf '\n=== %s\n' "$*" >&2; }
 
@@ -123,8 +129,14 @@ if [ "$REGION" = "$PARIS_REGION" ]; then
   echo "REGION and PARIS_REGION are both $REGION; a second copy in the same region is not a second failure domain" >&2
   exit 1
 fi
-[ -r "$SCHEMA_FILE" ] || { echo "schema file not readable: $SCHEMA_FILE" >&2; exit 1; }
-[ -r "$CLIENT_SCHEMA_FILE" ] || { echo "schema file not readable: $CLIENT_SCHEMA_FILE" >&2; exit 1; }
+SCHEMA_FILES=()
+while IFS= read -r _schema; do
+  SCHEMA_FILES+=("$_schema")
+done < <(single_node_migrations "$(cd "$(dirname "$0")/../.." && pwd)") || exit 1
+[ "${#SCHEMA_FILES[@]}" -gt 0 ] || { echo "empty single-node schema set" >&2; exit 1; }
+for _schema in "${SCHEMA_FILES[@]}"; do
+  [ -r "$_schema" ] || { echo "schema file not readable: $_schema" >&2; exit 1; }
+done
 
 PARIS_VPC_CIDR="$(aws ec2 describe-vpcs --region "$PARIS_REGION" --vpc-ids "$PARIS_VPC_ID" \
   --query 'Vpcs[0].CidrBlock' --output text)"
@@ -250,8 +262,7 @@ log "security group: $SG_ID"
 #    finishes booting -- the drain can be pointed at it without a second
 #    manual step that someone forgets.
 # ---------------------------------------------------------------------------
-OPERATIONAL_SCHEMA="$(cat "$SCHEMA_FILE")"
-CLIENT_SCHEMA="$(cat "$CLIENT_SCHEMA_FILE")"
+OPERATIONAL_SCHEMA="$(cat "${SCHEMA_FILES[@]}")"
 
 EXISTING="$(aws ec2 describe-instances --region "$REGION" \
   --filters "Name=tag:Name,Values=$NAME" "Name=instance-state-name,Values=running,pending" \
@@ -323,7 +334,6 @@ systemctl restart clickhouse-server
 # Keeper: this node does not replicate with Paris, the drain writes both.
 cat > /root/operational_schema.sql <<'SQLEOF'
 ${OPERATIONAL_SCHEMA}
-${CLIENT_SCHEMA}
 SQLEOF
 for attempt in \$(seq 1 60); do
   if CLICKHOUSE_PASSWORD='${CH_PASSWORD}' clickhouse-client --user default --database default --query 'SELECT 1' >/dev/null 2>&1; then

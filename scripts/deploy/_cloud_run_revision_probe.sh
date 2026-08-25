@@ -19,10 +19,18 @@ try:
     document = json.load(sys.stdin)
 except Exception:
     raise SystemExit(1)
-for entry in document.get("status", {}).get("traffic", []):
-    if entry.get("tag") == tag:
-        print(entry.get("revisionName", ""))
-        break
+matches = [
+    entry
+    for entry in document.get("status", {}).get("traffic", [])
+    if entry.get("tag") == tag
+]
+if len(matches) > 1:
+    raise SystemExit(f"probe tag {tag!r} resolves to more than one traffic entry")
+if matches:
+    revision = matches[0].get("revisionName")
+    if not revision:
+        raise SystemExit(f"probe tag {tag!r} has an empty revisionName")
+    print(revision)
 ' "$tag"
 }
 

@@ -47,6 +47,23 @@ print(value)
 PY
 }
 
+_deploy_mutex_record_cloud() {
+  local path="$1"
+  python3 - "$path" <<'PY'
+import json
+import sys
+
+try:
+    record = json.load(open(sys.argv[1], encoding="utf-8"))
+    value = record.get("cloud", "gcp")
+except (AttributeError, OSError, TypeError, ValueError):
+    raise SystemExit(1)
+if value not in {"gcp", "aws", "azure"}:
+    raise SystemExit(1)
+print(value)
+PY
+}
+
 _deploy_mutex_expired() {
   local expires_at="$1"
   python3 - "$expires_at" <<'PY'
@@ -71,16 +88,20 @@ _deploy_mutex_write_record() {
   local ttl_seconds="$4"
   local tool="$5"
   local pid="$6"
-  python3 - "$path" "$owner" "$operation_id" "$ttl_seconds" "$tool" "$pid" <<'PY'
+  local cloud="$7"
+  python3 - \
+    "$path" "$owner" "$operation_id" "$ttl_seconds" "$tool" "$pid" "$cloud" <<'PY'
 from datetime import UTC, datetime, timedelta
 import json
 import sys
 
-path, owner, operation_id, ttl_raw, tool, pid_raw = sys.argv[1:]
+path, owner, operation_id, ttl_raw, tool, pid_raw, cloud = sys.argv[1:]
 if not owner or len(owner) > 512 or any(ord(char) < 32 for char in owner):
     raise SystemExit("owner must be 1..512 printable characters")
 if tool not in {"workflow", "manual"}:
     raise SystemExit("tool must be workflow or manual")
+if cloud not in {"gcp", "aws", "azure"}:
+    raise SystemExit("cloud must be gcp, aws, or azure")
 try:
     ttl_seconds = int(ttl_raw)
     pid = int(pid_raw)
@@ -88,6 +109,7 @@ except ValueError:
     raise SystemExit("ttl and pid must be integers") from None
 created = datetime.now(UTC).replace(microsecond=0)
 record = {
+    "cloud": cloud,
     "owner": owner,
     "operation_id": operation_id,
     "created_at": created.isoformat().replace("+00:00", "Z"),
@@ -150,6 +172,7 @@ deploy_mutex_acquire() {
       tool="manual"
     fi
   fi
+  local cloud="${TR_DEPLOY_MUTEX_CLOUD:-gcp}"
   local operation_id
   operation_id="$(python3 -c 'import uuid; print(uuid.uuid4())')"
   local record_file
@@ -157,7 +180,8 @@ deploy_mutex_acquire() {
   record_file="$(mktemp "${TMPDIR:-/tmp}/tr-deploy-mutex-record.XXXXXX")"
   holder_file="$(mktemp "${TMPDIR:-/tmp}/tr-deploy-mutex-holder.XXXXXX")"
   if ! _deploy_mutex_write_record \
-      "$record_file" "$owner" "$operation_id" "$ttl_seconds" "$tool" "$$"; then
+      "$record_file" "$owner" "$operation_id" "$ttl_seconds" "$tool" "$$" \
+      "$cloud"; then
     rm -f "$record_file" "$holder_file"
     _deploy_mutex_log "deploy_mutex.invalid_metadata"
     return 1
@@ -191,10 +215,12 @@ deploy_mutex_acquire() {
     local previous_operation
     local previous_created_at
     local previous_expires_at
+    local previous_cloud
     if ! previous_owner="$(_deploy_mutex_json_field "$holder_file" owner)" ||
        ! previous_operation="$(_deploy_mutex_json_field "$holder_file" operation_id)" ||
        ! previous_created_at="$(_deploy_mutex_json_field "$holder_file" created_at)" ||
-       ! previous_expires_at="$(_deploy_mutex_json_field "$holder_file" expires_at)"; then
+       ! previous_expires_at="$(_deploy_mutex_json_field "$holder_file" expires_at)" ||
+       ! previous_cloud="$(_deploy_mutex_record_cloud "$holder_file")"; then
       rm -f "$record_file" "$holder_file"
       _deploy_mutex_log \
         "deploy_mutex.acquire_failed reason=holder_metadata_invalid generation=${previous_generation}"
@@ -228,7 +254,7 @@ deploy_mutex_acquire() {
           "deploy_mutex.acquire_failed reason=holder_expiry_invalid generation=${previous_generation}"
       else
         _deploy_mutex_log \
-          "deploy_mutex.blocked owner=${previous_owner} operation_id=${previous_operation} created_at=${previous_created_at} expires_at=${previous_expires_at}"
+          "deploy_mutex.blocked cloud=${previous_cloud} owner=${previous_owner} operation_id=${previous_operation} created_at=${previous_created_at} expires_at=${previous_expires_at}"
       fi
       return 1
     fi
@@ -301,7 +327,7 @@ deploy_mutex_acquire() {
   DEPLOY_MUTEX_SCOPE_DEPTH=$((${DEPLOY_MUTEX_SCOPE_DEPTH:-0} + 1))
   DEPLOY_MUTEX_SCOPE_OWNS_LOCK=1
   _deploy_mutex_log \
-    "deploy_mutex.acquired owner=${owner} operation_id=${operation_id} generation=${generation} created_at=${created_at} expires_at=${expires_at} ttl_seconds=${ttl_seconds} tool=${tool}"
+    "deploy_mutex.acquired cloud=${cloud} owner=${owner} operation_id=${operation_id} generation=${generation} created_at=${created_at} expires_at=${expires_at} ttl_seconds=${ttl_seconds} tool=${tool}"
   printf 'TR_DEPLOY_MUTEX_OPERATION=%s\n' "$operation_id"
   printf 'TR_DEPLOY_MUTEX_GENERATION=%s\n' "$generation"
 }
@@ -400,6 +426,7 @@ import sys
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     record = json.load(handle)
+record.setdefault("cloud", "gcp")
 record["generation"] = int(sys.argv[2])
 print(json.dumps(record, indent=2, sort_keys=True))
 PY

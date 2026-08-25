@@ -718,14 +718,12 @@ tbody tr:hover {
 
 .public-wrap :not(pre) > code {
   overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .agent-prompt-line {
   display: block;
   min-width: 0;
   overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .public-hero,
@@ -898,7 +896,7 @@ tbody tr:hover {
   overflow: hidden;
   width: 1px;
   height: 1px;
-  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
   white-space: nowrap;
 }
 

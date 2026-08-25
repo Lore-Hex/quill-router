@@ -76,8 +76,11 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from scripts.deploy.service_surface_url_map import rewrite_url_map
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -149,6 +152,83 @@ _STUB = r"""#!/usr/bin/env bash
 # stub is not in a pipeline.
 cat >/dev/null 2>&1 || true
 joined="${0##*/} $*"
+
+# The operator-run AWS and Azure control-plane scripts share the real
+# generation-fenced GCS mutex. Model that one object instead of letting the
+# generic success fallback invent an invalid generation or unreadable record.
+if [ "${0##*/}" = "gcloud" ] \
+    && [[ " $* " == *"trusted-router-production.json"* ]]; then
+  case "$1 $2 $3" in
+    "storage cp "*)
+      source_path="$3"
+      destination_path="$4"
+      if [[ "$destination_path" == gs://* ]]; then
+        if [ -f "$HARNESS_DEPLOY_MUTEX_STATE" ]; then
+          exit 1
+        fi
+        cp "$source_path" "$HARNESS_DEPLOY_MUTEX_STATE"
+      else
+        [ -f "$HARNESS_DEPLOY_MUTEX_STATE" ] || exit 1
+        cp "$HARNESS_DEPLOY_MUTEX_STATE" "$destination_path"
+      fi
+      exit 0
+      ;;
+    "storage objects describe")
+      [ -f "$HARNESS_DEPLOY_MUTEX_STATE" ] || exit 1
+      printf '1\n'
+      exit 0
+      ;;
+    "storage rm "*)
+      [ -f "$HARNESS_DEPLOY_MUTEX_STATE" ] || exit 1
+      rm -f "$HARNESS_DEPLOY_MUTEX_STATE"
+      exit 0
+      ;;
+  esac
+fi
+
+# Some execution tests need the real bake gate to pass so they can exercise
+# the artifact checks immediately after it. Feed every discovery CLI the same
+# old, merged commit from the isolated harness repository.
+if [ -n "${HARNESS_CLOUD_BAKE_SHA:-}" ]; then
+  case "${0##*/}:$1:$2" in
+    gcloud:run:services)
+      printf '%s\n' \
+        '{"status":{"traffic":[{"revisionName":"harness-serving","percent":100}]}}'
+      exit 0
+      ;;
+    gcloud:run:revisions)
+      printf 'harness.invalid/trusted-router:%s\n' "$HARNESS_CLOUD_BAKE_SHA"
+      exit 0
+      ;;
+    az:containerapp:revision)
+      printf '[{"name":"harness-serving","properties":{"createdTime":"2026-01-01T00:00:00Z","trafficWeight":100,"healthState":"Healthy","template":{"containers":[{"image":"harness.invalid/trusted-router@sha256:%064d","env":[{"name":"TR_RELEASE","value":"%s"}]}]}}}]\n' \
+        0 "$HARNESS_CLOUD_BAKE_SHA"
+      exit 0
+      ;;
+    aws:apprunner:list-services)
+      printf '%s\n' 'arn:aws:apprunner:eu-west-3:123456789012:service/tr-eu/harness'
+      exit 0
+      ;;
+    aws:apprunner:list-operations)
+      printf '%s\n' 'SUCCEEDED'
+      exit 0
+      ;;
+    aws:apprunner:describe-service)
+      if [[ " $* " == *"Service.Status"* ]]; then
+        printf '%s\n' 'RUNNING'
+      elif [[ " $* " == *"ImageIdentifier"* ]]; then
+        printf 'harness.invalid/trusted-router@sha256:%064d\n' 0
+      else
+        printf '%s\n' "$HARNESS_CLOUD_BAKE_SHA"
+      fi
+      exit 0
+      ;;
+    curl:--fail:--silent)
+      printf '%s\n' '{"data":{"overall_status":"up"}}'
+      exit 0
+      ;;
+  esac
+fi
 
 # Some deploy tests need to inspect the exact cloud-init document handed to
 # Azure. Capture the file at the command boundary, before the script's EXIT
@@ -252,6 +332,11 @@ PY
     kill -TERM "$PPID"
     exit 143
   fi
+  if [[ " $* " == *" run services update-traffic trusted-router-public "* ]] \
+      && [[ " $* " == *"--to-revisions=trusted-router-public-active=100"* ]] \
+      && [ "${HARNESS_PUBLIC_RESTORE_FAIL_REGION:-}" = "$region" ]; then
+    exit 1
+  fi
   if [[ " $* " == *" run services describe trusted-router-public "* ]] \
       && [[ " $* " == *" --format=json "* ]]; then
     python3 - "$HARNESS_PUBLIC_INGRESS_STATE" "$HARNESS_PROBE_TAG_STATE_DIR" "$region" <<'PY'
@@ -325,6 +410,25 @@ print(json.dumps({"status": {"traffic": traffic}}, separators=(",", ":")))
 PY
     exit 0
   fi
+  if [[ " $* " == *" run revisions describe trusted-router-public-active "* ]] \
+      && [[ " $* " == *" --format=json "* ]]; then
+    python3 - "$HARNESS_PUBLIC_INGRESS_STATE" "$region" <<'PY'
+import json
+import pathlib
+import sys
+ingress = json.loads(pathlib.Path(sys.argv[1]).read_text())[sys.argv[2]]
+mode = "untrusted" if ingress == "all" else "edge_header"
+print(json.dumps({"metadata": {"name": "trusted-router-public-active"}, "spec": {"containers": [{"env": [{"name": "TR_RATE_LIMIT_CLIENT_IP_MODE", "value": mode}]}]}}, separators=(",", ":")))
+PY
+    exit 0
+  fi
+  if [[ " $* " == *" run services describe trusted-router-public "* ]] \
+      && [[ " $* " == *"status.traffic"* ]]; then
+    if [ -f "${HARNESS_PROBE_TAG_STATE_DIR}/${region}" ]; then
+      cat "${HARNESS_PROBE_TAG_STATE_DIR}/${region}"
+    fi
+    exit 0
+  fi
   if [[ " $* " == *" run services describe trusted-router-public "* ]] \
       && [[ " $* " == *"status.url"* ]]; then
     printf 'https://trusted-router-public-%s.a.run.app\n' "$region"
@@ -362,6 +466,158 @@ PY
       printf 'harness response body\n' >"$output_file"
     fi
     printf '%s' "$code"
+    exit 0
+  fi
+fi
+
+if [ "${HARNESS_INTERNAL_SURFACE_SMOKE:-0}" = "1" ]; then
+  region=""
+  previous=""
+  output_file=""
+  header_file=""
+  request_body=""
+  ingress=""
+  for argument in "$@"; do
+    case "$argument" in
+      --region=*) region="${argument#--region=}" ;;
+      --region) previous="region"; continue ;;
+      --ingress=*) ingress="${argument#--ingress=}" ;;
+      --ingress) previous="ingress"; continue ;;
+      -o) previous="output"; continue ;;
+      --header) previous="header"; continue ;;
+      --data) previous="data"; continue ;;
+    esac
+    case "$previous" in
+      region) region="$argument" ;;
+      ingress) ingress="$argument" ;;
+      output) output_file="$argument" ;;
+      header) header_file="${argument#@}" ;;
+      data) request_body="$argument" ;;
+    esac
+    previous=""
+  done
+  if [[ " $* " == *" run deploy trusted-router-internal "* ]] \
+      && [[ " $* " == *"status.latestCreatedRevisionName"* ]]; then
+    python3 - "$HARNESS_INTERNAL_INGRESS_STATE" "$region" "$ingress" <<'PY'
+import json
+import pathlib
+import sys
+path = pathlib.Path(sys.argv[1])
+state = json.loads(path.read_text())
+state[sys.argv[2]] = sys.argv[3]
+path.write_text(json.dumps(state, sort_keys=True) + "\n")
+PY
+    printf 'trusted-router-internal-candidate-%s\n' "$region"
+    exit 0
+  fi
+  if [[ " $* " == *" run services update trusted-router-internal "* ]] \
+      && [ -n "$ingress" ]; then
+    python3 - "$HARNESS_INTERNAL_INGRESS_STATE" "$region" "$ingress" <<'PY'
+import json
+import pathlib
+import sys
+path = pathlib.Path(sys.argv[1])
+state = json.loads(path.read_text())
+state[sys.argv[2]] = sys.argv[3]
+path.write_text(json.dumps(state, sort_keys=True) + "\n")
+PY
+    exit 0
+  fi
+  if [[ " $* " == *" run services update-traffic trusted-router-internal "* ]] \
+      && [[ " $* " == *" --update-tags="* ]]; then
+    for argument in "$@"; do
+      case "$argument" in
+        --update-tags=*)
+          assignment="${argument#--update-tags=}"
+          printf '%s\n' "${assignment#*=}" >"${HARNESS_INTERNAL_PROBE_TAG_STATE_DIR}/${region}"
+          ;;
+      esac
+    done
+    exit 0
+  fi
+  if [[ " $* " == *" run services update-traffic trusted-router-internal "* ]] \
+      && [[ " $* " == *" --remove-tags="* ]]; then
+    rm -f "${HARNESS_INTERNAL_PROBE_TAG_STATE_DIR}/${region}"
+    exit 0
+  fi
+  if [[ " $* " == *" run services update-traffic trusted-router-internal "* ]] \
+      && [[ " $* " == *"--to-revisions=trusted-router-internal-active=100"* ]] \
+      && [ "${HARNESS_INTERNAL_RESTORE_FAIL_REGION:-}" = "$region" ]; then
+    exit 1
+  fi
+  if [[ " $* " == *" run services describe trusted-router-internal "* ]] \
+      && [[ " $* " == *" --format=json "* ]]; then
+    python3 - "$HARNESS_INTERNAL_INGRESS_STATE" "$HARNESS_INTERNAL_PROBE_TAG_STATE_DIR" "$region" <<'PY'
+import json
+import pathlib
+import sys
+region = sys.argv[3]
+ingress = json.loads(pathlib.Path(sys.argv[1]).read_text())[region]
+traffic = [{"percent": 100, "revisionName": "trusted-router-internal-active"}]
+tag_path = pathlib.Path(sys.argv[2]) / region
+if tag_path.is_file():
+    traffic.append({"percent": 0, "revisionName": tag_path.read_text().strip(), "tag": "internal-revision-probe"})
+print(json.dumps({
+    "metadata": {"annotations": {"run.googleapis.com/ingress": ingress}},
+    "status": {"traffic": traffic, "url": f"https://trusted-router-internal-{region}.a.run.app"},
+}, separators=(",", ":")))
+PY
+    exit 0
+  fi
+  if [[ " $* " == *" run revisions describe trusted-router-internal-active "* ]] \
+      && [[ " $* " == *" --format=json "* ]]; then
+    python3 - "$HARNESS_INTERNAL_INGRESS_STATE" "$region" <<'PY'
+import json
+import pathlib
+import sys
+ingress = json.loads(pathlib.Path(sys.argv[1]).read_text())[sys.argv[2]]
+mode = "untrusted" if ingress == "all" else "edge_header"
+print(json.dumps({"metadata": {"name": "trusted-router-internal-active"}, "spec": {"containers": [{"env": [{"name": "TR_RATE_LIMIT_CLIENT_IP_MODE", "value": mode}]}]}}, separators=(",", ":")))
+PY
+    exit 0
+  fi
+  if [[ " $* " == *" run services describe trusted-router-internal "* ]] \
+      && [[ " $* " == *"status.url"* ]]; then
+    printf 'https://trusted-router-internal-%s.a.run.app\n' "$region"
+    exit 0
+  fi
+  if [ "${0##*/}" = "curl" ]; then
+    expected_body='{"api_key_lookup_hash":"0000000000000000000000000000000000000000000000000000000000000000","route_type":"deploy-smoke"}'
+    if [ "$request_body" != "$expected_body" ]; then
+      if [ -n "$output_file" ]; then
+        printf '{"error":{"message":"Unexpected smoke request"}}\n' >"$output_file"
+      fi
+      printf '400'
+      exit 0
+    fi
+    supplied_token=""
+    if [ -n "$header_file" ] && [ -f "$header_file" ]; then
+      supplied_token="$(sed -n 's/^Authorization: Bearer //p' "$header_file" | head -n 1)"
+    fi
+    expected_token="${HARNESS_INTERNAL_EXPECTED_TOKEN:-harness-internal-gateway-token-${HARNESS_INTERNAL_TOKEN_SUFFIX:-gggggggggggggggggggggggggggggggg}}"
+    if [ -z "$supplied_token" ] || [ "$supplied_token" != "$expected_token" ]; then
+      if [ -n "$output_file" ]; then
+        printf '{"error":{"message":"Invalid internal service token"}}\n' >"$output_file"
+      fi
+      printf '401'
+      exit 0
+    fi
+    smoke_code="${HARNESS_INTERNAL_SMOKE_HTTP_CODE:-401}"
+    if [ -n "${HARNESS_INTERNAL_SMOKE_FAIL_REGION:-}" ] && \
+        [[ "${*: -1}" == *"${HARNESS_INTERNAL_SMOKE_FAIL_REGION}"* ]]; then
+      smoke_code="500"
+    fi
+    if [ -n "$output_file" ]; then
+      if [ "${HARNESS_INTERNAL_SMOKE_BODY:-valid}" = "valid" ] && \
+          [ "$smoke_code" = "401" ]; then
+        printf '{"error":{"code":401,"message":"Invalid API key","type":"unauthorized","source":"router"}}\n' >"$output_file"
+      elif [ "${HARNESS_INTERNAL_SMOKE_BODY:-}" = "substring" ]; then
+        printf '{"error":{"code":401,"message":"Unexpected response containing Invalid API key"}}\n' >"$output_file"
+      else
+        printf '{"error":{"message":"Unexpected smoke response"}}\n' >"$output_file"
+      fi
+    fi
+    printf '%s' "$smoke_code"
     exit 0
   fi
 fi
@@ -601,6 +857,16 @@ _SYNTHETIC_INGEST_SERVICE_JSON = json.dumps(
     separators=(",", ":"),
 )
 
+_PUBLIC_SURFACE_LEGACY_SERVICE_JSON = json.dumps(
+    {
+        "status": {
+            "traffic": [
+                {"percent": 100, "revisionName": "trusted-router-active"}
+            ]
+        }
+    },
+    separators=(",", ":"),
+)
 _PUBLIC_SURFACE_PUBLIC_SERVICE_JSON = json.dumps(
     {
         "metadata": {
@@ -690,7 +956,21 @@ _PUBLIC_SURFACE_LEGACY_REVISION_JSON = json.dumps(
     separators=(",", ":"),
 )
 _PUBLIC_SURFACE_PUBLIC_REVISION_JSON = json.dumps(
-    {"metadata": {"name": "trusted-router-public-active"}},
+    {
+        "metadata": {"name": "trusted-router-public-active"},
+        "spec": {
+            "containers": [
+                {
+                    "env": [
+                        {
+                            "name": "TR_RATE_LIMIT_CLIENT_IP_MODE",
+                            "value": "edge_header",
+                        }
+                    ]
+                }
+            ]
+        },
+    },
     separators=(",", ":"),
 )
 _PUBLIC_EDGE_LIVE_MAP_JSON = json.dumps(
@@ -738,6 +1018,164 @@ _PUBLIC_EDGE_ROUTED_SERVICE_JSON = json.dumps(
     separators=(",", ":"),
 )
 
+_INTERNAL_SURFACE_LEGACY_ENV = {
+    **_PUBLIC_SURFACE_LEGACY_ENV,
+    "TR_GENERATION_RECORDS_ENABLED": "true",
+    "TR_REQUEST_RECORD_WRITE_MODE": "typed",
+    "TR_SETTLE_OUTBOX_ENABLED": "true",
+    "TR_ANALYTICS_OUTBOX_ENABLED": "true",
+    "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED": "true",
+    "TR_USER_MODELS_DISPATCH_ENABLED": "true",
+    "TR_REGIONAL_QUOTA_LEASES_ENABLED": "true",
+    "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "false",
+    "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS": "workspace-pilot",
+    "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS": "120",
+    "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS": "5000000",
+    "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS": "5000",
+    "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT": "16",
+    "TR_REGIONAL_QUOTA_BIGTABLE_TABLE": "trustedrouter-regional-quota",
+    "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES": (
+        "us-central1=tr-quota-us-central1"
+    ),
+    "TR_FEDERATION_HOME_BASE_URL": "https://trustedrouter.com/v1",
+    "TR_FEDERATION_DEFERRED_SETTLEMENT_ENABLED": "true",
+}
+_INTERNAL_SECRET_BINDINGS = (
+    ("TR_INTERNAL_GATEWAY_TOKEN", "trustedrouter-internal-gateway-token"),
+    ("TR_OBSERVER_INTERNAL_TOKEN", "trustedrouter-observer-internal-token"),
+    ("TR_SYNTHETIC_MONITOR_API_KEY", "trustedrouter-synthetic-monitor-api-key"),
+    ("TR_SENTRY_DSN", "trustedrouter-sentry-dsn"),
+    ("TR_FEDERATION_PEER_TOKEN", "trustedrouter-federation-peer-token"),
+    ("TR_FEDERATION_HOME_TOKEN", "trustedrouter-federation-home-token"),
+    (
+        "TR_FEDERATION_CREDIT_INBOUND_TOKEN",
+        "trustedrouter-federation-credit-inbound-token",
+    ),
+    ("TR_FEDERATION_CREDIT_PEER_TOKEN", "trustedrouter-federation-credit-peer-token"),
+    (
+        "TR_FEDERATION_SETTLEMENT_INBOUND_TOKENS",
+        "trustedrouter-federation-settlement-inbound-tokens",
+    ),
+    (
+        "TR_FEDERATION_SETTLEMENT_HOME_TOKEN",
+        "trustedrouter-federation-settlement-home-token",
+    ),
+    (
+        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD",
+        "trustedrouter-clickhouse-control-read-password",
+    ),
+)
+_INTERNAL_SURFACE_LEGACY_REVISION_JSON = json.dumps(
+    {
+        "spec": {
+            "containers": [
+                {
+                    "image": (
+                        "us-central1-docker.pkg.dev/quill-cloud-proxy/"
+                        "trusted-router/trusted-router@sha256:" + "1" * 64
+                    ),
+                    "env": [
+                        *(
+                            {"name": name, "value": value}
+                            for name, value in _INTERNAL_SURFACE_LEGACY_ENV.items()
+                        ),
+                        *(
+                            {
+                                "name": name,
+                                "valueFrom": {
+                                    "secretKeyRef": {"name": secret, "key": "latest"}
+                                },
+                            }
+                            for name, secret in _INTERNAL_SECRET_BINDINGS
+                        ),
+                    ],
+                }
+            ]
+        }
+    },
+    separators=(",", ":"),
+)
+_INTERNAL_IAM_POLICY_JSON = json.dumps(
+    {
+        "bindings": [
+            {
+                "role": "roles/spanner.databaseUser",
+                "members": [
+                    "serviceAccount:tr-internal@quill-cloud-proxy.iam.gserviceaccount.com"
+                ],
+            },
+            {
+                "role": "roles/bigtable.user",
+                "members": [
+                    "serviceAccount:tr-internal@quill-cloud-proxy.iam.gserviceaccount.com"
+                ],
+            },
+            {
+                "role": "roles/secretmanager.secretAccessor",
+                "members": [
+                    "serviceAccount:tr-internal@quill-cloud-proxy.iam.gserviceaccount.com"
+                ],
+            },
+        ]
+    },
+    separators=(",", ":"),
+)
+_INTERNAL_EDGE_ROUTED_SERVICE_JSON = json.dumps(
+    {
+        "metadata": {
+            "annotations": {
+                "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
+            }
+        },
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [
+                        {
+                            "env": [
+                                {"name": "TR_SERVICE_SURFACE", "value": "internal"},
+                                {
+                                    "name": "TR_RATE_LIMIT_CLIENT_IP_MODE",
+                                    "value": "edge_header",
+                                },
+                            ]
+                        }
+                    ]
+                }
+            }
+        },
+    },
+    separators=(",", ":"),
+)
+_INTERNAL_BACKEND_JSON = json.dumps(
+    {
+        "enableCDN": False,
+        "securityPolicy": (
+            "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/"
+            "global/securityPolicies/trusted-router-internal-edge"
+        ),
+        "customRequestHeaders": [
+            "X-TrustedRouter-Client-IP:{client_ip_address}"
+        ],
+    },
+    separators=(",", ":"),
+)
+_BACKEND_BASE = (
+    "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/"
+    "global/backendServices/"
+)
+_INTERNAL_EDGE_LIVE_MAP_JSON = json.dumps(
+    rewrite_url_map(
+        json.loads(_PUBLIC_EDGE_LIVE_MAP_JSON),
+        public_backend=_BACKEND_BASE + "trusted-router-public-backend",
+        actions_backend=_BACKEND_BASE + "trusted-router-control-backend",
+        control_backend=_BACKEND_BASE + "trusted-router-control-backend",
+        internal_backend=_BACKEND_BASE + "trusted-router-control-backend",
+        domains=("trustedrouter.com", "allyrouter.com", "uptimerouter.com"),
+    ),
+    separators=(",", ":"),
+)
+
 
 @dataclass(frozen=True)
 class ScriptFixture:
@@ -761,6 +1199,68 @@ class ScriptFixture:
 
 
 SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
+    "scripts/deploy/internal_surface.sh": ScriptFixture(
+        env={"HARNESS_INTERNAL_SURFACE_SMOKE": "1"},
+        responses=(
+            (r"projects describe.*projectNumber", "44325983244"),
+            (
+                r"run services describe trusted-router .*--format=json",
+                _PUBLIC_SURFACE_LEGACY_SERVICE_JSON,
+            ),
+            (
+                r"run revisions describe trusted-router-active .*--format=json",
+                _INTERNAL_SURFACE_LEGACY_REVISION_JSON,
+            ),
+            (r"spanner databases get-iam-policy", _INTERNAL_IAM_POLICY_JSON),
+            (r"bigtable instances get-iam-policy", _INTERNAL_IAM_POLICY_JSON),
+            (r"secrets get-iam-policy", _INTERNAL_IAM_POLICY_JSON),
+            (
+                r"secrets versions access latest.*trustedrouter-internal-gateway-token",
+                "harness-internal-gateway-token-" + "g" * 32,
+            ),
+        ),
+    ),
+    "scripts/deploy/internal_surface_edge.sh": ScriptFixture(
+        responses=(
+            (r"projects describe.*projectNumber", "44325983244"),
+            (
+                r"run services describe trusted-router-internal .*--format=json",
+                _INTERNAL_EDGE_ROUTED_SERVICE_JSON,
+            ),
+            (
+                r"backend-services describe trusted-router-internal-backend"
+                r" .*--format=json",
+                _INTERNAL_BACKEND_JSON,
+            ),
+            (
+                r"backend-services describe trusted-router-internal-backend"
+                r" .*value[(]selfLink[)]",
+                "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/"
+                "global/backendServices/trusted-router-internal-backend",
+            ),
+            (
+                r"backend-services describe trusted-router-public-backend"
+                r" .*value[(]selfLink[)]",
+                "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/"
+                "global/backendServices/trusted-router-public-backend",
+            ),
+            (
+                r"backend-services describe trusted-router-control-backend"
+                r" .*value[(]selfLink[)]",
+                "https://www.googleapis.com/compute/v1/projects/quill-cloud-proxy/"
+                "global/backendServices/trusted-router-control-backend",
+            ),
+            (
+                r"backend-services describe trusted-router-control-backend"
+                r" .*value[(]loadBalancingScheme[)]",
+                "EXTERNAL_MANAGED",
+            ),
+            (
+                r"url-maps describe trusted-router-control-map .*--format=json",
+                _INTERNAL_EDGE_LIVE_MAP_JSON,
+            ),
+        ),
+    ),
     "scripts/deploy/public_surface.sh": ScriptFixture(
         env={"HARNESS_PUBLIC_SURFACE_SMOKE": "1"},
         responses=(
@@ -824,7 +1324,15 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
     "scripts/deploy/aws_eu_control_plane.sh": ScriptFixture(
         # PCR0 is a required operator input: the script refuses to run without
         # the enclave measurement to pin, which is the point of the probe.
-        env={"ATTESTATION_PCR0": "0" * 96},
+        env={
+            "ATTESTATION_PCR0": "0" * 96,
+            # The mirrored harness checkout deliberately has no .git. Supply
+            # the source tag and exercise the real gate in break-glass mode;
+            # its cloud/status reads remain stubbed and it still prints their
+            # real (UNKNOWN) results before proceeding.
+            "TAG": "abcdef0",
+            "TR_CLOUD_BAKE_OVERRIDE": "deploy-script harness isolation",
+        },
         responses=(
             # It deploys by DIGEST and then refuses to believe App Runner until
             # the service reports it is serving that exact digest.
@@ -877,6 +1385,7 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
             # It waits for the EventBridge API-key connection to authorize.
             (r"events describe-connection", "AUTHORIZED"),
         ),
+        cleanup_after_gate=(r"gcloud storage rm .*trusted-router-production[.]json",),
     ),
     "scripts/deploy/aws_eu_north_clickhouse.sh": ScriptFixture(
         env={"TR_STOCKHOLM_REPLICA_WIRED": "1"},
@@ -893,7 +1402,10 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
         ),
     ),
     "scripts/deploy/azure_control_plane.sh": ScriptFixture(
-        env={},
+        env={
+            "IMAGE_TAG": "abcdef0",
+            "TR_CLOUD_BAKE_OVERRIDE": "deploy-script harness isolation",
+        },
         home_files={
             # Credential-shaped inputs the script requires. Fake values in a
             # temp $HOME; nothing here is or resembles a real token.
@@ -931,7 +1443,10 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
         # The only thing this script does after the gate is the EXIT trap it
         # armed to remove the temporary Postgres firewall rule it opened to
         # apply the schema. Cleanup, not provisioning.
-        cleanup_after_gate=(r"firewall-rule delete",),
+        cleanup_after_gate=(
+            r"firewall-rule delete",
+            r"gcloud storage rm .*trusted-router-production[.]json",
+        ),
     ),
     "scripts/deploy/azure_canary_app.sh": ScriptFixture(
         responses=(
@@ -1041,6 +1556,9 @@ class DeployScriptHarness:
             stub = self.bin / name
             stub.write_text(_STUB)
             stub.chmod(0o755)
+        # Deploy helpers use datetime.UTC, so bind python3 to the interpreter
+        # running this suite instead of macOS's legacy Xcode Python 3.9.
+        (self.bin / "python3").symlink_to(sys.executable)
         for directory in ("/bin", "/usr/bin"):
             source = Path(directory)
             if not source.is_dir():
@@ -1126,8 +1644,30 @@ class DeployScriptHarness:
             )
             + "\n"
         )
+        internal_ingress_state = run_dir / "internal-ingress.json"
+        initial_internal_ingress = (extra_env or {}).get(
+            "HARNESS_INTERNAL_INITIAL_INGRESS",
+            "internal-and-cloud-load-balancing",
+        )
+        internal_ingress_state.write_text(
+            json.dumps(
+                {
+                    region: initial_internal_ingress
+                    for region in (
+                        "us-central1",
+                        "us-east4",
+                        "europe-west4",
+                        "southamerica-east1",
+                    )
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
         probe_tag_state_dir = run_dir / "probe-tags"
         probe_tag_state_dir.mkdir()
+        internal_probe_tag_state_dir = run_dir / "internal-probe-tags"
+        internal_probe_tag_state_dir.mkdir()
         initial_probe_region = (extra_env or {}).get(
             "HARNESS_PUBLIC_INITIAL_PROBE_TAG_REGION"
         )
@@ -1157,10 +1697,15 @@ class DeployScriptHarness:
             ),
             "HARNESS_URL_MAP_NAME": "trusted-router-control-map",
             "HARNESS_PUBLIC_INGRESS_STATE": str(public_ingress_state),
+            "HARNESS_INTERNAL_INGRESS_STATE": str(internal_ingress_state),
             "HARNESS_PROBE_TAG_STATE_DIR": str(probe_tag_state_dir),
+            "HARNESS_INTERNAL_PROBE_TAG_STATE_DIR": str(
+                internal_probe_tag_state_dir
+            ),
             "HARNESS_PROBE_TAG_REMOVE_FAILURES_STATE": str(
                 probe_tag_remove_failures
             ),
+            "HARNESS_DEPLOY_MUTEX_STATE": str(run_dir / "deploy-mutex.json"),
             "HARNESS_VERIFIER_RC": str(verifier_rc),
             **{k: v for k, v in fixture.env.items() if k not in omit_env},
             **(extra_env or {}),

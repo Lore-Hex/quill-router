@@ -9,6 +9,7 @@ from typing import Any
 
 from trusted_router.storage_gcp_settle_outbox import (
     _GUARD_STATUS_SQL,
+    AUTO_REFILL_COLUMNS,
     GUARD_STATUSES,
     OUTBOX_COLUMNS,
 )
@@ -1129,7 +1130,90 @@ class _FakeTransaction:
                 "settle_body",
             ):
                 new[col] = p[col]
+            if (
+                new.get("auto_refill_status") is None
+                and p.get("auto_refill_workspace_id") is not None
+            ):
+                new["auto_refill_workspace_id"] = p["auto_refill_workspace_id"]
+                new["auto_refill_status"] = "pending"
+                new["auto_refill_next_attempt_at"] = p["now"]
+                new["auto_refill_enqueued_at"] = p["now"]
+                new["auto_refill_updated_at"] = p["now"]
             new["updated_at"] = p["now"]
+            self.pending_writes.append(("update_settle_outbox", pk, new))
+            return 1
+        if sql.startswith(
+            "UPDATE tr_settle_outbox SET auto_refill_workspace_id=@workspace_id"
+        ):
+            _require_pred(sql, "authorization_id=@aid", "auto-attach")
+            _require_pred(sql, "intent_kind='settle'", "auto-attach")
+            _require_pred(sql, "auto_refill_status IS NULL", "auto-attach")
+            pk = (p["aid"], "settle")
+            rec = self._settle_outbox_current(pk)
+            if rec is None or rec.get("auto_refill_status") is not None:
+                return 0
+            new = dict(
+                rec,
+                auto_refill_workspace_id=p["workspace_id"],
+                auto_refill_status="pending",
+                auto_refill_attempts=0,
+                auto_refill_last_error=None,
+                auto_refill_next_attempt_at=p["next_at"],
+                auto_refill_lease_owner=None,
+                auto_refill_leased_until=None,
+                auto_refill_enqueued_at=p["now"],
+                auto_refill_updated_at=p["now"],
+                auto_refill_terminal_at=None,
+            )
+            self.pending_writes.append(("update_settle_outbox", pk, new))
+            return 1
+        if sql.startswith(
+            "UPDATE tr_settle_outbox SET auto_refill_lease_owner=@owner"
+        ):
+            _require_pred(sql, "authorization_id=@aid AND intent_kind='settle'", "auto-claim")
+            _require_pred(sql, "auto_refill_status='pending'", "auto-claim")
+            _require_pred(
+                sql,
+                "auto_refill_leased_until IS NULL OR auto_refill_leased_until < @now",
+                "auto-claim",
+            )
+            pk = (p["aid"], "settle")
+            rec = self._settle_outbox_current(pk)
+            if rec is None or rec.get("auto_refill_status") != "pending":
+                return 0
+            leased = rec.get("auto_refill_leased_until")
+            if leased is not None and leased >= p["now"]:
+                return 0
+            new = dict(
+                rec,
+                auto_refill_lease_owner=p["owner"],
+                auto_refill_leased_until=p["lease"],
+                auto_refill_updated_at=p["now"],
+            )
+            self.pending_writes.append(("update_settle_outbox", pk, new))
+            return 1
+        if sql.startswith("UPDATE tr_settle_outbox SET auto_refill_status=@status"):
+            _require_pred(sql, "authorization_id=@aid", "auto-resolve")
+            _require_pred(sql, "intent_kind='settle'", "auto-resolve")
+            _require_pred(sql, "auto_refill_status='pending'", "auto-resolve")
+            _require_pred(sql, "auto_refill_lease_owner=@lease_owner", "auto-resolve")
+            pk = (p["aid"], "settle")
+            rec = self._settle_outbox_current(pk)
+            if rec is None or rec.get("auto_refill_status") != "pending":
+                return 0
+            if rec.get("auto_refill_lease_owner") != p["lease_owner"]:
+                return 0
+            new = dict(
+                rec,
+                auto_refill_status=p["status"],
+                auto_refill_attempts=p["attempts"],
+                auto_refill_last_error=p["error"],
+                auto_refill_next_attempt_at=p["next_at"],
+                auto_refill_lease_owner=None,
+                auto_refill_leased_until=None,
+                auto_refill_updated_at=p["now"],
+                auto_refill_terminal_at=p["terminal_at"],
+            )
             self.pending_writes.append(("update_settle_outbox", pk, new))
             return 1
         if sql.startswith("UPDATE tr_settle_outbox SET lease_owner=@owner"):  # claim
@@ -1368,6 +1452,64 @@ def _execute_settle_outbox_sql(
     predicates it relies on are present in the real query, so a dropped guard/
     status/key predicate fails a test rather than silently matching."""
     p = params
+    if sql.startswith(
+        "SELECT auto_refill_attempts, auto_refill_lease_owner FROM tr_settle_outbox"
+    ):
+        _require_pred(sql, "authorization_id=@aid", "auto-resolve-read")
+        _require_pred(sql, "intent_kind='settle'", "auto-resolve-read")
+        _require_pred(sql, "auto_refill_status='pending'", "auto-resolve-read")
+        rec = (
+            txn._settle_outbox_current((p["aid"], "settle"))
+            if txn is not None
+            else db.settle_outbox.get((p["aid"], "settle"))
+        )
+        if rec is None or rec.get("auto_refill_status") != "pending":
+            return []
+        return [[rec.get("auto_refill_attempts", 0), rec.get("auto_refill_lease_owner")]]
+    if "FORCE_INDEX=tr_settle_outbox_auto_refill_due" in sql:
+        _require_pred(sql, "queue_shard IS NOT NULL", "auto-due-shard")
+        _require_pred(
+            sql,
+            "auto_refill_next_attempt_at IS NOT NULL",
+            "auto-due-sparse",
+        )
+        _require_pred(sql, "auto_refill_status='pending'", "auto-due-status")
+        _require_pred(
+            sql,
+            "auto_refill_next_attempt_at <= @now",
+            "auto-due-clock",
+        )
+        rows = [
+            rec
+            for rec in db.settle_outbox.values()
+            if rec.get("auto_refill_status") == "pending"
+            and rec.get("queue_shard") is not None
+            and rec.get("auto_refill_next_attempt_at") is not None
+            and rec["auto_refill_next_attempt_at"] <= p["now"]
+        ]
+        rows.sort(key=lambda rec: rec.get("auto_refill_next_attempt_at") or "")
+        return [
+            [rec.get(column) for column in AUTO_REFILL_COLUMNS]
+            for rec in rows[: int(p.get("limit", 100))]
+        ]
+    if sql.startswith("SELECT MIN(auto_refill_enqueued_at), COUNT(*)"):
+        pending = [
+            rec
+            for rec in db.settle_outbox.values()
+            if rec.get("auto_refill_status") == "pending"
+        ]
+        oldest = min(
+            (rec.get("auto_refill_enqueued_at") for rec in pending),
+            default=None,
+        )
+        return [[oldest, len(pending)]]
+    if "auto_refill_status IS NOT NULL" in sql:
+        _require_pred(sql, "authorization_id=@aid", "auto-get")
+        _require_pred(sql, "intent_kind='settle'", "auto-get")
+        rec = db.settle_outbox.get((p["aid"], "settle"))
+        if rec is None or rec.get("auto_refill_status") is None:
+            return []
+        return [[rec.get(column) for column in AUTO_REFILL_COLUMNS]]
     if sql.startswith("SELECT attempts, lease_owner FROM tr_settle_outbox") or sql.startswith(
         "SELECT attempts, lease_owner, reservation_id FROM tr_settle_outbox"
     ):

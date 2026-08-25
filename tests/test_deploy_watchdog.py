@@ -355,6 +355,49 @@ esac
     assert call_log.read_text().splitlines() == calls
 
 
+def _resolve_probe_tag(service_document: dict[str, object]) -> subprocess.CompletedProcess[str]:
+    command = (
+        f"source {ROOT / 'scripts/deploy/_cloud_run_revision_probe.sh'}; "
+        "gcloud() { printf '%s\\n' \"$PROBE_SERVICE_JSON\"; }; "
+        "cloud_run_probe_tag_revision trusted-router us-central1 test-project "
+        "staged-probe"
+    )
+    return subprocess.run(  # noqa: S603 - fixed shell with in-process gcloud stub
+        ["/bin/bash", "-c", command],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PROBE_SERVICE_JSON": json.dumps(service_document)},
+        timeout=10,
+    )
+
+
+def test_probe_tag_resolution_rejects_duplicate_tag_entries() -> None:
+    resolved = _resolve_probe_tag(
+        {
+            "status": {
+                "traffic": [
+                    {"tag": "staged-probe", "revisionName": "first-rev"},
+                    {"tag": "staged-probe", "revisionName": "second-rev"},
+                ]
+            }
+        }
+    )
+
+    assert resolved.returncode != 0
+    assert resolved.stdout == ""
+    assert "more than one traffic entry" in resolved.stderr
+
+
+def test_probe_tag_resolution_rejects_empty_revision_name() -> None:
+    resolved = _resolve_probe_tag(
+        {"status": {"traffic": [{"tag": "staged-probe", "revisionName": ""}]}}
+    )
+
+    assert resolved.returncode != 0
+    assert resolved.stdout == ""
+    assert "empty revisionName" in resolved.stderr
+
+
 @pytest.mark.parametrize(
     ("console_code", "session_code", "expected_rc", "rolls_back"),
     (
@@ -400,6 +443,8 @@ def test_staged_legacy_probe_uses_regional_origin_and_classifies_results(
         if call.startswith("gcloud run services describe")
     )
     assert not any("status.traffic[?tag=" in call for call in calls)
+    assert not any("status.traffic[?" in call for call in calls)
+    assert any("--format=json" in call for call in calls)
     rollback_calls = [
         call
         for call in calls

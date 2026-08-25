@@ -47,12 +47,19 @@ class AutoRefillOutcome:
     fired: bool
     reason: str  # "charged" | "disabled" | "above_threshold" | "pending" | "rate_limited" | "stripe_error:<code>"
     payment_intent_id: str | None = None
+    retryable: bool = False
+
+
+def settlement_auto_refill_idempotency_key(authorization_id: str) -> str:
+    """Return the Stripe identity shared by every path for one settlement."""
+    return f"auto-refill-settlement:{authorization_id}"
 
 
 def maybe_charge_after_settle(
     workspace_id: str,
     *,
     settings: Settings,
+    idempotency_key: str | None = None,
 ) -> AutoRefillOutcome:
     """Check the workspace's auto-refill state and fire a charge if due.
 
@@ -86,14 +93,14 @@ def maybe_charge_after_settle(
         return AutoRefillOutcome(fired=False, reason="no_payment_method")
     recent_attempt_reason = _recent_attempt_block_reason(account)
     if recent_attempt_reason is not None:
-        return AutoRefillOutcome(fired=False, reason=recent_attempt_reason)
+        return AutoRefillOutcome(fired=False, reason=recent_attempt_reason, retryable=True)
     if not settings.stripe_secret_key:
-        return AutoRefillOutcome(fired=False, reason="stripe_not_configured")
+        return AutoRefillOutcome(fired=False, reason="stripe_not_configured", retryable=True)
 
     try:
         import stripe
     except ImportError:  # pragma: no cover - stripe is in dependencies.
-        return AutoRefillOutcome(fired=False, reason="stripe_not_installed")
+        return AutoRefillOutcome(fired=False, reason="stripe_not_installed", retryable=True)
 
     stripe.api_key = settings.stripe_secret_key
     credit_amount_cents = max(50, account.auto_refill_amount_microdollars // 10_000)
@@ -103,7 +110,7 @@ def maybe_charge_after_settle(
         fixed_fee_cents=settings.stripe_card_fee_fixed_cents,
         minimum_fee_cents=settings.checkout_card_fee_minimum_cents,
     )
-    idempotency_key = (
+    charge_idempotency_key = idempotency_key or (
         f"auto-refill:{workspace_id}:{fee.charge_amount_cents}:"
         f"{datetime.now(UTC).strftime('%Y%m%d%H%M')}"
     )
@@ -138,7 +145,7 @@ def maybe_charge_after_settle(
                 {"line_items": fee.payment_intent_line_items()},
             ),
             metadata=metadata,
-            idempotency_key=idempotency_key,
+            idempotency_key=charge_idempotency_key,
         )
     except stripe.CardError as exc:
         STORE.record_auto_refill_outcome(workspace_id, status=f"failed:{exc.code or 'card_error'}")
@@ -147,7 +154,11 @@ def maybe_charge_after_settle(
     except Exception as exc:  # noqa: BLE001 - any Stripe error blocks the refill.
         STORE.record_auto_refill_outcome(workspace_id, status="failed:network")
         log.exception("auto_refill.error workspace=%s", workspace_id)
-        return AutoRefillOutcome(fired=False, reason=f"stripe_error:{type(exc).__name__}")
+        return AutoRefillOutcome(
+            fired=False,
+            reason=f"stripe_error:{type(exc).__name__}",
+            retryable=True,
+        )
 
     STORE.record_auto_refill_outcome(workspace_id, status="pending")
     return AutoRefillOutcome(fired=True, reason="charged", payment_intent_id=intent.id)

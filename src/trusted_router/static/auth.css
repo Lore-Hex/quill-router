@@ -22,7 +22,7 @@
   --auth-accent-ink: #ffffff;
   --auth-btn-secondary-bg: #21262d;
   --auth-error: #f85149;
-  --auth-shadow: rgba(1, 4, 9, 0.6);
+  --auth-shadow: rgb(1, 4, 9, 0.6);
 }
 
 :root[data-theme="light"] {
@@ -38,7 +38,7 @@
   --auth-accent-ink: #ffffff;
   --auth-btn-secondary-bg: #ffffff;
   --auth-error: #b00020;
-  --auth-shadow: rgba(16, 24, 40, 0.08);
+  --auth-shadow: rgb(16, 24, 40, 0.08);
 }
 
 body.auth {

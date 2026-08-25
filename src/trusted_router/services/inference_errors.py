@@ -81,6 +81,7 @@ def default_provider_secret_ref(provider: str) -> str:
         "scaleway": "SCALEWAY_SECRET_KEY",
         "featherless": "FEATHERLESS_API_KEY",
         "jina": "JINA_API_KEY",
+        "wandb": "WANDB_API_KEY",
         "databricks": "DATABRICKS_TOKEN",
         "zero-g": "ZERO_G_API_KEY",
         "vertex": "VERTEX_ACCESS_TOKEN",

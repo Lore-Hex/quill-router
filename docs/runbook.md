@@ -16,6 +16,7 @@ Index:
 - [GCP enclave deploy fails with "unrecognized arguments: --min-ready"](#min-ready)
 - [Hourly price bot commits but TR catalog stays stale](#bot-doesnt-deploy)
 - [Production deployment mutex](#deployment-mutex)
+- [Canary-cloud bake ladder](#cloud-bake-ladder)
 - [Status page shows a region "down" but the region is actually healthy](#stale-status)
 - [`refresh.py` reports "too_many_failures" locally](#local-refresh-fails)
 - [A provider serves a model but TR's `/v1/models` doesn't list it](#missing-model)
@@ -286,11 +287,20 @@ we exploit.
 
 ## <a id="deployment-mutex"></a>Production deployment mutex
 
-The control-plane deploy workflow, direct `rollout.sh` runs, and manual
-`staged_traffic.sh` traffic shifts share a generation-fenced lock in GCS. It
-prevents two operators or automation paths from changing production Cloud Run
-revisions or traffic at the same time. Inspect the current metadata-only holder
-record without changing it:
+The GCP control-plane deploy workflow, direct `rollout.sh` runs, manual
+`staged_traffic.sh` traffic shifts, and the AWS and Azure control-plane scripts
+share one generation-fenced lock object in GCS. This is a fleet-wide,
+one-cloud-at-a-time guard: a GCP, AWS, or Azure control-plane rollout blocks the
+other two until it releases the object. The `cloud` field is holder metadata,
+not a separate lock namespace; creating one object per cloud would permit the
+overlap this guard exists to prevent.
+
+Manual AWS and Azure operators must have an authenticated `gcloud` CLI with
+object access to `tr-deploy-mutex-quill-cloud-proxy` in addition to their
+cloud's own CLI credentials. `TR_DEPLOY_MUTEX_CLOUD` accepts `gcp`, `aws`, or
+`azure` and defaults to `gcp`; the AWS and Azure control-plane scripts set it
+themselves. Inspect the current metadata-only holder record, including its
+cloud, without changing it:
 
 ```bash
 bash scripts/deploy/deploy_mutex.sh status
@@ -309,6 +319,81 @@ gcloud storage rm \
 
 Normal recovery does not require manual removal: locks expire after 90 minutes,
 and the next acquirer can take over an expired generation safely.
+
+---
+
+## <a id="cloud-bake-ladder"></a>Canary-cloud bake ladder
+
+The fleet is intentionally allowed to run different commits for days. Any one
+cloud may receive a fresh commit quickly for production testing, but fresh code
+must never be serving everywhere at once. When one cloud receives fresh code,
+at least one *other* cloud must keep serving a commit that is 24 hours old or
+older. That trailing cloud is the lifeboat. Promoting the candidate to a second
+cloud is allowed only after the candidate has been present in first-parent
+`origin/main` history for at least 24 hours and its code line has already
+carried production traffic on one known cloud. Commit age is printed for
+context but is not authority because an operator can backdate it.
+
+`scripts/deploy/cloud_bake_gate.sh` enforces this rule after the fleet mutex is
+acquired and before AWS or Azure makes its first mutation. The default bake is
+24 hours; `TR_CLOUD_BAKE_HOURS` accepts an integer from 1 through 720. Both
+modes also require `https://trustedrouter.com/status.json` to report
+`overall_status=up`.
+
+To test fresh code on Azure now, use canary mode:
+
+```bash
+TR_CLOUD_DEPLOY_MODE=canary \
+  bash scripts/deploy/azure_control_plane.sh
+```
+
+Canary mode has no candidate-age requirement. It prints every cloud's serving
+commit and age before choosing a lifeboat. A typical table looks like:
+
+```text
+cloud  serving_sha  age_hours  classification
+gcp    9ac7812      1h         fresh-exempt (gcp auto-deploys; ineligible as lifeboat)
+azure  7b42d10      50h        baked-target
+aws    6e211aa      96h        LIFEBOAT
+```
+
+The target cloud is never allowed to count as its own lifeboat. GCP cannot be a
+lifeboat either: every merge auto-deploys there without this fleet gate, so a
+routine merge could revoke that safety copy minutes later. The lifeboat must be
+a gated cloud, AWS or Azure. An `UNKNOWN` row means the cloud CLI failed or its
+short SHA could not be resolved after `git fetch --quiet origin main`; unknown
+clouds cannot be lifeboats.
+
+After the candidate has baked, promote it to another cloud with the default
+mode (no mode variable is needed):
+
+```bash
+bash scripts/deploy/aws_eu_control_plane.sh
+```
+
+Promote mode requires the checkout's `HEAD` to be an ancestor of the newest
+first-parent `origin/main` commit old enough to satisfy the bake threshold, and
+also an ancestor of at least one known currently serving cloud commit. The
+first check proves when the candidate was merged; the second proves its code
+line actually carried traffic and has not been reverted. Lineage containment
+is deliberately the traffic definition: a commit included in a deployed batch
+counts as baked with that batch even if that individual commit never served
+alone.
+
+Break glass only with a non-empty incident reason. The gate still performs and
+prints every real check before it proceeds, so the reason and the unsafe state
+remain visible in the operator log:
+
+```bash
+TR_CLOUD_BAKE_OVERRIDE="INC-742: restore Azure after regional outage" \
+  bash scripts/deploy/azure_control_plane.sh
+```
+
+An empty `TR_CLOUD_BAKE_OVERRIDE` does nothing. GCP does not call this gate:
+each merge auto-deploys through GCP's staged regional rollout, so GCP is usually
+the freshest cloud and is never eligible as the canary lifeboat. AWS or Azure
+must be left trailing as the gated lifeboat, and operators run this gate when
+moving that commit onto another cloud.
 
 ---
 

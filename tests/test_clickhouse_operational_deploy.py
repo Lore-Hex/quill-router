@@ -178,11 +178,31 @@ def test_clickhouse_bundle_rejects_dirty_or_invalid_source(tmp_path: Path) -> No
 
 
 def test_client_telemetry_single_node_schema_is_applied_with_operational_schema() -> None:
+    """Client telemetry still ships with the operational schema -- but named by
+    DERIVATION now, not by filename.
+
+    This used to assert the script contained the literal strings
+    "006_operational_analytics_single_node.sql" and
+    "009_client_events_single_node.sql". That is what kept the defect alive: the
+    script applied exactly those two, 010 through 013 landed, and this test went
+    on passing because it was asserting the hardcoding rather than the coverage.
+
+    Newer contract: both files are members of clickhouse/*_single_node.sql, and
+    the script applies that whole derived set via
+    scripts/deploy/_clickhouse_single_node_schema.sh. Membership and the
+    derivation are pinned in tests/test_single_node_schema_set.py, including
+    that 013 (the workspace_id column the drain inserts) is in it.
+    """
     script = (ROOT / "scripts/deploy/aws_eu_north_clickhouse.sh").read_text()
 
-    assert "006_operational_analytics_single_node.sql" in script
-    assert "009_client_events_single_node.sql" in script
-    assert "${CLIENT_SCHEMA}" in script
+    assert "single_node_migrations" in script
+    assert 'OPERATIONAL_SCHEMA="$(cat "${SCHEMA_FILES[@]}")"' in script
+    for name in (
+        "006_operational_analytics_single_node.sql",
+        "009_client_events_single_node.sql",
+    ):
+        assert (ROOT / "clickhouse" / name).exists()
+        assert name.endswith("_single_node.sql"), "must be inside the derived set"
 
 
 def test_operational_finalize_requires_live_outbox_before_closing_gap() -> None:

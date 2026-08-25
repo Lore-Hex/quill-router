@@ -454,6 +454,27 @@ class SettleOutboxRow:
     # NULL while unresolved. Spanner row deletion policies ignore NULL, so a
     # pending/dead row can never expire before settlement repair is complete.
     terminal_at: str | None = None
+    # Internal-surface credit settlements attach an independent durable refill
+    # request to this already-required outbox insert. Combined deployments
+    # leave it NULL and retain the legacy in-process Stripe call.
+    auto_refill_workspace_id: str | None = None
+
+
+@dataclass
+class AutoRefillOutboxRow:
+    """Control-owned auto-refill work attached to one successful settlement."""
+
+    authorization_id: str
+    workspace_id: str
+    status: str = "pending"
+    attempts: int = 0
+    last_error: str | None = None
+    next_attempt_at: str | None = field(default_factory=iso_now)
+    lease_owner: str | None = None
+    leased_until: str | None = None
+    enqueued_at: str = field(default_factory=iso_now)
+    updated_at: str | None = None
+    terminal_at: str | None = None
 
 
 @dataclass

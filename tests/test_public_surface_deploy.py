@@ -319,6 +319,21 @@ def test_routed_healthy_smoke_promotes_each_region(tmp_path: Path) -> None:
     }
 
 
+def test_routed_accepts_deliberate_companion_cloud_state(tmp_path: Path) -> None:
+    isolated = DeployScriptHarness(tmp_path / "companion-to-routed-public")
+
+    run = isolated.run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={"HARNESS_PUBLIC_INITIAL_INGRESS": "all"},
+    )
+
+    assert run.returncode == 0, summarise(run)
+    assert run.public_ingress_state == {
+        region: "internal-and-cloud-load-balancing" for region in REGIONS
+    }
+
+
 def test_routed_smoke_is_reachable_before_each_region_restricts_ingress(
     tmp_path: Path,
 ) -> None:
@@ -509,6 +524,87 @@ def test_routed_failing_region_does_not_promote_it(tmp_path: Path) -> None:
     traffic = _traffic_calls(run)
     assert any("--to-revisions=trusted-router-public-active=100" in call for call in traffic)
     assert not any("candidate-us-central1=100" in " ".join(call) for call in traffic)
+
+
+def test_region_three_failure_restores_every_earlier_public_promotion(
+    tmp_path: Path,
+) -> None:
+    run = DeployScriptHarness(tmp_path / "public-region-three-failure").run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={
+            "HARNESS_PUBLIC_SMOKE_FAIL_REGION": "europe-west4",
+            "HARNESS_PUBLIC_SMOKE_FAIL_PATH": "/status.json",
+        },
+    )
+
+    assert run.returncode != 0
+    traffic = _traffic_calls(run)
+    for region in ("us-central1", "us-east4"):
+        assert any(
+            _region_arg(call) == region
+            and "--to-revisions=trusted-router-public-active=100" in call
+            for call in traffic
+        )
+
+
+def test_restart_restores_every_public_region_from_durable_promotion_history(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / "public-promotion-state"
+    state_dir.mkdir()
+    (state_dir / "trusted-router-public.promotion-history").write_text(
+        "us-central1\ttrusted-router-public-active\t"
+        "trusted-router-public-candidate-us-central1\t"
+        "internal-and-cloud-load-balancing\n"
+        "us-east4\ttrusted-router-public-active\t"
+        "trusted-router-public-candidate-us-east4\t"
+        "internal-and-cloud-load-balancing\n"
+    )
+
+    run = DeployScriptHarness(tmp_path / "public-restart-restore").run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={"TR_PUBLIC_DEPLOY_STATE_DIR": str(state_dir)},
+    )
+
+    assert run.returncode == 0, summarise(run)
+    traffic = _traffic_calls(run)
+    for region in ("us-central1", "us-east4"):
+        assert any(
+            _region_arg(call) == region
+            and "--to-revisions=trusted-router-public-active=100" in call
+            for call in traffic
+        )
+    assert not (state_dir / "trusted-router-public.promotion-history").exists()
+
+
+def test_failed_public_fleet_restore_reports_every_exact_command(
+    tmp_path: Path,
+) -> None:
+    run = DeployScriptHarness(tmp_path / "public-restore-failure").run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={
+            "HARNESS_PUBLIC_SMOKE_FAIL_REGION": "europe-west4",
+            "HARNESS_PUBLIC_SMOKE_FAIL_PATH": "/status.json",
+            "HARNESS_PUBLIC_RESTORE_FAIL_REGION": "us-east4",
+        },
+    )
+
+    assert run.returncode != 0
+    assert "FLEET IS SPLIT" in run.stderr
+    for region in ("us-central1", "us-east4", "europe-west4"):
+        assert (
+            "gcloud --project quill-cloud-proxy run services update-traffic "
+            f"trusted-router-public --region {region} "
+            "--to-revisions=trusted-router-public-active=100 --quiet"
+        ) in run.stderr
+        assert (
+            "gcloud --project quill-cloud-proxy run services update "
+            f"trusted-router-public --region {region} "
+            "--ingress internal-and-cloud-load-balancing --quiet"
+        ) in run.stderr
 
 
 def test_routed_transport_failure_retries_and_fails_safe(tmp_path: Path) -> None:

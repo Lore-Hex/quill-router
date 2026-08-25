@@ -230,6 +230,7 @@ def _production_app(surface: str):
             {
                 "internal_gateway_token": internal_token,
                 "observer_internal_token": "prod-observer-token",
+                "settle_outbox_enabled": True,
             }
         )
     return create_app(
