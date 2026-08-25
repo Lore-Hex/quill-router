@@ -1,13 +1,13 @@
-"""Privacy-posture tier logic for catalog providers and endpoints.
+"""Privacy-posture logic for catalog providers and endpoints.
 
-The PRIVACY_TIER_* ranks + aliases these read live in catalog_data; these
-functions apply them to decide the highest privacy bar a provider or endpoint
-clears, which is what enforces a request's minimum-privacy routing preference
-(the TR gateway hop is always attested regardless — this rank is about the
-UPSTREAM provider's posture). Split out of the catalog.py god-module (#38);
-catalog.py re-exports these and routing_candidates.py imports
-endpoint_privacy_tier. Depends only on the catalog_data leaf, so importing it
-never pulls in catalog.py (no cycle)."""
+The PRIVACY_TIER_* integer values are stable API vocabulary. They are not an
+implication ladder: confidential compute describes where plaintext is
+processed, while no-store and ZDR describe retention. Routing decisions use
+``endpoint_meets_privacy_requirement`` so those dimensions cannot be
+conflated. The TR gateway hop is always attested; these values describe the
+upstream provider. Split out of the catalog.py god-module (#38); this module
+depends only on the catalog_data leaf and therefore cannot create a cycle.
+"""
 
 from __future__ import annotations
 
@@ -26,10 +26,11 @@ from trusted_router.wafer_policy import wafer_zdr_support
 
 
 def provider_privacy_tier(provider: Provider) -> int:
-    """The highest privacy bar a provider clears. Used to enforce a
-    request's minimum-privacy routing preference. Note the TR gateway hop
-    is always attested regardless of tier — this rank is about the
-    UPSTREAM provider's posture, which is what varies."""
+    """Return the provider's primary display posture.
+
+    Enforcement must use ``endpoint_meets_privacy_requirement`` rather than
+    comparing this value numerically.
+    """
     if provider.provider_confidential_compute and provider.provider_e2ee:
         return PRIVACY_TIER_CONFIDENTIAL
     if provider.provider_zero_data_retention:
@@ -52,9 +53,7 @@ def _model_provider_privacy_override(
     if zdr_supported is None:
         return None
     return ModelProviderPrivacyOverride(
-        privacy_tier=(
-            PRIVACY_TIER_ZERO_RETENTION if zdr_supported else PRIVACY_TIER_STANDARD
-        ),
+        privacy_tier=(PRIVACY_TIER_ZERO_RETENTION if zdr_supported else PRIVACY_TIER_STANDARD),
         provider_zero_data_retention=zdr_supported,
         provider_policy=(
             "Wafer's authenticated model catalog reports that this exact route "
@@ -85,7 +84,17 @@ def endpoint_privacy_tier(endpoint: ModelEndpoint) -> int:
 
 def endpoint_stores_content(endpoint: ModelEndpoint) -> bool:
     """Return the retention posture for this exact provider/model route."""
-    return endpoint_privacy_tier(endpoint) < PRIVACY_TIER_NO_STORE
+    override = _model_provider_privacy_override(endpoint.model_id, endpoint.provider)
+    if override is not None and override.stores_content is not None:
+        return override.stores_content
+    if endpoint_zero_data_retention(endpoint) is True:
+        return False
+    if override is not None and override.privacy_tier in {
+        PRIVACY_TIER_NO_STORE,
+        PRIVACY_TIER_ZERO_RETENTION,
+    }:
+        return False
+    return PROVIDERS[endpoint.provider].stores_content
 
 
 def endpoint_zero_data_retention(endpoint: ModelEndpoint) -> bool | None:
@@ -151,6 +160,24 @@ def endpoint_confidential_compute(endpoint: ModelEndpoint) -> bool | None:
 
 def endpoint_e2ee(endpoint: ModelEndpoint) -> bool | None:
     return model_provider_e2ee(endpoint.model_id, endpoint.provider)
+
+
+def endpoint_meets_privacy_requirement(endpoint: ModelEndpoint, requirement: int) -> bool:
+    """Match one requested privacy guarantee without conflating dimensions.
+
+    The integer values are stable API vocabulary, not a logical implication
+    chain. In particular, confidential compute proves where plaintext can be
+    processed; it does not by itself promise deletion or zero retention.
+    """
+    if requirement == PRIVACY_TIER_STANDARD:
+        return True
+    if requirement == PRIVACY_TIER_NO_STORE:
+        return not endpoint_stores_content(endpoint)
+    if requirement == PRIVACY_TIER_ZERO_RETENTION:
+        return endpoint_zero_data_retention(endpoint) is True
+    if requirement == PRIVACY_TIER_CONFIDENTIAL:
+        return endpoint_confidential_compute(endpoint) is True and endpoint_e2ee(endpoint) is True
+    return False
 
 
 def model_provider_zero_data_retention(model_id: str, provider_slug: str) -> bool | None:

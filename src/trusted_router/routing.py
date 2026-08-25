@@ -17,7 +17,6 @@ from trusted_router.catalog import (
     META_MODEL_IDS,
     MODELS,
     PRIVACY_TIER_ALIASES,
-    PRIVACY_TIER_NO_STORE,
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
     ROUTING_MODEL_ALIAS_TARGETS,
@@ -30,10 +29,10 @@ from trusted_router.catalog import (
     Model,
     ModelEndpoint,
     auto_candidate_models,
-    endpoint_privacy_tier,
+    endpoint_meets_privacy_requirement,
+    endpoint_stores_content,
     endpoints_for_model,
     meta_candidate_models,
-    model_max_privacy_tier,
 )
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
@@ -51,9 +50,13 @@ class RoutePreferences:
     sort: str | None = None
     usage_type: str | None = None
     provider_jurisdiction: str | None = None
-    # Minimum upstream-provider privacy tier (see catalog.PRIVACY_TIER_*).
-    # 0 = no filter (default). Set via provider.min_privacy in the body.
+    # Requested upstream privacy posture (see catalog.PRIVACY_TIER_*). These
+    # are stable API values, not an implication ladder. 0 = no filter.
     min_privacy_rank: int = 0
+    # Multiple aliases in a fallback list can require orthogonal guarantees,
+    # such as both ZDR and confidential compute. The legacy rank remains for
+    # API/debug compatibility; routing enforces every value in this set.
+    privacy_requirements: frozenset[int] = frozenset()
 
 
 _PROVIDER_ALIASES = {
@@ -408,10 +411,9 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
         or raw.get("provider_country")
     )
 
-    # provider.min_privacy: route only to providers whose posture clears
-    # this bar. Accepts friendly names ("zdr", "confidential", "no_store",
-    # "any"). Unknown values are a 400 so a typo can't silently downgrade
-    # the privacy a caller asked for.
+    # provider.min_privacy: route only to providers with this exact posture.
+    # Accepts friendly names ("zdr", "confidential", "no_store", "any").
+    # Unknown values are a 400 so a typo cannot silently weaken the request.
     min_privacy_rank = 0
     min_privacy = raw.get("min_privacy")
     if min_privacy is not None:
@@ -423,6 +425,7 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
                 ErrorType.BAD_REQUEST,
             )
         min_privacy_rank = PRIVACY_TIER_ALIASES[key]
+    privacy_requirements = frozenset({min_privacy_rank}) if min_privacy_rank else frozenset()
 
     return RoutePreferences(
         order=order,
@@ -431,6 +434,7 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
         allow_fallbacks=allow_fallbacks_bool,
         data_collection=data_collection,
         min_privacy_rank=min_privacy_rank,
+        privacy_requirements=privacy_requirements,
         sort=sort,
         usage_type=usage_type,
         provider_jurisdiction=provider_jurisdiction,
@@ -467,13 +471,15 @@ def _routing_for_body(
         override_only = frozenset(_provider_filter_list("only", overrides["only"]))
         effective_only = override_only if not prefs.only else prefs.only & override_only
         prefs = dataclasses.replace(prefs, only=effective_only)
-    if "min_privacy" in overrides:
+    override_requirements = frozenset(
+        int(requirement) for requirement in overrides.get("privacy_requirements", ())
+    )
+    if override_requirements:
+        requirements = prefs.privacy_requirements | override_requirements
         prefs = dataclasses.replace(
             prefs,
-            min_privacy_rank=max(
-                prefs.min_privacy_rank,
-                PRIVACY_TIER_ALIASES[overrides["min_privacy"]],
-            ),
+            min_privacy_rank=max(requirements),
+            privacy_requirements=requirements,
         )
     if overrides.get("usage") == "Credits":
         if prefs.usage_type == "BYOK":
@@ -538,9 +544,9 @@ def resolve_model_alias(model_id: str) -> str:
 
 def _requested_model_ids(
     body: dict[str, Any], settings: Settings
-) -> tuple[list[str], dict[str, str]]:
+) -> tuple[list[str], dict[str, Any]]:
     ids: list[str] = []
-    overrides: dict[str, str] = {}
+    overrides: dict[str, Any] = {}
 
     def take(raw: str) -> None:
         stripped, ovr = _strip_variant_suffix(raw)
@@ -566,17 +572,12 @@ def _requested_model_ids(
             overrides.update(ovr)
         enforced_privacy_tier = ROUTING_MODEL_MIN_PRIVACY_TIERS.get(stripped)
         if enforced_privacy_tier is not None:
-            alias = "e2ee" if enforced_privacy_tier >= 3 else "zdr"
-            # Strictest wins, not last-seen. `overrides` is one flat dict shared
-            # by every id in `model` + `models[]`, so a plain assignment let a
-            # later, weaker meta-model overwrite a stricter earlier one:
-            # {"model": "trustedrouter/e2e", "models": ["trustedrouter/zdr"]}
-            # resolved to the zdr rank and returned rank-2 endpoints, while the
-            # reverse order resolved to e2ee. A request's privacy guarantee must
-            # not depend on which fallback happens to be listed last.
-            previous = overrides.get("min_privacy")
-            if previous is None or PRIVACY_TIER_ALIASES[alias] > PRIVACY_TIER_ALIASES[previous]:
-                overrides["min_privacy"] = alias
+            # Retain every requested posture. ZDR and E2EE are orthogonal: a
+            # fallback list that names both requires endpoints satisfying both,
+            # independent of model order.
+            requirements = set(overrides.get("privacy_requirements", ()))
+            requirements.add(enforced_privacy_tier)
+            overrides["privacy_requirements"] = frozenset(requirements)
         if stripped == ZDR_MODEL_ID:
             overrides["order"] = (
                 "anthropic,openai,google-vertex,google-ai-studio,tinfoil,venice,phala"
@@ -629,13 +630,34 @@ def _filter_candidates_soft_data_collection(
     inclusion/exclusion filters remain hard.
     """
     filtered = apply_fn(candidates, prefs)
-    if not filtered and prefs.data_collection == "deny":
+    # Keep OpenRouter compatibility soft only when it is the request's sole
+    # privacy preference. Once a caller also asks for an explicit ZDR/E2EE
+    # posture, silently dropping `deny` would violate the composed contract.
+    if (
+        not filtered
+        and prefs.data_collection == "deny"
+        and not _required_privacy_postures(prefs)
+    ):
         filtered = apply_fn(candidates, dataclasses.replace(prefs, data_collection=None))
     return filtered
 
 
+def _required_privacy_postures(prefs: RoutePreferences) -> frozenset[int]:
+    """Return every posture the route must satisfy.
+
+    ``min_privacy_rank`` remains accepted for internal callers created before
+    posture composition became explicit.
+    """
+
+    requirements = prefs.privacy_requirements
+    if prefs.min_privacy_rank:
+        requirements = requirements | {prefs.min_privacy_rank}
+    return frozenset(requirements)
+
+
 def _apply_provider_filters(candidates: list[Model], prefs: RoutePreferences) -> list[Model]:
     out: list[Model] = []
+    privacy_requirements = _required_privacy_postures(prefs)
     for model in candidates:
         provider = PROVIDERS[model.provider]
         if prefs.only and model.provider not in prefs.only:
@@ -644,21 +666,20 @@ def _apply_provider_filters(candidates: list[Model], prefs: RoutePreferences) ->
             continue
         if not _provider_matches_jurisdiction(provider, prefs.provider_jurisdiction):
             continue
-        # "deny" = no data collection — require at least the no-store
-        # tier. Keyed off the privacy tier (not raw stores_content) so
-        # ZDR/confidential providers, which carry the conservative
-        # stores_content=True default, are correctly kept.
-        if (
-            prefs.data_collection == "deny"
-            and model_max_privacy_tier(model) < PRIVACY_TIER_NO_STORE
+        model_endpoints = endpoints_for_model(model.id)
+        # Retention and confidential-compute guarantees are orthogonal. A TEE
+        # route with no tracked retention promise must not satisfy deny/ZDR.
+        if prefs.data_collection == "deny" and not any(
+            not endpoint_stores_content(endpoint) for endpoint in model_endpoints
         ):
             continue
-        # Keep a model if ANY provider that serves it can meet the
-        # requested privacy bar — a model like deepseek-v3.2 is no-store
-        # via deepseek but confidential via phala, so it stays in a
-        # confidential request. The endpoint-level filter then narrows to
-        # the qualifying provider when the gateway picks an endpoint.
-        if prefs.min_privacy_rank and model_max_privacy_tier(model) < prefs.min_privacy_rank:
+        if privacy_requirements and not any(
+            all(
+                endpoint_meets_privacy_requirement(endpoint, requirement)
+                for requirement in privacy_requirements
+            )
+            for endpoint in model_endpoints
+        ):
             continue
         out.append(model)
     return out
@@ -694,6 +715,7 @@ def _apply_endpoint_provider_filters(
     prefs: RoutePreferences,
 ) -> list[tuple[Model, ModelEndpoint]]:
     out: list[tuple[Model, ModelEndpoint]] = []
+    privacy_requirements = _required_privacy_postures(prefs)
     for model, endpoint in candidates:
         provider = PROVIDERS[endpoint.provider]
         if prefs.only and endpoint.provider not in prefs.only:
@@ -702,16 +724,12 @@ def _apply_endpoint_provider_filters(
             continue
         if not _provider_matches_jurisdiction(provider, prefs.provider_jurisdiction):
             continue
-        # "deny" = no data collection — require at least the no-store
-        # tier. Keyed off the privacy tier (not raw stores_content) so
-        # ZDR/confidential providers, which carry the conservative
-        # stores_content=True default, are correctly kept.
-        if (
-            prefs.data_collection == "deny"
-            and endpoint_privacy_tier(endpoint) < PRIVACY_TIER_NO_STORE
-        ):
+        if prefs.data_collection == "deny" and endpoint_stores_content(endpoint):
             continue
-        if prefs.min_privacy_rank and endpoint_privacy_tier(endpoint) < prefs.min_privacy_rank:
+        if privacy_requirements and not all(
+            endpoint_meets_privacy_requirement(endpoint, requirement)
+            for requirement in privacy_requirements
+        ):
             continue
         if prefs.usage_type is not None and endpoint.usage_type != prefs.usage_type:
             continue

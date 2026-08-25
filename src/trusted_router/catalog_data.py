@@ -208,6 +208,7 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
 @dataclass(frozen=True)
 class ModelProviderPrivacyOverride:
     privacy_tier: int
+    stores_content: bool | None = None
     provider_zero_data_retention: bool | None = None
     provider_confidential_compute: bool | None = None
     provider_e2ee: bool | None = None
@@ -291,6 +292,7 @@ _MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOve
         "phala",
     ): ModelProviderPrivacyOverride(
         privacy_tier=PRIVACY_TIER_STANDARD,
+        stores_content=True,
         provider_zero_data_retention=False,
         provider_confidential_compute=False,
         provider_e2ee=False,
@@ -723,6 +725,31 @@ PROVIDERS: dict[str, Provider] = {
             "provider compute and no prompt/output logging claims."
         ),
         provider_policy_url="https://tinfoil.sh/security-and-privacy-faq",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    # NEAR AI direct endpoints terminate TLS inside the measured model TEE.
+    # TrustedRouter verifies the live TLS SPKI, fresh nonce, Intel TDX quote,
+    # NVIDIA GPU evidence, compose-manager action log, and release-pinned
+    # workload before sending prompt bytes. No ZDR/no-store claim is inferred
+    # from confidential compute alone.
+    "near-ai": Provider(
+        slug="near-ai",
+        name="NEAR AI",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_confidential_compute=True,
+        provider_e2ee=True,
+        provider_policy=(
+            "TrustedRouter connects directly to the model workload and verifies "
+            "the live TLS key, Intel TDX quote, NVIDIA GPUs, deployment action "
+            "log, and pinned workload inside the TrustedRouter enclave before "
+            "sending content. Verification fails closed. No separate ZDR claim "
+            "is currently tracked."
+        ),
+        provider_policy_url="https://docs.near.ai/cloud/verification/tls/",
+        # Jasnah, Inc. d/b/a NEAR AI identifies itself as a Delaware
+        # corporation in its first-party Acceptable Use Policy.
+        # https://near.ai/acceptable-use-policy
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Venice's privacy posture is model-specific. Its Private routes carry a
@@ -1854,6 +1881,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "phala",
         "siliconflow",
         "tinfoil",
+        "near-ai",
         "venice",
         # 2026-05-11 batch (all OpenAI-compatible chat completions).
         # All three host google/gemma-4 family which gives TR three
@@ -2893,7 +2921,7 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
     ),
 }
 
-_PROVIDER_DISPLAY_ORDER = ("tinfoil",)
+_PROVIDER_DISPLAY_ORDER = ("tinfoil", "near-ai")
 
 
 # Legacy compatibility aliases (advisor/synth primitives) — completes

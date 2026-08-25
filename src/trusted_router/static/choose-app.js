@@ -148,7 +148,14 @@
   }
 
   function endpointsFor(model) {
-    return model.endpoints.filter((endpoint) => endpoint.privacy_tier >= state.privacy);
+    return model.endpoints.filter((endpoint) => {
+      if (state.privacy === 1) return endpoint.stores_content === false;
+      if (state.privacy === 2) return endpoint.zero_data_retention === true;
+      if (state.privacy === 3) {
+        return endpoint.confidential_compute === true && endpoint.e2ee === true;
+      }
+      return true;
+    });
   }
 
   function routePrice(endpoint) {
@@ -465,7 +472,7 @@
       state.privacy >= 3
         ? "Filtered to confidential + E2EE provider routes."
         : state.privacy >= 2
-          ? "Filtered to zero-retention or stronger provider routes."
+          ? "Filtered to provider routes with an explicit zero-retention guarantee."
           : "No upstream retention floor. Check each provider route above.",
     ));
 
@@ -492,7 +499,7 @@
   function recommendedRoutes() {
     const confidential = routeById("trustedrouter/confidential") || routeById("trustedrouter/e2e");
     if (state.privacy >= 3) return [confidential].filter(Boolean);
-    if (state.privacy >= 2) return [routeById("trustedrouter/zdr"), confidential].filter(Boolean);
+    if (state.privacy >= 2) return [routeById("trustedrouter/zdr")].filter(Boolean);
     if (state.quality === "frontier" || state.preference.quality >= 0.5) {
       return [routeById("trustedrouter/synth"), routeById("trustedrouter/auto")].filter(Boolean);
     }

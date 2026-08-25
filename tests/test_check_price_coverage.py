@@ -36,9 +36,7 @@ _NEW_AUTOMATIC_FEED_ALIASES = {
     "grok-4.6",
     "mistral-small-2603",
 }
-_NEW_AUTOMATIC_FEED_ROWS = (
-    _NEW_AUTOMATIC_FEED_MODELS | _NEW_AUTOMATIC_FEED_ALIASES
-)
+_NEW_AUTOMATIC_FEED_ROWS = _NEW_AUTOMATIC_FEED_MODELS | _NEW_AUTOMATIC_FEED_ALIASES
 
 
 def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict:
@@ -121,6 +119,8 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         }
     if "api.inference.wandb.ai" in url:
         return {"data": [{"id": "zai-org/GLM-5.2"}]}
+    if "cloud-api.near.ai" in url:
+        return {"data": [{"id": "z-ai/glm-5.2"}]}
     return {"data": []}
 
 
@@ -258,9 +258,7 @@ def test_gemini_model_discovery_keeps_api_key_out_of_url(
 
 def test_stale_fallback_manifests_are_age_gated_even_with_live_scrapers() -> None:
     raw = json.loads(
-        check_price_coverage.MANIFEST_DIR.joinpath("upstage.json").read_text(
-            encoding="utf-8"
-        )
+        check_price_coverage.MANIFEST_DIR.joinpath("upstage.json").read_text(encoding="utf-8")
     )
     generated = dt.datetime.fromisoformat(raw["generated_at"].replace("Z", "+00:00"))
 
@@ -277,9 +275,7 @@ def test_stale_fallback_manifests_are_age_gated_even_with_live_scrapers() -> Non
 
 def test_discovery_only_non_runtime_manifest_warns_without_global_freeze() -> None:
     raw = json.loads(
-        check_price_coverage.MANIFEST_DIR.joinpath("stepfun.json").read_text(
-            encoding="utf-8"
-        )
+        check_price_coverage.MANIFEST_DIR.joinpath("stepfun.json").read_text(encoding="utf-8")
     )
     generated = dt.datetime.fromisoformat(raw["generated_at"].replace("Z", "+00:00"))
 
@@ -299,9 +295,7 @@ def test_discovery_only_fallback_manifests_are_age_gated() -> None:
 
     assert "nvidia-nim" not in GATEWAY_PREPAID_PROVIDER_SLUGS
     raw = json.loads(
-        check_price_coverage.MANIFEST_DIR.joinpath("nvidia-nim.json").read_text(
-            encoding="utf-8"
-        )
+        check_price_coverage.MANIFEST_DIR.joinpath("nvidia-nim.json").read_text(encoding="utf-8")
     )
     generated = dt.datetime.fromisoformat(raw["generated_at"].replace("Z", "+00:00"))
 
@@ -322,9 +316,7 @@ def test_manifest_expiry_warns_before_provider_routes_go_dark(
 ) -> None:
     generated = dt.datetime(2026, 8, 1, tzinfo=dt.UTC)
     manifest = json.loads(
-        check_price_coverage.MANIFEST_DIR.joinpath("upstage.json").read_text(
-            encoding="utf-8"
-        )
+        check_price_coverage.MANIFEST_DIR.joinpath("upstage.json").read_text(encoding="utf-8")
     )
     manifest["generated_at"] = generated.isoformat()
     tmp_path.joinpath("upstage.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -369,9 +361,7 @@ def test_manifest_audit_rejects_media_price_runtime_would_quarantine(
         now=dt.datetime(2026, 8, 22, tzinfo=dt.UTC),
     )
 
-    assert warning == (
-        "bfl: live scraper fallback manifest fails runtime route validity checks"
-    )
+    assert warning == ("bfl: live scraper fallback manifest fails runtime route validity checks")
     assert covered is None
 
 
@@ -380,9 +370,7 @@ def test_manifest_audit_rejects_naive_timestamp_runtime_would_quarantine(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manifest = json.loads(
-        check_price_coverage.MANIFEST_DIR.joinpath("upstage.json").read_text(
-            encoding="utf-8"
-        )
+        check_price_coverage.MANIFEST_DIR.joinpath("upstage.json").read_text(encoding="utf-8")
     )
     manifest["generated_at"] = "2026-08-22T00:00:00"
     tmp_path.joinpath("upstage.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -497,9 +485,7 @@ def test_runtime_only_discovery_without_credentials_is_expected(
 
     for module in check_price_coverage._DIRECT_OPENAI_DISCOVERY_MODULES:
         assert any(
-            item.startswith(
-                f"{module.SLUG}: authenticated discovery intentionally disabled"
-            )
+            item.startswith(f"{module.SLUG}: authenticated discovery intentionally disabled")
             for item in info
         )
         assert not any(module.SLUG in item and "fetch failed" in item for item in warnings)
@@ -615,13 +601,9 @@ def test_direct_provider_discovery_uses_route_canonical_ids() -> None:
     assert normalizers["upstage"]("solar-pro4") == "upstage/solar-pro4"
     assert normalizers["sail-research"]("zai-org/GLM-5.2-FP8") == "z-ai/glm-5.2"
     assert normalizers["reka"]("reka-edge-2603") == "reka/reka-edge-2603"
-    assert normalizers["nextbit"]("deepseek:v4-flash-0731") == (
-        "deepseek/deepseek-v4-flash-0731"
-    )
+    assert normalizers["nextbit"]("deepseek:v4-flash-0731") == ("deepseek/deepseek-v4-flash-0731")
     assert normalizers["mancer"]("future-model") is None
-    assert normalizers["arcee"]("trinity-large-thinking") == (
-        "arcee-ai/trinity-large-thinking"
-    )
+    assert normalizers["arcee"]("trinity-large-thinking") == ("arcee-ai/trinity-large-thinking")
 
 
 def test_direct_provider_discovery_configuration_comes_from_each_catalog() -> None:
@@ -660,8 +642,7 @@ def test_model_discovery_warns_when_docs_mention_unpublished_model(
     warnings, info = check_price_coverage._model_discovery_audit(
         fetch_text=lambda _url: "Supported Models: GLM-5.2, GLM-4.7",
         fetch_json=_known_provider_model_payload,
-        published_model_ids={"z-ai/glm-4.7"}
-        | (_NEW_AUTOMATIC_FEED_ROWS - {"z-ai/glm-5.2"}),
+        published_model_ids={"z-ai/glm-4.7"} | (_NEW_AUTOMATIC_FEED_ROWS - {"z-ai/glm-5.2"}),
     )
 
     assert any(item.startswith("cerebras: model discovery matched catalog") for item in info)
@@ -694,8 +675,7 @@ def test_model_discovery_reports_match_when_docs_models_are_published(
     warnings, info = check_price_coverage._model_discovery_audit(
         fetch_text=lambda _url: "Supported Models: GLM-5.2, GLM-4.7",
         fetch_json=_known_provider_model_payload,
-        published_model_ids={"z-ai/glm-5.2", "z-ai/glm-4.7"}
-        | _NEW_AUTOMATIC_FEED_ROWS,
+        published_model_ids={"z-ai/glm-5.2", "z-ai/glm-4.7"} | _NEW_AUTOMATIC_FEED_ROWS,
     )
 
     assert warnings == []

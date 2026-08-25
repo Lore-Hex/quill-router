@@ -155,6 +155,7 @@ from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time 
 from trusted_router.catalog_privacy import (  # noqa: F401 - re-exported for back-compat
     endpoint_confidential_compute,
     endpoint_e2ee,
+    endpoint_meets_privacy_requirement,
     endpoint_privacy_tier,
     endpoint_stores_content,
     endpoint_zero_data_retention,

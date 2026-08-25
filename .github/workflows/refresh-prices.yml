@@ -155,6 +155,7 @@ jobs:
                       ALIBABA_API_KEY:trustedrouter-alibaba-api-key \
                       MAKORA_API_KEY:trustedrouter-makora-api-key \
                       CHUTES_API_KEY:trustedrouter-chutes-api-key \
+                      NEAR_API_KEY:trustedrouter-near-ai-api-key \
                       DIGITAL_OCEAN_API_KEY:trustedrouter-digitalocean-api-key \
                       CLOUDFLARE_WORKERS_AI_API_TOKEN:trustedrouter-cloudflare-workers-ai-api-token \
                       INCEPTRON_API_KEY:trustedrouter-inceptron-api-key \

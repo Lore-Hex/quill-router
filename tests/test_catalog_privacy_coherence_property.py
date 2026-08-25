@@ -18,10 +18,9 @@ customer), or less (silently excluding a route the customer paid for).
 The law, quantified over the whole catalog:
 
     for every ModelEndpoint e,
-        tier(e) >= ZERO_RETENTION      <=>  zero_data_retention(e) is True
-        tier(e) == CONFIDENTIAL         =>  confidential compute AND e2ee
-        tier(e) >= NO_STORE             =>  some explicit flag justifies it
-        stores_content(e)               <=> tier(e) < NO_STORE
+        meets(e, ZERO_RETENTION)        <=>  zero_data_retention(e) is True
+        meets(e, CONFIDENTIAL)           =>  confidential compute AND e2ee
+        meets(e, NO_STORE)               <=> not stores_content(e)
 
 The catalog is finite — 51 providers, ~1500 endpoints — so this enumerates
 rather than samples. That makes it a genuine proof *for the shipped catalog*,
@@ -51,6 +50,7 @@ from trusted_router.catalog_data import (
     PRIVACY_TIER_ZERO_RETENTION,
 )
 from trusted_router.catalog_privacy import (
+    endpoint_meets_privacy_requirement,
     endpoint_privacy_tier,
     endpoint_stores_content,
     endpoint_zero_data_retention,
@@ -92,7 +92,7 @@ def test_zero_data_retention_is_exactly_the_zdr_tier() -> None:
             endpoint_zero_data_retention(endpoint),
         )
         for endpoint in ALL_ENDPOINTS
-        if (endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_ZERO_RETENTION)
+        if endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_ZERO_RETENTION)
         != (endpoint_zero_data_retention(endpoint) is True)
     ]
     assert not disagreements, (
@@ -105,7 +105,7 @@ def test_confidential_tier_requires_both_confidential_flags() -> None:
     """CONFIDENTIAL is the strongest claim the catalog makes. It must never be
     reachable without both underlying flags actually being set."""
     for endpoint in ALL_ENDPOINTS:
-        if endpoint_privacy_tier(endpoint) != PRIVACY_TIER_CONFIDENTIAL:
+        if not endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_CONFIDENTIAL):
             continue
         provider = PROVIDERS[endpoint.provider]
         from trusted_router.catalog_privacy import _model_provider_privacy_override
@@ -127,9 +127,9 @@ def test_confidential_tier_requires_both_confidential_flags() -> None:
 
 def test_stores_content_is_the_complement_of_the_no_store_tier() -> None:
     for endpoint in ALL_ENDPOINTS:
-        assert endpoint_stores_content(endpoint) == (
-            endpoint_privacy_tier(endpoint) < PRIVACY_TIER_NO_STORE
-        ), f"{_describe(endpoint)}: stores_content disagrees with its tier"
+        assert endpoint_stores_content(endpoint) != endpoint_meets_privacy_requirement(
+            endpoint, PRIVACY_TIER_NO_STORE
+        ), f"{_describe(endpoint)}: stores_content disagrees with no-store matching"
 
 
 def test_no_endpoint_clears_a_bar_without_an_explicit_flag() -> None:
@@ -151,9 +151,7 @@ def test_no_endpoint_clears_a_bar_without_an_explicit_flag() -> None:
             or bool(provider.provider_confidential_compute and provider.provider_e2ee)
             or (endpoint.usage_type == "Credits" and provider.prepaid_zero_data_retention)
         )
-        assert justified, (
-            f"{_describe(endpoint)} sits at tier {tier} with no flag justifying it"
-        )
+        assert justified, f"{_describe(endpoint)} sits at tier {tier} with no flag justifying it"
 
 
 def test_every_endpoint_provider_exists_and_tiers_are_in_range() -> None:
