@@ -178,11 +178,38 @@ def test_stockholm_volume_survives_terminating_the_instance() -> None:
 
 def test_stockholm_applies_the_single_node_schema_not_the_replicated_one() -> None:
     """Two regions cannot form a Keeper quorum, so these nodes do not
-    replicate; the drain writes both."""
+    replicate; the drain writes both.
+
+    This used to assert the script contained the literal string
+    "006_operational_analytics_single_node.sql". That pinned the HARDCODING
+    rather than the coverage: the script applied exactly 006 and 009, 010
+    through 013 landed, and this test went on passing while every node it built
+    was missing the workspace_id column the drain inserts.
+
+    Newer contract: the script names no migration at all. It applies the set
+    derived from clickhouse/*_single_node.sql by
+    scripts/deploy/_clickhouse_single_node_schema.sh, and that naming is what
+    excludes the replicated ones -- so the "not the replicated one" half of this
+    test is now structural rather than a denylist of one filename. The
+    derivation itself is pinned in tests/test_single_node_schema_set.py.
+    """
     script = STOCKHOLM.read_text()
 
-    assert "006_operational_analytics_single_node.sql" in script
-    assert "004_operational_analytics_replicated.sql" not in _statements()
+    assert "single_node_migrations" in script
+    assert "_clickhouse_single_node_schema.sh" in script
+
+    # No replicated migration reaches this node -- checked against ALL of them,
+    # not just 004, since the set is derived and a new one could appear.
+    statements = _statements()
+    replicated = [
+        path.name
+        for path in sorted((ROOT / "clickhouse").glob("*.sql"))
+        if not path.name.endswith("_single_node.sql")
+    ]
+    assert replicated, "no non-single-node migrations found; the check would be vacuous"
+    for name in replicated:
+        assert name not in statements, f"{name} is a replicated migration"
+
     # Applied from user-data, so the node is complete when it finishes booting
     # rather than depending on a manual step someone forgets.
     assert "--multiquery < /root/operational_schema.sql" in script
