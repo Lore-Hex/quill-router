@@ -133,6 +133,18 @@ def _customer_price(cost_microdollars_per_million: int) -> int:
     )
     return max(marked_up, _PRICE_FLOOR_MICRODOLLARS_PER_M)
 
+
+def _provider_manifest_customer_price(
+    cost_microdollars_per_million: int,
+    *,
+    apply_markup: bool,
+) -> int:
+    """Convert manifest cost to retail without rewriting the source cost."""
+
+    if not apply_markup:
+        return cost_microdollars_per_million
+    return _customer_price(cost_microdollars_per_million)
+
 _CACHE_READ_PRICE_MULTIPLIER: dict[str, Decimal] = {
     "anthropic": Decimal("0.1"),
     "openai": Decimal("0.5"),
@@ -491,6 +503,7 @@ def _provider_manifest_price_tiers(
     default_cached_prompt_price: int | None,
     *,
     price_scale: int = 1,
+    apply_markup: bool = True,
 ) -> tuple[PriceTier, ...]:
     if "price_tiers" not in raw_model:
         return _flat_tier(
@@ -524,12 +537,26 @@ def _provider_manifest_price_tiers(
             raw_tier.get("cached_input_token_price_per_m"),
             price_scale=price_scale,
         )
-        cached_price = _customer_price(cached_cost) if cached_cost is not None else None
+        cached_price = (
+            _provider_manifest_customer_price(cached_cost, apply_markup=apply_markup)
+            if cached_cost is not None
+            else None
+        )
         tiers.append(
             PriceTier(
                 max_prompt_tokens=threshold,
-                prompt_price_microdollars_per_million_tokens=_customer_price(prompt_cost),
-                completion_price_microdollars_per_million_tokens=_customer_price(completion_cost),
+                prompt_price_microdollars_per_million_tokens=(
+                    _provider_manifest_customer_price(
+                        prompt_cost,
+                        apply_markup=apply_markup,
+                    )
+                ),
+                completion_price_microdollars_per_million_tokens=(
+                    _provider_manifest_customer_price(
+                        completion_cost,
+                        apply_markup=apply_markup,
+                    )
+                ),
                 prompt_cached_price_microdollars_per_million_tokens=cached_price,
             )
         )

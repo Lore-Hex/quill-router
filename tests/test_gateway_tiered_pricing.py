@@ -12,7 +12,7 @@ from trusted_router.catalog import (
     endpoint_for_id,
 )
 from trusted_router.money import token_cost_microdollars
-from trusted_router.pricing import PriceTier, _customer_price, _read_pricing_tiers
+from trusted_router.pricing import _read_pricing_tiers
 from trusted_router.routes.helpers import cost_microdollars
 from trusted_router.routes.internal.gateway import (
     _endpoint_cost_microdollars,
@@ -48,33 +48,11 @@ def _tiered_credits_endpoint() -> ModelEndpoint:
 
 
 def _sakana_fugu_pricing_fixture() -> ModelEndpoint:
-    """Dormant Fugu pricing stays testable while its route is safety-held."""
+    """Return the live direct Fugu route with its pass-through retail tiers."""
 
-    base = _tiered_credits_endpoint()
-    low_prompt = _customer_price(5_000_000)
-    low_completion = _customer_price(30_000_000)
-    return replace(
-        base,
-        id="sakana-ai/fugu-ultra-v1.1@sakana/test-only",
-        model_id="sakana-ai/fugu-ultra-v1.1",
-        provider="sakana",
-        prompt_price_microdollars_per_million_tokens=low_prompt,
-        completion_price_microdollars_per_million_tokens=low_completion,
-        price_tiers=(
-            PriceTier(
-                max_prompt_tokens=272_000,
-                prompt_price_microdollars_per_million_tokens=low_prompt,
-                completion_price_microdollars_per_million_tokens=low_completion,
-                prompt_cached_price_microdollars_per_million_tokens=_customer_price(500_000),
-            ),
-            PriceTier(
-                max_prompt_tokens=None,
-                prompt_price_microdollars_per_million_tokens=_customer_price(10_000_000),
-                completion_price_microdollars_per_million_tokens=_customer_price(45_000_000),
-                prompt_cached_price_microdollars_per_million_tokens=_customer_price(1_000_000),
-            ),
-        ),
-    )
+    endpoint = endpoint_for_id("sakana-ai/fugu-ultra-v1.1@sakana/prepaid")
+    assert endpoint is not None
+    return endpoint
 
 
 def test_provider_tier_basis_is_scoped_to_sakana_fugu() -> None:

@@ -69,7 +69,10 @@ from trusted_router.partner_billing import (
 )
 from trusted_router.pricing import resolve_request_rates
 from trusted_router.provider_compat import byok_storage_provider_candidates
-from trusted_router.provider_contracts import SAKANA_FUGU_MODEL_ID
+from trusted_router.provider_contracts import (
+    SAKANA_FUGU_MODEL_ID,
+    provider_model_requires_exact_global_settlement,
+)
 from trusted_router.provider_types import estimate_tokens_from_text
 from trusted_router.regional_quota_ledger import RegionalLeaseLedgerError
 from trusted_router.regions import choose_region, region_payload
@@ -626,6 +629,13 @@ def _authorize_gateway_sync(
                 and body.route_type in {None, "chat.completions", "responses"}
                 and all(
                     UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
+                    for _candidate_model, candidate_endpoint in endpoint_candidates
+                )
+                and not any(
+                    provider_model_requires_exact_global_settlement(
+                        candidate_endpoint.provider,
+                        candidate_endpoint.model_id,
+                    )
                     for _candidate_model, candidate_endpoint in endpoint_candidates
                 )
                 and api_key.limit_microdollars is None
@@ -1828,10 +1838,9 @@ def _settle_gateway_authorization(
             "Parasail Liberty does not support BYOK routes",
             ErrorType.MODEL_NOT_SUPPORTED,
         )
-    # Only Fugu defines this provider-private tier basis, and Fugu remains
-    # operator-held until its internal orchestration spend has a hard bound.
-    # Ignoring the field for every other model prevents a future provider
-    # extension from silently selecting a cheaper context tier.
+    # Only Fugu defines this provider-private tier basis. Ignoring the field
+    # for every other model prevents a future provider extension from silently
+    # selecting a cheaper context tier.
     price_tier_input_tokens = _provider_price_tier_input_tokens(
         selected_endpoint,
         body.price_tier_input_tokens,

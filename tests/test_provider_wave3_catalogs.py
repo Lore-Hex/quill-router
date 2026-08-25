@@ -77,7 +77,7 @@ READY = {
     "sakana",
 }
 RUNTIME_ONLY_READY = (READY - {"io-net", "sakana"}) | {"nscale"}
-ROUTABLE_READY = READY - {"sakana"}
+ROUTABLE_READY = READY
 PENDING = {
     "perceptron",
     "perplexity",
@@ -117,7 +117,7 @@ def test_wave3_ready_and_pending_providers_are_fail_closed() -> None:
 def test_wave3_manifests_publish_only_canaried_priced_chat_routes() -> None:
     endpoint_providers = {endpoint.provider for endpoint in MODEL_ENDPOINTS.values()}
     assert ROUTABLE_READY <= endpoint_providers
-    assert "sakana" not in endpoint_providers
+    assert "sakana" in endpoint_providers
     for module in MODULES:
         manifest = json.loads(module.MANIFEST_PATH.read_text(encoding="utf-8"))
         assert manifest["provider"] == module.SLUG
@@ -129,7 +129,6 @@ def test_wave3_manifests_publish_only_canaried_priced_chat_routes() -> None:
                 assert reason in {
                     "provider-canary-failed",
                     "delisted-upstream",
-                    "unbounded-provider-orchestration-cost",
                     "provider-geographic-restriction",
                 }
                 if reason == "delisted-upstream":

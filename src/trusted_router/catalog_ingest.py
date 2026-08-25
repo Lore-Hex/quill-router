@@ -35,13 +35,17 @@ from trusted_router.pricing import (
     _flat_tier,
     _optional_customer_price_from_dollars_per_token,
     _priced,
+    _provider_manifest_customer_price,
     _provider_manifest_optional_price_cost,
     _provider_manifest_price_cost,
     _provider_manifest_price_scale,
     _provider_manifest_price_tiers,
     _read_pricing_tiers,
 )
-from trusted_router.provider_contracts import provider_model_operator_held
+from trusted_router.provider_contracts import (
+    provider_model_operator_held,
+    provider_model_uses_passthrough_retail_price,
+)
 from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.provider_manifest_policy import (
     EXPIRED_PROVIDER_MANIFEST as _EXPIRED_PROVIDER_MANIFEST,
@@ -916,9 +920,26 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 cached_price = None
                 tiers = _flat_tier(0, 0)
             else:
-                prompt_price = _customer_price(prompt_cost)
-                completion_price = _customer_price(completion_cost)
-                cached_price = _customer_price(cached_cost) if cached_cost is not None else None
+                apply_markup = not provider_model_uses_passthrough_retail_price(
+                    provider_slug,
+                    model_id,
+                )
+                prompt_price = _provider_manifest_customer_price(
+                    prompt_cost,
+                    apply_markup=apply_markup,
+                )
+                completion_price = _provider_manifest_customer_price(
+                    completion_cost,
+                    apply_markup=apply_markup,
+                )
+                cached_price = (
+                    _provider_manifest_customer_price(
+                        cached_cost,
+                        apply_markup=apply_markup,
+                    )
+                    if cached_cost is not None
+                    else None
+                )
                 try:
                     tiers = _provider_manifest_price_tiers(
                         raw_model,
@@ -926,6 +947,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                         completion_price,
                         cached_price,
                         price_scale=price_scale,
+                        apply_markup=apply_markup,
                     )
                 except ValueError:
                     # A malformed pricing tier is an accounting ambiguity. Do

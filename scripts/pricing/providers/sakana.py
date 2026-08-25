@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import re
 from decimal import Decimal
 from pathlib import Path
@@ -14,7 +13,6 @@ from scripts.pricing.base import ModelPrice, PriceTier, fetch_html
 from scripts.pricing.providers._direct_openai import DirectOpenAIProvider, DirectOpenAIProviderSpec
 from trusted_router.provider_contracts import (
     SAKANA_FUGU_MODEL_ID,
-    SAKANA_FUGU_ROUTE_HOLD_REASON,
     SAKANA_NAMAZU_MODEL_ID,
     SAKANA_NAMAZU_ROUTE_HOLD_REASON,
 )
@@ -30,8 +28,7 @@ MODEL_MAP = {
     "fugu-ultra-v1.1": SAKANA_FUGU_MODEL_ID,
     "sakana-namazu-v1.0": SAKANA_NAMAZU_MODEL_ID,
 }
-EXPECTED_MODELS = (SAKANA_NAMAZU_MODEL_ID,)
-logger = logging.getLogger("pricing")
+EXPECTED_MODELS = (SAKANA_FUGU_MODEL_ID, SAKANA_NAMAZU_MODEL_ID)
 
 
 def _usd_per_m_to_micro(raw: str) -> int:
@@ -148,17 +145,9 @@ def _parse_pricing(html: str) -> dict[str, ModelPrice]:
 
 
 def _load_prices() -> dict[str, ModelPrice]:
-    soup = BeautifulSoup(fetch_html(PRICING_URL), "html.parser")
-    prices = {SAKANA_NAMAZU_MODEL_ID: _parse_namazu_price(soup)}
-    try:
-        fugu = _parse_fugu_price(soup)
-    except RuntimeError as exc:
-        # Fugu is deliberately operator-held. Its page drift must stay visible
-        # without expiring the independently billable Namazu route.
-        logger.warning("sakana: omitted held Fugu pricing after contract drift: %s", exc)
-    else:
-        if fugu is not None:
-            prices[SAKANA_FUGU_MODEL_ID] = fugu
+    prices = _parse_pricing(fetch_html(PRICING_URL))
+    if SAKANA_FUGU_MODEL_ID not in prices:
+        raise RuntimeError("sakana: live Fugu pricing disappeared")
     return prices
 
 
@@ -226,7 +215,6 @@ CATALOG = DirectOpenAIProvider(
         include=_include,
         normalize_rows=_normalize_rows,
         operator_hold_reasons={
-            SAKANA_FUGU_MODEL_ID: SAKANA_FUGU_ROUTE_HOLD_REASON,
             SAKANA_NAMAZU_MODEL_ID: SAKANA_NAMAZU_ROUTE_HOLD_REASON,
         },
         canary_max_tokens=64,

@@ -127,6 +127,52 @@ def test_allowlisted_uncapped_key_authorizes_from_bounded_regional_escrow() -> N
     assert sum(row["reserved"] for row in db.typed[CREDIT_BALANCE_TABLE].values()) > 0
 
 
+def test_sakana_fugu_uses_exact_global_settlement_not_regional_escrow() -> None:
+    store, _db, _ = make_fake_store(request_record_write_mode="typed")
+    store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
+    workspace = store.create_workspace(
+        "owner",
+        "sakana-fugu-global-settlement",
+        trial_credit_microdollars=100_000_000,
+    )
+    _raw, api_key = store.create_api_key(
+        workspace_id=workspace.id,
+        name="sakana-fugu",
+        creator_user_id="owner",
+    )
+    configure_store(store)
+    client = TestClient(
+        create_app(
+            Settings(
+                environment="test",
+                regional_quota_leases_enabled=True,
+                regional_quota_lease_issuance_enabled=True,
+                regional_quota_lease_pilot_workspace_ids=workspace.id,
+            ),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    response = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": api_key.hash,
+            "model": "sakana-ai/fugu-ultra-v1.1",
+            "estimated_input_tokens": 1_000,
+            "max_output_tokens": 100,
+            "route_type": "chat.completions",
+            "idempotency_key": "sakana-fugu-global-settlement",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    authorization = store.get_gateway_authorization(response.json()["data"]["authorization_id"])
+    assert authorization is not None
+    assert authorization.provider == "sakana"
+    assert authorization.settlement == "local"
+
+
 def test_capability_only_revision_keeps_uncapped_key_on_exact_global_path() -> None:
     store, _db, _ = make_fake_store(request_record_write_mode="typed")
     store._regional_quota_ledger = InMemoryRegionalQuotaLedger()
