@@ -1191,7 +1191,15 @@ def _install_deepseek_v4_pro_release_routes() -> None:
     baseten_current = MODEL_ENDPOINTS.get(
         f"{DEEPSEEK_V4_PRO_0813_MODEL_ID}@baseten/prepaid"
     )
-    if not historical or current is None or baseten_current is None:
+    fireworks_current = MODEL_ENDPOINTS.get(
+        f"{DEEPSEEK_V4_PRO_0813_MODEL_ID}@fireworks/prepaid"
+    )
+    if (
+        not historical
+        or current is None
+        or baseten_current is None
+        or fireworks_current is None
+    ):
         raise RuntimeError("DeepSeek V4 Pro release routes are incomplete")
 
     # Versioned release IDs are immutable Credits-only products. The hourly
@@ -1247,7 +1255,7 @@ def _install_deepseek_v4_pro_release_routes() -> None:
     install(
         DEEPSEEK_V4_PRO_0813_MODEL_ID,
         "DeepSeek V4 Pro 0813",
-        [current, baseten_current],
+        [current, baseten_current, fireworks_current],
     )
 
 

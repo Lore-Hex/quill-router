@@ -452,6 +452,7 @@ def test_qwen_38_routes_only_through_hosts_with_verified_pricing() -> None:
 
     assert f"{model_id}@novita/prepaid" in MODEL_ENDPOINTS
     assert f"{model_id}@atlas-cloud/prepaid" in MODEL_ENDPOINTS
+    assert f"{model_id}@fireworks/prepaid" in MODEL_ENDPOINTS
     assert f"{model_id}@alibaba/prepaid" not in MODEL_ENDPOINTS
     assert f"{model_id}@alibaba/byok" not in MODEL_ENDPOINTS
 
@@ -785,6 +786,7 @@ def test_deepseek_v4_pro_release_routes_are_keyed_and_credits_only() -> None:
     assert {endpoint.provider for endpoint in current_routes} == {
         "deepseek",
         "baseten",
+        "fireworks",
     }
     assert {endpoint.provider for endpoint in current_routes} <= GATEWAY_PREPAID_PROVIDER_SLUGS
     assert [
@@ -797,6 +799,11 @@ def test_deepseek_v4_pro_release_routes_are_keyed_and_credits_only() -> None:
         for endpoint in current_routes
         if endpoint.provider == "baseten"
     ] == [("baseten", "deepseek-ai/DeepSeek-V4-Pro-0813")]
+    assert [
+        (endpoint.provider, endpoint.upstream_id)
+        for endpoint in current_routes
+        if endpoint.provider == "fireworks"
+    ] == [("fireworks", "accounts/fireworks/models/deepseek-v4-pro-0813")]
     baseten = next(
         endpoint for endpoint in current_routes if endpoint.provider == "baseten"
     )

@@ -47,6 +47,8 @@ DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT = datetime(
 FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT = datetime(
     2026, 8, 22, 12, 0, tzinfo=UTC
 )
+FIREWORKS_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 27, 0, 0, tzinfo=UTC)
+FIREWORKS_QWEN37_RETIREMENT_AT = datetime(2026, 9, 4, 0, 0, tzinfo=UTC)
 
 # DeepSeek prices direct V4 traffic at twice the off-peak rate during these
 # half-open UTC windows. Keep them as seconds since midnight so boundary
@@ -102,6 +104,43 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # Fireworks announced that these Serverless routes retire on 2026-08-27.
+    # The two Kimi retirements apply only to the separately billed Fast
+    # routers; standard Kimi K2.6 and Kimi K2.7 Code remain available. The
+    # notice did not specify a time zone, so use 00:00 UTC conservatively.
+    # Dedicated deployments and equivalent routes on other providers are
+    # unaffected.
+    _Retirement(
+        provider="fireworks",
+        model_ids=frozenset(
+            {
+                "minimax/minimax-m2.7",
+                "openai/gpt-oss-20b",
+                "moonshotai/kimi-k2.6-fast",
+                "moonshotai/kimi-k2.7-code-fast",
+                "deepseek/deepseek-v4-pro",
+            }
+        ),
+        upstream_ids=frozenset(
+            {
+                "accounts/fireworks/models/minimax-m2p7",
+                "accounts/fireworks/models/gpt-oss-20b",
+                "accounts/fireworks/routers/kimi-k2p6-turbo",
+                "accounts/fireworks/routers/kimi-k2p7-code-fast",
+                "accounts/fireworks/models/deepseek-v4-pro",
+            }
+        ),
+        effective_at=FIREWORKS_AUGUST_2026_RETIREMENT_AT,
+    ),
+    # Fireworks extended Qwen 3.7 Plus Serverless through 2026-09-04 and
+    # named Qwen 3.8 Max as its replacement. Keep this separate from the
+    # August cutover so the route is not removed a week early.
+    _Retirement(
+        provider="fireworks",
+        model_ids=frozenset({"qwen/qwen3.7-plus"}),
+        upstream_ids=frozenset({"accounts/fireworks/models/qwen3p7-plus"}),
+        effective_at=FIREWORKS_QWEN37_RETIREMENT_AT,
+    ),
     # Cerebras announced that Qwen 3.8 27B replaces Gemma 4 31B on its
     # Shared Tier on 2026-09-03. The notice did not specify a time zone, so
     # retire the shared route conservatively at 00:00 UTC. Gemma remains

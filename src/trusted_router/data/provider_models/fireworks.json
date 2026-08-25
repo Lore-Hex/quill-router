@@ -2,9 +2,8 @@
   "_about": "Provider-native supplement for the Fireworks AI serverless models enabled on the TrustedRouter Fireworks account. Verified against https://api.fireworks.ai/inference/v1/models, Fireworks' first-party pricing page, and direct chat completions. Kimi K3 is a verified launch route served before the account model-list feed caught up. Fireworks uses full accounts/fireworks/models/... upstream IDs, so the enclave preserves upstream_id verbatim for this provider.",
   "provider": "fireworks",
   "source": "https://api.fireworks.ai/inference/v1/models",
-  "price_source": "https://docs.fireworks.ai/serverless/pricing",
-  "generated_at": "2026-08-25T08:44:22Z",
-  "model_count": 6,
+  "generated_at": "2026-08-25T09:20:02Z",
+  "model_count": 20,
   "models": [
     {
       "id": "moonshotai/kimi-k3",
@@ -33,7 +32,8 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "created": 1784483409
     },
     {
       "id": "moonshotai/kimi-k2.6",
@@ -61,7 +61,8 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "created": 1776455694
     },
     {
       "id": "deepseek/deepseek-v4-pro",
@@ -79,7 +80,8 @@
         "serverless"
       ],
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -87,7 +89,8 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "created": 1777003717
     },
     {
       "id": "z-ai/glm-5.2",
@@ -114,7 +117,8 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "created": 1781630293
     },
     {
       "id": "z-ai/glm-5.2-fast",
@@ -123,9 +127,9 @@
       "title": "accounts/fireworks/routers/glm-5p2-fast",
       "context_length": 1048576,
       "max_output_tokens": 65536,
-      "input_token_price_per_m": 2800000,
-      "output_token_price_per_m": 8800000,
-      "cached_input_token_price_per_m": 280000,
+      "input_token_price_per_m": 2100000,
+      "output_token_price_per_m": 6600000,
+      "cached_input_token_price_per_m": 210000,
       "model_type": "chat",
       "features": [
         "reasoning",
@@ -142,12 +146,13 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "created": 1781630293
     },
     {
       "id": "openai/gpt-oss-120b",
       "upstream_id": "accounts/fireworks/models/gpt-oss-120b",
-      "display_name": "GPT OSS 120B on Fireworks",
+      "display_name": "OpenAI GPT OSS 120B on Fireworks",
       "title": "accounts/fireworks/models/gpt-oss-120b",
       "context_length": 131072,
       "max_output_tokens": 65536,
@@ -168,7 +173,318 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "created": 1754345600
+    },
+    {
+      "display_name": "DeepSeek V4 Flash 0731 on Fireworks",
+      "title": "accounts/fireworks/models/deepseek-v4-flash-0731",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "accounts/fireworks/models/deepseek-v4-flash-0731",
+      "context_length": 1048576,
+      "created": 1785514482,
+      "input_token_price_per_m": 220000,
+      "output_token_price_per_m": 660000,
+      "cached_input_token_price_per_m": 7000
+    },
+    {
+      "display_name": "DeepSeek V4 Pro 0813 on Fireworks",
+      "title": "accounts/fireworks/models/deepseek-v4-pro-0813",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-pro-0813",
+      "upstream_id": "accounts/fireworks/models/deepseek-v4-pro-0813",
+      "context_length": 1048576,
+      "created": 1786637155,
+      "input_token_price_per_m": 1740000,
+      "output_token_price_per_m": 3480000,
+      "cached_input_token_price_per_m": 145000
+    },
+    {
+      "display_name": "MiniMax M2.7 on Fireworks",
+      "title": "accounts/fireworks/models/minimax-m2p7",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m2.7",
+      "upstream_id": "accounts/fireworks/models/minimax-m2p7",
+      "context_length": 196608,
+      "created": 1775867225,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 60000
+    },
+    {
+      "display_name": "MiniMax M3 on Fireworks",
+      "title": "accounts/fireworks/models/minimax-m3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m3",
+      "upstream_id": "accounts/fireworks/models/minimax-m3",
+      "context_length": 512000,
+      "created": 1781214748,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 60000
+    },
+    {
+      "display_name": "Kimi K2.6 Fast on Fireworks",
+      "title": "accounts/fireworks/routers/kimi-k2p6-turbo",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2.6-fast",
+      "upstream_id": "accounts/fireworks/routers/kimi-k2p6-turbo",
+      "context_length": 262144,
+      "created": 1776455694,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 8000000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Kimi K2.7 Code on Fireworks",
+      "title": "accounts/fireworks/models/kimi-k2p7-code",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2.7-code",
+      "upstream_id": "accounts/fireworks/models/kimi-k2p7-code",
+      "context_length": 262144,
+      "created": 1781283600,
+      "input_token_price_per_m": 950000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 190000
+    },
+    {
+      "display_name": "Kimi K2.7 Code Fast on Fireworks",
+      "title": "accounts/fireworks/routers/kimi-k2p7-code-fast",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2.7-code-fast",
+      "upstream_id": "accounts/fireworks/routers/kimi-k2p7-code-fast",
+      "context_length": 262144,
+      "created": 1781283600,
+      "input_token_price_per_m": 1900000,
+      "output_token_price_per_m": 8000000,
+      "cached_input_token_price_per_m": 380000
+    },
+    {
+      "display_name": "Kimi K3 Fast on Fireworks",
+      "title": "accounts/fireworks/routers/kimi-k3-fast",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3-fast",
+      "upstream_id": "accounts/fireworks/routers/kimi-k3-fast",
+      "context_length": 1048576,
+      "created": 1784483409,
+      "input_token_price_per_m": 4500000,
+      "output_token_price_per_m": 22500000,
+      "cached_input_token_price_per_m": 450000
+    },
+    {
+      "display_name": "NVIDIA Nemotron 3.5 Lightning on Fireworks",
+      "title": "accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "nvidia/nemotron-3.5-lightning",
+      "upstream_id": "accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b",
+      "context_length": 262144,
+      "created": 1786139705,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 200000,
+      "cached_input_token_price_per_m": 10000
+    },
+    {
+      "display_name": "OpenAI GPT OSS 20B on Fireworks",
+      "title": "accounts/fireworks/models/gpt-oss-20b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-20b",
+      "upstream_id": "accounts/fireworks/models/gpt-oss-20b",
+      "context_length": 131072,
+      "created": 1754345466,
+      "input_token_price_per_m": 70000,
+      "output_token_price_per_m": 300000,
+      "cached_input_token_price_per_m": 35000
+    },
+    {
+      "display_name": "Qwen 3.7 Plus on Fireworks",
+      "title": "accounts/fireworks/models/qwen3p7-plus",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.7-plus",
+      "upstream_id": "accounts/fireworks/models/qwen3p7-plus",
+      "created": 1781036419,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 1600000,
+      "cached_input_token_price_per_m": 80000
+    },
+    {
+      "display_name": "Qwen 3.8 Max on Fireworks",
+      "title": "accounts/fireworks/models/qwen3p8-max",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-max",
+      "upstream_id": "accounts/fireworks/models/qwen3p8-max",
+      "created": 1785949040,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 6000000,
+      "cached_input_token_price_per_m": 250000
+    },
+    {
+      "display_name": "Muse Glimmer 30B on Fireworks",
+      "title": "accounts/fireworks/models/muse-glimmer-30b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-models/muse-glimmer-30b",
+      "upstream_id": "accounts/fireworks/models/muse-glimmer-30b",
+      "context_length": 131072,
+      "created": 1786326846,
+      "input_token_price_per_m": 350000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 40000
+    },
+    {
+      "display_name": "NVIDIA Nemotron 3 Ultra on Fireworks",
+      "title": "accounts/fireworks/models/nemotron-3-ultra-nvfp4",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "nvidia/nemotron-3-ultra-550b-a55b",
+      "upstream_id": "accounts/fireworks/models/nemotron-3-ultra-nvfp4",
+      "context_length": 262144,
+      "created": 1780415326,
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 120000
     }
-  ]
+  ],
+  "pricing_source": "https://docs.fireworks.ai/serverless/pricing.md",
+  "price_scale": "microdollars_per_million"
 }
