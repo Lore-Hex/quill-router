@@ -359,6 +359,13 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert "GLM" in dashboard.text
     assert "Gemma" in dashboard.text
     assert "Google" in dashboard.text
+    assert "Featured in" in dashboard.text
+    assert "Axios" in dashboard.text
+    assert "DeepSeek model in under 30 seconds" in dashboard.text
+    assert (
+        'href="https://www.axios.com/2026/08/25/'
+        'routing-is-coming-for-the-frontier-ai-labs"'
+    ) in dashboard.text
     # Inline console is gone — these used to be rendered server-side here.
     assert "Workspace Console" not in dashboard.text
     assert 'id="signupForm"' not in dashboard.text

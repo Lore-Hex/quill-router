@@ -474,6 +474,21 @@ test("homepage exposes privacy, no-subscription, and open-source claims", async 
   ).toBeVisible();
 });
 
+test("homepage links the Axios feature and demo result", async ({ page }) => {
+  await page.goto("/");
+
+  const feature = page.locator(".home-press-mention");
+  await expect(feature).toBeVisible();
+  await expect(feature).toContainText("Featured in Axios");
+  await expect(feature).toContainText("DeepSeek model in under 30 seconds");
+  await expect(feature).toHaveAttribute(
+    "href",
+    "https://www.axios.com/2026/08/25/routing-is-coming-for-the-frontier-ai-labs",
+  );
+  await expect(feature).toHaveAttribute("rel", "noopener noreferrer");
+  await expect(feature).toHaveAttribute("target", "_blank");
+});
+
 test("local trust page links the public source repositories and release files", async ({ page }) => {
   await page.goto("/trust");
 
