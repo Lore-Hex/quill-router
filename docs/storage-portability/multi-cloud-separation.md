@@ -388,18 +388,21 @@ it to be an exact invocation of a script the registry proves by execution — an
 `echo` of the command is not one.
 
 What stayed in YAML, because a workflow cannot be executed from a test: that the
-job exists, that it depends on `deploy`, and that it runs `if: always()`. Those
-are read as text out of `.github/workflows/deploy.yml`.
+job exists, that it depends on `rollout-secondaries`, that the convergence job
+depends on primary-live `deploy`, and that the completeness gate runs `if:
+always()`. Those edges are read as text out of
+`.github/workflows/deploy.yml`.
 
-`if: always()` on `needs: [deploy]` is load-bearing and was missing: with a bare
-`needs:`, GitHub SKIPS a job when its dependency fails, and a deploy that failed
-PARTWAY has already mutated production. **Its coverage, stated exactly:** every
-run in which the `deploy` job ran, whatever the result. Not "after every
-production mutation" — `migrate-schema` and `sync-runtime-secrets` run *before*
-`deploy` and mutate production, and the job is skipped when `deploy` is skipped,
-which is what happens when `confirm-current-main` says do not proceed. A run can
-migrate the schema, rotate runtime secrets, skip the deploy and never reach this
-check.
+`if: always()` on `needs: [rollout-secondaries]` is load-bearing: with a bare
+`needs:`, GitHub SKIPS a job when secondary convergence fails, even though that
+job may already have shifted traffic in one or more regions. **Its coverage,
+stated exactly:** every run in which `rollout-secondaries` ran, whatever the
+result. It does not run when primary-live `deploy` fails, because the convergence
+job never schedules. It also does not mean "after every production mutation" —
+`migrate-schema` and `sync-runtime-secrets` run *before* `deploy` and mutate
+production, and the gate is skipped when `confirm-current-main` says not to
+proceed. A run can migrate the schema, rotate runtime secrets, skip the deploy
+and never reach this check.
 
 Honest caveat, because this is a control that has never fired: it lands with
 this change and has not yet run on a merge.

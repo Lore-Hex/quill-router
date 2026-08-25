@@ -224,9 +224,15 @@ def test_production_deploy_provisions_and_schedules_regional_quota_reconciliatio
     assert workflow.index("bash scripts/deploy/regional_quota_ledger.sh") < workflow.index(
         "bash scripts/deploy/rollout.sh"
     )
-    assert workflow.index("bash scripts/deploy/regional_quota_reconciler.sh") > workflow.index(
-        "- name: Warm secondaries in parallel, ramp serially"
-    )
+    rollout = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
+        "\n  public-surface-companion:\n", 1
+    )[0]
+    reconciler_start = rollout.index("bash scripts/deploy/regional_quota_reconciler.sh")
+    first_ramp = rollout.index('ramp_secondary "europe-west4"')
+    last_ramp = rollout.index('ramp_secondary "southamerica-east1"')
+    reconciler_wait = rollout.index('wait "${reconciler_pid}"')
+    assert reconciler_start < first_ramp < last_ramp < reconciler_wait
+    assert 'regional_quota_reconciler.sh >"${reconciler_log}" 2>&1 &' in rollout
     assert "--transactional-writes" in provisioner
     assert "trusted-router-logs-c1" in library
     assert "us-central1=tr-quota-us-central1" in library
