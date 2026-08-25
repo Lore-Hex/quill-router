@@ -151,6 +151,7 @@ PROVIDER_SLUGS = [
     "sakana",
     "jina",
     "wandb",
+    "nscale",
     # 0G Private Computer publishes exact per-route prices and trust metadata
     # in its public marketplace hydration data. The adapter admits only
     # healthy TeeML/private chat routes and keeps them dark until a keyed PONG.
@@ -470,6 +471,11 @@ def _index_provider_prices(
             continue
         provider_slugs = _PRICING_RESULT_PROVIDER_ALIASES.get(slug, (slug,))
         for model_id, price in result.prices.items():
+            if (
+                result.price_index_model_ids is not None
+                and model_id not in result.price_index_model_ids
+            ):
+                continue
             for provider_slug in provider_slugs:
                 upstream_id_map = upstream_id_maps.get(provider_slug)
                 if upstream_id_map is None:

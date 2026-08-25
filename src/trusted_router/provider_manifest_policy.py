@@ -14,6 +14,7 @@ RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS = frozenset(
         "arcee",
         "inception",
         "mancer",
+        "nscale",
         "nextbit",
         "reka",
         "sail-research",
@@ -37,6 +38,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS | frozen
         "jina",
         "nvidia-nim",
         "wandb",
+        "nscale",
         "recraft",
         "relace",
         "stepfun",
@@ -83,9 +85,7 @@ def provider_manifest_valid_until(
                     and all(int(value) > 0 for value in fixed.values())
                 )
             elif model_type == "video":
-                valid_price = int(
-                    row.get("fixed_output_price_per_second_microdollars") or 0
-                ) > 0
+                valid_price = int(row.get("fixed_output_price_per_second_microdollars") or 0) > 0
             elif model_type == "embedding":
                 prompt = int(row.get("input_token_price_per_m") or 0)
                 completion = int(row.get("output_token_price_per_m") or 0)

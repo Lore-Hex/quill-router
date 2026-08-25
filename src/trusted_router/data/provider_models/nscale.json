@@ -1,0 +1,521 @@
+{
+  "provider": "nscale",
+  "models": [
+    {
+      "display_name": "FLUX.1 Schnell",
+      "title": "black-forest-labs/FLUX.1-schnell",
+      "model_type": "image",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "black-forest-labs/flux.1-schnell",
+      "upstream_id": "black-forest-labs/FLUX.1-schnell",
+      "supported_features": [
+        "image-generation"
+      ],
+      "fixed_output_price_microdollars": {
+        "1k": 1364
+      },
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "DeepSeek-R1-Distill-Llama-8B",
+      "title": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-r1-distill-llama-8b",
+      "upstream_id": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+      "context_length": 131072,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 50000
+    },
+    {
+      "display_name": "DeepSeek-R1-Distill-Qwen-14B",
+      "title": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-r1-distill-qwen-14b",
+      "upstream_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
+      "context_length": 131072,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 200000
+    },
+    {
+      "display_name": "DeepSeek-R1-Distill-Qwen-7B",
+      "title": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-r1-distill-qwen-7b",
+      "upstream_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+      "context_length": 131072,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 150000
+    },
+    {
+      "display_name": "Llama-3.1-8B-Instruct",
+      "title": "meta-llama/Llama-3.1-8B-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.1-8b-instruct",
+      "upstream_id": "meta-llama/Llama-3.1-8B-Instruct",
+      "context_length": 131072,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 60000,
+      "output_token_price_per_m": 60000
+    },
+    {
+      "display_name": "Llama-4-Scout-17B-16E-Instruct",
+      "title": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-4-scout-17b-16e-instruct",
+      "upstream_id": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+      "context_length": 890000,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 90000,
+      "output_token_price_per_m": 290000
+    },
+    {
+      "display_name": "Devstral-Small-2505",
+      "title": "mistralai/Devstral-Small-2505",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/devstral-small-2505",
+      "upstream_id": "mistralai/Devstral-Small-2505",
+      "context_length": 128000,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 300000
+    },
+    {
+      "display_name": "mixtral-8x22b-instruct-v0.1",
+      "title": "mistralai/mixtral-8x22b-instruct-v0.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/mixtral-8x22b-instruct-v0.1",
+      "upstream_id": "mistralai/mixtral-8x22b-instruct-v0.1",
+      "context_length": 65536,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 1200000,
+      "output_token_price_per_m": 1200000
+    },
+    {
+      "display_name": "Kimi-K2.5",
+      "title": "moonshotai/Kimi-K2.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2.5",
+      "upstream_id": "moonshotai/Kimi-K2.5",
+      "context_length": 262144,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 450000,
+      "output_token_price_per_m": 2200000
+    },
+    {
+      "display_name": "NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+      "title": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "nvidia/nemotron-3-nano-30b-a3b-bf16",
+      "upstream_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+      "context_length": 256000,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 200000
+    },
+    {
+      "display_name": "gpt-oss-120b",
+      "title": "openai/gpt-oss-120b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-120b",
+      "upstream_id": "openai/gpt-oss-120b",
+      "context_length": 131072,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 400000
+    },
+    {
+      "display_name": "gpt-oss-20b",
+      "title": "openai/gpt-oss-20b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-oss-20b",
+      "upstream_id": "openai/gpt-oss-20b",
+      "context_length": 131072,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 200000
+    },
+    {
+      "display_name": "Qwen2.5-Coder-32B-Instruct",
+      "title": "Qwen/Qwen2.5-Coder-32B-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen2.5-coder-32b-instruct",
+      "upstream_id": "Qwen/Qwen2.5-Coder-32B-Instruct",
+      "context_length": 131072,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 60000,
+      "output_token_price_per_m": 200000
+    },
+    {
+      "display_name": "Qwen2.5-Coder-3B-Instruct",
+      "title": "Qwen/Qwen2.5-Coder-3B-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen2.5-coder-3b-instruct",
+      "upstream_id": "Qwen/Qwen2.5-Coder-3B-Instruct",
+      "context_length": 32768,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 10000,
+      "output_token_price_per_m": 30000
+    },
+    {
+      "display_name": "Qwen2.5-Coder-7B-Instruct",
+      "title": "Qwen/Qwen2.5-Coder-7B-Instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen2.5-coder-7b-instruct",
+      "upstream_id": "Qwen/Qwen2.5-Coder-7B-Instruct",
+      "context_length": 131072,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 10000,
+      "output_token_price_per_m": 30000
+    },
+    {
+      "display_name": "Qwen3-14B",
+      "title": "Qwen/Qwen3-14B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-14b",
+      "upstream_id": "Qwen/Qwen3-14B",
+      "context_length": 40960,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 70000,
+      "output_token_price_per_m": 200000
+    },
+    {
+      "display_name": "Qwen3-235B-A22B",
+      "title": "Qwen/Qwen3-235B-A22B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-235b-a22b",
+      "upstream_id": "Qwen/Qwen3-235B-A22B",
+      "context_length": 32000,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 600000
+    },
+    {
+      "display_name": "Qwen3-235B-A22B-Instruct-2507",
+      "title": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-235b-a22b-instruct-2507",
+      "upstream_id": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+      "context_length": 32768,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 600000
+    },
+    {
+      "display_name": "Qwen3-32B",
+      "title": "Qwen/Qwen3-32B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-32b",
+      "upstream_id": "Qwen/Qwen3-32B",
+      "context_length": 40960,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 80000,
+      "output_token_price_per_m": 250000
+    },
+    {
+      "display_name": "Qwen3-4B-Instruct-2507",
+      "title": "Qwen/Qwen3-4B-Instruct-2507",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-4b-instruct-2507",
+      "upstream_id": "Qwen/Qwen3-4B-Instruct-2507",
+      "context_length": 262144,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 10000,
+      "output_token_price_per_m": 30000
+    },
+    {
+      "display_name": "Qwen3-4B-Thinking-2507",
+      "title": "Qwen/Qwen3-4B-Thinking-2507",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-4b-thinking-2507",
+      "upstream_id": "Qwen/Qwen3-4B-Thinking-2507",
+      "context_length": 262144,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 10000,
+      "output_token_price_per_m": 30000
+    },
+    {
+      "display_name": "Qwen3-8B",
+      "title": "Qwen/Qwen3-8B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-8b",
+      "upstream_id": "Qwen/Qwen3-8B",
+      "context_length": 40960,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 70000,
+      "output_token_price_per_m": 180000
+    },
+    {
+      "display_name": "Qwen3 Embedding 8B",
+      "title": "Qwen/Qwen3-Embedding-8B",
+      "model_type": "embedding",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embeddings"
+      ],
+      "endpoints": [
+        "embeddings"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-embedding-8b",
+      "upstream_id": "Qwen/Qwen3-Embedding-8B",
+      "context_length": 32768,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 40000,
+      "output_token_price_per_m": 0
+    }
+  ],
+  "source": "https://inference.api.nscale.com/v1/models",
+  "pricing_source": "https://docs.nscale.com/docs/ai-services/models",
+  "generated_at": "2026-08-24T21:51:19Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 23
+}

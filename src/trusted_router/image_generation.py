@@ -27,6 +27,7 @@ IMAGE_MODEL_IDS: Final[tuple[str, ...]] = (
     "black-forest-labs/flux-2-pro",
     "black-forest-labs/flux-2-max",
     "black-forest-labs/flux-2-flex",
+    "black-forest-labs/flux.1-schnell",
     "decart/lucy-image-2",
 )
 IMAGE_MODEL_ID_SET: Final[frozenset[str]] = frozenset(IMAGE_MODEL_IDS)
@@ -52,6 +53,7 @@ FIXED_IMAGE_PRICES_MICRODOLLARS: Final[dict[str, dict[str, int]]] = {
     "black-forest-labs/flux-2-pro": {"1k": 30_000},
     "black-forest-labs/flux-2-max": {"1k": 70_000},
     "black-forest-labs/flux-2-flex": {"1k": 50_000},
+    "black-forest-labs/flux.1-schnell": {"1k": 1_364},
     "decart/lucy-image-2": {"480p": 10_000, "720p": 20_000},
 }
 

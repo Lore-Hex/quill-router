@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from trusted_router.catalog import endpoints_for_model
 from trusted_router.catalog_registry import MODELS
 from trusted_router.image_generation import IMAGE_MODEL_ID_SET
 from trusted_router.storage import STORE
@@ -13,7 +14,10 @@ def test_image_catalog_is_machine_readable_and_matches_general_filter(
     response = client.get("/v1/images/models")
     assert response.status_code == 200, response.text
     models = response.json()["data"]
-    assert {model["id"] for model in models} == IMAGE_MODEL_ID_SET
+    public_image_ids = {model["id"] for model in models}
+    assert public_image_ids == {
+        model_id for model_id in IMAGE_MODEL_ID_SET if endpoints_for_model(model_id)
+    }
     for model in models:
         assert model["architecture"]["output_modalities"] == ["image"]
         assert model["supported_parameters"]["n"] == {
@@ -74,7 +78,7 @@ def test_image_catalog_is_machine_readable_and_matches_general_filter(
 
     filtered = client.get("/v1/models", params={"output_modalities": "image"})
     assert filtered.status_code == 200, filtered.text
-    assert {model["id"] for model in filtered.json()["data"]} == IMAGE_MODEL_ID_SET
+    assert {model["id"] for model in filtered.json()["data"]} == public_image_ids
     assert MODELS["google/gemini-3.1-flash-image"].supports_chat is False
 
 

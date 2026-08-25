@@ -109,6 +109,7 @@ COUNTRY_NAMES: dict[str, str] = {
     "ES": "Spain",
     "FI": "Finland",
     "FR": "France",
+    "GB": "United Kingdom",
     "GR": "Greece",
     "HR": "Croatia",
     "HU": "Hungary",
@@ -319,14 +320,10 @@ def _model_row(model: Model, *, region: ModelRegion) -> dict[str, object]:
     endpoints = endpoints_for_model(model.id)
     operators = _operator_rows(model)
     highlighted = [
-        operator
-        for operator in operators
-        if operator["country_code"] in region.highlight_countries
+        operator for operator in operators if operator["country_code"] in region.highlight_countries
     ]
     in_region = [
-        operator
-        for operator in operators
-        if operator["country_code"] in region.provider_countries
+        operator for operator in operators if operator["country_code"] in region.provider_countries
     ]
     return {
         "id": model.id,
@@ -436,8 +433,7 @@ def _liberty_rows() -> list[dict[str, object]]:
                 "context_length": f"{model.context_length:,}",
                 "component_count": component_count,
                 "us_component_count": us_component_count,
-                "all_components_us": component_count > 0
-                and us_component_count == component_count,
+                "all_components_us": component_count > 0 and us_component_count == component_count,
                 "components": [_liberty_component_row(component) for component in components],
                 # True when a component is itself a Liberty preset, so the
                 # component count is larger than the list of ids shown.
@@ -479,6 +475,7 @@ def _open_weight_labs(region: ModelRegion) -> list[dict[str, object]]:
     ]
     rows.sort(key=lambda row: (-int(str(row["count"])), str(row["lab_name"])))
     return rows
+
 
 def model_region_evidence(slug: str) -> dict[str, object]:
     """Everything the /us-ai-models, /eu-ai-models, and /china-ai-models pages
@@ -525,9 +522,7 @@ def model_region_evidence(slug: str) -> dict[str, object]:
             model_origin_for_model_id(model.id) is None for model in directory_models
         ),
         "open_weight_labs": _open_weight_labs(region),
-        "open_weight_count": sum(
-            int(str(row["count"])) for row in _open_weight_labs(region)
-        ),
+        "open_weight_count": sum(int(str(row["count"])) for row in _open_weight_labs(region)),
         "liberty_models": _liberty_rows(),
         "other_regions": [
             {

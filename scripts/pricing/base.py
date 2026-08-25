@@ -261,6 +261,10 @@ class ProviderPricingResult:
     # the shared token-price index. Their ModelPrice(0, 0) values are schema
     # placeholders, not free token routes.
     include_in_price_index: bool = True
+    # Mixed catalogs can publish chat, embedding, and media rows together.
+    # When set, only these chat model IDs enter the shared token-price index;
+    # all prices remain available to the provider manifest writer.
+    price_index_model_ids: frozenset[str] | None = None
 
 
 def read_stale_provider_manifest(
@@ -279,9 +283,7 @@ def read_stale_provider_manifest(
     if not isinstance(rows, list) or not rows:
         return None, "committed provider manifest has no model rows"
     scale_raw = raw.get("price_scale_to_microdollars_per_million_tokens", 1)
-    if isinstance(scale_raw, bool) or (
-        isinstance(scale_raw, float) and not scale_raw.is_integer()
-    ):
+    if isinstance(scale_raw, bool) or (isinstance(scale_raw, float) and not scale_raw.is_integer()):
         return None, "committed provider manifest has invalid price scale"
     try:
         price_scale = int(scale_raw)
@@ -303,6 +305,11 @@ def read_stale_provider_manifest(
         if not include_in_price_index:
             prices[model_id] = ModelPrice(0, 0)
             continue
+        # Token-price recovery is intentionally chat-only. Embedding and
+        # fixed-price media rows are validated by provider_manifest_policy
+        # and consumed from their manifest, never from the chat price index.
+        if row.get("model_type", "chat") != "chat":
+            continue
         if not row.get("routable", True):
             continue
         if not provider_manifest_price_profile_is_valid(row):
@@ -317,10 +324,8 @@ def read_stale_provider_manifest(
                         if raw_tier.get("max_prompt_tokens") is not None
                         else None
                     ),
-                    prompt_micro_per_m=int(raw_tier["input_token_price_per_m"])
-                    * price_scale,
-                    completion_micro_per_m=int(raw_tier["output_token_price_per_m"])
-                    * price_scale,
+                    prompt_micro_per_m=int(raw_tier["input_token_price_per_m"]) * price_scale,
+                    completion_micro_per_m=int(raw_tier["output_token_price_per_m"]) * price_scale,
                     prompt_cached_micro_per_m=(
                         int(raw_tier["cached_input_token_price_per_m"]) * price_scale
                         if "cached_input_token_price_per_m" in raw_tier
@@ -341,9 +346,7 @@ def read_stale_provider_manifest(
             )
 
     if invalid_rows:
-        return None, (
-            f"committed provider manifest has {invalid_rows} invalid model row(s)"
-        )
+        return None, (f"committed provider manifest has {invalid_rows} invalid model row(s)")
     if not prices:
         return None, "committed provider manifest has no usable model rows"
     return (
@@ -473,9 +476,9 @@ def _safe_provider_error_category(message: str) -> str | None:
         return "no_supported_models"
     if "no data list" in folded or "unexpected shape" in folded:
         return "unexpected_catalog_shape"
-    if (
-        "required" in folded or "not set" in folded or "must be set together" in folded
-    ) and any(marker in folded for marker in ("api_key", "api key", "token", "credential")):
+    if ("required" in folded or "not set" in folded or "must be set together" in folded) and any(
+        marker in folded for marker in ("api_key", "api key", "token", "credential")
+    ):
         return "missing_credentials"
     if "missing expected model" in folded or "missing required model" in folded:
         return "missing_required_models"

@@ -153,8 +153,7 @@ def _apply_provider_manifest_expiry(
             deadlines[provider_slug] = _EXPIRED_PROVIDER_MANIFEST
             continue
         deadlines[provider_slug] = (
-            _provider_manifest_valid_until(provider_slug, raw)
-            or _EXPIRED_PROVIDER_MANIFEST
+            _provider_manifest_valid_until(provider_slug, raw) or _EXPIRED_PROVIDER_MANIFEST
         )
 
     return {
@@ -165,6 +164,7 @@ def _apply_provider_manifest_expiry(
         )
         for endpoint_id, endpoint in endpoints.items()
     }
+
 
 # These providers publish authoritative model catalogs. Their generated
 # manifests, rather than OpenRouter's provider inventory, determine which
@@ -197,6 +197,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "decart",
         "nvidia-nim",
         "wandb",
+        "nscale",
         "databricks",
         "zero-g",
         "openrouter-exclusive",
@@ -233,9 +234,7 @@ def _authoritative_provider_model_ids(provider_slug: str) -> frozenset[str]:
         if row.get("model_type") not in (None, "chat", "image", "video", "embedding"):
             continue
         endpoint_types = {str(item) for item in (row.get("endpoints") or [])}
-        if not endpoint_types.intersection(
-            {"chat/completions", "images", "videos", "embeddings"}
-        ):
+        if not endpoint_types.intersection({"chat/completions", "images", "videos", "embeddings"}):
             continue
         model_id = row.get("id")
         if not isinstance(model_id, str) or not model_id:
@@ -835,6 +834,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "decart",
         "nvidia-nim",
         "wandb",
+        "nscale",
         "databricks",
         "zero-g",
         "kimi",
@@ -888,9 +888,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 continue
             if raw_model.get("model_type") not in (None, "chat", "image"):
                 continue
-            endpoint_types = {
-                str(item) for item in (raw_model.get("endpoints") or [])
-            }
+            endpoint_types = {str(item) for item in (raw_model.get("endpoints") or [])}
             if not endpoint_types.intersection({"chat/completions", "images"}):
                 continue
 
@@ -1240,9 +1238,8 @@ def _filter_unserved_provider_endpoints(
             endpoint.provider, endpoint.model_id, endpoint.upstream_id
         ):
             return False
-        if (
-            endpoint.usage_type == "Credits"
-            and endpoint.model_id in dark.get(endpoint.provider, frozenset())
+        if endpoint.usage_type == "Credits" and endpoint.model_id in dark.get(
+            endpoint.provider, frozenset()
         ):
             return False
         if (
