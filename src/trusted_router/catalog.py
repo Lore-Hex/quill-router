@@ -194,6 +194,7 @@ from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     _provider_manifest_price_tiers,
     _read_pricing_tiers,
     cache_token_prices_microdollars,
+    customer_fixed_price_microdollars,
     select_price_tier,
 )
 from trusted_router.provider_lifecycle import (
@@ -578,10 +579,13 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "prompt": microdollars_per_million_tokens_to_token_decimal(prompt_min),
         "completion": microdollars_per_million_tokens_to_token_decimal(completion_min),
     }
+    if model.request_price_microdollars:
+        pricing["request"] = microdollars_to_decimal(model.request_price_microdollars)
     fixed_image_prices = FIXED_IMAGE_PRICES_MICRODOLLARS.get(model.id)
     if fixed_image_prices:
         customer_prices = [
-            (microdollars * 211 + 199) // 200 for microdollars in fixed_image_prices.values()
+            customer_fixed_price_microdollars(microdollars)
+            for microdollars in fixed_image_prices.values()
         ]
         pricing["image"] = microdollars_to_decimal(min(customer_prices))
         if max(customer_prices) != min(customer_prices):
@@ -636,6 +640,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "completion_price_microdollars_per_million_tokens": completion_min,
         "published_prompt_price_microdollars_per_million_tokens": pub_prompt_min,
         "published_completion_price_microdollars_per_million_tokens": pub_completion_min,
+        "request_price_microdollars": model.request_price_microdollars,
         "minimum_charge_microdollars": model.minimum_charge_microdollars,
         # Uniform pricing means the customer pays the headline rate — no
         # secret 1¢/M discount layered on top. Field kept for OpenRouter
@@ -680,6 +685,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                 "provider_us_based": PROVIDERS[endpoint.provider].provider_headquarters_country
                 == PROVIDER_JURISDICTION_US,
                 "provider_eu_focused": endpoint.provider in EU_FOCUSED_PROVIDER_ORDER,
+                "request_price_microdollars": endpoint.request_price_microdollars,
             }
             for endpoint in endpoints
         ],

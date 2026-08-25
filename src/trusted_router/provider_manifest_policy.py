@@ -32,6 +32,8 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS | frozen
         "bfl",
         "decart",
         "io-net",
+        "krea",
+        "perplexity",
         "scaleway",
         "featherless",
         "sakana",

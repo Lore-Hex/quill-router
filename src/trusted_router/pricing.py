@@ -69,6 +69,7 @@ def _flat_tier(
         ),
     )
 
+
 def select_price_tier(tiers: tuple[PriceTier, ...], prompt_tokens: int) -> PriceTier:
     """Pick the tier that applies to a request with `prompt_tokens` of
     input. Walks the tiers in order; returns the first one whose
@@ -120,16 +121,18 @@ class ModelPricingKwargs(TypedDict):
     published_prompt_price_microdollars_per_million_tokens: int
     published_completion_price_microdollars_per_million_tokens: int
 
+
 _PRICE_MARKUP_RATIO = Decimal("1.055")
 
 _PRICE_FLOOR_MICRODOLLARS_PER_M = 10_000  # $0.01 per million tokens.
 
+
 def _customer_price(cost_microdollars_per_million: int) -> int:
     """Apply the markup formula. Input/output in microdollars per million tokens."""
     marked_up = int(
-        (
-            Decimal(cost_microdollars_per_million) * _PRICE_MARKUP_RATIO
-        ).to_integral_value(rounding=ROUND_CEILING)
+        (Decimal(cost_microdollars_per_million) * _PRICE_MARKUP_RATIO).to_integral_value(
+            rounding=ROUND_CEILING
+        )
     )
     return max(marked_up, _PRICE_FLOOR_MICRODOLLARS_PER_M)
 
@@ -144,6 +147,22 @@ def _provider_manifest_customer_price(
     if not apply_markup:
         return cost_microdollars_per_million
     return _customer_price(cost_microdollars_per_million)
+
+
+def customer_fixed_price_microdollars(cost_microdollars: int) -> int:
+    """Apply the standard markup to a fixed provider charge.
+
+    Fixed request and media charges are already expressed in the ledger's
+    microdollar unit, so they must not inherit the per-million-token floor.
+    """
+
+    if isinstance(cost_microdollars, bool) or not isinstance(cost_microdollars, int):
+        raise ValueError("fixed provider price must be a non-negative integer")
+    if cost_microdollars < 0:
+        raise ValueError("fixed provider price must be a non-negative integer")
+    return int(
+        (Decimal(cost_microdollars) * _PRICE_MARKUP_RATIO).to_integral_value(rounding=ROUND_CEILING)
+    )
 
 _CACHE_READ_PRICE_MULTIPLIER: dict[str, Decimal] = {
     "anthropic": Decimal("0.1"),
@@ -162,6 +181,7 @@ _DEFAULT_CACHE_READ_MULTIPLIER = Decimal("1")
 
 _DEFAULT_CACHE_WRITE_MULTIPLIER = Decimal("1.25")
 
+
 def cache_token_prices_microdollars(
     provider: str, prompt_price_microdollars: int
 ) -> tuple[int, int]:
@@ -175,6 +195,7 @@ def cache_token_prices_microdollars(
         int((prompt * write).to_integral_value()),
     )
 
+
 def _priced(cost_dollars_per_million: str | int | float) -> tuple[int, int, int]:
     """Return (prompt_price, published_price, cost_microdollars) for a
     dollars-per-million cost. prompt_price == published_price under the
@@ -183,6 +204,7 @@ def _priced(cost_dollars_per_million: str | int | float) -> tuple[int, int, int]
     cost = dollars_to_microdollars(cost_dollars_per_million)
     customer = _customer_price(cost)
     return customer, customer, cost
+
 
 def _customer_price_from_dollars_per_token(price_per_token: str) -> tuple[int, int, int]:
     """Variant for snapshot-shaped inputs (dollars/token strings).
@@ -198,6 +220,7 @@ def _customer_price_from_dollars_per_token(price_per_token: str) -> tuple[int, i
     cost = int((per_token * MICRODOLLARS_PER_DOLLAR * TOKENS_PER_MILLION).to_integral_value())
     customer = _customer_price(cost)
     return customer, customer, cost
+
 
 def _optional_customer_price_from_dollars_per_token(value: object) -> int | None:
     """Parse an optional cached-input price without inventing a discount.
@@ -232,9 +255,7 @@ def _strict_customer_price_from_dollars_per_token(
         raise ValueError("malformed tier price") from None
     if not per_token.is_finite() or per_token < 0 or (not allow_zero and per_token == 0):
         raise ValueError("malformed tier price")
-    cost = int(
-        (per_token * MICRODOLLARS_PER_DOLLAR * TOKENS_PER_MILLION).to_integral_value()
-    )
+    cost = int((per_token * MICRODOLLARS_PER_DOLLAR * TOKENS_PER_MILLION).to_integral_value())
     return _customer_price(cost)
 
 
@@ -289,9 +310,7 @@ def _read_pricing_tiers(pricing: dict[str, Any], dimension: str) -> tuple[PriceT
             previous_threshold = threshold
 
         try:
-            prompt_micro = _strict_customer_price_from_dollars_per_token(
-                prompt_tier.get("prompt")
-            )
+            prompt_micro = _strict_customer_price_from_dollars_per_token(prompt_tier.get("prompt"))
             completion_micro = _strict_customer_price_from_dollars_per_token(
                 completion_tier.get("completion")
             )
@@ -331,6 +350,7 @@ def _read_pricing_tiers(pricing: dict[str, Any], dimension: str) -> tuple[PriceT
         raise ValueError(f"capped final {dimension} pricing tier")
     return tuple(tiers)
 
+
 def _as_positive_int(value: object) -> int:
     if not isinstance(value, int | str | float | bytes | bytearray):
         return 0
@@ -339,6 +359,7 @@ def _as_positive_int(value: object) -> int:
     except (TypeError, ValueError):
         return 0
     return max(parsed, 0)
+
 
 def _provider_manifest_price_scale(raw: dict[str, Any]) -> int:
     """Return the multiplier needed to turn provider-manifest price fields
@@ -352,11 +373,13 @@ def _provider_manifest_price_scale(raw: dict[str, Any]) -> int:
     scale = _as_positive_int(raw.get("price_scale_to_microdollars_per_million_tokens"))
     return max(scale, 1)
 
+
 def _provider_manifest_price_cost(value: object, *, price_scale: int) -> int:
     parsed = _as_positive_int(value)
     if parsed <= 0:
         return 0
     return parsed * price_scale
+
 
 def _provider_manifest_optional_price_cost(
     value: object,
@@ -495,6 +518,7 @@ def provider_manifest_price_profile_is_valid(raw_model: object) -> bool:
     # exact per-tier cache rates. That is safe because billing reads the tier;
     # when a headline cache rate is present, however, it must describe tier 0.
     return not cached_present or (first_cached_present and cached == first_cached)
+
 
 def _provider_manifest_price_tiers(
     raw_model: dict[str, Any],

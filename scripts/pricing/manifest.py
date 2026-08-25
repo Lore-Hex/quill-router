@@ -19,11 +19,12 @@ def guard_fixed_output_prices(
     manifest_path: Path,
     discovered_rows: dict[str, dict[str, Any]],
 ) -> None:
-    """Reject provider price changes that require an enclave release.
+    """Reject fixed provider price changes until the billing contract deploys.
 
-    Fixed media prices are enforced independently inside the enclave. The
-    hourly catalog refresh may verify those prices, but it must never publish
-    a new control-plane price before the matching enclave constants deploy.
+    Fixed media prices are enforced independently inside the enclave, while
+    fixed request fees are part of the selected endpoint's control-plane
+    contract. The hourly refresh verifies both but cannot silently publish a
+    new charge before the matching billing change is reviewed and deployed.
     """
 
     if not manifest_path.exists():
@@ -38,6 +39,7 @@ def guard_fixed_output_prices(
         if isinstance(row, dict) and isinstance(row.get("id"), str)
     }
     fixed_fields = (
+        "fixed_request_price_microdollars",
         "fixed_output_price_microdollars",
         "fixed_output_price_per_second_microdollars",
     )
@@ -53,7 +55,7 @@ def guard_fixed_output_prices(
                 changes.append(f"{model_id}.{field}: {old[field]!r} -> {discovered[field]!r}")
     if changes:
         raise RuntimeError(
-            "fixed media price changed; update and deploy enclave billing first: "
+            "fixed provider price changed; review and deploy billing contract first: "
             + "; ".join(changes)
         )
 

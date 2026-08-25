@@ -39,8 +39,7 @@ def positive_chat_prices(prices: dict[str, ModelPrice]) -> dict[str, ModelPrice]
         model_id: price
         for model_id, price in prices.items()
         if all(
-            tier.prompt_micro_per_m > 0 and tier.completion_micro_per_m > 0
-            for tier in price.tiers
+            tier.prompt_micro_per_m > 0 and tier.completion_micro_per_m > 0 for tier in price.tiers
         )
     }
 
@@ -66,6 +65,8 @@ class DirectOpenAIProviderSpec:
     operator_hold_reasons: dict[str, str] = field(default_factory=dict)
     canary_max_tokens: int = 16
     canary_expected_content: str | None = None
+    canary_endpoint_path: str = "/chat/completions"
+    canary_extra_body: dict[str, Any] = field(default_factory=dict)
 
 
 def _catalog_rows(payload: object, *, slug: str) -> list[dict[str, Any]]:
@@ -117,11 +118,7 @@ class DirectOpenAIProvider:
 
     def _api_key(self) -> str | None:
         return next(
-            (
-                value
-                for env_name in self.api_key_envs
-                if (value := os.environ.get(env_name))
-            ),
+            (value for env_name in self.api_key_envs if (value := os.environ.get(env_name))),
             None,
         )
 
@@ -206,6 +203,8 @@ class DirectOpenAIProvider:
                 model=self.upstream_id_map[model_id],
                 max_tokens=self.spec.canary_max_tokens,
                 expected_content=self.spec.canary_expected_content,
+                endpoint_path=self.spec.canary_endpoint_path,
+                extra_body=self.spec.canary_extra_body,
             )
         }
         apply_canary_results(

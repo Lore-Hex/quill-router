@@ -1729,9 +1729,9 @@ def _report_route_fallbacks(body: GatewaySettleRequest) -> None:
     try:
         import sentry_sdk
 
-        failures = [
-            f for f in (getattr(body, "route_failures", None) or []) if isinstance(f, str)
-        ][:8]
+        failures = [f for f in (getattr(body, "route_failures", None) or []) if isinstance(f, str)][
+            :8
+        ]
         providers = sorted({f.split("|", 1)[0] for f in failures if f})
         model = body.selected_model or body.model or "unknown"
         with sentry_sdk.push_scope() as scope:
@@ -2094,7 +2094,9 @@ def _settle_gateway_authorization(
                     model_id=generation_model_id,
                     selected_usage_type=str(selected_usage_type),
                     settle_body=json.dumps(frozen_settle_body, separators=(",", ":")),
-                    auto_refill_workspace_id=(authorization.workspace_id if refill_required else None),
+                    auto_refill_workspace_id=(
+                        authorization.workspace_id if refill_required else None
+                    ),
                 ),
                 # Grace so inline finalize wins the benign race; the drain only
                 # sees rows whose inline attempt is dead >=60s, avoiding replays.
@@ -3001,10 +3003,7 @@ def _provider_price_tier_input_tokens(
 ) -> int | None:
     """Admit a provider-private tier basis only for its pinned model contract."""
 
-    if (
-        endpoint.provider == "sakana"
-        and endpoint.model_id == SAKANA_FUGU_MODEL_ID
-    ):
+    if endpoint.provider == "sakana" and endpoint.model_id == SAKANA_FUGU_MODEL_ID:
         return reported_input_tokens
     return None
 
@@ -3055,12 +3054,18 @@ def _endpoint_cost_microdollars(
     )
     prompt_price = rates.prompt_price_microdollars_per_million_tokens
 
-    cost = token_cost_microdollars(input_tokens, prompt_price) + token_cost_microdollars(
-        output_tokens,
-        rates.completion_price_microdollars_per_million_tokens,
+    cost = (
+        endpoint.request_price_microdollars
+        + token_cost_microdollars(input_tokens, prompt_price)
+        + token_cost_microdollars(
+            output_tokens,
+            rates.completion_price_microdollars_per_million_tokens,
+        )
     )
-    has_positive_charge = (input_tokens > 0 and prompt_price > 0) or (
-        output_tokens > 0 and rates.completion_price_microdollars_per_million_tokens > 0
+    has_positive_charge = (
+        endpoint.request_price_microdollars > 0
+        or (input_tokens > 0 and prompt_price > 0)
+        or (output_tokens > 0 and rates.completion_price_microdollars_per_million_tokens > 0)
     )
     if cache_read_tokens or cache_creation_tokens:
         default_read_price, write_price = cache_token_prices_microdollars(

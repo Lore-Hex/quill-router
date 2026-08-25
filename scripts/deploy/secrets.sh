@@ -218,6 +218,8 @@ ensure_secret_from_env_file "SCALEWAY_SECRET_KEY" "trustedrouter-scaleway-api-ke
 ensure_secret_from_env_file "FEATHERLESS_API_KEY" "trustedrouter-featherless-api-key"
 ensure_secret_from_env_file "JINA_API_KEY" "trustedrouter-jina-api-key"
 ensure_secret_from_env_file "SAKANA_API_KEY" "trustedrouter-sakana-api-key"
+ensure_secret_from_env_file "PERPLEXITY_API_KEY" "trustedrouter-perplexity-api-key"
+ensure_secret_from_env_file "KREA_API_KEY" "trustedrouter-krea-api-key"
 ensure_secret_from_env_file \
   "AZURE_API_KEY" \
   "trustedrouter-azure-api-key" \
@@ -331,6 +333,8 @@ grant_tr_deploy_secret_access "trustedrouter-scaleway-api-key"
 grant_tr_deploy_secret_access "trustedrouter-featherless-api-key"
 grant_tr_deploy_secret_access "trustedrouter-jina-api-key"
 grant_tr_deploy_secret_access "trustedrouter-sakana-api-key"
+grant_tr_deploy_secret_access "trustedrouter-perplexity-api-key"
+grant_tr_deploy_secret_access "trustedrouter-krea-api-key"
 # The ten wave-3 keys are runtime-only until authenticated hourly discovery is
 # explicitly approved. Do not grant the GitHub deploy identity access merely
 # because the secrets exist; the attested workload identities hold their own

@@ -176,6 +176,8 @@ jobs:
                       FEATHERLESS_API_KEY:trustedrouter-featherless-api-key \
                       JINA_API_KEY:trustedrouter-jina-api-key \
                       SAKANA_API_KEY:trustedrouter-sakana-api-key \
+                      PERPLEXITY_API_KEY:trustedrouter-perplexity-api-key \
+                      KREA_API_KEY:trustedrouter-krea-api-key \
                       WANDB_API_KEY:trustedrouter-wandb-api-key; do
             env="${pair%%:*}"
             secret="${pair#*:}"

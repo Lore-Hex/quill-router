@@ -11,6 +11,8 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Final
 
+from trusted_router.pricing import customer_fixed_price_microdollars
+
 IMAGE_MODEL_IDS: Final[tuple[str, ...]] = (
     "google/gemini-3.1-flash-image",
     "google/gemini-3.1-flash-image-preview",
@@ -29,6 +31,7 @@ IMAGE_MODEL_IDS: Final[tuple[str, ...]] = (
     "black-forest-labs/flux-2-flex",
     "black-forest-labs/flux.1-schnell",
     "decart/lucy-image-2",
+    "krea/krea-2-medium",
 )
 IMAGE_MODEL_ID_SET: Final[frozenset[str]] = frozenset(IMAGE_MODEL_IDS)
 
@@ -55,6 +58,7 @@ FIXED_IMAGE_PRICES_MICRODOLLARS: Final[dict[str, dict[str, int]]] = {
     "black-forest-labs/flux-2-flex": {"1k": 50_000},
     "black-forest-labs/flux.1-schnell": {"1k": 1_364},
     "decart/lucy-image-2": {"480p": 10_000, "720p": 20_000},
+    "krea/krea-2-medium": {"1k": 30_000},
 }
 
 IMAGE_RESOLUTIONS: Final[tuple[str, ...]] = ("512", "1K", "2K", "4K")
@@ -230,8 +234,7 @@ def image_pricing_by_resolution(
                 "billable": "output_image",
                 "unit": "image",
                 "variant": variant,
-                # Exact prepaid markup: ceil(provider price * 1.055).
-                "cost_usd": ((cost * 211 + 199) // 200) / 1_000_000,
+                "cost_usd": customer_fixed_price_microdollars(cost) / 1_000_000,
             }
             for variant, cost in fixed.items()
         ]

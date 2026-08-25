@@ -58,14 +58,20 @@ def _sakana_fugu_pricing_fixture() -> ModelEndpoint:
 def test_provider_tier_basis_is_scoped_to_sakana_fugu() -> None:
     fugu = _sakana_fugu_pricing_fixture()
     assert _provider_price_tier_input_tokens(fugu, 6) == 6
-    assert _provider_price_tier_input_tokens(
-        replace(fugu, model_id="sakana-ai/sakana-namazu-v1.0"),
-        6,
-    ) is None
-    assert _provider_price_tier_input_tokens(
-        replace(fugu, provider="example"),
-        6,
-    ) is None
+    assert (
+        _provider_price_tier_input_tokens(
+            replace(fugu, model_id="sakana-ai/sakana-namazu-v1.0"),
+            6,
+        )
+        is None
+    )
+    assert (
+        _provider_price_tier_input_tokens(
+            replace(fugu, provider="example"),
+            6,
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -355,3 +361,18 @@ def test_endpoint_cost_reserves_one_microdollar_for_positive_fractional_cost() -
 
     assert _endpoint_cost_microdollars(endpoint, 1, 1) == 1
     assert _endpoint_cost_microdollars(endpoint, 0, 0) == 0
+
+
+def test_perplexity_sonar_charges_fixed_request_fee_and_tokens_once() -> None:
+    endpoint = endpoint_for_id("perplexity/sonar@perplexity/prepaid")
+    assert endpoint is not None
+    assert endpoint.upstream_id == "sonar"
+    assert endpoint.request_price_microdollars == 5_275
+    expected = (
+        5_275
+        + token_cost_microdollars(1_000, endpoint.prompt_price_microdollars_per_million_tokens)
+        + token_cost_microdollars(100, endpoint.completion_price_microdollars_per_million_tokens)
+    )
+    assert _endpoint_cost_microdollars(endpoint, 1_000, 100) == expected
+    assert cost_microdollars(MODELS[endpoint.model_id], 1_000, 100) == expected
+    assert _endpoint_cost_microdollars(endpoint, 0, 0) == 5_275

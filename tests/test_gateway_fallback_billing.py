@@ -634,6 +634,80 @@ def test_parasail_liberty_failed_request_refunds_minimum_reservation() -> None:
     assert not STORE.generation_store.generations
 
 
+def test_perplexity_fixed_request_fee_settles_once_and_refunds_on_failure() -> None:
+    client, key = _client_and_key()
+    money = STORE.credit_money[key["workspace_id"]]
+    endpoint = endpoint_for_id("perplexity/sonar@perplexity/prepaid")
+    assert endpoint is not None
+    usage_before = money.total_usage_microdollars
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": "perplexity/sonar",
+            "estimated_input_tokens": 4,
+            "max_output_tokens": 2,
+            "route_type": "chat.completions",
+            "idempotency_key": "req-perplexity-fixed-settle",
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    auth_data = authorize.json()["data"]
+    expected = gateway_routes._endpoint_cost_microdollars(endpoint, 4, 2)
+    assert auth_data["estimated_cost_microdollars"] == expected
+
+    settle_body = {
+        "authorization_id": auth_data["authorization_id"],
+        "actual_input_tokens": 4,
+        "actual_output_tokens": 2,
+        "route_type": "chat.completions",
+        "request_id": "req-perplexity-fixed-settle",
+        "elapsed_seconds": 0.2,
+    }
+    settle = client.post("/v1/internal/gateway/settle", json=settle_body)
+    assert settle.status_code == 200, settle.text
+    assert settle.json()["data"]["cost_microdollars"] == expected
+    assert money.total_usage_microdollars == usage_before + expected
+
+    replay = client.post("/v1/internal/gateway/settle", json=settle_body)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["data"]["already_settled"] is True
+    assert money.total_usage_microdollars == usage_before + expected
+
+    failed = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": "perplexity/sonar",
+            "estimated_input_tokens": 4,
+            "max_output_tokens": 2,
+            "route_type": "chat.completions",
+            "idempotency_key": "req-perplexity-fixed-refund",
+        },
+    )
+    assert failed.status_code == 200, failed.text
+    failed_data = failed.json()["data"]
+    assert failed_data["estimated_cost_microdollars"] == expected
+
+    refund = client.post(
+        "/v1/internal/gateway/refund",
+        json={
+            "authorization_id": failed_data["authorization_id"],
+            "actual_input_tokens": 0,
+            "actual_output_tokens": 0,
+            "route_type": "chat.completions",
+            "request_id": "req-perplexity-fixed-refund",
+            "elapsed_seconds": 0.1,
+            "error_status": 503,
+            "error_type": "provider_error",
+        },
+    )
+    assert refund.status_code == 200, refund.text
+    assert money.total_usage_microdollars == usage_before + expected
+    assert money.reserved_microdollars == 0
+
+
 def test_parasail_liberty_internal_calls_are_customer_cost_zero(
     monkeypatch,
 ) -> None:

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.manifest import guard_fixed_output_prices
-from scripts.pricing.providers import bfl, decart, recraft
+from scripts.pricing.providers import bfl, decart, krea, recraft
 from trusted_router.catalog_data import GATEWAY_PREPAID_PROVIDER_SLUGS
 from trusted_router.catalog_ingest import _supplemental_provider_models_and_endpoints
 from trusted_router.image_generation import (
@@ -90,9 +90,35 @@ def test_decart_pricing_parser_maps_native_resolutions() -> None:
     }
 
 
+def test_krea_pricing_parser_uses_exact_text_to_image_price() -> None:
+    openapi = {
+        "paths": {
+            "/generate/image/krea/krea-2/medium": {
+                "post": {
+                    "x-krea-pricing": {
+                        "type": "fixed",
+                        "currency": "USD",
+                        "price_points": [
+                            {
+                                "amount": "0.03",
+                                "dimensions": {"k2BillingTier": "text-to-image"},
+                            },
+                            {
+                                "amount": "0.05",
+                                "dimensions": {"k2BillingTier": "image-to-image"},
+                            },
+                        ],
+                    }
+                }
+            }
+        }
+    }
+    assert krea._fixed_text_to_image_price(openapi) == 30_000
+
+
 def test_media_manifests_match_runtime_fixed_price_contract() -> None:
     discovered: dict[str, dict[str, int]] = {}
-    for provider in ("recraft", "bfl", "decart", "nscale"):
+    for provider in ("recraft", "bfl", "decart", "nscale", "krea"):
         discovered.update(_manifest_prices(provider))
     assert discovered == FIXED_IMAGE_PRICES_MICRODOLLARS
     assert _manifest_video_prices("decart") == {
@@ -103,7 +129,7 @@ def test_media_manifests_match_runtime_fixed_price_contract() -> None:
 
 
 def test_media_providers_are_refreshable_prepaid_gateway_routes() -> None:
-    expected = {"recraft", "bfl", "decart", "nscale"}
+    expected = {"recraft", "bfl", "decart", "nscale", "krea"}
     assert expected <= set(refresh.PROVIDER_SLUGS)
     assert expected <= GATEWAY_PREPAID_PROVIDER_SLUGS
 
@@ -127,6 +153,17 @@ def test_media_providers_are_refreshable_prepaid_gateway_routes() -> None:
         assert nscale_model in models
         assert f"{nscale_model}@nscale/prepaid" in endpoints
 
+    krea_model = "krea/krea-2-medium"
+    assert krea_model in IMAGE_MODEL_ID_SET
+    krea_manifest = json.loads((MANIFEST_DIR / "krea.json").read_text())
+    krea_image = next(row for row in krea_manifest["models"] if row["id"] == krea_model)
+    if krea_image.get("routable") is False:
+        assert krea_model not in models
+        assert f"{krea_model}@krea/prepaid" not in endpoints
+    else:
+        assert krea_model in models
+        assert f"{krea_model}@krea/prepaid" in endpoints
+
 
 def test_fixed_media_price_change_fails_before_manifest_write(tmp_path: Path) -> None:
     manifest = tmp_path / "media.json"
@@ -146,7 +183,7 @@ def test_fixed_media_price_change_fails_before_manifest_write(tmp_path: Path) ->
     try:
         guard_fixed_output_prices(manifest, discovered)
     except RuntimeError as exc:
-        assert "update and deploy enclave billing first" in str(exc)
+        assert "review and deploy billing contract first" in str(exc)
     else:
         raise AssertionError("fixed price drift must stop the provider refresh")
     assert json.loads(manifest.read_text())["models"][0]["fixed_output_price_microdollars"] == {
@@ -230,6 +267,7 @@ def test_media_and_nvidia_refresh_credentials_are_narrowly_wired() -> None:
         "RECRAFT_API_KEY": "trustedrouter-recraft-api-key",
         "BFL_API_KEY": "trustedrouter-bfl-api-key",
         "DECART_API_KEY": "trustedrouter-decart-api-key",
+        "KREA_API_KEY": "trustedrouter-krea-api-key",
         "NVIDIA_NIM_API_KEY": "trustedrouter-nvidia-nim-api-key",
     }
     for env_name, secret_name in expected.items():

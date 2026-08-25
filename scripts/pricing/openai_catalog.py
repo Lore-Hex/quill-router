@@ -38,9 +38,7 @@ def openai_model_price(row: dict[str, Any]) -> ModelPrice | None:
     pricing = row.get("pricing")
     if not isinstance(pricing, dict):
         return None
-    prompt = dollars_per_token_to_micro_per_m(
-        pricing.get("prompt") or pricing.get("input")
-    )
+    prompt = dollars_per_token_to_micro_per_m(pricing.get("prompt") or pricing.get("input"))
     completion = dollars_per_token_to_micro_per_m(
         pricing.get("completion") or pricing.get("output")
     )
@@ -186,10 +184,14 @@ def probe_openai_chat(
     expected_content: str | None = None,
     max_tokens: int = 4,
     max_tokens_field: str = "max_tokens",
+    endpoint_path: str = "/chat/completions",
+    extra_body: dict[str, Any] | None = None,
 ) -> bool:
     """Run a minimal paid-path canary without logging response content."""
 
     if not api_key:
+        return False
+    if not endpoint_path.startswith("/") or "://" in endpoint_path:
         return False
     try:
         headers = {
@@ -198,15 +200,19 @@ def probe_openai_chat(
             "User-Agent": PROVIDER_FETCH_UA,
         }
         headers.update(extra_headers or {})
-        response = httpx.post(
-            f"{base_url.rstrip('/')}/chat/completions",
-            headers=headers,
-            json={
+        payload = dict(extra_body or {})
+        payload.update(
+            {
                 "model": model,
                 "messages": [{"role": "user", "content": "Reply PONG"}],
                 max_tokens_field: max_tokens,
                 "stream": False,
-            },
+            }
+        )
+        response = httpx.post(
+            f"{base_url.rstrip('/')}{endpoint_path}",
+            headers=headers,
+            json=payload,
             timeout=PROVIDER_FETCH_TIMEOUT,
         )
     except httpx.HTTPError:
