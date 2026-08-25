@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import json
 import os
 import re
@@ -72,8 +73,7 @@ def _prune_components(schema: dict[str, Any]) -> None:
         reachable.add(key)
         pending.extend(_component_refs(section_values[name]))
         pending.extend(
-            ("securitySchemes", nested)
-            for nested in _security_scheme_names(section_values[name])
+            ("securitySchemes", nested) for nested in _security_scheme_names(section_values[name])
         )
     pruned: dict[str, dict[str, Any]] = {}
     for section, name in sorted(reachable):
@@ -84,6 +84,27 @@ def _prune_components(schema: dict[str, Any]) -> None:
         schema["components"] = pruned
 
 
+def _tool_name(candidate: str) -> str:
+    """An operationId that is also a legal LLM tool name.
+
+    OpenAI-style function calling caps a tool name at 64 characters and allows
+    only [a-zA-Z0-9_-]. Ids here are derived from the path, so a long route
+    outgrows the limit:
+    get_compare_models_left_author_left_slug_vs_right_author_right_slug is 67.
+    A generated client turns that endpoint into a tool it cannot name, and
+    nothing in the spec says so -- the endpoint is simply uncallable that way.
+
+    Over-long ids keep a readable prefix and take a digest of the FULL string,
+    so they stay deterministic across regenerations and two ids differing only
+    past character 55 cannot collide. Ids within the limit are untouched, which
+    keeps this from churning the 600+ that are already fine.
+    """
+    if len(candidate) <= 64:
+        return candidate
+    digest = hashlib.sha1(candidate.encode("utf-8")).hexdigest()[:8]  # noqa: S324 - naming, not security
+    return f"{candidate[:55]}_{digest}"
+
+
 def _canonicalize_operation_ids(paths: dict[str, Any]) -> None:
     for path, path_shape in paths.items():
         if not isinstance(path_shape, dict):
@@ -92,7 +113,7 @@ def _canonicalize_operation_ids(paths: dict[str, Any]) -> None:
         for method, operation in path_shape.items():
             if method.lower() not in _HTTP_METHODS or not isinstance(operation, dict):
                 continue
-            operation["operationId"] = f"{method.lower()}_{path_slug}"
+            operation["operationId"] = _tool_name(f"{method.lower()}_{path_slug}")
 
 
 def _describe_for_agents(schema: dict[str, Any]) -> None:
@@ -119,7 +140,9 @@ def _describe_for_agents(schema: dict[str, Any]) -> None:
         "https://trustedrouter.com/docs (documentation), "
         "https://trustedrouter.com/docs/mcp (MCP server)."
     )
-    info.setdefault("contact", {"name": "TrustedRouter", "url": "https://trustedrouter.com/support"})
+    info.setdefault(
+        "contact", {"name": "TrustedRouter", "url": "https://trustedrouter.com/support"}
+    )
     info.setdefault("termsOfService", "https://trustedrouter.com/legal")
     schema.setdefault(
         "servers",
@@ -211,7 +234,9 @@ def generated_bytes() -> tuple[bytes, bytes]:
         if fragment in lowered
     ]
     if leaked:
-        raise ValueError("private credential names leaked into public OpenAPI: " + ", ".join(leaked))
+        raise ValueError(
+            "private credential names leaked into public OpenAPI: " + ", ".join(leaked)
+        )
     compressed = bytearray(gzip.compress(body, compresslevel=6, mtime=0))
     # mtime=0 alone is not byte-stable: the gzip header's OS byte (offset 9)
     # differs across Python runtimes (3.12 wrote 19, 3.14 writes 255), which
