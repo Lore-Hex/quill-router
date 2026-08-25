@@ -1,16 +1,15 @@
-"""Fireworks AI — human-only provider config.
+"""Fireworks AI catalog and first-party pricing integration.
 
 Fireworks publishes a first-party serverless pricing table for its headline
 models. We fetch that docs page and parse the standard serving-path prices.
 Prices become routable only when the authenticated operator model list also
-contains the model. The supplemental manifest is pruned from that intersection.
+contains the model. The supplemental manifest is rebuilt from that intersection
+so newly published, priced chat models are added automatically.
 """
 
 from __future__ import annotations
 
-import json
 import os
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,11 +19,14 @@ from scripts.pricing.base import (
     fetch_provider,
     validate,
 )
+from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.model_ids import (
     canonicalize_unqualified_model_id,
     price_aliases_for_versioned_families,
     remember_upstream_id,
 )
+from scripts.pricing.openai_catalog import discover_available_priced_chat_catalog
+from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "fireworks"
 URL = "https://docs.fireworks.ai/serverless/pricing.md"
@@ -41,40 +43,90 @@ MANIFEST_PATH = (
 EXPECTED_MODELS = [
     "moonshotai/kimi-k3",
     "moonshotai/kimi-k2.6",
-    "deepseek/deepseek-v4-pro",
+    "moonshotai/kimi-k2.7-code",
+    "deepseek/deepseek-v4-pro-0813",
+    "deepseek/deepseek-v4-flash-0731",
     "z-ai/glm-5.2",
-    "z-ai/glm-5.1",
+    "z-ai/glm-5.2-fast",
     "openai/gpt-oss-120b",
+    "meta-models/muse-glimmer-30b",
+    "minimax/minimax-m3",
+    "nvidia/nemotron-3.5-lightning",
+    "nvidia/nemotron-3-ultra-550b-a55b",
+    "qwen/qwen3.8-max",
 ]
+
+_DISPLAY_NAMES = {
+    "deepseek/deepseek-v4-flash-0731": "DeepSeek V4 Flash 0731",
+    "deepseek/deepseek-v4-pro": "DeepSeek V4 Pro",
+    "deepseek/deepseek-v4-pro-0813": "DeepSeek V4 Pro 0813",
+    "minimax/minimax-m2.7": "MiniMax M2.7",
+    "minimax/minimax-m3": "MiniMax M3",
+    "meta-models/muse-glimmer-30b": "Muse Glimmer 30B",
+    "moonshotai/kimi-k2.6": "Kimi K2.6",
+    "moonshotai/kimi-k2.6-fast": "Kimi K2.6 Fast",
+    "moonshotai/kimi-k2.7-code": "Kimi K2.7 Code",
+    "moonshotai/kimi-k2.7-code-fast": "Kimi K2.7 Code Fast",
+    "moonshotai/kimi-k3": "Kimi K3",
+    "moonshotai/kimi-k3-fast": "Kimi K3 Fast",
+    "nvidia/nemotron-3.5-lightning": "NVIDIA Nemotron 3.5 Lightning",
+    "nvidia/nemotron-3-ultra-550b-a55b": "NVIDIA Nemotron 3 Ultra",
+    "openai/gpt-oss-20b": "OpenAI GPT OSS 20B",
+    "openai/gpt-oss-120b": "OpenAI GPT OSS 120B",
+    "qwen/qwen3.7-plus": "Qwen 3.7 Plus",
+    "qwen/qwen3.8-max": "Qwen 3.8 Max",
+    "z-ai/glm-5.2": "GLM 5.2",
+    "z-ai/glm-5.2-fast": "GLM 5.2 Fast",
+}
 
 _NATIVE_TO_CANONICAL = {
     "accounts/fireworks/models/kimi-k3": "moonshotai/kimi-k3",
     "accounts/fireworks/models/kimi-k2p6": "moonshotai/kimi-k2.6",
     "accounts/fireworks/models/kimi-k2p7-code": "moonshotai/kimi-k2.7-code",
+    "accounts/fireworks/routers/kimi-k3-fast": "moonshotai/kimi-k3-fast",
+    "accounts/fireworks/routers/kimi-k2p6-turbo": "moonshotai/kimi-k2.6-fast",
+    "accounts/fireworks/routers/kimi-k2p7-code-fast": "moonshotai/kimi-k2.7-code-fast",
     "accounts/fireworks/models/deepseek-v4-pro": "deepseek/deepseek-v4-pro",
+    "accounts/fireworks/models/deepseek-v4-pro-0813": "deepseek/deepseek-v4-pro-0813",
     "accounts/fireworks/models/deepseek-v4-flash": "deepseek/deepseek-v4-flash",
+    "accounts/fireworks/models/deepseek-v4-flash-0731": "deepseek/deepseek-v4-flash-0731",
     "accounts/fireworks/models/glm-5p2": "z-ai/glm-5.2",
+    "accounts/fireworks/routers/glm-5p2-fast": "z-ai/glm-5.2-fast",
     "accounts/fireworks/models/glm-5p1": "z-ai/glm-5.1",
     "accounts/fireworks/models/gpt-oss-120b": "openai/gpt-oss-120b",
     "accounts/fireworks/models/gpt-oss-20b": "openai/gpt-oss-20b",
     "accounts/fireworks/models/minimax-m3": "minimax/minimax-m3",
     "accounts/fireworks/models/minimax-m2p7": "minimax/minimax-m2.7",
+    "accounts/fireworks/models/qwen3p7-plus": "qwen/qwen3.7-plus",
+    "accounts/fireworks/models/qwen3p8-max": "qwen/qwen3.8-max",
+    "accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b": (
+        "nvidia/nemotron-3.5-lightning"
+    ),
+    "accounts/fireworks/models/nemotron-3-ultra-nvfp4": (
+        "nvidia/nemotron-3-ultra-550b-a55b"
+    ),
+    "accounts/fireworks/models/muse-glimmer-30b": "meta-models/muse-glimmer-30b",
 }
 UPSTREAM_ID_MAP = {canonical: native for native, canonical in _NATIVE_TO_CANONICAL.items()}
-# Fast is an account router rather than a row in /v1/models. It remains an
-# explicit, separately smoke-tested route and is not subject to model pruning.
-UPSTREAM_ID_MAP["z-ai/glm-5.2-fast"] = "accounts/fireworks/routers/glm-5p2-fast"
 # Fireworks can publish and serve a launch model before its authenticated
 # /v1/models response catches up. Keep only explicitly verified exceptions,
 # and only while the first-party pricing page still contains the model.
 VERIFIED_PRICED_LAUNCH_MODELS = frozenset({"moonshotai/kimi-k3"})
-_DISCOVERED_LIVE_MODEL_IDS: set[str] = set()
+_VISION_MODEL_IDS = frozenset(
+    {
+        "moonshotai/kimi-k3",
+        "moonshotai/kimi-k3-fast",
+        "qwen/qwen3.8-max",
+    }
+)
+_DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 _VERSIONED_PRICE_FAMILIES = {
     "deepseek/deepseek-v4-flash-": "deepseek/deepseek-v4-flash",
+    "deepseek/deepseek-v4-pro-": "deepseek/deepseek-v4-pro",
 }
 
 
-def _live_model_ids() -> set[str]:
+def _live_model_rows() -> list[dict[str, Any]]:
     api_key = os.environ.get("FIREWORKS_API_KEY") or os.environ.get("FIREWORKS_AI_API_KEY")
     if not api_key:
         raise RuntimeError("fireworks: FIREWORKS_API_KEY is required")
@@ -85,26 +137,30 @@ def _live_model_ids() -> set[str]:
     rows = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
         raise RuntimeError("fireworks: /v1/models response has no data list")
-    discovered: set[str] = set()
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        native_id = row.get("id")
-        if not isinstance(native_id, str):
-            continue
-        canonical = _NATIVE_TO_CANONICAL.get(native_id) or canonicalize_unqualified_model_id(
-            native_id
-        )
-        if canonical is not None:
-            discovered.add(canonical)
-            remember_upstream_id(UPSTREAM_ID_MAP, canonical, native_id)
-    return discovered
+    return [row for row in rows if isinstance(row, dict)]
 
 
 def fetch() -> ProviderPricingResult:
-    global _DISCOVERED_LIVE_MODEL_IDS
+    global _DISCOVERED_MANIFEST_ROWS
 
-    live_model_ids = _live_model_ids()
+    source_rows = _live_model_rows()
+    live_model_ids: set[str] = set()
+    live_rows: list[dict[str, Any]] = []
+    resolved_native_map = dict(_NATIVE_TO_CANONICAL)
+    for row in source_rows:
+        native_id = row.get("id")
+        if not isinstance(native_id, str):
+            continue
+        canonical = resolved_native_map.get(native_id) or canonicalize_unqualified_model_id(
+            native_id
+        )
+        if canonical is None or provider_model_retired(SLUG, canonical, native_id):
+            continue
+        resolved_native_map[native_id] = canonical
+        live_model_ids.add(canonical)
+        live_rows.append(row)
+        remember_upstream_id(UPSTREAM_ID_MAP, canonical, native_id)
+
     price_aliases = price_aliases_for_versioned_families(
         live_model_ids,
         _VERSIONED_PRICE_FAMILIES,
@@ -118,13 +174,37 @@ def fetch() -> ProviderPricingResult:
     )
     verified_launch_ids = VERIFIED_PRICED_LAUNCH_MODELS.intersection(result.prices)
     routable_model_ids = live_model_ids | verified_launch_ids
-    _DISCOVERED_LIVE_MODEL_IDS = routable_model_ids
     docs_only = sorted(set(result.prices) - routable_model_ids)
     result.prices = {
         model_id: price
         for model_id, price in result.prices.items()
         if model_id in routable_model_ids
     }
+    discovered = discover_available_priced_chat_catalog(
+        live_rows,
+        prices=result.prices,
+        explicit_map=resolved_native_map,
+        upstream_id_map=UPSTREAM_ID_MAP,
+    )
+    # A verified launch exception is allowed to precede the account model-list
+    # feed, but only while the first-party pricing page still publishes it.
+    for model_id in verified_launch_ids - set(discovered):
+        upstream_id = UPSTREAM_ID_MAP.get(model_id)
+        if upstream_id is None:
+            continue
+        discovered[model_id] = {
+            "id": model_id,
+            "upstream_id": upstream_id,
+            "display_name": model_id,
+            "endpoints": ["chat/completions"],
+        }
+    for model_id in _VISION_MODEL_IDS:
+        if model_id in discovered:
+            discovered[model_id]["input_modalities"] = ["text", "image"]
+    for model_id, row in discovered.items():
+        fallback_name = model_id.rsplit("/", 1)[-1].replace("-", " ").title()
+        row["display_name"] = f"{_DISPLAY_NAMES.get(model_id, fallback_name)} on Fireworks"
+    _DISCOVERED_MANIFEST_ROWS = discovered
     errors = validate(result.prices, EXPECTED_MODELS)
     if errors:
         raise RuntimeError("; ".join(errors))
@@ -142,56 +222,12 @@ def fetch() -> ProviderPricingResult:
 
 
 def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
-    """Refresh prices and remove retired Fireworks model routes.
+    """Publish the fresh intersection of Fireworks availability and prices."""
 
-    Account routers are preserved because Fireworks does not expose them in
-    the model-list API. Ordinary model routes must be present in the
-    authenticated operator catalog and on the official pricing page.
-    """
-
-    raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    rows = raw.get("models")
-    if not isinstance(rows, list):
-        raise RuntimeError("fireworks manifest has no models list")
-
-    retained: list[dict[str, Any]] = []
-    updated = 0
-    removed: list[str] = []
-    for candidate in rows:
-        if not isinstance(candidate, dict):
-            continue
-        model_id = candidate.get("id")
-        upstream_id = candidate.get("upstream_id")
-        if not isinstance(model_id, str) or not isinstance(upstream_id, str):
-            continue
-        is_model_route = upstream_id.startswith("accounts/fireworks/models/")
-        if is_model_route and model_id not in _DISCOVERED_LIVE_MODEL_IDS:
-            removed.append(model_id)
-            continue
-
-        price = result.prices.get(model_id)
-        if price is not None:
-            tier = price.tiers[0]
-            candidate["input_token_price_per_m"] = tier.prompt_micro_per_m
-            candidate["output_token_price_per_m"] = tier.completion_micro_per_m
-            if tier.prompt_cached_micro_per_m is not None:
-                candidate["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
-            else:
-                candidate.pop("cached_input_token_price_per_m", None)
-            updated += 1
-        retained.append(candidate)
-
-    if not retained:
-        raise RuntimeError("fireworks manifest pruning removed every route")
-    rows[:] = retained
-    raw["generated_at"] = (
-        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return write_discovered_chat_manifest(
+        result,
+        manifest_path=MANIFEST_PATH,
+        discovered_rows=_DISCOVERED_MANIFEST_ROWS,
+        source_url=MODELS_URL,
+        pricing_source_url=URL,
     )
-    raw["model_count"] = len(rows)
-    MANIFEST_PATH.write_text(
-        json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-
-    suffix = f", removed {len(removed)} unavailable" if removed else ""
-    return [f"fireworks: refreshed provider_models/fireworks.json ({updated} priced rows{suffix})"]
