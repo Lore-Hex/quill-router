@@ -849,12 +849,16 @@ class SpannerSettleOutbox:
         return _auto_refill_row_from_tuple(rows[0]) if rows else None
 
     def auto_refill_pending_freshness(self) -> tuple[str | None, int]:
-        """Return oldest pending enqueue timestamp and queue depth."""
+        """Return queue freshness without scanning terminal settlement history."""
         with self._database.snapshot() as snapshot:
             rows = list(
                 snapshot.execute_sql(
                     "SELECT MIN(auto_refill_enqueued_at), COUNT(*) "
-                    "FROM tr_settle_outbox WHERE auto_refill_status='pending'"
+                    "FROM tr_settle_outbox"
+                    "@{FORCE_INDEX=tr_settle_outbox_auto_refill_due} "
+                    "WHERE queue_shard IS NOT NULL "
+                    "AND auto_refill_next_attempt_at IS NOT NULL "
+                    "AND auto_refill_status='pending'"
                 )
             )
         if not rows:
