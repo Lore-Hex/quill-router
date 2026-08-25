@@ -6,6 +6,7 @@ import datetime as dt
 import pytest
 from pydantic import ValidationError
 
+from tests.route_inventory import route_paths
 from trusted_router.acquisition import (
     AttributionContext,
     decode_attribution_cookie,
@@ -424,7 +425,7 @@ def test_combined_bridge_accepts_full_legacy_bindings_and_mounts_all_routes() ->
         configure_store_arg=False,
         init_observability=False,
     )
-    paths = {route.path for route in app.routes}
+    paths = route_paths(app)
     assert {"/", "/console", "/internal/gateway/authorize"} <= paths
 
 

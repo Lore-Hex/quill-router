@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from pydantic import ValidationError
 
+from tests.route_inventory import effective_routes
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes.internal import synthetic as synthetic_routes
@@ -31,15 +32,17 @@ def _app(surface: str, **overrides: object) -> FastAPI:
 
 def _signatures(app: FastAPI) -> set[tuple[str, str]]:
     return {
-        (method, route.path)
-        for route in app.routes
+        (method, path)
+        for path, route in effective_routes(app)
         if isinstance(route, APIRoute)
         for method in route.methods
     }
 
 
 def _paths(app: FastAPI) -> set[str]:
-    return {route.path for route in app.routes if isinstance(route, APIRoute)}
+    return {
+        path for path, route in effective_routes(app) if isinstance(route, APIRoute)
+    }
 
 
 def _endpoints(app: FastAPI) -> dict[object, set[str]]:
