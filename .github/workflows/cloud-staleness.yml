@@ -37,7 +37,7 @@ jobs:
           # repository" -- a detector that fails for its own reasons rather
           # than the fleet's.
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - name: Sync
         run: uv sync --frozen
       - name: Check
