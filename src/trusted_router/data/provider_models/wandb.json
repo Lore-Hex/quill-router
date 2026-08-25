@@ -234,7 +234,8 @@
       "context_length": 196608,
       "routable": true,
       "input_token_price_per_m": 300000,
-      "output_token_price_per_m": 1200000
+      "output_token_price_per_m": 1200000,
+      "missing_since": "2026-08-25"
     },
     {
       "display_name": "MiniMax M3",
@@ -324,7 +325,8 @@
       "context_length": 262144,
       "routable": true,
       "input_token_price_per_m": 200000,
-      "output_token_price_per_m": 800000
+      "output_token_price_per_m": 800000,
+      "missing_since": "2026-08-25"
     },
     {
       "display_name": "NVIDIA Nemotron 3 Ultra",
@@ -473,7 +475,8 @@
       "context_length": 262144,
       "routable": true,
       "input_token_price_per_m": 1000000,
-      "output_token_price_per_m": 1500000
+      "output_token_price_per_m": 1500000,
+      "missing_since": "2026-08-25"
     },
     {
       "display_name": "Qwen3.5 35B A3B",
@@ -585,7 +588,8 @@
       "routable": true,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 260000
+      "cached_input_token_price_per_m": 260000,
+      "missing_since": "2026-08-25"
     },
     {
       "display_name": "Z.AI GLM 5.2",
@@ -612,7 +616,7 @@
   ],
   "source": "https://api.inference.wandb.ai/v1/models",
   "pricing_source": "https://wandb.ai/site/pricing/inference/",
-  "generated_at": "2026-08-25T15:44:30Z",
+  "generated_at": "2026-08-25T16:39:53Z",
   "price_scale": "microdollars_per_million",
   "model_count": 28
 }

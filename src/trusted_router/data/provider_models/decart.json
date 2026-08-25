@@ -115,7 +115,7 @@
   ],
   "source": "https://api.decart.ai/v1/models/resolve",
   "pricing_source": "https://docs.platform.decart.ai/getting-started/pricing",
-  "generated_at": "2026-08-25T15:44:30Z",
+  "generated_at": "2026-08-25T16:39:53Z",
   "price_scale": "microdollars_per_million",
   "model_count": 4
 }
