@@ -192,9 +192,9 @@
 }
 
 .fusion-advanced {
-  border: 1px solid rgba(39, 50, 68, .72);
+  border: 1px solid rgb(39, 50, 68, .72);
   border-radius: var(--fusion-radius);
-  background: rgba(11, 18, 32, .56);
+  background: rgb(11, 18, 32, .56);
 }
 
 .fusion-advanced summary {
@@ -240,7 +240,7 @@
 }
 
 .fusion-advanced-body {
-  border-top: 1px solid rgba(39, 50, 68, .72);
+  border-top: 1px solid rgb(39, 50, 68, .72);
   display: grid;
   gap: 13px;
   padding: 13px;
@@ -282,7 +282,7 @@
 .fusion-field textarea:focus {
   outline: none;
   border-color: #456087;
-  box-shadow: 0 0 0 3px rgba(69, 96, 135, .35);
+  box-shadow: 0 0 0 3px rgb(69, 96, 135, .35);
 }
 
 .fusion-model-set {
@@ -353,7 +353,7 @@
 .fusion-details details {
   border: 1px solid var(--fusion-border);
   border-radius: var(--fusion-radius);
-  background: rgba(7, 11, 20, .55);
+  background: rgb(7, 11, 20, .55);
   margin-bottom: 10px;
 }
 
@@ -491,8 +491,8 @@
 
 .fusion-error {
   margin: 0;
-  border: 1px solid rgba(248, 113, 113, .45);
-  background: rgba(248, 113, 113, .12);
+  border: 1px solid rgb(248, 113, 113, .45);
+  background: rgb(248, 113, 113, .12);
   color: #fecaca;
   padding: 10px 12px;
   border-radius: var(--fusion-radius);
