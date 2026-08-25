@@ -1199,6 +1199,60 @@ class ScriptFixture:
 
 
 SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
+    "scripts/deploy/rollout.sh": ScriptFixture(
+        env={
+            "TR_ALLOW_DEPLOYED_COMBINED_SURFACE": "true",
+            "TR_DEPLOY_MUTEX_OPERATION": "harness-rollout-operation",
+            "TR_DEPLOY_MUTEX_GENERATION": "1",
+            "TR_DEPLOY_TARGET_REGIONS": "us-central1",
+            "TR_DEPLOY_NO_TRAFFIC": "1",
+            "TR_DEPLOY_RECONCILE_LB": "0",
+            "IMAGE_TAG": "harness-candidate",
+            "TR_REQUEST_RECORD_WRITE_MODE": "typed",
+            "TR_STORAGE_BACKEND": "spanner-bigtable",
+            "TR_GENERATION_RECORDS_ENABLED": "false",
+            "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "true",
+            "TR_ANALYTICS_READ_MODE": "bigtable",
+            "TR_REGIONAL_QUOTA_LEASES_ENABLED": "false",
+            "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED": "false",
+            # Reuse the stateful legacy-service tag behavior in the harness.
+            "HARNESS_PUBLIC_SURFACE_SMOKE": "1",
+        },
+        responses=(
+            (
+                r"run revisions describe trusted-router-active .*--format=json",
+                json.dumps(
+                    {
+                        "spec": {
+                            "containers": [
+                                {
+                                    "env": [
+                                        {
+                                            "name": "TR_REGIONAL_QUOTA_LEASES_ENABLED",
+                                            "value": "false",
+                                        },
+                                        {
+                                            "name": "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED",
+                                            "value": "false",
+                                        },
+                                    ]
+                                }
+                            ]
+                        }
+                    },
+                    separators=(",", ":"),
+                ),
+            ),
+            (
+                r"run revisions list .*--limit=10",
+                "trusted-router-candidate True",
+            ),
+            (
+                r"run services describe trusted-router .*status.url",
+                "https://trusted-router-hash-uc.a.run.app",
+            ),
+        ),
+    ),
     "scripts/deploy/internal_surface.sh": ScriptFixture(
         env={"HARNESS_INTERNAL_SURFACE_SMOKE": "1"},
         responses=(
@@ -1680,11 +1734,26 @@ class DeployScriptHarness:
             f"{(extra_env or {}).get('HARNESS_PROBE_TAG_REMOVE_FAILURES', '0')}\n"
         )
 
+        trust_fixture = self.root / "trust-release.json"
+        if not trust_fixture.exists():
+            trust_fixture.write_text(
+                '{"source_commit": "harness-trust-commit", '
+                '"image_reference": "harness.invalid/trusted-router:harness", '
+                '"image_digest": "sha256:%s"}' % ("0" * 64),
+                encoding="utf-8",
+            )
         env = {
             "PATH": str(self.bin),
             "HOME": str(home),
             "TMPDIR": str(tmp),
             "LANG": "C",
+            # rollout.sh's TRUST_FILE default is an operator-laptop path
+            # (_lib.sh): present on that machine, absent on CI, where the
+            # fallback curl hits the stub and returns a bare status code
+            # that json-parses to an int. Pin a harness-owned fixture so
+            # the test is identical on every machine.
+            "TRUST_FILE": str(trust_fixture),
+            "TRUST_FILE_URL": "",
             "HARNESS_ARGV_LOG": str(argv_log),
             "HARNESS_FIXTURES": str(fixtures_file),
             "HARNESS_FAILURES": str(failures_file),

@@ -170,7 +170,9 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
     assert 'TR_SPANNER_POOL_SIZE="${TR_SPANNER_POOL_SIZE:-8}"' in library
     assert '--concurrency "$TR_CLOUD_RUN_CONCURRENCY"' in rollout
     assert '--min "$min_instances"' in rollout
-    assert '--min-instances default' in rollout
+    assert 'local revision_min_instances="default"' in rollout
+    assert 'revision_min_instances="$min_instances"' in rollout
+    assert '--min-instances "$revision_min_instances"' in rollout
     assert '"TR_SPANNER_POOL_SIZE=${TR_SPANNER_POOL_SIZE}"' in rollout
 
 

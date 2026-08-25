@@ -144,6 +144,25 @@ def test_trust_degraded_ranks_with_down_in_severity() -> None:
     assert watchdog.SEVERITY["trust_degraded"] > watchdog.SEVERITY["degraded"]
 
 
+def test_watchdog_baseline_artifact_round_trips_atomically(tmp_path: Path) -> None:
+    watchdog = _load_watchdog()
+    artifact = tmp_path / "baseline.json"
+
+    watchdog.write_baseline(
+        str(artifact),
+        {"us-central1": "up", "europe-west4": "down"},
+    )
+
+    assert watchdog.read_baseline(
+        str(artifact), ["us-central1", "europe-west4", "us-east4"]
+    ) == {
+        "us-central1": "up",
+        "europe-west4": "down",
+        "us-east4": "unknown",
+    }
+    assert not list(tmp_path.glob("baseline.json.tmp.*"))
+
+
 def _run_staged_probe(
     tmp_path: Path,
     *,
@@ -154,6 +173,7 @@ def _run_staged_probe(
     remove_always_fails: bool = False,
     remove_leaves_tag: bool = False,
     traffic_shift_failure_pct: int | None = None,
+    watchdog_exit: int = 0,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     stub_bin = tmp_path / "bin"
     stub_bin.mkdir()
@@ -225,6 +245,46 @@ printf '%s' "$code"
 if [ "$1" = "-c" ]; then
   exec "$STAGED_REAL_PYTHON" "$@"
 fi
+previous=""
+gate_file=""
+for argument in "$@"; do
+  if [ "$previous" = "baseline-output" ]; then
+    printf '%s\n' '{"us-central1":"up"}' >"$argument"
+    previous=""
+    continue
+  fi
+  if [ "$previous" = "start-gate-file" ]; then
+    gate_file="$argument"
+    previous=""
+    continue
+  fi
+  case "$argument" in
+    --baseline-output) previous="baseline-output" ;;
+    --start-gate-file) previous="start-gate-file" ;;
+    *) previous="" ;;
+  esac
+done
+if [ -n "$gate_file" ]; then
+  # Behave like the real watchdog: block until the shell releases the gate
+  # AFTER its traffic shift, record the ordering, then return the injected
+  # verdict. The harness stubs `sleep` as a no-op, so the bounded wait must
+  # use the REAL python interpreter for actual wall-clock waiting.
+  if ! "$STAGED_REAL_PYTHON" - "$gate_file" <<'PYWAIT'
+import pathlib, sys, time
+gate = pathlib.Path(sys.argv[1])
+deadline = time.monotonic() + 10
+while not gate.exists():
+    if time.monotonic() >= deadline:
+        raise SystemExit(96)
+    time.sleep(0.05)
+PYWAIT
+  then
+    echo "python3 watchdog-stub: gate never released" >>"$STAGED_CALL_LOG"
+    exit 96
+  fi
+  echo "watchdog-stub: gate-released" >>"$STAGED_CALL_LOG"
+  exit "${STAGED_STUB_WATCHDOG_EXIT:-0}"
+fi
 exit 0
 """
     )
@@ -249,8 +309,10 @@ exit 0
             "" if traffic_shift_failure_pct is None else str(traffic_shift_failure_pct)
         ),
         "STAGED_REAL_PYTHON": sys.executable,
+        "STAGED_STUB_WATCHDOG_EXIT": str(watchdog_exit),
         "TR_LEGACY_PROBE_RETRY_SECONDS": "0",
         "TR_PROBE_TAG_REMOVE_RETRY_SECONDS": "0",
+        "TR_STAGED_WATCHDOG_BASELINE_FILE": str(tmp_path / "final-baseline.json"),
         # This helper exercises a traffic ramp nested inside the workflow's
         # already-acquired deployment-mutex scope. Dedicated mutex tests cover
         # direct/manual acquisition against a generation-aware storage stub.
@@ -542,3 +604,63 @@ def test_failed_traffic_shift_restores_the_old_desired_revision(tmp_path: Path) 
     assert any("--to-revisions=old-rev=100" in call for call in traffic_calls)
     assert "ROLLBACK" in run.stdout
     assert "traffic update to 10% failed" in run.stdout
+
+
+
+def test_staged_ramp_rolls_back_when_the_watchdog_reports_unhealthy(
+    tmp_path: Path,
+) -> None:
+    """The backgrounded watchdog's verdict must still fail the ramp.
+
+    Review F6: with the watchdog started before the shift (baseline overlap),
+    its exit code travels through `wait "$WATCHDOG_PID"` instead of a
+    synchronous invocation. If that wait were dropped or its status swallowed,
+    every unhealthy deploy would ramp to 100% green. This runs the REAL
+    staged_traffic.sh with a watchdog stub that honors the gate and then
+    reports unhealthy.
+    """
+    run, calls = _run_staged_probe(
+        tmp_path,
+        console_code="302",
+        session_code="401",
+        watchdog_exit=3,
+    )
+    assert run.returncode != 0
+    rollbacks = [
+        call
+        for call in calls
+        if call.startswith("gcloud run services update-traffic")
+        and "--to-revisions=old-rev=100" in call
+    ]
+    assert rollbacks, "unhealthy watchdog verdict must roll traffic back"
+
+
+def test_watchdog_gate_releases_only_after_the_traffic_shift(
+    tmp_path: Path,
+) -> None:
+    """Baseline overlap must not let the watch window start pre-shift.
+
+    The stub records `watchdog-stub: gate-released` the moment the gate file
+    appears. That marker must come AFTER the step's traffic shift call in the
+    recorded call order — releasing the gate before the shift would let the
+    watch window overlap the shift and effectively shorten the observed
+    post-shift window.
+    """
+    run, calls = _run_staged_probe(
+        tmp_path,
+        console_code="302",
+        session_code="401",
+    )
+    assert run.returncode == 0, run.stderr
+    first_shift = next(
+        index
+        for index, call in enumerate(calls)
+        if call.startswith("gcloud run services update-traffic")
+        and "--to-revisions=new-rev=10" in call
+    )
+    first_gate = next(
+        index for index, call in enumerate(calls) if "gate-released" in call
+    )
+    assert first_gate > first_shift, (
+        "the watchdog gate was released before the first traffic shift"
+    )

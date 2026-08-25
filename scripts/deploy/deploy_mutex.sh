@@ -142,6 +142,8 @@ deploy_mutex_acquire() {
     printf 'TR_DEPLOY_MUTEX_OPERATION=%s\n' "$TR_DEPLOY_MUTEX_OPERATION"
     printf 'TR_DEPLOY_MUTEX_GENERATION=%s\n' \
       "${TR_DEPLOY_MUTEX_GENERATION:-}"
+    printf 'TR_DEPLOY_MUTEX_CREATED_AT=%s\n' \
+      "${TR_DEPLOY_MUTEX_CREATED_AT:-}"
     return 0
   fi
 
@@ -324,12 +326,14 @@ deploy_mutex_acquire() {
 
   export TR_DEPLOY_MUTEX_OPERATION="$operation_id"
   export TR_DEPLOY_MUTEX_GENERATION="$generation"
+  export TR_DEPLOY_MUTEX_CREATED_AT="$created_at"
   DEPLOY_MUTEX_SCOPE_DEPTH=$((${DEPLOY_MUTEX_SCOPE_DEPTH:-0} + 1))
   DEPLOY_MUTEX_SCOPE_OWNS_LOCK=1
   _deploy_mutex_log \
     "deploy_mutex.acquired cloud=${cloud} owner=${owner} operation_id=${operation_id} generation=${generation} created_at=${created_at} expires_at=${expires_at} ttl_seconds=${ttl_seconds} tool=${tool}"
   printf 'TR_DEPLOY_MUTEX_OPERATION=%s\n' "$operation_id"
   printf 'TR_DEPLOY_MUTEX_GENERATION=%s\n' "$generation"
+  printf 'TR_DEPLOY_MUTEX_CREATED_AT=%s\n' "$created_at"
 }
 
 deploy_mutex_release() {
@@ -380,7 +384,8 @@ deploy_mutex_release() {
   # expire. Leaving these exported would make a LATER acquire in this same
   # shell take the reentrant fast path and "hold" a lock that no longer
   # exists — a manual deploy running with no lock at all.
-  unset TR_DEPLOY_MUTEX_OPERATION TR_DEPLOY_MUTEX_GENERATION
+  unset TR_DEPLOY_MUTEX_OPERATION TR_DEPLOY_MUTEX_GENERATION \
+    TR_DEPLOY_MUTEX_CREATED_AT
   DEPLOY_MUTEX_SCOPE_DEPTH=0
   DEPLOY_MUTEX_SCOPE_OWNS_LOCK=0
   return 0
