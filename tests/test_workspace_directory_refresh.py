@@ -131,3 +131,31 @@ def test_workspace_directory_schemas_have_matching_columns_and_version_order() -
         "    refreshed_at"
     ) in replicated
     assert "ENGINE = ReplacingMergeTree(refreshed_at)" in single
+
+
+def test_the_refresh_is_scheduled_and_installed() -> None:
+    """The directory went 685 workspaces stale between two manual runs.
+
+    The module used to declare itself deliberately unscheduled, which was true
+    for the tenant map and false for the directory: signup reporting joins new
+    activity to workspace names here, and a dimension table that only updates
+    when somebody remembers it goes quiet exactly when nobody is looking. These
+    pins keep the timer pair present, hardened like its siblings, and actually
+    installed and enabled by the node installer.
+    """
+    root = Path(__file__).resolve().parents[1]
+    service = (root / "clickhouse/tr-clickhouse-workspace-directory.service").read_text()
+    timer = (root / "clickhouse/tr-clickhouse-workspace-directory.timer").read_text()
+    installer = (root / "scripts/deploy/clickhouse_live_ingestion.sh").read_text()
+
+    assert "python -m clickhouse.refresh_workspace_directory" in service
+    assert "User=tr-clickhouse-ingest" in service
+    assert "EnvironmentFile=/etc/tr-clickhouse-ingest.env" in service
+    assert "ProtectSystem=strict" in service
+
+    assert "OnUnitActiveSec=30min" in timer
+    assert "Persistent=true" in timer
+
+    assert "tr-clickhouse-workspace-directory.service" in installer
+    assert "tr-clickhouse-workspace-directory.timer" in installer
+    assert "systemctl enable --now tr-clickhouse-workspace-directory.timer" in installer

@@ -64,6 +64,10 @@ ssh_node --command="sudo sh -c '
     /etc/systemd/system/tr-clickhouse-reconcile.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-reconcile.timer \
     /etc/systemd/system/tr-clickhouse-reconcile.timer
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-workspace-directory.service \
+    /etc/systemd/system/tr-clickhouse-workspace-directory.service
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-workspace-directory.timer \
+    /etc/systemd/system/tr-clickhouse-workspace-directory.timer
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-archive.service \
     /etc/systemd/system/tr-clickhouse-archive.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-archive.timer \
@@ -109,6 +113,7 @@ ssh_node --command="sudo sh -c '
       systemctl is-active \"\$unit\"
     fi
   done
+  systemctl enable --now tr-clickhouse-workspace-directory.timer
   systemctl enable --now tr-clickhouse-reconcile.timer
   systemctl enable --now tr-clickhouse-archive.timer
   systemctl enable --now tr-clickhouse-archive-restore.timer
