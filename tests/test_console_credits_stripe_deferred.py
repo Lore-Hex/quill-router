@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from typing import Any
@@ -327,20 +326,21 @@ def test_blocked_stripe_fragment_does_not_stall_event_loop(monkeypatch) -> None:
 
     with TestClient(client.app) as concurrent_client:
         concurrent_client.cookies.update(client.cookies)
-        with ThreadPoolExecutor(max_workers=1) as pool:
+        with ThreadPoolExecutor(max_workers=2) as pool:
             fragment = pool.submit(
                 concurrent_client.get,
                 "/console/credits/stripe-details",
             )
             assert stripe_started.wait(timeout=3)
-            started = time.perf_counter()
+            health_request = pool.submit(concurrent_client.get, "/health")
             try:
-                health = concurrent_client.get("/health")
-                elapsed = time.perf_counter() - started
+                # Prove the event loop can serve another request while the
+                # synchronous Stripe call remains blocked. A wall-clock
+                # latency threshold is needlessly sensitive to CI load.
+                health = health_request.result(timeout=3)
             finally:
                 release_stripe.set()
             fragment_response = fragment.result(timeout=3)
 
     assert health.status_code == 200
     assert fragment_response.status_code == 200
-    assert elapsed < 0.75
