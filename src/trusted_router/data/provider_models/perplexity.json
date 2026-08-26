@@ -1,0 +1,32 @@
+{
+  "provider": "perplexity",
+  "models": [
+    {
+      "display_name": "perplexity/sonar",
+      "title": "perplexity/sonar",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "perplexity/sonar",
+      "upstream_id": "sonar",
+      "fixed_request_price_microdollars": 5000,
+      "routable": true,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 2500000,
+      "cached_input_token_price_per_m": 62500
+    }
+  ],
+  "source": "https://api.perplexity.ai/v1/models",
+  "pricing_source": "https://docs.perplexity.ai/docs/getting-started/pricing",
+  "generated_at": "2026-08-25T00:00:00Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 1
+}

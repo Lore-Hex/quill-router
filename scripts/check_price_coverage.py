@@ -48,11 +48,13 @@ from scripts.pricing.providers import (
     inception,
     io_net,
     jina,
+    krea,
     mancer,
     near_ai,
     nextbit,
     nscale,
     nvidia_nim,
+    perplexity,
     recraft,
     reka,
     relace,
@@ -497,6 +499,7 @@ _DIRECT_OPENAI_DISCOVERY_MODULES = (
 # the runtime-only set so a missing workflow secret is a deployment error, not
 # an intentionally skipped discovery check.
 _CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
+    perplexity,
     scaleway,
     featherless,
     sakana,
@@ -508,6 +511,7 @@ _STALE_MANIFEST_PROVIDER_MODULES = (
     *_CI_DIRECT_OPENAI_DISCOVERY_MODULES,
     io_net,
     jina,
+    krea,
     bfl,
     decart,
     nscale,

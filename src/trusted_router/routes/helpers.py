@@ -107,7 +107,7 @@ def cost_microdollars(
         total_prompt_tokens=input_tokens,
     )
     if not model.price_tiers:
-        return (
+        return model.request_price_microdollars + (
             token_cost_microdollars(
                 input_tokens,
                 rates.prompt_price_microdollars_per_million_tokens,
@@ -122,7 +122,7 @@ def cost_microdollars(
         if rates.prompt_cached_price_microdollars_per_million_tokens is not None
         else rates.prompt_price_microdollars_per_million_tokens
     )
-    return (
+    return model.request_price_microdollars + (
         token_cost_microdollars(
             uncached_input_tokens,
             rates.prompt_price_microdollars_per_million_tokens,

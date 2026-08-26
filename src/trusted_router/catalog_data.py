@@ -341,6 +341,7 @@ class Model:
     completion_price_microdollars_per_million_tokens: int = 0
     published_prompt_price_microdollars_per_million_tokens: int = 0
     published_completion_price_microdollars_per_million_tokens: int = 0
+    request_price_microdollars: int = 0
     minimum_charge_microdollars: int = 0
     # Full tier list for context-conditional pricing. Defaults to a
     # single tier matching the headline rates above; the ingest path
@@ -361,6 +362,7 @@ class ModelEndpoint:
     completion_price_microdollars_per_million_tokens: int = 0
     published_prompt_price_microdollars_per_million_tokens: int = 0
     published_completion_price_microdollars_per_million_tokens: int = 0
+    request_price_microdollars: int = 0
     price_tiers: tuple[PriceTier, ...] = ()
     published_price_tiers: tuple[PriceTier, ...] = ()
     first_token_timeout_seconds: float | None = None
@@ -1523,13 +1525,13 @@ PROVIDERS: dict[str, Provider] = {
     "perplexity": Provider(
         slug="perplexity",
         name="Perplexity",
-        supports_prepaid=False,
+        supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
             "No contractual zero-retention, confidential-compute, or E2EE claim "
-            "is tracked for TrustedRouter's Perplexity account. The current model "
-            "catalog belongs to its Agent API and can add request/search charges, "
-            "so it remains non-routable until those costs settle exactly."
+            "is tracked for TrustedRouter's Perplexity account. Sonar runs with "
+            "low search context and its first-party token and fixed successful-request "
+            "charges settle exactly. This route is Standard."
         ),
         provider_policy_url="https://docs.perplexity.ai/",
     ),
@@ -1654,12 +1656,13 @@ PROVIDERS: dict[str, Provider] = {
         slug="krea",
         name="Krea",
         supports_chat=False,
-        supports_prepaid=False,
+        supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
             "Krea exposes an asynchronous media API, not a shared OpenAI-compatible "
-            "chat catalog. It remains non-routable until a media adapter and exact "
-            "billing contract are implemented."
+            "chat catalog. TrustedRouter supports Krea 2 Medium with exact fixed "
+            "per-image billing. The route remains dark until its paid generation "
+            "canary succeeds. No ZDR or confidential-compute claim is tracked."
         ),
         provider_policy_url="https://docs.krea.ai/",
     ),
@@ -1695,9 +1698,10 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=False,
         supports_byok=False,
         provider_policy=(
-            "Riverflow is a media workflow API with partner and enterprise access, "
-            "not a shared token-priced chat endpoint. It remains non-routable until "
-            "a dedicated media adapter and billing contract are implemented."
+            "Riverflow is a variable-credit media workflow API, not a shared "
+            "token-priced chat endpoint. Its configured credential is rejected by "
+            "the live MCP endpoint, and no exact per-job billable receipt is exposed. "
+            "It remains fail-closed until both contracts are available."
         ),
         provider_policy_url=("https://www.riverflow.ai/research/introducing-sourceful-riverflow-1"),
     ),
@@ -1932,6 +1936,8 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "scaleway",
         "featherless",
         "sakana",
+        "perplexity",
+        "krea",
         "jina",
         "nebius",
         "minimax",

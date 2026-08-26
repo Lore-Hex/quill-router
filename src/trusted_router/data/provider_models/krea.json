@@ -1,0 +1,37 @@
+{
+  "provider": "krea",
+  "models": [
+    {
+      "display_name": "Krea 2 Medium",
+      "title": "krea/krea-2/medium",
+      "model_type": "image",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "krea/krea-2-medium",
+      "upstream_id": "krea/krea-2/medium",
+      "supported_features": [
+        "image-generation"
+      ],
+      "fixed_output_price_microdollars": {
+        "1k": 30000
+      },
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    }
+  ],
+  "source": "https://api.krea.ai/openapi.json",
+  "pricing_source": "https://api.krea.ai/openapi.json",
+  "generated_at": "2026-08-25T00:00:00Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 1
+}

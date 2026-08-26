@@ -41,6 +41,7 @@ from trusted_router.pricing import (
     _provider_manifest_price_scale,
     _provider_manifest_price_tiers,
     _read_pricing_tiers,
+    customer_fixed_price_microdollars,
 )
 from trusted_router.provider_contracts import (
     provider_model_operator_held,
@@ -105,6 +106,7 @@ def _endpoint(
         completion_price_microdollars_per_million_tokens=model.completion_price_microdollars_per_million_tokens,
         published_prompt_price_microdollars_per_million_tokens=model.published_prompt_price_microdollars_per_million_tokens,
         published_completion_price_microdollars_per_million_tokens=model.published_completion_price_microdollars_per_million_tokens,
+        request_price_microdollars=model.request_price_microdollars,
     )
 
 
@@ -863,6 +865,8 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "scaleway",
         "featherless",
         "sakana",
+        "perplexity",
+        "krea",
         "meta",
         "openrouter-exclusive",
     ):
@@ -911,6 +915,14 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 cached_raw,
                 price_scale=price_scale,
             )
+            raw_request_price = raw_model.get("fixed_request_price_microdollars", 0)
+            if (
+                isinstance(raw_request_price, bool)
+                or not isinstance(raw_request_price, int)
+                or raw_request_price < 0
+            ):
+                continue
+            request_price = customer_fixed_price_microdollars(raw_request_price)
             if raw_model.get("model_type") == "image":
                 # These providers bill per generated image. The enclave sends
                 # an exact fixed-price hold; applying the global token-price
@@ -988,6 +1000,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 completion_price_microdollars_per_million_tokens=completion_price,
                 published_prompt_price_microdollars_per_million_tokens=prompt_price,
                 published_completion_price_microdollars_per_million_tokens=completion_price,
+                request_price_microdollars=request_price,
                 price_tiers=tiers,
                 published_price_tiers=tiers,
             )
@@ -1017,6 +1030,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
                     published_completion_price_microdollars_per_million_tokens=completion_price,
+                    request_price_microdollars=request_price,
                     price_tiers=tiers,
                     published_price_tiers=tiers,
                     first_token_timeout_seconds=_positive_float(
@@ -1042,6 +1056,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
                     published_completion_price_microdollars_per_million_tokens=completion_price,
+                    request_price_microdollars=request_price,
                     price_tiers=tiers,
                     published_price_tiers=tiers,
                     first_token_timeout_seconds=_positive_float(

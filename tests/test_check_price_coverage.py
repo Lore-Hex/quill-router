@@ -25,6 +25,7 @@ _NEW_AUTOMATIC_FEED_MODELS = {
     "deepseek/deepseek-v4-flash",
     "deepseek/deepseek-v4-flash-0731",
     "mistralai/mistral-small-2603",
+    "perplexity/sonar",
     "z-ai/glm-5.2",
     "sakana-ai/fugu-ultra-v1.1",
     "sakana-ai/sakana-namazu-v1.0",
@@ -121,6 +122,8 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "zai-org/GLM-5.2"}]}
     if "cloud-api.near.ai" in url:
         return {"data": [{"id": "z-ai/glm-5.2"}]}
+    if "api.perplexity.ai" in url:
+        return {"data": [{"id": "perplexity/sonar"}]}
     return {"data": []}
 
 

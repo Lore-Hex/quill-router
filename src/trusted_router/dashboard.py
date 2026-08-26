@@ -51,6 +51,7 @@ from trusted_router.catalog import (
     model_us_provider_available,
     orchestration_primitive,
     orchestration_role,
+    provider_is_routable,
     providers_for_display,
 )
 from trusted_router.competitor_comparisons import (
@@ -4763,7 +4764,7 @@ def _endpoint_provider_views(
 
 
 def _provider_view(provider: Provider) -> dict[str, object]:
-    routing_status = "active" if provider.supports_prepaid or provider.supports_byok else "blocked"
+    routing_status = "active" if provider_is_routable(provider) else "blocked"
     return {
         "id": provider.slug,
         "name": provider.name,

@@ -42,6 +42,7 @@ from trusted_router.catalog import (
     MODEL_ENDPOINTS,
     PROVIDERS,
     endpoints_for_model,
+    provider_to_openrouter_shape,
 )
 from trusted_router.catalog_ingest import (
     _EXPIRED_PROVIDER_MANIFEST,
@@ -76,12 +77,15 @@ READY = {
     "io-net",
     "sakana",
 }
-RUNTIME_ONLY_READY = (READY - {"io-net", "sakana"}) | {"nscale"}
-ROUTABLE_READY = READY
-PENDING = {
-    "perceptron",
+SPECIALIZED_READY = {
     "perplexity",
     "krea",
+}
+IMPLEMENTED = READY | SPECIALIZED_READY
+RUNTIME_ONLY_READY = (READY - {"io-net", "sakana"}) | {"nscale"}
+ROUTABLE_READY = READY | {"perplexity"}
+PENDING = {
+    "perceptron",
     "modal",
     "byteplus",
     "riverflow",
@@ -104,9 +108,9 @@ MODULES = (
 
 
 def test_wave3_ready_and_pending_providers_are_fail_closed() -> None:
-    assert READY <= GATEWAY_PREPAID_PROVIDER_SLUGS
+    assert IMPLEMENTED <= GATEWAY_PREPAID_PROVIDER_SLUGS
     assert PENDING.isdisjoint(GATEWAY_PREPAID_PROVIDER_SLUGS)
-    for slug in READY:
+    for slug in IMPLEMENTED:
         assert PROVIDERS[slug].supports_prepaid is True
         assert PROVIDERS[slug].supports_byok is False
     for slug in PENDING:
@@ -118,6 +122,7 @@ def test_wave3_manifests_publish_only_canaried_priced_chat_routes() -> None:
     endpoint_providers = {endpoint.provider for endpoint in MODEL_ENDPOINTS.values()}
     assert ROUTABLE_READY <= endpoint_providers
     assert "sakana" in endpoint_providers
+    assert "krea" not in endpoint_providers
     for module in MODULES:
         manifest = json.loads(module.MANIFEST_PATH.read_text(encoding="utf-8"))
         assert manifest["provider"] == module.SLUG
@@ -136,6 +141,11 @@ def test_wave3_manifests_publish_only_canaried_priced_chat_routes() -> None:
                 continue
             assert row["input_token_price_per_m"] > 0
             assert row["output_token_price_per_m"] > 0
+
+
+def test_public_routing_status_requires_a_callable_endpoint() -> None:
+    assert provider_to_openrouter_shape(PROVIDERS["perplexity"])["routing_status"] == "active"
+    assert provider_to_openrouter_shape(PROVIDERS["krea"])["routing_status"] == "blocked"
 
 
 def test_failed_live_canaries_stay_dark() -> None:
@@ -467,6 +477,7 @@ def test_perplexity_converts_catalog_usd_per_million_without_floats() -> None:
             }
         ]
     )
+    assert rows[0]["id"] == "sonar"
     assert rows[0]["pricing"] == {
         "prompt": str(Decimal("0.000001")),
         "completion": str(Decimal("0.000002")),
@@ -475,8 +486,24 @@ def test_perplexity_converts_catalog_usd_per_million_without_floats() -> None:
 
 
 def test_perplexity_uses_distinct_catalog_and_inference_paths() -> None:
-    assert perplexity.BASE_URL == "https://api.perplexity.ai"
+    assert perplexity.BASE_URL == "https://api.perplexity.ai/v1"
     assert perplexity.URL == "https://api.perplexity.ai/v1/models"
+    assert perplexity.CATALOG.spec.canary_endpoint_path == "/sonar"
+    assert (
+        f"{perplexity.CATALOG.spec.base_url.rstrip('/')}{perplexity.CATALOG.spec.canary_endpoint_path}"
+        == "https://api.perplexity.ai/v1/sonar"
+    )
+    assert perplexity.CATALOG.spec.canary_extra_body == {"search_context_size": "low"}
+
+
+def test_perplexity_parses_exact_low_context_request_fee() -> None:
+    html = """
+      <table>
+        <thead><tr><th>Model</th><th>Low Context Size</th><th>Medium Context Size</th></tr></thead>
+        <tbody><tr><td>Sonar</td><td>$5</td><td>$8</td></tr></tbody>
+      </table>
+    """
+    assert perplexity._parse_low_context_request_price(html) == 5_000
 
 
 def test_perceptron_filters_media_free_and_unpriced_rows() -> None:
@@ -615,7 +642,9 @@ def test_perplexity_omits_an_undocumented_cache_rate() -> None:
 
 def test_perplexity_accepts_unqualified_native_ids_for_namespacing() -> None:
     assert perplexity._is_perplexity_route({"id": "sonar"}) is True
-    assert perplexity._is_perplexity_route({"id": "r1-1776"}) is True
+    assert perplexity._is_perplexity_route({"id": "perplexity/sonar"}) is True
+    assert perplexity._is_perplexity_route({"id": "r1-1776"}) is False
+    assert perplexity._is_perplexity_route({"id": "Sonar-Pro"}) is False
     assert perplexity.CATALOG.model_id("sonar") == "perplexity/sonar"
     assert perplexity.CATALOG.model_id("Sonar-Pro") == "perplexity/sonar-pro"
     assert perplexity._is_perplexity_route({"id": "other/sonar"}) is False
@@ -662,7 +691,7 @@ def test_wave3_secrets_do_not_join_the_all_or_nothing_refresh_block() -> None:
 
     assert _RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS == RUNTIME_ONLY_READY
     assert RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS == RUNTIME_ONLY_READY
-    assert READY | {"nscale"} < EXPIRING_PROVIDER_MANIFEST_SLUGS
+    assert IMPLEMENTED | {"nscale"} < EXPIRING_PROVIDER_MANIFEST_SLUGS
     assert PROVIDER_MANIFEST_MAX_AGE_DAYS == 14
     assert RUNTIME_ONLY_PROVIDER_MANIFEST_MAX_AGE_DAYS == 14
 
