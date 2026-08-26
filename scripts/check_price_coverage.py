@@ -881,7 +881,9 @@ def _model_discovery_audit(
         )
     else:
         discovered = _discover_zai_coding_plan_models(zai_doc)
-        missing = sorted(discovered - published_model_ids)
+        # This page is Z.AI's own availability contract. A route published by
+        # another provider must not hide a missing Z.AI route.
+        missing = sorted(discovered - _manifest_provider_model_ids("zai"))
         if missing:
             warnings.append(
                 "zai: Coding Plan docs mention unpublished model(s) "
@@ -933,13 +935,17 @@ def _model_discovery_audit(
         missing = discovered_ids - published - unresolved - classified
         unresolved_live = discovered_ids & unresolved
         required_missing = sorted(
-            model_id for model_id in missing if _required_discovery_model(slug, model_id)
+            model_id
+            for model_id in missing
+            if _required_discovery_model(slug, model_id)
+            or _is_required_provider_glm_model_id(model_id)
         )
         optional_missing = sorted(missing - set(required_missing))
         required_new_unresolved = sorted(
             model_id
             for model_id in unresolved_live & new_unresolved
             if _required_discovery_model(slug, model_id)
+            or _is_required_provider_glm_model_id(model_id)
         )
         older_unresolved = sorted(unresolved_live - set(required_new_unresolved))
         if required_missing:
@@ -971,7 +977,9 @@ def _model_discovery_audit(
             info.append(f"{slug}: model discovery matched catalog ({len(discovered_ids)} id(s)) ✓")
 
     for slug, url, env_names in _GLM_DISCOVERABLE_PROVIDER_APIS:
-        published = published_model_ids | _manifest_provider_model_ids(slug)
+        # Provider coverage is provider-specific. A model being routable via
+        # one host must never mask a newly available route from another host.
+        published = _manifest_provider_model_ids(slug)
         try:
             payload = fetch_json(url, env_names)
         except Exception as exc:  # noqa: BLE001

@@ -21,7 +21,12 @@ MANIFEST_PATH = (
     / "provider_models"
     / "zai.json"
 )
-EXPECTED_MODELS = ["z-ai/glm-4.6", "z-ai/glm-5.2"]
+EXPECTED_MODELS = [
+    "z-ai/glm-4.6",
+    "z-ai/glm-5.2",
+    "z-ai/glm-5.3",
+    "z-ai/glm-5.3-flash",
+]
 UPSTREAM_ID_MAP: dict[str, str] = {}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 
@@ -53,6 +58,22 @@ def fetch() -> ProviderPricingResult:
         explicit_map=explicit_map,
         upstream_id_map=UPSTREAM_ID_MAP,
     )
+    flash = discovered.get("z-ai/glm-5.3-flash")
+    if flash is not None:
+        # Z.AI's launch documentation is authoritative for the first native
+        # multimodal GLM-5 model. Its bare /models row currently contains only
+        # the ID, so preserve these capabilities explicitly until the API feed
+        # exposes them itself.
+        flash["context_length"] = 1_048_576
+        flash["max_output_tokens"] = 131_072
+        flash["input_modalities"] = ["text", "image", "video"]
+        flash["output_modalities"] = ["text"]
+        flash["supported_features"] = [
+            "reasoning",
+            "structured_outputs",
+            "tools",
+            "prompt_cache",
+        ]
     if not discovered:
         raise RuntimeError("zai: no priced chat models found in authenticated catalog")
     _DISCOVERED_MANIFEST_ROWS = discovered

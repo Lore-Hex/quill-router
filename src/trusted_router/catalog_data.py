@@ -3199,6 +3199,17 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "450 Townsend Street, San Francisco, California 94107."
         ),
     ),
+    "ibm-granite": ModelOrigin(
+        country=PROVIDER_JURISDICTION_US,
+        lab_name="IBM Research",
+        source_url="https://research.ibm.com/blog/introducing-granite-4-2",
+        note=(
+            "IBM Research identifies Granite 4.2 as its model family. IBM's "
+            "corporate contact page lists International Business Machines "
+            "Corporation in Armonk, New York, United States "
+            "(https://www.ibm.com/contact/global)."
+        ),
+    ),
     # --- Canada ---
     "cohere": ModelOrigin(
         country=PROVIDER_JURISDICTION_CA,

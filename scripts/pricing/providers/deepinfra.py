@@ -54,7 +54,14 @@ MANIFEST_PATH = (
 EXPECTED_MODELS = [
     "google/gemma-4-31b-it",
     "z-ai/glm-5.2",
+    "z-ai/glm-5.3-flash",
 ]
+
+_MAX_OUTPUT_OVERRIDES = {
+    # DeepInfra currently repeats the context window in metadata.max_tokens.
+    # GLM-5.3-Flash's documented generation limit is 131,072 tokens.
+    "z-ai/glm-5.3-flash": 131_072,
+}
 
 
 # DeepInfra native ids → OR-canonical. DeepInfra mostly uses upstream
@@ -141,7 +148,7 @@ def fetch() -> ProviderPricingResult:
         )
         if context_length is not None:
             discovered_row["context_length"] = context_length
-        max_output = positive_int(
+        max_output = _MAX_OUTPUT_OVERRIDES.get(or_id) or positive_int(
             meta.get("max_tokens")
             or meta.get("max_output_tokens")
             or row.get("max_output_tokens")

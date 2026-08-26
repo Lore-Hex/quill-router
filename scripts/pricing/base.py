@@ -818,7 +818,7 @@ def reconcile_manifest_tombstones(
             if fresh:
                 row.pop("missing_since", None)
                 if present_operator_hold:
-                    pass
+                    row.pop("unresolved_since", None)
                 elif old_operator_hold:
                     row["routable"] = False
                     row["routable_reason"] = old_reason
@@ -843,10 +843,22 @@ def reconcile_manifest_tombstones(
 
     for model_id in sorted(present_rows.keys() - existing_ids):
         row = dict(present_rows[model_id])
-        if model_id not in priced_ids:
+        # Discovery adapters may classify a new route with an explicit
+        # operator hold (for example a zero-price trial that cannot enter the
+        # prepaid ledger). Preserve that stronger classification instead of
+        # replacing it with the generic awaiting-price state.
+        reason = row.get("routable_reason")
+        operator_hold = (
+            row.get("routable") is False
+            and isinstance(reason, str)
+            and reason not in discovery_managed_reasons
+        )
+        if model_id not in priced_ids and not operator_hold:
             row["routable"] = False
             row["routable_reason"] = "awaiting-price"
             row["unresolved_since"] = today
+        elif operator_hold:
+            row.pop("unresolved_since", None)
         reconciled.append(row)
 
     return reconciled
