@@ -133,6 +133,23 @@ def _spanner_fake_store() -> Store:
     return store
 
 
+def _with_connect_timeout(dsn: str, seconds: int = 10) -> str:
+    """Bound connection ESTABLISHMENT against a wedged server.
+
+    On 2026-08-26 CI shard `test (6)` hung for 2.5 hours: PGAdapter's log shows
+    a connection handshake beginning at 09:58:16 and nothing ever again, while
+    psycopg waited forever -- its default connect timeout is infinite -- and
+    every xdist worker eventually parked behind the same dead emulator. A
+    conformance backend that cannot accept a connection within seconds is
+    DOWN, and the honest outcome is a failed test naming the backend, not a
+    silent six-hour runner burn.
+    """
+    if "connect_timeout" in dsn:
+        return dsn
+    separator = "&" if "?" in dsn else "?"
+    return f"{dsn}{separator}connect_timeout={seconds}"
+
+
 def _postgres_store() -> Store:
     """A PostgresStore pointed at the conformance database.
 
@@ -148,14 +165,11 @@ def _postgres_store() -> Store:
     """
     dsn = os.environ.get("TR_CONFORMANCE_POSTGRES_DSN")
     if not dsn:
-        pytest.skip(
-            "Postgres conformance backend not configured "
-            "(set TR_CONFORMANCE_POSTGRES_DSN)"
-        )
+        pytest.skip("Postgres conformance backend not configured (set TR_CONFORMANCE_POSTGRES_DSN)")
     from trusted_router.storage_postgres import PostgresStore
 
     store = PostgresStore(
-        dsn,
+        _with_connect_timeout(dsn),
         postgres_iam_auth=os.environ.get("TR_POSTGRES_IAM_AUTH", ""),
         postgres_iam_region=os.environ.get("TR_POSTGRES_IAM_REGION", ""),
     )
@@ -191,7 +205,7 @@ def _spanner_pg_store() -> Store:
         )
     from trusted_router.storage_postgres import PostgresStore
 
-    store = PostgresStore(dsn)
+    store = PostgresStore(_with_connect_timeout(dsn))
     store.apply_schema()
     return store
 
@@ -222,9 +236,7 @@ _IN_PROCESS_BACKENDS = frozenset({"memory", "spanner-fake"})
 _BACKEND_PARAMS = [
     name
     if name in _IN_PROCESS_BACKENDS
-    else pytest.param(
-        name, marks=pytest.mark.xdist_group(f"conformance-{name}")
-    )
+    else pytest.param(name, marks=pytest.mark.xdist_group(f"conformance-{name}"))
     for name in sorted(BACKENDS)
 ]
 
@@ -265,9 +277,7 @@ _SPANNER_FAKE_KNOWN_GAPS: dict[str, str] = {
     "test_insufficient_reserve_does_not_mutate_balance": _C1_LEGACY_MONEY,
     "test_finalize_gateway_authorization_is_exactly_once": _C1_LEGACY_MONEY,
     "test_finalize_unknown_authorization_is_false_not_error": _C1_LEGACY_MONEY,
-    "test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option": (
-        _FAKE_ROLLUP_ORDERING
-    ),
+    "test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option": (_FAKE_ROLLUP_ORDERING),
 }
 
 

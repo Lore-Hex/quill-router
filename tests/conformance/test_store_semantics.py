@@ -1135,14 +1135,8 @@ def test_key_limit_window_columns_and_index_exist(store: Store, unique: str) -> 
 # --------------------------------------------------------------------------
 
 
-def _seed_key_limit(store: Store, key_hash: str, **columns: object) -> None:
-    pool = getattr(store, "_pool", None)
-    if pool is None:
-        pytest.skip("backend has no SQL schema to seed")
-    cols = {"workspace_id": "ws-keylimit", "key_hash": key_hash, "shard": 0, **columns}
-    names = ", ".join(cols)
-    marks = ", ".join(["%s"] * len(cols))
-    bigint_columns = {
+_SEED_BIGINT_COLUMNS = frozenset(
+    {
         "shard",
         "limit_micro",
         "usage",
@@ -1155,8 +1149,23 @@ def _seed_key_limit(store: Store, key_hash: str, **columns: object) -> None:
         "week_usage",
         "month_usage",
     }
+)
+
+
+def _seed_key_limit(store: Store, key_hash: str, **columns: object) -> None:
+    pool = getattr(store, "_pool", None)
+    if pool is None:
+        pytest.skip("backend has no SQL schema to seed")
+    cols = {"workspace_id": "ws-keylimit", "key_hash": key_hash, "shard": 0, **columns}
+    names = ", ".join(cols)
+    # Explicit ::bigint casts, not just Int8 wrappers: even with wrapped
+    # params and prepare=False, PGAdapter intermittently rejected this INSERT
+    # with "Invalid length for int8: 2" (binary-format negotiation race,
+    # observed on PR #840's CI and gone on the identical rerun). A cast pins
+    # the server-side type regardless of the wire format chosen per call.
+    marks = ", ".join("%s::bigint" if name in _SEED_BIGINT_COLUMNS else "%s" for name in cols)
     values = tuple(
-        Int8(value) if name in bigint_columns and value is not None else value
+        Int8(value) if name in _SEED_BIGINT_COLUMNS and value is not None else value
         for name, value in cols.items()
     )
     with pool.connection() as conn:

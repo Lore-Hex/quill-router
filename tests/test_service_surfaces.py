@@ -40,9 +40,7 @@ def _signatures(app: FastAPI) -> set[tuple[str, str]]:
 
 
 def _paths(app: FastAPI) -> set[str]:
-    return {
-        path for path, route in effective_routes(app) if isinstance(route, APIRoute)
-    }
+    return {path for path, route in effective_routes(app) if isinstance(route, APIRoute)}
 
 
 def _endpoints(app: FastAPI) -> dict[object, set[str]]:
@@ -297,8 +295,7 @@ def test_regional_observer_has_status_and_synthetic_but_no_account_or_money_rout
 def test_versioned_api_pairs_never_split_across_surface_owners() -> None:
     combined = _app("combined")
     owners = {
-        surface: _paths(_app(surface))
-        for surface in ("public", "actions", "control", "internal")
+        surface: _paths(_app(surface)) for surface in ("public", "actions", "control", "internal")
     }
 
     for paths in _endpoints(combined).values():
@@ -377,10 +374,18 @@ def test_observer_ready_fails_when_its_status_store_is_unavailable(
     def unavailable(_self: object) -> None:
         raise RuntimeError("database unavailable")
 
+    # Patch the TYPE OF THE LIVE SINGLETON, not just InMemoryStore: /ready
+    # calls module-level STORE.readiness_check, and a neighbouring test in the
+    # same xdist worker may have left a different store class configured --
+    # under the post-cutover matrix this intermittently made the class patch
+    # miss and /ready answer 200 (observed on PR #840's post-cutover shard).
+    import trusted_router.storage as storage_module
+
     monkeypatch.setattr(
         "trusted_router.storage.InMemoryStore.readiness_check",
         unavailable,
     )
+    monkeypatch.setattr(type(storage_module.STORE), "readiness_check", unavailable, raising=False)
     response = TestClient(_app("observer")).get("/ready")
 
     assert response.status_code == 503
