@@ -11,6 +11,7 @@ from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.money import dollars_to_microdollars
 from trusted_router.request_tags import InvalidTags, validate_tags
 from trusted_router.schemas import CreateKeyRequest, PatchKeyRequest, model_to_dict
+from trusted_router.scopes import SCOPE_PROFILE, validate_api_key_scopes
 from trusted_router.serialization import key_shape
 from trusted_router.storage import STORE, ApiKey
 from trusted_router.types import ErrorType
@@ -34,11 +35,48 @@ def _enriched_key_shape(key: ApiKey) -> dict[str, Any]:
     return key_shape(key, window_usage=usage["windows"])
 
 
+def self_key_shape(key: ApiKey) -> dict[str, Any]:
+    """Return self-introspection without widening a delegated key's grant."""
+    shape = _enriched_key_shape(key)
+    if not key.scopes:
+        # Preserve the pre-scope /key field set exactly for legacy callers.
+        shape.pop("scopes", None)
+        return shape
+
+    # A key needs its own limits and live usage for agent budget display, but
+    # self-introspection must not leak workspace metadata or person identifiers
+    # to a delegated credential that was not granted profile access.
+    allowed = {
+        field
+        for field in shape
+        if field.startswith("limit_")
+        or field.startswith("usage")
+        or field.startswith("byok_usage")
+    }
+    allowed.update(
+        {
+            "hash",
+            "name",
+            "label",
+            "scopes",
+            "disabled",
+            "expires_at",
+            "limit",
+            "reserved_microdollars",
+            "include_byok_in_limit",
+            "budget_alert_only",
+        }
+    )
+    if SCOPE_PROFILE in key.scopes:
+        allowed.add("creator_user_id")
+    return {field: value for field, value in shape.items() if field in allowed}
+
+
 def register_key_routes(router: APIRouter) -> None:
     @router.get("/key")
     async def key(principal: InferencePrincipal) -> dict[str, Any]:
         assert principal.api_key is not None
-        return {"data": _enriched_key_shape(principal.api_key)}
+        return {"data": self_key_shape(principal.api_key)}
 
     @router.get("/keys")
     async def keys(principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
@@ -62,6 +100,10 @@ def register_key_routes(router: APIRouter) -> None:
             tags = validate_tags(body.tags)
         except InvalidTags as exc:
             raise api_error(400, str(exc), ErrorType.INVALID_TAGS) from exc
+        try:
+            scopes = validate_api_key_scopes(body.scopes, management=body.management)
+        except ValueError as exc:
+            raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
         raw, k = STORE.create_api_key(
             workspace_id=workspace_id,
             name=body.name,
@@ -82,6 +124,7 @@ def register_key_routes(router: APIRouter) -> None:
             ),
             budget_alert_only=body.budget_alert_only,
             tags=tags,
+            scopes=scopes,
         )
         return JSONResponse({"data": key_shape(k), "key": raw}, status_code=201)
 
@@ -96,6 +139,12 @@ def register_key_routes(router: APIRouter) -> None:
         principal: ManagementPrincipal,
     ) -> dict[str, Any]:
         _require_key_in_workspace(hash, principal)
+        if "scopes" in (body.model_extra or {}):
+            raise api_error(
+                400,
+                "API key scopes are immutable; create a new key to change them",
+                ErrorType.BAD_REQUEST,
+            )
         patch = model_to_dict(body)
         if "tags" in patch:
             try:

@@ -749,6 +749,7 @@ class InMemoryStore:
         limit_monthly_microdollars: int | None = None,
         budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
+        scopes: list[str] | None = None,
     ) -> tuple[str, ApiKey]:
         return self.api_keys.create(
             workspace_id=workspace_id,
@@ -765,6 +766,7 @@ class InMemoryStore:
             limit_monthly_microdollars=limit_monthly_microdollars,
             budget_alert_only=budget_alert_only,
             tags=tags,
+            scopes=scopes,
         )
 
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:

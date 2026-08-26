@@ -42,6 +42,7 @@ from trusted_router.postgres_dsn import (
     aws_dsql_connection_details,
     dsql_token_is_admin,
 )
+from trusted_router.scopes import validate_api_key_scopes
 from trusted_router.security import (
     hash_api_key,
     key_label,
@@ -1709,7 +1710,9 @@ class PostgresStore:
         limit_monthly_microdollars: int | None = None,
         budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
+        scopes: list[str] | None = None,
     ) -> tuple[str, ApiKey]:
+        validated_scopes = validate_api_key_scopes(scopes, management=management)
         raw = raw_key or new_api_key()
         key = ApiKey(
             hash=new_key_id(),
@@ -1720,6 +1723,7 @@ class PostgresStore:
             label=key_label(raw),
             workspace_id=workspace_id,
             creator_user_id=creator_user_id,
+            scopes=validated_scopes,
             management=management,
             limit_microdollars=limit_microdollars,
             limit_reset=limit_reset,

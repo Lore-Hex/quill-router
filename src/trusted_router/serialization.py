@@ -106,6 +106,7 @@ def key_shape(key: ApiKey, *, window_usage: dict[str, int] | None = None) -> dic
         "creator_user_id": key.creator_user_id,
         "workspace_id": key.workspace_id,
         "management": key.management,
+        "scopes": list(key.scopes),
     }
 
 

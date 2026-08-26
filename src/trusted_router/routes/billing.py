@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from trusted_router.auth import ManagementPrincipal, SettingsDep, principal_from_request
+from trusted_router.auth import (
+    ManagementPrincipal,
+    Principal,
+    SettingsDep,
+    principal_from_request,
+    require_scope,
+)
 from trusted_router.billing_policy import (
     WALLET_ONLY_STABLECOIN_MESSAGE,
     is_stablecoin_checkout_method,
@@ -19,6 +25,7 @@ from trusted_router.errors import api_error, deprecated
 from trusted_router.money import VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS, money_pair
 from trusted_router.routes.helpers import json_body
 from trusted_router.schemas import CheckoutRequest, X402FundingRequest, X402SettleRequest
+from trusted_router.scopes import SCOPE_BALANCE_READ
 from trusted_router.services.adyen_billing import create_adyen_checkout_session
 from trusted_router.services.paypal_billing import (
     capture_paypal_order_for_workspace,
@@ -37,7 +44,7 @@ from trusted_router.services.x402_billing import (
     x402_payment_required_response_body,
 )
 from trusted_router.storage import STORE
-from trusted_router.typed_balance import live_credit_summary
+from trusted_router.typed_balance import live_credit_summary, remaining_credit_summary
 from trusted_router.types import ErrorType
 
 log = logging.getLogger(__name__)
@@ -57,6 +64,18 @@ def register_billing_routes(router: APIRouter) -> None:
                 **money_pair("available", summary["available"]),
             }
         }
+
+    @router.get("/credits/summary")
+    async def credits_summary(
+        principal: Annotated[
+            Principal,
+            Depends(require_scope(SCOPE_BALANCE_READ)),
+        ],
+    ) -> dict[str, dict[str, Any]]:
+        summary = remaining_credit_summary(principal.workspace.id)
+        if summary is None:
+            raise api_error(404, "Credit account not found", ErrorType.NOT_FOUND)
+        return {"data": dict(summary)}
 
     @router.post("/billing/checkout")
     async def billing_checkout(
@@ -156,6 +175,13 @@ def register_billing_routes(router: APIRouter) -> None:
         principal = principal_from_request(request, settings)
         if principal.api_key is None:
             raise api_error(403, "An API key is required for x402 funding", ErrorType.FORBIDDEN)
+        # No v1 delegated scope grants money movement through x402.
+        if principal.scopes:
+            raise api_error(
+                403,
+                "No delegated scope grants x402 funding",
+                ErrorType.INSUFFICIENT_SCOPE,
+            )
         body = _validated_x402_body(X402FundingRequest, await json_body(request))
         validate_x402_funding_amount(body.amount, settings)
         _enforce_x402_rate_limit(
@@ -192,6 +218,13 @@ def register_billing_routes(router: APIRouter) -> None:
         principal = principal_from_request(request, settings)
         if principal.api_key is None:
             raise api_error(403, "An API key is required for x402 settlement", ErrorType.FORBIDDEN)
+        # No v1 delegated scope grants money movement through x402.
+        if principal.scopes:
+            raise api_error(
+                403,
+                "No delegated scope grants x402 settlement",
+                ErrorType.INSUFFICIENT_SCOPE,
+            )
         body = _validated_x402_body(X402SettleRequest, await json_body(request))
         _enforce_x402_rate_limit(
             namespace="x402_settle_workspace",

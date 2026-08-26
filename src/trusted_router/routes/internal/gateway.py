@@ -97,6 +97,7 @@ from trusted_router.schemas import (
     GatewaySettleRequest,
     GatewayValidateRequest,
 )
+from trusted_router.scopes import SCOPE_INFERENCE
 from trusted_router.security import lookup_hash_api_key
 from trusted_router.services import federation
 from trusted_router.services.broadcast import (
@@ -256,6 +257,7 @@ def _authorize_gateway_sync(
     api_key = _api_key_for_gateway_authorization(body)
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
         raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
+    _assert_gateway_key_scope(api_key)
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
@@ -977,6 +979,7 @@ def _gateway_validate_sync(
     )
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
         raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
+    _assert_gateway_key_scope(api_key)
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
@@ -1009,9 +1012,10 @@ def _gateway_key_info_sync(
     )
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
         raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
-    from trusted_router.routes.keys import _enriched_key_shape
+    _assert_gateway_key_scope(api_key)
+    from trusted_router.routes.keys import self_key_shape
 
-    return {"data": _enriched_key_shape(api_key)}
+    return {"data": self_key_shape(api_key)}
 
 
 def _gateway_resolve_custom_model_sync(
@@ -1026,6 +1030,7 @@ def _gateway_resolve_custom_model_sync(
     )
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
         raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
+    _assert_gateway_key_scope(api_key)
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
@@ -1522,6 +1527,23 @@ def _api_key_for_gateway_lookup(
         # path (which every enclave request uses) does the age check.
         return api_key
     return _federated_key_still_valid(api_key, api_key_lookup_hash)
+
+
+def _assert_gateway_key_scope(api_key: Any) -> None:
+    """Require `inference` for every kind of model-execution spend.
+
+    This includes text, media, batch, and hosted-tool route types; the scope
+    bounds the kind of authority rather than the model modality. See
+    docs/design/oauth-scopes-and-app-economy.md, "Scopes: small, real,
+    enforced".
+    """
+    scopes = frozenset(api_key.scopes)
+    if scopes and SCOPE_INFERENCE not in scopes:
+        raise api_error(
+            403,
+            f"API key is missing required scope: {SCOPE_INFERENCE}",
+            ErrorType.INSUFFICIENT_SCOPE,
+        )
 
 
 def _federated_key_still_valid(cached: Any | None, lookup_hash: str) -> Any | None:

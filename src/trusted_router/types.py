@@ -72,6 +72,10 @@ class ErrorType(StrEnum):
     # string is a WIRE CONTRACT with enclave-go/internal/authcache; both sides
     # pin it with a test.
     INVALID_API_KEY = "invalid_api_key"
+    # A valid delegated key that lacks the permission named by a route. This
+    # must stay distinct from INVALID_API_KEY: the enclave negative-caches the
+    # latter, while a scope denial is specific to one route.
+    INSUFFICIENT_SCOPE = "insufficient_scope"
     FORBIDDEN = "forbidden"
     VERIFICATION_REQUIRED = "verification_required"
     MODEL_OFF_THE_CLOCK = "model_off_the_clock"

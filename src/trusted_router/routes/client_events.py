@@ -132,6 +132,9 @@ def register_client_events_routes(router: APIRouter) -> None:
                 telemetry_off=True,
             )
 
+        # Per docs/design/oauth-scopes-and-app-economy.md ("Scopes: small,
+        # real, enforced"), reliability beacons deliberately ride the same
+        # inference credential as the requests they describe.
         principal = require_inference_key(request, settings)
         api_key = principal.api_key
         if api_key is None:  # pragma: no cover - guaranteed by require_inference_key.

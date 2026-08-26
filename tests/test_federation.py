@@ -26,6 +26,7 @@ RECORD = {
     "key_hash": "kh-abc",
     "workspace_id": "ws-1",
     "name": "prod key",
+    "scopes": ["inference", "profile"],
     "disabled": False,
     "limit_microdollars": 5_000,
     "limit_daily_microdollars": 100,
@@ -47,6 +48,7 @@ class TestResolve:
     def test_resolves_and_returns_record(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.headers["x-trustedrouter-federation-token"] == "peer-secret"
+            assert request.headers["x-trustedrouter-federation-features"] == "scopes"
             return httpx.Response(200, json={"data": RECORD})
 
         assert _client(handler).resolve("lh-abc") == RECORD
@@ -167,6 +169,10 @@ class TestFederatedRecordSafety:
         assert key.limit_microdollars == 5_000
         assert key.limit_daily_microdollars == 100
         assert key.include_byok_in_limit is True
+
+    def test_scopes_are_carried_and_missing_scopes_are_legacy(self) -> None:
+        assert federated_api_key_from_record(RECORD).scopes == ["inference", "profile"]
+        assert federated_api_key_from_record({k: v for k, v in RECORD.items() if k != "scopes"}).scopes == []
 
     def test_never_management(self) -> None:
         """A management key can mint keys and move money. Even if a home

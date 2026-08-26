@@ -139,6 +139,7 @@ class CreateKeyRequest(_Lenient):
     workspace_id: str | None = None
     management: bool = False
     tags: dict[str, Any] | None = None
+    scopes: list[str] | None = None
 
     @field_validator("limit", "limit_daily", "limit_weekly", "limit_monthly", mode="before")
     @classmethod

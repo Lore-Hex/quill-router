@@ -15,6 +15,7 @@ import uuid
 from typing import Any
 
 from trusted_router.money import dollars_to_microdollars
+from trusted_router.scopes import validate_api_key_scopes
 from trusted_router.security import (
     hash_api_key,
     key_label,
@@ -116,6 +117,11 @@ def _apply_key_patch(key: ApiKey, patch: dict[str, Any]) -> None:
         key.budget_alerted = dict(patch["budget_alerted"] or {})
     if "tags" in patch:
         key.tags = dict(patch["tags"] or {})
+    if "scopes" in patch:
+        key.scopes = validate_api_key_scopes(
+            patch["scopes"],
+            management=key.management,
+        )
     key.updated_at = iso_now()
 
 
@@ -141,8 +147,10 @@ class SpannerApiKeys:
         limit_monthly_microdollars: int | None = None,
         budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
+        scopes: list[str] | None = None,
         usage_shard_count: int = 1,
     ) -> tuple[str, ApiKey]:
+        validated_scopes = validate_api_key_scopes(scopes, management=management)
         raw = raw_key or new_api_key()
         key_id = new_key_id()
         salt = new_hash_salt()
@@ -156,6 +164,7 @@ class SpannerApiKeys:
             label=key_label(raw),
             workspace_id=workspace_id,
             creator_user_id=creator_user_id,
+            scopes=validated_scopes,
             management=management,
             limit_microdollars=limit_microdollars,
             limit_reset=limit_reset,

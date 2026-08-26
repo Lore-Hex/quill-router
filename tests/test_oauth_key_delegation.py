@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from tests.fakes.spanner import make_fake_store
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.scopes import DEFAULT_DELEGATED_SCOPES
 from trusted_router.storage import STORE, InMemoryStore
 
 
@@ -67,6 +68,7 @@ def test_oauth_code_exchange_creates_delegated_inference_key(
     assert api_key.limit_reset == "monthly"
     assert api_key.expires_at == "2099-01-01T00:00:00Z"
     assert api_key.budget_alert_only is False
+    assert api_key.scopes == DEFAULT_DELEGATED_SCOPES
 
 
 def test_oauth_code_exchange_returns_signed_in_identity(
@@ -89,6 +91,9 @@ def test_oauth_code_exchange_returns_signed_in_identity(
     assert "email_verified" in identity
     assert identity["phone_verified"] is False
     assert identity["identity_verified"] is False
+    assert identity["verification_level"] == "none"
+    assert identity["workspace_id"]
+    assert identity["created_at"]
 
 
 def test_userinfo_returns_identity_for_delegated_key(
@@ -99,9 +104,10 @@ def test_userinfo_returns_identity_for_delegated_key(
     the key carries the approving user's id via creator_user_id."""
     verifier = "userinfo-verifier-" + "j" * 43
     code, _ = _create_code(client, user_headers, verifier=verifier)
-    key = client.post(
+    exchange = client.post(
         "/v1/auth/keys", json={"code": code, "code_verifier": verifier}
-    ).json()["key"]
+    )
+    key = exchange.json()["key"]
 
     resp = client.get("/v1/auth/userinfo", headers={"authorization": f"Bearer {key}"})
 
@@ -111,6 +117,7 @@ def test_userinfo_returns_identity_for_delegated_key(
     assert data["sub"] == alice.id
     assert data["email"] == "alice@example.com"
     assert data["workspace_id"]
+    assert data == exchange.json()["identity"]
 
 
 def test_userinfo_requires_authentication(client: TestClient) -> None:
@@ -962,3 +969,28 @@ def test_gcp_oauth_code_expiry_deletes_code_and_lookup() -> None:
     assert store.consume_oauth_authorization_code(raw) is None
     assert ("oauth_code", code.hash) not in db.rows
     assert ("oauth_code_lookup", code.lookup_hash) not in db.rows
+
+
+def test_exchange_mints_delegated_key_with_default_scopes(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    """The OAuth mint path is what makes every NEW delegated key scoped; a
+    regression here silently reverts new grants to full-workspace legacy keys
+    (increment A's central behavior change)."""
+    from trusted_router.scopes import DEFAULT_DELEGATED_SCOPES
+    from trusted_router.storage import STORE
+
+    code, _ = _create_code(
+        client,
+        user_headers,
+        code_challenge=None,
+        code_challenge_method=None,
+    )
+    exchange = client.post("/v1/auth/keys", json={"code": code})
+    assert exchange.status_code == 200, exchange.text
+
+    data = exchange.json()["data"]
+    assert data["scopes"] == DEFAULT_DELEGATED_SCOPES
+    stored = STORE.api_keys.get_by_hash(data["hash"])
+    assert list(stored.scopes) == DEFAULT_DELEGATED_SCOPES

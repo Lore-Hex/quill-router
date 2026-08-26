@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from trusted_router.auth import AuthenticatedPrincipal, ManagementPrincipal
+from trusted_router.auth import ManagementPrincipal, Principal, require_scope
 from trusted_router.errors import api_error, error_response
 from trusted_router.request_tags import InvalidTags, validate_tags
+from trusted_router.scopes import SCOPE_INFERENCE
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
@@ -68,7 +69,10 @@ def register_activity_routes(router: APIRouter) -> None:
         }
 
     @router.get("/generation")
-    async def generation(id: str, principal: AuthenticatedPrincipal) -> dict[str, Any]:  # noqa: A002
+    async def generation(  # noqa: A002
+        id: str,
+        principal: Annotated[Principal, Depends(require_scope(SCOPE_INFERENCE))],
+    ) -> dict[str, Any]:
         # Either an inference key or a management session works here.
         # OpenRouter accepts the same bearer token the caller used for
         # the chat completion that produced this generation_id, so
@@ -77,6 +81,14 @@ def register_activity_routes(router: APIRouter) -> None:
         # below stops cross-workspace lookups.
         gen = STORE.get_generation(id)
         if gen is None or gen.workspace_id != principal.workspace.id:
+            raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
+        # Delegated inference authority is key-isolated. Use the same 404 as a
+        # missing generation so one app cannot probe another app's activity.
+        if (
+            principal.api_key is not None
+            and principal.scopes
+            and gen.key_hash != principal.api_key.hash
+        ):
             raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
         return {"data": gen.to_openrouter_generation()}
 
