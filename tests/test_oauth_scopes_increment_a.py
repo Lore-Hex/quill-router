@@ -644,9 +644,11 @@ def test_federation_resolve_key_serves_scopes_end_to_end() -> None:
         record = served.json()["data"]
         assert record["scopes"] == list(DEFAULT_DELEGATED_SCOPES)
         assert record["app_id"] == "federated-app"
+        assert record["app_suspended"] is False
         imported = federated_api_key_from_record(record)
         assert list(imported.scopes) == list(DEFAULT_DELEGATED_SCOPES)
         assert imported.app_id == "federated-app"
+        assert imported.federated_app_suspended is False
 
 
 def test_federation_feature_declaration_fails_closed_only_for_scoped_keys() -> None:
@@ -695,3 +697,4 @@ def test_federation_feature_declaration_fails_closed_only_for_scoped_keys() -> N
         assert served_legacy.status_code == 200, served_legacy.text
         assert served_legacy.json()["data"]["scopes"] == []
         assert "app_id" not in served_legacy.json()["data"]
+        assert "app_suspended" not in served_legacy.json()["data"]

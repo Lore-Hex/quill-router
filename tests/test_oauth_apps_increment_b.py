@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from tests.fakes.spanner import make_fake_store
 from trusted_router.serialization import key_shape
-from trusted_router.storage import STORE, InMemoryStore
+from trusted_router.storage import STORE, InMemoryStore, OAuthApp
 from trusted_router.storage_activity import generation_events
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
@@ -53,6 +53,7 @@ def _register_app(
     **overrides: object,
 ) -> dict[str, object]:
     _identity_user(headers["x-trustedrouter-user"])
+    _active_session(client, headers["x-trustedrouter-user"])
     response = client.post("/v1/oauth/apps", headers=headers, json=_app_body(**overrides))
     assert response.status_code == 201, response.text
     return response.json()["data"]
@@ -115,6 +116,7 @@ def test_registration_crud_is_identity_gated_and_owner_scoped(
         "updated_at": patched.json()["data"]["updated_at"],
     }
 
+    _active_session(client, "bob@example.com")
     bob_headers = {"x-trustedrouter-user": "bob@example.com"}
     assert client.get(f"/v1/oauth/apps/{APP_ID}", headers=bob_headers).status_code == 404
     assert (
@@ -157,6 +159,34 @@ def test_registry_rejects_management_api_key_even_for_verified_creator(
             f"/v1/oauth/apps/{APP_ID}",
             headers=headers,
             json={"name": "Key-owned app"},
+        ),
+    ]
+
+    assert [response.status_code for response in responses] == [403, 403, 403, 403]
+    for response in responses:
+        assert response.json()["error"]["type"] == "forbidden"
+        assert "signed-in console session" in response.json()["error"]["message"]
+
+
+def test_registry_rejects_bearer_session_without_cookie(client: TestClient) -> None:
+    owner = _identity_user()
+    raw_session, _session = STORE.create_auth_session(
+        user_id=owner.id,
+        provider="google",
+        label="alice@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    headers = {"authorization": f"Bearer {raw_session}"}
+
+    responses = [
+        client.post("/v1/oauth/apps", headers=headers, json=_app_body()),
+        client.get("/v1/oauth/apps", headers=headers),
+        client.get(f"/v1/oauth/apps/{APP_ID}", headers=headers),
+        client.patch(
+            f"/v1/oauth/apps/{APP_ID}",
+            headers=headers,
+            json={"name": "Bearer-owned app"},
         ),
     ]
 
@@ -248,6 +278,7 @@ def test_registration_rejects_reserved_ids(
     reserved: str,
 ) -> None:
     _identity_user()
+    _active_session(client)
     response = client.post(
         "/v1/oauth/apps",
         headers=user_headers,
@@ -266,6 +297,7 @@ def test_registration_rejects_normalized_reserved_ids(
     reserved: str,
 ) -> None:
     _identity_user()
+    _active_session(client)
 
     response = client.post(
         "/v1/oauth/apps",
@@ -283,8 +315,11 @@ def test_registration_rejects_normalized_reserved_ids(
         "TrustedRouter",
         "Trusted-Router",
         "ТrustedRouter",
+        "TŕustedRouter",
+        "TгustedRouter",
+        "T R U S T E D R O U T E R",
         "trusted router inc",
-        " T R U S T E D ROUTER ",
+        "Trust3dR0uter",
         pytest.param("Quillium Labs", id="strict-substring"),
     ],
 )
@@ -294,6 +329,7 @@ def test_registration_rejects_protected_names_on_create_and_patch(
     protected_name: str,
 ) -> None:
     _identity_user()
+    _active_session(client)
     created = client.post(
         "/v1/oauth/apps",
         headers=user_headers,
@@ -315,6 +351,58 @@ def test_registration_rejects_protected_names_on_create_and_patch(
     for response in (create_response, patch_response):
         assert response.status_code == 400, response.text
         assert "mistaken for TrustedRouter" in response.json()["error"]["message"]
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Metro Labs", "Transit Tracker", "API Toolkit", "Trusty Notes"],
+)
+def test_registration_accepts_safe_names(
+    client: TestClient,
+    user_headers: dict[str, str],
+    name: str,
+) -> None:
+    _identity_user()
+    _active_session(client)
+
+    response = client.post(
+        "/v1/oauth/apps",
+        headers=user_headers,
+        json=_app_body(name=name),
+    )
+
+    assert response.status_code == 201, response.text
+
+
+@pytest.mark.parametrize(
+    ("app_id", "expected_status"),
+    [
+        ("trustedrouter", 400),
+        ("trustedrouter-support", 400),
+        ("tr", 400),
+        ("tr-tools", 400),
+        ("api", 400),
+        ("metrolabs", 201),
+        ("transit-tracker", 201),
+        ("apitoolkit", 201),
+    ],
+)
+def test_reserved_slug_matching_uses_exact_or_term_prefix(
+    client: TestClient,
+    user_headers: dict[str, str],
+    app_id: str,
+    expected_status: int,
+) -> None:
+    _identity_user()
+    _active_session(client)
+
+    response = client.post(
+        "/v1/oauth/apps",
+        headers=user_headers,
+        json=_app_body(id=app_id),
+    )
+
+    assert response.status_code == expected_status, response.text
 
 
 @pytest.mark.parametrize("invalid_markup", [-1, 30_001, True, "100"])
@@ -358,6 +446,7 @@ def test_registration_validation_bounds(
     override: dict[str, object],
 ) -> None:
     _identity_user()
+    _active_session(client)
     response = client.post(
         "/v1/oauth/apps",
         headers=user_headers,
@@ -418,15 +507,35 @@ def test_authorize_client_id_uses_exact_registry_identity_and_legacy_is_unchange
     assert 'name="client_id" value="verified-app"' in registered.text
 
 
-def test_registered_consent_falls_back_when_verified_legal_name_is_empty(
+def test_registration_and_patch_require_verified_legal_name(
     client: TestClient,
     user_headers: dict[str, str],
 ) -> None:
-    _identity_user(verified_name=None)
-    response = client.post("/v1/oauth/apps", headers=user_headers, json=_app_body())
-    assert response.status_code == 201, response.text
+    user = _identity_user(verified_name=None)
     _active_session(client)
+    created = client.post("/v1/oauth/apps", headers=user_headers, json=_app_body())
 
+    STORE.create_oauth_app(
+        OAuthApp(
+            id=APP_ID,
+            owner_user_id=user.id,
+            name="Existing App",
+            redirect_uris=[CALLBACK_URL],
+        )
+    )
+    patched = client.patch(
+        f"/v1/oauth/apps/{APP_ID}",
+        headers=user_headers,
+        json={"name": "Must not change"},
+    )
+
+    for response in (created, patched):
+        assert response.status_code == 403
+        assert response.json()["error"]["type"] == "verification_required"
+        assert "verified legal name" in response.json()["error"]["message"]
+        assert "re-run" in response.json()["error"]["message"]
+
+    # Defense in depth for rows predating the stronger registration gate.
     consent = client.get(
         "/auth",
         params={"client_id": APP_ID, "callback_url": CALLBACK_URL},
@@ -580,6 +689,62 @@ def test_registered_approve_exchange_stamps_key_while_legacy_stays_empty(
     assert legacy_key is not None and legacy_key.app_id == ""
     assert "app_id" not in legacy_exchange.json()["data"]
     assert "app_id" not in key_shape(legacy_key)
+
+
+def test_programmatic_code_client_id_requires_app_owner(
+    client: TestClient,
+) -> None:
+    owner = _identity_user()
+    _active_session(client)
+    registered = client.post("/v1/oauth/apps", json=_app_body())
+    assert registered.status_code == 201, registered.text
+
+    owner_workspace = STORE.list_workspaces_for_user(owner.id)[0]
+    owner_raw, _owner_key = STORE.create_api_key(
+        workspace_id=owner_workspace.id,
+        name="owner management",
+        creator_user_id=owner.id,
+        management=True,
+    )
+    bob = STORE.ensure_user("bob@example.com")
+    bob_workspace = STORE.list_workspaces_for_user(bob.id)[0]
+    bob_raw, _bob_key = STORE.create_api_key(
+        workspace_id=bob_workspace.id,
+        name="bob management",
+        creator_user_id=bob.id,
+        management=True,
+    )
+    code_body = {
+        "client_id": APP_ID,
+        "callback_url": CALLBACK_URL,
+    }
+
+    owner_code = client.post(
+        "/v1/auth/keys/code",
+        headers={"authorization": f"Bearer {owner_raw}"},
+        json=code_body,
+    )
+    forged = client.post(
+        "/v1/auth/keys/code",
+        headers={"authorization": f"Bearer {bob_raw}"},
+        json=code_body,
+    )
+    legacy = client.post(
+        "/v1/auth/keys/code",
+        headers={"authorization": f"Bearer {bob_raw}"},
+        json={"callback_url": "https://legacy.example/callback"},
+    )
+
+    assert owner_code.status_code == 200, owner_code.text
+    exchanged = client.post(
+        "/v1/auth/keys",
+        json={"code": owner_code.json()["data"]["id"]},
+    )
+    assert exchanged.status_code == 200, exchanged.text
+    assert exchanged.json()["data"]["app_id"] == APP_ID
+    assert forged.status_code == 403
+    assert forged.json()["error"]["type"] == "forbidden"
+    assert legacy.status_code == 200, legacy.text
 
 
 def test_typed_authorization_freezes_app_id() -> None:
@@ -768,8 +933,9 @@ def test_suspension_after_mint_denies_gateway_and_federation_until_unsuspended(
         },
         json={"api_key_lookup_hash": key.lookup_hash},
     )
-    assert federated.status_code == 404
-    assert federated.json()["error"]["message"] == "Unknown API key"
+    assert federated.status_code == 200, federated.text
+    assert federated.json()["data"]["app_id"] == APP_ID
+    assert federated.json()["data"]["app_suspended"] is True
 
     unsuspended = client.patch(
         f"/v1/oauth/apps/{APP_ID}",
@@ -788,6 +954,49 @@ def test_suspension_after_mint_denies_gateway_and_federation_until_unsuspended(
         },
     )
     assert restored.status_code == 200, restored.text
+
+
+def test_suspension_allows_identical_authorization_replay_but_denies_new_work(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    _register_app(client, user_headers)
+    approved = client.post(
+        "/auth/approve",
+        data={"client_id": APP_ID, "callback_url": CALLBACK_URL},
+        follow_redirects=False,
+    )
+    code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
+    exchanged = client.post("/v1/auth/keys", json={"code": code})
+    key = STORE.get_key_by_raw(exchanged.json()["key"])
+    assert key is not None
+    body = {
+        "api_key_lookup_hash": key.lookup_hash,
+        "model": "anthropic/claude-haiku-4.5",
+        "estimated_input_tokens": 1,
+        "max_output_tokens": 1,
+        "idempotency_key": "oauth-app-replay-before-suspension",
+    }
+
+    original = client.post("/v1/internal/gateway/authorize", json=body)
+    suspended = client.patch(
+        f"/v1/oauth/apps/{APP_ID}",
+        json={"suspended": True},
+    )
+    replay = client.post("/v1/internal/gateway/authorize", json=body)
+    new_work = client.post(
+        "/v1/internal/gateway/authorize",
+        json={**body, "idempotency_key": "oauth-app-new-after-suspension"},
+    )
+
+    assert original.status_code == 200, original.text
+    assert suspended.status_code == 200, suspended.text
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["data"]["authorization_id"] == original.json()["data"][
+        "authorization_id"
+    ]
+    assert new_work.status_code == 403
+    assert new_work.json()["error"]["type"] == "forbidden"
 
 
 def test_legacy_key_avoids_app_read_and_federation_omits_empty_app_id(
@@ -832,4 +1041,32 @@ def test_legacy_key_avoids_app_read_and_federation_omits_empty_app_id(
     )
     assert served.status_code == 200, served.text
     assert "app_id" not in served.json()["data"]
+    assert "app_suspended" not in served.json()["data"]
     assert app_reads == 0
+
+
+def test_non_federated_app_key_without_local_app_row_denies_authorization(
+    client: TestClient,
+) -> None:
+    owner = STORE.ensure_user("orphaned-app-key@example.com")
+    workspace = STORE.list_workspaces_for_user(owner.id)[0]
+    _raw_key, key = STORE.create_api_key(
+        workspace_id=workspace.id,
+        name="orphaned app key",
+        creator_user_id=owner.id,
+        app_id="deleted-local-app",
+    )
+
+    response = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_lookup_hash": key.lookup_hash,
+            "model": "anthropic/claude-haiku-4.5",
+            "estimated_input_tokens": 1,
+            "max_output_tokens": 1,
+            "idempotency_key": "orphaned-local-app",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["type"] == "forbidden"

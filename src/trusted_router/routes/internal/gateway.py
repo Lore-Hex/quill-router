@@ -258,16 +258,6 @@ def _authorize_gateway_sync(
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
         raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     _assert_gateway_key_scope(api_key)
-    if api_key.app_id:
-        app = STORE.get_oauth_app(api_key.app_id)
-        if app is None or app.suspended:
-            # Do not report INVALID_API_KEY: enclaves negative-cache that result,
-            # so un-suspending the app would not promptly restore its valid key.
-            raise api_error(
-                403,
-                "OAuth app is missing or suspended; new authorizations are forbidden",
-                ErrorType.FORBIDDEN,
-            )
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
@@ -576,6 +566,9 @@ def _authorize_gateway_sync(
                 ErrorType.CONFLICT,
             )
         return _replay_response(existing_authorization)
+    # Suspension stops NEW authorizations. Resolve replay first so a lost
+    # response can be recovered and in-flight work can settle under frozen terms.
+    _assert_oauth_app_allows_new_authorization(api_key)
     # Minted up front so a user-model concurrency slot can be keyed by it
     # before the reservation exists. It is a fresh uuid — never derived from
     # the caller's Idempotency-Key: a deterministic id would outlive its
@@ -1556,6 +1549,31 @@ def _assert_gateway_key_scope(api_key: Any) -> None:
             403,
             f"API key is missing required scope: {SCOPE_INFERENCE}",
             ErrorType.INSUFFICIENT_SCOPE,
+        )
+
+
+def _assert_oauth_app_allows_new_authorization(api_key: Any) -> None:
+    if not api_key.app_id:
+        return
+
+    app = STORE.get_oauth_app(api_key.app_id)
+    if app is not None:
+        # Case 1: a local row is authoritative for a locally registered app.
+        suspended = app.suspended
+    elif getattr(api_key, "federated_home", ""):
+        # Case 2: peers have no app row; trust the restriction served by home.
+        suspended = bool(getattr(api_key, "federated_app_suspended", False))
+    else:
+        # Case 3: an orphaned local app key fails closed after app deletion.
+        suspended = True
+
+    if suspended:
+        # Do not report INVALID_API_KEY: enclaves negative-cache that result,
+        # so un-suspending the app would not promptly restore its valid key.
+        raise api_error(
+            403,
+            "OAuth app is missing or suspended; new authorizations are forbidden",
+            ErrorType.FORBIDDEN,
         )
 
 

@@ -254,6 +254,19 @@ def test_t2_through_t4_and_legacy_alias_paths_are_not_public(path: str) -> None:
     assert URL_MAP.route_surface(path) != "public"
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/oauth/apps",
+        "/oauth/apps/verified-app",
+        "/v1/oauth/apps",
+        "/v1/oauth/apps/verified-app",
+    ],
+)
+def test_oauth_app_registry_paths_route_to_control(path: str) -> None:
+    assert URL_MAP.route_surface(path) == "control"
+
+
 @pytest.mark.parametrize("prefix", ["", "/v1"])
 @pytest.mark.parametrize(
     "path",

@@ -6,11 +6,13 @@ import unicodedata
 from typing import Any
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from trusted_router.auth import ManagementPrincipal, Principal
+from trusted_router.auth import SettingsDep
+from trusted_router.config import Settings
 from trusted_router.errors import api_error
+from trusted_router.routes.console._shared import require_console_context
 from trusted_router.routes.helpers import json_body
 from trusted_router.routes.oauth_keys import _validate_callback_url
 from trusted_router.storage import STORE, OAuthApp, User
@@ -21,14 +23,46 @@ OAUTH_APP_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 OAUTH_APP_RESERVED_IDS = frozenset(
     {"trustedrouter", "tr", "api", "console", "admin", "www"}
 )
-OAUTH_APP_PROTECTED_TERMS = OAUTH_APP_RESERVED_IDS | frozenset(
-    {"trustedrouter", "trustedrouter inc", "veriff", "quill", "lorehex"}
+OAUTH_APP_PROTECTED_TERMS = frozenset(
+    {"trustedrouter", "trusted router", "veriff", "lorehex", "quill"}
 )
-# NFKC does not fold cross-script lookalikes. This explicit mapping covers the
-# confusable called out by the registry threat model: Cyrillic Te in
-# ``ТrustedRouter``. Keep this table narrow and review additions as security
-# policy rather than silently transliterating arbitrary developer names.
-_OAUTH_APP_CONFUSABLES = str.maketrans({"т": "t"})
+# This curated confusables map is an impersonation heuristic, not a security
+# boundary. The verified owner-disclosure line on consent is the real defense.
+OAUTH_APP_CONFUSABLES: dict[str, str] = {
+    # Cyrillic lookalikes (input is casefolded before this map is applied).
+    "а": "a",
+    "е": "e",
+    "о": "o",
+    "р": "p",
+    "с": "c",
+    "х": "x",
+    "у": "y",
+    "т": "t",
+    "в": "b",
+    "м": "m",
+    "н": "h",
+    "к": "k",
+    "і": "i",
+    "ѕ": "s",
+    "г": "r",
+    # Greek lookalikes.
+    "ο": "o",
+    "α": "a",
+    "ε": "e",
+    "ρ": "p",
+    "ι": "i",
+    "κ": "k",
+    "τ": "t",
+    "β": "b",
+    "μ": "m",
+    "ν": "n",
+    # Common digit/letter substitutions.
+    "0": "o",
+    "1": "l",
+    "3": "e",
+    "5": "s",
+    "@": "a",
+}
 OAUTH_APP_CREATE_FIELDS = frozenset(
     {
         "id",
@@ -46,9 +80,9 @@ def register_oauth_app_routes(router: APIRouter) -> None:
     @router.post("/oauth/apps")
     async def create_oauth_app(
         request: Request,
-        principal: ManagementPrincipal,
+        settings: SettingsDep,
     ) -> JSONResponse:
-        owner = _resolved_user(principal)
+        owner = _resolved_user(request, settings)
         _require_identity_verification(owner)
         body = await json_body(request)
         values = _validated_create(body)
@@ -66,8 +100,11 @@ def register_oauth_app_routes(router: APIRouter) -> None:
         return JSONResponse({"data": _oauth_app_shape(app)}, status_code=201)
 
     @router.get("/oauth/apps")
-    async def list_oauth_apps(principal: ManagementPrincipal) -> dict[str, Any]:
-        owner = _resolved_user(principal)
+    async def list_oauth_apps(
+        request: Request,
+        settings: SettingsDep,
+    ) -> dict[str, Any]:
+        owner = _resolved_user(request, settings)
         return {
             "data": [
                 _oauth_app_shape(app)
@@ -78,18 +115,20 @@ def register_oauth_app_routes(router: APIRouter) -> None:
     @router.get("/oauth/apps/{app_id}")
     async def get_oauth_app(
         app_id: str,
-        principal: ManagementPrincipal,
+        request: Request,
+        settings: SettingsDep,
     ) -> dict[str, Any]:
-        return {"data": _oauth_app_shape(_owned_app(app_id, principal))}
+        owner = _resolved_user(request, settings)
+        return {"data": _oauth_app_shape(_owned_app(app_id, owner))}
 
     @router.patch("/oauth/apps/{app_id}")
     async def patch_oauth_app(
         app_id: str,
         request: Request,
-        principal: ManagementPrincipal,
+        settings: SettingsDep,
     ) -> dict[str, Any]:
-        app = _owned_app(app_id, principal)
-        owner = _resolved_user(principal)
+        owner = _resolved_user(request, settings)
+        app = _owned_app(app_id, owner)
         _require_identity_verification(owner)
         patch = _validated_patch(await json_body(request))
         updated = STORE.update_oauth_app(app.id, patch=patch)
@@ -98,13 +137,23 @@ def register_oauth_app_routes(router: APIRouter) -> None:
         return {"data": _oauth_app_shape(updated)}
 
 
-def _resolved_user(principal: Principal) -> User:
-    """Bind registry mutations to the live human behind a console session."""
-    if principal.api_key is None and principal.user is not None:
-        return principal.user
-    raise api_error(
+def _resolved_user(request: Request, settings: Settings) -> User:
+    """Bind every registry operation to an active browser session cookie."""
+    try:
+        context = require_console_context(request, settings)
+    except HTTPException as exc:
+        if exc.status_code != 302:
+            raise
+        raise _console_session_required() from exc
+    if not context.can_manage:
+        raise _console_session_required()
+    return context.user
+
+
+def _console_session_required() -> HTTPException:
+    return api_error(
         403,
-        "OAuth app management requires a signed-in console session",
+        "OAuth app management requires a signed-in console session cookie",
         ErrorType.FORBIDDEN,
     )
 
@@ -117,10 +166,16 @@ def _require_identity_verification(user: User) -> None:
             "complete the Veriff identity verification flow first.",
             ErrorType.VERIFICATION_REQUIRED,
         )
+    if not (user.identity_verified_name or "").strip():
+        raise api_error(
+            403,
+            "Your verified legal name is missing; re-run identity verification "
+            "before registering or updating an OAuth app.",
+            ErrorType.VERIFICATION_REQUIRED,
+        )
 
 
-def _owned_app(app_id: str, principal: Principal) -> OAuthApp:
-    owner = _resolved_user(principal)
+def _owned_app(app_id: str, owner: User) -> OAuthApp:
     app = STORE.get_oauth_app(app_id)
     if app is None or app.owner_user_id != owner.id:
         raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
@@ -132,9 +187,7 @@ def _validated_create(body: dict[str, Any]) -> dict[str, Any]:
     if unknown:
         raise api_error(400, "Unknown OAuth app field", ErrorType.BAD_REQUEST)
     app_id = body.get("id")
-    if isinstance(app_id, str) and _normalized_app_identity(
-        app_id
-    ) in _normalized_protected_terms(OAUTH_APP_RESERVED_IDS):
+    if isinstance(app_id, str) and _is_reserved_app_id(app_id):
         raise api_error(400, "id is reserved", ErrorType.BAD_REQUEST)
     if not isinstance(app_id, str) or not OAUTH_APP_ID_PATTERN.fullmatch(app_id):
         raise api_error(
@@ -191,14 +244,32 @@ def _validated_name(raw: Any) -> str:
 
 
 def _normalized_app_identity(value: str) -> str:
-    """Normalize separators, compatibility forms, case, and known lookalikes."""
-    normalized = unicodedata.normalize("NFKC", value).casefold()
-    collapsed = " ".join(normalized.split()).translate(_OAUTH_APP_CONFUSABLES)
-    return "".join(character for character in collapsed if character.isalnum())
+    """Fold accents, case, separators, and curated cross-script lookalikes."""
+    decomposed = unicodedata.normalize("NFKD", value)
+    without_marks = "".join(
+        character for character in decomposed if not unicodedata.combining(character)
+    )
+    confusable_folded = "".join(
+        OAUTH_APP_CONFUSABLES.get(character, character)
+        for character in without_marks.casefold()
+    )
+    return "".join(character for character in confusable_folded if character.isalnum())
 
 
 def _normalized_protected_terms(terms: frozenset[str]) -> frozenset[str]:
     return frozenset(_normalized_app_identity(term) for term in terms)
+
+
+def _is_reserved_app_id(app_id: str) -> bool:
+    # Valid slugs are ASCII lowercase. Exact compact normalization additionally
+    # keeps prior homoglyph/separator spellings on the reserved side of errors.
+    normalized = _normalized_app_identity(app_id)
+    return any(
+        app_id == term
+        or app_id.startswith(f"{term}-")
+        or normalized == _normalized_app_identity(term)
+        for term in OAUTH_APP_RESERVED_IDS
+    )
 
 
 def validate_oauth_app_name(name: str) -> None:

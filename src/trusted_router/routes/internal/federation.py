@@ -145,12 +145,14 @@ def register(router: APIRouter) -> None:
             raise api_error(404, "Unknown API key", ErrorType.NOT_FOUND)
 
         app_id = getattr(api_key, "app_id", "") or ""
+        app_suspended = False
         if app_id:
             app = STORE.get_oauth_app(app_id)
-            if app is None or app.suspended:
+            if app is None:
                 # Match the unknown/scoped-key fail-closed wire shape so a peer
-                # cannot distinguish or cache a suspended app key as valid.
+                # cannot distinguish or cache an orphaned app key as valid.
                 raise api_error(404, "Unknown API key", ErrorType.NOT_FOUND)
+            app_suspended = app.suspended
 
         if getattr(api_key, "management", False):
             raise api_error(
@@ -193,9 +195,10 @@ def register(router: APIRouter) -> None:
             or getattr(api_key, "created_at", None),
         }
         if app_id:
-            # Attribution is not authorization. Unlike scopes, app_id is safe
-            # without a feature declaration: old peers drop it harmlessly.
+            # Attribution and its restrictive suspension bit travel together.
+            # Old peers drop both harmlessly; legacy records remain byte-identical.
             record["app_id"] = app_id
+            record["app_suspended"] = app_suspended
         return {"data": record}
 
     @router.post("/internal/federation/apply-usage")

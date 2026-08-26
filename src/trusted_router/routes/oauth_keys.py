@@ -11,7 +11,12 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import ValidationError
 
-from trusted_router.auth import ManagementPrincipal, SettingsDep, principal_from_request
+from trusted_router.auth import (
+    ManagementPrincipal,
+    Principal,
+    SettingsDep,
+    principal_from_request,
+)
 from trusted_router.config import Settings
 from trusted_router.domains import request_control_origin
 from trusted_router.errors import api_error, assert_workspace_billing_active
@@ -153,6 +158,7 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> JSONResponse:
         params = await _oauth_params_from_json(request)
+        _require_programmatic_app_ownership(params, principal)
         raw_code, code = _create_code(params, principal, settings)
         return JSONResponse(
             {
@@ -288,6 +294,31 @@ def _registered_oauth_app(params: dict[str, Any]) -> OAuthApp | None:
             ErrorType.BAD_REQUEST,
         )
     return app
+
+
+def _require_programmatic_app_ownership(
+    params: dict[str, Any], principal: Principal
+) -> None:
+    """Prevent management programs from forging another app's attribution."""
+    client_id = _optional_str(params.get("client_id"))
+    if client_id is None:
+        return
+    app = STORE.get_oauth_app(client_id)
+    actor_user_id = (
+        principal.user.id
+        if principal.user is not None
+        else (
+            principal.api_key.creator_user_id
+            if principal.api_key is not None
+            else None
+        )
+    )
+    if app is None or actor_user_id != app.owner_user_id:
+        raise api_error(
+            403,
+            "Only the OAuth app owner can mint a code with this client_id",
+            ErrorType.FORBIDDEN,
+        )
 
 
 def _validate_callback_url(callback_url: str) -> str:

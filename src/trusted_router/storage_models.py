@@ -198,6 +198,9 @@ class ApiKey:
     # Registered OAuth app attribution. Empty keeps every legacy key's shape
     # and behavior unchanged.
     app_id: str = ""
+    # Home-plane suspension state imported with a federated registered-app
+    # key. Local keys always consult their authoritative local OAuthApp row.
+    federated_app_suspended: bool = False
     disabled: bool = False
     management: bool = False
     limit_microdollars: int | None = None
@@ -1800,6 +1803,7 @@ def federated_api_key_from_record(record: dict[str, Any]) -> ApiKey:
         creator_user_id=None,
         scopes=list(record.get("scopes") or []),
         app_id=str(record.get("app_id") or ""),
+        federated_app_suspended=bool(record.get("app_suspended", False)),
         disabled=bool(record.get("disabled", False)),
         management=False,  # never federated; the home plane refuses to serve them
         limit_microdollars=record.get("limit_microdollars"),
