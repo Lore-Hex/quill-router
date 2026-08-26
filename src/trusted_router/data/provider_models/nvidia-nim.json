@@ -2,62 +2,143 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-08-25T18:42:44Z",
-  "model_count": 95,
+  "generated_at": "2026-08-24T16:15:31Z",
+  "model_count": 118,
   "models": [
     {
       "id": "01-ai/yi-large",
       "upstream_id": "01-ai/yi-large",
       "display_name": "01-ai/yi-large",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "adept/fuyu-8b",
       "upstream_id": "adept/fuyu-8b",
       "display_name": "adept/fuyu-8b",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "ai21labs/jamba-1.5-large-instruct",
       "upstream_id": "ai21labs/jamba-1.5-large-instruct",
       "display_name": "ai21labs/jamba-1.5-large-instruct",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "aisingapore/sea-lion-7b-instruct",
       "upstream_id": "aisingapore/sea-lion-7b-instruct",
       "display_name": "aisingapore/sea-lion-7b-instruct",
+      "model_type": "chat",
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "id": "baai/bge-m3",
+      "upstream_id": "baai/bge-m3",
+      "display_name": "baai/bge-m3",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "bigcode/starcoder2-15b",
       "upstream_id": "bigcode/starcoder2-15b",
       "display_name": "bigcode/starcoder2-15b",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "databricks/dbrx-instruct",
       "upstream_id": "databricks/dbrx-instruct",
       "display_name": "databricks/dbrx-instruct",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "deepseek-ai/deepseek-coder-6.7b-instruct",
@@ -65,8 +146,9 @@
       "display_name": "deepseek-ai/deepseek-coder-6.7b-instruct",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "delisted-upstream",
+      "status": 1,
+      "missing_since": "2026-08-24"
     },
     {
       "id": "deepseek-ai/deepseek-v4-flash-0731",
@@ -74,26 +156,49 @@
       "display_name": "deepseek-ai/deepseek-v4-flash-0731",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "delisted-upstream",
+      "status": 1,
+      "missing_since": "2026-08-24"
     },
     {
       "id": "google/codegemma-1.1-7b",
       "upstream_id": "google/codegemma-1.1-7b",
       "display_name": "google/codegemma-1.1-7b",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "google/codegemma-7b",
       "upstream_id": "google/codegemma-7b",
       "display_name": "google/codegemma-7b",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "google/deplot",
@@ -101,8 +206,13 @@
       "display_name": "google/deplot",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "google/diffusiongemma-26b-a4b-it",
@@ -110,89 +220,192 @@
       "display_name": "google/diffusiongemma-26b-a4b-it",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "google/gemma-2b",
       "upstream_id": "google/gemma-2b",
       "display_name": "google/gemma-2b",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "google/gemma-3-12b-it",
       "upstream_id": "google/gemma-3-12b-it",
       "display_name": "google/gemma-3-12b-it",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "google/gemma-3-4b-it",
       "upstream_id": "google/gemma-3-4b-it",
       "display_name": "google/gemma-3-4b-it",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "google/gemma-4-31b-it",
       "upstream_id": "google/gemma-4-31b-it",
       "display_name": "google/gemma-4-31b-it",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "model_type": "chat",
+      "routable": true,
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "google/recurrentgemma-2b",
       "upstream_id": "google/recurrentgemma-2b",
       "display_name": "google/recurrentgemma-2b",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "ibm/granite-3.0-3b-a800m-instruct",
       "upstream_id": "ibm/granite-3.0-3b-a800m-instruct",
       "display_name": "ibm/granite-3.0-3b-a800m-instruct",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "ibm/granite-3.0-8b-instruct",
       "upstream_id": "ibm/granite-3.0-8b-instruct",
       "display_name": "ibm/granite-3.0-8b-instruct",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "ibm/granite-34b-code-instruct",
       "upstream_id": "ibm/granite-34b-code-instruct",
       "display_name": "ibm/granite-34b-code-instruct",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "ibm/granite-8b-code-instruct",
       "upstream_id": "ibm/granite-8b-code-instruct",
       "display_name": "ibm/granite-8b-code-instruct",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "meta/codellama-70b",
@@ -200,8 +413,9 @@
       "display_name": "meta/codellama-70b",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "delisted-upstream",
+      "status": 1,
+      "missing_since": "2026-08-24"
     },
     {
       "id": "meta/llama-3.1-70b-instruct",
@@ -209,8 +423,9 @@
       "display_name": "meta/llama-3.1-70b-instruct",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "delisted-upstream",
+      "status": 1,
+      "missing_since": "2026-08-24"
     },
     {
       "id": "meta/llama-3.1-8b-instruct",
@@ -218,8 +433,9 @@
       "display_name": "meta/llama-3.1-8b-instruct",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "delisted-upstream",
+      "status": 1,
+      "missing_since": "2026-08-24"
     },
     {
       "id": "meta/llama-3.2-11b-vision-instruct",
@@ -227,8 +443,9 @@
       "display_name": "meta/llama-3.2-11b-vision-instruct",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "delisted-upstream",
+      "status": 1,
+      "missing_since": "2026-08-24"
     },
     {
       "id": "meta/llama-3.2-1b-instruct",
@@ -236,8 +453,9 @@
       "display_name": "meta/llama-3.2-1b-instruct",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "delisted-upstream",
+      "status": 1,
+      "missing_since": "2026-08-24"
     },
     {
       "id": "meta/llama-3.2-3b-instruct",
@@ -245,8 +463,9 @@
       "display_name": "meta/llama-3.2-3b-instruct",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "delisted-upstream",
+      "status": 1,
+      "missing_since": "2026-08-24"
     },
     {
       "id": "meta/llama-3.2-90b-vision-instruct",
@@ -254,8 +473,9 @@
       "display_name": "meta/llama-3.2-90b-vision-instruct",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "delisted-upstream",
+      "status": 1,
+      "missing_since": "2026-08-24"
     },
     {
       "id": "meta/llama-3.3-70b-instruct",
@@ -263,8 +483,9 @@
       "display_name": "meta/llama-3.3-70b-instruct",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "delisted-upstream",
+      "status": 1,
+      "missing_since": "2026-08-24"
     },
     {
       "id": "meta/llama-guard-4-12b",
@@ -272,8 +493,9 @@
       "display_name": "meta/llama-guard-4-12b",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "delisted-upstream",
+      "status": 1,
+      "missing_since": "2026-08-24"
     },
     {
       "id": "meta/llama2-70b",
@@ -281,8 +503,9 @@
       "display_name": "meta/llama2-70b",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "delisted-upstream",
+      "status": 1,
+      "missing_since": "2026-08-24"
     },
     {
       "id": "meta/muse-glimmer-30b",
@@ -290,35 +513,71 @@
       "display_name": "meta/muse-glimmer-30b",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "delisted-upstream",
+      "status": 1,
+      "missing_since": "2026-08-24"
     },
     {
       "id": "microsoft/kosmos-2",
       "upstream_id": "microsoft/kosmos-2",
       "display_name": "microsoft/kosmos-2",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "microsoft/phi-3-vision-128k-instruct",
       "upstream_id": "microsoft/phi-3-vision-128k-instruct",
       "display_name": "microsoft/phi-3-vision-128k-instruct",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "microsoft/phi-3.5-moe-instruct",
       "upstream_id": "microsoft/phi-3.5-moe-instruct",
       "display_name": "microsoft/phi-3.5-moe-instruct",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "minimaxai/minimax-m3",
@@ -326,80 +585,168 @@
       "display_name": "minimaxai/minimax-m3",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "delisted-upstream",
+      "status": 1,
+      "missing_since": "2026-08-24"
     },
     {
       "id": "mistralai/codestral-22b-instruct-v0.1",
       "upstream_id": "mistralai/codestral-22b-instruct-v0.1",
       "display_name": "mistralai/codestral-22b-instruct-v0.1",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "mistralai/mistral-7b-instruct-v0.3",
       "upstream_id": "mistralai/mistral-7b-instruct-v0.3",
       "display_name": "mistralai/mistral-7b-instruct-v0.3",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "mistralai/mistral-large",
       "upstream_id": "mistralai/mistral-large",
       "display_name": "mistralai/mistral-large",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "mistralai/mistral-large-2-instruct",
       "upstream_id": "mistralai/mistral-large-2-instruct",
       "display_name": "mistralai/mistral-large-2-instruct",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "mistralai/mistral-nemotron",
       "upstream_id": "mistralai/mistral-nemotron",
       "display_name": "mistralai/mistral-nemotron",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "mistralai/mixtral-8x22b-v0.1",
       "upstream_id": "mistralai/mixtral-8x22b-v0.1",
       "display_name": "mistralai/mixtral-8x22b-v0.1",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "moonshotai/kimi-k2.6",
       "upstream_id": "moonshotai/kimi-k2.6",
       "display_name": "moonshotai/kimi-k2.6",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "moonshotai/kimi-k3",
       "upstream_id": "moonshotai/kimi-k3",
       "display_name": "moonshotai/kimi-k3",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "model_type": "chat",
+      "routable": true,
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nv-mistralai/mistral-nemo-12b-instruct",
@@ -407,8 +754,9 @@
       "display_name": "nv-mistralai/mistral-nemo-12b-instruct",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "delisted-upstream",
+      "status": 1,
+      "missing_since": "2026-08-24"
     },
     {
       "id": "nvidia/ai-synthetic-video-detector",
@@ -416,17 +764,33 @@
       "display_name": "nvidia/ai-synthetic-video-detector",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/cosmos-reason2-8b",
       "upstream_id": "nvidia/cosmos-reason2-8b",
       "display_name": "nvidia/cosmos-reason2-8b",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/embed-qa-4",
@@ -434,8 +798,13 @@
       "display_name": "nvidia/embed-qa-4",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/ising-calibration-1.5-31b",
@@ -443,8 +812,13 @@
       "display_name": "nvidia/ising-calibration-1.5-31b",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/llama-3.1-nemoguard-8b-content-safety",
@@ -452,8 +826,13 @@
       "display_name": "nvidia/llama-3.1-nemoguard-8b-content-safety",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "unsupported-chat-endpoint"
     },
     {
       "id": "nvidia/llama-3.1-nemoguard-8b-topic-control",
@@ -461,44 +840,93 @@
       "display_name": "nvidia/llama-3.1-nemoguard-8b-topic-control",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "unsupported-chat-endpoint"
     },
     {
       "id": "nvidia/llama-3.1-nemotron-51b-instruct",
       "upstream_id": "nvidia/llama-3.1-nemotron-51b-instruct",
       "display_name": "nvidia/llama-3.1-nemotron-51b-instruct",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/llama-3.1-nemotron-70b-instruct",
       "upstream_id": "nvidia/llama-3.1-nemotron-70b-instruct",
       "display_name": "nvidia/llama-3.1-nemotron-70b-instruct",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/llama-3.1-nemotron-nano-8b-v1",
       "upstream_id": "nvidia/llama-3.1-nemotron-nano-8b-v1",
       "display_name": "nvidia/llama-3.1-nemotron-nano-8b-v1",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
       "upstream_id": "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
       "display_name": "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "model_type": "chat",
+      "routable": true,
+      "status": 1,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
@@ -506,17 +934,33 @@
       "display_name": "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "unsupported-chat-endpoint"
     },
     {
       "id": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
       "upstream_id": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
       "display_name": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1",
@@ -524,35 +968,85 @@
       "display_name": "nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/llama-3.2-nv-embedqa-1b-v1",
       "upstream_id": "nvidia/llama-3.2-nv-embedqa-1b-v1",
       "display_name": "nvidia/llama-3.2-nv-embedqa-1b-v1",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/llama-3.3-nemotron-super-49b-v1",
       "upstream_id": "nvidia/llama-3.3-nemotron-super-49b-v1",
       "display_name": "nvidia/llama-3.3-nemotron-super-49b-v1",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "model_type": "chat",
+      "routable": true,
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
       "upstream_id": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
       "display_name": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+      "model_type": "chat",
+      "routable": true,
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "id": "nvidia/llama-nemotron-embed-1b-v2",
+      "upstream_id": "nvidia/llama-nemotron-embed-1b-v2",
+      "display_name": "nvidia/llama-nemotron-embed-1b-v2",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/llama-nemotron-embed-vl-1b-v2",
@@ -560,26 +1054,67 @@
       "display_name": "nvidia/llama-nemotron-embed-vl-1b-v2",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/llama3-chatqa-1.5-70b",
       "upstream_id": "nvidia/llama3-chatqa-1.5-70b",
       "display_name": "nvidia/llama3-chatqa-1.5-70b",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/mistral-nemo-minitron-8b-8k-instruct",
       "upstream_id": "nvidia/mistral-nemo-minitron-8b-8k-instruct",
       "display_name": "nvidia/mistral-nemo-minitron-8b-8k-instruct",
+      "model_type": "chat",
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "id": "nvidia/nemoretriever-parse",
+      "upstream_id": "nvidia/nemoretriever-parse",
+      "display_name": "nvidia/nemoretriever-parse",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/nemotron-3-embed-1b",
@@ -587,44 +1122,89 @@
       "display_name": "nvidia/nemotron-3-embed-1b",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/nemotron-3-nano-30b-a3b",
       "upstream_id": "nvidia/nemotron-3-nano-30b-a3b",
       "display_name": "nvidia/nemotron-3-nano-30b-a3b",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "model_type": "chat",
+      "routable": true,
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
       "upstream_id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
       "display_name": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "model_type": "chat",
+      "routable": true,
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/nemotron-3-super-120b-a12b",
       "upstream_id": "nvidia/nemotron-3-super-120b-a12b",
       "display_name": "nvidia/nemotron-3-super-120b-a12b",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "model_type": "chat",
+      "routable": true,
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/nemotron-3-ultra-550b-a55b",
       "upstream_id": "nvidia/nemotron-3-ultra-550b-a55b",
       "display_name": "nvidia/nemotron-3-ultra-550b-a55b",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "model_type": "chat",
+      "routable": true,
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/nemotron-3.5-content-safety",
@@ -632,26 +1212,52 @@
       "display_name": "nvidia/nemotron-3.5-content-safety",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "unsupported-chat-endpoint"
     },
     {
       "id": "nvidia/nemotron-3.5-lightning-30b-a3b",
       "upstream_id": "nvidia/nemotron-3.5-lightning-30b-a3b",
       "display_name": "nvidia/nemotron-3.5-lightning-30b-a3b",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "model_type": "chat",
+      "routable": true,
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/nemotron-4-340b-instruct",
       "upstream_id": "nvidia/nemotron-4-340b-instruct",
       "display_name": "nvidia/nemotron-4-340b-instruct",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/nemotron-4-340b-reward",
@@ -659,35 +1265,72 @@
       "display_name": "nvidia/nemotron-4-340b-reward",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/nemotron-mini-4b-instruct",
       "upstream_id": "nvidia/nemotron-mini-4b-instruct",
       "display_name": "nvidia/nemotron-mini-4b-instruct",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "model_type": "chat",
+      "routable": true,
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/nemotron-nano-12b-v2-vl",
       "upstream_id": "nvidia/nemotron-nano-12b-v2-vl",
       "display_name": "nvidia/nemotron-nano-12b-v2-vl",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "model_type": "chat",
+      "routable": true,
+      "status": 1,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/nemotron-nano-3-30b-a3b",
       "upstream_id": "nvidia/nemotron-nano-3-30b-a3b",
       "display_name": "nvidia/nemotron-nano-3-30b-a3b",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/nemotron-parse",
@@ -695,17 +1338,76 @@
       "display_name": "nvidia/nemotron-parse",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/neva-22b",
       "upstream_id": "nvidia/neva-22b",
       "display_name": "nvidia/neva-22b",
+      "model_type": "chat",
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "id": "nvidia/nv-embed-v1",
+      "upstream_id": "nvidia/nv-embed-v1",
+      "display_name": "nvidia/nv-embed-v1",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "id": "nvidia/nv-embedcode-7b-v1",
+      "upstream_id": "nvidia/nv-embedcode-7b-v1",
+      "display_name": "nvidia/nv-embedcode-7b-v1",
+      "model_type": "discovery",
+      "routable": false,
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "id": "nvidia/nv-embedqa-e5-v5",
+      "upstream_id": "nvidia/nv-embedqa-e5-v5",
+      "display_name": "nvidia/nv-embedqa-e5-v5",
+      "model_type": "discovery",
+      "routable": false,
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/nv-embedqa-mistral-7b-v2",
@@ -713,8 +1415,13 @@
       "display_name": "nvidia/nv-embedqa-mistral-7b-v2",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/nvclip",
@@ -722,8 +1429,13 @@
       "display_name": "nvidia/nvclip",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/nvidia-nemotron-nano-9b-v2",
@@ -731,8 +1443,9 @@
       "display_name": "nvidia/nvidia-nemotron-nano-9b-v2",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "delisted-upstream",
+      "status": 1,
+      "missing_since": "2026-08-24"
     },
     {
       "id": "nvidia/riva-translate-4b-instruct",
@@ -740,8 +1453,13 @@
       "display_name": "nvidia/riva-translate-4b-instruct",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "nvidia/riva-translate-4b-instruct-v1.1",
@@ -749,8 +1467,13 @@
       "display_name": "nvidia/riva-translate-4b-instruct-v1.1",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "unsupported-chat-endpoint"
     },
     {
       "id": "nvidia/riva-translate-4b-instruct-v2",
@@ -758,44 +1481,92 @@
       "display_name": "nvidia/riva-translate-4b-instruct-v2",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "unsupported-chat-endpoint"
     },
     {
       "id": "nvidia/vila",
       "upstream_id": "nvidia/vila",
       "display_name": "nvidia/vila",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "openai/gpt-oss-120b",
       "upstream_id": "openai/gpt-oss-120b",
       "display_name": "openai/gpt-oss-120b",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "openai/gpt-oss-20b",
       "upstream_id": "openai/gpt-oss-20b",
       "display_name": "openai/gpt-oss-20b",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "model_type": "chat",
+      "routable": true,
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "poolside/laguna-xs-2.1",
       "upstream_id": "poolside/laguna-xs-2.1",
       "display_name": "poolside/laguna-xs-2.1",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "model_type": "chat",
+      "routable": true,
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "snowflake/arctic-embed-l",
@@ -803,62 +1574,475 @@
       "display_name": "snowflake/arctic-embed-l",
       "model_type": "discovery",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "unsupported-chat-endpoint",
+      "status": 1,
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "stepfun-ai/step-3.7-flash",
       "upstream_id": "stepfun-ai/step-3.7-flash",
       "display_name": "stepfun-ai/step-3.7-flash",
-      "model_type": "discovery",
-      "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "model_type": "chat",
+      "routable": true,
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "id": "thinkingmachines/inkling",
+      "upstream_id": "thinkingmachines/inkling",
+      "display_name": "thinkingmachines/inkling",
+      "model_type": "chat",
+      "routable": true,
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "writer/palmyra-creative-122b",
       "upstream_id": "writer/palmyra-creative-122b",
       "display_name": "writer/palmyra-creative-122b",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "writer/palmyra-fin-70b-32k",
       "upstream_id": "writer/palmyra-fin-70b-32k",
       "display_name": "writer/palmyra-fin-70b-32k",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "writer/palmyra-med-70b",
       "upstream_id": "writer/palmyra-med-70b",
       "display_name": "writer/palmyra-med-70b",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "writer/palmyra-med-70b-32k",
       "upstream_id": "writer/palmyra-med-70b-32k",
       "display_name": "writer/palmyra-med-70b-32k",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "zyphra/zamba2-7b-instruct",
       "upstream_id": "zyphra/zamba2-7b-instruct",
       "display_name": "zyphra/zamba2-7b-instruct",
-      "model_type": "discovery",
+      "model_type": "chat",
       "routable": false,
-      "routable_reason": "production-entitlement-required",
-      "status": 1
+      "routable_reason": "provider-canary-failed",
+      "status": 1,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "deepseek-ai/deepseek-coder-6.7b-instruct",
+      "title": "deepseek-ai/deepseek-coder-6.7b-instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-coder-6.7b-instruct",
+      "upstream_id": "deepseek-ai/deepseek-coder-6.7b-instruct",
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "deepseek-ai/deepseek-v4-flash-0731",
+      "title": "deepseek-ai/deepseek-v4-flash-0731",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek-ai/deepseek-v4-flash-0731",
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "meta/codellama-70b",
+      "title": "meta/codellama-70b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/codellama-70b",
+      "upstream_id": "meta/codellama-70b",
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "meta/llama-3.1-70b-instruct",
+      "title": "meta/llama-3.1-70b-instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.1-70b-instruct",
+      "upstream_id": "meta/llama-3.1-70b-instruct",
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "meta/llama-3.1-8b-instruct",
+      "title": "meta/llama-3.1-8b-instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.1-8b-instruct",
+      "upstream_id": "meta/llama-3.1-8b-instruct",
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "meta/llama-3.2-11b-vision-instruct",
+      "title": "meta/llama-3.2-11b-vision-instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.2-11b-vision-instruct",
+      "upstream_id": "meta/llama-3.2-11b-vision-instruct",
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "meta/llama-3.2-1b-instruct",
+      "title": "meta/llama-3.2-1b-instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.2-1b-instruct",
+      "upstream_id": "meta/llama-3.2-1b-instruct",
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "meta/llama-3.2-3b-instruct",
+      "title": "meta/llama-3.2-3b-instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.2-3b-instruct",
+      "upstream_id": "meta/llama-3.2-3b-instruct",
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "meta/llama-3.2-90b-vision-instruct",
+      "title": "meta/llama-3.2-90b-vision-instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.2-90b-vision-instruct",
+      "upstream_id": "meta/llama-3.2-90b-vision-instruct",
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "meta/llama-3.3-70b-instruct",
+      "title": "meta/llama-3.3-70b-instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.3-70b-instruct",
+      "upstream_id": "meta/llama-3.3-70b-instruct",
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "meta/llama-guard-4-12b",
+      "title": "meta/llama-guard-4-12b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-guard-4-12b",
+      "upstream_id": "meta/llama-guard-4-12b",
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "meta/llama2-70b",
+      "title": "meta/llama2-70b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama2-70b",
+      "upstream_id": "meta/llama2-70b",
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "meta/muse-glimmer-30b",
+      "title": "meta/muse-glimmer-30b",
+      "model_type": "discovery",
+      "input_modalities": [],
+      "output_modalities": [],
+      "endpoints": [],
+      "status": 1,
+      "id": "meta-llama/muse-glimmer-30b",
+      "upstream_id": "meta/muse-glimmer-30b",
+      "routable": false,
+      "routable_reason": "unsupported-chat-endpoint",
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "minimaxai/minimax-m3",
+      "title": "minimaxai/minimax-m3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m3",
+      "upstream_id": "minimaxai/minimax-m3",
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "nv-mistralai/mistral-nemo-12b-instruct",
+      "title": "nv-mistralai/mistral-nemo-12b-instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/mistral-nemo-12b-instruct",
+      "upstream_id": "nv-mistralai/mistral-nemo-12b-instruct",
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
+    },
+    {
+      "display_name": "nvidia/nvidia-nemotron-nano-9b-v2",
+      "title": "nvidia/nvidia-nemotron-nano-9b-v2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "nvidia/nemotron-nano-9b-v2",
+      "upstream_id": "nvidia/nvidia-nemotron-nano-9b-v2",
+      "routable": true,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000
     }
-  ]
+  ],
+  "price_scale": "microdollars_per_million"
 }

@@ -182,6 +182,7 @@ def probe_openai_chat(
     model: str,
     extra_headers: dict[str, str] | None = None,
     expected_content: str | None = None,
+    require_message: bool = False,
     max_tokens: int = 4,
     max_tokens_field: str = "max_tokens",
     endpoint_path: str = "/chat/completions",
@@ -219,7 +220,7 @@ def probe_openai_chat(
         return False
     if response.status_code != 200:
         return False
-    if expected_content is None:
+    if expected_content is None and not require_message:
         return True
     try:
         payload = response.json()
@@ -234,4 +235,13 @@ def probe_openai_chat(
     if not isinstance(message, dict):
         return False
     content = message.get("content")
-    return isinstance(content, str) and content.strip() == expected_content
+    if expected_content is not None:
+        return isinstance(content, str) and content.strip() == expected_content
+    for field in ("content", "reasoning_content", "reasoning"):
+        value = message.get(field)
+        if isinstance(value, str) and value.strip():
+            return True
+        if isinstance(value, list) and value:
+            return True
+    tool_calls = message.get("tool_calls")
+    return isinstance(tool_calls, list) and bool(tool_calls)
