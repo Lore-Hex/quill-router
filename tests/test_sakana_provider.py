@@ -14,6 +14,7 @@ from trusted_router.catalog import (
     PROVIDERS,
     endpoints_for_model,
 )
+from trusted_router.provider_contracts import provider_model_available_from_gateway_region
 from trusted_router.services.inference_errors import default_provider_secret_ref
 
 SAKANA_PRICING = """
@@ -100,9 +101,8 @@ def test_sakana_pricing_parser_fails_closed_on_layout_drift() -> None:
         )
 
 
-def test_sakana_held_fugu_drift_does_not_expire_namazu(
+def test_sakana_live_fugu_pricing_drift_fails_refresh_closed(
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     drifted = SAKANA_PRICING.replace(
         "Sum of all input tokens used for orchestration.",
@@ -110,10 +110,8 @@ def test_sakana_held_fugu_drift_does_not_expire_namazu(
     )
     monkeypatch.setattr(sakana, "fetch_html", lambda _url: drifted)
 
-    prices = sakana._load_prices()
-
-    assert set(prices) == {"sakana-ai/sakana-namazu-v1.0"}
-    assert "omitted held Fugu pricing" in caplog.text
+    with pytest.raises(RuntimeError, match="orchestration usage contract changed"):
+        sakana._load_prices()
 
 
 def test_sakana_pricing_keeps_namazu_available_after_fugu_retirement() -> None:
@@ -150,23 +148,52 @@ def test_sakana_routes_are_prepaid_only_and_use_the_operator_secret() -> None:
 
     fugu = endpoints_for_model("sakana-ai/fugu-ultra-v1.1")
     namazu = endpoints_for_model("sakana-ai/sakana-namazu-v1.0")
-    assert not any(endpoint.provider == "sakana" for endpoint in fugu)
+    direct_fugu = [endpoint for endpoint in fugu if endpoint.provider == "sakana"]
+    assert len(direct_fugu) == 1
+    assert direct_fugu[0].usage_type == "Credits"
+    assert direct_fugu[0].prompt_price_microdollars_per_million_tokens == 5_000_000
+    assert direct_fugu[0].completion_price_microdollars_per_million_tokens == 30_000_000
+    assert [
+        (
+            tier.max_prompt_tokens,
+            tier.prompt_price_microdollars_per_million_tokens,
+            tier.completion_price_microdollars_per_million_tokens,
+            tier.prompt_cached_price_microdollars_per_million_tokens,
+        )
+        for tier in direct_fugu[0].price_tiers
+    ] == [
+        (272_000, 5_000_000, 30_000_000, 500_000),
+        (None, 10_000_000, 45_000_000, 1_000_000),
+    ]
     assert not any(endpoint.provider == "sakana" for endpoint in namazu)
 
 
 def test_sakana_declares_operator_holds_in_shared_fetcher() -> None:
     assert sakana.CATALOG.spec.operator_hold_reasons == {
-        sakana.SAKANA_FUGU_MODEL_ID: sakana.SAKANA_FUGU_ROUTE_HOLD_REASON,
         sakana.SAKANA_NAMAZU_MODEL_ID: sakana.SAKANA_NAMAZU_ROUTE_HOLD_REASON,
     }
+    # Fugu can consume smaller budgets entirely as private reasoning and return
+    # an empty length-truncated response. Keep its exact-PONG canary above the
+    # live-reproduced 64-token failure mode.
+    assert sakana.CATALOG.spec.canary_max_tokens == 256
+
+
+def test_sakana_fugu_gateway_region_contract_is_fail_closed_for_europe() -> None:
+    assert provider_model_available_from_gateway_region(
+        "sakana",
+        sakana.SAKANA_FUGU_MODEL_ID,
+        "us-central1",
+    )
+    assert not provider_model_available_from_gateway_region(
+        "sakana",
+        sakana.SAKANA_FUGU_MODEL_ID,
+        "europe-west4",
+    )
 
 
 @pytest.mark.parametrize(
     ("model_id", "upstream_id"),
-    [
-        (sakana.SAKANA_FUGU_MODEL_ID, "fugu-ultra-v1.1"),
-        (sakana.SAKANA_NAMAZU_MODEL_ID, "sakana-namazu-v1.0"),
-    ],
+    [(sakana.SAKANA_NAMAZU_MODEL_ID, "sakana-namazu-v1.0")],
 )
 def test_sakana_routes_are_code_held_even_if_a_manifest_route_is_enabled(
     model_id: str,
@@ -200,3 +227,32 @@ def test_sakana_manifest_keeps_region_restricted_namazu_visible_but_dark() -> No
     )
     assert namazu["routable"] is False
     assert namazu["routable_reason"] == sakana.SAKANA_NAMAZU_ROUTE_HOLD_REASON
+
+
+def test_sakana_manifest_publishes_direct_fugu_with_exact_tiered_pricing() -> None:
+    manifest = json.loads(sakana.MANIFEST_PATH.read_text(encoding="utf-8"))
+    fugu = next(
+        row
+        for row in manifest["models"]
+        if row["id"] == sakana.SAKANA_FUGU_MODEL_ID
+    )
+
+    assert fugu["routable"] is True
+    assert "routable_reason" not in fugu
+    assert fugu["input_token_price_per_m"] == 5_000_000
+    assert fugu["output_token_price_per_m"] == 30_000_000
+    assert fugu["cached_input_token_price_per_m"] == 500_000
+    assert fugu["price_tiers"] == [
+        {
+            "max_prompt_tokens": 272_000,
+            "input_token_price_per_m": 5_000_000,
+            "output_token_price_per_m": 30_000_000,
+            "cached_input_token_price_per_m": 500_000,
+        },
+        {
+            "max_prompt_tokens": None,
+            "input_token_price_per_m": 10_000_000,
+            "output_token_price_per_m": 45_000_000,
+            "cached_input_token_price_per_m": 1_000_000,
+        },
+    ]
