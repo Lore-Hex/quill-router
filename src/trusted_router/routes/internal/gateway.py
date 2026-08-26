@@ -351,6 +351,7 @@ def _authorize_gateway_sync(
     if partner_mode is not None:
         _force_partner_credit_routes(body_dict)
     native_retention_allowed = _native_batch_request_allows_retention(body_dict, settings)
+    route_preferences = provider_route_preferences(body_dict)
     # Embedding-only models can't go through the chat resolver (it
     # rejects supports_chat=False). Route them to the embeddings
     # resolver so the attested enclave can authorize + bill an
@@ -382,7 +383,11 @@ def _authorize_gateway_sync(
             )
         endpoint_candidates = [_user_model_gateway_candidate(user_model)]
     elif is_video_request:
-        endpoint_candidates = video_route_endpoint_candidates(body_dict, settings)
+        endpoint_candidates = video_route_endpoint_candidates(
+            body_dict,
+            settings,
+            defer_no_fallback_selection=True,
+        )
     elif is_image_request:
         if custom_model is not None:
             raise api_error(
@@ -390,13 +395,25 @@ def _authorize_gateway_sync(
                 "Custom models do not support image generation",
                 ErrorType.MODEL_NOT_SUPPORTED,
             )
-        endpoint_candidates = image_route_endpoint_candidates(body_dict, settings)
+        endpoint_candidates = image_route_endpoint_candidates(
+            body_dict,
+            settings,
+            defer_no_fallback_selection=True,
+        )
     elif is_embeddings_request:
-        endpoint_candidates = embeddings_route_endpoint_candidates(body_dict, settings)
+        endpoint_candidates = embeddings_route_endpoint_candidates(
+            body_dict,
+            settings,
+            defer_no_fallback_selection=True,
+        )
         if not endpoint_candidates:
             raise api_error(400, "Model does not support embeddings", ErrorType.MODEL_NOT_SUPPORTED)
     else:
-        endpoint_candidates = chat_route_endpoint_candidates(body_dict, settings)
+        endpoint_candidates = chat_route_endpoint_candidates(
+            body_dict,
+            settings,
+            defer_no_fallback_selection=True,
+        )
         if not endpoint_candidates:
             raise api_error(
                 400, "Model does not support chat completions", ErrorType.MODEL_NOT_SUPPORTED
@@ -436,6 +453,12 @@ def _authorize_gateway_sync(
             for candidate_model, candidate_endpoint in endpoint_candidates
             if UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
         ]
+    # ``allow_fallbacks=false`` removes alternate models in the resolver, but
+    # provider selection must happen after regional, workspace/BYOK, and
+    # service-tier eligibility. Truncating the raw catalog first can pin an
+    # unusable endpoint and reject a model another eligible provider serves.
+    if not route_preferences.allow_fallbacks:
+        endpoint_candidates = endpoint_candidates[:1]
     if not endpoint_candidates:
         raise api_error(
             400,

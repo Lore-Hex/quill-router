@@ -6,6 +6,7 @@ from trusted_router.catalog import MODELS
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.providers import ProviderClient, ProviderError, ProviderResult
+from trusted_router.routing import chat_route_endpoint_candidates
 from trusted_router.routing_candidates import FAST_MODEL_ORDER, auto_candidate_models
 from trusted_router.storage import STORE
 
@@ -399,6 +400,63 @@ def test_gateway_authorize_top_level_no_fallbacks_ignores_stale_alternatives() -
         "openai/gpt-oss-20b"
     }
     assert len(data["route_candidates"]) == 1
+
+
+def test_gateway_no_fallbacks_selects_an_eligible_provider_for_exact_model() -> None:
+    """Provider eligibility must run before pinning one exact-model endpoint."""
+    settings = Settings(environment="test")
+    raw_candidates = chat_route_endpoint_candidates(
+        {
+            "model": "openai/gpt-oss-20b",
+            "provider": {"usage": "byok"},
+        },
+        settings,
+    )
+    first_provider = raw_candidates[0][1].provider
+    eligible_provider = next(
+        endpoint.provider
+        for _model, endpoint in raw_candidates[1:]
+        if endpoint.provider != first_provider
+    )
+
+    app = create_app(settings)
+    local_client = TestClient(app)
+    created = local_client.post(
+        "/v1/keys",
+        headers={"x-trustedrouter-user": "exact-model@example.com"},
+        json={"name": "exact-model"},
+    ).json()
+    configured = local_client.put(
+        f"/v1/byok/providers/{eligible_provider}",
+        headers={"x-trustedrouter-user": "exact-model@example.com"},
+        json={"secret_ref": f"env://{eligible_provider.upper()}_API_KEY"},
+    )
+    assert configured.status_code == 201, configured.text
+
+    authorize = local_client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": created["data"]["hash"],
+            "model": "openai/gpt-oss-20b",
+            "models": ["google/gemini-2.0-flash-lite"],
+            "allow_fallbacks": False,
+            "provider": {"usage": "byok"},
+            "estimated_input_tokens": 10,
+            "max_output_tokens": 4,
+        },
+    )
+
+    assert authorize.status_code == 200, authorize.text
+    data = authorize.json()["data"]
+    assert data["requested_model"] == "openai/gpt-oss-20b"
+    assert data["model"] == "openai/gpt-oss-20b"
+    assert data["provider"] == eligible_provider
+    assert [candidate["model"] for candidate in data["route_candidates"]] == [
+        "openai/gpt-oss-20b"
+    ]
+    assert [candidate["provider"] for candidate in data["route_candidates"]] == [
+        eligible_provider
+    ]
 
 
 def test_gateway_authorize_expands_fast_router_pool() -> None:
