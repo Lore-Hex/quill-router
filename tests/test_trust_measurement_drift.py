@@ -17,6 +17,8 @@ THE LAW
         regions[] array while naming more than one accepted hostdata value —
         cannot certify its own coverage and is a gap, not a pass;
       * under --strict, a plane that publishes nothing is a failure;
+      * AWS user_data is exactly 96 or 128 bytes, and accepting the future
+        receipt-key commitment does not move the existing three 32-byte fields;
       * the summary states the planes and endpoint count it is based on, so a
         success sentence can never outrun its own coverage again.
 
@@ -110,6 +112,9 @@ SCOPE LIMIT — WHAT THIS DOES NOT ESTABLISH
       and the shape of what the route serves; they are not evidence about what
       any deployed control plane publishes today, and no assertion in this file
       should be read as one.
+    * Accepting 128-byte AWS user_data establishes only verifier tolerance for
+      its final receipt-key commitment. Nothing here verifies that commitment
+      or proves possession of the corresponding receipt key.
     * A record that names one region, one issuer, and TWO accepted hostdata
       values is accepted as covered. That shape is a one-region plane mid-roll
       and a two-region plane whose second region was never published, and the
@@ -190,21 +195,24 @@ def azure_token(hostdata: str, issuer: str) -> bytes:
 
 
 def aws_document(
-    *, pcr0: str = AWS_PCR0, module_id: str = AWS_MODULE_A, cert_der: bytes = AWS_CERT_DER
+    *,
+    pcr0: str = AWS_PCR0,
+    module_id: str = AWS_MODULE_A,
+    cert_der: bytes = AWS_CERT_DER,
+    user_data: bytes | None = None,
 ) -> bytes:
     """The COSE_Sign1 shape the Nitro Security Module emits.
 
     user_data is 96 bytes with the layout measured on the live enclave:
-    [0:32] SHA-256 of the served certificate DER, [32:64] a build-invariant
-    constant (same value across nonces and connections; not interpreted here),
+    [0:32] SHA-256 of the served certificate DER, [32:64] the device hash,
     [64:96] the TLS exporter channel binding, which varies per connection.
     """
-    user_data = hashlib.sha256(cert_der).digest() + bytes(32) + b"\xe1" * 32
+    default_user_data = hashlib.sha256(cert_der).digest() + bytes(32) + b"\xe1" * 32
     payload = {
         "module_id": module_id,
         "digest": "SHA384",
         "pcrs": {0: bytes.fromhex(pcr0)},
-        "user_data": user_data,
+        "user_data": default_user_data if user_data is None else user_data,
     }
     return cbor2.dumps([b"\xa1\x01\x38\x22", {}, cbor2.dumps(payload), b"sig" * 32])
 
@@ -643,6 +651,43 @@ def test_aws_document_must_bind_the_certificate_this_connection_was_served() -> 
 
     assert not result.ok
     assert "user_data[0:32]" in result.detail
+
+
+def test_aws_accepts_128_byte_user_data_without_moving_the_exporter() -> None:
+    """The future receipt commitment extends, rather than rearranges, the layout."""
+    exporter = bytes(range(32))
+    receipt_key_fp = b"\xf4" * 32
+    user_data = (
+        hashlib.sha256(AWS_CERT_DER).digest() + b"\xd2" * 32 + exporter + receipt_key_fp
+    )
+
+    assert user_data[64:96] == exporter
+    transport = whole_fleet(aws_live=aws_document(user_data=user_data))
+    result = results_by_plane(transport)["aws"]
+
+    assert result.ok
+
+
+@pytest.mark.parametrize("length", [127, 129])
+def test_aws_rejects_user_data_adjacent_to_the_allowed_lengths(length: int) -> None:
+    """Tolerance is for the specified receipt layout, not arbitrary trailing bytes."""
+    valid = hashlib.sha256(AWS_CERT_DER).digest() + bytes(64) + b"\xf4" * 32
+    user_data = valid[:length].ljust(length, b"\x00")
+    transport = whole_fleet(aws_live=aws_document(user_data=user_data))
+    result = results_by_plane(transport)["aws"]
+
+    assert not result.ok
+    assert f"user_data is {length} bytes" in result.detail
+
+
+def test_aws_still_rejects_64_byte_user_data() -> None:
+    """The legacy short shape remains invalid; only 128 bytes are newly accepted."""
+    user_data = hashlib.sha256(AWS_CERT_DER).digest() + bytes(32)
+    transport = whole_fleet(aws_live=aws_document(user_data=user_data))
+    result = results_by_plane(transport)["aws"]
+
+    assert not result.ok
+    assert "user_data is 64 bytes" in result.detail
 
 
 def test_aws_document_binding_nothing_fails_closed() -> None:
