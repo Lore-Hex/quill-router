@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from collections import Counter
+from dataclasses import dataclass
 from typing import Any
 
 from trusted_router.config import Settings
@@ -14,12 +15,56 @@ from trusted_router.services.auto_refill import (
 )
 from trusted_router.services.settle_outbox_drain import spanner_settle_outbox
 from trusted_router.storage import STORE
+from trusted_router.storage_errors import is_transient_store_error
 from trusted_router.synthetic.alerts import ops_alert
 
 logger = logging.getLogger(__name__)
 
 STALE_AFTER_SECONDS = 5 * 60
 RETRY_AFTER_SECONDS = 5 * 60
+TRANSIENT_FAILURE_ALERT_THRESHOLD = 3
+TRANSIENT_FAILURE_REMINDER_INTERVAL = 20
+
+
+@dataclass
+class AutoRefillDrainPass:
+    """Debounce retryable store failures without hiding a sustained outage."""
+
+    consecutive_transient_failures: int = 0
+
+    def run(self, settings: Settings, *, limit: int = 100) -> dict[str, Any] | None:
+        try:
+            result = drain_auto_refill_outbox(settings, limit=limit)
+        except Exception as exc:
+            if not is_transient_store_error(exc):
+                raise
+            self.consecutive_transient_failures += 1
+            failures = self.consecutive_transient_failures
+            if failures == TRANSIENT_FAILURE_ALERT_THRESHOLD or (
+                failures > TRANSIENT_FAILURE_ALERT_THRESHOLD
+                and failures % TRANSIENT_FAILURE_REMINDER_INTERVAL == 0
+            ):
+                logger.exception(
+                    "auto-refill outbox storage unavailable repeatedly "
+                    "consecutive_failures=%d",
+                    failures,
+                )
+            else:
+                logger.warning(
+                    "auto-refill outbox transient storage failure; scheduled retry "
+                    "consecutive_failures=%d error_type=%s",
+                    failures,
+                    type(exc).__name__,
+                )
+            return None
+
+        if self.consecutive_transient_failures:
+            logger.info(
+                "auto-refill outbox recovered after %d transient failures",
+                self.consecutive_transient_failures,
+            )
+            self.consecutive_transient_failures = 0
+        return result
 
 
 def drain_auto_refill_outbox(settings: Settings, *, limit: int = 100) -> dict[str, Any]:

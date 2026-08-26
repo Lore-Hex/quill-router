@@ -258,16 +258,17 @@ def create_app(
             import random as _random
 
             from trusted_router.services.auto_refill_outbox_drain import (
-                drain_auto_refill_outbox,
+                AutoRefillDrainPass,
             )
             from trusted_router.synthetic.fleet import record_heartbeat
 
             async def loop() -> None:
+                drain_pass = AutoRefillDrainPass()
                 await _asyncio.sleep(_random.uniform(5, 30))  # noqa: S311
                 while True:
                     try:
                         await _asyncio.to_thread(
-                            drain_auto_refill_outbox,
+                            drain_pass.run,
                             settings,
                             limit=100,
                         )
