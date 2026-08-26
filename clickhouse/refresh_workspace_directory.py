@@ -1,10 +1,15 @@
-"""Refresh the no-PII ClickHouse workspace directory from Spanner, on demand.
+"""Refresh the no-PII ClickHouse workspace directory from Spanner.
 
-Not a scheduled job, deliberately. Since 2026-08-19 every new activity row
-carries its own ``workspace_id``, so the tenant_id map only matters for the
-closed set of rows written before that change -- a set that cannot grow. Run
-this when a workspace RENAME should be reflected in ``workspace_directory``,
-or to re-freeze the historical map; there is nothing that needs it hourly.
+Scheduled every 30 minutes since 2026-08-26 (tr-clickhouse-workspace-directory
+.timer). An earlier version of this docstring said "not a scheduled job,
+deliberately", reasoning that the tenant_id map only matters for the closed set
+of pre-2026-08-19 rows. That reasoning covered the MAP and forgot the
+DIRECTORY: workspace/domain signup reporting joins new activity to
+``workspace_directory`` for names, so every workspace created after the last
+manual run reports as an unnamed id. It was run by hand on Aug 23 and Aug 24
+and then not again; by Aug 26 the directory was 685 workspaces behind while
+live usage stayed current. A dimension table that only updates when somebody
+remembers it is how that happens, so now the timer remembers.
 
 The projection permits workspace ids and workspace names only; all other
 entity attributes are discarded before a ClickHouse payload is built.

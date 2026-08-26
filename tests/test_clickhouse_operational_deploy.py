@@ -369,21 +369,32 @@ def test_capacity_probe_is_disposable_and_uses_a_conservative_gate() -> None:
     assert "add_shard_now" in script
 
 
-def test_workspace_directory_is_on_demand_not_a_timer() -> None:
-    """The directory refresh is an operator tool, not a scheduled unit.
+def test_workspace_directory_timer_is_installed_and_enabled() -> None:
+    """Reinstated 2026-08-26, and this test used to assert the opposite.
 
-    The hourly timer was removed on 2026-08-19: new activity rows carry
-    workspace_id directly, so the map of tenant_id -> workspace_id only covers
-    the CLOSED set of pre-change rows and never goes stale. A timer would be a
-    standing moving part guarding against a drift that can no longer happen --
-    and it was wired into this deploy script, so removing the units without
-    removing the wiring would break the next deploy at install -m.
+    The hourly timer was removed on 2026-08-19 on the reasoning that new
+    activity rows carry workspace_id directly, so the tenant_id map covers a
+    closed set and cannot drift. That was true of the MAP and false of the
+    DIRECTORY: signup reporting joins new activity to workspace names here, so
+    every workspace created after the last manual run reports as an unnamed id.
+    Between two manual runs (Aug 23 and Aug 24) and Aug 26 the directory fell
+    685 workspaces behind while live usage stayed current.
+
+    Both states of this test pinned the install WIRING, which is the part that
+    breaks deploys when units and installer disagree. Unit content and cadence
+    are pinned in tests/test_workspace_directory_refresh.py.
     """
     deploy = (ROOT / "scripts/deploy/clickhouse_live_ingestion.sh").read_text()
 
-    assert "tr-clickhouse-workspace-directory" not in deploy
-    assert not (ROOT / "clickhouse/tr-clickhouse-workspace-directory.service").exists()
-    assert not (ROOT / "clickhouse/tr-clickhouse-workspace-directory.timer").exists()
+    assert (ROOT / "clickhouse/tr-clickhouse-workspace-directory.service").exists()
+    assert (ROOT / "clickhouse/tr-clickhouse-workspace-directory.timer").exists()
+    for unit in (
+        "tr-clickhouse-workspace-directory.service",
+        "tr-clickhouse-workspace-directory.timer",
+    ):
+        assert f"/opt/tr-clickhouse/clickhouse/{unit}" in deploy
+        assert f"/etc/systemd/system/{unit}" in deploy
+    assert "systemctl enable --now tr-clickhouse-workspace-directory.timer" in deploy
     # The schema applies stay: the directory remains queryable, and new rows
     # need the workspace_id column before the drain ships.
     assert "010_workspace_directory.sql" in deploy

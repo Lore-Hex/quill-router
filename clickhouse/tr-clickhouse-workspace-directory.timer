@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh the ClickHouse workspace directory every 30 minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
