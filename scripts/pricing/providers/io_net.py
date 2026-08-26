@@ -88,6 +88,7 @@ CATALOG = DirectOpenAIProvider(
             "deepseek/deepseek-v4-flash-0731",
             "moonshotai/kimi-k3",
             "z-ai/glm-5.3",
+            "z-ai/glm-5.3-flash",
         ),
         normalize_rows=_normalize_rows,
     ),

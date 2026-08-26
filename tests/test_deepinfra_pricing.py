@@ -16,7 +16,7 @@ def test_deepinfra_llama_31_70b_deprecation_aliases_to_canonical_model() -> None
     )
 
 
-def test_deepinfra_fetch_discovers_glm_52(monkeypatch) -> None:  # noqa: ANN001
+def test_deepinfra_fetch_discovers_current_glm_models(monkeypatch) -> None:  # noqa: ANN001
     payload = {
         "data": [
             {
@@ -28,7 +28,18 @@ def test_deepinfra_fetch_discovers_glm_52(monkeypatch) -> None:  # noqa: ANN001
                         "cache_read_tokens": 0.2,
                     }
                 },
-            }
+            },
+            {
+                "id": "zai-org/GLM-5.3-Flash",
+                "metadata": {
+                    "context_length": 1_048_576,
+                    "max_tokens": 1_048_576,
+                    "pricing": {
+                        "input_tokens": 0.15,
+                        "output_tokens": 0.50,
+                    },
+                },
+            },
         ]
     }
 
@@ -60,3 +71,15 @@ def test_deepinfra_fetch_discovers_glm_52(monkeypatch) -> None:  # noqa: ANN001
     assert price.prompt_micro_per_m == 1_200_000
     assert price.completion_micro_per_m == 4_200_000
     assert deepinfra.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "zai-org/GLM-5.2"
+    flash = result.prices["z-ai/glm-5.3-flash"]
+    assert flash.prompt_micro_per_m == 150_000
+    assert flash.completion_micro_per_m == 500_000
+    assert (
+        deepinfra._DISCOVERED_MANIFEST_ROWS["z-ai/glm-5.3-flash"][
+            "max_output_tokens"
+        ]
+        == 131_072
+    )
+    assert deepinfra.UPSTREAM_ID_MAP["z-ai/glm-5.3-flash"] == (
+        "zai-org/GLM-5.3-Flash"
+    )

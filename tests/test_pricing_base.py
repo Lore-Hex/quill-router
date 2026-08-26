@@ -77,6 +77,31 @@ def test_tombstone_reconciliation_preserves_operator_hold_across_relist() -> Non
     assert "missing_since" not in relisted
 
 
+def test_tombstone_reconciliation_preserves_new_unpriced_operator_hold() -> None:
+    held = {
+        "id": "provider/free-trial",
+        "routable": False,
+        "routable_reason": "zero-price-unbillable",
+        "unresolved_since": "2026-08-25",
+    }
+
+    result = reconcile_manifest_tombstones(
+        [],
+        {"provider/free-trial": held},
+        priced_ids=set(),
+        source="api",
+        missing_date="2026-08-26",
+    )
+
+    assert result == [
+        {
+            "id": "provider/free-trial",
+            "routable": False,
+            "routable_reason": "zero-price-unbillable",
+        }
+    ]
+
+
 def test_authenticated_provider_headers_disable_redirects_by_default() -> None:
     assert _has_sensitive_headers({"Authorization": "Bearer secret"}) is True
     assert _has_sensitive_headers({"x-api-key": "secret"}) is True
