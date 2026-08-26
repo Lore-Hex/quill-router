@@ -133,12 +133,15 @@ WHAT THIS DOES NOT ESTABLISH
       "every enclave we happened to reach matched", nothing more. Enumerating
       the fleet needs per-NLB pinning (see trusted_router.synthetic.probes and
       TR_SYNTHETIC_GATEWAY_REGION_TARGETS), which is a different tool's job.
-    * The AWS certificate binding checked here is user_data[0:32] only. user_data
-      is 96 bytes: [0:32] is SHA-256 of the served certificate DER (verified on
-      6/6 samples when this was written, 8/8 on re-measurement), [32:64] is a
-      constant this script does not interpret, and [64:96] is the TLS exporter
-      channel binding, which cannot be checked from here because CPython's ssl
-      module exposes no keying-material export. The payload's public_key/SPKI
+    * The AWS certificate binding checked here is user_data[0:32] only. The
+      first 96 bytes are unchanged: [0:32] is SHA-256 of the served certificate
+      DER (verified on 6/6 samples when this was written, 8/8 on
+      re-measurement), [32:64] is the device hash this script does not
+      interpret, and [64:96] is the TLS exporter channel binding, which cannot
+      be checked from here because CPython's ssl module exposes no
+      keying-material export.
+      A 128-byte payload additionally carries a receipt-key commitment, which
+      this script tolerates but does not verify. The payload's public_key/SPKI
       binding is likewise not checked here; probes.py::_aws_cert_binding_ok
       checks both and is the reference for that.
     * Matching the accepted SET is not proof the primary is serving. Both are
@@ -218,10 +221,11 @@ NOT_CONFIGURED = "not-configured"
 # up as more than one module id, few enough that the whole run stays under a
 # CI step's patience. It buys a lower bound, not coverage — see the scope limit.
 DEFAULT_AWS_SAMPLES = 5
-# The enclave's user_data layout, in bytes. Named so a future reader does not
-# have to rediscover that the certificate hash is 32 bytes and not 64, which is
-# what trust.py's published `certificate_binding` string used to say.
-AWS_USER_DATA_LENGTH = 96
+# The enclave's user_data layout, in bytes. The first 96 bytes remain cert fp
+# [0:32], device hash [32:64], and exporter [64:96]. Bytes [96:128], when
+# present, are the receipt-key commitment for the signed-inference-receipts
+# project — tolerated, not verified, by this script.
+AWS_USER_DATA_LENGTHS = frozenset({96, 128})
 AWS_USER_DATA_CERT_SHA256 = slice(0, 32)
 
 
@@ -582,8 +586,8 @@ def _aws_binding_problem(document: dict[Any, Any], peer_certificate_der: bytes |
     user_data = document.get("user_data")
     if not isinstance(user_data, bytes):
         return "attestation carries no user_data, so it binds no certificate"
-    if len(user_data) != AWS_USER_DATA_LENGTH:
-        return f"user_data is {len(user_data)} bytes, want {AWS_USER_DATA_LENGTH}"
+    if len(user_data) not in AWS_USER_DATA_LENGTHS:
+        return f"user_data is {len(user_data)} bytes, want one of {sorted(AWS_USER_DATA_LENGTHS)}"
     expected = hashlib.sha256(peer_certificate_der).digest()
     if user_data[AWS_USER_DATA_CERT_SHA256] != expected:
         return "user_data[0:32] is not SHA-256 of the certificate served on this connection"
