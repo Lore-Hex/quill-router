@@ -91,6 +91,23 @@ response. The ladder is ordered; apps can gate on `>=`.
   model is deliberately one layer, and a verified individual is both
   the stronger signal and the simpler system.
 
+- **Reserved SLUGS and protected NAMES are deliberately different sets
+  (settled 2026-08-26, after a review round proposed merging them).**
+  Slugs are identifiers users see in URLs and consent, so the short
+  generic ones (`tr`, `api`, `console`, `admin`, `www`) are reserved
+  exactly and as `term-` prefixes — nobody can hold `api` or
+  `tr-tools`. Display NAMES match only long distinctive brand strings
+  (`trustedrouter`, `veriff`, `lorehex`, `quill`). Adding the short
+  slugs to NAME matching was proposed and REJECTED: it rejects ordinary
+  legitimate apps ("API Toolkit", "Admin Console", "Metro Labs" — whose
+  normalized form contains `tr`), which is the exact over-inclusive bug
+  an earlier round flagged. Generic English words are not a brand, and
+  the real impersonation defense is the disclosure line: every consent
+  screen names the app id and the owner's Veriff-verified legal name,
+  so "TR Cloud, by Jane Q. Smith (identity-verified)" cannot read as
+  first-party. Term matching is a cheap heuristic layered on top, not
+  the boundary.
+
 - **Impersonation: block protected terms AND show the owner.** App
   `name` is rejected if, after casefold + Unicode NFKC + whitespace and
   separator stripping, it contains any protected term
