@@ -42,6 +42,7 @@ from trusted_router.catalog import (
     MODEL_ENDPOINTS,
     PROVIDERS,
     endpoints_for_model,
+    provider_to_openrouter_shape,
 )
 from trusted_router.catalog_ingest import (
     _EXPIRED_PROVIDER_MANIFEST,
@@ -140,6 +141,11 @@ def test_wave3_manifests_publish_only_canaried_priced_chat_routes() -> None:
                 continue
             assert row["input_token_price_per_m"] > 0
             assert row["output_token_price_per_m"] > 0
+
+
+def test_public_routing_status_requires_a_callable_endpoint() -> None:
+    assert provider_to_openrouter_shape(PROVIDERS["perplexity"])["routing_status"] == "active"
+    assert provider_to_openrouter_shape(PROVIDERS["krea"])["routing_status"] == "blocked"
 
 
 def test_failed_live_canaries_stay_dark() -> None:

@@ -727,7 +727,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
 
 
 def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
-    routing_status = "active" if provider.supports_prepaid or provider.supports_byok else "blocked"
+    routing_status = "active" if provider_is_routable(provider) else "blocked"
     return {
         "id": provider.slug,
         "name": provider.name,
@@ -756,6 +756,13 @@ def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
         "provider_headquarters_country": provider.provider_headquarters_country,
         "provider_us_based": provider.provider_headquarters_country == PROVIDER_JURISDICTION_US,
     }
+
+
+def provider_is_routable(provider: Provider) -> bool:
+    """Return whether the public catalog currently exposes a route for a provider."""
+    if provider.slug in {"trustedrouter", "meta"}:
+        return provider.supports_prepaid or provider.supports_byok
+    return any(endpoint.provider == provider.slug for endpoint in MODEL_ENDPOINTS.values())
 
 
 def providers_for_display() -> tuple[Provider, ...]:
