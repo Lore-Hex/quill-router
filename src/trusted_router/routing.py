@@ -493,6 +493,12 @@ def _routing_for_body(
     if "only" in overrides:
         override_only = frozenset(_provider_filter_list("only", overrides["only"]))
         effective_only = override_only if not prefs.only else prefs.only & override_only
+        if not effective_only:
+            raise api_error(
+                400,
+                "No route candidates match the requested provider filters",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
         prefs = dataclasses.replace(prefs, only=effective_only)
     override_requirements = frozenset(
         int(requirement) for requirement in overrides.get("privacy_requirements", ())
@@ -521,6 +527,23 @@ def _routing_for_body(
                 ErrorType.MODEL_NOT_SUPPORTED,
             )
         prefs = dataclasses.replace(prefs, provider_jurisdiction=jurisdiction)
+    if not prefs.allow_fallbacks and prefs.order:
+        # OpenRouter treats `order` as a preference while fallbacks are enabled,
+        # but disabling fallbacks prevents routing outside that ordered set.
+        # Keep an explicit `only` restriction as the ceiling by intersecting it
+        # with `order`; a disjoint request then fails closed in the normal
+        # provider-filter path instead of silently selecting an unlisted host.
+        ordered_providers = frozenset(prefs.order)
+        effective_only = (
+            prefs.only & ordered_providers if prefs.only else ordered_providers
+        )
+        if not effective_only:
+            raise api_error(
+                400,
+                "No route candidates match the requested provider filters",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        prefs = dataclasses.replace(prefs, only=effective_only)
     return ids, prefs
 
 

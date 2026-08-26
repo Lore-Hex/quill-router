@@ -157,6 +157,95 @@ def test_chat_route_candidates_allow_fallbacks_false_returns_only_head() -> None
     assert candidates[0].provider == "mistral"
 
 
+def test_provider_order_is_soft_while_fallbacks_are_enabled() -> None:
+    candidates = chat_route_endpoint_candidates(
+        {
+            "model": "google/gemma-4-31b-it",
+            "provider": {"order": ["moonshot"], "allow_fallbacks": True},
+        },
+        _settings(),
+    )
+
+    assert candidates
+    assert "kimi" not in {endpoint.provider for _model, endpoint in candidates}
+    assert len(candidates) > 1
+
+
+def test_provider_order_with_fallbacks_disabled_never_escapes_ordered_set() -> None:
+    with pytest.raises(HTTPException) as ctx:
+        chat_route_endpoint_candidates(
+            {
+                "model": "google/gemma-4-31b-it",
+                "provider": {"order": ["moonshot"], "allow_fallbacks": False},
+            },
+            _settings(),
+        )
+
+    assert ctx.value.status_code == 400
+    assert "provider filters" in ctx.value.detail["error"]["message"].lower()
+
+
+def test_provider_order_with_fallbacks_disabled_selects_first_available_ordered_route() -> None:
+    candidates = chat_route_endpoint_candidates(
+        {
+            "model": "google/gemma-4-31b-it",
+            "provider": {
+                "order": ["moonshot", "together", "cerebras"],
+                "allow_fallbacks": False,
+            },
+        },
+        _settings(),
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0][1].provider == "together"
+
+
+def test_provider_only_remains_hard_with_fallbacks_enabled() -> None:
+    candidates = chat_route_endpoint_candidates(
+        {
+            "model": "google/gemma-4-31b-it",
+            "provider": {"only": ["tinfoil"], "allow_fallbacks": True},
+        },
+        _settings(),
+    )
+
+    assert candidates
+    assert {endpoint.provider for _model, endpoint in candidates} == {"tinfoil"}
+
+
+def test_disjoint_only_and_no_fallback_order_fail_closed() -> None:
+    with pytest.raises(HTTPException) as ctx:
+        chat_route_endpoint_candidates(
+            {
+                "model": "google/gemma-4-31b-it",
+                "provider": {
+                    "only": ["cerebras"],
+                    "order": ["together"],
+                    "allow_fallbacks": False,
+                },
+            },
+            _settings(),
+        )
+
+    assert ctx.value.status_code == 400
+    assert "provider filters" in ctx.value.detail["error"]["message"].lower()
+
+
+def test_disjoint_alias_and_request_provider_allowlists_fail_closed() -> None:
+    with pytest.raises(HTTPException) as ctx:
+        chat_route_endpoint_candidates(
+            {
+                "model": "trustedrouter/eu",
+                "provider": {"only": ["deepseek"]},
+            },
+            _settings(),
+        )
+
+    assert ctx.value.status_code == 400
+    assert "provider filters" in ctx.value.detail["error"]["message"].lower()
+
+
 @pytest.mark.parametrize(
     "fallback_control",
     [
