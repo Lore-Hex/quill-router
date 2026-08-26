@@ -91,21 +91,28 @@ SECRET_ENVS=(
 )
 # Retired environment bindings remain on Cloud Run until explicitly removed.
 REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")
+
+# Read the metadata inventory once. Probing every optional name with
+# `secrets describe` records an ERROR audit event for each expected missing
+# secret, which obscures real Secret Manager failures and inflates logging
+# volume. The inventory contains names only, never secret values. Failure to
+# list is fatal so an IAM or API outage cannot silently strip bindings.
+OPTIONAL_SECRET_NAMES=""
+if ! OPTIONAL_SECRET_NAMES="$(gc secrets list --format='value(name)')"; then
+  log "cannot list optional secret inventory"
+  exit 1
+fi
+
 add_secret_env_if_exists() {
   local env_name="$1"
   local secret_name="$2"
-  local describe_error=""
-  if describe_error="$(gc secrets describe "$secret_name" 2>&1)"; then
+  if grep -Fxq -- "$secret_name" <<<"$OPTIONAL_SECRET_NAMES"; then
     SECRET_ENVS+=("${env_name}=${secret_name}:latest")
-  elif [[ "$describe_error" == *"NOT_FOUND"* ]] || \
-       [[ "$describe_error" == *"not found"* ]]; then
+  else
     # gcloud --update-secrets preserves old bindings. Explicit removal keeps
     # a deleted optional secret from making an otherwise healthy revision
     # unroutable in regions that still carry the stale environment entry.
     REMOVE_SECRET_ENVS+=("${env_name}")
-  else
-    log "cannot determine whether optional secret ${secret_name} exists"
-    return 1
   fi
 }
 # Carrier credentials for /v1/notify. Optional bindings: if the secrets are
