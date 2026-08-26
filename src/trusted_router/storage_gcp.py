@@ -23,6 +23,7 @@ from trusted_router.operational_analytics import (
     stable_rows_fingerprint,
 )
 from trusted_router.operational_analytics_freshness import (
+    BACKEND_DIRECT,
     BACKEND_SPANNER,
     REASON_NOT_CONFIGURED,
     REASON_UNREACHABLE,
@@ -3775,6 +3776,24 @@ class SpannerBigtableStore:
         outbox = self._operational_analytics_outbox
         if outbox is None:
             return OutboxFreshness.unavailable(BACKEND_SPANNER, REASON_NOT_CONFIGURED)
+        from trusted_router.operational_analytics_direct import (
+            DirectOperationalAnalyticsSink,
+        )
+
+        if isinstance(outbox, DirectOperationalAnalyticsSink):
+            oldest, stats = outbox.freshness_snapshot()
+            seconds_since_last_delivery = (
+                None
+                if stats.last_success_unix <= 0
+                else max(0.0, time.time() - stats.last_success_unix)
+            )
+            return OutboxFreshness(
+                backend=BACKEND_DIRECT,
+                oldest_enqueued_at=oldest,
+                seconds_since_last_delivery=seconds_since_last_delivery,
+                dropped_total=stats.dropped,
+                flush_failures=stats.flush_failures,
+            )
         try:
             oldest = outbox.oldest_enqueued_at(timeout=OUTBOX_FRESHNESS_TIMEOUT_SECONDS)
         except Exception as exc:

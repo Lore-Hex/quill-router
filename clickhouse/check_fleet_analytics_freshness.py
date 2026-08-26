@@ -14,6 +14,13 @@ is ``drain_lag_seconds``: the age of the oldest row still sitting in that
 cloud's outbox.  Rows leave the outbox only after ClickHouse has accepted them,
 so a lag that stops falling is a drain that has stopped delivering.
 
+Direct mode has no durable outbox and cannot use that proof: its bounded buffer
+drops oldest rows, making the retained head look young again. For a direct
+reading this checker additionally requires a recent successful delivery and
+zero cumulative drops/flush failures. The registry may continue to name the
+plane's ``spanner``/``postgres`` system of record while the publisher reports
+the ``direct`` delivery backend, which lets verifier tolerance deploy first.
+
 WHY THE FLEET AND NOT ONE CLOUD
     This started as an AWS-only check, and an AWS-only check would have been
     the outage repeating itself one layer up.  Between 2026-08-02 and
@@ -75,9 +82,12 @@ from trusted_router.operational_analytics_fleet import (
 from trusted_router.operational_analytics_freshness import (
     ANALYTICS_STATUS_KEY,
     AVAILABLE_FIELD,
+    BACKEND_DIRECT,
     BACKEND_FIELD,
     DEFAULT_MAX_DRAIN_LAG_SECONDS,
     DRAIN_LAG_FIELD,
+    DROPPED_TOTAL_FIELD,
+    FLUSH_FAILURES_FIELD,
     GENERATED_AT_FIELD,
     OUTBOX_DEPTH_FIELD,
     PUBLISHABLE_REASONS,
@@ -85,6 +95,7 @@ from trusted_router.operational_analytics_freshness import (
     REASON_NO_DATA,
     REASON_NOT_CONFIGURED,
     REASON_UNREACHABLE,
+    SECONDS_SINCE_LAST_DELIVERY_FIELD,
     publishable_backend,
     publishable_reason,
 )
@@ -93,6 +104,11 @@ from trusted_router.operational_analytics_freshness import (
 #: The AWS-EU control plane; not trustedrouter.com, which is the GCP deployment
 #: and would answer this question about the wrong cloud.
 DEFAULT_STATUS_URL = "https://gchircrcif.eu-west-3.awsapprunner.com/status.json"
+
+#: A direct sink has no durable, unbounded backlog: its buffer drops oldest
+#: rows. Delivery age is therefore its primary liveness signal and must page
+#: much sooner than the durable outbox's one-hour backlog threshold.
+DEFAULT_MAX_DIRECT_DELIVERY_AGE_SECONDS = 600.0
 
 
 def _float(value: Any) -> float | None:
@@ -212,6 +228,7 @@ def evaluate(
     max_drain_lag_seconds: float = DEFAULT_MAX_DRAIN_LAG_SECONDS,
     max_age_seconds: int = 3_600,
     max_outbox_depth: int | None = None,
+    max_direct_delivery_age_seconds: float = DEFAULT_MAX_DIRECT_DELIVERY_AGE_SECONDS,
     expected_backend: str | None = None,
     expects_outbox: bool = True,
 ) -> list[str]:
@@ -270,7 +287,11 @@ def evaluate(
     # mismatches every expected backend and so still fails, loudly, without
     # letting the remote page choose the words.
     backend = publishable_backend(section.get(BACKEND_FIELD))
-    if expected_backend is not None and backend != expected_backend:
+    # ``direct`` is a delivery mechanism, not the plane's system-of-record
+    # backend. Accept it alongside the registry's current spanner/postgres
+    # value so this verifier can ship before any producer changes its value.
+    # Every non-direct mismatch retains the original wrong-plane alarm.
+    if expected_backend is not None and backend not in {expected_backend, BACKEND_DIRECT}:
         problems.append(
             f"answered by {BACKEND_FIELD}={backend!r}, but this cloud runs "
             f"{expected_backend!r}. The registry's status_url is pointed at another "
@@ -302,6 +323,45 @@ def evaluate(
     depth = _int(section.get(OUTBOX_DEPTH_FIELD))
     if max_outbox_depth is not None and depth is not None and depth > max_outbox_depth:
         problems.append(f"outbox holds {depth} undelivered rows (> {max_outbox_depth})")
+
+    if backend == BACKEND_DIRECT:
+        delivery_age = _float(section.get(SECONDS_SINCE_LAST_DELIVERY_FIELD))
+        if delivery_age is not None and delivery_age < 0:
+            problems.append(
+                f"{ANALYTICS_STATUS_KEY}.{SECONDS_SINCE_LAST_DELIVERY_FIELD} is negative"
+            )
+        elif delivery_age is not None and delivery_age > max_direct_delivery_age_seconds:
+            problems.append(
+                f"direct sink has not delivered for {delivery_age:.0f}s "
+                f"(> {max_direct_delivery_age_seconds:.0f}s)"
+            )
+        elif (
+            delivery_age is None
+            and lag is not None
+            and lag > max_direct_delivery_age_seconds
+        ):
+            problems.append(
+                f"direct sink has never delivered and its oldest retained row is "
+                f"{lag:.0f}s old (> {max_direct_delivery_age_seconds:.0f}s)"
+            )
+
+        for field_name, label in (
+            (DROPPED_TOTAL_FIELD, "rows dropped"),
+            (FLUSH_FAILURES_FIELD, "flush failures"),
+        ):
+            counter = _int(section.get(field_name))
+            if counter is None:
+                problems.append(
+                    f"{ANALYTICS_STATUS_KEY}.{field_name} missing or unparseable "
+                    "for direct backend"
+                )
+            elif counter < 0:
+                problems.append(f"{ANALYTICS_STATUS_KEY}.{field_name} is negative")
+            elif counter > 0:
+                problems.append(
+                    f"direct sink reports {label}={counter}; the cumulative counter "
+                    "has grown since this process started"
+                )
 
     return problems
 
@@ -336,6 +396,7 @@ def evaluate_fleet(
     max_drain_lag_seconds: float = DEFAULT_MAX_DRAIN_LAG_SECONDS,
     max_age_seconds: int = 3_600,
     max_outbox_depth: int | None = None,
+    max_direct_delivery_age_seconds: float = DEFAULT_MAX_DIRECT_DELIVERY_AGE_SECONDS,
     minimum_measured: int = 1,
 ) -> FleetResult:
     """Problems and unchecked notes, each prefixed with the cloud it is about.
@@ -418,6 +479,7 @@ def evaluate_fleet(
             max_drain_lag_seconds=max_drain_lag_seconds,
             max_age_seconds=max_age_seconds,
             max_outbox_depth=max_outbox_depth,
+            max_direct_delivery_age_seconds=max_direct_delivery_age_seconds,
             expected_backend=entry.expected_backend,
             expects_outbox=entry.expects_outbox,
         ):
@@ -458,6 +520,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--max-age-seconds", type=int, default=3_600)
     parser.add_argument("--max-outbox-depth", type=int, default=None)
+    parser.add_argument(
+        "--max-direct-delivery-age-seconds",
+        type=float,
+        default=DEFAULT_MAX_DIRECT_DELIVERY_AGE_SECONDS,
+    )
     parser.add_argument("--problems-file", default=None)
     return parser.parse_args(argv)
 
@@ -550,6 +617,7 @@ def main(argv: list[str] | None = None) -> int:
         max_drain_lag_seconds=args.max_drain_lag_seconds,
         max_age_seconds=args.max_age_seconds,
         max_outbox_depth=args.max_outbox_depth,
+        max_direct_delivery_age_seconds=args.max_direct_delivery_age_seconds,
     )
 
     summary = " ".join(f"{cloud}={lags.get(cloud)}" for cloud in sorted(lags)) or "no clouds read"

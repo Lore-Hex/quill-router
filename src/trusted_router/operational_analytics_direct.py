@@ -622,10 +622,32 @@ class DirectOperationalAnalyticsSink:
         samples quietly ceasing to arrive. A delivery path whose failure mode
         is invisible is not an improvement over the one it replaced.
         """
+        oldest, _stats = self.freshness_snapshot()
+        return oldest
+
+    def freshness_snapshot(self) -> tuple[dt.datetime | None, SinkStats]:
+        """Return one lock-consistent delivery-health snapshot.
+
+        The public freshness surface needs the buffer head and cumulative
+        counters from the same instant.  Returning a copy also prevents a
+        caller from observing the mutable ``stats`` object while the flusher
+        changes it underneath serialization.
+        """
         with self._lock:
-            if not self._buffer:
-                return None
-            return min(commit_ts for _table, _row, commit_ts in self._buffer)
+            oldest = (
+                min(commit_ts for _table, _row, commit_ts in self._buffer)
+                if self._buffer
+                else None
+            )
+            stats = SinkStats(
+                published=self.stats.published,
+                inserted=self.stats.inserted,
+                dropped=self.stats.dropped,
+                quarantined=self.stats.quarantined,
+                flush_failures=self.stats.flush_failures,
+                last_success_unix=self.stats.last_success_unix,
+            )
+        return oldest, stats
 
     # -- internals ----------------------------------------------------------
 
@@ -639,9 +661,10 @@ class DirectOperationalAnalyticsSink:
         )
         try:
             events = normalise_operational_event(row)
+            quarantined = False
         except ValueError as exc:
             events = [quarantine_event(row, exc)]
-            self.stats.quarantined += 1
+            quarantined = True
         with self._lock:
             before = len(self._buffer)
             for event in events:
@@ -651,8 +674,11 @@ class DirectOperationalAnalyticsSink:
             overflow = before + len(events) - self._buffer_rows
             if overflow > 0:
                 self.stats.dropped += overflow
+            if quarantined:
+                self.stats.quarantined += 1
             self.stats.published += len(events)
-        if len(self._buffer) >= self._flush_batch:
+            buffered = len(self._buffer)
+        if buffered >= self._flush_batch:
             self._wake.set()
 
     def _run(self) -> None:
@@ -661,18 +687,20 @@ class DirectOperationalAnalyticsSink:
             self._wake.wait(timeout=self._flush_interval)
             self._wake.clear()
             try:
-                flushed = self.flush()
+                self.flush()
             except Exception as exc:
-                self.stats.flush_failures += 1
+                _oldest, stats = self.freshness_snapshot()
+                with self._lock:
+                    buffered = len(self._buffer)
                 # error(), not just exception(): this must be greppable and
                 # must carry the counts, because the failure is otherwise
                 # invisible from outside the process.
                 log.error(
                     "operational_analytics_direct.flush_failed "
                     "buffered=%d dropped=%d failures=%d error=%s: %s",
-                    len(self._buffer),
-                    self.stats.dropped,
-                    self.stats.flush_failures,
+                    buffered,
+                    stats.dropped,
+                    stats.flush_failures,
                     type(exc).__name__,
                     str(exc)[:200],
                 )
@@ -683,8 +711,6 @@ class DirectOperationalAnalyticsSink:
                 failure_delay = min(failure_delay * 2, FAILURE_BACKOFF_CAP_SECONDS)
                 continue
             failure_delay = self._flush_interval
-            if flushed:
-                self.stats.last_success_unix = time.time()
 
     def flush(self) -> int:
         """Send everything buffered, grouped per table. Raises on failure
@@ -724,8 +750,12 @@ class DirectOperationalAnalyticsSink:
                 ]
                 for item in reversed(remaining):
                     self._buffer.appendleft(item)
+                self.stats.flush_failures += 1
             raise
-        self.stats.inserted += sent
+        with self._lock:
+            self.stats.inserted += sent
+            if sent:
+                self.stats.last_success_unix = time.time()
         return sent
 
     def close(self) -> None:
