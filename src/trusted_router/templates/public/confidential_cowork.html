@@ -11,17 +11,6 @@
     <a class="btn" href="mailto:support@trustedrouter.com?subject=Confidential%20Cowork%20enterprise">Enterprise deployment <span aria-hidden="true">→</span></a>
   </div>
   <p class="cc-platform-note">One universal download for Apple silicon and Intel Macs. OpenAI compatible API.</p>
-  <details class="cc-first-launch">
-    <summary>Opening it the first time takes one extra step on macOS</summary>
-    <p>This build is not yet signed with an Apple Developer ID or notarized, so macOS refuses the first launch and reports that it cannot verify the app is free of malware. That message is about the missing Apple signature, not about anything found in the download. Verify the file against the published SHA-256 if you want to confirm what you received.</p>
-    <ol>
-      <li>Open the downloaded <code>.dmg</code> and drag <strong>Confidential Cowork</strong> into Applications.</li>
-      <li>Launch it once from Applications and dismiss the warning.</li>
-      <li>Open <strong>System Settings &rarr; Privacy &amp; Security</strong>, scroll to Security, and choose <strong>Open Anyway</strong> for Confidential Cowork.</li>
-      <li>Launch it again and confirm. macOS remembers the choice.</li>
-    </ol>
-    <p>On macOS 15 and later, Control-clicking <strong>Open</strong> no longer works for an unnotarized app; the Privacy &amp; Security panel is the only route. Computer Use separately needs Screen Recording and Accessibility permission in that same panel.</p>
-  </details>
   <figure class="cc-product-shot">
     <img src="/static/confidential-cowork-desktop.png" alt="Confidential Cowork desktop app showing its native workspace, confidential model route, and Auto safety mode" width="1094" height="768" loading="eager" fetchpriority="high">
     <figcaption>Every LLM request carries the confidential provider policy. The app cannot silently fall back to an ordinary route.</figcaption>
@@ -72,7 +61,7 @@
     <h2 id="start-heading">Self-serve in minutes. Enterprise controls when you need them.</h2>
   </div>
   <ol class="flow-steps cc-flow">
-    <li><span>1</span><strong>Download</strong><p>Install the macOS app and open a local project.</p></li>
+    <li><span>1</span><strong>Download</strong><p>Install the signed macOS app and open a local project.</p></li>
     <li><span>2</span><strong>Sign in</strong><p>Use TrustedRouter OAuth. No custom gateway can replace the confidential boundary.</p></li>
     <li><span>3</span><strong>Choose a region</strong><p>Require United States or European Union processing, then start working.</p></li>
   </ol>
