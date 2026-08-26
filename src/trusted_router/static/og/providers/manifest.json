@@ -476,15 +476,6 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },
-  "openrouter-exclusive": {
-    "card_version": 2,
-    "model_count": 1,
-    "name": "Stealth via OpenRouter",
-    "privacy": "Policy documented",
-    "route_count": 1,
-    "route_mode": "Prepaid",
-    "slug": "openrouter-exclusive"
-  },
   "ovhcloud": {
     "card_version": 2,
     "model_count": 0,

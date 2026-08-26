@@ -80,7 +80,6 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "nscale": ProviderBrand("https://www.nscale.com/"),
     "near-ai": ProviderBrand("https://near.ai/"),
     "openai": ProviderBrand("https://openai.com/"),
-    "openrouter-exclusive": ProviderBrand("https://openrouter.ai/stealth/ox-alpha"),
     "ovhcloud": ProviderBrand("https://www.ovhcloud.com/"),
     "parasail": ProviderBrand("https://www.parasail.io/"),
     "pearl": ProviderBrand("https://pearlresearch.ai/"),
