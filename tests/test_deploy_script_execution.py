@@ -246,6 +246,50 @@ def test_gcp_no_traffic_warm_preprovisions_and_tags_candidate(
     assert "--no-traffic" in deploy
 
 
+def test_rollout_lists_optional_secrets_once_without_missing_secret_probes(
+    harness: DeployScriptHarness,
+) -> None:
+    run = harness.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+
+    inventory_calls = [
+        call
+        for call in run.calls
+        if call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "secrets"]
+        and call[4] == "list"
+    ]
+    assert len(inventory_calls) == 1
+    assert not any(
+        call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "secrets"]
+        and call[4] == "describe"
+        for call in run.calls
+    )
+
+
+def test_rollout_fails_closed_when_optional_secret_inventory_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = "scripts/deploy/rollout.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        replace(fixture, failures=(r"secrets list --format=value\(name\)",)),
+    )
+    isolated = DeployScriptHarness(tmp_path / "secret-inventory-failure")
+
+    run = isolated.run(script)
+
+    assert run.returncode != 0
+    assert "cannot list optional secret inventory" in run.stderr
+    assert not any(
+        call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+        and call[4:6] == ["deploy", "trusted-router"]
+        for call in run.calls
+    )
+
+
 def test_warm_primer_caps_below_a_high_service_minimum(
     harness: DeployScriptHarness,
 ) -> None:

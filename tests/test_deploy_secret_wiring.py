@@ -85,8 +85,10 @@ def test_deploy_removes_only_explicitly_missing_optional_secrets() -> None:
         'REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")' in rollout
     )
     assert "trustedrouter-google-ads-conversion-feed-password" not in rollout
-    assert '[[ "$describe_error" == *"NOT_FOUND"* ]]' in rollout
-    assert "cannot determine whether optional secret" in rollout
+    assert "gc secrets list --format='value(name)'" in rollout
+    assert 'grep -Fxq -- "$secret_name" <<<"$OPTIONAL_SECRET_NAMES"' in rollout
+    assert "cannot list optional secret inventory" in rollout
+    assert 'gc secrets describe "$secret_name"' not in rollout
     assert 'REMOVE_SECRET_ENVS+=("${env_name}")' in rollout
     assert 'REMOVE_SECRETS_ARGS=(--remove-secrets ' in rollout
     assert '"${REMOVE_SECRETS_ARGS[@]}"' in rollout
