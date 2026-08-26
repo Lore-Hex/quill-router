@@ -1,0 +1,34 @@
+{
+  "_about": "ByteDance Seed 2.1 Turbo served through one explicitly allowlisted OpenRouter route. ByteDance sells no provider-direct credential this deployment can obtain, so OpenRouter is the billing source. This is not BYOK, ZDR, confidential-compute, or E2EE.",
+  "provider": "openrouter",
+  "source": "https://openrouter.ai/api/v1/models/bytedance-seed/seed-2-1-turbo/endpoints",
+  "generated_at": "2026-08-26T21:23:29Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 1,
+  "models": [
+    {
+      "id": "bytedance-seed/seed-2-1-turbo",
+      "upstream_id": "bytedance-seed/seed-2-1-turbo",
+      "display_name": "Seed 2.1 Turbo",
+      "context_length": 262144,
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 2500000,
+      "reliability": {
+        "first_token_timeout_seconds": 45,
+        "completion_timeout_seconds": 600,
+        "stream_idle_timeout_seconds": 120
+      }
+    }
+  ]
+}

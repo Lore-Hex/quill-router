@@ -153,6 +153,12 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
             "sambanova",
         )
     },
+    "openrouter": (
+        "Checked OpenRouter's published privacy and logging documentation. "
+        "Downstream operators are selected by OpenRouter and their legal "
+        "entity and country are not published per-route, so jurisdiction "
+        "filters conservatively exclude these routes."
+    ),
     "phala": (
         "Checked phala.com/terms (names Hashforest Technology LLC, California "
         "law) and redpill.ai/terms for api.redpill.ai, the endpoint TrustedRouter "
@@ -398,6 +404,23 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://trust.trustedrouter.com",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "openrouter": Provider(
+        slug="openrouter",
+        name="OpenRouter",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=True,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "TrustedRouter sends requests through its attested gateway to "
+            "OpenRouter, which routes them to a downstream operator. Routes "
+            "here are Standard privacy and are excluded from ZDR, "
+            "confidential-compute, and E2EE routing."
+        ),
+        provider_policy_url="https://openrouter.ai/docs/features/privacy-and-logging",
     ),
     "meta": Provider(
         slug="meta",
@@ -1938,6 +1961,9 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         # inference API. The public provider label says "Meta via OpenRouter"
         # and the privacy posture remains standard/non-ZDR.
         "meta",
+        # OpenRouter as a transport in its own right: prepaid credits only,
+        # no provider-direct key. Models are added as routes are enabled.
+        "openrouter",
     }
 )
 
