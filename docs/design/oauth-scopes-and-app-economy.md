@@ -84,50 +84,12 @@ response. The ladder is ordered; apps can gate on `>=`.
   `creator_user_id`. Rationale: registration is a high-trust,
   low-frequency human action; a leaked management key must not be able
   to stand up a phishing app.
-- **Business verification (KYB) — DEFERRED (Joseph, 2026-08-26).** Held
-  after design; not built in increment B. The design below stands for
-  when it resumes. Rule that must survive the pause: KYB is an ADD-ON
-  requiring personal identity verification first, so
-  `verification_level()` is never widened and every app always has an
-  accountable natural person behind it.
-
-- **Business verification design (ON HOLD).** Veriff offers business verification (KYB) alongside
-  individual KYC. The account verification page therefore offers BOTH:
-  "Verify as an individual" and "Verify a business". A user who
-  completes business verification gets a verified ORGANIZATION name,
-  and may choose which verified identity an app is presented under —
-  showing "Acme Analytics, Inc. (verified business)" instead of a
-  personal legal name. Most real apps are companies, and forcing a
-  founder's personal name onto every consent screen is both worse
-  privacy for them and weaker signal for users.
-
-  **KYB is an ADD-ON, never a substitute (Joseph, 2026-08-26):**
-  business verification is available ONLY to a user who has already
-  completed personal identity verification. There is always an
-  accountable natural person behind every app; the company name is an
-  additional disclosure layer on top of that person, not a way around
-  them. A shell company cannot be the only thing standing behind an app
-  that spends other people's wallets.
-
-  Model: `User` gains a business block mirroring the identity one
-  (`business_status`, `business_verified_at`, `business_name`,
-  `business_registration_number?`, `veriff_business_session_*`).
-  `verification_level()` is COMPLETELY UNCHANGED — it keys on personal
-  `identity_verified` only, because business verification presupposes
-  it. Starting a KYB session requires `identity_verified` (403
-  VERIFICATION_REQUIRED naming personal verification first), so
-  `business_verified and not identity_verified` is unreachable by
-  construction; a defensive assert covers data drift.
-  `OAuthApp.display_identity: "individual" | "business"` (default
-  `individual`; `business` selectable only when the owner holds KYB).
-  The consent page renders the chosen verified name with its kind.
-  Registry gate is unchanged: personal identity verification.
-
-  This is increment B-round-3 scope for the model + registry + consent
-  rendering; the Veriff KYB session/webhook plumbing follows the exact
-  shape of the existing individual flow (`services/veriff.py`
-  `create_veriff_session` → `/v1/sessions`, webhook decision handler,
-  `$5/attempt` guarded debit, lifetime-top-up gate).
+- **No business verification / KYB (Joseph, 2026-08-26).** Decided
+  against: TrustedRouter verifies PEOPLE, not companies. Every app is
+  accountable to a Veriff-verified natural person, full stop. Do not
+  re-propose a company-name verification tier — the accountability
+  model is deliberately one layer, and a verified individual is both
+  the stronger signal and the simpler system.
 
 - **Impersonation: block protected terms AND show the owner.** App
   `name` is rejected if, after casefold + Unicode NFKC + whitespace and
