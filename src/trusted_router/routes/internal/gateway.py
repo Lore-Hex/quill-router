@@ -1556,16 +1556,7 @@ def _assert_oauth_app_allows_new_authorization(api_key: Any) -> None:
     if not api_key.app_id:
         return
 
-    app = STORE.get_oauth_app(api_key.app_id)
-    if app is not None:
-        # Case 1: a local row is authoritative for a locally registered app.
-        suspended = app.suspended
-    elif getattr(api_key, "federated_home", ""):
-        # Case 2: peers have no app row; trust the restriction served by home.
-        suspended = bool(getattr(api_key, "federated_app_suspended", False))
-    else:
-        # Case 3: an orphaned local app key fails closed after app deletion.
-        suspended = True
+    suspended = _oauth_app_is_suspended_for_key(api_key)
 
     if suspended:
         # Do not report INVALID_API_KEY: enclaves negative-cache that result,
@@ -1575,6 +1566,23 @@ def _assert_oauth_app_allows_new_authorization(api_key: Any) -> None:
             "OAuth app is missing or suspended; new authorizations are forbidden",
             ErrorType.FORBIDDEN,
         )
+
+
+def _oauth_app_is_suspended_for_key(api_key: Any) -> bool:
+    """Resolve app suspension from the key's authoritative provenance."""
+    if getattr(api_key, "federated_home", ""):
+        # Case 1: a federated key trusts only the restriction served by home.
+        # App slugs are namespaced per plane, so a peer's local row with the
+        # same slug is unrelated and meaningless for this key.
+        return bool(getattr(api_key, "federated_app_suspended", False))
+
+    app = STORE.get_oauth_app(api_key.app_id)
+    if app is not None:
+        # Case 2: a home-plane key uses its authoritative local app row.
+        return bool(app.suspended)
+
+    # Case 3: an orphaned home-plane app key fails closed after app deletion.
+    return True
 
 
 def _federated_key_still_valid(cached: Any | None, lookup_hash: str) -> Any | None:

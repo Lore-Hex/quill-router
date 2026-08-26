@@ -539,11 +539,15 @@ def test_registration_and_patch_require_verified_legal_name(
     consent = client.get(
         "/auth",
         params={"client_id": APP_ID, "callback_url": CALLBACK_URL},
+        follow_redirects=False,
     )
 
-    assert consent.status_code == 200, consent.text
-    assert "by identity-verified developer" in consent.text
-    assert "alice@example.com" not in consent.text
+    assert consent.status_code == 403, consent.text
+    assert consent.headers.get("location") is None
+    assert consent.json()["error"]["type"] == "verification_required"
+    assert "cannot be presented" in consent.json()["error"]["message"]
+    assert "verified name is unavailable" in consent.json()["error"]["message"]
+    assert "must re-verify" in consent.json()["error"]["message"]
 
 
 def test_registered_consent_escapes_hostile_name_and_logo_url(

@@ -523,20 +523,24 @@ def _consent_html(
     workspace_id: str,
     oauth_app: OAuthApp | None,
 ) -> str:
+    app_owner_line = ""
+    if oauth_app is not None:
+        owner = STORE.get_user(oauth_app.owner_user_id)
+        verified_name = (owner.identity_verified_name or "").strip() if owner else ""
+        if not verified_name:
+            raise api_error(
+                403,
+                "This app cannot be presented because its owner's verified name is "
+                "unavailable; the owner must re-verify.",
+                ErrorType.VERIFICATION_REQUIRED,
+            )
+        app_owner_line = f"by {verified_name} (identity-verified)"
+
     callback_url = _validate_callback_url(str(params.get("callback_url") or ""))
     key_label = _key_label(params.get("key_label"), callback_url)
     consent_app_name = (
         f"{oauth_app.name} · {oauth_app.id}" if oauth_app is not None else key_label
     )
-    app_owner_line = ""
-    if oauth_app is not None:
-        owner = STORE.get_user(oauth_app.owner_user_id)
-        verified_name = (owner.identity_verified_name or "").strip() if owner else ""
-        app_owner_line = (
-            f"by {verified_name} (identity-verified)"
-            if verified_name
-            else "by identity-verified developer"
-        )
     limit = _limit_microdollars(params.get("limit"))
     effective_limit = OAUTH_DEFAULT_KEY_LIMIT if limit is None else microdollars_to_decimal(limit)
     reset = _limit_reset(params.get("usage_limit_type")) or ""
