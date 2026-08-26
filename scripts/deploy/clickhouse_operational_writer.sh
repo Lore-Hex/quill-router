@@ -25,6 +25,23 @@ if [ -n "$external_ip" ]; then
   exit 1
 fi
 
+# REFUSE a credential with surrounding whitespace rather than silently
+# hashing the trimmed form. `openssl rand -hex 24 | gcloud secrets create
+# --data-file=-` stores a trailing newline; command substitution below strips
+# it, so the hash installed here would not match the raw bytes Cloud Run
+# injects into the app -- 401 on every request, with the deploy reporting
+# success. That is precisely how the 2026-08-26 GCP cutover went live and
+# delivered nothing for two hours.
+writer_raw="$(gcloud secrets versions access latest \
+  --secret="$WRITER_SECRET" \
+  --project="$PROJECT" | od -An -c | tr -d ' \n' | tail -c 2)"
+if [ "$writer_raw" = "\\n" ]; then
+  echo "refusing: $WRITER_SECRET ends with a newline; consumers receive the raw" >&2
+  echo "  bytes while this script would hash the trimmed value. Store it without:" >&2
+  echo "  gcloud secrets versions access latest --secret=$WRITER_SECRET \\" >&2
+  echo "    | tr -d '\\n' | gcloud secrets versions add $WRITER_SECRET --data-file=-" >&2
+  exit 1
+fi
 writer_password="$(gcloud secrets versions access latest \
   --secret="$WRITER_SECRET" \
   --project="$PROJECT")"
