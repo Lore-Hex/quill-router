@@ -13,3 +13,8 @@ Use the canonical source:
 - Raw `SKILL.md`: `https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md`
 
 When this local skill is invoked, read the canonical raw `SKILL.md` above and follow it. Keep this file as a pointer only.
+
+Agents connected to the TrustedRouter MCP server do not need this pointer: the
+server publishes the canonical skill through the Skills Extension (SEP-2640),
+so `skills/list` and `skills/get` return the CURRENT text without any
+client-side change when the skill is edited.
