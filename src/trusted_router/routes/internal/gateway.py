@@ -28,6 +28,15 @@ from trusted_router.acquisition import (
     record_free_credit_exhausted_safely,
     record_successful_api_call_safely,
 )
+from trusted_router.app_markup_billing import (
+    APP_MARKUP_APP_ID_SETTLE_FIELD,
+    APP_MARKUP_OWNER_SETTLE_FIELD,
+    APP_MARKUP_PAYOUT_SETTLE_FIELD,
+    app_markup_microdollars,
+    app_markup_microdollars_from_charge,
+    app_markup_owner_share_microdollars,
+    app_markup_payout_event_id,
+)
 from trusted_router.auth import SettingsDep, is_api_key_expired
 from trusted_router.byok_crypto import byok_cache_key, encrypted_secret_payload
 from trusted_router.catalog import (
@@ -139,6 +148,7 @@ from trusted_router.storage_errors import (
 )
 from trusted_router.storage_gcp_io import spanner_rpc_budget
 from trusted_router.storage_models import (
+    AppMarkupPayout,
     SettleOutboxRow,
     TypedFinalizeResult,
     UserModelPayout,
@@ -566,6 +576,13 @@ def _authorize_gateway_sync(
                 ErrorType.CONFLICT,
             )
         return _replay_response(existing_authorization)
+    # Suspension stops NEW authorizations. Resolve replay first so a lost
+    # response can be recovered and in-flight work can settle under frozen terms.
+    app_markup_basis_points, app_owner_user_id = _oauth_app_terms_for_key(api_key)
+    if app_markup_basis_points > 0:
+        # Settle-side caps compare against this frozen hold. If authorize held
+        # only the base, those caps would claw the app markup back at settle.
+        estimate += app_markup_microdollars(estimate, app_markup_basis_points)
     # Minted up front so a user-model concurrency slot can be keyed by it
     # before the reservation exists. It is a fresh uuid — never derived from
     # the caller's Idempotency-Key: a deterministic id would outlive its
@@ -659,6 +676,7 @@ def _authorize_gateway_sync(
                 and partner_mode is None
                 and additional_cost_reservation == 0
                 and not native_batch_eligible
+                and app_markup_basis_points == 0
             )
             outcome = "unavailable"
             authorization = None
@@ -679,6 +697,7 @@ def _authorize_gateway_sync(
                     candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
                     idempotency_key=request_idempotency_key,
                     idempotency_fingerprint=request_fingerprint,
+                    app_id=api_key.app_id,
                     tags=effective_tags,
                     expires_at=expires_at,
                     lease_ttl_seconds=settings.regional_quota_lease_ttl_seconds,
@@ -706,6 +725,9 @@ def _authorize_gateway_sync(
                     idempotency_key=request_idempotency_key,
                     tags=effective_tags,
                     idempotency_fingerprint=request_fingerprint,
+                    app_id=api_key.app_id,
+                    app_markup_basis_points=app_markup_basis_points,
+                    app_owner_user_id=app_owner_user_id,
                     key_usage_shards=key_usage_shards,
                     custom_model_id=custom_model.id if custom_model else None,
                     custom_model_revision=custom_model.revision if custom_model else None,
@@ -884,6 +906,9 @@ def _authorize_gateway_sync(
             idempotency_key=request_idempotency_key,
             tags=effective_tags,
             idempotency_fingerprint=request_fingerprint,
+            app_id=api_key.app_id,
+            app_markup_basis_points=app_markup_basis_points,
+            app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model.id if custom_model else None,
             custom_model_revision=custom_model.revision if custom_model else None,
             user_provided_model_id=user_model.id if user_model else None,
@@ -1546,6 +1571,52 @@ def _assert_gateway_key_scope(api_key: Any) -> None:
         )
 
 
+def _oauth_app_terms_for_key(api_key: Any) -> tuple[int, str]:
+    if not api_key.app_id:
+        return 0, ""
+
+    suspended, markup_basis_points, owner_user_id = _oauth_app_provenance(api_key)
+    if suspended:
+        # Do not report INVALID_API_KEY: enclaves negative-cache that result,
+        # so un-suspending the app would not promptly restore its valid key.
+        raise api_error(
+            403,
+            "OAuth app is missing or suspended; new authorizations are forbidden",
+            ErrorType.FORBIDDEN,
+        )
+    return markup_basis_points, owner_user_id
+
+
+def _oauth_app_provenance(api_key: Any) -> tuple[bool, int, str]:
+    if getattr(api_key, "federated_home", ""):
+        # Case 1: all federated app terms come from home. A peer-local app with
+        # the same slug is unrelated for both restrictions and billing.
+        suspended = bool(getattr(api_key, "federated_app_suspended", False))
+        markup_basis_points = int(
+            getattr(api_key, "federated_app_markup_basis_points", 0)
+        )
+        owner_user_id = str(getattr(api_key, "federated_app_owner_user_id", ""))
+    else:
+        app = STORE.get_oauth_app(api_key.app_id)
+        if app is None:
+            # Case 3: an orphaned home-plane app key fails closed.
+            suspended = True
+            markup_basis_points = 0
+            owner_user_id = ""
+        else:
+            # Case 2: a home-plane key uses its authoritative local app row.
+            suspended = bool(app.suspended)
+            markup_basis_points = int(app.markup_basis_points)
+            owner_user_id = str(app.owner_user_id)
+
+    return suspended, markup_basis_points, owner_user_id
+
+
+def _oauth_app_is_suspended_for_key(api_key: Any) -> bool:
+    """Resolve app suspension from the key's authoritative provenance."""
+    return _oauth_app_provenance(api_key)[0]
+
+
 def _federated_key_still_valid(cached: Any | None, lookup_hash: str) -> Any | None:
     """Serve a federated key only while it is young enough to trust.
 
@@ -1820,6 +1891,9 @@ def _settle_gateway_authorization(
     settle_body.pop(USER_MODEL_PAYOUT_SETTLE_FIELD, None)
     settle_body.pop(USER_MODEL_OWNER_SETTLE_FIELD, None)
     settle_body.pop(USER_MODEL_ID_SETTLE_FIELD, None)
+    settle_body.pop(APP_MARKUP_PAYOUT_SETTLE_FIELD, None)
+    settle_body.pop(APP_MARKUP_OWNER_SETTLE_FIELD, None)
+    settle_body.pop(APP_MARKUP_APP_ID_SETTLE_FIELD, None)
 
     user_model_pair = _authorized_user_model_pair(authorization)
     selected_endpoint = _select_authorized_endpoint(authorization, body)
@@ -1902,6 +1976,7 @@ def _settle_gateway_authorization(
             service_tier=service_tier,
         )
     )
+    app_markup_micro = 0
     if not success:
         # A refund books zero and releases the frozen hold. Never require a
         # route marker from a generic abort path; the authorization id is the
@@ -1936,22 +2011,6 @@ def _settle_gateway_authorization(
             native_batch_eligible=authorization.native_batch_eligible,
             selected_usage_type=UsageType.for_endpoint(selected_endpoint),
         )
-    operator_cost = (
-        owner_share_microdollars(actual_cost)
-        if user_model_pair is not None
-        else _endpoint_cost_microdollars(
-            selected_endpoint,
-            uncached_input,
-            output_tokens,
-            cache_read_tokens=cache_read,
-            cache_creation_tokens=cache_creation,
-            price_tier_input_tokens=price_tier_input_tokens,
-            effective_at=authorization.created_at,
-            service_tier=service_tier,
-        )
-        if partner_mode == PartnerBillingMode.INTERNAL
-        else None
-    )
     additional_cost = body.additional_cost_microdollars
     if user_model_pair is not None and additional_cost:
         raise api_error(
@@ -1979,6 +2038,14 @@ def _settle_gateway_authorization(
                 ErrorType.BAD_REQUEST,
             )
         actual_cost += additional_cost
+    if success and authorization.app_markup_basis_points > 0:
+        # THE HOLD AND THE CHARGE MUST MARK UP THE SAME BASE: authorize marks
+        # model estimate plus hosted-tool/media reservation, so settle marks up
+        # model cost plus the corresponding additional cost.
+        proposed_app_markup_micro = app_markup_microdollars(
+            actual_cost, authorization.app_markup_basis_points
+        )
+        actual_cost += proposed_app_markup_micro
     input_tokens = total_input
     selected_usage_type = UsageType.for_endpoint(selected_endpoint)
     if (
@@ -1997,6 +2064,28 @@ def _settle_gateway_authorization(
             },
         )
         actual_cost = authorization.estimated_microdollars
+    if success and authorization.app_markup_basis_points > 0:
+        # THE PAYOUT IS A FUNCTION OF THE FINAL CHARGE: authorization freezes
+        # the rate, while every clamp/cap/adjustment above decides the base.
+        app_markup_micro = app_markup_microdollars_from_charge(
+            actual_cost, authorization.app_markup_basis_points
+        )
+    operator_cost = (
+        owner_share_microdollars(max(0, actual_cost - app_markup_micro))
+        if user_model_pair is not None
+        else _endpoint_cost_microdollars(
+            selected_endpoint,
+            uncached_input,
+            output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
+            price_tier_input_tokens=price_tier_input_tokens,
+            effective_at=authorization.created_at,
+            service_tier=service_tier,
+        )
+        if partner_mode == PartnerBillingMode.INTERNAL
+        else None
+    )
     if (
         success
         and selected_usage_type == UsageType.CREDITS
@@ -2037,6 +2126,7 @@ def _settle_gateway_authorization(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             actual_cost_microdollars=actual_cost,
+            app_markup_microdollars=app_markup_micro,
             operator_cost_microdollars=operator_cost,
         )
         generation_id = generation.id
@@ -2048,7 +2138,33 @@ def _settle_gateway_authorization(
         user_model_payout = UserModelPayout(
             owner_user_id=owner_user_id,
             model_id=user_model_id,
-            amount_microdollars=(owner_share_microdollars(actual_cost) if success else 0),
+            amount_microdollars=(
+                owner_share_microdollars(max(0, actual_cost - app_markup_micro))
+                if success
+                else 0
+            ),
+            payer_workspace_id=authorization.workspace_id,
+        )
+
+    app_markup_payout: AppMarkupPayout | None = None
+    if authorization.app_markup_basis_points > 0:
+        app_markup_payout_micro = (
+            app_markup_owner_share_microdollars(app_markup_micro) if success else 0
+        )
+        if app_markup_payout_micro > app_markup_micro:
+            logger.error(
+                "billing.app_markup_payout_exceeded_collected_markup",
+                extra={
+                    "authorization_id": authorization.id,
+                    "payout_microdollars": app_markup_payout_micro,
+                    "markup_microdollars": app_markup_micro,
+                },
+            )
+            app_markup_payout_micro = app_markup_micro
+        app_markup_payout = AppMarkupPayout(
+            owner_user_id=authorization.app_owner_user_id,
+            app_id=authorization.app_id,
+            amount_microdollars=app_markup_payout_micro,
             payer_workspace_id=authorization.workspace_id,
         )
 
@@ -2079,6 +2195,14 @@ def _settle_gateway_authorization(
                 )
                 frozen_settle_body[USER_MODEL_OWNER_SETTLE_FIELD] = user_model_payout.owner_user_id
                 frozen_settle_body[USER_MODEL_ID_SETTLE_FIELD] = user_model_payout.model_id
+            if app_markup_payout is not None:
+                frozen_settle_body[APP_MARKUP_PAYOUT_SETTLE_FIELD] = (
+                    app_markup_payout.amount_microdollars
+                )
+                frozen_settle_body[APP_MARKUP_OWNER_SETTLE_FIELD] = (
+                    app_markup_payout.owner_user_id
+                )
+                frozen_settle_body[APP_MARKUP_APP_ID_SETTLE_FIELD] = app_markup_payout.app_id
             # §5.4 honest scope: durability starts only when this INSERT commits;
             # crashes before it still rely on enclave redelivery. MF4/MF5 freeze
             # the finalize path and exact resolved cost used by the inline attempt.
@@ -2165,6 +2289,7 @@ def _settle_gateway_authorization(
                         selected_usage_type=selected_usage_type,
                         generation=generation,
                         user_model_payout=user_model_payout,
+                        app_markup_payout=app_markup_payout,
                     ),
                 )
             except (RegionalLeaseLedgerError, LeaseSettlementError):
@@ -2194,6 +2319,7 @@ def _settle_gateway_authorization(
                 selected_usage_type=selected_usage_type,
                 generation=generation,
                 user_model_payout=user_model_payout,
+                app_markup_payout=app_markup_payout,
             )
             finalize_result = TypedFinalizeResult(
                 finalized=finalized_legacy_contract,
@@ -2213,6 +2339,11 @@ def _settle_gateway_authorization(
                 authorization,
                 success=success,
                 payout=user_model_payout,
+            )
+            _credit_app_markup_payout_safely(
+                authorization,
+                success=success,
+                payout=app_markup_payout,
             )
         finalize_result = TypedFinalizeResult(
             finalized=finalized,
@@ -2306,6 +2437,9 @@ def _settle_gateway_authorization(
         # correlation id is useful to them, the client telemetry object is not.
         broadcast_settle_body = dict(settle_body)
         broadcast_settle_body.pop("client", None)
+        # App attribution is frozen from the key at authorize. Never let a
+        # caller-supplied root field become forgeable broadcast metadata.
+        broadcast_settle_body.pop("app_id", None)
         broadcast_settle_body.pop("price_tier_input_tokens", None)
         enqueue_metadata_broadcast(generation, settle_body=broadcast_settle_body)
         if should_drain_inline(settings) and background_tasks is not None:
@@ -2387,6 +2521,31 @@ def _credit_user_model_payout_safely(
     except Exception:
         logger.error(
             "user_model_payout_failed authorization_id=%s owner=%s",
+            authorization.id,
+            payout.owner_user_id,
+            exc_info=True,
+        )
+
+
+def _credit_app_markup_payout_safely(
+    authorization: Any,
+    *,
+    success: bool,
+    payout: AppMarkupPayout | None,
+) -> None:
+    if not success or payout is None or payout.amount_microdollars <= 0:
+        return
+    try:
+        STORE.credit_user_earnings(
+            payout.owner_user_id,
+            payout.amount_microdollars,
+            app_markup_payout_event_id(authorization.id),
+            custom_model_id=payout.app_id,
+            payer_workspace_id=payout.payer_workspace_id,
+        )
+    except Exception:
+        logger.error(
+            "app_markup_payout_failed authorization_id=%s owner=%s",
             authorization.id,
             payout.owner_user_id,
             exc_info=True,

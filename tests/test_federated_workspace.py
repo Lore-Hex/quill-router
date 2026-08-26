@@ -32,7 +32,7 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.services import federation
 from trusted_router.services.federation import FederationClient
-from trusted_router.storage import STORE, InMemoryStore, configure_store
+from trusted_router.storage import STORE, InMemoryStore, OAuthApp, configure_store
 from trusted_router.storage_errors import StoreConflict
 from trusted_router.storage_models import (
     FEDERATED_WORKSPACE_NAME,
@@ -287,6 +287,159 @@ def _authorize(client: TestClient, lookup_hash: str) -> httpx.Response:
 
 
 class TestFederatedRequestReachesAuthorize:
+    def test_registered_app_key_authorizes_without_a_peer_app_row(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        record = {
+            **HOME_RECORD,
+            "app_id": "home-only-app",
+            "app_suspended": False,
+        }
+        client = _federating_client(monkeypatch, record)
+        assert _authorize(client, "lh-fed-1").status_code == 402
+        STORE.claim_credit_transfer(
+            transfer_id="t-federated-app",
+            workspace_id="ws-home-1",
+            amount_microdollars=5_000_000,
+            source="https://trustedrouter.com/v1",
+            accept=True,
+        )
+
+        response = _authorize(client, "lh-fed-1")
+
+        assert response.status_code == 200, response.text
+        imported = STORE.get_key_by_lookup_hash("lh-fed-1")
+        assert imported is not None
+        assert imported.app_id == "home-only-app"
+        assert imported.federated_app_suspended is False
+        assert STORE.get_oauth_app("home-only-app") is None
+
+    def test_registered_app_suspended_at_home_is_denied_on_peer(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = _federating_client(
+            monkeypatch,
+            {
+                **HOME_RECORD,
+                "app_id": "home-suspended-app",
+                "app_suspended": True,
+            },
+        )
+
+        response = _authorize(client, "lh-fed-1")
+
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["type"] == "forbidden"
+        imported = STORE.get_key_by_lookup_hash("lh-fed-1")
+        assert imported is not None
+        assert imported.federated_app_suspended is True
+
+    def test_peer_local_app_collision_cannot_override_home_suspension(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        app_id = "colliding-app"
+        STORE.create_oauth_app(
+            OAuthApp(
+                id=app_id,
+                owner_user_id="peer-owner",
+                name="Unrelated peer app",
+                redirect_uris=["https://peer.example/callback"],
+                suspended=False,
+            )
+        )
+        client = _federating_client(
+            monkeypatch,
+            {**HOME_RECORD, "app_id": app_id, "app_suspended": True},
+        )
+
+        response = _authorize(client, "lh-fed-1")
+
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["type"] == "forbidden"
+
+    def test_peer_local_app_collision_cannot_suspend_active_home_app(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        app_id = "colliding-app"
+        STORE.create_oauth_app(
+            OAuthApp(
+                id=app_id,
+                owner_user_id="peer-owner",
+                name="Unrelated peer app",
+                redirect_uris=["https://peer.example/callback"],
+                suspended=True,
+            )
+        )
+        client = _federating_client(
+            monkeypatch,
+            {**HOME_RECORD, "app_id": app_id, "app_suspended": False},
+        )
+        assert _authorize(client, "lh-fed-1").status_code == 402
+        STORE.claim_credit_transfer(
+            transfer_id="t-federated-colliding-app",
+            workspace_id="ws-home-1",
+            amount_microdollars=5_000_000,
+            source="https://trustedrouter.com/v1",
+            accept=True,
+        )
+
+        response = _authorize(client, "lh-fed-1")
+
+        assert response.status_code == 200, response.text
+
+    @pytest.mark.parametrize("peer_bps", [0, 30_000])
+    def test_federated_markup_uses_home_terms_and_credits_home_owner(
+        self, monkeypatch: pytest.MonkeyPatch, peer_bps: int
+    ) -> None:
+        app_id = f"markup-collision-{peer_bps}"
+        STORE.create_oauth_app(
+            OAuthApp(
+                id=app_id,
+                owner_user_id="peer-owner",
+                name="Unrelated peer app",
+                redirect_uris=["https://peer.example/callback"],
+                markup_basis_points=peer_bps,
+            )
+        )
+        client = _federating_client(
+            monkeypatch,
+            {
+                **HOME_RECORD,
+                "app_id": app_id,
+                "app_suspended": False,
+                "app_markup_basis_points": 1_000,
+                "app_owner_user_id": "home-owner",
+            },
+        )
+        assert _authorize(client, "lh-fed-1").status_code == 402
+        STORE.claim_credit_transfer(
+            transfer_id=f"t-federated-markup-{peer_bps}",
+            workspace_id="ws-home-1",
+            amount_microdollars=5_000_000,
+            source="https://trustedrouter.com/v1",
+            accept=True,
+        )
+        response = _authorize(client, "lh-fed-1")
+        assert response.status_code == 200, response.text
+        auth = STORE.get_gateway_authorization(response.json()["data"]["authorization_id"])
+        assert auth is not None
+        assert auth.app_markup_basis_points == 1_000
+        assert auth.app_owner_user_id == "home-owner"
+        settle = client.post(
+            "/v1/internal/gateway/settle",
+            json={
+                "authorization_id": auth.id,
+                "actual_input_tokens": 12,
+                "actual_output_tokens": 8,
+                "request_id": f"req-{auth.id}",
+                "status": "success",
+                "elapsed_seconds": 0.5,
+            },
+        )
+        assert settle.status_code == 200, settle.text
+        assert STORE.earnings_summary("home-owner")["total_earned"] > 0
+        assert STORE.earnings_summary("peer-owner")["total_earned"] == 0
+
     def test_a_federated_key_no_longer_403s_on_a_missing_workspace(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

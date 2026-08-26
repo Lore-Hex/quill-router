@@ -100,6 +100,7 @@ from trusted_router.storage_models import (
     Generation,
     GoogleAdsConversion,
     Member,
+    OAuthApp,
     OAuthAuthorizationCode,
     ProviderAccessGrant,
     ProviderBenchmarkSample,
@@ -124,6 +125,7 @@ from trusted_router.storage_models import (
     normalize_provider_access_slug,
     utcnow,
 )
+from trusted_router.storage_oauth_apps import apply_oauth_app_patch
 from trusted_router.storage_postgres_group_buy import PostgresBedrockGroupBuy
 from trusted_router.storage_postgres_operational_analytics_outbox import (
     PostgresOperationalAnalyticsOutbox,
@@ -1603,6 +1605,7 @@ class PostgresStore:
         code_challenge_method: str | None = None,
         spawn_agent: str | None = None,
         spawn_cloud: str | None = None,
+        client_app_id: str = "",
     ) -> tuple[str, OAuthAuthorizationCode]:
         raw = new_api_key(prefix="auth_code")
         code = OAuthAuthorizationCode(
@@ -1623,6 +1626,7 @@ class PostgresStore:
             code_expires_at=self._expires_at(ttl_seconds),
             spawn_agent=spawn_agent,
             spawn_cloud=spawn_cloud,
+            client_app_id=client_app_id,
         )
         code.secret_hash = hash_api_key(raw, code.salt)
 
@@ -1647,6 +1651,41 @@ class PostgresStore:
             cls=OAuthAuthorizationCode,
             expiry_field="code_expires_at",
         )
+
+    def create_oauth_app(self, app: OAuthApp) -> OAuthApp:
+        def create(conn: Any) -> OAuthApp:
+            if not self._insert_entity_once_tx(conn, "oauth_app", app.id, app):
+                raise ValueError("oauth_app_id_taken")
+            return app
+
+        return self._run_transaction(create)
+
+    def get_oauth_app(self, app_id: str) -> OAuthApp | None:
+        return self._read_entity("oauth_app", app_id, OAuthApp)
+
+    def list_oauth_apps_for_user(self, owner_user_id: str) -> list[OAuthApp]:
+        apps = [
+            app
+            for app in self._list_entities("oauth_app", OAuthApp)
+            if app.owner_user_id == owner_user_id
+        ]
+        return sorted(apps, key=lambda app: (app.created_at, app.id))
+
+    def update_oauth_app(
+        self,
+        app_id: str,
+        *,
+        patch: dict[str, Any],
+    ) -> OAuthApp | None:
+        def update(conn: Any) -> OAuthApp | None:
+            app = self._read_entity_tx(conn, "oauth_app", app_id, OAuthApp, for_update=True)
+            if app is None:
+                return None
+            apply_oauth_app_patch(app, patch)
+            self._write_entity_tx(conn, "oauth_app", app.id, app)
+            return app
+
+        return self._run_transaction(update)
 
     # Email send blocks ------------------------------------------------------
 
@@ -1711,6 +1750,7 @@ class PostgresStore:
         budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
         scopes: list[str] | None = None,
+        app_id: str = "",
     ) -> tuple[str, ApiKey]:
         validated_scopes = validate_api_key_scopes(scopes, management=management)
         raw = raw_key or new_api_key()
@@ -1724,6 +1764,7 @@ class PostgresStore:
             workspace_id=workspace_id,
             creator_user_id=creator_user_id,
             scopes=validated_scopes,
+            app_id=app_id,
             management=management,
             limit_microdollars=limit_microdollars,
             limit_reset=limit_reset,
@@ -3176,6 +3217,7 @@ class PostgresStore:
         payer_workspace_id: str | None = None,
     ) -> bool:
         amount = self._positive_money_amount(amount_microdollars)
+        is_app_markup = event_id.startswith("app_markup_payout:")
 
         def credit(conn: Any) -> bool:
             won = self._insert_entity_once_tx(
@@ -3200,13 +3242,11 @@ class PostgresStore:
                 CreditMovement(
                     account_id=f"user:{user_id}",
                     movement_id=event_id,
-                    kind="custom_model_payout",
+                    kind="app_markup_payout" if is_app_markup else "custom_model_payout",
                     amount_microdollars=amount,
                     counterparty_account_id=payer_workspace_id,
                     custom_model_id=custom_model_id,
-                    authorization_id=(
-                        user_model_authorization_id_from_payout_event_id(event_id)
-                    ),
+                    authorization_id=(event_id.split(":", 1)[1] if is_app_markup else user_model_authorization_id_from_payout_event_id(event_id)),
                 ),
             )
             return True
@@ -3924,6 +3964,9 @@ class PostgresStore:
         idempotency_key: str | None = None,
         tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
+        app_id: str = "",
+        app_markup_basis_points: int = 0,
+        app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         user_provided_model_id: str | None = None,
@@ -3974,6 +4017,9 @@ class PostgresStore:
             idempotency_key=idempotency_key,
             tags=dict(tags or {}),
             idempotency_fingerprint=idempotency_fingerprint,
+            app_id=app_id,
+            app_markup_basis_points=app_markup_basis_points,
+            app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
             user_provided_model_id=user_provided_model_id,

@@ -751,7 +751,7 @@ class _FakeTransaction:
                 "kind": p["kind"],
                 "amount_microdollars": p["amount"],
                 "counterparty_account_id": p["counterparty"],
-                "custom_model_id": p["custom_model_id"],
+                "custom_model_id": p.get("custom_model_id", p.get("app_id")),
                 "authorization_id": p["authorization_id"],
                 "created_at": p["created_at"],
             }
@@ -2831,6 +2831,7 @@ def make_fake_store(
     from trusted_router.storage_gcp_group_buy import SpannerBedrockGroupBuy
     from trusted_router.storage_gcp_io import SpannerIO
     from trusted_router.storage_gcp_keys import SpannerApiKeys
+    from trusted_router.storage_gcp_oauth_apps import SpannerOAuthApps
     from trusted_router.storage_gcp_oauth_codes import SpannerOAuthCodes
     from trusted_router.storage_gcp_operational_analytics_outbox import (
         SpannerOperationalAnalyticsOutbox,
@@ -2906,6 +2907,7 @@ def make_fake_store(
     store.video_job_store = SpannerVideoJobs(io)
     store.settle_outbox = SpannerSettleOutbox(store._database, store._param_types)
     store.auth_session_store = SpannerAuthSessions(io)
+    store.oauth_app_store = SpannerOAuthApps(io)
     store.oauth_code_store = SpannerOAuthCodes(io)
     store.rate_limit_store = SpannerRateLimits(io)
     store.wallet_challenges = SpannerWalletChallenges(io)

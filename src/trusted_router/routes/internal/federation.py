@@ -144,6 +144,20 @@ def register(router: APIRouter) -> None:
         if api_key.scopes and "scopes" not in declared_features:
             raise api_error(404, "Unknown API key", ErrorType.NOT_FOUND)
 
+        app_id = getattr(api_key, "app_id", "") or ""
+        app_suspended = False
+        app_markup_basis_points = 0
+        app_owner_user_id = ""
+        if app_id:
+            app = STORE.get_oauth_app(app_id)
+            if app is None:
+                # Match the unknown/scoped-key fail-closed wire shape so a peer
+                # cannot distinguish or cache an orphaned app key as valid.
+                raise api_error(404, "Unknown API key", ErrorType.NOT_FOUND)
+            app_suspended = app.suspended
+            app_markup_basis_points = int(app.markup_basis_points)
+            app_owner_user_id = str(app.owner_user_id)
+
         if getattr(api_key, "management", False):
             raise api_error(
                 403,
@@ -159,33 +173,39 @@ def register(router: APIRouter) -> None:
         # opted in here deliberately — the alternative (serialize the
         # object and strip secrets) leaks the next secret-shaped field
         # somebody adds.
-        return {
-            "data": {
-                "lookup_hash": api_key.lookup_hash,
-                "key_hash": api_key.hash,
-                "workspace_id": api_key.workspace_id,
-                "name": getattr(api_key, "name", "") or "",
-                "scopes": list(getattr(api_key, "scopes", [])),
-                "disabled": bool(getattr(api_key, "disabled", False)),
-                "expires_at": getattr(api_key, "expires_at", None),
-                "limit_microdollars": getattr(api_key, "limit_microdollars", None),
-                "limit_daily_microdollars": getattr(api_key, "limit_daily_microdollars", None),
-                "limit_weekly_microdollars": getattr(api_key, "limit_weekly_microdollars", None),
-                "limit_monthly_microdollars": getattr(api_key, "limit_monthly_microdollars", None),
-                "include_byok_in_limit": bool(
-                    getattr(api_key, "include_byok_in_limit", True)
-                ),
-                "budget_alert_only": bool(getattr(api_key, "budget_alert_only", False)),
-                "workspace_billing_paused": bool(
-                    getattr(workspace, "billing_paused", False)
-                ),
-                # Lets the peer detect a changed record without diffing
-                # every field, and lets a future revocation feed say
-                # "anything older than X is stale".
-                "revision": getattr(api_key, "updated_at", None)
-                or getattr(api_key, "created_at", None),
-            }
+        record = {
+            "lookup_hash": api_key.lookup_hash,
+            "key_hash": api_key.hash,
+            "workspace_id": api_key.workspace_id,
+            "name": getattr(api_key, "name", "") or "",
+            "scopes": list(getattr(api_key, "scopes", [])),
+            "disabled": bool(getattr(api_key, "disabled", False)),
+            "expires_at": getattr(api_key, "expires_at", None),
+            "limit_microdollars": getattr(api_key, "limit_microdollars", None),
+            "limit_daily_microdollars": getattr(api_key, "limit_daily_microdollars", None),
+            "limit_weekly_microdollars": getattr(api_key, "limit_weekly_microdollars", None),
+            "limit_monthly_microdollars": getattr(api_key, "limit_monthly_microdollars", None),
+            "include_byok_in_limit": bool(
+                getattr(api_key, "include_byok_in_limit", True)
+            ),
+            "budget_alert_only": bool(getattr(api_key, "budget_alert_only", False)),
+            "workspace_billing_paused": bool(
+                getattr(workspace, "billing_paused", False)
+            ),
+            # Lets the peer detect a changed record without diffing every
+            # field, and lets a future revocation feed say "anything older
+            # than X is stale".
+            "revision": getattr(api_key, "updated_at", None)
+            or getattr(api_key, "created_at", None),
         }
+        if app_id:
+            # Attribution and its restrictive suspension bit travel together.
+            # Old peers drop both harmlessly; legacy records remain byte-identical.
+            record["app_id"] = app_id
+            record["app_suspended"] = app_suspended
+            record["app_markup_basis_points"] = app_markup_basis_points
+            record["app_owner_user_id"] = app_owner_user_id
+        return {"data": record}
 
     @router.post("/internal/federation/apply-usage")
     async def federation_apply_usage(request: Request, settings: SettingsDep) -> dict[str, Any]:

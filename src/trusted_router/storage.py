@@ -59,6 +59,7 @@ from trusted_router.storage_models import (
     Generation,
     GoogleAdsConversion,
     Member,
+    OAuthApp,
     OAuthAuthorizationCode,
     ProviderAccessGrant,
     ProviderBenchmarkSample,
@@ -80,6 +81,7 @@ from trusted_router.storage_models import (
     normalize_provider_access_role,
     normalize_provider_access_slug,
 )
+from trusted_router.storage_oauth_apps import InMemoryOAuthApps
 from trusted_router.storage_oauth_codes import InMemoryOAuthCodes
 from trusted_router.storage_rate_limits import InMemoryRateLimits
 from trusted_router.storage_synthetic import InMemorySyntheticChecks
@@ -149,6 +151,7 @@ class InMemoryStore:
         self.video_job_store = InMemoryVideoJobs(lock=self._lock)
         self.auth_session_store = InMemoryAuthSessions(lock=self._lock)
         self.oauth_code_store = InMemoryOAuthCodes(lock=self._lock)
+        self.oauth_app_store = InMemoryOAuthApps(lock=self._lock)
         self.rate_limit_store = InMemoryRateLimits(lock=self._lock)
         self.wallet_challenges = InMemoryWalletChallenges()
         self.verification_tokens = InMemoryVerificationTokens()
@@ -185,6 +188,7 @@ class InMemoryStore:
             self.video_job_store.reset()
             self.auth_session_store.reset()
             self.oauth_code_store.reset()
+            self.oauth_app_store.reset()
             self.rate_limit_store.reset()
             self.wallet_challenges.reset()
             self.verification_tokens.reset()
@@ -750,6 +754,7 @@ class InMemoryStore:
         budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
         scopes: list[str] | None = None,
+        app_id: str = "",
     ) -> tuple[str, ApiKey]:
         return self.api_keys.create(
             workspace_id=workspace_id,
@@ -767,6 +772,7 @@ class InMemoryStore:
             budget_alert_only=budget_alert_only,
             tags=tags,
             scopes=scopes,
+            app_id=app_id,
         )
 
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:
@@ -1414,6 +1420,7 @@ class InMemoryStore:
     ) -> bool:
         amount = self._positive_money_amount(amount_microdollars)
         account_id = f"user:{user_id}"
+        is_app_markup = event_id.startswith("app_markup_payout:")
         with self._lock:
             if event_id in self.stripe_events:
                 return False
@@ -1423,11 +1430,11 @@ class InMemoryStore:
             self.credit_movements[(account_id, event_id)] = CreditMovement(
                 account_id=account_id,
                 movement_id=event_id,
-                kind="custom_model_payout",
+                kind="app_markup_payout" if is_app_markup else "custom_model_payout",
                 amount_microdollars=amount,
                 counterparty_account_id=payer_workspace_id,
                 custom_model_id=custom_model_id,
-                authorization_id=(user_model_authorization_id_from_payout_event_id(event_id)),
+                authorization_id=(event_id.split(":", 1)[1] if is_app_markup else user_model_authorization_id_from_payout_event_id(event_id)),
             )
             return True
 
@@ -1824,6 +1831,9 @@ class InMemoryStore:
         idempotency_key: str | None = None,
         tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
+        app_id: str = "",
+        app_markup_basis_points: int = 0,
+        app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         user_provided_model_id: str | None = None,
@@ -1854,6 +1864,9 @@ class InMemoryStore:
             idempotency_key=idempotency_key,
             tags=tags,
             idempotency_fingerprint=idempotency_fingerprint,
+            app_id=app_id,
+            app_markup_basis_points=app_markup_basis_points,
+            app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
             user_provided_model_id=user_provided_model_id,
@@ -2193,6 +2206,7 @@ class InMemoryStore:
         code_challenge_method: str | None = None,
         spawn_agent: str | None = None,
         spawn_cloud: str | None = None,
+        client_app_id: str = "",
     ) -> tuple[str, OAuthAuthorizationCode]:
         return self.oauth_code_store.create(
             workspace_id=workspace_id,
@@ -2208,10 +2222,28 @@ class InMemoryStore:
             code_challenge_method=code_challenge_method,
             spawn_agent=spawn_agent,
             spawn_cloud=spawn_cloud,
+            client_app_id=client_app_id,
         )
 
     def consume_oauth_authorization_code(self, raw_code: str) -> OAuthAuthorizationCode | None:
         return self.oauth_code_store.consume(raw_code)
+
+    def create_oauth_app(self, app: OAuthApp) -> OAuthApp:
+        return self.oauth_app_store.create(app)
+
+    def get_oauth_app(self, app_id: str) -> OAuthApp | None:
+        return self.oauth_app_store.get(app_id)
+
+    def list_oauth_apps_for_user(self, owner_user_id: str) -> list[OAuthApp]:
+        return self.oauth_app_store.list_for_user(owner_user_id)
+
+    def update_oauth_app(
+        self,
+        app_id: str,
+        *,
+        patch: dict[str, Any],
+    ) -> OAuthApp | None:
+        return self.oauth_app_store.update(app_id, patch=patch)
 
     # ── Email send blocks (SES bounce/complaint suppression) ────────────
     # Delegates to the composed InMemoryEmailBlocks store; see

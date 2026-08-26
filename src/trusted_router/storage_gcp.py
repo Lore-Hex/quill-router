@@ -48,6 +48,7 @@ from trusted_router.storage import (
     Generation,
     GoogleAdsConversion,
     Member,
+    OAuthApp,
     OAuthAuthorizationCode,
     ProviderAccessGrant,
     ProviderBenchmarkSample,
@@ -123,6 +124,7 @@ from trusted_router.storage_gcp_io import (
     run_in_transaction_with_retry,
 )
 from trusted_router.storage_gcp_keys import SpannerApiKeys
+from trusted_router.storage_gcp_oauth_apps import SpannerOAuthApps
 from trusted_router.storage_gcp_oauth_codes import SpannerOAuthCodes
 from trusted_router.storage_gcp_operational_analytics_outbox import (
     SpannerOperationalAnalyticsOutbox,
@@ -146,6 +148,7 @@ from trusted_router.storage_gcp_video_jobs import SpannerVideoJobs
 from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
 from trusted_router.storage_models import (
     ApiKeyAuthContext,
+    AppMarkupPayout,
     BedrockGroupBuyAggregate,
     BedrockGroupBuyPledge,
     BedrockGroupBuyPublicMessage,
@@ -534,6 +537,7 @@ class SpannerBigtableStore:
         self.settle_outbox = SpannerSettleOutbox(self._database, self._param_types)
         self.auth_session_store = SpannerAuthSessions(io)
         self.oauth_code_store = SpannerOAuthCodes(io)
+        self.oauth_app_store = SpannerOAuthApps(io)
         self.rate_limit_store = SpannerRateLimits(io)
         self.wallet_challenges = SpannerWalletChallenges(io)
         self.verification_tokens = SpannerVerificationTokens(io)
@@ -1284,6 +1288,7 @@ class SpannerBigtableStore:
         code_challenge_method: str | None = None,
         spawn_agent: str | None = None,
         spawn_cloud: str | None = None,
+        client_app_id: str = "",
     ) -> tuple[str, OAuthAuthorizationCode]:
         return self.oauth_code_store.create(
             workspace_id=workspace_id,
@@ -1299,10 +1304,28 @@ class SpannerBigtableStore:
             code_challenge_method=code_challenge_method,
             spawn_agent=spawn_agent,
             spawn_cloud=spawn_cloud,
+            client_app_id=client_app_id,
         )
 
     def consume_oauth_authorization_code(self, raw_code: str) -> OAuthAuthorizationCode | None:
         return self.oauth_code_store.consume(raw_code)
+
+    def create_oauth_app(self, app: OAuthApp) -> OAuthApp:
+        return self.oauth_app_store.create(app)
+
+    def get_oauth_app(self, app_id: str) -> OAuthApp | None:
+        return self.oauth_app_store.get(app_id)
+
+    def list_oauth_apps_for_user(self, owner_user_id: str) -> list[OAuthApp]:
+        return self.oauth_app_store.list_for_user(owner_user_id)
+
+    def update_oauth_app(
+        self,
+        app_id: str,
+        *,
+        patch: dict[str, Any],
+    ) -> OAuthApp | None:
+        return self.oauth_app_store.update(app_id, patch=patch)
 
     # API key + per-key spend cap. The actual logic lives in
     # storage_gcp_keys.SpannerApiKeys; these methods are thin delegations.
@@ -1324,6 +1347,7 @@ class SpannerBigtableStore:
         budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
         scopes: list[str] | None = None,
+        app_id: str = "",
     ) -> tuple[str, ApiKey]:
         # Keep every new key at the workspace's established write scale.
         # Lifetime limits use escrowed per-shard sub-budgets, so retaining an
@@ -1345,6 +1369,7 @@ class SpannerBigtableStore:
             budget_alert_only=budget_alert_only,
             tags=tags,
             scopes=scopes,
+            app_id=app_id,
             usage_shard_count=usage_shard_count,
         )
 
@@ -2112,6 +2137,7 @@ class SpannerBigtableStore:
         payer_workspace_id: str | None = None,
     ) -> bool:
         amount = self._positive_money_amount(amount_microdollars)
+        is_app_markup = event_id.startswith("app_markup_payout:")
 
         def txn(transaction: Any) -> bool:
             if self._read_entity_tx(transaction, "stripe_event", event_id, dict) is not None:
@@ -2145,11 +2171,11 @@ class SpannerBigtableStore:
                 transaction,
                 account_id=f"user:{user_id}",
                 movement_id=event_id,
-                kind="custom_model_payout",
+                kind="app_markup_payout" if is_app_markup else "custom_model_payout",
                 amount_microdollars=amount,
                 counterparty_account_id=payer_workspace_id,
                 custom_model_id=custom_model_id,
-                authorization_id=(user_model_authorization_id_from_payout_event_id(event_id)),
+                authorization_id=(event_id.split(":", 1)[1] if is_app_markup else user_model_authorization_id_from_payout_event_id(event_id)),
                 created_at=now,
             )
             insert_entity_dml_at(
@@ -2528,6 +2554,9 @@ class SpannerBigtableStore:
         idempotency_key: str | None = None,
         tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
+        app_id: str = "",
+        app_markup_basis_points: int = 0,
+        app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         user_provided_model_id: str | None = None,
@@ -2558,6 +2587,9 @@ class SpannerBigtableStore:
             idempotency_key=idempotency_key,
             tags=tags,
             idempotency_fingerprint=idempotency_fingerprint,
+            app_id=app_id,
+            app_markup_basis_points=app_markup_basis_points,
+            app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
             user_provided_model_id=user_provided_model_id,
@@ -2638,6 +2670,7 @@ class SpannerBigtableStore:
         selected_usage_type: UsageType | str,
         generation: Generation | None = None,
         user_model_payout: UserModelPayout | None = None,
+        app_markup_payout: AppMarkupPayout | None = None,
     ) -> bool:
         return self.typed_finalize_gateway_authorization_result(
             authorization_id,
@@ -2646,6 +2679,7 @@ class SpannerBigtableStore:
             selected_usage_type=selected_usage_type,
             generation=generation,
             user_model_payout=user_model_payout,
+            app_markup_payout=app_markup_payout,
         ).finalized
 
     def typed_finalize_gateway_authorization_result(
@@ -2657,6 +2691,7 @@ class SpannerBigtableStore:
         selected_usage_type: UsageType | str,
         generation: Generation | None = None,
         user_model_payout: UserModelPayout | None = None,
+        app_markup_payout: AppMarkupPayout | None = None,
     ) -> TypedFinalizeResult:
         """Route-facing typed settle: same contract as
         finalize_gateway_authorization, with explicit activity-index status.
@@ -2718,6 +2753,7 @@ class SpannerBigtableStore:
                 None,
             ),
             user_model_payout=user_model_payout,
+            app_markup_payout=app_markup_payout,
         )
         spanner_ms = (time.perf_counter() - spanner_start) * 1000
         if result["outcome"] == SettleOutcome.ERROR:
@@ -2781,6 +2817,9 @@ class SpannerBigtableStore:
         lease_max_microdollars: int,
         lease_max_available_basis_points: int,
         lease_shard_count: int,
+        app_id: str = "",
+        app_markup_basis_points: int = 0,
+        app_owner_user_id: str = "",
     ) -> tuple[str, GatewayAuthorization | None]:
         """Authorize from bounded regional escrow without touching hot counters."""
 
@@ -2960,6 +2999,7 @@ class SpannerBigtableStore:
             idempotency_key=idempotency_key,
             tags=dict(tags or {}),
             idempotency_fingerprint=idempotency_fingerprint,
+            app_id=app_id,
             settlement="regional_lease",
             regional_lease_id=selected_global.lease_id,
             regional_fencing_token=selected_global.fencing_token,
@@ -3223,6 +3263,9 @@ class SpannerBigtableStore:
         candidate_endpoint_ids: list[str],
         idempotency_key: str | None,
         idempotency_fingerprint: str | None,
+        app_id: str = "",
+        app_markup_basis_points: int = 0,
+        app_owner_user_id: str = "",
         key_usage_shards: int = 1,
         tags: dict[str, str] | None = None,
         custom_model_id: str | None = None,
@@ -3278,6 +3321,9 @@ class SpannerBigtableStore:
                 idempotency_key=idempotency_key,
                 tags=dict(tags or {}),
                 idempotency_fingerprint=idempotency_fingerprint,
+                app_id=app_id,
+                app_markup_basis_points=app_markup_basis_points,
+                app_owner_user_id=app_owner_user_id,
                 custom_model_id=custom_model_id,
                 custom_model_revision=custom_model_revision,
                 user_provided_model_id=user_provided_model_id,
