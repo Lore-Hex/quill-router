@@ -209,7 +209,10 @@ def chat_route_candidates(body: dict[str, Any], settings: Settings) -> list[Mode
 
 
 def chat_route_endpoint_candidates(
-    body: dict[str, Any], settings: Settings
+    body: dict[str, Any],
+    settings: Settings,
+    *,
+    defer_no_fallback_selection: bool = False,
 ) -> list[tuple[Model, ModelEndpoint]]:
     raw_ids, prefs = _routing_for_body(body, settings)
     candidates: list[tuple[Model, ModelEndpoint]] = []
@@ -238,13 +241,16 @@ def chat_route_endpoint_candidates(
             ErrorType.MODEL_NOT_SUPPORTED,
         )
     candidates = _sort_endpoint_candidates(candidates, prefs)
-    if not prefs.allow_fallbacks:
+    if not prefs.allow_fallbacks and not defer_no_fallback_selection:
         return candidates[:1]
     return candidates
 
 
 def image_route_endpoint_candidates(
-    body: dict[str, Any], settings: Settings
+    body: dict[str, Any],
+    settings: Settings,
+    *,
+    defer_no_fallback_selection: bool = False,
 ) -> list[tuple[Model, ModelEndpoint]]:
     """Resolve only models whose normalized image contract is implemented."""
 
@@ -275,7 +281,7 @@ def image_route_endpoint_candidates(
             ErrorType.MODEL_NOT_SUPPORTED,
         )
     candidates = _sort_endpoint_candidates(candidates, prefs)
-    if not prefs.allow_fallbacks:
+    if not prefs.allow_fallbacks and not defer_no_fallback_selection:
         return candidates[:1]
     return candidates
 
@@ -301,7 +307,10 @@ def catalog_endpoint_candidates(
 
 
 def embeddings_route_endpoint_candidates(
-    body: dict[str, Any], settings: Settings
+    body: dict[str, Any],
+    settings: Settings,
+    *,
+    defer_no_fallback_selection: bool = False,
 ) -> list[tuple[Model, ModelEndpoint]]:
     """Endpoint candidates for an embeddings request — the gateway-authorize
     analogue of `chat_route_endpoint_candidates`, accepting only
@@ -335,13 +344,16 @@ def embeddings_route_endpoint_candidates(
             ErrorType.MODEL_NOT_SUPPORTED,
         )
     candidates = _sort_endpoint_candidates(candidates, prefs)
-    if not prefs.allow_fallbacks:
+    if not prefs.allow_fallbacks and not defer_no_fallback_selection:
         return candidates[:1]
     return candidates
 
 
 def video_route_endpoint_candidates(
-    body: dict[str, Any], settings: Settings
+    body: dict[str, Any],
+    settings: Settings,
+    *,
+    defer_no_fallback_selection: bool = False,
 ) -> list[tuple[Model, ModelEndpoint]]:
     """Resolve only provider endpoints backed by the attested video worker."""
     raw_ids, prefs = _routing_for_body(body, settings)
@@ -371,7 +383,7 @@ def video_route_endpoint_candidates(
             ErrorType.MODEL_NOT_SUPPORTED,
         )
     candidates = _sort_endpoint_candidates(candidates, prefs)
-    if not prefs.allow_fallbacks:
+    if not prefs.allow_fallbacks and not defer_no_fallback_selection:
         return candidates[:1]
     return candidates
 
