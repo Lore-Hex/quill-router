@@ -934,8 +934,7 @@ class InMemoryStore:
             hidden_prompt=hidden_prompt,
             enabled=enabled,
             slug=slug,
-            other_model_exists=lambda model_id: self.user_model_store.get(model_id)
-            is not None,
+            other_model_exists=lambda model_id: self.user_model_store.get(model_id) is not None,
         )
 
     def list_custom_models_for_user(self, owner_user_id: str) -> list[CustomModel]:
@@ -955,8 +954,9 @@ class InMemoryStore:
             model_id,
             owner_user_id=owner_user_id,
             patch=patch,
-            other_model_exists=lambda candidate_id: self.user_model_store.get(candidate_id)
-            is not None,
+            other_model_exists=lambda candidate_id: (
+                self.user_model_store.get(candidate_id) is not None
+            ),
         )
 
     def delete_custom_model(self, model_id: str, *, owner_user_id: str) -> bool:
@@ -1013,8 +1013,7 @@ class InMemoryStore:
             enabled=enabled,
             status=status,
             slug=slug,
-            other_model_exists=lambda model_id: self.custom_model_store.get(model_id)
-            is not None,
+            other_model_exists=lambda model_id: self.custom_model_store.get(model_id) is not None,
         )
 
     def list_user_models_for_user(self, owner_user_id: str) -> list[UserProvidedModel]:
@@ -1040,10 +1039,9 @@ class InMemoryStore:
             model_id,
             owner_user_id=owner_user_id,
             patch=patch,
-            other_model_exists=lambda candidate_id: self.custom_model_store.get(
-                candidate_id
-            )
-            is not None,
+            other_model_exists=lambda candidate_id: (
+                self.custom_model_store.get(candidate_id) is not None
+            ),
         )
 
     def delete_user_model(self, model_id: str, *, owner_user_id: str) -> bool:
@@ -1427,9 +1425,7 @@ class InMemoryStore:
                 amount_microdollars=amount,
                 counterparty_account_id=payer_workspace_id,
                 custom_model_id=custom_model_id,
-                authorization_id=(
-                    user_model_authorization_id_from_payout_event_id(event_id)
-                ),
+                authorization_id=(user_model_authorization_id_from_payout_event_id(event_id)),
             )
             return True
 
@@ -1860,9 +1856,7 @@ class InMemoryStore:
             custom_model_revision=custom_model_revision,
             user_provided_model_id=user_provided_model_id,
             user_provided_model_revision=user_provided_model_revision,
-            user_model_prompt_price_microdollars_per_m=(
-                user_model_prompt_price_microdollars_per_m
-            ),
+            user_model_prompt_price_microdollars_per_m=(user_model_prompt_price_microdollars_per_m),
             user_model_completion_price_microdollars_per_m=(
                 user_model_completion_price_microdollars_per_m
             ),
@@ -1951,9 +1945,7 @@ class InMemoryStore:
             self.client_events_batches.append(dict(payload))
             if len(self.client_events_batches) > 1_000:
                 removed = self.client_events_batches.pop(0)
-                self.client_event_ids.discard(
-                    f"{removed['tenant_id']}:{removed['batch_id']}"
-                )
+                self.client_event_ids.discard(f"{removed['tenant_id']}:{removed['batch_id']}")
 
     def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None:
         self.generation_store.record_benchmark(sample)
@@ -2418,6 +2410,13 @@ def create_store(settings: Any) -> Store:
                 "operational_analytics_outbox_enabled",
                 False,
             ),
+            operational_analytics_sink=getattr(settings, "operational_analytics_sink", "outbox"),
+            operational_analytics_clickhouse_write_user=getattr(
+                settings, "operational_analytics_clickhouse_write_user", "tr"
+            ),
+            operational_analytics_clickhouse_write_password=getattr(
+                settings, "operational_analytics_clickhouse_write_password", ""
+            ),
             operational_analytics_clickhouse_url=getattr(
                 settings, "operational_analytics_clickhouse_url", ""
             ),
@@ -2440,9 +2439,7 @@ def create_store(settings: Any) -> Store:
             analytics_dual_read_grace_seconds=getattr(
                 settings, "analytics_dual_read_grace_seconds", 30
             ),
-            regional_quota_leases_enabled=getattr(
-                settings, "regional_quota_leases_enabled", False
-            ),
+            regional_quota_leases_enabled=getattr(settings, "regional_quota_leases_enabled", False),
             regional_quota_bigtable_table=getattr(
                 settings,
                 "regional_quota_bigtable_table",

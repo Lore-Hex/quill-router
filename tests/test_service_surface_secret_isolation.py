@@ -63,6 +63,11 @@ _ACTION_FORBIDDEN_CONFIG: tuple[tuple[str, object, str], ...] = (
         "ops-clickhouse-secret",
         "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD",
     ),
+    (
+        "operational_analytics_clickhouse_write_password",
+        "ops-clickhouse-write-secret",
+        "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_WRITE_PASSWORD",
+    ),
     ("google_data_manager_enabled", True, "TR_GOOGLE_DATA_MANAGER_ENABLED"),
     (
         "google_data_manager_kms_key_name",
@@ -144,6 +149,7 @@ _SENSITIVE_TEST_VALUES: dict[str, object] = {
     "provider_analytics_clickhouse_password": "provider-clickhouse-secret",
     "operational_analytics_clickhouse_url": "https://ops-clickhouse.example",
     "operational_analytics_clickhouse_password": "ops-clickhouse-secret",
+    "operational_analytics_clickhouse_write_password": "ops-clickhouse-write-secret",
     "sentry_dsn": "https://example@example.ingest.sentry.io/1",
     "google_data_manager_enabled": True,
     "google_data_manager_kms_key_name": "projects/test/locations/global/keyRings/gdm/keys/k",
@@ -205,6 +211,7 @@ _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
         (
             "clickhouse_url",
             "clickhouse_password",
+            "operational_analytics_clickhouse_write_password",
         ),
     ),
     (

@@ -231,6 +231,10 @@ SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     "operational_analytics_clickhouse_url": frozenset(
         {"public", "control", "internal", "observer"}
     ),
+    # The write USER is not in this map: it is a username with a non-empty
+    # default, not a secret, exactly like the read user above it. Only the
+    # credential is surface-restricted.
+    "operational_analytics_clickhouse_write_password": frozenset({"control", "internal"}),
     "operational_analytics_clickhouse_password": frozenset(
         {"public", "control", "internal", "observer"}
     ),
@@ -286,6 +290,35 @@ def _sensitive_setting_is_configured(field_name: str, value: object) -> bool:
     if field_name in {"google_alias_credentials_json", "github_alias_credentials_json"}:
         return value != "{}"
     return bool(value)
+
+
+def operational_analytics_sink_problems(settings: Any) -> list[str]:
+    """Fail-closed checks for HOW operational telemetry leaves the process.
+
+    Pure and duck-typed so the contract is testable without constructing a
+    full production Settings. Called from production_is_fail_closed for the
+    spanner-clickhouse backend.
+    """
+    problems: list[str] = []
+    sink = settings.operational_analytics_sink
+    if sink not in ("outbox", "direct"):
+        problems.append(
+            f"TR_OPERATIONAL_ANALYTICS_SINK must be 'outbox' or 'direct' (got {sink!r})"
+        )
+    if not (settings.operational_analytics_outbox_enabled or sink == "direct"):
+        problems.append(
+            "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true (or TR_OPERATIONAL_ANALYTICS_SINK=direct)"
+        )
+    if sink == "direct" and not (
+        settings.operational_analytics_clickhouse_url
+        and settings.operational_analytics_clickhouse_write_password
+    ):
+        problems.append(
+            "TR_OPERATIONAL_ANALYTICS_SINK=direct requires "
+            "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL and "
+            "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_WRITE_PASSWORD"
+        )
+    return problems
 
 
 class Settings(BaseSettings):
@@ -406,6 +439,17 @@ class Settings(BaseSettings):
     # Durable tenant-activity and synthetic-status stream. Kept independent
     # from provider analytics so its privacy and cutover can be controlled.
     operational_analytics_outbox_enabled: bool = False
+    # HOW operational telemetry leaves the process. "outbox" is the historical
+    # path: rows into the billing database, polled out by a drainer -- a
+    # standing tax on the money path that on 2026-08-25 measured ~25% of the
+    # whole Spanner instance while idle. "direct" writes canonical rows
+    # straight to ClickHouse from a bounded in-process buffer
+    # (operational_analytics_direct.py) and needs a WRITE-capable ClickHouse
+    # credential below. Per-cloud cutover: flip this only where that
+    # credential is provisioned.
+    operational_analytics_sink: str = "outbox"
+    operational_analytics_clickhouse_write_user: str = "tr"
+    operational_analytics_clickhouse_write_password: str = ""
     # Client-observed figures include upstream provider-caused failures and can
     # understate a healthy gateway. Keep them off public surfaces until
     # per-provider attribution makes the number fair to publish.
@@ -1572,8 +1616,7 @@ class Settings(BaseSettings):
                 )
             if not self.generation_records_enabled:
                 missing.append("TR_GENERATION_RECORDS_ENABLED=true")
-            if not self.operational_analytics_outbox_enabled:
-                missing.append("TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true")
+            missing.extend(operational_analytics_sink_problems(self))
             if not self.analytics_outbox_enabled:
                 missing.append("TR_ANALYTICS_OUTBOX_ENABLED=true")
             if self.bigtable_mirror_writes_enabled:
