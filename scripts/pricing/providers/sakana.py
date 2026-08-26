@@ -217,7 +217,10 @@ CATALOG = DirectOpenAIProvider(
         operator_hold_reasons={
             SAKANA_NAMAZU_MODEL_ID: SAKANA_NAMAZU_ROUTE_HOLD_REASON,
         },
-        canary_max_tokens=64,
+        # Fugu can spend a small response budget entirely on private reasoning,
+        # yielding a healthy but empty length-truncated response. A 256-token
+        # ceiling remains cheap while reliably reaching the visible PONG.
+        canary_max_tokens=256,
         canary_expected_content="PONG",
     ),
     manifest_path=MANIFEST_PATH,

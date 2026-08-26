@@ -172,6 +172,10 @@ def test_sakana_declares_operator_holds_in_shared_fetcher() -> None:
     assert sakana.CATALOG.spec.operator_hold_reasons == {
         sakana.SAKANA_NAMAZU_MODEL_ID: sakana.SAKANA_NAMAZU_ROUTE_HOLD_REASON,
     }
+    # Fugu can consume smaller budgets entirely as private reasoning and return
+    # an empty length-truncated response. Keep its exact-PONG canary above the
+    # live-reproduced 64-token failure mode.
+    assert sakana.CATALOG.spec.canary_max_tokens == 256
 
 
 def test_sakana_fugu_gateway_region_contract_is_fail_closed_for_europe() -> None:
