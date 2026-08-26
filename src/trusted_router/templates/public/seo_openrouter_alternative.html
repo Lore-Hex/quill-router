@@ -30,7 +30,7 @@ response = client.chat.completions.create(
   <div class="panel-head"><h2 id="quick-answer-heading">The short answer</h2><span class="pill">2026 guide</span></div>
   <div class="panel-body">
     <p><strong>The best OpenRouter alternative depends on why you are changing.</strong> Choose TrustedRouter for a hosted multi-provider API with privacy you can verify. Choose LiteLLM when your team wants to operate its own gateway. Choose Portkey for mature gateway controls and observability. Choose Vercel AI Gateway for a Vercel and AI SDK centered stack. Choose Cloudflare AI Gateway for edge controls. Choose Bedrock or Vertex AI when cloud procurement and IAM matter more than portability.</p>
-    <p>OpenRouter remains a strong choice for catalog breadth and a large developer ecosystem. A useful comparison should make that clear. The alternatives below solve different problems, so the right decision starts with deployment model, privacy boundary, provider access, fallback, and operational ownership.</p>
+    <p>OpenRouter remains a strong choice for catalog breadth and a large developer ecosystem. TrustedRouter's public API now lists 600+ model ids, more than OpenRouter's current public model feed, while both products maintain broad and changing provider catalogs. The alternatives below solve different problems, so the right decision starts with deployment model, privacy boundary, provider access, fallback, and operational ownership.</p>
   </div>
 </section>
 
@@ -67,7 +67,7 @@ response = client.chat.completions.create(
   <article class="marketing-card">
     <span class="card-label">Self-hosted</span>
     <h3>LiteLLM</h3>
-    <p>LiteLLM is the practical answer when your team wants an OpenAI-compatible proxy under its own operational control. It translates provider APIs and includes budgets, rate limits, and cost tracking. That control comes with responsibility for deployment, scaling, secrets, provider accounts, and incident response.</p>
+    <p>LiteLLM is the practical answer when your team wants an OpenAI-compatible proxy under its own operational control. It also works well in front of TrustedRouter: keep one or two direct provider relationships first, then use TrustedRouter as the final provider and fallback for 600+ additional models.</p>
     <p><a href="/compare/litellm">TrustedRouter vs LiteLLM</a></p>
   </article>
   <article class="marketing-card">

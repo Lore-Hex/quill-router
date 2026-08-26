@@ -45,7 +45,9 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
   });
   expect(faintTextContrast.dark).toBeGreaterThanOrEqual(4.5);
   expect(faintTextContrast.light).toBeGreaterThanOrEqual(4.5);
-  await expect(page.getByText("ATTESTED GATEWAY", { exact: true })).toBeVisible();
+  await expect(page.locator(".hero-sdk-swap")).toBeVisible();
+  await expect(page.locator(".hero-sdk-code-line.removed")).toContainText("api.openai.com/v1");
+  await expect(page.locator(".hero-sdk-code-line.added")).toContainText("api.trustedrouter.com/v1");
   await expect(page.locator(".charter-home-hero .hero-links")).toHaveCSS("justify-content", "flex-start");
 
   await page.getByRole("button", { name: "Sign in" }).click();
@@ -465,7 +467,11 @@ test("homepage exposes privacy, no-subscription, and open-source claims", async 
   await expect(page.getByText("End-to-End Encrypted AI gateway").first()).toBeVisible();
   await expect(page.getByText("No subscription required")).toBeVisible();
   await expect(page.getByText("inspect, fork, or run yourself")).toBeVisible();
-  await expect(page.getByText("ATTESTED GATEWAY", { exact: true })).toBeVisible();
+  const sdkSwap = page.locator(".hero-sdk-swap");
+  await expect(sdkSwap).toBeVisible();
+  await expect(sdkSwap).toContainText("Change one line");
+  await expect(sdkSwap).toContainText('base_url="https://api.openai.com/v1"');
+  await expect(sdkSwap).toContainText('base_url="https://api.trustedrouter.com/v1"');
   await expect(
     page.locator('a[href="https://github.com/Lore-Hex/trusted-router-py"]').first(),
   ).toBeVisible();
@@ -627,6 +633,12 @@ test("homepage explainer video contacts YouTube only after an explicit press", a
 
   const facade = page.locator('[data-action="load-video"]');
   await expect(facade).toBeVisible();
+  await expect(facade.locator(".video-embed-poster")).toBeVisible();
+  await expect(facade).toContainText("Watch the demo");
+  const posterLoaded = await facade.locator(".video-embed-poster").evaluate(
+    (image) => image.complete && image.naturalWidth === 1280 && image.naturalHeight === 720,
+  );
+  expect(posterLoaded).toBe(true);
 
   // The point of the facade: a privacy-first homepage must not hand Google a
   // pageview to render. Nothing may be requested before the visitor asks.

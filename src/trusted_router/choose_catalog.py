@@ -98,6 +98,9 @@ _DIMENSION_TAGS = {
     "multimodal": "vision",
 }
 
+_AI_IQ_TASK_OUTPUT_TOKENS = 1_000
+_AI_IQ_SPEED_URL = "https://aiiq.org/speed/"
+
 
 def choose_catalog_payload(*, test_mode: bool = False) -> dict[str, Any]:
     catalog_models = _public_chat_models()
@@ -215,7 +218,6 @@ def _endpoint_row(
             "sample_count": int(measured.get("sample_count") or 0),
             "uptime": measured.get("uptime"),
             "p50_ttft_ms": measured.get("p50_ttft_ms"),
-            "p50_tokens_per_second": measured.get("p50_tokens_per_second"),
             "last_seen": measured.get("last_seen"),
         }
     return {
@@ -247,7 +249,33 @@ def _quality_row(quality: Mapping[str, Any]) -> dict[str, Any]:
         "url": str(quality.get("url") or ""),
         "source": "AI IQ",
         "dimensions": dict(dimensions) if isinstance(dimensions, Mapping) else {},
+        "task_speed": _task_speed_row(quality),
     }
+
+
+def _task_speed_row(quality: Mapping[str, Any]) -> dict[str, Any] | None:
+    speed = quality.get("speed")
+    if not isinstance(speed, Mapping):
+        return None
+    response_time = _positive_number(speed.get("response_time_seconds"))
+    throughput = _positive_number(speed.get("median_tokens_per_second"))
+    if response_time is None or throughput is None:
+        return None
+    completion_time = response_time + (_AI_IQ_TASK_OUTPUT_TOKENS / throughput)
+    return {
+        "response_time_seconds": round(response_time, 2),
+        "median_tokens_per_second": round(throughput, 2),
+        "task_output_tokens": _AI_IQ_TASK_OUTPUT_TOKENS,
+        "completion_time_seconds": round(completion_time, 2),
+        "source": "AI IQ",
+        "url": _AI_IQ_SPEED_URL,
+    }
+
+
+def _positive_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
+        return None
+    return float(value)
 
 
 def _positive_quality_score(quality: Mapping[str, Any]) -> int | None:

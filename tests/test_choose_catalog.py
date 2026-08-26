@@ -53,6 +53,12 @@ def test_choose_catalog_is_compact_endpoint_scoped_and_cached(client: TestClient
     assert payload["catalog_route_count"] > payload["catalog_model_count"]
     for model in payload["models"]:
         assert model["quality"]["score"] > 0
+        task_speed = model["quality"]["task_speed"]
+        if task_speed is not None:
+            assert task_speed["source"] == "AI IQ"
+            assert task_speed["url"] == "https://aiiq.org/speed/"
+            assert task_speed["task_output_tokens"] == 1_000
+            assert task_speed["completion_time_seconds"] > task_speed["response_time_seconds"]
         assert model["endpoints"]
         for endpoint in model["endpoints"]:
             assert isinstance(endpoint["prompt_price_microdollars_per_million_tokens"], int)
@@ -60,6 +66,8 @@ def test_choose_catalog_is_compact_endpoint_scoped_and_cached(client: TestClient
             assert endpoint["provider"]
             assert endpoint["usage_type"] in {"BYOK", "Credits"}
             assert endpoint["privacy_tier"] in {0, 1, 2, 3}
+            if endpoint["performance"] is not None:
+                assert "p50_tokens_per_second" not in endpoint["performance"]
 
     forbidden_keys = {
         "api_key",
@@ -159,6 +167,35 @@ def test_choose_catalog_omits_unscored_and_zero_score_models() -> None:
     assert payload["models"] == []
 
 
+def test_choose_catalog_uses_ai_iq_full_task_completion_time() -> None:
+    model = MODELS["openai/gpt-5.5"]
+    payload = build_choose_catalog_payload(
+        catalog_models=[model],
+        quality_models={
+            model.id: {
+                "iq": 120,
+                "url": "https://aiiq.org/models/gpt-5.5/",
+                "speed": {
+                    "response_time_seconds": 10.0,
+                    "median_tokens_per_second": 100.0,
+                },
+            }
+        },
+        quality_updated_at="2026-08-26T00:00:00Z",
+        measured={"models": [], "generated_at": "2026-08-26T00:00:00Z"},
+    )
+
+    task_speed = payload["models"][0]["quality"]["task_speed"]
+    assert task_speed == {
+        "response_time_seconds": 10.0,
+        "median_tokens_per_second": 100.0,
+        "task_output_tokens": 1_000,
+        "completion_time_seconds": 20.0,
+        "source": "AI IQ",
+        "url": "https://aiiq.org/speed/",
+    }
+
+
 def test_choose_page_and_client_do_not_repeat_old_false_claims(client: TestClient) -> None:
     page = client.get("/choose").text
     script = client.get("/static/choose-app.js").text
@@ -168,6 +205,10 @@ def test_choose_page_and_client_do_not_repeat_old_false_claims(client: TestClien
     assert "cheapest capable, tee" not in combined
     assert "every model trustedrouter can reach plotted" not in combined
     assert "tps≈" not in combined
+    assert "measured throughput" not in combined
+    assert "p50_tokens_per_second" not in script
+    assert "AI IQ TASK SPEED" in script
+    assert "completion_time_seconds" in script
     assert 'const catalog_url = "/choose/catalog.json"' in combined
     assert "/v1/models" not in script
     assert "/ai-iq/models.json" not in script

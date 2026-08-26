@@ -4,9 +4,9 @@
 <section class="marketing-split" aria-label="LiteLLM alternative">
   <div class="marketing-copy">
     <span class="eyebrow">LiteLLM alternative</span>
-    <h2>LiteLLM lets you self-host. TrustedRouter lets you self-host <em>and</em> prove it.</h2>
-    <p>LiteLLM is a great open-source proxy: one OpenAI-compatible API across 100+ models, runs in your own infra. The gap is verification — once it's deployed, nobody outside your ops team can confirm what the running proxy actually does with a prompt.</p>
-    <p>TrustedRouter closes that gap. The gateway runs in hardware enclaves and signs the exact binary it's running, so the no-logging guarantee is cryptographically checkable — by you, your auditors, or your customers.</p>
+    <h2>LiteLLM lets you self-host. TrustedRouter completes its provider map.</h2>
+    <p>LiteLLM is a strong open-source control layer for your own platform. Keep one or two direct providers where you have contracts, credits, or special terms. Then add TrustedRouter as the final provider and fallback for 600+ additional models across more than 80 providers.</p>
+    <p>The combination gives you local policy and spend controls without maintaining every long-tail integration. TrustedRouter adds managed rollover and a hardware-attested prompt path through one OpenAI-compatible upstream.</p>
     <p>
       <a class="btn primary" href="/chat">Try the playground</a>
       <a class="btn" href="/security">How verification works</a>
@@ -26,19 +26,19 @@
 
 <section class="marketing-grid three">
   <div class="marketing-card">
-    <span class="card-label">Self-host</span>
-    <h3>Run it in your own VPC.</h3>
-    <p>Like LiteLLM, the full stack is open source and self-hostable. Unlike LiteLLM, the deployment is attestable end to end.</p>
+    <span class="card-label">Control layer</span>
+    <h3>Run LiteLLM in your VPC.</h3>
+    <p>Keep internal policy, budgets, virtual keys, and direct-provider order under your control.</p>
   </div>
   <div class="marketing-card">
-    <span class="card-label">Verifiable</span>
-    <h3>Prove the no-log claim.</h3>
-    <p>Build the image, deploy to a confidential VM, and the attestation reports your hash. Your security team verifies instead of trusting your runbook.</p>
+    <span class="card-label">Catalog breadth</span>
+    <h3>Add one universal upstream.</h3>
+    <p>TrustedRouter fills model and provider gaps without dozens of new accounts and adapters.</p>
   </div>
   <div class="marketing-card">
-    <span class="card-label">Hosted option</span>
-    <h3>Or skip the ops entirely.</h3>
-    <p>Don't want to run a proxy? Use the hosted attested gateway at api.trustedrouter.com — same verification, zero infra.</p>
+    <span class="card-label">Verifiable hosted path</span>
+    <h3>Keep sensitive fallback inspectable.</h3>
+    <p>The final upstream runs through an attested gateway whose source and running image can be checked.</p>
   </div>
 </section>
 
@@ -64,15 +64,18 @@
   <div class="matrix-row">
     <span>Best fit</span><span>Teams that want a self-hosted proxy</span><span>Teams that must <em>prove</em> what the proxy does</span>
   </div>
+  <div class="matrix-row">
+    <span>Use together</span><span>Direct providers and local controls first</span><span>600+ models as the final provider and fallback</span>
+  </div>
 </section>
 
 <section class="quote-feature">
   <div>
-    <span class="eyebrow">When to choose TR over LiteLLM</span>
-    <h2>When "trust our deployment" isn't enough.</h2>
+    <span class="eyebrow">Recommended architecture</span>
+    <h2>Use LiteLLM in front of TrustedRouter.</h2>
   </div>
   <div>
-    <p>If your security review, your customers, or your regulator needs evidence — not assurances — that prompts aren't logged, a self-hosted proxy alone doesn't get you there. Attestation does.</p>
+    <p>Put direct provider relationships first, then route everything else to TrustedRouter. Your team owns the policy layer while one final upstream supplies catalog breadth, provider rollover, and privacy with proof.</p>
     <p>Read the full argument: <a href="https://jperla.com/blog/attestation-is-all-you-need">&ldquo;Attestation is All You Need&rdquo;</a>.</p>
   </div>
 </section>

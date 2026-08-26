@@ -335,12 +335,13 @@ def test_local_key_file_accepts_operator_aliases(tmp_path: Path) -> None:
 def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None:
     dashboard = client.get("/")
     assert dashboard.status_code == 200
-    # Marketing page hero + key surfaces stay real. Redesigned 2026-06: a
-    # static routing-diagram hero + reliability stat cards replace the
-    # animated orbital scene and the world map.
+    # Marketing page hero + key surfaces stay real. The one-line SDK swap
+    # demonstrates migration without displacing trust evidence lower down.
     assert "Get API key" in dashboard.text
     assert "End-to-End Encrypted AI gateway" in dashboard.text
-    assert "ATTESTED GATEWAY" in dashboard.text  # routing-diagram hero
+    assert "CHANGE ONE LINE" in dashboard.text.upper()
+    assert 'base_url="https://api.openai.com/v1"' in dashboard.text
+    assert 'base_url="https://api.trustedrouter.com/v1"' in dashboard.text
     assert "3 clouds" in dashboard.text
     assert "GCP · AWS · Azure" in dashboard.text
     assert "GCP, AWS, and Azure" in dashboard.text

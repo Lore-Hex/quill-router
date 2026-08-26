@@ -15,10 +15,10 @@
     { key: "frontier", label: "Frontier", detail: "IQ 124+", floor: 124 },
   ];
   const SPEED_LEVELS = [
-    { key: "realtime", label: "Realtime", detail: "TTFT <= 1s", maxTtftMs: 1000 },
-    { key: "seconds", label: "Seconds", detail: "TTFT <= 5s", maxTtftMs: 5000 },
-    { key: "minutes", label: "Minutes", detail: "Prefer measured", maxTtftMs: null },
-    { key: "any", label: "Any", detail: "No speed floor", maxTtftMs: null },
+    { key: "realtime", label: "Quick", detail: "Task <= 25s", maxTaskSeconds: 25 },
+    { key: "seconds", label: "Responsive", detail: "Task <= 60s", maxTaskSeconds: 60 },
+    { key: "minutes", label: "Deliberate", detail: "Task <= 2m", maxTaskSeconds: 120 },
+    { key: "any", label: "Any", detail: "No time floor", maxTaskSeconds: null },
   ];
   const EXAMPLES = [
     "Refactor a React component and write tests",
@@ -126,7 +126,12 @@
       if (!model || typeof model.id !== "string" || typeof model.name !== "string" || score === null || score <= 0 || !endpoints.length) {
         return null;
       }
-      return { ...model, quality: { ...model.quality, score }, endpoints };
+      const taskSpeed = normalizeTaskSpeed(model.quality.task_speed);
+      return {
+        ...model,
+        quality: { ...model.quality, score, task_speed: taskSpeed },
+        endpoints,
+      };
     }).filter(Boolean);
     if (!models.length) throw new Error("No independently scored routes are currently available.");
 
@@ -165,13 +170,23 @@
     );
   }
 
-  function measuredPerformance(endpoint) {
+  function normalizeTaskSpeed(speed) {
+    const completionSeconds = finiteNumber(speed?.completion_time_seconds);
+    const responseSeconds = finiteNumber(speed?.response_time_seconds);
+    const outputTokens = finiteNumber(speed?.task_output_tokens);
+    const url = safeUrl(speed?.url);
+    if (completionSeconds === null || completionSeconds <= 0
+      || responseSeconds === null || responseSeconds < 0
+      || outputTokens === null || outputTokens <= 0) return null;
+    return { completionSeconds, responseSeconds, outputTokens, url };
+  }
+
+  function measuredRouteLatency(endpoint) {
     const performance = endpoint.performance;
     const ttft = finiteNumber(performance?.p50_ttft_ms);
-    const throughput = finiteNumber(performance?.p50_tokens_per_second);
     const samples = finiteNumber(performance?.sample_count) || 0;
-    if (!performance || samples <= 0 || ttft === null || throughput === null || throughput <= 0) return null;
-    return { endpoint, ttft, throughput, samples, uptime: finiteNumber(performance.uptime) };
+    if (!performance || samples <= 0 || ttft === null || ttft < 0) return null;
+    return { endpoint, ttft, samples, uptime: finiteNumber(performance.uptime) };
   }
 
   function modelFacts(model) {
@@ -179,18 +194,14 @@
     const endpoints = endpointsFor(model);
     if (!endpoints.length) return null;
     const cheapest = [...endpoints].sort((left, right) => routePrice(left) - routePrice(right))[0];
-    const measured = endpoints.map(measuredPerformance).filter(Boolean);
-    const fastest = measured.sort((left, right) => {
-      if (right.throughput !== left.throughput) return right.throughput - left.throughput;
-      return left.ttft - right.ttft;
-    })[0] || null;
+    const measured = endpoints.map(measuredRouteLatency).filter(Boolean);
     const lowestTtft = measured.sort((left, right) => left.ttft - right.ttft)[0] || null;
     return {
       model,
       endpoints,
       cheapest,
       blendedPrice: routePrice(cheapest),
-      fastest,
+      taskSpeed: model.quality.task_speed,
       lowestTtft,
     };
   }
@@ -205,9 +216,11 @@
 
   function passesRequirements(facts) {
     if (facts.model.quality.score < qualityLevel().floor) return false;
-    const maxTtftMs = speedLevel().maxTtftMs;
-    if (maxTtftMs === null) return true;
-    return Boolean(facts.lowestTtft && facts.lowestTtft.ttft <= maxTtftMs);
+    const maxTaskSeconds = speedLevel().maxTaskSeconds;
+    if (maxTaskSeconds === null) return true;
+    return Boolean(
+      facts.taskSpeed && facts.taskSpeed.completionSeconds <= maxTaskSeconds,
+    );
   }
 
   function normalizedMetric(value, low, high, inverse = false) {
@@ -220,15 +233,15 @@
   function scoreFacts(factsList) {
     const qualities = factsList.map((facts) => facts.model.quality.score);
     const prices = factsList.map((facts) => Math.log10(Math.max(1, facts.blendedPrice)));
-    const measuredSpeeds = factsList
-      .map((facts) => facts.fastest?.throughput)
+    const taskTimes = factsList
+      .map((facts) => facts.taskSpeed?.completionSeconds)
       .filter((value) => Number.isFinite(value) && value > 0)
       .map((value) => Math.log10(value));
     const ranges = {
       quality: [Math.min(...qualities), Math.max(...qualities)],
       price: [Math.min(...prices), Math.max(...prices)],
-      speed: measuredSpeeds.length
-        ? [Math.min(...measuredSpeeds), Math.max(...measuredSpeeds)]
+      speed: taskTimes.length
+        ? [Math.min(...taskTimes), Math.max(...taskTimes)]
         : [0, 1],
     };
     return factsList.map((facts) => {
@@ -238,8 +251,12 @@
         ...ranges.price,
         true,
       );
-      const speedScore = facts.fastest
-        ? normalizedMetric(Math.log10(facts.fastest.throughput), ...ranges.speed)
+      const speedScore = facts.taskSpeed
+        ? normalizedMetric(
+          Math.log10(facts.taskSpeed.completionSeconds),
+          ...ranges.speed,
+          true,
+        )
         : 0;
       const matchScore = (
         qualityScore * state.preference.quality
@@ -331,7 +348,7 @@
     const labels = [
       ["QUALITY", 500, 42, "#aa8cff", "middle"],
       ["LOW COST", 60, 862, "#36d39a", "start"],
-      ["MEASURED SPEED", 940, 862, "#f5b642", "end"],
+      ["AI IQ TASK SPEED", 940, 862, "#f5b642", "end"],
     ];
     for (const [label, x, y, fill, anchor] of labels) {
       const text = svgElement("text", { x, y, fill, "text-anchor": anchor, "font-size": 18, "font-weight": 800 });
@@ -419,6 +436,15 @@
     return String(value);
   }
 
+  function formatDuration(seconds) {
+    const value = finiteNumber(seconds);
+    if (value === null) return "unknown";
+    if (value < 60) return `${value.toFixed(value < 10 ? 1 : 0)}s`;
+    const minutes = Math.floor(value / 60);
+    const remainder = Math.round(value % 60);
+    return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
+  }
+
   function providerRoute(endpoint) {
     const url = safeUrl(endpoint.provider_policy_url);
     const node = htmlElement(url ? "a" : "span", `provider-route ${tierClass(endpoint.privacy_tier)}`);
@@ -437,7 +463,7 @@
     if (facts.model.id === ranked[0]?.model.id) return "best match for your mix";
     if (state.preference.quality >= 0.45) return "high independent score";
     if (state.preference.cost >= 0.45) return "low-cost qualifying route";
-    if (state.preference.speed >= 0.45 && facts.fastest) return "fast measured route";
+    if (state.preference.speed >= 0.45 && facts.taskSpeed) return "fast AI IQ task time";
     return "qualified alternative";
   }
 
@@ -483,9 +509,16 @@
     metrics.appendChild(htmlElement(
       "span",
       "",
-      facts.fastest
-        ? `${facts.fastest.throughput.toFixed(1)} tok/s · ${Math.round(facts.fastest.ttft)} ms TTFT via ${facts.fastest.endpoint.provider_name}`
-        : "No recent route speed sample",
+      facts.taskSpeed
+        ? `${formatDuration(facts.taskSpeed.completionSeconds)} AI IQ task time · ${Math.round(facts.taskSpeed.outputTokens / 100) / 10}K output`
+        : "No AI IQ task-speed estimate",
+    ));
+    metrics.appendChild(htmlElement(
+      "span",
+      "",
+      facts.lowestTtft
+        ? `${Math.round(facts.lowestTtft.ttft)} ms route TTFT via ${facts.lowestTtft.endpoint.provider_name}`
+        : "Route TTFT warming up",
     ));
     metrics.appendChild(htmlElement("span", `privacy-badge ${tierClass(state.privacy)}`, `${tierShortLabel(state.privacy)} qualified`));
     card.append(rankNode, body, metrics);
@@ -577,9 +610,12 @@
     dom.tooltip.appendChild(htmlElement("h3", "", facts.model.name));
     dom.tooltip.appendChild(htmlElement("p", "", `${facts.model.id} · AI IQ ${facts.model.quality.score}`));
     dom.tooltip.appendChild(htmlElement("p", "", `${formatDollars(facts.cheapest.prompt_price_microdollars_per_million_tokens)}/M in · ${formatDollars(facts.cheapest.completion_price_microdollars_per_million_tokens)}/M out via ${facts.cheapest.provider_name}`));
-    dom.tooltip.appendChild(htmlElement("p", "", facts.fastest
-      ? `${facts.fastest.throughput.toFixed(1)} tok/s · ${Math.round(facts.fastest.ttft)} ms measured TTFT via ${facts.fastest.endpoint.provider_name}`
-      : "No recent route speed sample"));
+    dom.tooltip.appendChild(htmlElement("p", "", facts.taskSpeed
+      ? `${formatDuration(facts.taskSpeed.completionSeconds)} AI IQ completion estimate for a ${Math.round(facts.taskSpeed.outputTokens)}-token answer`
+      : "No AI IQ task-speed estimate"));
+    dom.tooltip.appendChild(htmlElement("p", "", facts.lowestTtft
+      ? `${Math.round(facts.lowestTtft.ttft)} ms measured route TTFT via ${facts.lowestTtft.endpoint.provider_name}`
+      : "Route TTFT is still warming up"));
     const host = dom.tooltip.offsetParent || dom.triangle.parentElement;
     const bounds = host.getBoundingClientRect();
     const width = 260;

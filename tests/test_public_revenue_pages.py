@@ -15,7 +15,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
     markers = {
         "/compare/openrouter": "OpenRouter, but you can verify the prompt path.",
         "/compare/vercel-ai-gateway": "Use Vercel where it fits.",
-        "/compare/litellm": "LiteLLM for your own infra",
+        "/compare/litellm": "LiteLLM and TrustedRouter fit in the same stack.",
         "/docs/migrate-from-openrouter": "Change base_url",
         "/docs/synth": "Run a panel of models inside the attested gateway.",
         "/synth": "Synthesize many models into one perfect frontier answer.",
@@ -300,6 +300,23 @@ def test_public_pricing_matches_five_point_five_percent_billing_policy(
     assert "Video generation is the direct provider quote + 20%" in llms.text
 
 
+def test_router_comparisons_publish_current_catalog_and_composable_litellm_stack(
+    client: TestClient,
+) -> None:
+    litellm = client.get("/compare/litellm")
+    litellm_seo = client.get("/litellm-alternative")
+    openrouter = client.get("/compare/openrouter")
+
+    assert litellm.status_code == litellm_seo.status_code == openrouter.status_code == 200
+    assert "LiteLLM and TrustedRouter fit in the same stack." in litellm.text
+    assert "Direct provider A" in litellm.text
+    assert "TrustedRouter completes the map" in litellm.text
+    assert "600+ additional models" in litellm.text
+    assert "Use LiteLLM in front of TrustedRouter." in litellm_seo.text
+    assert "600+ model ids across 80+ providers" in openrouter.text
+    assert "TrustedRouter's public API lists 600+ model ids" in openrouter.text
+
+
 def test_paid_search_landing_pages_drive_a_runnable_first_call(
     client: TestClient,
 ) -> None:
@@ -390,7 +407,7 @@ def test_choose_app_static_asset_is_served(client: TestClient) -> None:
     assert "Upstream privacy floor" in response.text
     assert 'id="providerCount"' in response.text
     assert "/static/choose-app.css?v=2" in response.text
-    assert "/static/choose-app.js?v=3" in response.text
+    assert "/static/choose-app.js?v=4" in response.text
     assert "fonts.googleapis.com" not in response.text
     # Privacy floor defaults to Open (any provider), not ZDR.
     assert '<option value="0" selected>' in response.text
@@ -684,7 +701,11 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     assert '<strong>3 clouds</strong><span>GCP · AWS · Azure</span>' in response.text
     assert 'class="region-map-card"' not in response.text
     assert "Provable privacy." not in response.text
-    assert "ATTESTED GATEWAY" in response.text  # attestation record
+    assert "ATTESTED GATEWAY" not in response.text
+    assert 'class="hero-sdk-swap"' in response.text
+    assert 'base_url="https://api.openai.com/v1"' in response.text
+    assert f'base_url="{client.app.state.settings.api_base_url}"' in response.text
+    assert 'src="/static/trustedrouter-explainer.jpg"' in response.text
     assert "Get API key" in response.text  # primary CTA
     assert "Provider failover" in response.text  # hero proof row
     assert 'min_privacy": "confidential"' in response.text

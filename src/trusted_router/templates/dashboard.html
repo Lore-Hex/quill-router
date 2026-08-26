@@ -78,19 +78,21 @@
         </div>
       </div>
 
-      <aside aria-label="Gateway attestation evidence">
-        <div class="attestation-record">
-          <div class="attestation-record-head">
-            <strong>ATTESTED GATEWAY</strong>
-            <a class="attestation-status" href="https://trust.trustedrouter.com">Verify live</a>
-          </div>
-          <div class="evidence-list">
-            <div class="evidence-row"><span>prompt path</span><span>Confidential Space</span></div>
-            <div class="evidence-row"><span>source</span><span class="verified">public commit</span></div>
-            <div class="evidence-row"><span>prompt logs</span><span class="verified">none by design</span></div>
-            <div class="evidence-row"><span>on failure</span><span>fails closed</span></div>
-          </div>
-          <div class="attestation-record-foot">Evidence is published for the running gateway, not a policy document.</div>
+      <aside class="hero-sdk-swap" aria-label="Switch the OpenAI SDK to TrustedRouter in one line">
+        <div class="hero-sdk-swap-head">
+          <strong>OPENAI SDK</strong>
+          <span>Change one line</span>
+        </div>
+        <div class="hero-sdk-code" aria-label="OpenAI base URL changed to TrustedRouter">
+          <div class="hero-sdk-code-context"><span>client</span> = OpenAI(</div>
+          <div class="hero-sdk-code-line removed"><span aria-hidden="true">−</span><code>base_url="https://api.openai.com/v1"</code></div>
+          <div class="hero-sdk-code-line added"><span aria-hidden="true">+</span><code>base_url="{{ api_base_url }}"</code></div>
+          <div class="hero-sdk-code-context">)</div>
+        </div>
+        <div class="hero-sdk-swap-foot">
+          <span>Same client</span>
+          <span>600+ models</span>
+          <span>One key</span>
         </div>
       </aside>
     </section>
@@ -139,8 +141,18 @@
           tabindex="0"
           aria-label="Play: how {{ brand_name }} works (loads YouTube)"
         >
+          <img
+            class="video-embed-poster"
+            src="/static/trustedrouter-explainer.jpg"
+            alt="TrustedRouter demo showing an AI coding workflow"
+            width="1280"
+            height="720"
+            loading="lazy"
+            decoding="async"
+          >
+          <span class="video-embed-shade" aria-hidden="true"></span>
           <span class="video-embed-play" aria-hidden="true"></span>
-          <span class="video-embed-note">Loads YouTube only when you press play</span>
+          <span class="video-embed-label"><strong>Watch the demo</strong><span>YouTube loads after you press play</span></span>
         </div>
       </div>
     </section>
