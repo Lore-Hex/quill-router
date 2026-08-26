@@ -34,6 +34,50 @@ def _client_and_key() -> tuple[TestClient, dict]:
     return client, created.json()["data"]
 
 
+def test_gateway_authorize_never_escapes_no_fallback_provider_order() -> None:
+    client, key = _client_and_key()
+
+    unavailable = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": "google/gemma-4-31b-it",
+            "estimated_input_tokens": 4,
+            "max_output_tokens": 2,
+            "idempotency_key": "provider-order-unavailable",
+            "provider": {
+                "order": ["moonshot"],
+                "allow_fallbacks": False,
+            },
+        },
+    )
+
+    assert unavailable.status_code == 400, unavailable.text
+    assert "provider filters" in unavailable.json()["error"]["message"].lower()
+
+    pinned = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": "google/gemma-4-31b-it",
+            "estimated_input_tokens": 4,
+            "max_output_tokens": 2,
+            "idempotency_key": "provider-order-tinfoil",
+            "provider": {
+                "order": ["tinfoil"],
+                "allow_fallbacks": False,
+            },
+        },
+    )
+
+    assert pinned.status_code == 200, pinned.text
+    data = pinned.json()["data"]
+    assert data["provider"] == "tinfoil"
+    assert {candidate["provider"] for candidate in data["route_candidates"]} == {
+        "tinfoil"
+    }
+
+
 def test_gateway_authorize_fake_spanner_uses_typed_without_allowlist_settings() -> None:
     store, db, _ = make_fake_store()
     ws = "ws_gcp_capability_authorize"
