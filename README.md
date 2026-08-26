@@ -295,7 +295,11 @@ remains available.
   Tinfoil first. Chat requests also honor OpenRouter-style `models` and
   `provider` routing filters (`order`, `only`, `ignore`, `allow_fallbacks`,
   `min_privacy`, `data_collection`, and `sort`) so clients can request explicit
-  fallback chains or provider preferences. `min_privacy="confidential"` is a
+  fallback chains or provider preferences. Setting `allow_fallbacks=false`
+  either at the request top level or as `provider.allow_fallbacks` is a hard
+  model-integrity guarantee: TrustedRouter authorizes one provider route for
+  the requested model and fails instead of substituting another model.
+  `min_privacy="confidential"` is a
   hard provider-side confidential-compute + E2EE requirement and fails closed;
   the request-value aliases `e2e` and `e2ee` select the same tier
   rather than falling back to a weaker route.

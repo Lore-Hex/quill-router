@@ -157,9 +157,9 @@ def test_provider_order_sort_and_no_fallbacks_shape_candidate_list(
         "/v1/chat/completions",
         headers=inference_headers,
         json={
+            "model": "mistralai/mistral-small-2603",
             "models": [
                 "openai/gpt-5.4-nano",
-                "mistralai/mistral-small-2603",
                 "deepseek/deepseek-v4-flash",
             ],
             "provider": {
@@ -346,8 +346,8 @@ def test_gateway_authorize_honors_models_and_provider_filters() -> None:
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": created["data"]["hash"],
-            "model": "openai/gpt-5.4-nano",
-            "models": ["mistralai/mistral-small-2603", "deepseek/deepseek-v4-flash"],
+            "model": "deepseek/deepseek-v4-flash",
+            "models": ["openai/gpt-5.4-nano", "mistralai/mistral-small-2603"],
             "provider": {"order": ["deepseek"], "usage": "byok", "allow_fallbacks": False},
             "estimated_input_tokens": 10,
             "max_output_tokens": 4,
@@ -361,6 +361,44 @@ def test_gateway_authorize_honors_models_and_provider_filters() -> None:
     assert [item["model"] for item in pinned_data["route_candidates"]] == [
         "deepseek/deepseek-v4-flash",
     ]
+
+
+def test_gateway_authorize_top_level_no_fallbacks_ignores_stale_alternatives() -> None:
+    app = create_app(Settings(environment="test"))
+    local_client = TestClient(app)
+    created = local_client.post(
+        "/v1/keys",
+        headers={"x-trustedrouter-user": "alice@example.com"},
+        json={"name": "gateway"},
+    ).json()
+    configured = local_client.put(
+        "/v1/byok/providers/deepinfra",
+        headers={"x-trustedrouter-user": "alice@example.com"},
+        json={"secret_ref": "env://DEEPINFRA_API_KEY"},
+    )
+    assert configured.status_code == 201, configured.text
+
+    authorize = local_client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": created["data"]["hash"],
+            "model": "openai/gpt-oss-20b",
+            "models": ["google/gemini-2.0-flash-lite"],
+            "allow_fallbacks": False,
+            "provider": {"only": ["deepinfra"], "usage": "byok"},
+            "estimated_input_tokens": 10,
+            "max_output_tokens": 4,
+        },
+    )
+
+    assert authorize.status_code == 200, authorize.text
+    data = authorize.json()["data"]
+    assert data["requested_model"] == "openai/gpt-oss-20b"
+    assert data["model"] == "openai/gpt-oss-20b"
+    assert {item["model"] for item in data["route_candidates"]} == {
+        "openai/gpt-oss-20b"
+    }
+    assert len(data["route_candidates"]) == 1
 
 
 def test_gateway_authorize_expands_fast_router_pool() -> None:

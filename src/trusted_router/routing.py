@@ -377,20 +377,39 @@ def video_route_endpoint_candidates(
 
 
 def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
-    raw = body.get("provider")
-    if not isinstance(raw, dict):
-        return RoutePreferences()
+    raw_provider = body.get("provider")
+    raw = raw_provider if isinstance(raw_provider, dict) else {}
 
     order = tuple(_provider_filter_list("order", raw.get("order")))
     only = frozenset(_provider_filter_list("only", raw.get("only")))
     ignore = frozenset(_provider_filter_list("ignore", raw.get("ignore")))
-    allow_fallbacks = raw.get("allow_fallbacks")
+    top_level_allow_fallbacks = body.get("allow_fallbacks")
+    nested_allow_fallbacks = raw.get("allow_fallbacks")
+    if top_level_allow_fallbacks is not None and not isinstance(
+        top_level_allow_fallbacks, bool
+    ):
+        raise api_error(400, "allow_fallbacks must be a boolean", ErrorType.BAD_REQUEST)
+    if nested_allow_fallbacks is not None and not isinstance(nested_allow_fallbacks, bool):
+        raise api_error(400, "provider.allow_fallbacks must be a boolean", ErrorType.BAD_REQUEST)
+    if (
+        top_level_allow_fallbacks is not None
+        and nested_allow_fallbacks is not None
+        and top_level_allow_fallbacks != nested_allow_fallbacks
+    ):
+        raise api_error(
+            400,
+            "allow_fallbacks conflicts with provider.allow_fallbacks",
+            ErrorType.BAD_REQUEST,
+        )
+    allow_fallbacks = (
+        top_level_allow_fallbacks
+        if top_level_allow_fallbacks is not None
+        else nested_allow_fallbacks
+    )
     if allow_fallbacks is None:
         allow_fallbacks_bool = True
-    elif isinstance(allow_fallbacks, bool):
-        allow_fallbacks_bool = allow_fallbacks
     else:
-        raise api_error(400, "provider.allow_fallbacks must be a boolean", ErrorType.BAD_REQUEST)
+        allow_fallbacks_bool = allow_fallbacks
 
     data_collection = raw.get("data_collection")
     if data_collection is not None:
@@ -458,8 +477,12 @@ def _routing_for_body(
     AUTO, build the RoutePreferences. Suffix-derived overrides win over
     body-set fields (per OpenRouter: the suffix is the explicit shorthand
     and is meant to be authoritative)."""
-    ids, overrides = _requested_model_ids(body, settings)
     prefs = provider_route_preferences(body)
+    ids, overrides = _requested_model_ids(
+        body,
+        settings,
+        include_fallback_models=prefs.allow_fallbacks,
+    )
     if "sort" in overrides:
         prefs = dataclasses.replace(prefs, sort=overrides["sort"])
     if "order" in overrides:
@@ -543,7 +566,10 @@ def resolve_model_alias(model_id: str) -> str:
 
 
 def _requested_model_ids(
-    body: dict[str, Any], settings: Settings
+    body: dict[str, Any],
+    settings: Settings,
+    *,
+    include_fallback_models: bool = True,
 ) -> tuple[list[str], dict[str, Any]]:
     ids: list[str] = []
     overrides: dict[str, Any] = {}
@@ -595,7 +621,16 @@ def _requested_model_ids(
         take(model_id)
 
     fallback_models = body.get("models")
-    if fallback_models is not None:
+    if not model_id and not include_fallback_models and fallback_models is not None:
+        if not isinstance(fallback_models, list):
+            raise api_error(400, "models must be an array of model IDs", ErrorType.BAD_REQUEST)
+        if not fallback_models:
+            raise api_error(400, "model is required", ErrorType.BAD_REQUEST)
+        primary = fallback_models[0]
+        if not isinstance(primary, str) or not primary.strip():
+            raise api_error(400, "models must contain only model IDs", ErrorType.BAD_REQUEST)
+        take(primary.strip())
+    elif include_fallback_models and fallback_models is not None:
         if not isinstance(fallback_models, list):
             raise api_error(400, "models must be an array of model IDs", ErrorType.BAD_REQUEST)
         for item in fallback_models:

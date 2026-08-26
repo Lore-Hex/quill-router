@@ -144,9 +144,9 @@ def test_chat_route_candidates_provider_order_reorders() -> None:
 def test_chat_route_candidates_allow_fallbacks_false_returns_only_head() -> None:
     candidates = chat_route_candidates(
         {
+            "model": "mistralai/mistral-small-2603",
             "models": [
                 "openai/gpt-5.4-nano",
-                "mistralai/mistral-small-2603",
                 "anthropic/claude-sonnet-4.6",
             ],
             "provider": {"allow_fallbacks": False, "order": ["mistral"]},
@@ -155,6 +155,51 @@ def test_chat_route_candidates_allow_fallbacks_false_returns_only_head() -> None
     )
     assert len(candidates) == 1
     assert candidates[0].provider == "mistral"
+
+
+@pytest.mark.parametrize(
+    "fallback_control",
+    [
+        {"allow_fallbacks": False},
+        {"provider": {"allow_fallbacks": False}},
+    ],
+)
+def test_allow_fallbacks_false_never_validates_or_routes_fallback_models(
+    fallback_control: dict[str, object],
+) -> None:
+    """A disabled fallback list is inert, including stale model IDs.
+
+    Validating the fallback array before applying the flag can reject a valid
+    primary with an error naming a model the caller explicitly disabled.
+    """
+
+    candidates = chat_route_endpoint_candidates(
+        {
+            "model": "openai/gpt-oss-20b",
+            "models": ["google/gemini-2.0-flash-lite"],
+            **fallback_control,
+        },
+        _settings(),
+    )
+
+    assert len(candidates) == 1
+    model, _endpoint = candidates[0]
+    assert model.id == "openai/gpt-oss-20b"
+
+
+def test_allow_fallbacks_false_uses_first_models_entry_when_model_is_absent() -> None:
+    candidates = chat_route_candidates(
+        {
+            "models": [
+                "openai/gpt-5.4-nano",
+                "google/gemini-2.0-flash-lite",
+            ],
+            "allow_fallbacks": False,
+        },
+        _settings(),
+    )
+
+    assert [candidate.id for candidate in candidates] == ["openai/gpt-5.4-nano"]
 
 
 def test_chat_route_candidates_sort_by_throughput_uses_rank_table() -> None:
@@ -208,6 +253,43 @@ def test_provider_route_preferences_handles_missing_provider_key() -> None:
     assert prefs.allow_fallbacks is True
     assert prefs.sort is None
     assert prefs.data_collection is None
+
+
+def test_provider_route_preferences_accepts_top_level_allow_fallbacks_alias() -> None:
+    prefs = provider_route_preferences({"allow_fallbacks": False})
+    assert prefs.allow_fallbacks is False
+
+
+def test_top_level_no_fallbacks_pins_exact_request_to_one_provider_route() -> None:
+    candidates = chat_route_endpoint_candidates(
+        {
+            "model": "openai/gpt-oss-20b",
+            "allow_fallbacks": False,
+        },
+        _settings(),
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0][0].id == "openai/gpt-oss-20b"
+
+
+def test_provider_route_preferences_rejects_conflicting_fallback_controls() -> None:
+    with pytest.raises(HTTPException) as ctx:
+        provider_route_preferences(
+            {
+                "allow_fallbacks": False,
+                "provider": {"allow_fallbacks": True},
+            }
+        )
+    assert ctx.value.status_code == 400
+    assert "conflict" in ctx.value.detail["error"]["message"].lower()
+
+
+def test_provider_route_preferences_rejects_non_boolean_top_level_fallback_control() -> None:
+    with pytest.raises(HTTPException) as ctx:
+        provider_route_preferences({"allow_fallbacks": "false"})
+    assert ctx.value.status_code == 400
+    assert ctx.value.detail["error"]["message"] == "allow_fallbacks must be a boolean"
 
 
 def test_provider_route_preferences_handles_provider_as_non_dict() -> None:
