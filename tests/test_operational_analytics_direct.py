@@ -192,10 +192,46 @@ class TestSinkDelivery:
         (url, _) = post.calls[0]
         assert "operational_outbox_quarantine" in url
 
+    def test_a_failing_sink_reports_a_growing_backlog_not_silence(self) -> None:
+        """The 2026-08-26 cutover failed invisibly: every flush 401'd and the
+        only outward sign was samples ceasing to arrive. oldest_enqueued_at
+        must expose undelivered rows so the EXISTING freshness gate alarms."""
+        post = _CapturingPost(fail_times=1)
+        sink = _sink(post)
+        assert sink.oldest_enqueued_at() is None
+        sink._publish("synthetic", "evt-1", SYNTHETIC_PAYLOAD)
+        with pytest.raises(OSError):
+            sink.flush()
+        backlog = sink.oldest_enqueued_at()
+        assert backlog is not None, "undelivered rows must surface as backlog"
+        assert sink.stats.flush_failures == 0  # raised to caller, counted in _run
+        assert sink.flush() == 1
+        assert sink.oldest_enqueued_at() is None, "delivered backlog must clear"
+
+    def test_credential_whitespace_cannot_break_authentication(self) -> None:
+        """`openssl rand -hex 24 | gcloud secrets create --data-file=-` stores
+        a trailing newline; provisioning scripts strip it when hashing. That
+        one byte broke the GCP cutover."""
+        import base64
+
+        clean = _sink(
+            _CapturingPost(),
+        )
+        noisy = DirectOperationalAnalyticsSink(
+            url="http://clickhouse.internal:8123",
+            database="tr",
+            user="tr\n",
+            password="pw\n",  # noqa: S106
+            post=_CapturingPost(),
+            start_thread=False,
+        )
+        assert clean._auth == noisy._auth
+        assert base64.b64decode(noisy._auth).decode() == "tr:pw"
+
     def test_duck_type_surface_matches_the_outbox_writer(self) -> None:
         sink = _sink(_CapturingPost())
         # _tx variants ignore the transaction handle by design (documented
-        # dup/phantom trade); freshness reads as empty.
+        # dup/phantom trade); an empty buffer reports no backlog.
         assert sink.oldest_enqueued_at() is None
         assert sink.oldest_enqueued_at(timeout=1.0) is None
         for name in (

@@ -562,9 +562,17 @@ class DirectOperationalAnalyticsSink:
             )
         self._url = url.rstrip("/")
         self._database = database
-        self._auth = base64.b64encode(f"{user}:{password}".encode()).decode()
+        # .strip() both halves. `openssl rand -hex 24 | gcloud secrets create
+        # --data-file=-` stores a TRAILING NEWLINE, and every provisioning
+        # script that reads the value back through command substitution
+        # silently drops it -- so the hash installed on the ClickHouse user
+        # and the password injected into this process differ by one byte.
+        # That is exactly how the 2026-08-26 GCP cutover went live "verified"
+        # and delivered nothing: 401 on every flush. Trailing whitespace in a
+        # credential is never meaningful; refusing to be broken by it is free.
+        self._auth = base64.b64encode(f"{user.strip()}:{password.strip()}".encode()).decode()
         self._buffer_rows = buffer_rows
-        self._buffer: deque[tuple[str, dict[str, Any]]] = deque(maxlen=buffer_rows)
+        self._buffer: deque[tuple[str, dict[str, Any], dt.datetime]] = deque(maxlen=buffer_rows)
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._closed = threading.Event()
@@ -601,12 +609,23 @@ class DirectOperationalAnalyticsSink:
         )
 
     def oldest_enqueued_at(self, *, timeout: float | None = None) -> dt.datetime | None:
-        """The freshness contract's question is "how old is the undelivered
-        backlog"; this sink's backlog is the in-memory buffer, delivered
-        within seconds or dropped WITH A COUNT. Publishing None (= empty)
-        keeps /status truthful for the common case; sustained delivery
-        failure surfaces through stats/logs rather than a phantom lag."""
-        return None
+        """Age of the oldest UNDELIVERED row, or None when the buffer is empty.
+
+        This answers the same question the durable outboxes answer, which is
+        the entire point: /status.json's `analytics.drain_lag_seconds` and the
+        freshness gate already know how to alarm on a growing backlog, so a
+        sink that cannot deliver must grow a number those consumers can see.
+
+        Returning a flat None here -- as this method first did -- is how the
+        2026-08-26 cutover failed SILENTLY: every flush 401'd, telemetry was
+        dropped by the bounded buffer, and the only outward sign was synthetic
+        samples quietly ceasing to arrive. A delivery path whose failure mode
+        is invisible is not an improvement over the one it replaced.
+        """
+        with self._lock:
+            if not self._buffer:
+                return None
+            return min(commit_ts for _table, _row, commit_ts in self._buffer)
 
     # -- internals ----------------------------------------------------------
 
@@ -628,7 +647,7 @@ class DirectOperationalAnalyticsSink:
             for event in events:
                 table = EVENT_TABLES[event.event_kind]
                 assert isinstance(table, str)
-                self._buffer.append((table, event.row))
+                self._buffer.append((table, event.row, row.commit_ts))
             overflow = before + len(events) - self._buffer_rows
             if overflow > 0:
                 self.stats.dropped += overflow
@@ -643,9 +662,20 @@ class DirectOperationalAnalyticsSink:
             self._wake.clear()
             try:
                 flushed = self.flush()
-            except Exception:
+            except Exception as exc:
                 self.stats.flush_failures += 1
-                log.exception("operational_analytics_direct.flush_failed")
+                # error(), not just exception(): this must be greppable and
+                # must carry the counts, because the failure is otherwise
+                # invisible from outside the process.
+                log.error(
+                    "operational_analytics_direct.flush_failed "
+                    "buffered=%d dropped=%d failures=%d error=%s: %s",
+                    len(self._buffer),
+                    self.stats.dropped,
+                    self.stats.flush_failures,
+                    type(exc).__name__,
+                    str(exc)[:200],
+                )
                 # Failure backoff: nothing was consumed, so retry later
                 # rather than immediately -- a down ClickHouse must not turn
                 # this thread into a hot loop.
@@ -664,13 +694,13 @@ class DirectOperationalAnalyticsSink:
             self._buffer.clear()
         if not batch:
             return 0
-        by_table: dict[str, list[dict[str, Any]]] = {}
-        for table, row in batch:
-            by_table.setdefault(table, []).append(row)
+        by_table: dict[str, list[tuple[dict[str, Any], dt.datetime]]] = {}
+        for table, row, commit_ts in batch:
+            by_table.setdefault(table, []).append((row, commit_ts))
         sent = 0
         try:
             for table, rows in by_table.items():
-                body = "\n".join(json.dumps(row, default=str) for row in rows).encode()
+                body = "\n".join(json.dumps(row, default=str) for row, _ts in rows).encode()
                 query = f"INSERT INTO {self._database}.{table} FORMAT JSONEachRow"
                 self._post(
                     f"{self._url}/?query={urllib.parse.quote(query)}",
@@ -687,7 +717,11 @@ class DirectOperationalAnalyticsSink:
                 # Put back everything not confirmed sent, oldest first, ahead
                 # of anything published meanwhile. maxlen drops overflow from
                 # the RIGHT via appendleft ordering -- newest retained.
-                remaining = [(table, row) for table, rows in by_table.items() for row in rows]
+                remaining = [
+                    (table, row, commit_ts)
+                    for table, rows in by_table.items()
+                    for row, commit_ts in rows
+                ]
                 for item in reversed(remaining):
                     self._buffer.appendleft(item)
             raise
