@@ -318,7 +318,11 @@ class TrustedRouterMCP:
             maximum_bytes=MAX_MCP_GENERATION_ID_BYTES,
         )
         generation = await run_in_threadpool(STORE.get_generation, generation_id)
-        if generation is None or generation.workspace_id != api_key.workspace_id:
+        if (
+            generation is None
+            or generation.workspace_id != api_key.workspace_id
+            or (api_key.scopes and generation.key_hash != api_key.hash)
+        ):
             raise MCPToolError(f"Unknown generation: {generation_id}")
         return _tool_json({"data": generation.to_openrouter_generation()})
 

@@ -32,8 +32,6 @@ def register_auth_routes(router: APIRouter) -> None:
         A delegated key carries the approving user's id via `creator_user_id`,
         so apps that did the PKCE sign-in can fetch the user's email/profile
         with just the key they received."""
-        # Deliberate PII tightening: a legacy key still passes the scope gate,
-        # but an ownerless key never falls back to the workspace owner's data.
         user = principal.user
         if (
             user is None
@@ -42,6 +40,16 @@ def register_auth_routes(router: APIRouter) -> None:
         ):
             user = STORE.get_user(principal.api_key.creator_user_id)
         if user is None:
+            # Legacy ownerless keys retain origin/main's null-subject response.
+            # Scoped keys stay strict: a delegated profile grant must resolve
+            # the approving person rather than imply or expose an owner.
+            if principal.api_key is not None and not principal.scopes:
+                return {
+                    "data": {
+                        "sub": None,
+                        "workspace_id": principal.workspace.id,
+                    }
+                }
             raise api_error(
                 403,
                 "A user-owned session or API key is required",

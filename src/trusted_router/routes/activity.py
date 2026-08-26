@@ -82,6 +82,14 @@ def register_activity_routes(router: APIRouter) -> None:
         gen = STORE.get_generation(id)
         if gen is None or gen.workspace_id != principal.workspace.id:
             raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
+        # Delegated inference authority is key-isolated. Use the same 404 as a
+        # missing generation so one app cannot probe another app's activity.
+        if (
+            principal.api_key is not None
+            and principal.scopes
+            and gen.key_hash != principal.api_key.hash
+        ):
+            raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
         return {"data": gen.to_openrouter_generation()}
 
     @router.get("/generation/content")

@@ -26,10 +26,14 @@ Known limits of this suite — read before trusting it
 from __future__ import annotations
 
 import datetime as dt
+import json
 import threading
 
 import pytest
 
+from trusted_router.storage_gcp import _auth_record
+from trusted_router.storage_key_usage import api_key_from_json
+from trusted_router.storage_models import ApiKey
 from trusted_router.store_protocol import Store
 from trusted_router.typed_balance import live_credit_summary
 
@@ -764,13 +768,13 @@ def test_api_key_usage_projection_is_immediate_and_scoped(
     assert store.list_api_keys_with_usage(workspace_id) == []
 
 
-def test_api_key_scopes_default_and_round_trip_across_storage(
+def test_api_key_scopes_round_trip_across_storage(
     store: Store,
     workspace_id: str,
     user_id: str,
     unique: str,
 ) -> None:
-    """Old JSON without scopes decodes legacy; new scope lists survive IO."""
+    """New scope lists survive every backend's write/read path."""
     _legacy_raw, legacy = store.create_api_key(
         workspace_id=workspace_id,
         name=f"legacy-scopes-{unique}",
@@ -789,6 +793,25 @@ def test_api_key_scopes_default_and_round_trip_across_storage(
     assert stored_scoped is not None
     assert stored_legacy.scopes == []
     assert stored_scoped.scopes == ["inference", "profile"]
+
+
+def test_old_api_key_raw_json_without_scopes_decodes_as_legacy() -> None:
+    """Exercise both real entity decoders with the field genuinely absent."""
+    raw = json.dumps(
+        {
+            "hash": "legacy-hash",
+            "salt": "legacy-salt",
+            "secret_hash": "legacy-secret-hash",
+            "lookup_hash": "legacy-lookup-hash",
+            "name": "legacy",
+            "label": "sk-tr-v1-old",
+            "workspace_id": "legacy-workspace",
+            "creator_user_id": None,
+        }
+    )
+
+    assert api_key_from_json(raw).scopes == []
+    assert _auth_record(raw, ApiKey).scopes == []
 
 
 def test_auth_session_lifecycle(store: Store, user_id: str) -> None:

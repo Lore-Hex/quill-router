@@ -131,6 +131,19 @@ def register(router: APIRouter) -> None:
             # must treat as an outage and NOT cache.
             raise api_error(404, "Unknown API key", ErrorType.NOT_FOUND)
 
+        declared_features = {
+            token.strip()
+            for token in request.headers.get(
+                "x-trustedrouter-federation-features", ""
+            ).split(",")
+            if token.strip()
+        }
+        # The three planes deploy independently. A peer that can parse this
+        # record but drops `scopes` would import a delegated key as legacy and
+        # fail open, so scope support must be declared rather than assumed.
+        if api_key.scopes and "scopes" not in declared_features:
+            raise api_error(404, "Unknown API key", ErrorType.NOT_FOUND)
+
         if getattr(api_key, "management", False):
             raise api_error(
                 403,

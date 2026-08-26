@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.scopes import SCOPE_INFERENCE
 from trusted_router.services import notify as notify_module
 from trusted_router.services.telephony import TelephonyResult
 from trusted_router.storage import STORE
@@ -95,6 +96,36 @@ class TestAuth:
         )
 
         assert sent_to == ["+13059511381"], "a caller-supplied destination was honoured"
+
+    def test_scoped_keys_are_denied_and_legacy_keys_keep_existing_behavior(
+        self,
+        notify_client: TestClient,
+        inference_headers: dict[str, str],
+    ) -> None:
+        legacy = STORE.get_key_by_raw(inference_headers["authorization"].split()[1])
+        assert legacy is not None
+        scoped_raw, _scoped = STORE.create_api_key(
+            workspace_id=legacy.workspace_id,
+            name="delegated notify",
+            creator_user_id=legacy.creator_user_id,
+            scopes=[SCOPE_INFERENCE],
+        )
+
+        scoped_response = notify_client.post(
+            "/v1/notify",
+            headers={"authorization": f"Bearer {scoped_raw}"},
+            json={"channel": "sms", "body": "hi"},
+        )
+        legacy_response = notify_client.post(
+            "/v1/notify",
+            headers=inference_headers,
+            json={"channel": "sms", "body": "hi"},
+        )
+
+        assert scoped_response.status_code == 403
+        assert scoped_response.json()["error"]["type"] == "insufficient_scope"
+        assert legacy_response.status_code == 409
+        assert legacy_response.json()["refusal"] == "phone_not_verified"
 
 
 class TestTheGate:

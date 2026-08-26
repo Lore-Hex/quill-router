@@ -88,6 +88,14 @@ def register_notify_routes(router: APIRouter) -> None:
         principal: InferencePrincipal,
         settings: SettingsDep,
     ) -> JSONResponse:
+        # This is a paid owner-notification channel. No v1 delegated scope
+        # grants it; `inference` covers model execution and client telemetry.
+        if principal.scopes:
+            raise api_error(
+                403,
+                "No delegated scope grants owner notifications",
+                ErrorType.INSUFFICIENT_SCOPE,
+            )
         channel = str(payload.get("channel") or "push").strip().lower()
         if channel not in CHANNELS:
             raise api_error(

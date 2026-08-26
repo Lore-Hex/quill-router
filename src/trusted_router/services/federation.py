@@ -216,19 +216,26 @@ class FederationClient:
         url = f"{self._home}/v1/internal/federation/resolve-key"
         timeout = httpx.Timeout(TOTAL_TIMEOUT_SECONDS, connect=CONNECT_TIMEOUT_SECONDS)
         client = self._client
+        # The three planes deploy independently. Declaring support prevents a
+        # newer home plane from sending scoped records to an older importer
+        # that would silently drop `scopes` and turn them into legacy keys.
+        headers = {
+            "x-trustedrouter-federation-token": self._peer_token,
+            "x-trustedrouter-federation-features": "scopes",
+        }
         try:
             if client is None:
                 with httpx.Client(timeout=timeout) as owned:
                     response = owned.post(
                         url,
                         json={"api_key_lookup_hash": lookup_hash},
-                        headers={"x-trustedrouter-federation-token": self._peer_token},
+                        headers=headers,
                     )
             else:
                 response = client.post(
                     url,
                     json={"api_key_lookup_hash": lookup_hash},
-                    headers={"x-trustedrouter-federation-token": self._peer_token},
+                    headers=headers,
                 )
         except httpx.HTTPError as exc:
             raise FederationUnavailable(f"home plane unreachable: {exc}") from exc

@@ -44,15 +44,28 @@ Scope vocabulary v1 (deliberately tiny):
 
 | scope | grants |
 | --- | --- |
-| `inference` | chat/completions, messages, responses, embeddings via the attested gateway; `/v1/models`, `/v1/generation` (own requests) |
-| `profile` | `/v1/oauth/userinfo`: user id (app-scoped surrogate), email, `verification_level` |
-| `balance:read` | `/v1/credits/summary`: remaining prepaid credits only (single number + currency), NOT the management `/v1/credits` payload |
-| `activity:read` | `/v1/activity` filtered to generations attributed to THIS app |
+| `inference` | ALL model-execution spend through the attested gateway — chat/completions, messages, responses, embeddings, images, videos, batch, hosted-tool costs (amended 2026-08-25: the scope bounds WHAT KIND of authority — spending the user's wallet on model work — not which modality; the user's real per-app controls are the budget and revocation. Modality-split scopes can be added later without breaking `inference`). Also: reading generations THIS KEY created (scoped keys are key-isolated, not workspace-isolated), and posting SDK client-telemetry beacons for its own requests (`/client-events` — the reliability program deliberately rides the inference credential). NOT granted: `/notify` (paid owner notifications — no v1 scope grants it), x402, any management surface. |
+| `profile` | userinfo: user id, email, `verification_level` |
+| `balance:read` | `/v1/credits/summary`: remaining prepaid credits only, NOT the management `/v1/credits` payload |
+| `activity:read` | `/v1/activity` filtered to generations attributed to THIS app (increment B) |
 
-Default consent request: `inference profile`. Anything else must be asked
-for explicitly in the authorize URL and is listed on the consent page.
+Default minted scopes until increment D: `inference profile
+balance:read` (amended 2026-08-25 — reviewer correctly flagged the
+doc/code mismatch; the DECISION is that `balance:read` stays in the
+default: an app the user authorizes to SPEND the balance may see the
+remaining balance, the consent page discloses it, and D's
+requested-scope parameter is what introduces narrower grants).
+`GET /key` self-introspection for a scoped key returns a TRIMMED shape
+(its own limits/usage/scopes; `creator_user_id` only with `profile`).
 No management scopes exist at all in v1 — key creation, BYOK, broadcast,
 checkout stay session/management-key only.
+
+Federation across the three live planes fails CLOSED for scoped keys:
+the home plane serves a scoped key's record only to a peer that
+declared scope support (`x-trustedrouter-federation-features: scopes`);
+an undeclared (older) peer receives the same answer as for an unknown
+key, so a scoped key simply does not work there — never silently
+unscoped. Legacy keys federate exactly as before.
 
 ### Verification level: expose, don't rebuild
 

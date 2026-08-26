@@ -17,6 +17,7 @@ from trusted_router.routes.helpers import (
     _CLIENT_EVENT_RATE_LIMITS,
     read_json_body_bounded,
 )
+from trusted_router.scopes import SCOPE_INFERENCE
 from trusted_router.storage import STORE, InMemoryStore
 
 
@@ -113,14 +114,19 @@ def _batch(**updates: Any) -> dict[str, Any]:
 
 def _client_with_key(
     test_settings: Settings,
+    *,
+    key_scopes: list[str] | None = None,
     **setting_updates: Any,
 ) -> tuple[TestClient, dict[str, str], str]:
     settings = test_settings.model_copy(update={"client_events_enabled": True, **setting_updates})
     client = TestClient(create_app(settings, init_observability=False))
+    key_body: dict[str, Any] = {"name": "client events"}
+    if key_scopes is not None:
+        key_body["scopes"] = key_scopes
     created = client.post(
         "/v1/keys",
         headers={"x-trustedrouter-user": "client-events@example.com"},
-        json={"name": "client events"},
+        json=key_body,
     )
     assert created.status_code == 201, created.text
     raw_key = str(created.json()["key"])
@@ -170,6 +176,27 @@ def test_client_events_accepts_exact_shape_and_stores_private_payload(
         second=0,
         microsecond=0,
     )
+
+
+def test_client_events_accepts_inference_scoped_key(
+    test_settings: Settings,
+) -> None:
+    client, headers, _raw_key = _client_with_key(
+        test_settings,
+        key_scopes=[SCOPE_INFERENCE],
+    )
+
+    response = client.post("/v1/client-events", headers=headers, json=_batch())
+
+    assert response.status_code == 202, response.text
+    assert response.json() == {
+        "data": {"accepted_events": 1, "accepted_counters": 1, "dropped": 3},
+        "policy": {
+            "success_sample_rate": 0.01,
+            "flush_seconds": 30,
+            "pause_seconds": 0,
+        },
+    }
 
 
 def test_client_events_flag_off_returns_pause_before_auth_or_body_read(

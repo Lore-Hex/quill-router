@@ -993,9 +993,9 @@ def _gateway_key_info_sync(
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
         raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     _assert_gateway_key_scope(api_key)
-    from trusted_router.routes.keys import _enriched_key_shape
+    from trusted_router.routes.keys import self_key_shape
 
-    return {"data": _enriched_key_shape(api_key)}
+    return {"data": self_key_shape(api_key)}
 
 
 def _gateway_resolve_custom_model_sync(
@@ -1510,6 +1510,13 @@ def _api_key_for_gateway_lookup(
 
 
 def _assert_gateway_key_scope(api_key: Any) -> None:
+    """Require `inference` for every kind of model-execution spend.
+
+    This includes text, media, batch, and hosted-tool route types; the scope
+    bounds the kind of authority rather than the model modality. See
+    docs/design/oauth-scopes-and-app-economy.md, "Scopes: small, real,
+    enforced".
+    """
     scopes = frozenset(api_key.scopes)
     if scopes and SCOPE_INFERENCE not in scopes:
         raise api_error(
