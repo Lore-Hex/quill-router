@@ -195,6 +195,9 @@ add_secret_env_if_exists \
 add_secret_env_if_exists \
   "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_PASSWORD" \
   "trustedrouter-clickhouse-control-read-password"
+add_secret_env_if_exists \
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_WRITE_PASSWORD" \
+  "trustedrouter-clickhouse-ops-ingest-password"
 UPDATE_SECRETS="$(IFS=,; echo "${SECRET_ENVS[*]}")"
 REMOVE_SECRETS_ARGS=()
 if [ "${#REMOVE_SECRET_ENVS[@]}" -gt 0 ]; then
@@ -638,6 +641,13 @@ ENV_VARS=(
   "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=${PROVIDER_ANALYTICS_CLICKHOUSE_URL}"
   "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=tr_control_read"
   "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=tr"
+  # Telemetry leaves the process straight to ClickHouse (bounded in-process
+  # buffer, INSERT-only account provisioned by clickhouse_operational_writer.sh)
+  # instead of through the billing database's outbox. The outbox drain was
+  # measured at ~25% of the Spanner instance while idle -- the headroom that
+  # was missing on launch day 2026-08-25.
+  "TR_OPERATIONAL_ANALYTICS_SINK=direct"
+  "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_WRITE_USER=tr_ops_ingest"
   "TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}"
   "TR_ANALYTICS_DUAL_READ_GRACE_SECONDS=30"
   "TR_ANALYTICS_DUAL_READ_STARTED_AT=${ANALYTICS_DUAL_READ_STARTED_AT}"
