@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from trusted_router.catalog import MODELS
 from trusted_router.client_reliability import (
@@ -30,6 +30,25 @@ if TYPE_CHECKING:
     from trusted_router.client_events_schema import ClientEventsBatch
 
 OPERATIONAL_ANALYTICS_OUTBOX_SHARDS = 32
+
+
+class OperationalAnalyticsWriter(Protocol):
+    """What the stores need from an operational-telemetry writer.
+
+    Two implementations: the durable outboxes (Spanner/Postgres rows drained
+    by a poller) and DirectOperationalAnalyticsSink (straight to ClickHouse,
+    no billing-database involvement). The stores hold this Protocol so the
+    choice is wiring, not code.
+    """
+
+    def enqueue_activity(self, generation: Any) -> None: ...
+    def enqueue_activity_tx(self, transaction: Any, generation: Any) -> None: ...
+    def enqueue_synthetic(self, sample: Any) -> None: ...
+    def enqueue_synthetic_tx(self, transaction: Any, sample: Any) -> None: ...
+    def enqueue_client_events(self, payload: dict[str, Any]) -> None: ...
+    def oldest_enqueued_at(self, *, timeout: float | None = None) -> dt.datetime | None: ...
+
+
 ACTIVITY_EVENT_KIND = "activity"
 SYNTHETIC_EVENT_KIND = "synthetic"
 CLIENT_EVENTS_EVENT_KIND = "client_events"
@@ -81,7 +100,9 @@ def build_client_events_payload(
     events: list[dict[str, Any]] = []
     for event in batch.events:
         attempts = event.attempts
-        outcome = attempts[-1].outcome if event.final_outcome == "exhausted" else event.final_outcome
+        outcome = (
+            attempts[-1].outcome if event.final_outcome == "exhausted" else event.final_outcome
+        )
         error_class = next(
             (attempt.error_class for attempt in attempts if attempt.error_class is not None),
             None,
@@ -122,16 +143,12 @@ def build_client_events_payload(
 
     counters: list[dict[str, Any]] = []
     for counter in batch.counters:
-        bucket_start = received_at - dt.timedelta(
-            milliseconds=counter.window_start_age_ms
-        )
+        bucket_start = received_at - dt.timedelta(milliseconds=counter.window_start_age_ms)
         counter_payload = counter.model_dump(mode="json")
         counter_payload.pop("window_start_age_ms")
         counter_payload.update(
             {
-                "bucket_start": _iso_milliseconds(
-                    bucket_start.replace(second=0, microsecond=0)
-                ),
+                "bucket_start": _iso_milliseconds(bucket_start.replace(second=0, microsecond=0)),
                 "tr_fault": int(
                     classify_tr_fault(
                         level=counter.level,

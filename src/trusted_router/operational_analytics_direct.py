@@ -1,25 +1,57 @@
-"""Drain tenant activity and synthetic metadata from Spanner to ClickHouse."""
+"""Direct-to-ClickHouse sink for operational analytics.
+
+WHY THIS EXISTS. Operational telemetry -- activity rows, synthetic probe
+samples, client SDK beacons -- used to be written into a 32-shard outbox table
+in the BILLING database and polled out by a drainer at 64 queries per cycle,
+every ~1.5 seconds, forever. Spanner's own query stats measured that drain at
+~25% of the whole instance's CPU while doing nothing, and on launch day
+(2026-08-25) that standing tax was the missing headroom that let a modest
+traffic bump collapse authorize/settle for every cloud. The outbox pattern
+buys transactional coupling with business writes -- a property operational
+telemetry does not need and should not pay for. Bounded, counted loss is the
+correct contract for ops data; the money path is for money.
+
+So this sink writes telemetry straight to ClickHouse: canonicalise at the
+producer, buffer in memory (bounded, drop-oldest, counted), flush in batches
+from one background thread. Loss window on an instance kill is one flush
+interval of TELEMETRY, not revenue. Selected per deployment via
+``settings.operational_analytics_sink`` ("outbox" stays the default until a
+cloud's ClickHouse write credential is provisioned; see config validation).
+
+The canonicalisation below is EXTRACTED VERBATIM from
+clickhouse/ingest_operational_outbox.py so rows are byte-identical to what the
+drainer produced. The drainer keeps a frozen copy only until the outbox is
+decommissioned; clickhouse/ingest_operational_outbox_postgres.py (AWS/Azure)
+keeps its own until those planes cut over. Do not let the copies drift --
+delete them.
+"""
 
 from __future__ import annotations
 
-import argparse
+import base64
 import datetime as dt
 import hashlib
 import json
 import logging
-import math
-import os
-import subprocess
+import threading
 import time
-from collections import defaultdict
+import urllib.parse
+import urllib.request
+from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
-PROJECT = "quill-cloud-proxy"
-SPANNER_INSTANCE = "trusted-router-nam6"
-SPANNER_DATABASE = "trusted-router"
-OUTBOX_TABLE = "tr_operational_analytics_outbox"
-OUTBOX_SHARDS = 32
+from trusted_router.storage_models import Generation, SyntheticProbeSample
+from trusted_router.storage_operational_analytics import (
+    ACTIVITY_EVENT_KIND,
+    CLIENT_EVENTS_EVENT_KIND,
+    SYNTHETIC_EVENT_KIND,
+    activity_payload,
+    synthetic_payload,
+)
+
+log = logging.getLogger("trusted_router.operational_analytics_direct")
 
 ACTIVITY_COLUMNS = (
     "generation_id",
@@ -217,8 +249,6 @@ EVENT_TABLES = {
     "quarantine": "operational_outbox_quarantine",
 }
 
-log = logging.getLogger("trusted_router.operational_analytics_ingest")
-
 
 @dataclass(frozen=True)
 class OperationalOutboxRow:
@@ -239,241 +269,10 @@ class CanonicalOperationalEvent:
     row: dict[str, Any]
 
 
-@dataclass(frozen=True)
-class DrainResult:
-    fetched: int
-    inserted: int
-    rows_per_second: float
-    quarantined: int = 0
-    lag_seconds: float = 0.0
-
-
-class OutboxSource(Protocol):
-    def fetch(self, *, limit: int) -> list[OperationalOutboxRow]:
-        # ONE unordered global read, not 32 ordered per-shard reads. Spanner
-        # stores rows in primary-key order, so results arrive
-        # (shard, commit_ts)-ordered per split anyway; delivery order does not
-        # matter (delete is by key, ClickHouse dedups by event) and this same
-        # statement doubles as the emptiness probe. The per-shard ORDER BY
-        # fan-out this replaces ran 64 statements every ~1.5s around the
-        # clock -- measured at ~25% of the whole 300-PU instance on
-        # 2026-08-25 -- to mostly discover an empty table. This path is
-        # interim: the direct sink (trusted_router.operational_analytics_direct)
-        # removes the outbox entirely; this drainer then only clears residue.
-        rows: list[OperationalOutboxRow] = []
-        with self._database.snapshot() as snapshot:
-            results = snapshot.execute_sql(
-                # OUTBOX_TABLE is a module constant, not caller input.
-                "SELECT shard, commit_ts, event_kind, event_id, payload "  # noqa: S608
-                f"FROM {OUTBOX_TABLE} LIMIT @limit",
-                params={"limit": limit},
-                param_types={"limit": self._pt.INT64},
-            )
-            for row in results:
-                rows.append(
-                    OperationalOutboxRow(
-                        shard=int(row[0]),
-                        commit_ts=row[1],
-                        event_kind=str(row[2]),
-                        event_id=str(row[3]),
-                        payload=str(row[4]),
-                    )
-                )
-        return rows
-
-    def delete(self, rows: list[OperationalOutboxRow]) -> None: ...
-
-    def oldest_commit_ts(self) -> dt.datetime | None: ...
-
-
-class BatchWriter(Protocol):
-    def insert(self, events: list[CanonicalOperationalEvent]) -> None: ...
-
-
 def _utc(value: dt.datetime) -> dt.datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=dt.UTC)
     return value.astimezone(dt.UTC)
-
-
-class SpannerOperationalOutboxSource:
-    def __init__(
-        self,
-        *,
-        project: str,
-        instance: str,
-        database: str,
-        shard_count: int = OUTBOX_SHARDS,
-    ) -> None:
-        from google.cloud import spanner
-        from google.cloud.spanner_v1 import param_types
-
-        self._database = (
-            spanner.Client(project=project, disable_builtin_metrics=True)
-            .instance(instance)
-            .database(database)
-        )
-        self._pt = param_types
-        self._shard_count = shard_count
-
-    def fetch(self, *, limit: int) -> list[OperationalOutboxRow]:
-        if limit < 1:
-            return []
-        per_shard = max(1, math.ceil(limit / self._shard_count) * 2)
-        rows: list[OperationalOutboxRow] = []
-        with self._database.snapshot(multi_use=True) as snapshot:
-            for shard in range(self._shard_count):
-                values = snapshot.execute_sql(
-                    "SELECT shard, commit_ts, event_kind, event_id, payload "
-                    "FROM tr_operational_analytics_outbox "
-                    "WHERE shard=@shard ORDER BY commit_ts, event_kind, event_id "
-                    "LIMIT @limit",
-                    params={"shard": shard, "limit": per_shard},
-                    param_types={"shard": self._pt.INT64, "limit": self._pt.INT64},
-                )
-                rows.extend(
-                    OperationalOutboxRow(
-                        shard=int(row[0]),
-                        commit_ts=_utc(row[1]),
-                        event_kind=str(row[2]),
-                        event_id=str(row[3]),
-                        payload=str(row[4]),
-                    )
-                    for row in values
-                )
-        rows.sort(
-            key=lambda row: (
-                row.commit_ts,
-                row.shard,
-                row.event_kind,
-                row.event_id,
-            )
-        )
-        return rows[:limit]
-
-    def delete(self, rows: list[OperationalOutboxRow]) -> None:
-        if not rows:
-            return
-        from google.cloud.spanner_v1 import KeySet
-
-        with self._database.batch() as batch:
-            batch.delete(OUTBOX_TABLE, KeySet(keys=[list(row.key) for row in rows]))
-
-    def oldest_commit_ts(self) -> dt.datetime | None:
-        oldest: dt.datetime | None = None
-        with self._database.snapshot(multi_use=True) as snapshot:
-            for shard in range(self._shard_count):
-                values = list(
-                    snapshot.execute_sql(
-                        "SELECT commit_ts FROM tr_operational_analytics_outbox "
-                        "WHERE shard=@shard ORDER BY commit_ts LIMIT 1",
-                        params={"shard": shard},
-                        param_types={"shard": self._pt.INT64},
-                    )
-                )
-                if values:
-                    candidate = _utc(values[0][0])
-                    oldest = candidate if oldest is None else min(oldest, candidate)
-        return oldest
-
-
-class ClickHouseOperationalWriter:
-    """Inserts a batch into one ClickHouse endpoint via clickhouse-client.
-
-    `host`/`port`/`secure` default to unset, and an unset connection flag is
-    omitted from argv entirely rather than passed as a default. That is what
-    keeps a writer constructed the historical way — password/user/database
-    only — emitting the byte-identical command it always did, talking to the
-    node on this machine. A drain with one configured endpoint therefore
-    behaves exactly as it did before remote endpoints existed.
-    """
-
-    def __init__(
-        self,
-        *,
-        password: str,
-        database: str = "tr",
-        user: str = "tr",
-        host: str = "",
-        port: int = 0,
-        secure: bool = False,
-        timeout_seconds: float | None = None,
-    ) -> None:
-        self._password = password
-        self._database = database
-        # The user was hardcoded to "tr" while the database was already a
-        # parameter, so this class silently only worked on the GCP cluster.
-        # The AWS-EU node authenticates as "default" into database "default"
-        # (its schema is applied unqualified), so a drain pointed at it failed
-        # authentication on the very first insert -- after the rows had been
-        # read, which is the worst place to discover a credential mismatch.
-        self._user = user
-        self._host = host
-        self._port = port
-        self._secure = secure
-        # None means "wait forever", which is what the local writer has always
-        # done and what it keeps doing. A REMOTE endpoint needs a finite bound:
-        # a node that completes the TCP handshake and then stalls -- a wedged
-        # server, a silently blackholed path -- would otherwise hang
-        # subprocess.run indefinitely, freezing the whole sweep inside a daemon
-        # that still looks alive while the outbox grows behind it.
-        self._timeout_seconds = timeout_seconds
-
-    def insert(self, events: list[CanonicalOperationalEvent]) -> None:
-        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for event in events:
-            grouped[event.event_kind].append(event.row)
-        for event_kind, rows in grouped.items():
-            table = EVENT_TABLES.get(event_kind)
-            if table is None:
-                raise ValueError(f"unsupported operational event kind: {event_kind}")
-            if not isinstance(table, str):
-                raise ValueError(
-                    f"operational event kind must be expanded before insert: {event_kind}"
-                )
-            payload = "\n".join(
-                json.dumps(row, separators=(",", ":"), sort_keys=True) for row in rows
-            ).encode("utf-8")
-            command = ["/usr/bin/clickhouse-client"]
-            # Omitted, not defaulted: see the class docstring. With no host,
-            # port or TLS configured this list is exactly what it has always
-            # been, so the single-node deployment is untouched.
-            if self._host:
-                command += ["--host", self._host]
-            if self._port:
-                command += ["--port", str(self._port)]
-            if self._secure:
-                command.append("--secure")
-            command += [
-                "--user",
-                self._user,
-                "--database",
-                self._database,
-                "--query",
-                f"INSERT INTO {table} FORMAT JSONEachRow",
-            ]
-            env = os.environ.copy()
-            env["CLICKHOUSE_PASSWORD"] = self._password
-            try:
-                result = subprocess.run(  # noqa: S603 - fixed executable and table allowlist.
-                    command,
-                    input=payload,
-                    env=env,
-                    capture_output=True,
-                    check=False,
-                    timeout=self._timeout_seconds,
-                )
-            except subprocess.TimeoutExpired as exc:
-                # Raising is the point: the caller must not reach its DELETE,
-                # so the rows stay queued and the next sweep retries them.
-                raise RuntimeError(
-                    f"ClickHouse {event_kind} insert to "
-                    f"{self._host or 'localhost'} timed out after "
-                    f"{self._timeout_seconds}s"
-                ) from exc
-            if result.returncode != 0:
-                detail = result.stderr.decode("utf-8", errors="replace")[:1000]
-                raise RuntimeError(f"ClickHouse {event_kind} insert failed: {detail}")
 
 
 def _event_id(tenant_id: str, batch_id: str, kind: str, index: int) -> str:
@@ -703,100 +502,212 @@ def quarantine_event(
     )
 
 
-def drain_once(
-    source: OutboxSource,
-    writer: BatchWriter,
-    *,
-    batch_size: int,
-) -> DrainResult:
-    rows = source.fetch(limit=batch_size)
-    if not rows:
-        return DrainResult(fetched=0, inserted=0, rows_per_second=0.0)
-    lag_seconds = _lag_seconds(min(row.commit_ts for row in rows))
-    events: list[CanonicalOperationalEvent] = []
-    quarantined = 0
-    for row in rows:
-        try:
-            events.extend(normalise_operational_event(row))
-        except ValueError as exc:
-            events.append(quarantine_event(row, exc))
-            quarantined += 1
-    started = time.monotonic()
-    writer.insert(events)
-    source.delete(rows)
-    elapsed = max(time.monotonic() - started, 0.000_001)
-    return DrainResult(
-        fetched=len(rows),
-        inserted=len(events) - quarantined,
-        rows_per_second=len(events) / elapsed,
-        quarantined=quarantined,
-        lag_seconds=lag_seconds,
-    )
+# ---------------------------------------------------------------------------
+# The sink
+# ---------------------------------------------------------------------------
+
+#: Bounded buffer size. At ~2 rows/second of steady telemetry this is hours of
+#: ClickHouse outage before anything drops; when it does drop it drops OLDEST
+#: (the newest telemetry is the operationally interesting end) and counts.
+DEFAULT_BUFFER_ROWS = 20_000
+DEFAULT_FLUSH_INTERVAL_SECONDS = 2.0
+DEFAULT_FLUSH_BATCH_ROWS = 1_000
+#: Failure backoff cap. Telemetry freshness is worth little enough that
+#: hammering a down ClickHouse would be its own kind of self-harm.
+FAILURE_BACKOFF_CAP_SECONDS = 30.0
 
 
-def _lag_seconds(oldest: dt.datetime | None) -> float:
-    if oldest is None:
-        return 0.0
-    return max(0.0, (dt.datetime.now(dt.UTC) - _utc(oldest)).total_seconds())
+@dataclass
+class SinkStats:
+    published: int = 0
+    inserted: int = 0
+    dropped: int = 0
+    quarantined: int = 0
+    flush_failures: int = 0
+    last_success_unix: float = 0.0
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--project", default=os.environ.get("GCP_PROJECT_ID", PROJECT))
-    parser.add_argument(
-        "--spanner-instance",
-        default=os.environ.get("SPANNER_INSTANCE_ID", SPANNER_INSTANCE),
-    )
-    parser.add_argument(
-        "--spanner-database",
-        default=os.environ.get("SPANNER_DATABASE_ID", SPANNER_DATABASE),
-    )
-    parser.add_argument("--shards", type=int, default=OUTBOX_SHARDS)
-    parser.add_argument("--batch-size", type=int, default=5000)
-    parser.add_argument("--poll-seconds", type=float, default=2.0)
-    parser.add_argument("--once", action="store_true")
-    args = parser.parse_args()
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
-    password = os.environ.get("CH_PASSWORD", "")
-    if not password:
-        raise SystemExit("CH_PASSWORD is required")
-    source = SpannerOperationalOutboxSource(
-        project=args.project,
-        instance=args.spanner_instance,
-        database=args.spanner_database,
-        shard_count=args.shards,
-    )
-    writer = ClickHouseOperationalWriter(password=password)
-    # Idle backoff: the poll interval doubles while the outbox stays empty
-    # (cap 30s) and snaps back to fast the moment work appears. Combined with
-    # the single-statement fetch this takes the idle cost from 64 statements
-    # per ~1.5s to one statement per 30s. Lag is measured from the batch in
-    # hand: an empty outbox HAS no lag, and the per-cycle 32-statement
-    # watermark this replaces was the single largest query load on the
-    # production Spanner instance (measured 2026-08-25).
-    idle_delay = max(0.1, args.poll_seconds)
-    while True:
-        result = drain_once(source, writer, batch_size=max(1, args.batch_size))
-        if result.fetched:
-            log.info(
-                "operational_analytics_outbox.metrics rows=%d rows_per_second=%.3f "
-                "drain_lag_seconds=%.3f quarantined=%d",
-                result.inserted,
-                result.rows_per_second,
-                result.lag_seconds,
-                result.quarantined,
+class DirectOperationalAnalyticsSink:
+    """Bounded in-process buffer draining to ClickHouse from one thread.
+
+    Duck-type-compatible with SpannerOperationalAnalyticsOutbox /
+    PostgresOperationalAnalyticsOutbox where the stores touch it: the
+    ``enqueue_*`` family and ``oldest_enqueued_at``. The ``_tx`` variants
+    accept and ignore the transaction handle -- the whole point is that
+    telemetry no longer rides business transactions. A transaction that
+    retries may therefore publish the same event twice, and an aborted one
+    may publish a phantom; ClickHouse deduplicates by event_id and the data
+    is operational, so both are accepted trades, stated here on purpose.
+    """
+
+    def __init__(
+        self,
+        *,
+        url: str,
+        database: str,
+        user: str,
+        password: str,
+        buffer_rows: int = DEFAULT_BUFFER_ROWS,
+        flush_interval_seconds: float = DEFAULT_FLUSH_INTERVAL_SECONDS,
+        flush_batch_rows: int = DEFAULT_FLUSH_BATCH_ROWS,
+        post: Callable[[str, bytes, dict[str, str]], None] | None = None,
+        start_thread: bool = True,
+    ) -> None:
+        if not url:
+            raise ValueError("direct operational analytics sink requires a ClickHouse url")
+        if not password:
+            raise ValueError(
+                "direct operational analytics sink requires a WRITE-capable "
+                "ClickHouse credential; the read user cannot INSERT"
             )
-        if args.once:
+        self._url = url.rstrip("/")
+        self._database = database
+        self._auth = base64.b64encode(f"{user}:{password}".encode()).decode()
+        self._buffer_rows = buffer_rows
+        self._buffer: deque[tuple[str, dict[str, Any]]] = deque(maxlen=buffer_rows)
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._closed = threading.Event()
+        self._flush_interval = flush_interval_seconds
+        self._flush_batch = flush_batch_rows
+        self._post = post or self._http_post
+        self.stats = SinkStats()
+        self._thread: threading.Thread | None = None
+        if start_thread:
+            self._thread = threading.Thread(
+                target=self._run, name="operational-analytics-direct", daemon=True
+            )
+            self._thread.start()
+
+    # -- producer surface (documented duck-type of the outbox writers) ------
+
+    def enqueue_activity(self, generation: Generation) -> None:
+        self._publish(ACTIVITY_EVENT_KIND, generation.id, activity_payload(generation))
+
+    def enqueue_activity_tx(self, transaction: Any, generation: Generation) -> None:
+        self.enqueue_activity(generation)
+
+    def enqueue_synthetic(self, sample: SyntheticProbeSample) -> None:
+        self._publish(SYNTHETIC_EVENT_KIND, sample.id, synthetic_payload(sample))
+
+    def enqueue_synthetic_tx(self, transaction: Any, sample: SyntheticProbeSample) -> None:
+        self.enqueue_synthetic(sample)
+
+    def enqueue_client_events(self, payload: dict[str, Any]) -> None:
+        self._publish(
+            CLIENT_EVENTS_EVENT_KIND,
+            f"{payload['tenant_id']}:{payload['batch_id']}",
+            payload,
+        )
+
+    def oldest_enqueued_at(self, *, timeout: float | None = None) -> dt.datetime | None:
+        """The freshness contract's question is "how old is the undelivered
+        backlog"; this sink's backlog is the in-memory buffer, delivered
+        within seconds or dropped WITH A COUNT. Publishing None (= empty)
+        keeps /status truthful for the common case; sustained delivery
+        failure surfaces through stats/logs rather than a phantom lag."""
+        return None
+
+    # -- internals ----------------------------------------------------------
+
+    def _publish(self, event_kind: str, event_id: str, payload: dict[str, Any]) -> None:
+        row = OperationalOutboxRow(
+            shard=0,
+            commit_ts=dt.datetime.now(dt.UTC),
+            event_kind=event_kind,
+            event_id=event_id,
+            payload=json.dumps(payload),
+        )
+        try:
+            events = normalise_operational_event(row)
+        except ValueError as exc:
+            events = [quarantine_event(row, exc)]
+            self.stats.quarantined += 1
+        with self._lock:
+            before = len(self._buffer)
+            for event in events:
+                table = EVENT_TABLES[event.event_kind]
+                assert isinstance(table, str)
+                self._buffer.append((table, event.row))
+            overflow = before + len(events) - self._buffer_rows
+            if overflow > 0:
+                self.stats.dropped += overflow
+            self.stats.published += len(events)
+        if len(self._buffer) >= self._flush_batch:
+            self._wake.set()
+
+    def _run(self) -> None:
+        failure_delay = self._flush_interval
+        while not self._closed.is_set():
+            self._wake.wait(timeout=self._flush_interval)
+            self._wake.clear()
+            try:
+                flushed = self.flush()
+            except Exception:
+                self.stats.flush_failures += 1
+                log.exception("operational_analytics_direct.flush_failed")
+                # Failure backoff: nothing was consumed, so retry later
+                # rather than immediately -- a down ClickHouse must not turn
+                # this thread into a hot loop.
+                self._closed.wait(timeout=failure_delay)
+                failure_delay = min(failure_delay * 2, FAILURE_BACKOFF_CAP_SECONDS)
+                continue
+            failure_delay = self._flush_interval
+            if flushed:
+                self.stats.last_success_unix = time.time()
+
+    def flush(self) -> int:
+        """Send everything buffered, grouped per table. Raises on failure
+        with rows RETAINED (front of the deque) for the next attempt."""
+        with self._lock:
+            batch = list(self._buffer)
+            self._buffer.clear()
+        if not batch:
             return 0
-        if result.fetched == 0:
-            time.sleep(idle_delay)
-            idle_delay = min(idle_delay * 2, 30.0)
-        else:
-            idle_delay = max(0.1, args.poll_seconds)
+        by_table: dict[str, list[dict[str, Any]]] = {}
+        for table, row in batch:
+            by_table.setdefault(table, []).append(row)
+        sent = 0
+        try:
+            for table, rows in by_table.items():
+                body = "\n".join(json.dumps(row, default=str) for row in rows).encode()
+                query = f"INSERT INTO {self._database}.{table} FORMAT JSONEachRow"
+                self._post(
+                    f"{self._url}/?query={urllib.parse.quote(query)}",
+                    body,
+                    {
+                        "Authorization": f"Basic {self._auth}",
+                        "Content-Type": "application/x-ndjson",
+                    },
+                )
+                sent += len(rows)
+                by_table[table] = []
+        except Exception:
+            with self._lock:
+                # Put back everything not confirmed sent, oldest first, ahead
+                # of anything published meanwhile. maxlen drops overflow from
+                # the RIGHT via appendleft ordering -- newest retained.
+                remaining = [(table, row) for table, rows in by_table.items() for row in rows]
+                for item in reversed(remaining):
+                    self._buffer.appendleft(item)
+            raise
+        self.stats.inserted += sent
+        return sent
 
+    def close(self) -> None:
+        self._closed.set()
+        self._wake.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+        try:
+            self.flush()
+        except Exception:
+            log.exception("operational_analytics_direct.final_flush_failed")
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+    @staticmethod
+    def _http_post(url: str, body: bytes, headers: dict[str, str]) -> None:
+        if not url.startswith(("http://", "https://")):
+            raise ValueError(f"clickhouse url must be http(s), got {url.split(':', 1)[0]!r}")
+        request = urllib.request.Request(url, data=body, headers=headers, method="POST")  # noqa: S310
+        with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
+            response.read()

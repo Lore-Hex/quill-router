@@ -58,13 +58,13 @@ from trusted_router.storage_gcp_generation_records import (
     upsert_generation_record,
 )
 from trusted_router.storage_gcp_io import SpannerIO
-from trusted_router.storage_gcp_operational_analytics_outbox import (
-    SpannerOperationalAnalyticsOutbox,
-)
 from trusted_router.storage_models import (
     Generation,
     ProviderBenchmarkSample,
     _is_byok,
+)
+from trusted_router.storage_operational_analytics import (
+    OperationalAnalyticsWriter,
 )
 
 log = logging.getLogger(__name__)
@@ -72,9 +72,7 @@ ACTIVITY_SCAN_LIMIT = 5000
 
 
 class _AddUsageCallback(Protocol):
-    def __call__(
-        self, key_hash: str, cost_microdollars: int, *, is_byok: bool
-    ) -> None: ...
+    def __call__(self, key_hash: str, cost_microdollars: int, *, is_byok: bool) -> None: ...
 
 
 class SpannerGenerations:
@@ -92,7 +90,7 @@ class SpannerGenerations:
         legacy_family: str | None = None,
         add_usage_to_key: _AddUsageCallback,
         analytics_outbox: SpannerAnalyticsOutbox | None = None,
-        operational_analytics_outbox: SpannerOperationalAnalyticsOutbox | None = None,
+        operational_analytics_outbox: OperationalAnalyticsWriter | None = None,
     ) -> None:
         self._io = io
         self._bt_table = bt_table

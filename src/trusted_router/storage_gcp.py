@@ -155,6 +155,9 @@ from trusted_router.storage_models import (
     UserModelPayout,
     _is_expired,
 )
+from trusted_router.storage_operational_analytics import (
+    OperationalAnalyticsWriter,
+)
 from trusted_router.types import IdentityVerificationStatus, UsageType
 
 T = TypeVar("T")
@@ -287,6 +290,9 @@ class SpannerBigtableStore:
         request_record_write_mode: str = "legacy",
         analytics_outbox_enabled: bool = False,
         operational_analytics_outbox_enabled: bool = False,
+        operational_analytics_sink: str = "outbox",
+        operational_analytics_clickhouse_write_user: str = "tr",
+        operational_analytics_clickhouse_write_password: str = "",
         operational_analytics_clickhouse_url: str = "",
         operational_analytics_clickhouse_user: str = "tr_control_read",
         operational_analytics_clickhouse_password: str = "",
@@ -426,9 +432,7 @@ class SpannerBigtableStore:
         # profile map therefore opens the ledger even when local issuance is off.
         if profiles:
             if not bigtable_instance_id:
-                raise ValueError(
-                    "regional quota app profiles require a Bigtable instance"
-                )
+                raise ValueError("regional quota app profiles require a Bigtable instance")
             try:
                 from google.cloud import bigtable
             except ImportError as exc:  # pragma: no cover - production image.
@@ -479,11 +483,28 @@ class SpannerBigtableStore:
         self.api_keys = SpannerApiKeys(io)
         self.acquisition_store = SpannerAcquisitionAttribution(io)
         self.bedrock_group_buy_store = SpannerBedrockGroupBuy(io)
-        self._operational_analytics_outbox = (
-            SpannerOperationalAnalyticsOutbox(self._database, self._param_types)
-            if operational_analytics_outbox_enabled
-            else None
-        )
+        self._operational_analytics_outbox: OperationalAnalyticsWriter | None
+        if operational_analytics_sink == "direct":
+            # Telemetry stops touching Spanner entirely: canonical rows go
+            # straight to ClickHouse from a bounded in-process buffer. The
+            # sink duck-types the outbox writer, so every enqueue site below
+            # is unchanged. See operational_analytics_direct.py for why.
+            from trusted_router.operational_analytics_direct import (
+                DirectOperationalAnalyticsSink,
+            )
+
+            self._operational_analytics_outbox = DirectOperationalAnalyticsSink(
+                url=operational_analytics_clickhouse_url,
+                database=operational_analytics_clickhouse_database,
+                user=operational_analytics_clickhouse_write_user,
+                password=operational_analytics_clickhouse_write_password,
+            )
+        else:
+            self._operational_analytics_outbox = (
+                SpannerOperationalAnalyticsOutbox(self._database, self._param_types)
+                if operational_analytics_outbox_enabled
+                else None
+            )
         self.generation_store = SpannerGenerations(
             io,
             bt_table=self._bt_table,
@@ -3300,8 +3321,7 @@ class SpannerBigtableStore:
                 # gateway route splits on ':'.
                 return (
                     AuthorizeVerdict(
-                        f"{AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED}:"
-                        f"{window_decision.window}",
+                        f"{AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED}:{window_decision.window}",
                         rate_limit=window_decision,
                     ),
                     None,
