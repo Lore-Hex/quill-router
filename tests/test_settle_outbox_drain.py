@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from google.api_core.exceptions import DeadlineExceeded
 
 from tests.fakes.spanner import _FakeTransaction, make_fake_store
 from trusted_router.config import Settings
@@ -20,6 +21,7 @@ from trusted_router.services import auto_refill_outbox_drain as auto_refill_drai
 from trusted_router.services import settle_outbox_apply as apply_mod
 from trusted_router.services import settle_outbox_drain as drain_mod
 from trusted_router.services.auto_refill import AutoRefillOutcome
+from trusted_router.services.auto_refill_outbox_drain import AutoRefillDrainPass
 from trusted_router.services.regional_quota_leases import LeaseSettlementError
 from trusted_router.services.settle_outbox_apply import ApplyOutcome
 from trusted_router.storage import InMemoryStore, configure_store
@@ -705,6 +707,72 @@ def test_auto_refill_freshness_reads_only_the_sparse_pending_index(
     store, _db, _bt = fake_store
 
     assert _outbox(store).auto_refill_pending_freshness() == (None, 0)
+
+
+def test_auto_refill_pass_debounces_transient_store_errors_until_sustained(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    attempts = 0
+
+    def transient_then_recover(
+        _settings: Settings,
+        *,
+        limit: int,
+    ) -> dict[str, Any]:
+        nonlocal attempts
+        assert limit == 10
+        attempts += 1
+        if attempts <= 4:
+            raise DeadlineExceeded("temporary Spanner deadline")
+        return {"claimed": 0}
+
+    monkeypatch.setattr(
+        auto_refill_drain_mod,
+        "drain_auto_refill_outbox",
+        transient_then_recover,
+    )
+    drain_pass = AutoRefillDrainPass()
+    settings = Settings(environment="test", service_surface="control")
+
+    with caplog.at_level(logging.INFO, logger=auto_refill_drain_mod.__name__):
+        assert drain_pass.run(settings, limit=10) is None
+        assert drain_pass.run(settings, limit=10) is None
+        assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+
+        assert drain_pass.run(settings, limit=10) is None
+        alerts = [record for record in caplog.records if record.levelno >= logging.ERROR]
+        assert len(alerts) == 1
+        assert "consecutive_failures=3" in alerts[0].getMessage()
+
+        assert drain_pass.run(settings, limit=10) is None
+        assert len(
+            [record for record in caplog.records if record.levelno >= logging.ERROR]
+        ) == 1
+
+        assert drain_pass.run(settings, limit=10) == {"claimed": 0}
+
+    assert drain_pass.consecutive_transient_failures == 0
+    assert any(
+        "recovered after 4 transient failures" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_auto_refill_pass_does_not_hide_application_bugs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(_settings: Settings, *, limit: int) -> dict[str, Any]:
+        _ = limit
+        raise ValueError("invalid queue row")
+
+    monkeypatch.setattr(auto_refill_drain_mod, "drain_auto_refill_outbox", broken)
+
+    with pytest.raises(ValueError, match="invalid queue row"):
+        AutoRefillDrainPass().run(
+            Settings(environment="test", service_surface="control"),
+            limit=10,
+        )
 
 
 def test_settle_emits_timing_line(

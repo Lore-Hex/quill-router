@@ -154,10 +154,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 95,
+    "model_count": 99,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 184,
+    "route_count": 192,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -271,10 +271,10 @@
   },
   "io-net": {
     "card_version": 2,
-    "model_count": 32,
+    "model_count": 33,
     "name": "IO Intelligence",
     "privacy": "Policy documented",
-    "route_count": 32,
+    "route_count": 33,
     "route_mode": "Prepaid",
     "slug": "io-net"
   },
@@ -442,10 +442,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 112,
+    "model_count": 114,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 206,
+    "route_count": 210,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -460,11 +460,11 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 25,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 25,
+    "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
   "openai": {
@@ -476,14 +476,14 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },
-  "openrouter-exclusive": {
+  "openrouter": {
     "card_version": 2,
     "model_count": 1,
-    "name": "Stealth via OpenRouter",
+    "name": "OpenRouter",
     "privacy": "Policy documented",
     "route_count": 1,
     "route_mode": "Prepaid",
-    "slug": "openrouter-exclusive"
+    "slug": "openrouter"
   },
   "ovhcloud": {
     "card_version": 2,
@@ -757,10 +757,10 @@
   },
   "zai": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 14,
     "name": "Z.AI",
     "privacy": "Policy documented",
-    "route_count": 25,
+    "route_count": 27,
     "route_mode": "Prepaid + BYOK",
     "slug": "zai"
   },

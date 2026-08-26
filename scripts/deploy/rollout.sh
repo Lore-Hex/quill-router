@@ -641,12 +641,20 @@ ENV_VARS=(
   "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_URL=${PROVIDER_ANALYTICS_CLICKHOUSE_URL}"
   "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_USER=tr_control_read"
   "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_DATABASE=tr"
-  # Telemetry leaves the process straight to ClickHouse (bounded in-process
-  # buffer, INSERT-only account provisioned by clickhouse_operational_writer.sh)
-  # instead of through the billing database's outbox. The outbox drain was
-  # measured at ~25% of the Spanner instance while idle -- the headroom that
-  # was missing on launch day 2026-08-25.
-  "TR_OPERATIONAL_ANALYTICS_SINK=direct"
+  # 2026-08-26: the direct sink is RETIRED from deploys until it is reworked.
+  # It failed twice in one day — first silently (Cloud Run direct VPC egress
+  # cannot reliably reach the passthrough ILB at the operational ClickHouse
+  # URL; delivery stopped with zero errors and the status page read healthy
+  # while ~3.5h of telemetry dropped), then loudly after the #853 logging fix
+  # exposed every flush failing HTTP 403. Each deploy also silently overwrote
+  # the operator's live outbox revert, re-breaking prod telemetry mid-release.
+  # The outbox drain's ~25% idle Spanner cost is accepted until a re-cutover
+  # that (a) targets a supported endpoint (instance IPs, an internal
+  # Application LB, or PSC — never a passthrough ILB forwarding rule),
+  # (b) is verified FROM the Cloud Run runtime rather than by hairpin from a
+  # ClickHouse VM, and (c) ships after the direct-mode freshness fields from
+  # #853 are live so a dead sink can never again read as healthy.
+  "TR_OPERATIONAL_ANALYTICS_SINK=outbox"
   "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_WRITE_USER=tr_ops_ingest"
   "TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}"
   "TR_ANALYTICS_DUAL_READ_GRACE_SECONDS=30"

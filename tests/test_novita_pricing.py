@@ -309,6 +309,39 @@ def test_novita_api_price_rejects_all_zero_internal_rows() -> None:
     )
 
 
+def test_novita_zero_price_trial_is_classified_without_blocking_refresh(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    manifest_path = tmp_path / "novita.json"
+    manifest_path.write_text('{"models": []}\n', encoding="utf-8")
+    monkeypatch.setattr(novita, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setenv("NOVITA_API_KEY", "secret")
+    monkeypatch.setattr(
+        novita,
+        "fetch_json",
+        lambda *_args, **_kwargs: {
+            "data": [
+                {
+                    "id": "inclusionai/ling-3.0-flash-fin",
+                    "status": 1,
+                    "endpoints": ["chat/completions"],
+                    "input_token_price_per_m": 0,
+                    "output_token_price_per_m": 0,
+                }
+            ]
+        },
+    )
+
+    rows, prices = novita._live_catalog()
+
+    model_id = "inclusionai/ling-3.0-flash-fin"
+    assert prices == {}
+    assert rows[model_id]["routable"] is False
+    assert rows[model_id]["routable_reason"] == "zero-price-unbillable"
+    assert novita._new_required_price_ids(rows) == frozenset()
+
+
 def test_novita_manifest_writer_appends_live_priced_model(
     tmp_path: Path,
     monkeypatch,

@@ -14,8 +14,8 @@ runner included -- can ask it ``SELECT max(created_at) FROM
 activity_generations``.  A freshness check that cannot reach the thing it
 checks is not a check.
 
-The signal that *is* reachable is the outbox, and it is strictly better than a
-ClickHouse timestamp for this purpose.  Rows are deleted from the outbox only
+The signal that *is* reachable is the publisher's delivery state. For durable
+outboxes, rows are deleted only
 after ClickHouse has accepted them (``SELECT -> insert -> DELETE``, in that
 order, gated on every configured target succeeding), so the age of the OLDEST
 undelivered row is an end-to-end statement about the whole pipeline:
@@ -30,6 +30,12 @@ running to say so -- which is the failure that actually happened: between
 2026-08-02 and 2026-08-17 the drain was never installed at all, the outbox grew
 to 465,119 rows, and nothing anywhere reported it, because the alarm is emitted
 BY the process that was missing.
+
+The direct sink is deliberately different: its bounded buffer drops oldest
+rows, so its oldest retained row can stay young during an outage. Direct-mode
+readings therefore add time since the last successful delivery plus cumulative
+drop and flush-failure counters. An empty direct buffer no longer impersonates
+the healthiest state after the flusher has died.
 
 The control plane is the natural publisher because it is already the only
 public thing that holds a DSQL connection, and the query is an index seek on
@@ -48,6 +54,7 @@ back, for every cloud, with no credentials at all.
 from __future__ import annotations
 
 import datetime as dt
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -63,6 +70,9 @@ REASON_FIELD = "reason"
 BACKEND_FIELD = "backend"
 DRAIN_LAG_FIELD = "drain_lag_seconds"
 OUTBOX_DEPTH_FIELD = "outbox_depth"
+SECONDS_SINCE_LAST_DELIVERY_FIELD = "seconds_since_last_delivery"
+DROPPED_TOTAL_FIELD = "dropped_total"
+FLUSH_FAILURES_FIELD = "flush_failures"
 GENERATED_AT_FIELD = "generated_at"
 
 #: Every key the published section may contain, in both of its forms.  Pinned
@@ -70,7 +80,16 @@ GENERATED_AT_FIELD = "generated_at"
 #: can safely narrow later: an added key is a promise to whoever started
 #: reading it.
 PUBLISHED_AVAILABLE_FIELDS: frozenset[str] = frozenset(
-    {AVAILABLE_FIELD, BACKEND_FIELD, DRAIN_LAG_FIELD, OUTBOX_DEPTH_FIELD, GENERATED_AT_FIELD}
+    {
+        AVAILABLE_FIELD,
+        BACKEND_FIELD,
+        DRAIN_LAG_FIELD,
+        OUTBOX_DEPTH_FIELD,
+        SECONDS_SINCE_LAST_DELIVERY_FIELD,
+        DROPPED_TOTAL_FIELD,
+        FLUSH_FAILURES_FIELD,
+        GENERATED_AT_FIELD,
+    }
 )
 PUBLISHED_UNAVAILABLE_FIELDS: frozenset[str] = frozenset({AVAILABLE_FIELD, REASON_FIELD})
 
@@ -112,6 +131,7 @@ PUBLISHABLE_REASONS: frozenset[str] = frozenset(
 BACKEND_SPANNER = "spanner"
 BACKEND_POSTGRES = "postgres"
 BACKEND_MEMORY = "memory"
+BACKEND_DIRECT = "direct"
 #: A backend name the publisher does not recognise.  Narrowed for the same
 #: reason as :data:`PUBLISHABLE_REASONS` above -- every value on the public page
 #: comes from a closed vocabulary -- and it is not silently dropped, because the
@@ -120,25 +140,30 @@ BACKEND_MEMORY = "memory"
 BACKEND_UNKNOWN = "unknown"
 
 PUBLISHABLE_BACKENDS: frozenset[str] = frozenset(
-    {BACKEND_SPANNER, BACKEND_POSTGRES, BACKEND_MEMORY}
+    {BACKEND_SPANNER, BACKEND_POSTGRES, BACKEND_MEMORY, BACKEND_DIRECT}
 )
 
 
 @dataclass(frozen=True)
 class OutboxFreshness:
-    """One storage backend's answer to "how old is the oldest undelivered row?".
+    """One delivery backend's externally publishable freshness answer.
 
     Carrying availability in the reading rather than returning a bare
     ``datetime | None`` is the whole point.  ``None`` already means "the outbox
-    is empty", which is the healthiest state there is; a backend that could not
-    look, or has no outbox to look at, must not be able to express itself with
-    the same value.  Every backend answers with one of these, so a backend that
-    cannot answer is *loud* rather than absent.
+    is empty", which is the healthiest durable-outbox state there is; a backend
+    that could not look, or has no outbox to look at, must not be able to
+    express itself with the same value. Direct mode supplements that ambiguous
+    bounded-buffer head with delivery age and cumulative counters. Every
+    backend answers with one of these, so a backend that cannot answer is
+    *loud* rather than absent.
     """
 
     backend: str
     oldest_enqueued_at: dt.datetime | None = None
     outbox_depth: int | None = None
+    seconds_since_last_delivery: float | None = None
+    dropped_total: int | None = None
+    flush_failures: int | None = None
     available: bool = True
     reason: str | None = None
 
@@ -209,6 +234,9 @@ def analytics_status_section(
     now: dt.datetime,
     outbox_depth: int | None = None,
     backend: str = "postgres",
+    seconds_since_last_delivery: float | None = None,
+    dropped_total: int | None = None,
+    flush_failures: int | None = None,
 ) -> dict[str, Any]:
     """Project the outbox's head onto the public status contract.
 
@@ -240,8 +268,30 @@ def analytics_status_section(
         BACKEND_FIELD: publishable_backend(backend),
         DRAIN_LAG_FIELD: round(lag, 3),
         OUTBOX_DEPTH_FIELD: None if outbox_depth is None else max(0, int(outbox_depth)),
+        SECONDS_SINCE_LAST_DELIVERY_FIELD: _publishable_non_negative_float(
+            seconds_since_last_delivery
+        ),
+        DROPPED_TOTAL_FIELD: _publishable_non_negative_int(dropped_total),
+        FLUSH_FAILURES_FIELD: _publishable_non_negative_int(flush_failures),
         GENERATED_AT_FIELD: _iso(moment),
     }
+
+
+def _publishable_non_negative_float(value: object) -> float | None:
+    """Narrow an internal reading to a finite, non-negative JSON number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number):
+        return None
+    return round(max(0.0, number), 3)
+
+
+def _publishable_non_negative_int(value: object) -> int | None:
+    """Narrow a cumulative counter without invoking arbitrary conversion code."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return max(0, value)
 
 
 def analytics_status_from_reading(
@@ -273,4 +323,7 @@ def analytics_status_from_reading(
         now=now,
         outbox_depth=reading.outbox_depth,
         backend=reading.backend,
+        seconds_since_last_delivery=reading.seconds_since_last_delivery,
+        dropped_total=reading.dropped_total,
+        flush_failures=reading.flush_failures,
     )

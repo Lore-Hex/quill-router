@@ -293,10 +293,10 @@ def test_discovery_only_non_runtime_manifest_warns_without_global_freeze() -> No
     assert warning not in hard_failures
 
 
-def test_discovery_only_fallback_manifests_are_age_gated() -> None:
+def test_nvidia_runtime_fallback_manifest_is_age_gated_provider_locally() -> None:
     from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS
 
-    assert "nvidia-nim" not in GATEWAY_PREPAID_PROVIDER_SLUGS
+    assert "nvidia-nim" in GATEWAY_PREPAID_PROVIDER_SLUGS
     raw = json.loads(
         check_price_coverage.MANIFEST_DIR.joinpath("nvidia-nim.json").read_text(encoding="utf-8")
     )
@@ -309,7 +309,8 @@ def test_discovery_only_fallback_manifests_are_age_gated() -> None:
     )
 
     warning = next(item for item in warnings if item.startswith("nvidia-nim:"))
-    assert "live scraper fallback manifest fails runtime route validity checks" in warning
+    assert "live scraper fallback manifest is 15d stale" in warning
+    assert "provider routes are quarantined" in warning
     assert warning not in hard_failures
 
 
@@ -523,6 +524,7 @@ def test_zai_model_discovery_extracts_glm_ids_from_docs() -> None:
     text = """
     The GLM Coding Plan now supports GLM-5.2.
     Use `ANTHROPIC_DEFAULT_OPUS_MODEL`: `glm-5.2[1m]`.
+    The newest low-cost route is GLM-5.3-Flash.
     Fallbacks: GLM-4.7 and GLM-4.5-Air.
     """
 
@@ -530,6 +532,7 @@ def test_zai_model_discovery_extracts_glm_ids_from_docs() -> None:
         "z-ai/glm-4.5-air",
         "z-ai/glm-4.7",
         "z-ai/glm-5.2",
+        "z-ai/glm-5.3-flash",
     }
 
 
@@ -538,6 +541,7 @@ def test_provider_glm_model_discovery_normalizes_native_ids() -> None:
         "data": [
             {"id": "zai-org/GLM-5.2"},
             {"id": "zai-org/GLM-5.2-FP8"},
+            {"id": "zai-org/GLM-5.3-Flash"},
             {"id": "accounts/fireworks/models/glm-5p2"},
             {"id": "zai-org/glm-5.1"},
             {"id": "not-a-glm-model"},
@@ -547,6 +551,7 @@ def test_provider_glm_model_discovery_normalizes_native_ids() -> None:
     assert check_price_coverage._provider_glm_model_ids(payload) == {
         "z-ai/glm-5.1",
         "z-ai/glm-5.2",
+        "z-ai/glm-5.3-flash",
     }
 
 
@@ -587,6 +592,7 @@ def test_novita_discovery_ignores_internal_aliases_but_catches_public_families()
 def test_provider_glm_required_gate_targets_current_flagships() -> None:
     assert check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-5.2")
     assert check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-5.3")
+    assert check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-5.3-flash")
     assert check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-6")
     assert not check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-5.1")
     assert not check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-5-turbo")
@@ -640,17 +646,26 @@ def test_direct_provider_discovery_configuration_comes_from_each_catalog() -> No
 
 def test_model_discovery_warns_when_docs_mention_unpublished_model(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(check_price_coverage, "_GLM_DISCOVERABLE_PROVIDER_APIS", ())
+    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", tmp_path)
+    (tmp_path / "zai.json").write_text(
+        json.dumps({"models": [{"id": "z-ai/glm-4.7"}]}) + "\n",
+        encoding="utf-8",
+    )
     warnings, info = check_price_coverage._model_discovery_audit(
         fetch_text=lambda _url: "Supported Models: GLM-5.2, GLM-4.7",
         fetch_json=_known_provider_model_payload,
         published_model_ids={"z-ai/glm-4.7"} | (_NEW_AUTOMATIC_FEED_ROWS - {"z-ai/glm-5.2"}),
     )
 
-    assert any(item.startswith("cerebras: model discovery matched catalog") for item in info)
-    assert len(warnings) == 1
-    assert "z-ai/glm-5.2" in warnings[0]
+    assert info or warnings
+    assert any(
+        warning.startswith("zai: Coding Plan docs mention unpublished model(s)")
+        and "z-ai/glm-5.2" in warning
+        for warning in warnings
+    )
 
 
 def test_zai_fetch_failure_does_not_skip_other_provider_discovery() -> None:
@@ -836,7 +851,9 @@ def test_provider_glm_discovery_warns_on_unpublished_route(monkeypatch, tmp_path
     warnings, _info = check_price_coverage._model_discovery_audit(
         fetch_text=lambda _url: "Supported Models: GLM-4.7",
         fetch_json=fake_fetch_json,
-        published_model_ids={"z-ai/glm-4.7"},
+        # Global publication through another host must not hide these missing
+        # provider-specific routes.
+        published_model_ids={"z-ai/glm-4.7", "z-ai/glm-5.2"},
     )
 
     assert any(

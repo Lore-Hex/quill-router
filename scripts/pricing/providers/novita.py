@@ -45,6 +45,8 @@ EXPECTED_MODELS = [
     "deepseek/deepseek-v4-flash",
     "moonshotai/kimi-k3",
     "tencent/hy3",
+    "z-ai/glm-5.3",
+    "z-ai/glm-5.3-flash",
 ]
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 _API_PRICE_SCALE_TO_MICRODOLLARS_PER_M = Decimal(100)
@@ -112,7 +114,9 @@ def _new_required_price_ids(
     return frozenset(
         model_id
         for model_id, row in discovered.items()
-        if model_id not in known and row.get("status") == 1
+        if model_id not in known
+        and row.get("status") == 1
+        and row.get("routable") is not False
     )
 
 
@@ -219,6 +223,15 @@ def _live_catalog() -> tuple[dict[str, dict[str, Any]], dict[str, ModelPrice]]:
         price = _source_price(source)
         if price is not None:
             api_prices[model_id] = price
+        elif (
+            source.get("input_token_price_per_m") == 0
+            and source.get("output_token_price_per_m") == 0
+        ):
+            # Novita occasionally exposes time-limited free trials in the
+            # paid account catalog. They are real models but cannot enter the
+            # prepaid ledger without a nonzero durable billing contract.
+            row["routable"] = False
+            row["routable_reason"] = "zero-price-unbillable"
 
     if not discovered:
         raise RuntimeError("novita: /models returned no supported model ids")

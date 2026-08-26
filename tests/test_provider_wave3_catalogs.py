@@ -582,6 +582,7 @@ def test_io_net_normalizes_exact_prices_capabilities_and_limits() -> None:
         }
     ]
     assert io_net.CATALOG.model_id("XiaomiMiMo/MiMo-V2.5") == "xiaomi/mimo-v2.5"
+    assert "z-ai/glm-5.3-flash" in io_net.CATALOG.spec.expected_models
 
 
 def test_io_net_drops_unpriced_or_one_sided_rows() -> None:

@@ -316,6 +316,23 @@ def test_route_health_first_sweep_dead_routes_are_not_routable() -> None:
     )
 
 
+def test_glm_53_flash_publishes_all_verified_provider_routes() -> None:
+    expected_upstream_ids = {
+        "zai": "glm-5.3-flash",
+        "deepinfra": "zai-org/GLM-5.3-Flash",
+        "io-net": "zai-org/GLM-5.3-Flash",
+        "novita": "zai-org/glm-5.3-flash",
+    }
+
+    credits = {
+        endpoint.provider: endpoint.upstream_id
+        for endpoint in endpoints_for_model("z-ai/glm-5.3-flash")
+        if endpoint.usage_type == "Credits"
+    }
+
+    assert expected_upstream_ids.items() <= credits.items()
+
+
 def test_gemini_native_supplement_publishes_missing_text_models() -> None:
     gemini_35 = MODEL_ENDPOINTS[
         "google/gemini-3.5-flash@google-ai-studio/prepaid"

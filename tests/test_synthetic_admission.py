@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import threading
 import time
 from collections.abc import Iterator
@@ -138,6 +139,11 @@ def test_synthetic_ingest_rejects_oversized_item_batches_before_work(
 def test_synthetic_run_has_a_small_route_specific_cadence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        "trusted_router.storage_rate_limits.utcnow",
+        lambda: dt.datetime(2026, 8, 26, 20, 20, 30, tzinfo=dt.UTC),
+    )
+
     async def immediate(
         _settings: Settings,
         _body: dict[str, object],

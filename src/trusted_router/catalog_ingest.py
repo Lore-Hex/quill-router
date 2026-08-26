@@ -207,12 +207,12 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "nscale",
         "databricks",
         "zero-g",
-        "openrouter-exclusive",
         "azure",
         "scaleway",
         "featherless",
         "sakana",
         "jina",
+        "openrouter",
     }
 )
 
@@ -868,7 +868,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "perplexity",
         "krea",
         "meta",
-        "openrouter-exclusive",
+        "openrouter",
     ):
         path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
         if not path.exists() or provider_slug not in PROVIDERS:

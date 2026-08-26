@@ -74,6 +74,7 @@ from dataclasses import dataclass
 from trusted_router import byok_v1_attestations, regions
 from trusted_router.config import Settings
 from trusted_router.operational_analytics_freshness import (
+    BACKEND_DIRECT,
     BACKEND_POSTGRES,
     BACKEND_SPANNER,
 )
@@ -82,7 +83,9 @@ from trusted_router.synthetic import fleet as synthetic_fleet
 #: Backends a control plane can legitimately answer this question from. The
 #: registry pins one per cloud so a status page belonging to a DIFFERENT cloud
 #: cannot answer for this one; see :class:`FleetAnalyticsEndpoint`.
-KNOWN_BACKENDS: frozenset[str] = frozenset({BACKEND_SPANNER, BACKEND_POSTGRES})
+KNOWN_BACKENDS: frozenset[str] = frozenset(
+    {BACKEND_SPANNER, BACKEND_POSTGRES, BACKEND_DIRECT}
+)
 
 
 @dataclass(frozen=True)
