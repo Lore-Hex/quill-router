@@ -53,7 +53,15 @@ if [ -z "$POLICY" ]; then
 else
   TYPES="$(jq -r '[.auditConfigs[]? | select(.service=="allServices") | .auditLogConfigs[].logType] | sort | join(",")' <<<"$POLICY")"
   case "$TYPES" in
-    "ADMIN_READ,DATA_WRITE") ok "auditConfigs = ADMIN_READ + DATA_WRITE" ;;
+    "ADMIN_READ") ok "auditConfigs = ADMIN_READ (Admin Activity logs are always-on and free)" ;;
+    "ADMIN_READ,DATA_WRITE")
+      # The 2026-08-22 baseline enabled DATA_WRITE on allServices; at
+      # production settle/authorize traffic every Spanner mutation became a
+      # billed audit entry (~14 GiB/day, the 2026-08-26 ingestion alert).
+      # All writes come from the control plane's own service accounts, so
+      # per-row write audit re-records what app-level records already carry.
+      # Removed deliberately 2026-08-26; Admin Activity + ADMIN_READ remain.
+      drift "DATA_WRITE is enabled — ingestion-cost regression; removed deliberately 2026-08-26 (got: $TYPES)" ;;
     *DATA_READ*)
       # Not merely unexpected — expensive. DATA_READ was enabled and removed
       # the same day on measured cost: ingestion went ~0.07 -> ~0.80 GiB/hour,
@@ -62,7 +70,7 @@ else
       # re-ran the old hardening script.
       drift "DATA_READ is enabled — ~\$236/month regression; removed deliberately 2026-08-15 (got: $TYPES)" ;;
     "") drift "no auditConfigs on allServices — administrative activity is not being audited" ;;
-    *)  drift "auditConfigs = $TYPES (want ADMIN_READ,DATA_WRITE)" ;;
+    *)  drift "auditConfigs = $TYPES (want ADMIN_READ)" ;;
   esac
   jq -e '[.auditConfigs[]?.auditLogConfigs[]?.exemptedMembers // empty] | flatten | length > 0' <<<"$POLICY" >/dev/null 2>&1 \
     && drift "an auditLogConfig has exemptedMembers — some principal is exempt from audit logging" \
