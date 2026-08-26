@@ -351,7 +351,6 @@ def _authorize_gateway_sync(
     if partner_mode is not None:
         _force_partner_credit_routes(body_dict)
     native_retention_allowed = _native_batch_request_allows_retention(body_dict, settings)
-    route_preferences = provider_route_preferences(body_dict)
     # Embedding-only models can't go through the chat resolver (it
     # rejects supports_chat=False). Route them to the embeddings
     # resolver so the attested enclave can authorize + bill an
@@ -366,6 +365,7 @@ def _authorize_gateway_sync(
             "web_search is not available for this privacy tier",
             ErrorType.BAD_REQUEST,
         )
+    route_preferences = provider_route_preferences(body_dict)
     requested_model = MODELS.get(route_model_id) if route_model_id else None
     is_video_request = body.route_type == "videos"
     is_image_request = body.route_type == "images"
