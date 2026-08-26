@@ -75,7 +75,7 @@ def test_rollout_prefers_private_clickhouse_load_balancer() -> None:
     script = (ROOT / "scripts/deploy/rollout.sh").read_text()
 
     assert "compute addresses describe tr-clickhouse-ilb" in script
-    assert 'TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL=${PROVIDER_ANALYTICS_CLICKHOUSE_URL}' in script
+    assert "TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL=${PROVIDER_ANALYTICS_CLICKHOUSE_URL}" in script
 
 
 def test_operational_deploy_moves_benchmark_code_schema_and_replay_together() -> None:
@@ -134,7 +134,7 @@ def test_stockholm_refuses_a_cidr_that_overlaps_paris() -> None:
 
     assert "import ipaddress" in script
     assert ".overlaps(" in script
-    assert "aws ec2 describe-vpcs --region \"$PARIS_REGION\"" in script
+    assert 'aws ec2 describe-vpcs --region "$PARIS_REGION"' in script
 
 
 def test_stockholm_security_group_admits_only_the_paris_vpc() -> None:
@@ -157,7 +157,9 @@ def test_stockholm_repeats_the_hard_won_details_from_the_paris_node() -> None:
 
     # The users.d ownership fix: the server drops privileges, so a root-owned
     # file is unreadable to it and it dies without naming the permission.
-    assert "chown clickhouse:clickhouse /etc/clickhouse-server/users.d/default-password.xml" in script
+    assert (
+        "chown clickhouse:clickhouse /etc/clickhouse-server/users.d/default-password.xml" in script
+    )
     # IMDSv2 required, not optional.
     assert "HttpTokens=required" in script
     assert "X-aws-ec2-metadata-token-ttl-seconds" in script
@@ -284,14 +286,14 @@ def test_stockholm_builds_the_path_against_the_subnet_the_drain_runs_in() -> Non
 
     # Derived from the instance that actually runs the drain, by tag.
     assert 'PARIS_NODE_NAME="${PARIS_NODE_NAME:-tr-eu-clickhouse-1}"' in script
-    assert 'Name=tag:Name,Values=$PARIS_NODE_NAME' in script
+    assert "Name=tag:Name,Values=$PARIS_NODE_NAME" in script
     assert "Reservations[0].Instances[0].SubnetId" in script
     # And never from an arbitrary subnet of the VPC. The one surviving
     # `Subnets[0].SubnetId` is the Stockholm lookup, which is deterministic
     # because it filters on this script's own Name tag rather than taking
     # whatever the API returns first.
     assert statements.count("Subnets[0].SubnetId") == 1
-    assert 'Name=tag:Name,Values=$VPC_NAME-a' in statements
+    assert "Name=tag:Name,Values=$VPC_NAME-a" in statements
     assert 'describe-subnets --region "$PARIS_REGION" \\\n      --filters' not in statements
     # A subnet that is not in the Paris VPC is refused rather than used.
     assert "$PARIS_SUBNET_VPC" in script
@@ -310,9 +312,7 @@ def test_stockholm_env_block_contains_no_shell_substitution() -> None:
     """
     lines = STOCKHOLM.read_text().splitlines()
     env_lines = [
-        line
-        for line in lines
-        if "CH_REPLICA_PASSWORD=" in line or "_CLICKHOUSE_REPLICA_" in line
+        line for line in lines if "CH_REPLICA_PASSWORD=" in line or "_CLICKHOUSE_REPLICA_" in line
     ]
     assert env_lines, "the runbook must still print the replica env block"
     for line in env_lines:
@@ -392,3 +392,88 @@ def test_stockholm_documents_that_it_starts_empty_and_is_not_backfilled() -> Non
     assert "starts EMPTY" in script
     assert "remote(" in script
     assert "ingest_version" in script
+
+
+# --------------------------------------------------------------------------
+# Analytics nodes must not vend the enclave hosts' credentials
+# --------------------------------------------------------------------------
+#
+# Until 2026-08-17 both AWS ClickHouse scripts launched their node with
+# quill-enclave-instance-profile. That role grants secretsmanager on quill/*
+# -- roughly forty provider API keys, the Cloudflare token and the cross-cloud
+# SA key -- plus kms:Decrypt on every key in the account, the CloudTrail CMK
+# included. An analytics box was therefore one RCE away from the entire
+# provider credential set.
+#
+# The split was first applied by hand to the running node, which fixed exactly
+# nothing durable: the next run of the deploy script would have handed the
+# profile straight back, and a new region would never have had the narrow role
+# at all. These tests exist so the fix lives in the bring-up rather than in a
+# shell history.
+
+PARIS = ROOT / "scripts/deploy/aws_eu_clickhouse.sh"
+
+
+def _executable_lines(path: Path) -> str:
+    """Script text with comment-only lines removed.
+
+    The negative assertions below guard against a profile name that both
+    scripts legitimately DISCUSS in their comments, so matching raw text would
+    fail on the prose explaining why the thing is wrong.
+    """
+    return "\n".join(
+        line for line in path.read_text().splitlines() if not line.lstrip().startswith("#")
+    )
+
+
+def test_analytics_nodes_never_launch_with_the_enclave_instance_profile() -> None:
+    for path in (PARIS, STOCKHOLM):
+        assert "quill-enclave-instance-profile" not in _executable_lines(path), (
+            f"{path.name} would give an analytics node the enclave hosts' credentials"
+        )
+
+
+def test_analytics_nodes_create_the_role_they_launch_with() -> None:
+    """Referencing a role someone made by hand is not provisioning it.
+
+    A control that exists only in live cloud state dies with the resource, and
+    cannot be evidenced as operating across a SOC 2 observation period for
+    anything rebuilt during it.
+    """
+    for path in (PARIS, STOCKHOLM):
+        script = path.read_text()
+        assert "iam create-role" in script
+        assert "iam put-role-policy" in script
+        assert "iam create-instance-profile" in script
+        assert "iam add-role-to-instance-profile" in script
+
+
+def test_analytics_role_is_scoped_to_one_secret_and_one_key() -> None:
+    for path in (PARIS, STOCKHOLM):
+        script = path.read_text()
+        # Its own password secret, not the whole quill/ namespace.
+        assert "secret:$SECRET_ID-*" in script
+        assert "secret:quill/*" not in script
+        # The resolved secretsmanager key, never every key in the account.
+        assert "alias/aws/secretsmanager" in script
+        assert "kms:*:$ACCOUNT:key/*" not in script
+
+
+def test_analytics_role_trust_policy_uses_if_exists_for_ec2() -> None:
+    """EC2 instance-profile assumption does not populate aws:SourceAccount.
+
+    A hard StringEquals here fails CLOSED, and not at deploy time -- it fails
+    when cached IMDS credentials next expire, which presents as an unrelated
+    outage hours later. Every other role in the account uses hard StringEquals
+    precisely because every other one is a service principal that does populate
+    the key.
+    """
+    for path in (PARIS, STOCKHOLM):
+        assert "StringEqualsIfExists" in _executable_lines(path)
+
+
+def test_paris_converges_the_profile_on_an_existing_node() -> None:
+    """Fixing only the launch path leaves every node built before the fix
+    holding the enclave profile forever."""
+    script = PARIS.read_text()
+    assert "replace-iam-instance-profile-association" in script

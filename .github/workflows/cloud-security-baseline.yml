@@ -1,0 +1,108 @@
+name: Cloud security baseline drift
+
+# Reads the GCP project's security controls and fails if they have drifted.
+#
+# WHY THIS EXISTS
+# ---------------
+# A 2026-08-17 audit asked, of every SOC 2 hardening change on AWS, Azure and
+# GCP: if this resource were rebuilt, would the control come back? For 43 of 53
+# the answer was no, because each existed only as live cloud state -- typed
+# once, recorded nowhere, and watched by nothing.
+#
+# The audit half of that is what this job fixes. A control that nothing checks
+# is a control you find out about from an auditor, and for a Type II report the
+# question is not whether a control was configured but whether it OPERATED
+# across the observation period. This job's run history is that evidence.
+#
+# WHY IT ONLY READS
+# -----------------
+# scripts/deploy/gcp_security_baseline_check.sh has no --apply and a test suite
+# that fails if anyone adds one. The reasoning is in that script's header: the
+# controls are deliberate deviations from every default, and the previous
+# one-shot hardening script -- which still claims in its header that its work
+# is unapplied, two days after it was applied -- would today stop a running
+# production node, rewrite two CIS metrics into different filters, and
+# re-introduce a ~$236/month cost regression if re-run. Reading is safe;
+# converging is a per-resource decision a person makes.
+#
+# WHY GCP ONLY, FOR NOW
+# ---------------------
+# Credentials, not preference.
+#   * GCP  -- works today: this repo already federates to
+#             tr-deploy@quill-cloud-proxy via workload identity.
+#   * AWS  -- needs one new role. The account DOES have a GitHub OIDC provider
+#             (arn:aws:iam::330422590279:oidc-provider/token.actions.githubusercontent.com);
+#             the only role trusting it is scoped to
+#             repo:Lore-Hex/quill-cloud-proxy:ref:refs/heads/main, so a role
+#             trusting repo:Lore-Hex/quill-router with SecurityAudit is the
+#             whole gap. (An earlier workflow's comment says the repo has no
+#             OIDC provider at all; that is imprecise -- the account has one.)
+#   * Azure -- no CI credential of any kind exists. Needs an app registration
+#             with a federated credential and Reader on the subscription.
+# Both scripts run locally today, so the gap is scheduling, not capability.
+
+on:
+  schedule:
+    # 08:15 UTC daily. Deliberately after check-archive-freshness (07:30) so a
+    # bad morning produces the archive alert first -- that one has a data-loss
+    # clock on it, this one does not.
+    - cron: "15 8 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/deploy/gcp_security_baseline_check.sh"
+      - "scripts/deploy/azure_security_baseline_check.sh"
+      - ".github/workflows/cloud-security-baseline.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+jobs:
+  gcp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # tr-deploy@ holds broad project roles for deploys; this job uses only
+      # read verbs (get-iam-policy, logging metrics describe, monitoring list,
+      # firewall-rules describe, buckets describe, keys list). The script is
+      # test-enforced to contain no mutating command.
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Check GCP security baseline
+        id: check
+        run: |
+          set -uo pipefail
+          bash scripts/deploy/gcp_security_baseline_check.sh 2>&1 | tee /tmp/baseline.txt
+          exit "${PIPESTATUS[0]}"
+
+      - name: Open or update the drift issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TITLE="GCP security baseline drift"
+          # One issue, updated -- not one per day. A daily check that files a
+          # daily issue trains you to close them unread, which is a slower way
+          # of not having the check.
+          NUM="$(gh issue list --state open --search "$TITLE in:title" \
+                   --json number --jq '.[0].number // empty' || true)"
+          BODY="$(printf 'Drift detected by `scripts/deploy/gcp_security_baseline_check.sh`.\n\nRun: %s/%s/actions/runs/%s\n\n```\n%s\n```\n' \
+                   "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" \
+                   "$(grep -E 'DRIFT|note' /tmp/baseline.txt | head -40)")"
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --label security --body "$BODY"
+          fi
