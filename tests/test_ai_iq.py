@@ -18,6 +18,10 @@ def test_ai_iq_for_model_returns_public_profile_metadata() -> None:
     assert opus["iq"] == 128
     assert opus["rank"] == 3
     assert opus["url"] == "https://aiiq.org/models/opus-4.8/"
+    assert opus["speed"] == {
+        "response_time_seconds": 45.35,
+        "median_tokens_per_second": 62.0,
+    }
 
     gemini = ai_iq_for_model("google/gemini-3.1-pro-preview", test_mode=True)
     assert gemini is not None
@@ -37,6 +41,7 @@ def test_ai_iq_catalog_payload_is_keyed_by_trustedrouter_model_id() -> None:
     assert payload["source"] == "AI IQ"
     assert payload["source_url"] == "https://aiiq.org/api/"
     assert payload["models"]["minimax/minimax-m3"]["iq"] == 109
+    assert payload["models"]["minimax/minimax-m3"]["speed"]["response_time_seconds"] == 27.52
     assert payload["models"]["moonshotai/kimi-k2.7-code"]["rank"] == 16
     assert "unknown/provider-model" not in payload["models"]
 

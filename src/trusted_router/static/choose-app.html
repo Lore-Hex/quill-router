@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Choose an LLM | TrustedRouter</title>
-  <meta name="description" content="Compare independently scored models against live TrustedRouter pricing, provider privacy, context, and measured performance.">
+  <meta name="description" content="Compare independently scored models against AI IQ task-completion time, live TrustedRouter pricing, provider privacy, context, and route latency.">
   <meta name="robots" content="noindex,follow">
   <link rel="canonical" href="https://trustedrouter.com/choose">
   <link rel="stylesheet" href="/static/choose-app.css?v=2">
-  <script src="/static/choose-app.js?v=3" defer></script>
+  <script src="/static/choose-app.js?v=4" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -28,7 +28,7 @@
     <section class="intro">
       <p class="eyebrow">Smart. Cheap. Fast. Private.</p>
       <h1>Choose with route-level facts.</h1>
-      <p>Quality comes from independent evaluations. Price, privacy, context, and performance come from the live model and provider routes TrustedRouter can call.</p>
+      <p>Quality and full-task completion time come from AI IQ. Price, privacy, context, and route latency come from the live provider routes TrustedRouter can call.</p>
     </section>
 
     <main>
@@ -37,7 +37,7 @@
           <div class="section-heading">
             <div>
               <h2 id="chartTitle">Evaluated models</h2>
-              <p>Move your preference toward quality, cost, or measured throughput.</p>
+              <p>Move your preference toward quality, cost, or AI IQ task-completion time.</p>
             </div>
             <div class="legend" aria-label="Provider route privacy legend">
               <span><i class="tier-dot tier-0"></i>Open</span>
@@ -46,7 +46,7 @@
               <span><i class="preference-dot"></i>Your mix</span>
             </div>
           </div>
-          <svg class="triangle" id="triangle" viewBox="0 0 1000 940" role="application" tabindex="0" aria-describedby="triangleHelp" aria-label="Model chart using independent quality, qualified route cost, and measured provider throughput"></svg>
+          <svg class="triangle" id="triangle" viewBox="0 0 1000 940" role="application" tabindex="0" aria-describedby="triangleHelp" aria-label="Model chart using independent quality, qualified route cost, and AI IQ task-completion time"></svg>
           <p class="sr-only" id="triangleHelp">Use Arrow Up for quality, Arrow Left for cost, Arrow Right for speed, or Arrow Down to rebalance.</p>
           <div class="tooltip" id="tooltip" role="tooltip"></div>
         </section>
@@ -80,7 +80,7 @@
 
           <fieldset class="control-section">
             <legend><span>4</span>Latency tolerance</legend>
-            <p>Strict options require recent measurements.</p>
+            <p>Uses AI IQ completion time for a standard 1,000-token answer.</p>
             <div class="segments" id="speedSegments"></div>
             <div class="weights" aria-live="polite">
               <div class="weight quality"><strong id="qualityWeight">33</strong><span>Quality</span></div>
@@ -105,8 +105,9 @@
     </main>
 
     <footer>
-      <p>AI IQ supplies independent quality scores. TrustedRouter supplies live integer pricing, exact provider privacy scope, context, and measured route performance.</p>
+      <p>AI IQ supplies independent quality and task-completion estimates. TrustedRouter supplies live integer pricing, exact provider privacy scope, context, and measured route TTFT.</p>
       <div>
+        <a href="https://aiiq.org/speed/" target="_blank" rel="noopener">AI IQ task speed</a>
         <a href="https://trust.trustedrouter.com" target="_blank" rel="noopener">Verify gateway</a>
         <a href="https://trustedrouter.com/models" target="_blank" rel="noopener">Full catalog</a>
       </div>

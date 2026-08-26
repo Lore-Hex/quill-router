@@ -26,6 +26,11 @@ AI_IQ_TIMEOUT_SECONDS = 2.0
 AI_IQ_FAILURE_TTL_SECONDS = 60.0
 
 
+class AiIqSpeed(TypedDict):
+    response_time_seconds: float
+    median_tokens_per_second: float
+
+
 class AiIqModel(TypedDict, total=False):
     id: str
     name: str
@@ -34,6 +39,7 @@ class AiIqModel(TypedDict, total=False):
     iq: int
     url: str
     dimensions: dict[str, Any]
+    speed: AiIqSpeed
     methodology_version: str
     updated_at: str
 
@@ -50,7 +56,7 @@ class AiIqCatalogPayload(TypedDict):
 _CACHE_LOCK = RLock()
 _CACHE: tuple[float, dict[str, Any]] | None = None
 
-_TEST_MODELS: tuple[dict[str, Any], ...] = (
+_TEST_MODEL_ROWS: tuple[dict[str, Any], ...] = (
     {
         "id": "gpt-5.5",
         "name": "GPT-5.5",
@@ -151,6 +157,23 @@ _TEST_MODELS: tuple[dict[str, Any], ...] = (
         "dimensions": {"multimodal": 98, "general": 94},
         "updatedAt": "2026-06-23T17:41:57.352Z",
     },
+)
+
+_TEST_SPEED_BY_ID: dict[str, dict[str, float]] = {
+    "gpt-5.5": {"responseTimeSec": 91.51, "medianTokensPerSecond": 81.0},
+    "opus-4.8": {"responseTimeSec": 45.35, "medianTokensPerSecond": 62.0},
+    "gemini-3.1-pro": {"responseTimeSec": 38.2, "medianTokensPerSecond": 94.0},
+    "gemini-3.5-flash": {"responseTimeSec": 27.83, "medianTokensPerSecond": 191.0},
+    "kimi-k2.6": {"responseTimeSec": 43.8, "medianTokensPerSecond": 58.0},
+    "glm-5.2": {"responseTimeSec": 12.93, "medianTokensPerSecond": 217.0},
+    "kimi-k2.7-code": {"responseTimeSec": 39.4, "medianTokensPerSecond": 70.0},
+    "deepseek-v4-pro": {"responseTimeSec": 70.56, "medianTokensPerSecond": 71.0},
+    "minimax-m3": {"responseTimeSec": 27.52, "medianTokensPerSecond": 97.0},
+    "gemma-4-31b": {"responseTimeSec": 18.8, "medianTokensPerSecond": 115.0},
+}
+
+_TEST_MODELS: tuple[dict[str, Any], ...] = tuple(
+    {**row, "speed": _TEST_SPEED_BY_ID[str(row["id"])]} for row in _TEST_MODEL_ROWS
 )
 
 _FALLBACK_PAYLOAD: dict[str, Any] = {
@@ -323,6 +346,20 @@ def _public_model_row(
     dimensions = row.get("dimensions")
     if isinstance(dimensions, dict):
         output["dimensions"] = dict(dimensions)
+    speed = row.get("speed")
+    if isinstance(speed, Mapping):
+        response_time = _float(speed.get("responseTimeSec"))
+        throughput = _float(speed.get("medianTokensPerSecond"))
+        if (
+            response_time is not None
+            and response_time >= 0
+            and throughput is not None
+            and throughput > 0
+        ):
+            output["speed"] = {
+                "response_time_seconds": response_time,
+                "median_tokens_per_second": throughput,
+            }
     return output
 
 
@@ -339,4 +376,12 @@ def _int(value: Any) -> int | None:
         return int(value)
     if isinstance(value, str) and value.isdigit():
         return int(value)
+    return None
+
+
+def _float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
     return None
