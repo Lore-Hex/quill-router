@@ -67,6 +67,12 @@ jobs:
     # so main silently stops reaching production -- 11 hours of it on
     # 2026-08-23, with every run green. This repository is public, so extra
     # standard runners cost nothing but concurrency.
+    # A wedged shard otherwise burns GitHub's 6-hour default: seen twice on
+    # 2026-08-26 (one shard at 2h16m, another run's shard idle for hours)
+    # while every sibling finished in under 9 minutes. pytest-timeout=600
+    # bounds a hung TEST, but not collection, fixture teardown, or a wedged
+    # xdist worker — this bounds the job whatever wedges.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -223,6 +229,12 @@ jobs:
     # Sharded for the same reason as `test`: gate-on-ci waits for the whole
     # run, so the slowest job sets deploy latency. Leaving this one unsharded
     # would just move the bottleneck here.
+    # A wedged shard otherwise burns GitHub's 6-hour default: seen twice on
+    # 2026-08-26 (one shard at 2h16m, another run's shard idle for hours)
+    # while every sibling finished in under 9 minutes. pytest-timeout=600
+    # bounds a hung TEST, but not collection, fixture teardown, or a wedged
+    # xdist worker — this bounds the job whatever wedges.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
