@@ -54,12 +54,20 @@ dev = [
   "pytest-cov>=7.1.0",
   "pytest-httpx>=0.36.2",
   "pytest-split>=0.10",
-  "pytest-xdist>=3.8.0",
+  "pytest-timeout>=2.3",
+    "pytest-xdist>=3.8.0",
   "ruff>=0.8.0",
   "sec-parser>=0.58.0",
 ]
 
 [tool.pytest.ini_options]
+# Wall-clock ceiling per test. Ten minutes is far above the slowest real
+# test and far below the six hours GitHub lets a wedged runner burn --
+# the 2026-08-26 shard hang cost 2.5 hours of deploy latency because no
+# per-test bound existed. thread method: signal-based interrupts break
+# under xdist workers with subprocess fixtures.
+timeout = 600
+timeout_method = "thread"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
