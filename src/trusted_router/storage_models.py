@@ -81,6 +81,26 @@ def _is_expired(expires_at: str | None) -> bool:
     return parsed <= utcnow()
 
 
+@dataclass(frozen=True)
+class ReceiptKey:
+    """One durable, public receipt-signing key observation.
+
+    Receipt keys are generated per enclave boot.  The backing entity is
+    append-only by ``kid``: only ``last_seen``, a key-bound refreshed
+    attestation, and a monotonic ``verified`` upgrade may change later.
+    """
+
+    kid: str
+    jwk: dict[str, str]
+    att: str
+    att_kind: str
+    plane: str
+    first_seen: str
+    last_seen: str
+    revoked: bool = False
+    verified: bool = False
+
+
 @dataclass
 class User:
     id: str

@@ -44,6 +44,11 @@ from trusted_router.postgres_dsn import (
     aws_dsql_connection_details,
     dsql_token_is_admin,
 )
+from trusted_router.receipt_keys import (
+    RECEIPT_KEY_KIND,
+    ReceiptKeyWriteOutcome,
+    merge_receipt_key_observation,
+)
 from trusted_router.scopes import validate_api_key_scopes
 from trusted_router.security import (
     hash_api_key,
@@ -107,6 +112,7 @@ from trusted_router.storage_models import (
     ProviderAccessGrant,
     ProviderBenchmarkSample,
     RateLimitHit,
+    ReceiptKey,
     Reservation,
     SessionAuthContext,
     SignupResult,
@@ -635,6 +641,48 @@ class PostgresStore:
 
     def _read_entity(self, kind: str, entity_id: str, cls: type[T]) -> T | None:
         return self._run_transaction(lambda conn: self._read_entity_tx(conn, kind, entity_id, cls))
+
+    def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
+        def operation(conn: Any) -> ReceiptKeyWriteOutcome:
+            existing = self._read_entity_tx(
+                conn,
+                RECEIPT_KEY_KIND,
+                record.kid,
+                ReceiptKey,
+                for_update=True,
+            )
+            candidate, outcome = merge_receipt_key_observation(existing, record)
+            if candidate is None or outcome in {"conflict", "invalid"}:
+                return outcome
+            if existing is None:
+                if self._insert_entity_once_tx(
+                    conn, RECEIPT_KEY_KIND, record.kid, candidate
+                ):
+                    return "appended"
+                # A concurrent transaction inserted this kid after our absent
+                # read. Lock its now-committed verdict before comparing.
+                existing = self._read_entity_tx(
+                    conn,
+                    RECEIPT_KEY_KIND,
+                    record.kid,
+                    ReceiptKey,
+                    for_update=True,
+                )
+                if existing is None:  # pragma: no cover - database invariant
+                    raise StoreConflict("receipt key insert conflict lost its row")
+                candidate, outcome = merge_receipt_key_observation(existing, record)
+            if candidate is not None and outcome == "refreshed":
+                self._write_entity_tx(conn, RECEIPT_KEY_KIND, record.kid, candidate)
+            return outcome
+
+        return self._run_transaction(operation)
+
+    def list_receipt_keys(self, *, limit: int = 5_000) -> list[ReceiptKey]:
+        return self._list_entities(
+            RECEIPT_KEY_KIND,
+            ReceiptKey,
+            limit=max(0, min(limit, 10_000)),
+        )
 
     def _list_entities(
         self,
