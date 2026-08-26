@@ -13,6 +13,8 @@ Heavy logic lives elsewhere:
 
 from __future__ import annotations
 
+import logging
+import sys
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request
@@ -95,6 +97,39 @@ from trusted_router.storage_errors import (
 )
 from trusted_router.types import ErrorType
 
+_APP_CONSOLE_HANDLER_MARKER = "_trusted_router_app_console"
+
+
+def _configure_application_logging() -> None:
+    """Make app logs visible to the container runtime, exactly once.
+
+    Uvicorn configures handlers for its own logger names, not for the root
+    logger.  In production ``init_axiom`` then adds a queue handler to root.
+    That root handler is enough to suppress ``logging.lastResort`` even though
+    it has no stderr/stdout destination, so every ``trusted_router.*`` record
+    otherwise bypasses Cloud Run's container-log collector.
+
+    Own the console destination on the package logger instead of changing root
+    or uvicorn's loggers.  Propagation remains enabled so Axiom and Sentry keep
+    receiving the same records.  The marker makes repeated app factories and
+    in-process reloads idempotent.
+    """
+    app_logger = logging.getLogger("trusted_router")
+    app_logger.disabled = False
+    app_logger.setLevel(logging.INFO)
+    app_logger.propagate = True
+    if any(
+        getattr(handler, _APP_CONSOLE_HANDLER_MARKER, False)
+        for handler in app_logger.handlers
+    ):
+        return
+
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter("%(levelname)s %(name)s %(message)s"))
+    setattr(handler, _APP_CONSOLE_HANDLER_MARKER, True)
+    app_logger.addHandler(handler)
+
 
 def create_app(
     settings: Settings | None = None,
@@ -122,6 +157,7 @@ def create_app(
     if init_observability:
         init_sentry(settings)
         init_axiom(settings)
+    _configure_application_logging()
     # Swagger UI moves to /api/reference so the public docs hub can own
     # /docs (the marketing nav points "Docs" there). ReDoc stays at /redoc.
     app = FastAPI(

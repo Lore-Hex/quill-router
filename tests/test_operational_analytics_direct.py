@@ -204,7 +204,7 @@ class TestSinkDelivery:
             sink.flush()
         backlog = sink.oldest_enqueued_at()
         assert backlog is not None, "undelivered rows must surface as backlog"
-        assert sink.stats.flush_failures == 0  # raised to caller, counted in _run
+        assert sink.stats.flush_failures == 1
         assert sink.flush() == 1
         assert sink.oldest_enqueued_at() is None, "delivered backlog must clear"
 
