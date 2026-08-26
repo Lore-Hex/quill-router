@@ -198,10 +198,15 @@ def test_oauth_metadata_pkce_methods_match_the_exchange_exactly(client: TestClie
     assert document["code_challenge_methods_supported"] == sorted(PKCE_METHODS)
 
 
-def test_oauth_metadata_omits_scopes_because_keys_are_not_scoped(client: TestClient) -> None:
+def test_oauth_metadata_lists_supported_scopes(client: TestClient) -> None:
     document = client.get("/.well-known/oauth-authorization-server").json()
 
-    assert "scopes_supported" not in document
+    assert set(document["scopes_supported"]) == {
+        "inference",
+        "profile",
+        "balance:read",
+        "activity:read",
+    }
 
 
 @pytest.mark.parametrize(

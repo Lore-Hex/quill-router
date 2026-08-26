@@ -764,6 +764,33 @@ def test_api_key_usage_projection_is_immediate_and_scoped(
     assert store.list_api_keys_with_usage(workspace_id) == []
 
 
+def test_api_key_scopes_default_and_round_trip_across_storage(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+    unique: str,
+) -> None:
+    """Old JSON without scopes decodes legacy; new scope lists survive IO."""
+    _legacy_raw, legacy = store.create_api_key(
+        workspace_id=workspace_id,
+        name=f"legacy-scopes-{unique}",
+        creator_user_id=user_id,
+    )
+    _scoped_raw, scoped = store.create_api_key(
+        workspace_id=workspace_id,
+        name=f"delegated-scopes-{unique}",
+        creator_user_id=user_id,
+        scopes=["inference", "profile"],
+    )
+
+    stored_legacy = store.get_key_by_hash(legacy.hash)
+    stored_scoped = store.get_key_by_hash(scoped.hash)
+    assert stored_legacy is not None
+    assert stored_scoped is not None
+    assert stored_legacy.scopes == []
+    assert stored_scoped.scopes == ["inference", "profile"]
+
+
 def test_auth_session_lifecycle(store: Store, user_id: str) -> None:
     """Create -> read -> delete -> gone. Logout must actually invalidate."""
     raw_token, _session = store.create_auth_session(

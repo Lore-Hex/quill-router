@@ -1302,6 +1302,7 @@ class SpannerBigtableStore:
         limit_monthly_microdollars: int | None = None,
         budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
+        scopes: list[str] | None = None,
     ) -> tuple[str, ApiKey]:
         # Keep every new key at the workspace's established write scale.
         # Lifetime limits use escrowed per-shard sub-budgets, so retaining an
@@ -1322,6 +1323,7 @@ class SpannerBigtableStore:
             limit_monthly_microdollars=limit_monthly_microdollars,
             budget_alert_only=budget_alert_only,
             tags=tags,
+            scopes=scopes,
             usage_shard_count=usage_shard_count,
         )
 

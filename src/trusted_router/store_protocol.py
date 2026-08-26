@@ -308,6 +308,7 @@ class Store(Protocol):
         limit_monthly_microdollars: int | None = ...,
         budget_alert_only: bool = ...,
         tags: dict[str, str] | None = ...,
+        scopes: list[str] | None = ...,
     ) -> tuple[str, ApiKey]: ...
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None: ...
     def typed_key_usage(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -9,6 +10,7 @@ from fastapi import Depends, Request, Response
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.request_limits import enforce_authenticated_rate_limit
+from trusted_router.scopes import SCOPE_INFERENCE
 from trusted_router.storage import (
     STORE,
     ApiKey,
@@ -56,6 +58,7 @@ class Principal:
     workspace: Workspace
     api_key: ApiKey | None
     is_management: bool
+    scopes: frozenset[str]
 
 
 def bootstrap_management_key(settings: Settings) -> ApiKey | None:
@@ -192,6 +195,7 @@ def _principal_from_dev_header(
         workspace=workspace,
         api_key=None,
         is_management=STORE.user_can_manage(user.id, workspace.id),
+        scopes=frozenset(),
     )
     enforce_authenticated_rate_limit(
         request,
@@ -231,6 +235,7 @@ def _principal_for_session(
         workspace=workspace,
         api_key=None,
         is_management=context.is_management,
+        scopes=frozenset(),
     )
 
 
@@ -248,6 +253,7 @@ def _principal_for_api_key(context: ApiKeyAuthContext) -> Principal:
         workspace=workspace,
         api_key=api_key,
         is_management=api_key.management,
+        scopes=frozenset(api_key.scopes),
     )
 
 
@@ -281,6 +287,28 @@ def settings_from_request(request: Request) -> Settings:
 SettingsDep = Annotated[Settings, Depends(settings_from_request)]
 
 
+def _assert_principal_scope(principal: Principal, scope: str) -> None:
+    if principal.api_key is None or not principal.scopes:
+        return
+    if scope not in principal.scopes:
+        raise api_error(
+            403,
+            f"API key is missing required scope: {scope}",
+            ErrorType.INSUFFICIENT_SCOPE,
+        )
+
+
+def require_scope(scope: str) -> Callable[[Request, SettingsDep], Principal]:
+    """Build a dependency that scopes API keys but never human sessions."""
+
+    def dependency(request: Request, settings: SettingsDep) -> Principal:
+        principal = principal_from_request(request, settings)
+        _assert_principal_scope(principal, scope)
+        return principal
+
+    return dependency
+
+
 def require_management(
     request: Request,
     settings: SettingsDep,
@@ -292,6 +320,12 @@ def require_management(
             "Only management keys can perform this operation",
             ErrorType.FORBIDDEN,
         )
+    if principal.api_key is not None and principal.scopes:
+        raise api_error(
+            403,
+            "No delegated scope grants management access",
+            ErrorType.INSUFFICIENT_SCOPE,
+        )
     return principal
 
 
@@ -302,6 +336,7 @@ def require_inference_key(
     principal = principal_from_request(request, settings)
     if principal.api_key is None:
         raise api_error(403, "An inference API key is required", ErrorType.FORBIDDEN)
+    _assert_principal_scope(principal, SCOPE_INFERENCE)
     return principal
 
 

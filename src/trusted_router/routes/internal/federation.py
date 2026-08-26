@@ -152,6 +152,7 @@ def register(router: APIRouter) -> None:
                 "key_hash": api_key.hash,
                 "workspace_id": api_key.workspace_id,
                 "name": getattr(api_key, "name", "") or "",
+                "scopes": list(getattr(api_key, "scopes", [])),
                 "disabled": bool(getattr(api_key, "disabled", False)),
                 "expires_at": getattr(api_key, "expires_at", None),
                 "limit_microdollars": getattr(api_key, "limit_microdollars", None),

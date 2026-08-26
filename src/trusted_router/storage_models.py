@@ -192,6 +192,9 @@ class ApiKey:
     label: str
     workspace_id: str
     creator_user_id: str | None
+    # Empty is the legacy unscoped key shape. Any non-empty list is a
+    # delegated key and is denied by default at scope-aware chokepoints.
+    scopes: list[str] = field(default_factory=list)
     disabled: bool = False
     management: bool = False
     limit_microdollars: int | None = None
@@ -1767,6 +1770,7 @@ def federated_api_key_from_record(record: dict[str, Any]) -> ApiKey:
         label=(str(record.get("name") or "federated"))[:24],
         workspace_id=str(record.get("workspace_id") or ""),
         creator_user_id=None,
+        scopes=list(record.get("scopes") or []),
         disabled=bool(record.get("disabled", False)),
         management=False,  # never federated; the home plane refuses to serve them
         limit_microdollars=record.get("limit_microdollars"),

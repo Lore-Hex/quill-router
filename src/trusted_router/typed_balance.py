@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
+from trusted_router.money import microdollars_to_decimal
 from trusted_router.storage import STORE, typed_billing_store
 
 
@@ -17,6 +18,11 @@ class LiveCreditSummary(TypedDict):
     total_usage: int
     reserved: int
     available: int
+
+
+class RemainingCreditSummary(TypedDict):
+    remaining_microdollars: int
+    remaining: str
 
 
 def live_credit_summary(
@@ -55,6 +61,25 @@ def live_credit_summary(
             return None
         return _summary(int(money[0]), int(money[1]), int(money[2]))
     return None
+
+
+def remaining_credit_summary(
+    workspace_id: str,
+    *,
+    store: Any | None = None,
+) -> RemainingCreditSummary | None:
+    """Return only the spendable balance fields safe for delegated apps."""
+    summary = live_credit_summary(workspace_id, store=store)
+    if summary is None:
+        return None
+    remaining = max(
+        0,
+        summary["total_credits"] - summary["total_usage"] - summary["reserved"],
+    )
+    return {
+        "remaining_microdollars": remaining,
+        "remaining": microdollars_to_decimal(remaining),
+    }
 
 
 def _summary(total_credits: int, total_usage: int, reserved: int) -> LiveCreditSummary:

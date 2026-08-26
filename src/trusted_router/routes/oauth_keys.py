@@ -22,11 +22,13 @@ from trusted_router.money import (
 )
 from trusted_router.routes.helpers import json_body
 from trusted_router.schemas import CheckoutRequest
+from trusted_router.scopes import DEFAULT_DELEGATED_SCOPES
 from trusted_router.serialization import key_shape
 from trusted_router.services.stripe_billing import create_checkout_session
 from trusted_router.storage import STORE, OAuthAuthorizationCode
 from trusted_router.typed_balance import live_credit_summary
 from trusted_router.types import ErrorType
+from trusted_router.verification import identity_payload
 from trusted_router.views import render_template
 
 PKCE_METHODS = {"S256", "plain"}
@@ -63,6 +65,7 @@ def register_oauth_key_routes(router: APIRouter) -> None:
             return HTMLResponse(_signin_html(request, settings, params), status_code=401)
         if not principal.is_management:
             raise api_error(403, "Only management users can delegate credits", ErrorType.FORBIDDEN)
+        _deny_scoped_delegator(principal)
         return HTMLResponse(
             _consent_html(
                 params,
@@ -84,6 +87,7 @@ def register_oauth_key_routes(router: APIRouter) -> None:
             raise api_error(401, "Sign in is required", ErrorType.UNAUTHORIZED) from exc
         if not principal.is_management:
             raise api_error(403, "Only management users can fund credits", ErrorType.FORBIDDEN)
+        _deny_scoped_delegator(principal)
 
         amount = str(form.get("fund_amount") or "")
         if amount not in OAUTH_FUNDING_AMOUNTS:
@@ -130,6 +134,7 @@ def register_oauth_key_routes(router: APIRouter) -> None:
             raise api_error(401, "Sign in is required", ErrorType.UNAUTHORIZED) from exc
         if not principal.is_management:
             raise api_error(403, "Only management users can delegate credits", ErrorType.FORBIDDEN)
+        _deny_scoped_delegator(principal)
         raw_code, code = _create_code(params, principal, settings)
         return RedirectResponse(
             url=_callback_with_code(code.callback_url, raw_code, code.user_id), status_code=302
@@ -173,6 +178,7 @@ def register_oauth_key_routes(router: APIRouter) -> None:
             limit_microdollars=code.limit_microdollars,
             limit_reset=code.limit_reset,
             expires_at=code.expires_at,
+            scopes=DEFAULT_DELEGATED_SCOPES,
         )
         # Return the signed-in user's identity alongside the key so the app
         # knows WHO signed in without a second /auth/userinfo round-trip
@@ -182,7 +188,7 @@ def register_oauth_key_routes(router: APIRouter) -> None:
             {
                 "key": raw_key,
                 "user_id": code.user_id,
-                "identity": _identity_payload(user),
+                "identity": identity_payload(user, code.workspace_id),
                 "data": key_shape(key),
             }
         )
@@ -415,19 +421,13 @@ def _optional_str(raw: Any) -> str | None:
     return str(raw)
 
 
-def _identity_payload(user: Any) -> dict[str, Any] | None:
-    """The signed-in user's identity returned with the delegated key. None
-    when the approving user can't be resolved (e.g. legacy code rows)."""
-    if user is None:
-        return None
-    return {
-        "sub": user.id,
-        "email": user.email,
-        "email_verified": user.email_verified,
-        "phone_verified": user.phone_verified,
-        "identity_verified": user.identity_verified,
-        "wallet_address": user.wallet_address,
-    }
+def _deny_scoped_delegator(principal: Any) -> None:
+    if principal.api_key is not None and principal.scopes:
+        raise api_error(
+            403,
+            "A delegated API key cannot mint delegation codes",
+            ErrorType.INSUFFICIENT_SCOPE,
+        )
 
 
 def _signin_html(request: Request, settings: Settings, params: dict[str, Any]) -> str:

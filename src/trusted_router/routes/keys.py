@@ -11,6 +11,7 @@ from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.money import dollars_to_microdollars
 from trusted_router.request_tags import InvalidTags, validate_tags
 from trusted_router.schemas import CreateKeyRequest, PatchKeyRequest, model_to_dict
+from trusted_router.scopes import validate_api_key_scopes
 from trusted_router.serialization import key_shape
 from trusted_router.storage import STORE, ApiKey
 from trusted_router.types import ErrorType
@@ -62,6 +63,10 @@ def register_key_routes(router: APIRouter) -> None:
             tags = validate_tags(body.tags)
         except InvalidTags as exc:
             raise api_error(400, str(exc), ErrorType.INVALID_TAGS) from exc
+        try:
+            scopes = validate_api_key_scopes(body.scopes, management=body.management)
+        except ValueError as exc:
+            raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
         raw, k = STORE.create_api_key(
             workspace_id=workspace_id,
             name=body.name,
@@ -82,6 +87,7 @@ def register_key_routes(router: APIRouter) -> None:
             ),
             budget_alert_only=body.budget_alert_only,
             tags=tags,
+            scopes=scopes,
         )
         return JSONResponse({"data": key_shape(k), "key": raw}, status_code=201)
 
@@ -96,6 +102,12 @@ def register_key_routes(router: APIRouter) -> None:
         principal: ManagementPrincipal,
     ) -> dict[str, Any]:
         _require_key_in_workspace(hash, principal)
+        if "scopes" in (body.model_extra or {}):
+            raise api_error(
+                400,
+                "API key scopes are immutable; create a new key to change them",
+                ErrorType.BAD_REQUEST,
+            )
         patch = model_to_dict(body)
         if "tags" in patch:
             try:

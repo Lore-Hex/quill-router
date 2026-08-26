@@ -141,6 +141,7 @@ from trusted_router.routes.oauth_keys import (
     OAUTH_KEY_EXCHANGE_ENDPOINT_PATH,
     PKCE_METHODS,
 )
+from trusted_router.scopes import KNOWN_SCOPES
 from trusted_router.serialization import user_model_public_shape
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.services.ops_chat import OpsChatSupportMessage, fanout_support_message
@@ -1520,9 +1521,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 "code_challenge_methods_supported": sorted(PKCE_METHODS),
                 "token_endpoint_auth_methods_supported": ["none"],
                 "service_documentation": f"{origin}/sign-in-with-trustedrouter",
-                # scopes_supported is deliberately absent. API keys have no scope or
-                # permission concept, so advertising scopes would falsely imply that
-                # a requested narrow scope produces anything but a full-access key.
+                "scopes_supported": sorted(KNOWN_SCOPES),
             },
             headers={"cache-control": "public, max-age=300, s-maxage=3600"},
         )

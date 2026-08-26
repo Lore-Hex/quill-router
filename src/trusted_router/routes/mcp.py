@@ -23,8 +23,9 @@ from trusted_router.dashboard import docs_llms_full_txt
 from trusted_router.errors import error_response
 from trusted_router.mcp_metadata import MCP_SERVER_NAME, MCP_SERVER_TITLE
 from trusted_router.request_limits import enforce_authenticated_rate_limit
+from trusted_router.scopes import SCOPE_BALANCE_READ, SCOPE_INFERENCE
 from trusted_router.storage import STORE, ApiKey
-from trusted_router.typed_balance import live_credit_summary
+from trusted_router.typed_balance import live_credit_summary, remaining_credit_summary
 from trusted_router.types import ErrorType
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
@@ -45,6 +46,15 @@ _EXPENSIVE_TOOLS = frozenset({"models-list", "model-endpoints", "providers-list"
 _STORAGE_TOOLS = frozenset({"credits-get", "generation-get"})
 _MCP_AUTH_STATE_KEY = "trusted_router_mcp_auth"
 _API_KEY_BEARER_PREFIX = "sk-tr-"
+_MCP_TOOL_SCOPES = {
+    "models-list": SCOPE_INFERENCE,
+    "model-get": SCOPE_INFERENCE,
+    "model-endpoints": SCOPE_INFERENCE,
+    "providers-list": SCOPE_INFERENCE,
+    "chat-send": SCOPE_INFERENCE,
+    "generation-get": SCOPE_INFERENCE,
+    "credits-get": SCOPE_BALANCE_READ,
+}
 
 
 @dataclass(frozen=True)
@@ -186,6 +196,7 @@ class TrustedRouterMCP:
         handler = self._handlers.get(name)
         if handler is None:
             raise MCPToolError(f"Unknown tool: {name}")
+        self._require_tool_scope(self._require_api_key(request).api_key, name)
         return await handler(args, request)
 
     def require_api_key(self, request: Request) -> _MCPAuth:
@@ -273,7 +284,16 @@ class TrustedRouterMCP:
         return _tool_json({"data": self._providers_projection()})
 
     async def _tool_credits_get(self, _args: dict[str, Any], request: Request) -> dict[str, Any]:
+        """Return the legacy full balance, or delegated remaining-only shape."""
         api_key = self._require_api_key(request).api_key
+        if api_key.scopes:
+            delegated_summary = await run_in_threadpool(
+                remaining_credit_summary,
+                api_key.workspace_id,
+            )
+            if delegated_summary is None:
+                raise MCPToolError("No credit account found for this workspace")
+            return _tool_json({"data": dict(delegated_summary)})
         summary = await run_in_threadpool(live_credit_summary, api_key.workspace_id)
         if summary is None:
             raise MCPToolError("No credit account found for this workspace")
@@ -446,6 +466,24 @@ class TrustedRouterMCP:
         auth = _MCPAuth(bearer=bearer, api_key=api_key)
         setattr(request.state, _MCP_AUTH_STATE_KEY, auth)
         return auth
+
+    @staticmethod
+    def _require_tool_scope(api_key: ApiKey, tool_name: str) -> None:
+        if not api_key.scopes:
+            return
+        required_scope = _MCP_TOOL_SCOPES.get(tool_name)
+        if required_scope is None:
+            raise MCPToolError(
+                f"No delegated scope grants MCP tool: {tool_name}",
+                status_code=403,
+                error_type=ErrorType.INSUFFICIENT_SCOPE,
+            )
+        if required_scope not in api_key.scopes:
+            raise MCPToolError(
+                f"API key is missing required scope: {required_scope}",
+                status_code=403,
+                error_type=ErrorType.INSUFFICIENT_SCOPE,
+            )
 
 
 class MCPToolError(Exception):

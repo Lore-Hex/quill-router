@@ -1,30 +1,39 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 
 from trusted_router.auth import (
     SESSION_COOKIE_NAME,
-    AuthenticatedPrincipal,
     ManagementPrincipal,
+    Principal,
     SettingsDep,
     clear_session_cookie,
     get_authorization_bearer,
+    require_scope,
 )
+from trusted_router.errors import api_error
+from trusted_router.scopes import SCOPE_PROFILE
 from trusted_router.storage import STORE, User, Workspace
+from trusted_router.types import ErrorType
+from trusted_router.verification import identity_payload
 
 
 def register_auth_routes(router: APIRouter) -> None:
     @router.get("/auth/userinfo")
-    async def auth_userinfo(principal: AuthenticatedPrincipal) -> dict[str, Any]:
+    async def auth_userinfo(
+        principal: Annotated[Principal, Depends(require_scope(SCOPE_PROFILE))],
+    ) -> dict[str, Any]:
         """OIDC-style userinfo for "Sign in with TrustedRouter". Works with a
         user-scoped (delegated) inference key OR a console session — resolves
         the signed-in user behind the credential and returns their identity.
         A delegated key carries the approving user's id via `creator_user_id`,
         so apps that did the PKCE sign-in can fetch the user's email/profile
         with just the key they received."""
+        # Deliberate PII tightening: a legacy key still passes the scope gate,
+        # but an ownerless key never falls back to the workspace owner's data.
         user = principal.user
         if (
             user is None
@@ -32,7 +41,13 @@ def register_auth_routes(router: APIRouter) -> None:
             and principal.api_key.creator_user_id
         ):
             user = STORE.get_user(principal.api_key.creator_user_id)
-        return {"data": _userinfo_payload(user, principal.workspace)}
+        if user is None:
+            raise api_error(
+                403,
+                "A user-owned session or API key is required",
+                ErrorType.FORBIDDEN,
+            )
+        return {"data": identity_payload(user, principal.workspace.id)}
 
     @router.get("/auth/session")
     async def auth_session(principal: ManagementPrincipal) -> dict[str, Any]:
@@ -65,21 +80,6 @@ def register_auth_routes(router: APIRouter) -> None:
         )
         clear_session_cookie(json_response, settings)
         return json_response
-
-
-def _userinfo_payload(user: User | None, workspace: Workspace) -> dict[str, Any]:
-    """OIDC-shaped userinfo: `sub` is the subject (user id). Wallet-only
-    users have no email — `email` is null and `wallet_address` is set."""
-    if user is None:
-        return {"sub": None, "workspace_id": workspace.id}
-    return {
-        "sub": user.id,
-        "email": user.email,
-        "email_verified": user.email_verified,
-        "wallet_address": user.wallet_address,
-        "workspace_id": workspace.id,
-        "created_at": user.created_at,
-    }
 
 
 def _user_payload(user: User) -> dict[str, Any]:
