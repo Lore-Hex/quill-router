@@ -292,3 +292,66 @@ class TestSilentProbeDisappearance:
         assert _monitor_is_reporting(stale, now=NOW) is False
         # Poison must not count as "the monitor is alive".
         assert _monitor_is_reporting(poison, now=NOW) is False
+
+
+def _keyed_sample(
+    created_at: dt.datetime, *, target: str, status: str = "up"
+) -> SyntheticProbeSample:
+    """A sample on its OWN probe key. _slo_current dedupes by
+    (monitor_region, target, probe_type), so tests that need two independent
+    keys must vary one of those -- not just the id."""
+    return SyntheticProbeSample(
+        id=f"s-{target}",
+        probe_type="tls_health",
+        target=target,
+        target_url="https://api.trustedrouter.com/health",
+        monitor_region="us-central1",
+        status=status,
+        created_at=created_at.isoformat().replace("+00:00", "Z"),
+    )
+
+
+class TestStalenessIsNotAnOutage:
+    """A late probe key must not paint an outage across a healthy fleet.
+
+    Measured 2026-08-26 (n=2374 gaps, 6h of production): p50 180s, p99 400s,
+    max 721s. Any freshness contract tighter than that tail will be crossed by
+    a normally-behaving monitor, so the contract cannot be the thing that
+    decides whether the fleet is up.
+    """
+
+    def test_one_late_key_does_not_degrade_the_slo(self) -> None:
+        fresh = _keyed_sample(NOW - dt.timedelta(seconds=30), target="canonical")
+        late = _keyed_sample(
+            NOW - dt.timedelta(seconds=CURRENT_SAMPLE_TTL_SECONDS + 60), target="us-east4"
+        )
+        current = _slo_current([fresh, late], now=NOW)
+        assert current["status"] == "up", (
+            "a late-but-not-silent probe is absence of evidence; the SLO must "
+            "reflect its last known observation"
+        )
+
+    def test_a_silent_key_still_degrades_the_slo(self) -> None:
+        fresh = _keyed_sample(NOW - dt.timedelta(seconds=30), target="canonical")
+        silent = _keyed_sample(
+            NOW - dt.timedelta(seconds=SILENT_PROBE_TTL_SECONDS + 60), target="us-east4"
+        )
+        current = _slo_current([fresh, silent], now=NOW)
+        assert current["status"] != "up", (
+            "a probe that stopped while its siblings kept reporting IS evidence"
+        )
+
+    def test_silent_boundary_clears_the_measured_cadence_tail(self) -> None:
+        # max observed gap 721s; the down boundary must sit above it.
+        assert SILENT_PROBE_TTL_SECONDS > 721
+
+    def test_a_late_sample_that_recorded_failure_still_counts(self) -> None:
+        # Using the last KNOWN observation must not launder a real failure.
+        fresh = _keyed_sample(NOW - dt.timedelta(seconds=30), target="canonical")
+        late_bad = _keyed_sample(
+            NOW - dt.timedelta(seconds=CURRENT_SAMPLE_TTL_SECONDS + 60),
+            target="us-east4",
+            status="down",
+        )
+        current = _slo_current([fresh, late_bad], now=NOW)
+        assert current["status"] != "up"

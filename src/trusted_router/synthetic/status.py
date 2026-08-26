@@ -44,11 +44,15 @@ from trusted_router.synthetic.rollups import merge_rollups, new_rollup_for_sampl
 # second missed cycle is degraded -- a contract the cadence can actually keep.
 MONITOR_CADENCE_SECONDS = 3 * 60
 CURRENT_SAMPLE_TTL_SECONDS = (2 * MONITOR_CADENCE_SECONDS) + 60
-# Unchanged at 660s: a probe silent past ~11 minutes (3+ cadences) stopped
-# emitting while its siblings kept going -- the silent-disappearance outage.
-# Kept as an absolute rather than re-derived from the widened contract so the
-# "down" boundary does not silently move with it.
-SILENT_PROBE_TTL_SECONDS = 11 * 60
+# The "this probe DIED" boundary, and it must sit above the cadence's real
+# tail or ordinary jitter manufactures an outage. Measured 2026-08-26 over 6h
+# of production samples (n=2374 gaps, tls_health + attestation_nonce):
+#   p50 180s   p95 265s   p99 400s   max 721s
+# The previous 660s sat BELOW the observed maximum, so a normally-behaving
+# fleet could be reported down. 900s clears the measured worst case with
+# margin while still catching a probe that has genuinely stopped (5 cadences).
+# Re-measure with that query before changing this; do not guess it.
+SILENT_PROBE_TTL_SECONDS = 15 * 60
 IMAGE_GENERATION_SAMPLE_TTL_SECONDS = 7 * 60 * 60
 STATUS_HISTORY_HOURS = 48
 # Uptime thresholds for per-bucket coloring. Single-sample blips
@@ -711,10 +715,31 @@ def _slo_current(
     sample_count = 0
     monitor_reporting = _monitor_is_reporting(samples, now=now)
     for sample in latest.values():
-        status, _signed_age = _sample_effective_status(
+        status, signed_age = _sample_effective_status(
             sample, now=now, monitor_reporting=monitor_reporting
         )
-        overall = _worse_status(overall, status)
+        # STALENESS IS ABSENCE OF EVIDENCE, NOT EVIDENCE OF FAILURE.
+        #
+        # _sample_effective_status downgrades a merely-late sample to
+        # "degraded", which _worse_status then folds into the SLO -- so ONE
+        # probe key running late painted "Router Core Outage" across a page
+        # whose every component read up. That happened repeatedly on
+        # 2026-08-26 because the cadence's real tail (max 721s measured)
+        # exceeds the freshness contract: the fleet was healthy and the
+        # banner was not.
+        #
+        # For the OVERALL SLO (which drives the public banner) we therefore
+        # use the last KNOWN observation for a probe
+        # that is late but not silent. Nothing is hidden: the check's own row
+        # still shows `degraded` with its age, the per-region breakdown below
+        # keeps reporting it, and monitor_freshness still
+        # publishes global staleness. A probe past SILENT_PROBE_TTL_SECONDS
+        # still reports "down" here -- that one IS evidence, because its
+        # siblings kept reporting while it stopped.
+        overall_status = status
+        if status == "degraded" and monitor_reporting and signed_age <= SILENT_PROBE_TTL_SECONDS:
+            overall_status = sample.status
+        overall = _worse_status(overall, overall_status)
         sample_count += 1
         for region in _sample_region_keys(sample):
             region_row = by_region.setdefault(
