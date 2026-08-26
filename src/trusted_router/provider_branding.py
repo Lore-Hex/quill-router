@@ -70,6 +70,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "ltx": ProviderBrand("https://ltx.io/"),
     "makora": ProviderBrand("https://www.makora.com/"),
     "meta": ProviderBrand("https://www.meta.com/"),
+    "openrouter": ProviderBrand("https://openrouter.ai"),
     "minimax": ProviderBrand("https://www.minimax.io/"),
     "mistral": ProviderBrand("https://mistral.ai/"),
     "morph": ProviderBrand("https://www.morphllm.com/"),

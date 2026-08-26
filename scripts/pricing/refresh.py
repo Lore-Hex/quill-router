@@ -77,6 +77,9 @@ PROVIDER_SLUGS = [
     # Meta Muse is served through OpenRouter, so OpenRouter is the provider API
     # and billing source for this one explicitly labelled downstream route.
     "meta",
+    # Laguna S 2.1 is an explicit one-model OpenRouter route: the module
+    # name and the runtime slug are both "openrouter".
+    "openrouter",
     "anthropic",
     "openai",
     "gemini",
@@ -232,7 +235,7 @@ CROSS_CHECK_DISAGREE_THRESHOLD = 0.02  # 2%
 # OpenRouter is the actual serving and billing API for this deliberately
 # labelled downstream provider. Keep its provenance distinct from both direct
 # provider prices and emergency OpenRouter fallback prices.
-_OPENROUTER_BACKED_PROVIDER_SLUGS = frozenset({"meta"})
+_OPENROUTER_BACKED_PROVIDER_SLUGS = frozenset({"meta", "openrouter"})
 
 
 def _endpoint_pricing_source(slug: str, healed_slugs: set[str]) -> str:

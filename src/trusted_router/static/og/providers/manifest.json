@@ -476,6 +476,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },
+  "openrouter": {
+    "card_version": 2,
+    "model_count": 1,
+    "name": "OpenRouter",
+    "privacy": "Policy documented",
+    "route_count": 1,
+    "route_mode": "Prepaid",
+    "slug": "openrouter"
+  },
   "ovhcloud": {
     "card_version": 2,
     "model_count": 0,
