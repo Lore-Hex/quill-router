@@ -37,6 +37,7 @@ from trusted_router.storage_models import (
     Generation,
     GoogleAdsConversion,
     Member,
+    OAuthApp,
     OAuthAuthorizationCode,
     ProviderAccessGrant,
     ProviderBenchmarkSample,
@@ -268,8 +269,20 @@ class Store(Protocol):
         code_challenge_method: str | None = ...,
         spawn_agent: str | None = ...,
         spawn_cloud: str | None = ...,
+        client_app_id: str = ...,
     ) -> tuple[str, OAuthAuthorizationCode]: ...
     def consume_oauth_authorization_code(self, raw_code: str) -> OAuthAuthorizationCode | None: ...
+
+    # Registered OAuth applications -----------------------------------------
+    def create_oauth_app(self, app: OAuthApp) -> OAuthApp: ...
+    def get_oauth_app(self, app_id: str) -> OAuthApp | None: ...
+    def list_oauth_apps_for_user(self, owner_user_id: str) -> list[OAuthApp]: ...
+    def update_oauth_app(
+        self,
+        app_id: str,
+        *,
+        patch: dict[str, Any],
+    ) -> OAuthApp | None: ...
 
     # Email send blocks (SES bounce/complaint suppression) -------------------
     def block_email_sending(
@@ -309,6 +322,7 @@ class Store(Protocol):
         budget_alert_only: bool = ...,
         tags: dict[str, str] | None = ...,
         scopes: list[str] | None = ...,
+        app_id: str = ...,
     ) -> tuple[str, ApiKey]: ...
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None: ...
     def typed_key_usage(
@@ -740,6 +754,7 @@ class Store(Protocol):
         idempotency_key: str | None = ...,
         tags: dict[str, str] | None = ...,
         idempotency_fingerprint: str | None = ...,
+        app_id: str = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,
         user_provided_model_id: str | None = ...,
@@ -915,6 +930,7 @@ class TypedBillingStore(Protocol):
         candidate_endpoint_ids: list[str],
         idempotency_key: str | None,
         idempotency_fingerprint: str | None,
+        app_id: str = ...,
         key_usage_shards: int = ...,
         tags: dict[str, str] | None = ...,
         custom_model_id: str | None = ...,

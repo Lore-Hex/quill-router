@@ -258,6 +258,16 @@ def _authorize_gateway_sync(
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
         raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     _assert_gateway_key_scope(api_key)
+    if api_key.app_id:
+        app = STORE.get_oauth_app(api_key.app_id)
+        if app is None or app.suspended:
+            # Do not report INVALID_API_KEY: enclaves negative-cache that result,
+            # so un-suspending the app would not promptly restore its valid key.
+            raise api_error(
+                403,
+                "OAuth app is missing or suspended; new authorizations are forbidden",
+                ErrorType.FORBIDDEN,
+            )
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
@@ -679,6 +689,7 @@ def _authorize_gateway_sync(
                     candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
                     idempotency_key=request_idempotency_key,
                     idempotency_fingerprint=request_fingerprint,
+                    app_id=api_key.app_id,
                     tags=effective_tags,
                     expires_at=expires_at,
                     lease_ttl_seconds=settings.regional_quota_lease_ttl_seconds,
@@ -706,6 +717,7 @@ def _authorize_gateway_sync(
                     idempotency_key=request_idempotency_key,
                     tags=effective_tags,
                     idempotency_fingerprint=request_fingerprint,
+                    app_id=api_key.app_id,
                     key_usage_shards=key_usage_shards,
                     custom_model_id=custom_model.id if custom_model else None,
                     custom_model_revision=custom_model.revision if custom_model else None,
@@ -884,6 +896,7 @@ def _authorize_gateway_sync(
             idempotency_key=request_idempotency_key,
             tags=effective_tags,
             idempotency_fingerprint=request_fingerprint,
+            app_id=api_key.app_id,
             custom_model_id=custom_model.id if custom_model else None,
             custom_model_revision=custom_model.revision if custom_model else None,
             user_provided_model_id=user_model.id if user_model else None,
@@ -2306,6 +2319,9 @@ def _settle_gateway_authorization(
         # correlation id is useful to them, the client telemetry object is not.
         broadcast_settle_body = dict(settle_body)
         broadcast_settle_body.pop("client", None)
+        # App attribution is frozen from the key at authorize. Never let a
+        # caller-supplied root field become forgeable broadcast metadata.
+        broadcast_settle_body.pop("app_id", None)
         broadcast_settle_body.pop("price_tier_input_tokens", None)
         enqueue_metadata_broadcast(generation, settle_body=broadcast_settle_body)
         if should_drain_inline(settings) and background_tasks is not None:

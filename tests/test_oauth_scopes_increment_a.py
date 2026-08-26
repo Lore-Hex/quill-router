@@ -17,7 +17,7 @@ from trusted_router.scopes import (
     SCOPE_INFERENCE,
     SCOPE_PROFILE,
 )
-from trusted_router.storage import STORE, ApiKey, Generation
+from trusted_router.storage import STORE, ApiKey, Generation, OAuthApp
 from trusted_router.types import UsageType
 from trusted_router.verification import verification_level
 
@@ -616,11 +616,20 @@ def test_federation_resolve_key_serves_scopes_end_to_end() -> None:
     with TestClient(app) as fed_client:
         user = STORE.ensure_user("fed-scopes@example.com")
         workspace = STORE.list_workspaces_for_user(user.id)[0]
+        STORE.create_oauth_app(
+            OAuthApp(
+                id="federated-app",
+                owner_user_id=user.id,
+                name="Federated App",
+                redirect_uris=["https://federated.example/callback"],
+            )
+        )
         raw, key = STORE.create_api_key(
             workspace_id=workspace.id,
             name="fed scoped",
             creator_user_id=user.id,
             scopes=list(DEFAULT_DELEGATED_SCOPES),
+            app_id="federated-app",
         )
         del raw
         served = fed_client.post(
@@ -634,8 +643,10 @@ def test_federation_resolve_key_serves_scopes_end_to_end() -> None:
         assert served.status_code == 200, served.text
         record = served.json()["data"]
         assert record["scopes"] == list(DEFAULT_DELEGATED_SCOPES)
+        assert record["app_id"] == "federated-app"
         imported = federated_api_key_from_record(record)
         assert list(imported.scopes) == list(DEFAULT_DELEGATED_SCOPES)
+        assert imported.app_id == "federated-app"
 
 
 def test_federation_feature_declaration_fails_closed_only_for_scoped_keys() -> None:
@@ -683,3 +694,4 @@ def test_federation_feature_declaration_fails_closed_only_for_scoped_keys() -> N
         assert undeclared_scoped.json() == unknown.json()
         assert served_legacy.status_code == 200, served_legacy.text
         assert served_legacy.json()["data"]["scopes"] == []
+        assert "app_id" not in served_legacy.json()["data"]

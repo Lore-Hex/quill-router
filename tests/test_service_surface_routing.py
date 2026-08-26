@@ -242,6 +242,7 @@ def test_t1_marketing_static_status_and_catalog_paths_are_public(path: str) -> N
     [
         "/console",
         "/auth/session",
+        "/oauth/apps",
         "/signup",
         "/billing/checkout",
         "/internal/stripe/webhook",
@@ -331,6 +332,7 @@ def test_every_emitted_nonpublic_wildcard_has_an_exact_bare_twin() -> None:
         ("/v1/bedrock-group-buy", LEGACY_BACKEND),
         ("/console", LEGACY_BACKEND),
         ("/auth/session", LEGACY_BACKEND),
+        ("/oauth/apps/verified-app", LEGACY_BACKEND),
         ("/signup", LEGACY_BACKEND),
         ("/internal/gateway/settle", LEGACY_BACKEND),
         ("/v1/chat/completions", LEGACY_BACKEND),
@@ -361,6 +363,7 @@ def test_emitted_map_routes_representative_paths(path: str, backend: str) -> Non
         ("/static/a.css", "public"),
         ("/.well-known/mcp/server-card.json", "public"),
         ("/console", "control"),
+        ("/oauth/apps/verified-app", "control"),
         ("/signup", "control"),
         ("/internal/gateway/settle", "internal"),
         ("/v1/chat/completions", "control"),
