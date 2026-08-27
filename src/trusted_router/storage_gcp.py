@@ -3420,9 +3420,10 @@ class SpannerBigtableStore:
         if result["outcome"] == AuthorizeOutcome.INSUFFICIENT_CREDITS and has_credit_candidate:
             from trusted_router import storage_gcp_credit_rebalance as rebalance_mod
 
-            # An all-shards rejection is cold. Refresh once so a remote
+            # A bounded write-set rejection is cold. Refresh once so a remote
             # pause/drain split or unshard cannot produce a false 402 until the
-            # normal TTL expires. The accepted hot path never pays this read.
+            # normal TTL expires. Requests accepted inside the bounded prefix
+            # never pay this read; a later funded shard needs one snapshot.
             previous_count = len(credit_shard_candidates)
             try:
                 refreshed_candidates = self._refresh_credit_shard_candidates(workspace_id)
@@ -3538,6 +3539,12 @@ class SpannerBigtableStore:
                 }:
                     result = run_authorize(credit_shard_candidates)
                     continue
+                if rebalance_result["outcome"] == rebalance_mod.RebalanceOutcome.INSUFFICIENT:
+                    # This verdict comes from a locked read of every configured
+                    # shard and is at least as authoritative as the snapshot
+                    # precheck. Preserve the honest 402 instead of turning a
+                    # concurrent final-credit race into a spurious 503.
+                    aggregate_exhaustion_proven = True
                 break
             if (
                 result["outcome"] == AuthorizeOutcome.INSUFFICIENT_CREDITS

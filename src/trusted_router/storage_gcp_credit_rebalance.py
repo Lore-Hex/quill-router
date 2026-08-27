@@ -45,8 +45,6 @@ def credit_headroom_precheck(
     candidates = tuple(shard_candidates)
     if len(candidates) != count or set(candidates) != set(range(count)):
         raise ValueError("credit precheck requires every configured shard exactly once")
-    if estimate <= 0:
-        return CreditHeadroomPrecheck(RebalanceOutcome.NOT_NEEDED, candidates[0])
     pt = param_types
 
     with database.snapshot() as snapshot:

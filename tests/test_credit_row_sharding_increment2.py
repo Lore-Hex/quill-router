@@ -136,6 +136,8 @@ def test_invalid_or_unbounded_candidate_configuration_fails_closed() -> None:
         authorize_atomic(**common, credit_shard_candidates=(0, 0))
     with pytest.raises(ValueError, match="non-negative"):
         authorize_atomic(**common, credit_shard_candidates=(-1,))
+    with pytest.raises(ValueError, match="hot-path transaction limit"):
+        authorize_atomic(**common, credit_shard_candidates=(0, 1, 2, 3, 4))
 
 
 def test_scan_skips_insufficient_shard_and_records_first_success() -> None:
@@ -294,7 +296,9 @@ def test_store_byok_path_does_not_load_credit_shard_configuration(
 
 
 def test_concurrent_sharded_reserves_never_exceed_global_cap() -> None:
-    shard_count = 8
+    # Exercise the low-level atomic primitive at its enforced write-set bound.
+    # The store wrapper owns larger shard sets and its lock-free cold path.
+    shard_count = 4
     per_shard_credit = 40
     estimate = 10
     store, database, key = _seed([per_shard_credit] * shard_count)

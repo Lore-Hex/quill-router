@@ -10,6 +10,7 @@ from trusted_router.storage_gcp_authorize import AuthorizeOutcome
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 from trusted_router.storage_gcp_credit_rebalance import (
     RebalanceOutcome,
+    credit_headroom_precheck,
     rebalance_precheck,
 )
 from trusted_router.storage_gcp_credit_shards import (
@@ -255,8 +256,60 @@ def test_rebalance_precheck_incomplete_and_nonpositive_are_read_only() -> None:
     )
 
     assert incomplete == RebalanceOutcome.INCOMPLETE
-    assert nonpositive == RebalanceOutcome.NOT_NEEDED
+    assert nonpositive == RebalanceOutcome.INCOMPLETE
     assert _typed_rows(database) == before
+
+
+def test_zero_estimate_precheck_selects_a_viable_later_shard() -> None:
+    """A zero estimate must not blindly select an overdrawn prefix shard."""
+    store, database, _key = _seed(
+        [100, 100, 100, 100, 100, 100],
+        usage=[101, 101, 101, 101, 100, 99],
+    )
+    before = _typed_rows(database)
+
+    precheck = credit_headroom_precheck(
+        store._database,
+        store._param_types,
+        workspace_id=WORKSPACE_ID,
+        shard_count=6,
+        shard_candidates=tuple(range(6)),
+        estimate=0,
+    )
+
+    assert precheck.outcome == RebalanceOutcome.NOT_NEEDED
+    assert precheck.candidate_shard == 4
+    assert _typed_rows(database) == before
+
+
+def test_authoritative_rebalance_exhaustion_returns_402(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A locked all-shard verdict is proof, not a retryable ambiguity."""
+    from trusted_router import storage_gcp_credit_rebalance as rebalance_mod
+
+    store, _database, key = _seed([100, 100], usage=[60, 60])
+    monkeypatch.setattr(
+        rebalance_mod,
+        "credit_headroom_precheck",
+        lambda *_args, **_kwargs: rebalance_mod.CreditHeadroomPrecheck(
+            RebalanceOutcome.MOVED
+        ),
+    )
+    monkeypatch.setattr(
+        rebalance_mod,
+        "rebalance_credit_for_estimate",
+        lambda *_args, **_kwargs: {
+            "outcome": RebalanceOutcome.INSUFFICIENT,
+            "moved_micro": 0,
+            "target_shard": 0,
+        },
+    )
+
+    outcome, authorization = _typed_authorize(store, key, estimate=60)
+
+    assert outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS
+    assert authorization is None
 
 
 def test_rebalance_cooldown_returns_retryable_error_not_false_402(
@@ -387,7 +440,7 @@ def test_unsharded_rejection_skips_precheck_and_rebalance(
     def fail_precheck(*args: Any, **kwargs: Any) -> str:
         raise AssertionError("unsharded rejection must not precheck")
 
-    monkeypatch.setattr(rebalance_mod, "rebalance_precheck", fail_precheck)
+    monkeypatch.setattr(rebalance_mod, "credit_headroom_precheck", fail_precheck)
 
     outcome, authorization = _typed_authorize(store, key, estimate=50)
 

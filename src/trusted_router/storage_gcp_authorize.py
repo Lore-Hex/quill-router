@@ -280,6 +280,13 @@ def authorize_atomic(
         raise ValueError("credit shards must be non-negative")
     if len(set(shard_candidates)) != len(shard_candidates):
         raise ValueError("credit_shard_candidates must be unique")
+    if (
+        has_credit_candidate
+        and len(shard_candidates) > MAX_CREDIT_SHARD_ATTEMPTS_PER_TRANSACTION
+    ):
+        raise ValueError(
+            "credit_shard_candidates exceeds the hot-path transaction limit"
+        )
     if not has_credit_candidate and shard_candidates != (UNSHARDED,):
         raise ValueError("BYOK-only authorization must use credit shard zero")
     key_candidates = tuple(key_shard_candidates)
