@@ -3676,7 +3676,9 @@ def public_chat_html(
             # provider response headers are visible without any CORS
             # expose-headers work, so "via {provider}" lights up.
             api_base_url="/chat-proxy/v1",
-            catalog_base_url="https://api.trustedrouter.com/v1",
+            # Catalog discovery is public control-plane metadata. Keep it
+            # same-origin so browsers never depend on gateway CORS policy.
+            catalog_base_url="/v1",
             site_url=f"https://{settings.trusted_domain}/chat",
             title="Chat | TrustedRouter",
             heading="Chat",
@@ -3700,7 +3702,7 @@ def public_fusion_html(settings: Settings) -> str:
         .get_template("public/fusion_playground.html")
         .render(
             api_base_url="/chat-proxy/v1",
-            catalog_base_url="https://api.trustedrouter.com/v1",
+            catalog_base_url="/v1",
             site_url=f"https://{settings.trusted_domain}/synth",
             title="Synth | TrustedRouter",
             heading="Synth",

@@ -60,7 +60,8 @@ def test_chat_page_renders_without_auth() -> None:
     assert "/auth/session" in body
     assert "/internal/chat/issue-browser-key" in body
     assert "tr_chat_key" in body  # keyCookieName
-    assert 'catalogBaseUrl: "https://api.trustedrouter.com/v1"' in body
+    assert 'catalogBaseUrl: "/v1"' in body
+    assert 'catalogBaseUrl: "https://api.trustedrouter.com/v1"' not in body
 
     # Static assets are referenced
     assert "/static/model_catalog.js" in body
