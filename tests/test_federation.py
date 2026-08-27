@@ -180,6 +180,20 @@ class TestFederatedRecordSafety:
         without_app_id = {k: v for k, v in RECORD.items() if k != "app_id"}
         assert federated_api_key_from_record(without_app_id).app_id == ""
 
+    def test_app_markup_terms_are_carried_and_legacy_record_defaults_to_zero(self) -> None:
+        imported = federated_api_key_from_record(
+            {
+                **RECORD,
+                "app_markup_basis_points": 1_250,
+                "app_owner_user_id": "home-owner",
+            }
+        )
+        assert imported.federated_app_markup_basis_points == 1_250
+        assert imported.federated_app_owner_user_id == "home-owner"
+        legacy = federated_api_key_from_record(RECORD)
+        assert legacy.federated_app_markup_basis_points == 0
+        assert legacy.federated_app_owner_user_id == ""
+
     def test_never_management(self) -> None:
         """A management key can mint keys and move money. Even if a home
         plane somehow served one, the peer must not honour it."""

@@ -81,26 +81,6 @@ def _is_expired(expires_at: str | None) -> bool:
     return parsed <= utcnow()
 
 
-@dataclass(frozen=True)
-class ReceiptKey:
-    """One durable, public receipt-signing key observation.
-
-    Receipt keys are generated per enclave boot.  The backing entity is
-    append-only by ``kid``: only ``last_seen``, a key-bound refreshed
-    attestation, and a monotonic ``verified`` upgrade may change later.
-    """
-
-    kid: str
-    jwk: dict[str, str]
-    att: str
-    att_kind: str
-    plane: str
-    first_seen: str
-    last_seen: str
-    revoked: bool = False
-    verified: bool = False
-
-
 @dataclass
 class User:
     id: str
@@ -221,6 +201,10 @@ class ApiKey:
     # Home-plane suspension state imported with a federated registered-app
     # key. Local keys always consult their authoritative local OAuthApp row.
     federated_app_suspended: bool = False
+    # Home-plane billing terms imported with a federated registered-app key.
+    # A peer must never substitute an app row from its own slug namespace.
+    federated_app_markup_basis_points: int = 0
+    federated_app_owner_user_id: str = ""
     disabled: bool = False
     management: bool = False
     limit_microdollars: int | None = None
@@ -607,6 +591,8 @@ class GatewayAuthorization:
     # Frozen from the API key at authorize. Settlement never re-reads the key,
     # so this remains stable even if the grant changes while a request runs.
     app_id: str = ""
+    app_markup_basis_points: int = 0
+    app_owner_user_id: str = ""
     custom_model_id: str | None = None
     custom_model_revision: int | None = None
     user_provided_model_id: str | None = None
@@ -707,6 +693,14 @@ class UserModelPayout:
     payer_workspace_id: str
 
 
+@dataclass(frozen=True)
+class AppMarkupPayout:
+    owner_user_id: str
+    app_id: str
+    amount_microdollars: int
+    payer_workspace_id: str
+
+
 @dataclass
 class Generation:
     id: str
@@ -727,6 +721,7 @@ class Generation:
     # Registered OAuth app attribution, distinct from the free-form `app`
     # request metadata above.
     app_id: str = ""
+    app_markup_microdollars: int = 0
     usage_estimated: bool = True
     cached_input_tokens: int = 0
     reasoning_tokens: int = 0
@@ -887,6 +882,7 @@ class Generation:
         input_tokens: int,
         output_tokens: int,
         actual_cost_microdollars: int,
+        app_markup_microdollars: int = 0,
         operator_cost_microdollars: int | None = None,
     ) -> Generation:
         elapsed = max(float(body.get("elapsed_seconds") or 0.001), 0.001)
@@ -913,6 +909,7 @@ class Generation:
             provider_name=provider_name,
             app=app,
             app_id=authorization.app_id,
+            app_markup_microdollars=app_markup_microdollars,
             tokens_prompt=input_tokens,
             tokens_completion=output_tokens,
             total_cost_microdollars=actual_cost_microdollars,
@@ -1029,6 +1026,7 @@ class Generation:
             "usage_microdollars": self.total_cost_microdollars,
             "total_cost": microdollars_to_float(self.total_cost_microdollars),
             "total_cost_microdollars": self.total_cost_microdollars,
+            "app_markup_microdollars": self.app_markup_microdollars,
             "tokens_prompt": self.tokens_prompt,
             "tokens_completion": self.tokens_completion,
             "native_tokens_prompt": self.tokens_prompt,
@@ -1824,6 +1822,8 @@ def federated_api_key_from_record(record: dict[str, Any]) -> ApiKey:
         scopes=list(record.get("scopes") or []),
         app_id=str(record.get("app_id") or ""),
         federated_app_suspended=bool(record.get("app_suspended", False)),
+        federated_app_markup_basis_points=int(record.get("app_markup_basis_points") or 0),
+        federated_app_owner_user_id=str(record.get("app_owner_user_id") or ""),
         disabled=bool(record.get("disabled", False)),
         management=False,  # never federated; the home plane refuses to serve them
         limit_microdollars=record.get("limit_microdollars"),

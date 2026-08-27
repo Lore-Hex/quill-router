@@ -23,10 +23,6 @@ from trusted_router.operational_analytics_freshness import (
     REASON_NOT_CONFIGURED,
     OutboxFreshness,
 )
-from trusted_router.receipt_keys import (
-    ReceiptKeyWriteOutcome,
-    merge_receipt_key_observation,
-)
 from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage_attribution import InMemoryAcquisitionAttribution
 from trusted_router.storage_auth_context import build_session_auth_context
@@ -68,7 +64,6 @@ from trusted_router.storage_models import (
     ProviderAccessGrant,
     ProviderBenchmarkSample,
     RateLimitHit,
-    ReceiptKey,
     Reservation,
     SessionAuthContext,
     SignupResult,
@@ -128,7 +123,6 @@ class InMemoryStore:
         self.credit_transfer_claims: dict[str, dict[str, Any]] = {}
         self.client_events_batches: list[dict[str, Any]] = []
         self.client_event_ids: set[str] = set()
-        self.receipt_keys: dict[str, ReceiptKey] = {}
         #: Federated settlement claims, keyed (source_plane, authorization_id).
         #: Insert-once: the recorded terms are the verdict for every replay.
         self.federated_settlement_claims: dict[tuple[str, str], dict[str, Any]] = {}
@@ -182,7 +176,6 @@ class InMemoryStore:
             self.credit_transfer_claims.clear()
             self.client_events_batches.clear()
             self.client_event_ids.clear()
-            self.receipt_keys.clear()
             self.api_keys.reset()
             self.acquisition_store.reset()
             self.bedrock_group_buy_store.reset()
@@ -203,20 +196,6 @@ class InMemoryStore:
 
     def readiness_check(self) -> None:
         """The in-memory backend has no external serving dependency."""
-
-    def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
-        with self._lock:
-            merged, outcome = merge_receipt_key_observation(
-                self.receipt_keys.get(record.kid), record
-            )
-            if merged is not None and outcome in {"appended", "refreshed"}:
-                self.receipt_keys[record.kid] = merged
-            return outcome
-
-    def list_receipt_keys(self, *, limit: int = 5_000) -> list[ReceiptKey]:
-        bounded = max(0, min(limit, 10_000))
-        with self._lock:
-            return [self.receipt_keys[kid] for kid in sorted(self.receipt_keys)[:bounded]]
 
     def ensure_user(
         self,
@@ -1441,6 +1420,7 @@ class InMemoryStore:
     ) -> bool:
         amount = self._positive_money_amount(amount_microdollars)
         account_id = f"user:{user_id}"
+        is_app_markup = event_id.startswith("app_markup_payout:")
         with self._lock:
             if event_id in self.stripe_events:
                 return False
@@ -1450,11 +1430,15 @@ class InMemoryStore:
             self.credit_movements[(account_id, event_id)] = CreditMovement(
                 account_id=account_id,
                 movement_id=event_id,
-                kind="custom_model_payout",
+                kind="app_markup_payout" if is_app_markup else "custom_model_payout",
                 amount_microdollars=amount,
                 counterparty_account_id=payer_workspace_id,
                 custom_model_id=custom_model_id,
-                authorization_id=(user_model_authorization_id_from_payout_event_id(event_id)),
+                authorization_id=(
+                    event_id.split(":", 1)[1]
+                    if is_app_markup
+                    else user_model_authorization_id_from_payout_event_id(event_id)
+                ),
             )
             return True
 
@@ -1852,6 +1836,8 @@ class InMemoryStore:
         tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
         app_id: str = "",
+        app_markup_basis_points: int = 0,
+        app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         user_provided_model_id: str | None = None,
@@ -1883,6 +1869,8 @@ class InMemoryStore:
             tags=tags,
             idempotency_fingerprint=idempotency_fingerprint,
             app_id=app_id,
+            app_markup_basis_points=app_markup_basis_points,
+            app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
             user_provided_model_id=user_provided_model_id,

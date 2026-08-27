@@ -157,13 +157,7 @@ from trusted_router.services.trust_release import (
 )
 from trusted_router.storage import STORE
 from trusted_router.storage_custom_models import normalize_custom_model_id
-from trusted_router.storage_models import (
-    ReceiptKey,
-    SyntheticProbeSample,
-    SyntheticRollup,
-    iso_now,
-    utcnow,
-)
+from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, utcnow
 from trusted_router.synthetic.fleet import fleet_snapshot
 from trusted_router.synthetic.leaderboard import aggregate_leaderboard
 from trusted_router.synthetic.status import history_payload, status_snapshot
@@ -605,7 +599,6 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         validator=validated_azure_metadata,
         embedded=embedded_azure_metadata,
     )
-    receipt_key_cache: list[ReceiptKey] | None = None
 
     async def _mirrored(
         resolver: TrustReleaseResolver, embedded: Callable[[Settings], Mapping[str, Any]]
@@ -845,14 +838,6 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/docs/tagging")
     async def tagging_docs() -> str:
         return public_page_html(settings, "docs/tagging")
-
-    @public_html_route("/docs/provider-routing")
-    async def provider_routing_docs() -> str:
-        return public_page_html(settings, "docs/provider-routing")
-
-    @public_html_route("/docs/receipts")
-    async def receipts_docs() -> str:
-        return public_page_html(settings, "docs/receipts")
 
     @public_html_route("/docs/telemetry")
     async def telemetry_docs() -> str:
@@ -1920,54 +1905,6 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 "api_base_url": settings.api_base_url,
             },
             headers=public_document_headers("/trust/control-plane.json"),
-        )
-
-    @app.get("/.well-known/inference-receipt-keys", include_in_schema=False)
-    @app.get("/trust/receipt-keys.json", include_in_schema=False)
-    async def inference_receipt_keys() -> JSONResponse:
-        """Bounded public projection of the durable, append-only key log."""
-
-        nonlocal receipt_key_cache
-        degraded = False
-        try:
-            records = await asyncio.wait_for(
-                run_in_threadpool(STORE.list_receipt_keys, limit=5_000),
-                timeout=3.0,
-            )
-            receipt_key_cache = records
-        except Exception:
-            degraded = True
-            records = receipt_key_cache or []
-            log.exception("receipt_key_log_read_degraded_serving_cached")
-        keys = [
-            {
-                "kid": record.kid,
-                "jwk": {
-                    "kty": record.jwk.get("kty"),
-                    "crv": record.jwk.get("crv"),
-                    "x": record.jwk.get("x"),
-                },
-                "att": record.att,
-                "att_kind": record.att_kind,
-                "plane": record.plane,
-                "first_seen": record.first_seen,
-                "last_seen": record.last_seen,
-                "revoked": record.revoked,
-                "verified": record.verified,
-            }
-            for record in records
-        ]
-        return JSONResponse(
-            {
-                "spec": "inference-receipt/1",
-                "generated_at": iso_now(),
-                "degraded": degraded,
-                "keys": keys,
-            },
-            headers={
-                **public_document_headers("/.well-known/inference-receipt-keys"),
-                "x-trustedrouter-key-log-status": "degraded" if degraded else "live",
-            },
         )
 
     @app.get("/trust/gcp-release.json")

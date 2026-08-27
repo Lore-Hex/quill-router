@@ -66,7 +66,6 @@ BUILTIN_HEARTBEAT_TARGETS = frozenset(
     {
         "job:settle-outbox-drain",
         "job:regional-quota-reconcile",
-        "job:receipt-key-collector",
         "scheduler:auto-refill-outbox",
         "scheduler:home-settlement",
         "scheduler:remediator",

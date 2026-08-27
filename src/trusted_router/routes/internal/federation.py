@@ -146,6 +146,8 @@ def register(router: APIRouter) -> None:
 
         app_id = getattr(api_key, "app_id", "") or ""
         app_suspended = False
+        app_markup_basis_points = 0
+        app_owner_user_id = ""
         if app_id:
             app = STORE.get_oauth_app(app_id)
             if app is None:
@@ -153,6 +155,8 @@ def register(router: APIRouter) -> None:
                 # cannot distinguish or cache an orphaned app key as valid.
                 raise api_error(404, "Unknown API key", ErrorType.NOT_FOUND)
             app_suspended = app.suspended
+            app_markup_basis_points = int(app.markup_basis_points)
+            app_owner_user_id = str(app.owner_user_id)
 
         if getattr(api_key, "management", False):
             raise api_error(
@@ -199,6 +203,8 @@ def register(router: APIRouter) -> None:
             # Old peers drop both harmlessly; legacy records remain byte-identical.
             record["app_id"] = app_id
             record["app_suspended"] = app_suspended
+            record["app_markup_basis_points"] = app_markup_basis_points
+            record["app_owner_user_id"] = app_owner_user_id
         return {"data": record}
 
     @router.post("/internal/federation/apply-usage")

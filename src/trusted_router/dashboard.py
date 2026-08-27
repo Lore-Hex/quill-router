@@ -1318,24 +1318,6 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "without adding them to model prompts or provider payloads."
         ),
     ),
-    "docs/provider-routing": PublicPage(
-        template="public/provider_routing.html",
-        title="Provider Routing And Pinning",
-        description=(
-            "Pin, prefer, or exclude providers per request with the OpenRouter-compatible "
-            "provider object: only, ignore, order, allow_fallbacks, sort, hard privacy "
-            "floors, billing path, and jurisdiction filters that fail closed."
-        ),
-    ),
-    "docs/receipts": PublicPage(
-        template="public/receipts.html",
-        title="Signed Inference Receipts",
-        description=(
-            "Opt into a signed, offline-verifiable receipt on any inference call: exact "
-            "request and response hashes, the routed model and provider, the upstream "
-            "verification tier, and a signing key committed into hardware attestation."
-        ),
-    ),
     "docs/telemetry": PublicPage(
         template="public/telemetry.html",
         title="Client Reliability Telemetry",

@@ -751,7 +751,7 @@ class _FakeTransaction:
                 "kind": p["kind"],
                 "amount_microdollars": p["amount"],
                 "counterparty_account_id": p["counterparty"],
-                "custom_model_id": p["custom_model_id"],
+                "custom_model_id": p.get("custom_model_id", p.get("app_id")),
                 "authorization_id": p["authorization_id"],
                 "created_at": p["created_at"],
             }

@@ -44,11 +44,6 @@ from trusted_router.postgres_dsn import (
     aws_dsql_connection_details,
     dsql_token_is_admin,
 )
-from trusted_router.receipt_keys import (
-    RECEIPT_KEY_KIND,
-    ReceiptKeyWriteOutcome,
-    merge_receipt_key_observation,
-)
 from trusted_router.scopes import validate_api_key_scopes
 from trusted_router.security import (
     hash_api_key,
@@ -112,7 +107,6 @@ from trusted_router.storage_models import (
     ProviderAccessGrant,
     ProviderBenchmarkSample,
     RateLimitHit,
-    ReceiptKey,
     Reservation,
     SessionAuthContext,
     SignupResult,
@@ -641,48 +635,6 @@ class PostgresStore:
 
     def _read_entity(self, kind: str, entity_id: str, cls: type[T]) -> T | None:
         return self._run_transaction(lambda conn: self._read_entity_tx(conn, kind, entity_id, cls))
-
-    def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
-        def operation(conn: Any) -> ReceiptKeyWriteOutcome:
-            existing = self._read_entity_tx(
-                conn,
-                RECEIPT_KEY_KIND,
-                record.kid,
-                ReceiptKey,
-                for_update=True,
-            )
-            candidate, outcome = merge_receipt_key_observation(existing, record)
-            if candidate is None or outcome in {"conflict", "invalid"}:
-                return outcome
-            if existing is None:
-                if self._insert_entity_once_tx(
-                    conn, RECEIPT_KEY_KIND, record.kid, candidate
-                ):
-                    return "appended"
-                # A concurrent transaction inserted this kid after our absent
-                # read. Lock its now-committed verdict before comparing.
-                existing = self._read_entity_tx(
-                    conn,
-                    RECEIPT_KEY_KIND,
-                    record.kid,
-                    ReceiptKey,
-                    for_update=True,
-                )
-                if existing is None:  # pragma: no cover - database invariant
-                    raise StoreConflict("receipt key insert conflict lost its row")
-                candidate, outcome = merge_receipt_key_observation(existing, record)
-            if candidate is not None and outcome == "refreshed":
-                self._write_entity_tx(conn, RECEIPT_KEY_KIND, record.kid, candidate)
-            return outcome
-
-        return self._run_transaction(operation)
-
-    def list_receipt_keys(self, *, limit: int = 5_000) -> list[ReceiptKey]:
-        return self._list_entities(
-            RECEIPT_KEY_KIND,
-            ReceiptKey,
-            limit=max(0, min(limit, 10_000)),
-        )
 
     def _list_entities(
         self,
@@ -3267,6 +3219,7 @@ class PostgresStore:
         payer_workspace_id: str | None = None,
     ) -> bool:
         amount = self._positive_money_amount(amount_microdollars)
+        is_app_markup = event_id.startswith("app_markup_payout:")
 
         def credit(conn: Any) -> bool:
             won = self._insert_entity_once_tx(
@@ -3291,12 +3244,14 @@ class PostgresStore:
                 CreditMovement(
                     account_id=f"user:{user_id}",
                     movement_id=event_id,
-                    kind="custom_model_payout",
+                    kind="app_markup_payout" if is_app_markup else "custom_model_payout",
                     amount_microdollars=amount,
                     counterparty_account_id=payer_workspace_id,
                     custom_model_id=custom_model_id,
                     authorization_id=(
-                        user_model_authorization_id_from_payout_event_id(event_id)
+                        event_id.split(":", 1)[1]
+                        if is_app_markup
+                        else user_model_authorization_id_from_payout_event_id(event_id)
                     ),
                 ),
             )
@@ -4016,6 +3971,8 @@ class PostgresStore:
         tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
         app_id: str = "",
+        app_markup_basis_points: int = 0,
+        app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         user_provided_model_id: str | None = None,
@@ -4067,6 +4024,8 @@ class PostgresStore:
             tags=dict(tags or {}),
             idempotency_fingerprint=idempotency_fingerprint,
             app_id=app_id,
+            app_markup_basis_points=app_markup_basis_points,
+            app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
             user_provided_model_id=user_provided_model_id,
