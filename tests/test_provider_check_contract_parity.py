@@ -84,6 +84,12 @@ def test_contract_guards_are_nonempty_and_deterministic() -> None:
         assert len(set(first["source_hashes"].values())) == len(first["source_hashes"])
         assert first["leaderboard"]["models"]
         assert first["leaderboard"]["providers"]
+        assert first["catalog_contract"]["invariants"]["receipts"] == {
+            "required": False,
+            "specs": ["inference-receipt/1"],
+            "algorithms": ["EdDSA"],
+            "delivery": ["header", "stream-chunk"],
+        }
         assert "trusted_router.catalog" not in sys.modules
     finally:
         if previous_catalog is not None:
