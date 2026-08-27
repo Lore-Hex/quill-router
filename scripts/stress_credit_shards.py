@@ -22,6 +22,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from tests.fakes.spanner import make_fake_store
+from trusted_router.storage_errors import StoreUnavailable
 from trusted_router.storage_gcp_authorize import (
     AuthorizeOutcome,
     SettleOutcome,
@@ -180,7 +181,7 @@ def run_stress(
         started = time.perf_counter()
         outcome = ""
         authorization = None
-        for attempt in range(8):
+        for attempt in range(16):
             try:
                 outcome, authorization = store.authorize_gateway_typed(
                     workspace_id=workspace_id,
@@ -199,13 +200,26 @@ def run_stress(
                     idempotency_fingerprint="stress-body-v1",
                     key_usage_shards=key.usage_shard_count,
                 )
+            except StoreUnavailable:
+                # A concurrent cold-path rebalance deliberately returns a
+                # retryable 503 instead of lying with a 402 or joining the
+                # all-shard write-lock stampede. Exercise that public contract
+                # with the same idempotency key and bounded exponential delay.
+                if attempt == 15:
+                    elapsed = time.perf_counter() - started
+                    with authorization_lock:
+                        authorize_latencies.append(elapsed)
+                        authorize_errors[StoreUnavailable.__name__] += 1
+                    return False
+                time.sleep(min(0.002 * (2**attempt), 0.05))
+                continue
             except Exception as exc:  # noqa: BLE001 - stress harness classifies failures.
                 elapsed = time.perf_counter() - started
                 with authorization_lock:
                     authorize_latencies.append(elapsed)
                     authorize_errors[type(exc).__name__] += 1
                 return False
-            if outcome != AuthorizeOutcome.INSUFFICIENT_CREDITS or attempt == 7:
+            if outcome != AuthorizeOutcome.INSUFFICIENT_CREDITS or attempt == 15:
                 break
             time.sleep(0.002)
         elapsed = time.perf_counter() - started

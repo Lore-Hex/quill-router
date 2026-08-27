@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from trusted_router.storage_gcp_counter_dml import transfer_credit_budget
@@ -18,25 +19,32 @@ class RebalanceOutcome:
     INCOMPLETE = "incomplete"
 
 
+@dataclass(frozen=True)
+class CreditHeadroomPrecheck:
+    """Lock-free affordability result plus a directly usable shard, if any."""
+
+    outcome: str
+    candidate_shard: int | None = None
+
+
 class _RebalanceInvariantError(RuntimeError):
     """Rollback a transfer plan if any guarded DML does not affect one row."""
 
 
-def rebalance_precheck(
+def credit_headroom_precheck(
     database: Any,
     param_types: Any,
     *,
     workspace_id: str,
     shard_count: int,
-    target_shard: int,
+    shard_candidates: tuple[int, ...],
     estimate: int,
-) -> str:
-    """Advisory, lock-free verdict from a read-only snapshot."""
+) -> CreditHeadroomPrecheck:
+    """Find a directly usable shard before considering an all-shard rebalance."""
     count = credit_shard_count({"shard_count": shard_count})
-    if target_shard < 0 or target_shard >= count:
-        raise ValueError("rebalance target shard is outside configured range")
-    if estimate <= 0:
-        return RebalanceOutcome.NOT_NEEDED
+    candidates = tuple(shard_candidates)
+    if len(candidates) != count or set(candidates) != set(range(count)):
+        raise ValueError("credit precheck requires every configured shard exactly once")
     pt = param_types
 
     with database.snapshot() as snapshot:
@@ -51,19 +59,45 @@ def rebalance_precheck(
         )
     observed = [int(row[0]) for row in rows]
     if observed != list(range(count)):
-        return RebalanceOutcome.INCOMPLETE
+        return CreditHeadroomPrecheck(RebalanceOutcome.INCOMPLETE)
 
     headroom: dict[int, int] = {}
     for shard, total_credits, total_usage, reserved in rows:
         available = int(total_credits) - int(total_usage) - int(reserved)
         headroom[int(shard)] = available
 
-    target_available = headroom[target_shard]
-    if target_available >= estimate:
-        return RebalanceOutcome.NOT_NEEDED
+    for candidate in candidates:
+        if headroom[candidate] >= estimate:
+            return CreditHeadroomPrecheck(RebalanceOutcome.NOT_NEEDED, candidate)
     if sum(headroom.values()) < estimate:
-        return RebalanceOutcome.INSUFFICIENT
-    return RebalanceOutcome.MOVED
+        return CreditHeadroomPrecheck(RebalanceOutcome.INSUFFICIENT)
+    return CreditHeadroomPrecheck(RebalanceOutcome.MOVED)
+
+
+def rebalance_precheck(
+    database: Any,
+    param_types: Any,
+    *,
+    workspace_id: str,
+    shard_count: int,
+    target_shard: int,
+    estimate: int,
+) -> str:
+    """Compatibility verdict for callers that only need the target outcome."""
+    count = credit_shard_count({"shard_count": shard_count})
+    if target_shard < 0 or target_shard >= count:
+        raise ValueError("rebalance target shard is outside configured range")
+    candidates = (target_shard,) + tuple(
+        shard for shard in range(count) if shard != target_shard
+    )
+    return credit_headroom_precheck(
+        database,
+        param_types,
+        workspace_id=workspace_id,
+        shard_count=count,
+        shard_candidates=candidates,
+        estimate=estimate,
+    ).outcome
 
 
 def rebalance_credit_for_estimate(
