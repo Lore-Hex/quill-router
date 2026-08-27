@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
@@ -132,12 +132,15 @@ def discover_available_priced_chat_catalog(
     explicit_map: dict[str, str],
     upstream_id_map: dict[str, str],
     include: Callable[[dict[str, Any]], bool] | None = None,
+    preserve_unpriced_model_ids: Collection[str] = (),
 ) -> dict[str, dict[str, Any]]:
     """Intersect an authenticated model list with independently sourced prices.
 
     Some first-party catalogs expose availability and capabilities but keep
     prices on a separate official page. Only the intersection is eligible for
-    publication; availability alone can never create an unpriced route.
+    routing. Callers may explicitly preserve reviewed unmatched model IDs as
+    metadata so the shared manifest writer can classify them
+    ``awaiting-price``; availability alone can never create a priced route.
     """
 
     discovered: dict[str, dict[str, Any]] = {}
@@ -150,7 +153,9 @@ def discover_available_priced_chat_catalog(
         if not _supports_text_output(source):
             continue
         model_id = mapped_or_canonical_model_id(native_id, explicit_map)
-        if model_id is None or model_id not in prices:
+        if model_id is None or (
+            model_id not in prices and model_id not in preserve_unpriced_model_ids
+        ):
             continue
         remember_upstream_id(upstream_id_map, model_id, native_id)
         row: dict[str, Any] = {

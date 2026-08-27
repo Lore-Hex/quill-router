@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for the Fireworks AI serverless models enabled on the TrustedRouter Fireworks account. Verified against https://api.fireworks.ai/inference/v1/models, Fireworks' first-party pricing page, and direct chat completions. Kimi K3 is a verified launch route served before the account model-list feed caught up. Fireworks uses full accounts/fireworks/models/... upstream IDs, so the enclave preserves upstream_id verbatim for this provider.",
   "provider": "fireworks",
   "source": "https://api.fireworks.ai/inference/v1/models",
-  "generated_at": "2026-08-25T18:42:44Z",
-  "model_count": 20,
+  "generated_at": "2026-08-27T18:33:32Z",
+  "model_count": 21,
   "models": [
     {
       "id": "moonshotai/kimi-k3",
@@ -216,9 +216,9 @@
       "upstream_id": "accounts/fireworks/models/deepseek-v4-pro-0813",
       "context_length": 1048576,
       "created": 1786637155,
-      "input_token_price_per_m": 1740000,
-      "output_token_price_per_m": 3480000,
-      "cached_input_token_price_per_m": 145000
+      "input_token_price_per_m": 1320000,
+      "output_token_price_per_m": 3960000,
+      "cached_input_token_price_per_m": 44000
     },
     {
       "display_name": "MiniMax M2.7 on Fireworks",
@@ -483,6 +483,28 @@
       "input_token_price_per_m": 600000,
       "output_token_price_per_m": 2400000,
       "cached_input_token_price_per_m": 120000
+    },
+    {
+      "display_name": "GLM 5.3 Flash on Fireworks",
+      "title": "accounts/fireworks/models/glm-5p3-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "accounts/fireworks/models/glm-5p3-flash",
+      "context_length": 1048576,
+      "created": 1787754936,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-08-27"
     }
   ],
   "pricing_source": "https://docs.fireworks.ai/serverless/pricing.md",
