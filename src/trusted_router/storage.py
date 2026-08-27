@@ -1441,6 +1441,7 @@ class InMemoryStore:
     ) -> bool:
         amount = self._positive_money_amount(amount_microdollars)
         account_id = f"user:{user_id}"
+        is_app_markup = event_id.startswith("app_markup_payout:")
         with self._lock:
             if event_id in self.stripe_events:
                 return False
@@ -1450,11 +1451,15 @@ class InMemoryStore:
             self.credit_movements[(account_id, event_id)] = CreditMovement(
                 account_id=account_id,
                 movement_id=event_id,
-                kind="custom_model_payout",
+                kind="app_markup_payout" if is_app_markup else "custom_model_payout",
                 amount_microdollars=amount,
                 counterparty_account_id=payer_workspace_id,
                 custom_model_id=custom_model_id,
-                authorization_id=(user_model_authorization_id_from_payout_event_id(event_id)),
+                authorization_id=(
+                    event_id.split(":", 1)[1]
+                    if is_app_markup
+                    else user_model_authorization_id_from_payout_event_id(event_id)
+                ),
             )
             return True
 
@@ -1852,6 +1857,8 @@ class InMemoryStore:
         tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
         app_id: str = "",
+        app_markup_basis_points: int = 0,
+        app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         user_provided_model_id: str | None = None,
@@ -1883,6 +1890,8 @@ class InMemoryStore:
             tags=tags,
             idempotency_fingerprint=idempotency_fingerprint,
             app_id=app_id,
+            app_markup_basis_points=app_markup_basis_points,
+            app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
             user_provided_model_id=user_provided_model_id,

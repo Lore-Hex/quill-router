@@ -387,6 +387,59 @@ class TestFederatedRequestReachesAuthorize:
 
         assert response.status_code == 200, response.text
 
+    @pytest.mark.parametrize("peer_bps", [0, 30_000])
+    def test_federated_markup_uses_home_terms_and_credits_home_owner(
+        self, monkeypatch: pytest.MonkeyPatch, peer_bps: int
+    ) -> None:
+        app_id = f"markup-collision-{peer_bps}"
+        STORE.create_oauth_app(
+            OAuthApp(
+                id=app_id,
+                owner_user_id="peer-owner",
+                name="Unrelated peer app",
+                redirect_uris=["https://peer.example/callback"],
+                markup_basis_points=peer_bps,
+            )
+        )
+        client = _federating_client(
+            monkeypatch,
+            {
+                **HOME_RECORD,
+                "app_id": app_id,
+                "app_suspended": False,
+                "app_markup_basis_points": 1_000,
+                "app_owner_user_id": "home-owner",
+            },
+        )
+        assert _authorize(client, "lh-fed-1").status_code == 402
+        STORE.claim_credit_transfer(
+            transfer_id=f"t-federated-markup-{peer_bps}",
+            workspace_id="ws-home-1",
+            amount_microdollars=5_000_000,
+            source="https://trustedrouter.com/v1",
+            accept=True,
+        )
+        response = _authorize(client, "lh-fed-1")
+        assert response.status_code == 200, response.text
+        auth = STORE.get_gateway_authorization(response.json()["data"]["authorization_id"])
+        assert auth is not None
+        assert auth.app_markup_basis_points == 1_000
+        assert auth.app_owner_user_id == "home-owner"
+        settle = client.post(
+            "/v1/internal/gateway/settle",
+            json={
+                "authorization_id": auth.id,
+                "actual_input_tokens": 12,
+                "actual_output_tokens": 8,
+                "request_id": f"req-{auth.id}",
+                "status": "success",
+                "elapsed_seconds": 0.5,
+            },
+        )
+        assert settle.status_code == 200, settle.text
+        assert STORE.earnings_summary("home-owner")["total_earned"] > 0
+        assert STORE.earnings_summary("peer-owner")["total_earned"] == 0
+
     def test_a_federated_key_no_longer_403s_on_a_missing_workspace(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

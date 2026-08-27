@@ -20,6 +20,7 @@ from trusted_router.storage_models import (
     ApiKey,
     ApiKeyAuthContext,
     ApiKeyUsageSnapshot,
+    AppMarkupPayout,
     AuthSession,
     BedrockGroupBuyAggregate,
     BedrockGroupBuyPledge,
@@ -756,6 +757,8 @@ class Store(Protocol):
         tags: dict[str, str] | None = ...,
         idempotency_fingerprint: str | None = ...,
         app_id: str = ...,
+        app_markup_basis_points: int = ...,
+        app_owner_user_id: str = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,
         user_provided_model_id: str | None = ...,
@@ -936,6 +939,8 @@ class TypedBillingStore(Protocol):
         idempotency_key: str | None,
         idempotency_fingerprint: str | None,
         app_id: str = ...,
+        app_markup_basis_points: int = ...,
+        app_owner_user_id: str = ...,
         key_usage_shards: int = ...,
         tags: dict[str, str] | None = ...,
         custom_model_id: str | None = ...,
@@ -960,6 +965,7 @@ class TypedBillingStore(Protocol):
         selected_usage_type: UsageType | str,
         generation: Generation | None = ...,
         user_model_payout: UserModelPayout | None = ...,
+        app_markup_payout: AppMarkupPayout | None = ...,
     ) -> bool: ...
 
     def typed_finalize_gateway(self, **kwargs: Any) -> dict[str, Any]: ...

@@ -34,9 +34,10 @@ from psycopg.types.numeric import Int8
 
 from trusted_router.storage_gcp import _auth_record
 from trusted_router.storage_key_usage import api_key_from_json
-from trusted_router.storage_models import ApiKey, OAuthApp
+from trusted_router.storage_models import ApiKey, Generation, OAuthApp
 from trusted_router.store_protocol import Store
 from trusted_router.typed_balance import live_credit_summary
+from trusted_router.types import UsageType
 
 from .conftest import BACKENDS, make_benchmark_sample, make_synthetic_probe_sample
 
@@ -226,6 +227,55 @@ def test_user_earnings_credit_seeds_an_absent_account(
 ) -> None:
     assert store.credit_user_earnings(user_id, 9, f"evt-bare-payout-{unique}")
     assert store.earnings_summary(user_id)["available"] == 9
+
+
+def test_app_markup_movement_kind_round_trips(
+    store: Store, user_id: str, unique: str
+) -> None:
+    event_id = f"app_markup_payout:auth-{unique}"
+    assert store.credit_user_earnings(
+        user_id,
+        70,
+        event_id,
+        custom_model_id=f"app-{unique}",
+        payer_workspace_id=f"payer-{unique}",
+    )
+    movement = store.list_credit_movements(f"user:{user_id}")[0]
+    assert movement.kind == "app_markup_payout"
+    assert movement.authorization_id == f"auth-{unique}"
+    assert movement.custom_model_id == f"app-{unique}"
+
+
+def test_generation_app_markup_field_round_trips(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    generation = Generation(
+        id=f"gen-{unique}",
+        request_id=f"req-{unique}",
+        workspace_id=workspace_id,
+        key_hash=f"key-{unique}",
+        model="openai/gpt-5.4-nano",
+        provider_name="OpenAI",
+        app="conformance",
+        app_id=f"app-{unique}",
+        app_markup_microdollars=37,
+        tokens_prompt=10,
+        tokens_completion=5,
+        total_cost_microdollars=137,
+        usage_type=UsageType.CREDITS,
+        speed_tokens_per_second=10.0,
+        finish_reason="stop",
+        status="success",
+        streamed=False,
+    )
+    try:
+        store.add_generation(generation)
+    except NotImplementedError:
+        pytest.skip("backend does not implement generation writes")
+    loaded = store.get_generation(generation.id)
+    assert loaded is not None
+    assert loaded.app_markup_microdollars == 37
+    assert loaded.app_id == f"app-{unique}"
 
 
 def test_transfer_earnings_is_atomic_idempotent_and_visible_in_workspace(

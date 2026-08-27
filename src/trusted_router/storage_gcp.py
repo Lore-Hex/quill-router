@@ -158,6 +158,7 @@ from trusted_router.storage_gcp_video_jobs import SpannerVideoJobs
 from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
 from trusted_router.storage_models import (
     ApiKeyAuthContext,
+    AppMarkupPayout,
     BedrockGroupBuyAggregate,
     BedrockGroupBuyPledge,
     BedrockGroupBuyPublicMessage,
@@ -2147,6 +2148,7 @@ class SpannerBigtableStore:
         payer_workspace_id: str | None = None,
     ) -> bool:
         amount = self._positive_money_amount(amount_microdollars)
+        is_app_markup = event_id.startswith("app_markup_payout:")
 
         def txn(transaction: Any) -> bool:
             if self._read_entity_tx(transaction, "stripe_event", event_id, dict) is not None:
@@ -2180,11 +2182,15 @@ class SpannerBigtableStore:
                 transaction,
                 account_id=f"user:{user_id}",
                 movement_id=event_id,
-                kind="custom_model_payout",
+                kind="app_markup_payout" if is_app_markup else "custom_model_payout",
                 amount_microdollars=amount,
                 counterparty_account_id=payer_workspace_id,
                 custom_model_id=custom_model_id,
-                authorization_id=(user_model_authorization_id_from_payout_event_id(event_id)),
+                authorization_id=(
+                    event_id.split(":", 1)[1]
+                    if is_app_markup
+                    else user_model_authorization_id_from_payout_event_id(event_id)
+                ),
                 created_at=now,
             )
             insert_entity_dml_at(
@@ -2564,6 +2570,8 @@ class SpannerBigtableStore:
         tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
         app_id: str = "",
+        app_markup_basis_points: int = 0,
+        app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         user_provided_model_id: str | None = None,
@@ -2595,6 +2603,8 @@ class SpannerBigtableStore:
             tags=tags,
             idempotency_fingerprint=idempotency_fingerprint,
             app_id=app_id,
+            app_markup_basis_points=app_markup_basis_points,
+            app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
             user_provided_model_id=user_provided_model_id,
@@ -2675,6 +2685,7 @@ class SpannerBigtableStore:
         selected_usage_type: UsageType | str,
         generation: Generation | None = None,
         user_model_payout: UserModelPayout | None = None,
+        app_markup_payout: AppMarkupPayout | None = None,
     ) -> bool:
         return self.typed_finalize_gateway_authorization_result(
             authorization_id,
@@ -2683,6 +2694,7 @@ class SpannerBigtableStore:
             selected_usage_type=selected_usage_type,
             generation=generation,
             user_model_payout=user_model_payout,
+            app_markup_payout=app_markup_payout,
         ).finalized
 
     def typed_finalize_gateway_authorization_result(
@@ -2694,6 +2706,7 @@ class SpannerBigtableStore:
         selected_usage_type: UsageType | str,
         generation: Generation | None = None,
         user_model_payout: UserModelPayout | None = None,
+        app_markup_payout: AppMarkupPayout | None = None,
     ) -> TypedFinalizeResult:
         """Route-facing typed settle: same contract as
         finalize_gateway_authorization, with explicit activity-index status.
@@ -2755,6 +2768,7 @@ class SpannerBigtableStore:
                 None,
             ),
             user_model_payout=user_model_payout,
+            app_markup_payout=app_markup_payout,
         )
         spanner_ms = (time.perf_counter() - spanner_start) * 1000
         if result["outcome"] == SettleOutcome.ERROR:
@@ -2819,6 +2833,8 @@ class SpannerBigtableStore:
         lease_max_available_basis_points: int,
         lease_shard_count: int,
         app_id: str = "",
+        app_markup_basis_points: int = 0,
+        app_owner_user_id: str = "",
     ) -> tuple[str, GatewayAuthorization | None]:
         """Authorize from bounded regional escrow without touching hot counters."""
 
@@ -3263,6 +3279,8 @@ class SpannerBigtableStore:
         idempotency_key: str | None,
         idempotency_fingerprint: str | None,
         app_id: str = "",
+        app_markup_basis_points: int = 0,
+        app_owner_user_id: str = "",
         key_usage_shards: int = 1,
         tags: dict[str, str] | None = None,
         custom_model_id: str | None = None,
@@ -3329,6 +3347,8 @@ class SpannerBigtableStore:
                 tags=dict(tags or {}),
                 idempotency_fingerprint=idempotency_fingerprint,
                 app_id=app_id,
+                app_markup_basis_points=app_markup_basis_points,
+                app_owner_user_id=app_owner_user_id,
                 custom_model_id=custom_model_id,
                 custom_model_revision=custom_model_revision,
                 user_provided_model_id=user_provided_model_id,
