@@ -29,6 +29,11 @@ from trusted_router.operational_analytics_freshness import (
     REASON_UNREACHABLE,
     OutboxFreshness,
 )
+from trusted_router.receipt_keys import (
+    RECEIPT_KEY_KIND,
+    ReceiptKeyWriteOutcome,
+    merge_receipt_key_observation,
+)
 from trusted_router.security import lookup_hash_api_key, verify_api_key
 from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage import (
@@ -153,6 +158,7 @@ from trusted_router.storage_models import (
     BedrockGroupBuyPledge,
     BedrockGroupBuyPublicMessage,
     CreditMovement,
+    ReceiptKey,
     SessionAuthContext,
     TypedFinalizeResult,
     UserModelPayout,
@@ -4446,6 +4452,25 @@ class SpannerBigtableStore:
         if email_user:
             return str(email_user["user_id"])
         return None
+
+    def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
+        def txn(transaction: Any) -> ReceiptKeyWriteOutcome:
+            existing = self._read_entity_tx(
+                transaction, RECEIPT_KEY_KIND, record.kid, ReceiptKey
+            )
+            merged, outcome = merge_receipt_key_observation(existing, record)
+            if merged is not None and outcome in {"appended", "refreshed"}:
+                self._write_entity_tx(transaction, RECEIPT_KEY_KIND, record.kid, merged)
+            return outcome
+
+        return cast(ReceiptKeyWriteOutcome, self._run_in_transaction(txn))
+
+    def list_receipt_keys(self, *, limit: int = 5_000) -> list[ReceiptKey]:
+        return self._list_entities(
+            RECEIPT_KEY_KIND,
+            cls=ReceiptKey,
+            limit=max(0, min(limit, 10_000)),
+        )
 
     def _read_entity(self, kind: str, entity_id: str, cls: type[T]) -> T | None:
         # This generic helper serves membership, key, and workspace authorization

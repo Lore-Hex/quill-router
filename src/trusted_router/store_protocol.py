@@ -42,6 +42,7 @@ from trusted_router.storage_models import (
     ProviderAccessGrant,
     ProviderBenchmarkSample,
     RateLimitHit,
+    ReceiptKey,
     Reservation,
     SessionAuthContext,
     SignupResult,
@@ -884,6 +885,10 @@ class Store(Protocol):
         api_key_hash: str | None = ...,
         by_model: bool = ...,
     ) -> dict[str, Any]: ...
+
+    # Append-only inference-receipt key log ---------------------------------
+    def observe_receipt_key(self, record: ReceiptKey) -> str: ...
+    def list_receipt_keys(self, *, limit: int = ...) -> list[ReceiptKey]: ...
 
     # Rate limiting -----------------------------------------------------------
     def hit_rate_limit(

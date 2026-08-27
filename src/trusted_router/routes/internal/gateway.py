@@ -107,6 +107,7 @@ from trusted_router.services.broadcast import (
     should_drain_inline,
 )
 from trusted_router.services.federation import FederationClient, FederationUnavailable
+from trusted_router.services.receipt_key_collector import collect_receipt_keys
 from trusted_router.services.regional_quota_leases import LeaseSettlementError
 from trusted_router.services.settle_outbox_apply import normalized_prompt_accounting
 from trusted_router.services.settle_outbox_drain import (
@@ -1222,6 +1223,22 @@ def register(router: APIRouter) -> None:
         # Cloud Scheduler drives this on a cadence; the heartbeat makes that
         # cadence visible on /fleet so a silently-dead scheduler is seen.
         await run_in_threadpool(record_heartbeat, "job:settle-outbox-drain", settings=settings)
+        return result
+
+    @router.post("/internal/gateway/receipt-keys/collect")
+    async def gateway_receipt_keys_collect(
+        request: Request,
+        settings: SettingsDep,
+    ) -> dict[str, int]:
+        """Cloud Scheduler pass for the append-only receipt-key log."""
+
+        require_internal_gateway(request, settings)
+        result = await run_in_threadpool(collect_receipt_keys, settings)
+        await run_in_threadpool(
+            record_heartbeat,
+            "job:receipt-key-collector",
+            settings=settings,
+        )
         return result
 
     @router.post("/internal/gateway/regional-quota/reconcile")

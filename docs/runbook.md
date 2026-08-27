@@ -563,6 +563,25 @@ https://docs.phala.com/phala-cloud/confidential-ai/confidential-model/confidenti
 
 ---
 
+## Receipt key collection
+
+The append-only inference-receipt key log is fed by a Cloud Scheduler job
+(created 2026-08-26; recreate with the same internal-token header as the
+settle-outbox drain if it is ever lost):
+
+```
+gcloud scheduler jobs create http trusted-router-receipt-key-collect \
+  --location us-central1 \
+  --schedule "*/30 * * * *" \
+  --uri "https://trusted-router-vsjf6qu4la-uc.a.run.app/v1/internal/gateway/receipt-keys/collect" \
+  --http-method POST \
+  --headers "x-trustedrouter-internal-token=<internal gateway token>"
+```
+
+The collector verifies every key before append (kid derivation, commitment
+set membership, GCP attestation chain); a kid observed with a different key
+logs `ALERT receipt_key_kid_collision` and never replaces the stored key.
+
 ## <a id="settle-outbox"></a>Settle outbox: flip, verify, monitor, roll back
 
 Durably recover completed charges whose settle intent was recorded but whose

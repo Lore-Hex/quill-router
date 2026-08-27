@@ -23,6 +23,10 @@ from trusted_router.operational_analytics_freshness import (
     REASON_NOT_CONFIGURED,
     OutboxFreshness,
 )
+from trusted_router.receipt_keys import (
+    ReceiptKeyWriteOutcome,
+    merge_receipt_key_observation,
+)
 from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage_attribution import InMemoryAcquisitionAttribution
 from trusted_router.storage_auth_context import build_session_auth_context
@@ -64,6 +68,7 @@ from trusted_router.storage_models import (
     ProviderAccessGrant,
     ProviderBenchmarkSample,
     RateLimitHit,
+    ReceiptKey,
     Reservation,
     SessionAuthContext,
     SignupResult,
@@ -123,6 +128,7 @@ class InMemoryStore:
         self.credit_transfer_claims: dict[str, dict[str, Any]] = {}
         self.client_events_batches: list[dict[str, Any]] = []
         self.client_event_ids: set[str] = set()
+        self.receipt_keys: dict[str, ReceiptKey] = {}
         #: Federated settlement claims, keyed (source_plane, authorization_id).
         #: Insert-once: the recorded terms are the verdict for every replay.
         self.federated_settlement_claims: dict[tuple[str, str], dict[str, Any]] = {}
@@ -176,6 +182,7 @@ class InMemoryStore:
             self.credit_transfer_claims.clear()
             self.client_events_batches.clear()
             self.client_event_ids.clear()
+            self.receipt_keys.clear()
             self.api_keys.reset()
             self.acquisition_store.reset()
             self.bedrock_group_buy_store.reset()
@@ -196,6 +203,20 @@ class InMemoryStore:
 
     def readiness_check(self) -> None:
         """The in-memory backend has no external serving dependency."""
+
+    def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
+        with self._lock:
+            merged, outcome = merge_receipt_key_observation(
+                self.receipt_keys.get(record.kid), record
+            )
+            if merged is not None and outcome in {"appended", "refreshed"}:
+                self.receipt_keys[record.kid] = merged
+            return outcome
+
+    def list_receipt_keys(self, *, limit: int = 5_000) -> list[ReceiptKey]:
+        bounded = max(0, min(limit, 10_000))
+        with self._lock:
+            return [self.receipt_keys[kid] for kid in sorted(self.receipt_keys)[:bounded]]
 
     def ensure_user(
         self,

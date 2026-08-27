@@ -1,0 +1,167 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Signed inference receipts">
+  <div class="marketing-copy">
+    <span class="eyebrow">Offline-verifiable proof of inference</span>
+    <h2>Every response can carry a signed receipt.</h2>
+    <p>Add one header to any chat or responses call and TrustedRouter returns a signed receipt: a compact proof that this exact request produced this exact response, which model and provider served it, and how the upstream was verified. The signing key is minted inside the attested enclave and committed into its hardware attestation, so a receipt chains to the same Confidential Space evidence as the live gateway.</p>
+    <p>Receipts are opt-in per request and never stored server-side. Verification is offline: signature, hashes, and the attestation chain all check without calling TrustedRouter again.</p>
+    <p><strong>A receipt is not a confidentiality proof.</strong> It proves integrity and origin of the bytes; session privacy remains the job of the attested TLS channel documented on the <a href="/trust">trust page</a>.</p>
+  </div>
+  <div class="marketing-grid two">
+    <div class="marketing-card">
+      <span class="card-label">Non-streaming</span>
+      <h3>Compact JWS in a header</h3>
+      <p>The response carries <code>x-inference-receipt</code>: a three-part JWS over the exact request and response body bytes. The attestation document is pinned by hash and fetched separately.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Streaming</span>
+      <h3>Self-contained final chunk</h3>
+      <p>The last data event before <code>[DONE]</code> is a <code>chat.completion.chunk</code> with an <code>inference_receipt</code> object — a flattened JWS with the full attestation embedded in its protected header. Truncated streams never get a receipt.</p>
+    </div>
+  </div>
+</section>
+
+<section class="status-section" style="margin-top:48px" id="quickstart">
+  <div class="status-section-head">
+    <div>
+      <h2>Quickstart</h2>
+      <p>Send the header with <code>true</code>, or with a fresh nonce of 1–88 characters from <code>A–Z a–z 0–9 _ -</code>. The nonce is echoed inside the signed claims, which is what makes a receipt provably fresh to you.</p>
+    </div>
+  </div>
+  <pre><code>curl {{ api_base_url }}/chat/completions \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "x-inference-receipt: $(openssl rand -hex 16)" \
+  -d '{"model":"trustedrouter/auto","messages":[{"role":"user","content":"Hello"}]}' \
+  -D - -o response.json</code></pre>
+  <p>The <code>x-inference-receipt</code> response header holds the compact receipt. Requests without the header are byte-identical to today — the feature is invisible unless you ask for it. Malformed opt-in values are rejected with <code>400</code>.</p>
+</section>
+
+<section class="status-section" style="margin-top:48px" id="verify">
+  <div class="status-section-head">
+    <div>
+      <h2>Verify a receipt</h2>
+      <p>All six SDKs verify receipts offline, and the reference verifier ships in the open <code>quill-cloud-proxy</code> repository as <code>tools/verify-attestation.py --verify-receipt</code>.</p>
+    </div>
+  </div>
+  <div class="marketing-grid two">
+    <div class="marketing-card">
+      <span class="card-label">Python</span>
+      <h3>Streaming, fully self-contained</h3>
+      <pre><code>from trustedrouter.receipts import verify_receipt
+
+claims = verify_receipt(
+    receipt,                      # the inference_receipt object
+    request_body=body_bytes,      # exact bytes you sent
+    response_stream=wire_bytes,   # exact SSE bytes you received
+    expected_nonce=my_nonce,
+    max_age_seconds=300,
+)
+print(claims.model.selected, claims.upstream.tier)</code></pre>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">JavaScript</span>
+      <h3>Compact, with the pinned attestation</h3>
+      <pre><code>import { verifyReceipt } from "@lore-hex/trusted-router/receipts";
+
+const claims = await verifyReceipt(compactReceipt, {
+  requestBody, responseBody,
+  expectedNonce: myNonce,
+  maxAgeSeconds: 300,
+  attestation,   // bytes whose sha256 equals the att_sha256 claim
+});</code></pre>
+    </div>
+  </div>
+  <p style="margin-top:16px">Go, Rust, Swift, and Java expose the same verification with the same checks and the same frozen cross-SDK test vectors. Verification always covers: the Ed25519 signature; <code>rv</code>, <code>iat</code> freshness, and your nonce; the request and response hashes over exact bytes; the receipt event's position in a stream; and the attestation chain with the signing key's commitment checked by set membership.</p>
+</section>
+
+<section class="status-section" style="margin-top:48px" id="claims">
+  <div class="status-section-head">
+    <div>
+      <h2>What the claims say</h2>
+      <p>The payload is <code>inference-receipt/1</code>. Hashes are unpadded base64url SHA-256.</p>
+    </div>
+  </div>
+  <div class="leaderboard-table-wrap">
+    <table class="activity-table status-table">
+      <thead><tr><th>Claim</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>rv</code></td><td>Receipt version, <code>1</code></td></tr>
+        <tr><td><code>iss</code></td><td>The issuing plane's canonical https origin</td></tr>
+        <tr><td><code>iat</code></td><td>Signing time, Unix seconds; verifiers allow at most 60&nbsp;s of future skew</td></tr>
+        <tr><td><code>jti</code></td><td>The response id (<code>chatcmpl-…</code> or <code>resp_…</code>)</td></tr>
+        <tr><td><code>gen</code></td><td>Generation id — non-streaming only, since streams settle after <code>[DONE]</code></td></tr>
+        <tr><td><code>nonce</code></td><td>Your opt-in value, echoed verbatim when it was not <code>true</code></td></tr>
+        <tr><td><code>route</code></td><td><code>chat.completions</code> or <code>responses</code></td></tr>
+        <tr><td><code>req</code></td><td><code>sha256</code> over the exact request body bytes</td></tr>
+        <tr><td><code>resp</code></td><td><code>sha256</code> over exact response bytes: <code>of&nbsp;=&nbsp;body</code>, or the stream domains <code>sse-data-v1</code> / <code>sse-events-v1</code> with an <code>events</code> count</td></tr>
+        <tr><td><code>model</code></td><td><code>requested</code>, <code>selected</code>, <code>provider</code>, <code>endpoint</code> — the router's actual selection</td></tr>
+        <tr><td><code>upstream</code></td><td>The verification tier below</td></tr>
+        <tr><td><code>att_sha256</code></td><td>Compact receipts only: SHA-256 of the exact key-binding attestation document</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="status-section" style="margin-top:48px" id="tiers">
+  <div class="status-section-head">
+    <div>
+      <h2>Upstream tiers name a mechanism, never a privacy property</h2>
+      <p>The tier records how the upstream that served <em>this request</em> was verified. It makes no claim about what the upstream retains.</p>
+    </div>
+  </div>
+  <div class="leaderboard-table-wrap">
+    <table class="activity-table status-table">
+      <thead><tr><th>Tier</th><th>Meaning</th><th>Extra claims</th></tr></thead>
+      <tbody>
+        <tr><td><code>tee-verified</code></td><td>The upstream's own TEE attestation was verified before your bytes were sent, under a named policy such as <code>chutes-tdx-nvidia-e2e-v1</code> or <code>tinfoil-snp-dual-source-v1</code></td><td><code>policy</code>, <code>verified_at</code>, <code>verification_expires_at</code>; verifiers require <code>verified_at ≤ iat &lt; verification_expires_at</code></td></tr>
+        <tr><td><code>tls-webpki</code></td><td>The upstream was reached over ordinary WebPKI TLS</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top:12px">A failed attested candidate never lends its tier to the fallback that actually serves the response — the tier always describes the connection your bytes used.</p>
+</section>
+
+<section class="status-section" style="margin-top:48px" id="attestation">
+  <div class="status-section-head">
+    <div>
+      <h2>The attestation chain</h2>
+      <p>Each enclave instance mints a fresh Ed25519 keypair at boot and commits <code>SHA-256("inference-receipt-key-v1"&nbsp;‖&nbsp;0x00&nbsp;‖&nbsp;pubkey)</code> into its hardware attestation. Verifiers check that commitment by set membership among the attestation's committed values — never by position.</p>
+    </div>
+  </div>
+  <div class="leaderboard-table-wrap">
+    <table class="activity-table status-table">
+      <thead><tr><th>Endpoint</th><th>Serves</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /receipt-attestation</code></td><td>This instance's raw key-binding attestation document</td></tr>
+        <tr><td><code>GET /receipt-key</code></td><td>This instance's <code>{kid, jwk, att, att_kind}</code> envelope — match a compact receipt's <code>kid</code> directly</td></tr>
+        <tr><td><code>GET /.well-known/inference-receipt-keys</code></td><td>The append-only key log: every observed signing key with its attestation, so compact receipts stay verifiable after the instance that signed them is gone</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top:12px">Streaming receipts embed the attestation, so nothing extra is fetched. For compact receipts, note that keys are per-instance: routing is DNS-based, so either resolve the gateway hostname's A records and ask each instance for its <code>/receipt-key</code> until the <code>kid</code> matches, or look the <code>kid</code> up in the key log.</p>
+</section>
+
+<section class="status-section" style="margin-top:48px" id="threat-model">
+  <div class="status-section-head">
+    <div>
+      <h2>What a receipt proves — and deliberately does not</h2>
+    </div>
+  </div>
+  <div class="marketing-grid two">
+    <div class="marketing-card">
+      <span class="card-label">Proves</span>
+      <h3>Integrity and origin</h3>
+      <p>The exact request produced the exact response; the named model, provider, and endpoint served it; the signing key lives in a measured, debug-disabled Confidential Space workload; with your nonce, that the receipt was minted for your request and is not a replay.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Does not prove</span>
+      <h3>Confidentiality or identity</h3>
+      <p>A relay that forwarded your request holds a valid receipt <em>and</em> read everything — session privacy is the attested-TLS flow on the <a href="/trust">trust page</a>, not the receipt. Receipts carry no requester identity, so sharing one cannot deanonymize you.</p>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

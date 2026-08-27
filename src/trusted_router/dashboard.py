@@ -1318,6 +1318,15 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "without adding them to model prompts or provider payloads."
         ),
     ),
+    "docs/receipts": PublicPage(
+        template="public/receipts.html",
+        title="Signed Inference Receipts",
+        description=(
+            "Opt into a signed, offline-verifiable receipt on any inference call: exact "
+            "request and response hashes, the routed model and provider, the upstream "
+            "verification tier, and a signing key committed into hardware attestation."
+        ),
+    ),
     "docs/telemetry": PublicPage(
         template="public/telemetry.html",
         title="Client Reliability Telemetry",
