@@ -104,6 +104,7 @@ def _settle(
     *,
     client_context: dict[str, Any] | None = None,
     gateway_request_id: str | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> tuple[Any, Generation]:
     body: dict[str, Any] = {
         "authorization_id": authorization["authorization_id"],
@@ -118,6 +119,8 @@ def _settle(
         body["client"] = client_context
     if gateway_request_id is not None:
         body["gateway_request_id"] = gateway_request_id
+    if extra:
+        body.update(extra)
     response = client.post("/v1/internal/gateway/settle", json=body)
     assert response.status_code == 200, response.text
     generation = STORE.get_generation(response.json()["data"]["generation_id"])
@@ -259,10 +262,12 @@ def test_broadcast_excludes_client_but_keeps_gateway_request_id(
         authorization,
         client_context=VALID_CLIENT_CONTEXT,
         gateway_request_id=GATEWAY_REQUEST_ID,
+        extra={"app_id": "forged-app"},
     )
 
     assert captured["generation"] is generation
     assert "client" not in captured["settle_body"]
+    assert "app_id" not in captured["settle_body"]
     assert captured["settle_body"]["gateway_request_id"] == GATEWAY_REQUEST_ID
     assert generation.client_sdk == "tr-py"
 

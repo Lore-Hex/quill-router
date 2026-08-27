@@ -107,6 +107,8 @@ from trusted_router.services.broadcast import (
     should_drain_inline,
 )
 from trusted_router.services.federation import FederationClient, FederationUnavailable
+from trusted_router.services.keyed_admission import KeyedConcurrencyAdmission
+from trusted_router.services.receipt_key_collector import collect_receipt_keys
 from trusted_router.services.regional_quota_leases import LeaseSettlementError
 from trusted_router.services.settle_outbox_apply import normalized_prompt_accounting
 from trusted_router.services.settle_outbox_drain import (
@@ -157,7 +159,11 @@ from trusted_router.user_model_rules import (
 
 logger = logging.getLogger(__name__)
 REQUEST_METADATA_VERSION = 1
-_BILLING_PATH_SPANNER_BUDGET_SECONDS = 25.0
+# The enclave stops waiting for response headers after 25 seconds. Preserve the
+# transaction layer's 20-second retry budget while leaving five seconds for this
+# process to serialize a structured retryable 503 and for network transit.
+_BILLING_PATH_SPANNER_BUDGET_SECONDS = 20.0
+_AUTHORIZE_ADMISSION = KeyedConcurrencyAdmission()
 _NATIVE_BATCH_ROUTE_PREFIX = "batch.native."
 _NATIVE_BATCH_BILLED_FRACTION_BPS = {
     "openai": 5_000,
@@ -241,7 +247,32 @@ async def authorize_gateway(
     free while this request's blocking storage runs; the response is byte-identical.
     Kept ``async`` so callers/tests await it unchanged.
     """
-    return await run_in_threadpool(_authorize_gateway_sync, request, body, settings)
+    subject = body.api_key_lookup_hash or body.api_key_hash
+    assert subject is not None  # GatewayAuthorizeRequest validates one identifier.
+    if not _AUTHORIZE_ADMISSION.try_acquire(
+        subject,
+        limit=settings.gateway_authorize_max_in_flight_per_key,
+    ):
+        logger.warning(
+            "billing.authorize_admission_limited",
+            extra={
+                "request_id": getattr(request.state, "request_id", None),
+                "key_subject_fingerprint": hashlib.sha256(
+                    subject.encode("utf-8")
+                ).hexdigest()[:16],
+                "limit": settings.gateway_authorize_max_in_flight_per_key,
+            },
+        )
+        raise api_error(
+            429,
+            "Too many concurrent requests for this API key",
+            ErrorType.RATE_LIMITED,
+            headers={"Retry-After": "1"},
+        )
+    try:
+        return await run_in_threadpool(_authorize_gateway_sync, request, body, settings)
+    finally:
+        _AUTHORIZE_ADMISSION.release(subject)
 
 
 @spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)
@@ -589,6 +620,9 @@ def _authorize_gateway_sync(
                 ErrorType.CONFLICT,
             )
         return _replay_response(existing_authorization)
+    # Suspension stops NEW authorizations. Resolve replay first so a lost
+    # response can be recovered and in-flight work can settle under frozen terms.
+    _assert_oauth_app_allows_new_authorization(api_key)
     # Minted up front so a user-model concurrency slot can be keyed by it
     # before the reservation exists. It is a fresh uuid — never derived from
     # the caller's Idempotency-Key: a deterministic id would outlive its
@@ -702,6 +736,7 @@ def _authorize_gateway_sync(
                     candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
                     idempotency_key=request_idempotency_key,
                     idempotency_fingerprint=request_fingerprint,
+                    app_id=api_key.app_id,
                     tags=effective_tags,
                     expires_at=expires_at,
                     lease_ttl_seconds=settings.regional_quota_lease_ttl_seconds,
@@ -729,6 +764,7 @@ def _authorize_gateway_sync(
                     idempotency_key=request_idempotency_key,
                     tags=effective_tags,
                     idempotency_fingerprint=request_fingerprint,
+                    app_id=api_key.app_id,
                     key_usage_shards=key_usage_shards,
                     custom_model_id=custom_model.id if custom_model else None,
                     custom_model_revision=custom_model.revision if custom_model else None,
@@ -907,6 +943,7 @@ def _authorize_gateway_sync(
             idempotency_key=request_idempotency_key,
             tags=effective_tags,
             idempotency_fingerprint=request_fingerprint,
+            app_id=api_key.app_id,
             custom_model_id=custom_model.id if custom_model else None,
             custom_model_revision=custom_model.revision if custom_model else None,
             user_provided_model_id=user_model.id if user_model else None,
@@ -1216,6 +1253,22 @@ def register(router: APIRouter) -> None:
         # Cloud Scheduler drives this on a cadence; the heartbeat makes that
         # cadence visible on /fleet so a silently-dead scheduler is seen.
         await run_in_threadpool(record_heartbeat, "job:settle-outbox-drain", settings=settings)
+        return result
+
+    @router.post("/internal/gateway/receipt-keys/collect")
+    async def gateway_receipt_keys_collect(
+        request: Request,
+        settings: SettingsDep,
+    ) -> dict[str, int]:
+        """Cloud Scheduler pass for the append-only receipt-key log."""
+
+        require_internal_gateway(request, settings)
+        result = await run_in_threadpool(collect_receipt_keys, settings)
+        await run_in_threadpool(
+            record_heartbeat,
+            "job:receipt-key-collector",
+            settings=settings,
+        )
         return result
 
     @router.post("/internal/gateway/regional-quota/reconcile")
@@ -1567,6 +1620,39 @@ def _assert_gateway_key_scope(api_key: Any) -> None:
             f"API key is missing required scope: {SCOPE_INFERENCE}",
             ErrorType.INSUFFICIENT_SCOPE,
         )
+
+
+def _assert_oauth_app_allows_new_authorization(api_key: Any) -> None:
+    if not api_key.app_id:
+        return
+
+    suspended = _oauth_app_is_suspended_for_key(api_key)
+
+    if suspended:
+        # Do not report INVALID_API_KEY: enclaves negative-cache that result,
+        # so un-suspending the app would not promptly restore its valid key.
+        raise api_error(
+            403,
+            "OAuth app is missing or suspended; new authorizations are forbidden",
+            ErrorType.FORBIDDEN,
+        )
+
+
+def _oauth_app_is_suspended_for_key(api_key: Any) -> bool:
+    """Resolve app suspension from the key's authoritative provenance."""
+    if getattr(api_key, "federated_home", ""):
+        # Case 1: a federated key trusts only the restriction served by home.
+        # App slugs are namespaced per plane, so a peer's local row with the
+        # same slug is unrelated and meaningless for this key.
+        return bool(getattr(api_key, "federated_app_suspended", False))
+
+    app = STORE.get_oauth_app(api_key.app_id)
+    if app is not None:
+        # Case 2: a home-plane key uses its authoritative local app row.
+        return bool(app.suspended)
+
+    # Case 3: an orphaned home-plane app key fails closed after app deletion.
+    return True
 
 
 def _federated_key_still_valid(cached: Any | None, lookup_hash: str) -> Any | None:
@@ -2331,6 +2417,9 @@ def _settle_gateway_authorization(
         # correlation id is useful to them, the client telemetry object is not.
         broadcast_settle_body = dict(settle_body)
         broadcast_settle_body.pop("client", None)
+        # App attribution is frozen from the key at authorize. Never let a
+        # caller-supplied root field become forgeable broadcast metadata.
+        broadcast_settle_body.pop("app_id", None)
         broadcast_settle_body.pop("price_tier_input_tokens", None)
         enqueue_metadata_broadcast(generation, settle_body=broadcast_settle_body)
         if should_drain_inline(settings) and background_tasks is not None:

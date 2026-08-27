@@ -44,6 +44,11 @@ from trusted_router.postgres_dsn import (
     aws_dsql_connection_details,
     dsql_token_is_admin,
 )
+from trusted_router.receipt_keys import (
+    RECEIPT_KEY_KIND,
+    ReceiptKeyWriteOutcome,
+    merge_receipt_key_observation,
+)
 from trusted_router.scopes import validate_api_key_scopes
 from trusted_router.security import (
     hash_api_key,
@@ -102,10 +107,12 @@ from trusted_router.storage_models import (
     Generation,
     GoogleAdsConversion,
     Member,
+    OAuthApp,
     OAuthAuthorizationCode,
     ProviderAccessGrant,
     ProviderBenchmarkSample,
     RateLimitHit,
+    ReceiptKey,
     Reservation,
     SessionAuthContext,
     SignupResult,
@@ -126,6 +133,7 @@ from trusted_router.storage_models import (
     normalize_provider_access_slug,
     utcnow,
 )
+from trusted_router.storage_oauth_apps import apply_oauth_app_patch
 from trusted_router.storage_postgres_group_buy import PostgresBedrockGroupBuy
 from trusted_router.storage_postgres_operational_analytics_outbox import (
     PostgresOperationalAnalyticsOutbox,
@@ -633,6 +641,48 @@ class PostgresStore:
 
     def _read_entity(self, kind: str, entity_id: str, cls: type[T]) -> T | None:
         return self._run_transaction(lambda conn: self._read_entity_tx(conn, kind, entity_id, cls))
+
+    def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
+        def operation(conn: Any) -> ReceiptKeyWriteOutcome:
+            existing = self._read_entity_tx(
+                conn,
+                RECEIPT_KEY_KIND,
+                record.kid,
+                ReceiptKey,
+                for_update=True,
+            )
+            candidate, outcome = merge_receipt_key_observation(existing, record)
+            if candidate is None or outcome in {"conflict", "invalid"}:
+                return outcome
+            if existing is None:
+                if self._insert_entity_once_tx(
+                    conn, RECEIPT_KEY_KIND, record.kid, candidate
+                ):
+                    return "appended"
+                # A concurrent transaction inserted this kid after our absent
+                # read. Lock its now-committed verdict before comparing.
+                existing = self._read_entity_tx(
+                    conn,
+                    RECEIPT_KEY_KIND,
+                    record.kid,
+                    ReceiptKey,
+                    for_update=True,
+                )
+                if existing is None:  # pragma: no cover - database invariant
+                    raise StoreConflict("receipt key insert conflict lost its row")
+                candidate, outcome = merge_receipt_key_observation(existing, record)
+            if candidate is not None and outcome == "refreshed":
+                self._write_entity_tx(conn, RECEIPT_KEY_KIND, record.kid, candidate)
+            return outcome
+
+        return self._run_transaction(operation)
+
+    def list_receipt_keys(self, *, limit: int = 5_000) -> list[ReceiptKey]:
+        return self._list_entities(
+            RECEIPT_KEY_KIND,
+            ReceiptKey,
+            limit=max(0, min(limit, 10_000)),
+        )
 
     def _list_entities(
         self,
@@ -1605,6 +1655,7 @@ class PostgresStore:
         code_challenge_method: str | None = None,
         spawn_agent: str | None = None,
         spawn_cloud: str | None = None,
+        client_app_id: str = "",
     ) -> tuple[str, OAuthAuthorizationCode]:
         raw = new_api_key(prefix="auth_code")
         code = OAuthAuthorizationCode(
@@ -1625,6 +1676,7 @@ class PostgresStore:
             code_expires_at=self._expires_at(ttl_seconds),
             spawn_agent=spawn_agent,
             spawn_cloud=spawn_cloud,
+            client_app_id=client_app_id,
         )
         code.secret_hash = hash_api_key(raw, code.salt)
 
@@ -1649,6 +1701,41 @@ class PostgresStore:
             cls=OAuthAuthorizationCode,
             expiry_field="code_expires_at",
         )
+
+    def create_oauth_app(self, app: OAuthApp) -> OAuthApp:
+        def create(conn: Any) -> OAuthApp:
+            if not self._insert_entity_once_tx(conn, "oauth_app", app.id, app):
+                raise ValueError("oauth_app_id_taken")
+            return app
+
+        return self._run_transaction(create)
+
+    def get_oauth_app(self, app_id: str) -> OAuthApp | None:
+        return self._read_entity("oauth_app", app_id, OAuthApp)
+
+    def list_oauth_apps_for_user(self, owner_user_id: str) -> list[OAuthApp]:
+        apps = [
+            app
+            for app in self._list_entities("oauth_app", OAuthApp)
+            if app.owner_user_id == owner_user_id
+        ]
+        return sorted(apps, key=lambda app: (app.created_at, app.id))
+
+    def update_oauth_app(
+        self,
+        app_id: str,
+        *,
+        patch: dict[str, Any],
+    ) -> OAuthApp | None:
+        def update(conn: Any) -> OAuthApp | None:
+            app = self._read_entity_tx(conn, "oauth_app", app_id, OAuthApp, for_update=True)
+            if app is None:
+                return None
+            apply_oauth_app_patch(app, patch)
+            self._write_entity_tx(conn, "oauth_app", app.id, app)
+            return app
+
+        return self._run_transaction(update)
 
     # Email send blocks ------------------------------------------------------
 
@@ -1713,6 +1800,7 @@ class PostgresStore:
         budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
         scopes: list[str] | None = None,
+        app_id: str = "",
     ) -> tuple[str, ApiKey]:
         validated_scopes = validate_api_key_scopes(scopes, management=management)
         raw = raw_key or new_api_key()
@@ -1726,6 +1814,7 @@ class PostgresStore:
             workspace_id=workspace_id,
             creator_user_id=creator_user_id,
             scopes=validated_scopes,
+            app_id=app_id,
             management=management,
             limit_microdollars=limit_microdollars,
             limit_reset=limit_reset,
@@ -3926,6 +4015,7 @@ class PostgresStore:
         idempotency_key: str | None = None,
         tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
+        app_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         user_provided_model_id: str | None = None,
@@ -3976,6 +4066,7 @@ class PostgresStore:
             idempotency_key=idempotency_key,
             tags=dict(tags or {}),
             idempotency_fingerprint=idempotency_fingerprint,
+            app_id=app_id,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
             user_provided_model_id=user_provided_model_id,

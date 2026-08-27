@@ -225,6 +225,8 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/docs/migrate-from-openrouter",
     "/docs/tagging",
     "/docs/telemetry",
+    "/docs/receipts",
+    "/docs/provider-routing",
     "/docs/prompt-caching",
     "/docs/batch",
     "/docs/web-search",
@@ -1316,6 +1318,24 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "Attach AWS style tags and OpenRouter attribution metadata to LLM requests "
             "without adding them to model prompts or provider payloads."
+        ),
+    ),
+    "docs/provider-routing": PublicPage(
+        template="public/provider_routing.html",
+        title="Provider Routing And Pinning",
+        description=(
+            "Pin, prefer, or exclude providers per request with the OpenRouter-compatible "
+            "provider object: only, ignore, order, allow_fallbacks, sort, hard privacy "
+            "floors, billing path, and jurisdiction filters that fail closed."
+        ),
+    ),
+    "docs/receipts": PublicPage(
+        template="public/receipts.html",
+        title="Signed Inference Receipts",
+        description=(
+            "Opt into a signed, offline-verifiable receipt on any inference call: exact "
+            "request and response hashes, the routed model and provider, the upstream "
+            "verification tier, and a signing key committed into hardware attestation."
         ),
     ),
     "docs/telemetry": PublicPage(
@@ -4296,10 +4316,14 @@ def llms_txt(settings: Settings) -> str:
         f"- [Video generation](https://{domain}/docs/video)",
         f"- [Request tagging and cost allocation](https://{domain}/docs/tagging)",
         f"- [Client reliability telemetry](https://{domain}/docs/telemetry)",
+        f"- [Signed inference receipts](https://{domain}/docs/receipts)",
+        f"- [Provider routing and pinning](https://{domain}/docs/provider-routing)",
         f"- [Blog](https://{domain}/blog)",
         f"- [Migration guide](https://{domain}/docs/migrate-from-openrouter)",
         f"- [Request tagging and cost allocation](https://{domain}/docs/tagging)",
         f"- [Client reliability telemetry](https://{domain}/docs/telemetry)",
+        f"- [Signed inference receipts](https://{domain}/docs/receipts)",
+        f"- [Provider routing and pinning](https://{domain}/docs/provider-routing)",
         "",
         "## API",
         "- [OpenAI compatible base URL](https://api.trustedrouter.com/v1)",

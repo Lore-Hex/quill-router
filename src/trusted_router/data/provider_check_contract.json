@@ -70,6 +70,9 @@
         "structured_output",
         "tools"
       ],
+      "_CAPABILITY_V2_OPTIONAL_FIELDS": [
+        "receipts"
+      ],
       "_CAPACITY_SCOPES": [
         "global",
         "model",
@@ -158,6 +161,21 @@
         "status_url",
         "support_contact"
       ],
+      "_RECEIPT_ALGORITHMS": [
+        "EdDSA"
+      ],
+      "_RECEIPT_DELIVERY": [
+        "header",
+        "stream-chunk"
+      ],
+      "_RECEIPT_FIELDS": [
+        "algorithms",
+        "delivery",
+        "spec"
+      ],
+      "_RECEIPT_SPECS": [
+        "inference-receipt/1"
+      ],
       "_RELIABILITY_FIELDS": [
         "capacity_scope",
         "completion_timeout_seconds",
@@ -190,12 +208,25 @@
         "minimum_request": 0,
         "prompt_caching_matches_cached_input_presence": true,
         "unit": "per_1m_tokens"
+      },
+      "receipts": {
+        "algorithms": [
+          "EdDSA"
+        ],
+        "delivery": [
+          "header",
+          "stream-chunk"
+        ],
+        "required": false,
+        "specs": [
+          "inference-receipt/1"
+        ]
       }
     },
     "model_id_pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$",
     "owner_pattern": "^[a-z0-9][a-z0-9._-]*$"
   },
-  "contract_version": "9b6b5aba71fb7ffc62bb0de07dd9055c343f781358c69daf54af32de620e0026",
+  "contract_version": "daf822353b83ddbf6a23eaa2deb449d42bc441a53d345c94278040be989a4371",
   "decision_tables": [
     {
       "max_tokens": 512,

@@ -29,6 +29,11 @@ from trusted_router.operational_analytics_freshness import (
     REASON_UNREACHABLE,
     OutboxFreshness,
 )
+from trusted_router.receipt_keys import (
+    RECEIPT_KEY_KIND,
+    ReceiptKeyWriteOutcome,
+    merge_receipt_key_observation,
+)
 from trusted_router.security import lookup_hash_api_key, verify_api_key
 from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage import (
@@ -49,6 +54,7 @@ from trusted_router.storage import (
     Generation,
     GoogleAdsConversion,
     Member,
+    OAuthApp,
     OAuthAuthorizationCode,
     ProviderAccessGrant,
     ProviderBenchmarkSample,
@@ -76,7 +82,11 @@ from trusted_router.storage_activity import (
     usage_bucket_key,
 )
 from trusted_router.storage_auth_context import build_session_auth_context
-from trusted_router.storage_errors import is_duplicate_key_error, is_transient_store_error
+from trusted_router.storage_errors import (
+    StoreUnavailable,
+    is_duplicate_key_error,
+    is_transient_store_error,
+)
 from trusted_router.storage_gcp_analytics_outbox import SpannerAnalyticsOutbox
 from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
 from trusted_router.storage_gcp_auth_sessions import SpannerAuthSessions
@@ -124,6 +134,7 @@ from trusted_router.storage_gcp_io import (
     run_in_transaction_with_retry,
 )
 from trusted_router.storage_gcp_keys import SpannerApiKeys
+from trusted_router.storage_gcp_oauth_apps import SpannerOAuthApps
 from trusted_router.storage_gcp_oauth_codes import SpannerOAuthCodes
 from trusted_router.storage_gcp_operational_analytics_outbox import (
     SpannerOperationalAnalyticsOutbox,
@@ -151,6 +162,7 @@ from trusted_router.storage_models import (
     BedrockGroupBuyPledge,
     BedrockGroupBuyPublicMessage,
     CreditMovement,
+    ReceiptKey,
     SessionAuthContext,
     TypedFinalizeResult,
     UserModelPayout,
@@ -535,6 +547,7 @@ class SpannerBigtableStore:
         self.settle_outbox = SpannerSettleOutbox(self._database, self._param_types)
         self.auth_session_store = SpannerAuthSessions(io)
         self.oauth_code_store = SpannerOAuthCodes(io)
+        self.oauth_app_store = SpannerOAuthApps(io)
         self.rate_limit_store = SpannerRateLimits(io)
         self.wallet_challenges = SpannerWalletChallenges(io)
         self.verification_tokens = SpannerVerificationTokens(io)
@@ -1285,6 +1298,7 @@ class SpannerBigtableStore:
         code_challenge_method: str | None = None,
         spawn_agent: str | None = None,
         spawn_cloud: str | None = None,
+        client_app_id: str = "",
     ) -> tuple[str, OAuthAuthorizationCode]:
         return self.oauth_code_store.create(
             workspace_id=workspace_id,
@@ -1300,10 +1314,28 @@ class SpannerBigtableStore:
             code_challenge_method=code_challenge_method,
             spawn_agent=spawn_agent,
             spawn_cloud=spawn_cloud,
+            client_app_id=client_app_id,
         )
 
     def consume_oauth_authorization_code(self, raw_code: str) -> OAuthAuthorizationCode | None:
         return self.oauth_code_store.consume(raw_code)
+
+    def create_oauth_app(self, app: OAuthApp) -> OAuthApp:
+        return self.oauth_app_store.create(app)
+
+    def get_oauth_app(self, app_id: str) -> OAuthApp | None:
+        return self.oauth_app_store.get(app_id)
+
+    def list_oauth_apps_for_user(self, owner_user_id: str) -> list[OAuthApp]:
+        return self.oauth_app_store.list_for_user(owner_user_id)
+
+    def update_oauth_app(
+        self,
+        app_id: str,
+        *,
+        patch: dict[str, Any],
+    ) -> OAuthApp | None:
+        return self.oauth_app_store.update(app_id, patch=patch)
 
     # API key + per-key spend cap. The actual logic lives in
     # storage_gcp_keys.SpannerApiKeys; these methods are thin delegations.
@@ -1325,6 +1357,7 @@ class SpannerBigtableStore:
         budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
         scopes: list[str] | None = None,
+        app_id: str = "",
     ) -> tuple[str, ApiKey]:
         # Keep every new key at the workspace's established write scale.
         # Lifetime limits use escrowed per-shard sub-budgets, so retaining an
@@ -1346,6 +1379,7 @@ class SpannerBigtableStore:
             budget_alert_only=budget_alert_only,
             tags=tags,
             scopes=scopes,
+            app_id=app_id,
             usage_shard_count=usage_shard_count,
         )
 
@@ -2529,6 +2563,7 @@ class SpannerBigtableStore:
         idempotency_key: str | None = None,
         tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
+        app_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         user_provided_model_id: str | None = None,
@@ -2559,6 +2594,7 @@ class SpannerBigtableStore:
             idempotency_key=idempotency_key,
             tags=tags,
             idempotency_fingerprint=idempotency_fingerprint,
+            app_id=app_id,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
             user_provided_model_id=user_provided_model_id,
@@ -2782,6 +2818,7 @@ class SpannerBigtableStore:
         lease_max_microdollars: int,
         lease_max_available_basis_points: int,
         lease_shard_count: int,
+        app_id: str = "",
     ) -> tuple[str, GatewayAuthorization | None]:
         """Authorize from bounded regional escrow without touching hot counters."""
 
@@ -2961,6 +2998,7 @@ class SpannerBigtableStore:
             idempotency_key=idempotency_key,
             tags=dict(tags or {}),
             idempotency_fingerprint=idempotency_fingerprint,
+            app_id=app_id,
             settlement="regional_lease",
             regional_lease_id=selected_global.lease_id,
             regional_fencing_token=selected_global.fencing_token,
@@ -3224,6 +3262,7 @@ class SpannerBigtableStore:
         candidate_endpoint_ids: list[str],
         idempotency_key: str | None,
         idempotency_fingerprint: str | None,
+        app_id: str = "",
         key_usage_shards: int = 1,
         tags: dict[str, str] | None = None,
         custom_model_id: str | None = None,
@@ -3244,7 +3283,11 @@ class SpannerBigtableStore:
         key_limit_exceeded/key_missing/idempotency_mismatch, or
         "key_window_limit_exceeded:<daily|weekly|monthly>" when a per-window cap
         blocked (see authorize_atomic's window_limits contract)."""
-        from trusted_router.storage_gcp_authorize import AuthorizeOutcome, authorize_atomic
+        from trusted_router.storage_gcp_authorize import (
+            AuthorizeOutcome,
+            authorize_atomic,
+            bounded_credit_shard_candidates,
+        )
         from trusted_router.storage_gcp_keys import (
             _gateway_authorization_idempotency_index_id,
         )
@@ -3279,6 +3322,7 @@ class SpannerBigtableStore:
                 idempotency_key=idempotency_key,
                 tags=dict(tags or {}),
                 idempotency_fingerprint=idempotency_fingerprint,
+                app_id=app_id,
                 custom_model_id=custom_model_id,
                 custom_model_revision=custom_model_revision,
                 user_provided_model_id=user_provided_model_id,
@@ -3349,7 +3393,11 @@ class SpannerBigtableStore:
                 build_authorization=build_authorization,
                 build_auth_body=build_body,
                 request_record_write_mode=self.request_record_write_mode,
-                credit_shard_candidates=candidates,
+                # Retain `candidates` in full outside this transaction for the
+                # lock-free aggregate check and cold rebalance below. A depleted
+                # workspace must never make one rejected transaction lock every
+                # configured shard.
+                credit_shard_candidates=bounded_credit_shard_candidates(candidates),
                 key_shard_candidates=key_shard_candidates,
                 authorization_id=authorization_id,
             )
@@ -3372,9 +3420,10 @@ class SpannerBigtableStore:
         if result["outcome"] == AuthorizeOutcome.INSUFFICIENT_CREDITS and has_credit_candidate:
             from trusted_router import storage_gcp_credit_rebalance as rebalance_mod
 
-            # An all-shards rejection is cold. Refresh once so a remote
+            # A bounded write-set rejection is cold. Refresh once so a remote
             # pause/drain split or unshard cannot produce a false 402 until the
-            # normal TTL expires. The accepted hot path never pays this read.
+            # normal TTL expires. Requests accepted inside the bounded prefix
+            # never pay this read; a later funded shard needs one snapshot.
             previous_count = len(credit_shard_candidates)
             try:
                 refreshed_candidates = self._refresh_credit_shard_candidates(workspace_id)
@@ -3406,24 +3455,32 @@ class SpannerBigtableStore:
             # from the snapshot precheck before entering the RW repair.
             forced_reload_done = False
             cooldown_passed = False
+            aggregate_exhaustion_proven = False
             for _attempt in range(3):
                 if (
                     result["outcome"] != AuthorizeOutcome.INSUFFICIENT_CREDITS
                     or len(credit_shard_candidates) <= 1
                 ):
                     break
-                verdict = rebalance_mod.rebalance_precheck(
+                precheck = rebalance_mod.credit_headroom_precheck(
                     self._database,
                     self._param_types,
                     workspace_id=workspace_id,
                     shard_count=len(credit_shard_candidates),
-                    target_shard=credit_shard_candidates[0],
+                    shard_candidates=credit_shard_candidates,
                     estimate=estimate,
                 )
+                verdict = precheck.outcome
                 if verdict == rebalance_mod.RebalanceOutcome.INSUFFICIENT:
+                    aggregate_exhaustion_proven = True
                     break
                 if verdict == rebalance_mod.RebalanceOutcome.NOT_NEEDED:
-                    result = run_authorize(credit_shard_candidates)
+                    if precheck.candidate_shard is None:  # pragma: no cover - invariant
+                        raise RuntimeError("credit headroom precheck omitted its candidate")
+                    # The bounded random prefix missed a funded later shard.
+                    # Retry that exact row instead of either returning a false
+                    # 402 or expanding into an all-shard write transaction.
+                    result = run_authorize((precheck.candidate_shard,))
                     continue
                 if verdict == rebalance_mod.RebalanceOutcome.INCOMPLETE and not forced_reload_done:
                     # The observed shard set doesn't match the count we hold —
@@ -3456,7 +3513,11 @@ class SpannerBigtableStore:
                 # be blocked by our own just-recorded timestamp.
                 if not cooldown_passed:
                     if not self._credit_rebalance_cooldown_allows(workspace_id):
-                        break
+                        # Aggregate funds exist but are genuinely fragmented.
+                        # The cooldown protects Spanner from a rebalance
+                        # stampede; reporting 402 here would be an accounting
+                        # lie, so ask the caller to retry instead.
+                        raise StoreUnavailable("credit escrow rebalance is busy; retry")
                     cooldown_passed = True
                 rebalance_result = rebalance(credit_shard_candidates)
                 log.info(
@@ -3478,7 +3539,23 @@ class SpannerBigtableStore:
                 }:
                     result = run_authorize(credit_shard_candidates)
                     continue
+                if rebalance_result["outcome"] == rebalance_mod.RebalanceOutcome.INSUFFICIENT:
+                    # This verdict comes from a locked read of every configured
+                    # shard and is at least as authoritative as the snapshot
+                    # precheck. Preserve the honest 402 instead of turning a
+                    # concurrent final-credit race into a spurious 503.
+                    aggregate_exhaustion_proven = True
                 break
+            if (
+                result["outcome"] == AuthorizeOutcome.INSUFFICIENT_CREDITS
+                and len(credit_shard_candidates) > 1
+                and not aggregate_exhaustion_proven
+            ):
+                # A bounded retry race or incomplete precheck is not proof that
+                # the customer's aggregate balance is exhausted. Preserve the
+                # accounting contract by returning retryable unavailability;
+                # only the explicit read-only aggregate verdict above may 402.
+                raise StoreUnavailable("credit headroom changed concurrently; retry")
         outcome = result["outcome"]
         authorization: GatewayAuthorization | None = None
         if outcome in (AuthorizeOutcome.ACCEPTED, AuthorizeOutcome.REPLAY):
@@ -4416,6 +4493,25 @@ class SpannerBigtableStore:
         if email_user:
             return str(email_user["user_id"])
         return None
+
+    def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
+        def txn(transaction: Any) -> ReceiptKeyWriteOutcome:
+            existing = self._read_entity_tx(
+                transaction, RECEIPT_KEY_KIND, record.kid, ReceiptKey
+            )
+            merged, outcome = merge_receipt_key_observation(existing, record)
+            if merged is not None and outcome in {"appended", "refreshed"}:
+                self._write_entity_tx(transaction, RECEIPT_KEY_KIND, record.kid, merged)
+            return outcome
+
+        return cast(ReceiptKeyWriteOutcome, self._run_in_transaction(txn))
+
+    def list_receipt_keys(self, *, limit: int = 5_000) -> list[ReceiptKey]:
+        return self._list_entities(
+            RECEIPT_KEY_KIND,
+            cls=ReceiptKey,
+            limit=max(0, min(limit, 10_000)),
+        )
 
     def _read_entity(self, kind: str, entity_id: str, cls: type[T]) -> T | None:
         # This generic helper serves membership, key, and workspace authorization

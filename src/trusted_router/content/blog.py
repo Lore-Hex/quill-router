@@ -2014,6 +2014,36 @@ The model already knows the truth. Whether you hear it depends on whose server y
 <p>The payoff is that each person can verify the part they care about, in their own terms. A lawyer reads the DPA and the subprocessor list. <a href="https://github.com/Lore-Hex/quill-router">An engineer reads the code</a>. An agent checks attestation before it <a href="/models">routes sensitive work</a>. Nobody has to take the others' word for it.</p>
 """,
     ),
+    BlogPost(
+        slug="every-response-can-prove-itself",
+        title="Every response can prove itself",
+        description=(
+            "Opt into a signed receipt on any inference call: the exact request and "
+            "response hashes, the routed model and provider, and a signing key committed "
+            "into hardware attestation — verifiable offline, in six SDKs."
+        ),
+        published_date="2026-08-27",
+        source_label=None,
+        source_url=None,
+        body_html="""<p>Until today, a TrustedRouter response proved nothing on its own. Everything we publish about the gateway &mdash; the <a href="/trust">attested enclave</a>, the RFC&nbsp;9266 channel binding, the measured image digests &mdash; is evidence about the connection and the binary. The moment a response left that connection, it was just bytes. Anyone could edit them, misattribute them, or claim a different model wrote them, and nothing in the bytes could argue back.</p>
+
+<p>Now any request can opt into a signed receipt. Add one header &mdash; <span class="mono">x-inference-receipt</span> with a fresh nonce &mdash; and the response carries a compact proof signed inside the enclave: the SHA-256 of the exact request you sent, the SHA-256 of the exact bytes you received, the model and provider that actually served it, how that upstream was verified, and the signing time, with your nonce echoed inside the signature. Streaming responses get the same proof as the final chunk before <span class="mono">[DONE]</span>, with the enclave's hardware attestation embedded so the whole thing verifies offline, from a file, with no call back to us.</p>
+
+<pre><code>curl https://api.trustedrouter.com/v1/chat/completions \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "x-inference-receipt: $(openssl rand -hex 16)" \
+  -d '{"model":"trustedrouter/auto","messages":[{"role":"user","content":"Hello"}]}'</code></pre>
+
+<p>The chain goes all the way down. Each enclave instance mints a fresh Ed25519 key at boot and commits a hash of it into its Confidential Space attestation &mdash; the same Google-signed evidence our trust page pins, with debug disabled and the image digest measured. A verifier checks the receipt's signature, recomputes both hashes from the bytes it holds, then checks that the signing key's commitment sits inside that attestation. If any byte of the request or response changed, the hash check fails. If the key didn't come from a measured enclave, the commitment check fails. We ran exactly this against production while writing this post; so can you, with <a href="https://github.com/Lore-Hex/quill-cloud-proxy">the open reference verifier</a> or any of the six SDKs &mdash; Python, JavaScript, Go, Rust, Swift, and Java all verify receipts against the same frozen test vectors, byte for byte.</p>
+
+<p>The receipt is honest about the upstream, too. When your request rode a verified TEE route &mdash; a <a href="https://tinfoil.sh">Tinfoil</a> enclave, a <a href="https://chutes.ai">Chutes</a> TDX worker &mdash; the receipt says <span class="mono">tee-verified</span> and names the exact policy and the window in which that verification held. When it rode ordinary TLS to a provider like DeepSeek, the receipt says <span class="mono">tls-webpki</span> and claims nothing more. A failed verified candidate never lends its tier to the fallback that actually answered; the tier describes the connection your bytes used, and we pinned that property with a test before we shipped it.</p>
+
+<p>Two things a receipt deliberately does not prove, because saying so is the difference between a proof and a vibe. It is not a confidentiality proof: a relay that forwarded your request holds a valid receipt and read everything, so session privacy remains the attested-TLS flow on the <a href="/trust">trust page</a>, not the receipt. And it names no requester: receipts carry nothing about who asked, so you can hand one to an auditor without handing them your identity.</p>
+
+<p>Keys are per-boot and per-instance, which is a feature with a consequence. The feature: no long-lived signing key exists anywhere, so there is nothing to exfiltrate and rotate. The consequence: a receipt must outlive the instance that signed it, so every observed key lands in an <a href="/.well-known/inference-receipt-keys">append-only public key log</a> with its attestation, verified before it is recorded, alarmed if a key id ever reappears with different material. Your receipt from today still verifies after that instance is gone.</p>
+
+<p>The wire format is deliberately provider-neutral &mdash; plain JWS, plain SHA-256, a documented commitment scheme &mdash; and the <a href="https://github.com/Lore-Hex/quill-cloud-proxy/blob/main/docs/design/signed-receipts-wire-format.md">spec</a>, the reference verifier, and the cross-implementation test vectors are public. Any OpenAI-compatible gateway that runs in a TEE could sign the same shape, and we would rather compete on routing than on whether a response can be trusted at all. The full guide, with the claims table and verification walkthroughs, is at <a href="/docs/receipts">docs/receipts</a>. <a href="/docs/receipts">Get a receipt for your next request &rarr;</a></p>""",
+    ),
 )
 
 BLOG_POSTS_BY_SLUG: dict[str, BlogPost] = {post.slug: post for post in BLOG_POSTS}

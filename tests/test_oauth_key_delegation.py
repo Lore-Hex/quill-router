@@ -951,6 +951,29 @@ def test_gcp_oauth_code_consume_is_one_time_and_hash_only() -> None:
     assert replay is None
 
 
+def test_gcp_oauth_code_without_client_app_id_defaults_to_legacy() -> None:
+    store, db, _ = make_fake_store()
+    user = store.ensure_user("old-oauth-code@example.com")
+    workspace = store.list_workspaces_for_user(user.id)[0]
+    raw, code = store.create_oauth_authorization_code(
+        workspace_id=workspace.id,
+        user_id=user.id,
+        callback_url="https://legacy.example.com/callback",
+        key_label="Old code row",
+        ttl_seconds=600,
+        app_id=123,
+    )
+    row = db.rows[("oauth_code", code.hash)]
+    old_body = json.loads(row.body)
+    old_body.pop("client_app_id")
+    row.body = json.dumps(old_body)
+
+    consumed = store.consume_oauth_authorization_code(raw)
+
+    assert consumed is not None
+    assert consumed.client_app_id == ""
+
+
 def test_gcp_oauth_code_expiry_deletes_code_and_lookup() -> None:
     store, db, _ = make_fake_store()
     user = store.ensure_user("alice@example.com")

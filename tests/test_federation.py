@@ -27,6 +27,7 @@ RECORD = {
     "workspace_id": "ws-1",
     "name": "prod key",
     "scopes": ["inference", "profile"],
+    "app_id": "coding-app",
     "disabled": False,
     "limit_microdollars": 5_000,
     "limit_daily_microdollars": 100,
@@ -173,6 +174,11 @@ class TestFederatedRecordSafety:
     def test_scopes_are_carried_and_missing_scopes_are_legacy(self) -> None:
         assert federated_api_key_from_record(RECORD).scopes == ["inference", "profile"]
         assert federated_api_key_from_record({k: v for k, v in RECORD.items() if k != "scopes"}).scopes == []
+
+    def test_app_id_is_carried_and_missing_app_id_is_legacy(self) -> None:
+        assert federated_api_key_from_record(RECORD).app_id == "coding-app"
+        without_app_id = {k: v for k, v in RECORD.items() if k != "app_id"}
+        assert federated_api_key_from_record(without_app_id).app_id == ""
 
     def test_never_management(self) -> None:
         """A management key can mint keys and move money. Even if a home

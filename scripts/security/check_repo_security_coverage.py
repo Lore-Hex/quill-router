@@ -19,6 +19,23 @@ That is the shape this script exists to break: coverage asserted continuously
 over the live set of repositories, rather than asserted once over the set that
 happened to exist that day.
 
+**Branch protection.** The same script also asserts that `main` on the production
+repositories still carries required status checks and refuses force-pushes and
+deletions. This was added on 2026-08-27 after that configuration changed twice
+inside 24 hours with nothing noticing either time — once when `gate-on-ci` was
+added to the required set (which silently blocked every pull request, since that
+job lives in `deploy.yml` and never runs on a PR), and again when it was removed.
+Neither change produced a signal. A setting nothing watches is a setting that
+drifts, and branch protection is the control the change-management narrative
+rests on.
+
+Note what is asserted and what is not. Required *contexts* are compared as a
+set-membership test against a required minimum, not pinned to an exact list —
+pinning would fail the run every time a legitimate CI job is added or renamed,
+and a check that cries wolf on ordinary work gets muted. What must hold is that
+protection exists, that force-push and deletion stay off, and that the named
+minimum checks are present.
+
 **On reading failures.** PVR state is only visible to a token with repository
 administration rights. When the token cannot read it, this script reports
 ``unreadable`` and exits non-zero — it never reports such a repository as
@@ -133,6 +150,48 @@ def security_md_state(org: str, repo: str, token: str) -> str:
     return UNCOVERED
 
 
+# main is protected by these, and by nothing else, on these repositories.
+PROTECTED_REPOS = {
+    "quill-router": {"lint", "test (1)", "test (2)", "test (3)"},
+    "quill-cloud-proxy": {"parent", "trust-page-validation"},
+}
+
+
+def check_branch_protection(org: str, token: str) -> list[str]:
+    """Return a list of problems. Empty means the protection still holds."""
+    problems: list[str] = []
+    for repo, required in sorted(PROTECTED_REPOS.items()):
+        status, body = _get(f"/repos/{org}/{repo}/branches/main/protection", token)
+        if status == 404:
+            problems.append(f"{repo}: main is NOT PROTECTED")
+            continue
+        if status != 200 or not isinstance(body, dict):
+            # Same rule as everywhere else here: could-not-read is its own state.
+            problems.append(f"{repo}: could not read protection (HTTP {status}) — NOT treating as unprotected")
+            continue
+
+        checks = body.get("required_status_checks") or {}
+        contexts = set(checks.get("contexts") or [])
+        missing = required - contexts
+        if missing:
+            problems.append(f"{repo}: required status checks missing {sorted(missing)} (have {sorted(contexts)})")
+
+        if (body.get("allow_force_pushes") or {}).get("enabled"):
+            problems.append(f"{repo}: force pushes to main are ALLOWED")
+        if (body.get("allow_deletions") or {}).get("enabled"):
+            problems.append(f"{repo}: deletion of main is ALLOWED")
+
+        # Not a failure — recorded so the report states the real boundary of the
+        # control rather than implying a stronger one. A sole founder cannot
+        # approve their own pull request, so review is structurally unavailable.
+        admins = (body.get("enforce_admins") or {}).get("enabled")
+        reviews = (body.get("required_pull_request_reviews") or {}).get(
+            "required_approving_review_count"
+        )
+        print(f"  {repo}: contexts={sorted(contexts)} enforce_admins={admins} required_reviews={reviews}")
+    return problems
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--org", default="Lore-Hex")
@@ -148,6 +207,16 @@ def main() -> int:
     token = os.environ.get("REPO_SECURITY_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
     if not token:
         raise SystemExit("REPO_SECURITY_TOKEN or GITHUB_TOKEN must be set")
+
+    print("branch protection on production repositories:")
+    protection_problems = check_branch_protection(args.org, token)
+    if protection_problems:
+        print("\n  BRANCH PROTECTION PROBLEMS:")
+        for line in protection_problems:
+            print(f"    - {line}")
+    else:
+        print("  ok — protection holds on all production repositories")
+    print()
 
     repos = list_public_repos(args.org, token)
     print(f"public, non-archived repositories in {args.org}: {len(repos)}\n")
@@ -194,7 +263,7 @@ def main() -> int:
             "  REPO_SECURITY_TOKEN secret."
         )
 
-    if uncovered:
+    if uncovered or protection_problems:
         return 1
     if unreadable:
         return 0 if args.allow_unreadable else 1

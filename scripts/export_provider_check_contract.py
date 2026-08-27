@@ -153,6 +153,12 @@ def _catalog_contract(catalog: ModuleType) -> dict[str, Any]:
                 "overload_status": 503,
                 "retry_after_header": "Retry-After",
             },
+            "receipts": {
+                "required": False,
+                "specs": sorted(catalog._RECEIPT_SPECS),
+                "algorithms": sorted(catalog._RECEIPT_ALGORITHMS),
+                "delivery": sorted(catalog._RECEIPT_DELIVERY),
+            },
             "pricing": {
                 "currency": "USD",
                 "unit": "per_1m_tokens",

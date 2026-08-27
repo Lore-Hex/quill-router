@@ -251,6 +251,7 @@ def generation_events(
             "model": gen.model,
             "provider_name": gen.provider_name,
             "app": gen.app,
+            **({"app_id": gen.app_id} if gen.app_id else {}),
             "user": gen.user,
             "session_id": gen.session_id,
             "http_referer": gen.http_referer,

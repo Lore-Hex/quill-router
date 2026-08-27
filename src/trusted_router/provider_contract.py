@@ -219,6 +219,13 @@ _V1_EXAMPLE_DATA = PROVIDER_CATALOG_EXAMPLE["data"]
 assert isinstance(_V1_EXAMPLE_DATA, list)
 _V2_MODEL_EXAMPLE = copy.deepcopy(_V1_EXAMPLE_DATA[0])
 assert isinstance(_V2_MODEL_EXAMPLE, dict)
+_V2_CAPABILITIES_EXAMPLE = _V2_MODEL_EXAMPLE["capabilities"]
+assert isinstance(_V2_CAPABILITIES_EXAMPLE, dict)
+_V2_CAPABILITIES_EXAMPLE["receipts"] = {
+    "spec": "inference-receipt/1",
+    "algorithms": ["EdDSA"],
+    "delivery": ["header", "stream-chunk"],
+}
 _V2_MODEL_EXAMPLE["reliability"] = {
     "first_token_timeout_seconds": 20,
     "completion_timeout_seconds": 120,
@@ -322,6 +329,30 @@ assert isinstance(model_required, list)
 model_required.append("reliability")
 model_properties = model_schema["properties"]
 assert isinstance(model_properties, dict)
+capabilities_schema = model_properties["capabilities"]
+assert isinstance(capabilities_schema, dict)
+capabilities_properties = capabilities_schema["properties"]
+assert isinstance(capabilities_properties, dict)
+capabilities_properties["receipts"] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["spec", "algorithms", "delivery"],
+    "properties": {
+        "spec": {"const": "inference-receipt/1"},
+        "algorithms": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": True,
+            "items": {"enum": ["EdDSA"]},
+        },
+        "delivery": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": True,
+            "items": {"enum": ["header", "stream-chunk"]},
+        },
+    },
+}
 model_properties["reliability"] = {
     "type": "object",
     "additionalProperties": False,
