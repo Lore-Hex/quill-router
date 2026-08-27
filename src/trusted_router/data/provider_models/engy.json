@@ -61,8 +61,40 @@
       "input_token_price_per_m": 680000,
       "output_token_price_per_m": 1500000,
       "cached_input_token_price_per_m": 180000
+    },
+    {
+      "display_name": "glm-5.3-flash",
+      "title": "glm-5.3-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "image",
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "glm-5.3-flash",
+      "context_length": 262144,
+      "routable": true,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "prompt_caching"
+      ],
+      "input_token_price_per_m": 135000,
+      "output_token_price_per_m": 450000,
+      "cached_input_token_price_per_m": 27000
     }
   ],
-  "generated_at": "2026-08-25T18:42:44Z",
-  "model_count": 2
+  "generated_at": "2026-08-27T13:51:47Z",
+  "model_count": 3
 }
