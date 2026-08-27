@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import ast
 import dataclasses
 import datetime as dt
+import inspect
 import json
 import re
+import textwrap
 import threading
 from typing import Any
 
@@ -13,6 +16,8 @@ import pytest
 from clickhouse.ingest_operational_outbox import (
     CanonicalOperationalEvent,
     OperationalOutboxRow,
+    OutboxSource,
+    SpannerOperationalOutboxSource,
     drain_once,
     expand_client_events_payload,
     normalise_operational_event,
@@ -505,6 +510,93 @@ class _Writer:
         if self.failures:
             self.failures -= 1
             raise RuntimeError("ClickHouse unavailable")
+
+
+def test_outbox_source_protocol_is_behavior_free() -> None:
+    """Protocols define the drain contract; implementations own all behavior."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(OutboxSource)))
+    methods = [node for node in tree.body[0].body if isinstance(node, ast.FunctionDef)]
+
+    assert methods
+    for method in methods:
+        assert len(method.body) == 1, f"OutboxSource.{method.name} carries behavior"
+        [statement] = method.body
+        assert (
+            isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and statement.value.value is Ellipsis
+        ), f"OutboxSource.{method.name} carries behavior"
+
+
+class _QueryCountingSnapshot:
+    def __init__(self, database: _QueryCountingDatabase) -> None:
+        self.database = database
+
+    def __enter__(self) -> _QueryCountingSnapshot:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        pass
+
+    def execute_sql(
+        self,
+        sql: str,
+        *,
+        params: dict[str, Any],
+        param_types: dict[str, Any],
+    ) -> list[tuple[object, ...]]:
+        self.database.select_statements.append(sql)
+        self.database.select_params.append((params, param_types))
+        if len(self.database.select_statements) > 1:
+            return []
+        row = _outbox_row()
+        return [(row.shard, row.commit_ts, row.event_kind, row.event_id, row.payload)]
+
+
+class _QueryCountingBatch:
+    def __init__(self, database: _QueryCountingDatabase) -> None:
+        self.database = database
+
+    def __enter__(self) -> _QueryCountingBatch:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        pass
+
+    def delete(self, table: str, key_set: object) -> None:
+        self.database.delete_calls.append((table, key_set))
+
+
+class _QueryCountingDatabase:
+    def __init__(self) -> None:
+        self.select_statements: list[str] = []
+        self.select_params: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        self.delete_calls: list[tuple[str, object]] = []
+
+    def snapshot(self, **_kwargs: object) -> _QueryCountingSnapshot:
+        return _QueryCountingSnapshot(self)
+
+    def batch(self) -> _QueryCountingBatch:
+        return _QueryCountingBatch(self)
+
+
+def test_spanner_drain_loop_uses_one_global_fetch_query_plus_ack() -> None:
+    database = _QueryCountingDatabase()
+    source = object.__new__(SpannerOperationalOutboxSource)
+    source._database = database
+    source._pt = _ParamTypes()
+    source._shard_count = 32
+
+    result = drain_once(source, _Writer(), batch_size=100)
+
+    assert result.fetched == 1
+    assert len(database.select_statements) == 1
+    assert "WHERE shard" not in database.select_statements[0]
+    assert "ORDER BY" not in database.select_statements[0]
+    assert database.select_params == [
+        ({"limit": 100}, {"limit": _ParamTypes.INT64})
+    ]
+    assert len(database.delete_calls) == 1
 
 
 def test_operational_cursor_advances_only_after_clickhouse_ack() -> None:
