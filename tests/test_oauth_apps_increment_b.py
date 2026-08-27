@@ -787,10 +787,14 @@ def test_typed_authorization_freezes_app_id() -> None:
         idempotency_key=None,
         idempotency_fingerprint=None,
         app_id=key.app_id,
+        app_markup_basis_points=1_250,
+        app_owner_user_id="user-app-owner",
     )
 
     assert outcome == AuthorizeOutcome.ACCEPTED
     assert authorization is not None and authorization.app_id == APP_ID
+    assert authorization.app_markup_basis_points == 1_250
+    assert authorization.app_owner_user_id == "user-app-owner"
     key.app_id = "changed-after-authorize"
     assert store.get_gateway_authorization(authorization.id).app_id == APP_ID
 
@@ -805,6 +809,8 @@ def test_generation_settle_projection_carries_frozen_app_id_and_legacy_none() ->
         usage_type=UsageType.CREDITS,
         estimated_microdollars=10,
         app_id=APP_ID,
+        app_markup_basis_points=1_000,
+        app_owner_user_id="user-app-owner",
     )
     generation = Generation.from_settle_body(
         authorization=authorization,
@@ -813,6 +819,7 @@ def test_generation_settle_projection_carries_frozen_app_id_and_legacy_none() ->
         input_tokens=1,
         output_tokens=1,
         actual_cost_microdollars=10,
+        app_markup_microdollars=1,
     )
     legacy = Generation.from_settle_body(
         authorization=GatewayAuthorization(
@@ -832,6 +839,8 @@ def test_generation_settle_projection_carries_frozen_app_id_and_legacy_none() ->
     )
 
     assert generation.app_id == APP_ID
+    assert generation.app_markup_microdollars == 1
+    assert generation.to_openrouter_generation()["app_markup_microdollars"] == 1
     assert generation.to_openrouter_generation()["app_id"] == APP_ID
     assert generation_events([generation])[0]["app_id"] == APP_ID
     assert legacy.app_id == ""
@@ -940,6 +949,10 @@ def test_suspension_after_mint_denies_gateway_and_federation_until_unsuspended(
     assert federated.status_code == 200, federated.text
     assert federated.json()["data"]["app_id"] == APP_ID
     assert federated.json()["data"]["app_suspended"] is True
+    assert federated.json()["data"]["app_markup_basis_points"] == 30_000
+    assert federated.json()["data"]["app_owner_user_id"] == STORE.find_user_by_email(
+        user_headers["x-trustedrouter-user"]
+    ).id
 
     unsuspended = client.patch(
         f"/v1/oauth/apps/{APP_ID}",

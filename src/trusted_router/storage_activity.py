@@ -261,6 +261,7 @@ def generation_events(
             "output_tokens": gen.tokens_completion,
             "cost": microdollars_to_float(gen.total_cost_microdollars),
             "cost_microdollars": gen.total_cost_microdollars,
+            "app_markup_microdollars": gen.app_markup_microdollars,
             "usage_type": gen.usage_type,
             "speed_tokens_per_second": gen.speed_tokens_per_second,
             "finish_reason": gen.finish_reason,
