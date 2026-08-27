@@ -207,7 +207,11 @@ def test_console_page_shows_neutral_copy_for_a_declined_user() -> None:
     assert page.status_code == 200
     body = page.text
     assert "device screen" not in body.lower()
-    assert "518" not in body
+    # The workspace selector contains an opaque UUID. Ignore that known ID so
+    # a random UUID segment such as ``a518...`` cannot masquerade as a leaked
+    # Veriff reason code while the rest of the rendered HTML stays covered.
+    workspace_id = STORE.list_workspaces_for_user(user.id)[0].id
+    assert "518" not in body.replace(workspace_id, "")
     stored = STORE.get_user(user.id)
     assert stored is not None and stored.veriff_decision_reason is not None
     assert stored.veriff_decision_reason.lower() not in body.lower()
