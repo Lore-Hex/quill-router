@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for Parasail models live ahead of the shared snapshot. Prices refreshed hourly from the public pricing page (www.parasail.io/pricing); model liveness gated on api.parasail.io/v1/models.",
   "provider": "parasail",
   "source": "https://www.parasail.io/pricing",
-  "generated_at": "2026-08-24T16:40:13Z",
-  "model_count": 4,
+  "generated_at": "2026-08-27T16:56:40Z",
+  "model_count": 5,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -115,6 +115,34 @@
       "input_token_price_per_m": 750000,
       "output_token_price_per_m": 3500000,
       "cached_input_token_price_per_m": 160000
+    },
+    {
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "zai-org/GLM-5.3-Flash",
+      "display_name": "Parasail GLM 5.3 Flash",
+      "title": "z-ai/glm-5.3-flash",
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "model_type": "chat",
+      "features": [
+        "reasoning",
+        "function-calling",
+        "structured-outputs",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-08-27"
     }
   ]
 }

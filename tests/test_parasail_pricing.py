@@ -95,6 +95,7 @@ def test_fetch_prices_only_models_on_both_page_and_api(monkeypatch) -> None:  # 
             {"id": "MiniMaxAI/Minimax-M3"},
             # API-only model with a known mapping: unpriced note
             {"id": "zai-org/GLM-5.2"},
+            {"id": "zai-org/GLM-5.3-Flash"},
         ]
     }
     _fake_clients(monkeypatch, html, models_payload)
@@ -111,6 +112,7 @@ def test_fetch_prices_only_models_on_both_page_and_api(monkeypatch) -> None:  # 
     assert "nvidia/nemotron-3-ultra-550b-a55b" in joined  # page-only
     assert "Brand New Model 9000" in joined  # unmapped page row
     assert "z-ai/glm-5.2" in joined  # api-only, page missing
+    assert "z-ai/glm-5.3-flash" in joined
 
 
 def test_fetch_case_variant_native_ids_map_to_one_model(monkeypatch) -> None:  # noqa: ANN001
@@ -175,6 +177,7 @@ def test_write_provider_manifest_appends_new_models(tmp_path, monkeypatch) -> No
             {"id": "Qwen/Qwen3.5-397B-A17B"},
             {"id": "moonshotai/Kimi-K2.7-Code"},
             {"id": "MiniMaxAI/MiniMax-M3"},
+            {"id": "zai-org/GLM-5.3-Flash"},
         ]
     }
     _fake_clients(monkeypatch, html, models_payload)
@@ -190,8 +193,66 @@ def test_write_provider_manifest_appends_new_models(tmp_path, monkeypatch) -> No
     assert by_id["moonshotai/kimi-k2.7-code"]["input_token_price_per_m"] == 750_000
     assert by_id["moonshotai/kimi-k2.7-code"]["upstream_id"] == "parasail-kimi-k27-code"
     assert by_id["minimax/minimax-m3"]["context_length"] == 1_048_576
+    # Live discovery without a price remains visible but impossible to route.
+    unresolved = by_id["z-ai/glm-5.3-flash"]
+    assert unresolved["upstream_id"] == "zai-org/GLM-5.3-Flash"
+    assert unresolved["routable"] is False
+    assert unresolved["routable_reason"] == "awaiting-price"
+    assert "input_token_price_per_m" not in unresolved
     assert saved["model_count"] == len(saved["models"])
     assert any("appended" in n for n in notes)
+
+
+def test_write_provider_manifest_promotes_glm_53_only_after_official_price(
+    tmp_path, monkeypatch
+) -> None:  # noqa: ANN001
+    manifest = {
+        "provider": "parasail",
+        "models": [
+            {
+                **parasail._MANIFEST_ROW_TEMPLATES["z-ai/glm-5.3-flash"],
+                "routable": False,
+                "routable_reason": "awaiting-price",
+                "unresolved_since": "2026-08-27",
+            }
+        ],
+    }
+    path = tmp_path / "parasail.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(parasail, "MANIFEST_PATH", path)
+    monkeypatch.setattr(parasail, "_MANIFEST_EXPECTED", [])
+
+    html = _page(_row("GLM-5.3 Flash", "0.15", "0.50", "0.03"))
+    _fake_clients(
+        monkeypatch,
+        html,
+        {"data": [{"id": "zai-org/GLM-5.3-Flash"}]},
+    )
+
+    parasail.write_provider_manifest(parasail.fetch())
+
+    row = json.loads(path.read_text(encoding="utf-8"))["models"][0]
+    assert row["input_token_price_per_m"] == 150_000
+    assert row["output_token_price_per_m"] == 500_000
+    assert row["cached_input_token_price_per_m"] == 30_000
+    assert "routable" not in row
+    assert "routable_reason" not in row
+    assert "unresolved_since" not in row
+
+
+def test_write_provider_manifest_does_not_invent_unseen_glm_53(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    path = tmp_path / "parasail.json"
+    path.write_text(json.dumps({"provider": "parasail", "models": []}), encoding="utf-8")
+    monkeypatch.setattr(parasail, "MANIFEST_PATH", path)
+    monkeypatch.setattr(parasail, "_MANIFEST_EXPECTED", [])
+
+    html = _page(_row("MiniMax M3", "0.30", "1.20", "0.06"))
+    _fake_clients(monkeypatch, html, {"data": [{"id": "MiniMaxAI/MiniMax-M3"}]})
+
+    parasail.write_provider_manifest(parasail.fetch())
+
+    ids = {row["id"] for row in json.loads(path.read_text(encoding="utf-8"))["models"]}
+    assert "z-ai/glm-5.3-flash" not in ids
 
 
 def test_parse_pricing_page_raises_on_layout_change() -> None:
