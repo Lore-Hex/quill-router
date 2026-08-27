@@ -122,10 +122,10 @@ SECRETS_DIR="${SECRETS_DIR:-$HOME/.quill-secrets}"
 # reads the password through a Container Apps Key Vault reference backed by the
 # node's existing user-assigned identity. The password value never enters this
 # process, argv, cloud-init, or an operator-visible log.
-CLICKHOUSE_NODE="${CLICKHOUSE_NODE:-tr-azure-clickhouse-$LOCATION}"
-CLICKHOUSE_VAULT="${CLICKHOUSE_VAULT:-tr-azure-analytics-kv}"
-CLICKHOUSE_SECRET_NAME="${CLICKHOUSE_SECRET_NAME:-clickhouse-default-password}"
-CLICKHOUSE_IDENTITY="${CLICKHOUSE_IDENTITY:-tr-azure-analytics-$LOCATION-id}"
+CLICKHOUSE_NODE="${CLICKHOUSE_NODE:-tr-azure-clickhouse-1}"
+CLICKHOUSE_VAULT="${CLICKHOUSE_VAULT:-trquillkv}"
+CLICKHOUSE_SECRET_NAME="${CLICKHOUSE_SECRET_NAME:-tr-azure-clickhouse-password}"
+CLICKHOUSE_IDENTITY="${CLICKHOUSE_IDENTITY:-tr-azure-clickhouse-identity}"
 CLICKHOUSE_USER="${CLICKHOUSE_USER:-default}"
 CLICKHOUSE_DATABASE="${CLICKHOUSE_DATABASE:-default}"
 

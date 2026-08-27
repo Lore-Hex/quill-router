@@ -1293,19 +1293,19 @@ def test_azure_observer_refuses_to_drop_its_only_synthetic_owner(
 def _azure_without_analytics_discovery(fixture: ScriptFixture) -> ScriptFixture:
     discovery_fragments = (
         "vm list-ip-addresses",
-        "keyvault secret show.*clickhouse-default-password",
-        "identity show.*tr-azure-analytics-uaenorth-id",
+        "keyvault secret show.*tr-azure-clickhouse-password",
+        "identity show.*tr-azure-clickhouse-identity",
     )
     return replace(
         fixture,
         responses=(
-            (r"vm list-ip-addresses.*tr-azure-clickhouse-uaenorth", ""),
+            (r"vm list-ip-addresses.*tr-azure-clickhouse-1", ""),
             (
-                r"keyvault secret show.*clickhouse-default-password.*--query id",
+                r"keyvault secret show.*tr-azure-clickhouse-password.*--query id",
                 "",
             ),
             (
-                r"identity show.*tr-azure-analytics-uaenorth-id.*--query id",
+                r"identity show.*tr-azure-clickhouse-identity.*--query id",
                 "",
             ),
             *(
@@ -1373,10 +1373,10 @@ def test_azure_observer_emits_the_discovered_operational_analytics_env(
         argument for argument in secret_set if argument.startswith("clickhouse-password=")
     )
     assert clickhouse_reference == (
-        "clickhouse-password=keyvaultref:https://tr-azure-analytics-kv.vault.azure.net/"
-        "secrets/clickhouse-default-password/harness-version,identityref:/subscriptions/"
+        "clickhouse-password=keyvaultref:https://trquillkv.vault.azure.net/"
+        "secrets/tr-azure-clickhouse-password/harness-version,identityref:/subscriptions/"
         "harness/resourceGroups/tr-azure/providers/Microsoft.ManagedIdentity/"
-        "userAssignedIdentities/tr-azure-analytics-uaenorth-id"
+        "userAssignedIdentities/tr-azure-clickhouse-identity"
     )
 
 
@@ -1397,10 +1397,10 @@ def test_azure_observer_refuses_missing_analytics_discovery_before_any_mutation(
 
     assert run.returncode != 0
     assert "expects_outbox=True" in run.stderr
-    assert "tr-azure-clickhouse-uaenorth" in run.stderr
-    assert "tr-azure-analytics-kv" in run.stderr
-    assert "az vm list-ip-addresses -g tr-azure -n tr-azure-clickhouse-uaenorth" in run.stderr
-    assert "az keyvault secret show --vault-name tr-azure-analytics-kv" in run.stderr
+    assert "tr-azure-clickhouse-1" in run.stderr
+    assert "trquillkv" in run.stderr
+    assert "az vm list-ip-addresses -g tr-azure -n tr-azure-clickhouse-1" in run.stderr
+    assert "az keyvault secret show --vault-name trquillkv" in run.stderr
     mutating_prefixes = (
         ["az", "acr", "build"],
         ["az", "acr", "import"],
