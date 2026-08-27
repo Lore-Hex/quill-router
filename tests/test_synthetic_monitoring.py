@@ -2774,6 +2774,49 @@ async def test_remediator_caller_reports_success_and_failure(
 
 
 @pytest.mark.asyncio
+async def test_remediator_caller_treats_only_active_overlap_as_success(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        message = (
+            "Synthetic operation is already in progress"
+            if request.url.path.endswith("/overlap")
+            else "Synthetic operation rate limit exceeded"
+        )
+        return httpx.Response(
+            429,
+            json={
+                "error": {
+                    "code": 429,
+                    "message": message,
+                    "type": "rate_limited",
+                    "source": "router",
+                }
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        overlap = await cli_module._post_remediator(
+            client,
+            url="https://trustedrouter.com/overlap",
+            internal_token="internal",  # noqa: S106 - test placeholder.
+        )
+        rate_limited = await cli_module._post_remediator(
+            client,
+            url="https://trustedrouter.com/rate-limit",
+            internal_token="internal",  # noqa: S106 - test placeholder.
+        )
+
+    output = capsys.readouterr()
+    assert overlap is True
+    assert rate_limited is False
+    assert "remediator skipped: another pass is already in progress" in output.out
+    assert output.err.count("remediator check failed: HTTPStatusError:") == 1
+
+
+@pytest.mark.asyncio
 async def test_primary_synthetic_job_invokes_scheduled_remediator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
