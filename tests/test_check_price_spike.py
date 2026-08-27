@@ -931,3 +931,68 @@ def test_unapproved_tinfoil_kimi_k3_price_transition_still_blocks(
 
     assert main([str(before), str(after), "--summary"]) == 1
     assert "PRICE SPIKE FAILURES" in capsys.readouterr().out
+
+
+def test_confirmed_io_net_price_transitions_are_allowed() -> None:
+    mistral = (
+        "mistralai/mistral-nemo-instruct-2407 "
+        "[io-net:io-net:mistralai/Mistral-Nemo-Instruct-2407]"
+    )
+    mistral_cached = f"{mistral} cached-input"
+    glm_cached = (
+        "z-ai/glm-5.3-flash "
+        "[io-net:io-net:zai-org/GLM-5.3-Flash] cached-input"
+    )
+    before = {
+        mistral: {"prompt": "0.000000029667", "completion": "0.000000076667"},
+        mistral_cached: {"prompt": "0.000000014834", "completion": "0"},
+        glm_cached: {"prompt": "0.00000003", "completion": "0"},
+    }
+    after = {
+        mistral: {"prompt": "0.0000000635", "completion": "0.00000009875"},
+        mistral_cached: {"prompt": "0.00000003175", "completion": "0"},
+        glm_cached: {"prompt": "0.00000006", "completion": "0"},
+    }
+
+    failures, changes, removed = check(before, after)
+
+    assert failures == []
+    assert len(changes) == 3
+    assert removed == []
+
+
+@pytest.mark.parametrize(
+    ("route", "old_price", "unapproved_price"),
+    [
+        (
+            "mistralai/mistral-nemo-instruct-2407 "
+            "[io-net:io-net:mistralai/Mistral-Nemo-Instruct-2407]",
+            "0.000000029667",
+            "0.0000000636",
+        ),
+        (
+            "mistralai/mistral-nemo-instruct-2407 "
+            "[io-net:io-net:mistralai/Mistral-Nemo-Instruct-2407] cached-input",
+            "0.000000014834",
+            "0.00000003176",
+        ),
+        (
+            "z-ai/glm-5.3-flash "
+            "[io-net:io-net:zai-org/GLM-5.3-Flash] cached-input",
+            "0.00000003",
+            "0.000000061",
+        ),
+    ],
+)
+def test_different_io_net_price_transitions_still_block(
+    route: str,
+    old_price: str,
+    unapproved_price: str,
+) -> None:
+    before = {route: {"prompt": old_price, "completion": "0"}}
+    after = {route: {"prompt": unapproved_price, "completion": "0"}}
+
+    failures, _changes, _removed = check(before, after)
+
+    assert len(failures) == 1
+    assert route in failures[0]

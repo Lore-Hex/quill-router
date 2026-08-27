@@ -145,6 +145,31 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             Decimal("0.000006"),
             Decimal("0.00002"),
         ),
+        # IO.NET's authenticated model catalog is the provider-owned source
+        # used by the hourly adapter. The dashboard documentation confirms
+        # that model-specific prices are published in the Models UI/API:
+        # https://io.net/docs/guides/intelligence/exploring-ai-models
+        (
+            "mistralai/mistral-nemo-instruct-2407 "
+            "[io-net:io-net:mistralai/Mistral-Nemo-Instruct-2407]",
+            "prompt",
+            Decimal("0.000000029667"),
+            Decimal("0.0000000635"),
+        ),
+        (
+            "mistralai/mistral-nemo-instruct-2407 "
+            "[io-net:io-net:mistralai/Mistral-Nemo-Instruct-2407] cached-input",
+            "prompt",
+            Decimal("0.000000014834"),
+            Decimal("0.00000003175"),
+        ),
+        (
+            "z-ai/glm-5.3-flash "
+            "[io-net:io-net:zai-org/GLM-5.3-Flash] cached-input",
+            "prompt",
+            Decimal("0.00000003"),
+            Decimal("0.00000006"),
+        ),
     }
 )
 
