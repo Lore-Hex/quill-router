@@ -107,6 +107,7 @@ from trusted_router.services.broadcast import (
     should_drain_inline,
 )
 from trusted_router.services.federation import FederationClient, FederationUnavailable
+from trusted_router.services.keyed_admission import KeyedConcurrencyAdmission
 from trusted_router.services.receipt_key_collector import collect_receipt_keys
 from trusted_router.services.regional_quota_leases import LeaseSettlementError
 from trusted_router.services.settle_outbox_apply import normalized_prompt_accounting
@@ -159,6 +160,7 @@ from trusted_router.user_model_rules import (
 logger = logging.getLogger(__name__)
 REQUEST_METADATA_VERSION = 1
 _BILLING_PATH_SPANNER_BUDGET_SECONDS = 25.0
+_AUTHORIZE_ADMISSION = KeyedConcurrencyAdmission()
 _NATIVE_BATCH_ROUTE_PREFIX = "batch.native."
 _NATIVE_BATCH_BILLED_FRACTION_BPS = {
     "openai": 5_000,
@@ -242,7 +244,32 @@ async def authorize_gateway(
     free while this request's blocking storage runs; the response is byte-identical.
     Kept ``async`` so callers/tests await it unchanged.
     """
-    return await run_in_threadpool(_authorize_gateway_sync, request, body, settings)
+    subject = body.api_key_lookup_hash or body.api_key_hash
+    assert subject is not None  # GatewayAuthorizeRequest validates one identifier.
+    if not _AUTHORIZE_ADMISSION.try_acquire(
+        subject,
+        limit=settings.gateway_authorize_max_in_flight_per_key,
+    ):
+        logger.warning(
+            "billing.authorize_admission_limited",
+            extra={
+                "request_id": getattr(request.state, "request_id", None),
+                "key_subject_fingerprint": hashlib.sha256(
+                    subject.encode("utf-8")
+                ).hexdigest()[:16],
+                "limit": settings.gateway_authorize_max_in_flight_per_key,
+            },
+        )
+        raise api_error(
+            429,
+            "Too many concurrent requests for this API key",
+            ErrorType.RATE_LIMITED,
+            headers={"Retry-After": "1"},
+        )
+    try:
+        return await run_in_threadpool(_authorize_gateway_sync, request, body, settings)
+    finally:
+        _AUTHORIZE_ADMISSION.release(subject)
 
 
 @spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)
