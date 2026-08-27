@@ -199,6 +199,8 @@ class FakeSpannerDatabase:
         # cannot masquerade as one logical Store operation.
         self.snapshot_execute_sql_calls = 0
         self.snapshot_sql: list[str] = []
+        self.transaction_execute_sql_calls = 0
+        self.transaction_execute_update_calls = 0
 
     def run_in_transaction(self, fn: Any, *, timeout_secs: float | None = None) -> Any:
         # timeout_secs mirrors google-cloud-spanner's Database.run_in_transaction
@@ -379,6 +381,7 @@ class _FakeTransaction:
         params: dict[str, Any] | None = None,
         param_types: Any = None,
     ) -> list[list[str]]:
+        self.db.transaction_execute_sql_calls += 1
         return _execute_sql(self.db, self, sql, params or {})
 
     def _pinned_read(
@@ -497,6 +500,7 @@ class _FakeTransaction:
         and serialize via abort-retry), evaluates the WHERE predicate, and
         conditionally buffers the SET. Returns the modified-row count.
         """
+        self.db.transaction_execute_update_calls += 1
         if self._did_mutation:
             raise RuntimeError(
                 "DML after a mutation in the same transaction — DML+mutation "

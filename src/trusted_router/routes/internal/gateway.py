@@ -15,7 +15,10 @@ import functools
 import hashlib
 import json
 import logging
+import threading
+import time
 import uuid
+from collections import OrderedDict
 from datetime import datetime
 from functools import lru_cache
 from time import perf_counter
@@ -164,6 +167,10 @@ REQUEST_METADATA_VERSION = 1
 # process to serialize a structured retryable 503 and for network transit.
 _BILLING_PATH_SPANNER_BUDGET_SECONDS = 20.0
 _AUTHORIZE_ADMISSION = KeyedConcurrencyAdmission()
+_BROADCAST_EMPTY_CACHE_TTL_SECONDS = 60.0
+_BROADCAST_EMPTY_CACHE_MAX_ENTRIES = 1_024
+_BROADCAST_EMPTY_CACHE: OrderedDict[str, float] = OrderedDict()
+_BROADCAST_EMPTY_CACHE_LOCK = threading.Lock()
 _NATIVE_BATCH_ROUTE_PREFIX = "batch.native."
 _NATIVE_BATCH_BILLED_FRACTION_BPS = {
     "openai": 5_000,
@@ -533,7 +540,7 @@ def _authorize_gateway_sync(
     reservation_usage_type = UsageType.CREDITS if has_credit_candidate else UsageType.BYOK
     broadcast_destinations = [
         payload
-        for destination in STORE.list_broadcast_destinations(workspace.id)
+        for destination in _broadcast_destinations_for_authorize(workspace.id)
         if (payload := gateway_destination_payload(destination)) is not None
     ]
     native_batch_eligible = _native_batch_eligibility(
@@ -600,26 +607,23 @@ def _authorize_gateway_sync(
             custom_model=custom_model,
         )
 
-    existing_authorization = STORE.get_gateway_authorization_by_idempotency_key(
-        workspace.id, api_key.hash, request_idempotency_key
-    )
-    if existing_authorization is None:
-        # Typed authorizations have no JSON idempotency index; whenever the
-        # active store has typed billing, retries must replay from the typed
-        # table because the legacy cohort brake no longer exists after C1.
-        _typed_store = typed_billing_store(STORE)
-        if _typed_store is not None:
-            existing_authorization = _typed_store.get_typed_authorization_by_idempotency(
-                workspace.id, api_key.hash, request_idempotency_key
-            )
-    if existing_authorization is not None:
-        if existing_authorization.idempotency_fingerprint != request_fingerprint:
-            raise api_error(
-                409,
-                "Idempotency key was already used for a different gateway request",
-                ErrorType.CONFLICT,
-            )
-        return _replay_response(existing_authorization)
+    _typed_store = typed_billing_store(STORE)
+    if _typed_store is None:
+        # Non-typed stores still use their legacy authorization index. Typed
+        # Spanner never writes that entity index on the production route after
+        # C1; its reservation transaction below owns idempotency and money
+        # atomically, so probing either index here only adds happy-path RPCs.
+        existing_authorization = STORE.get_gateway_authorization_by_idempotency_key(
+            workspace.id, api_key.hash, request_idempotency_key
+        )
+        if existing_authorization is not None:
+            if existing_authorization.idempotency_fingerprint != request_fingerprint:
+                raise api_error(
+                    409,
+                    "Idempotency key was already used for a different gateway request",
+                    ErrorType.CONFLICT,
+                )
+            return _replay_response(existing_authorization)
     # Suspension stops NEW authorizations. Resolve replay first so a lost
     # response can be recovered and in-flight work can settle under frozen terms.
     _assert_oauth_app_allows_new_authorization(api_key)
@@ -655,7 +659,6 @@ def _authorize_gateway_sync(
     # C1 removed the workspace cohort/denylist brake: GCP now always uses typed
     # billing when the store exposes that capability. Emergency rollback is the
     # previous deploy revision; the memory store below remains the test twin.
-    _typed_store = typed_billing_store(STORE)
     if _typed_store is not None:
         import datetime as _dt
 
@@ -1429,6 +1432,34 @@ def _authorization_endpoint_candidates(
             continue
         candidates.append((model, endpoint))
     return candidates or fallback
+
+
+def _broadcast_destinations_for_authorize(workspace_id: str) -> list[Any]:
+    """Skip the destination-index RPC briefly after an observed empty result."""
+    now = time.monotonic()
+    with _BROADCAST_EMPTY_CACHE_LOCK:
+        expires_at = _BROADCAST_EMPTY_CACHE.get(workspace_id)
+        if expires_at is not None:
+            if now < expires_at:
+                _BROADCAST_EMPTY_CACHE.move_to_end(workspace_id)
+                return []
+            del _BROADCAST_EMPTY_CACHE[workspace_id]
+
+    destinations = STORE.list_broadcast_destinations(workspace_id)
+    with _BROADCAST_EMPTY_CACHE_LOCK:
+        if destinations:
+            # Positive results are deliberately uncached: destination changes
+            # must take effect on the next authorize. A newly-created first
+            # destination can be hidden only by a previously cached empty result,
+            # delaying response metadata and native-batch eligibility by at most
+            # this cache's 60-second TTL.
+            _BROADCAST_EMPTY_CACHE.pop(workspace_id, None)
+        else:
+            _BROADCAST_EMPTY_CACHE[workspace_id] = now + _BROADCAST_EMPTY_CACHE_TTL_SECONDS
+            _BROADCAST_EMPTY_CACHE.move_to_end(workspace_id)
+            while len(_BROADCAST_EMPTY_CACHE) > _BROADCAST_EMPTY_CACHE_MAX_ENTRIES:
+                _BROADCAST_EMPTY_CACHE.popitem(last=False)
+    return destinations
 
 
 def _gateway_authorize_response(

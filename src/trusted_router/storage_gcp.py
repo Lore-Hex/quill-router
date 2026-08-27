@@ -3301,11 +3301,17 @@ class SpannerBigtableStore:
             else None
         )
 
+        built_authorizations: dict[str, GatewayAuthorization] = {}
+
         def build_authorization(
             authorization_id: str,
             reservation_id: str,
         ) -> GatewayAuthorization:
-            return GatewayAuthorization(
+            existing = built_authorizations.get(authorization_id)
+            if existing is not None:
+                assert existing.credit_reservation_id == reservation_id
+                return existing
+            built = GatewayAuthorization(
                 id=authorization_id,
                 workspace_id=workspace_id,
                 key_hash=key_hash,
@@ -3337,6 +3343,8 @@ class SpannerBigtableStore:
                 additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
                 native_batch_eligible=native_batch_eligible,
             )
+            built_authorizations[authorization_id] = built
+            return built
 
         def build_body(authorization_id: str, reservation_id: str) -> str:
             return _json_body(build_authorization(authorization_id, reservation_id))
@@ -3558,7 +3566,15 @@ class SpannerBigtableStore:
                 raise StoreUnavailable("credit headroom changed concurrently; retry")
         outcome = result["outcome"]
         authorization: GatewayAuthorization | None = None
-        if outcome in (AuthorizeOutcome.ACCEPTED, AuthorizeOutcome.REPLAY):
+        if outcome == AuthorizeOutcome.ACCEPTED:
+            # authorize_atomic stamps one client timestamp onto both the object
+            # and the inserted typed row/payload. No commit-generated response
+            # field exists, so the just-inserted object is byte-for-byte the
+            # response record and a strong post-commit point read adds no truth.
+            authorization = built_authorizations[result["authorization_id"]]
+        elif outcome == AuthorizeOutcome.REPLAY:
+            # A replay must respond from the winner's stored authorization, not
+            # this call's provisional object.
             authorization = self.get_gateway_authorization(result["authorization_id"])
         from trusted_router.storage_gcp_authorize import AuthorizeVerdict
 
