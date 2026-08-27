@@ -55,6 +55,7 @@ _DEFAULT_THROUGHPUT_TIMEOUT_SECONDS = 90.0
 _DEFAULT_THROUGHPUT_TIMEOUT_CEILING_SECONDS = 210.0
 _DEFAULT_THROUGHPUT_INTERVAL_SECONDS = THROUGHPUT_INTERVAL_SECONDS
 _DEFAULT_REMEDIATOR_TIMEOUT_SECONDS = 90.0
+_REMEDIATOR_OVERLAP_MESSAGE = "Synthetic operation is already in progress"
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:
@@ -407,6 +408,15 @@ async def _post_remediator(
             headers={"x-trustedrouter-internal-token": internal_token},
             timeout=httpx.Timeout(timeout_seconds),
         )
+        if response.status_code == 429:
+            payload = response.json()
+            error = payload.get("error") if isinstance(payload, dict) else None
+            if (
+                isinstance(error, dict)
+                and error.get("message") == _REMEDIATOR_OVERLAP_MESSAGE
+            ):
+                print("remediator skipped: another pass is already in progress")
+                return True
         response.raise_for_status()
         payload = response.json()
         decisions = payload.get("data", {}).get("decisions") if isinstance(payload, dict) else None
