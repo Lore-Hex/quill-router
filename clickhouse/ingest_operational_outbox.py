@@ -7,7 +7,6 @@ import datetime as dt
 import hashlib
 import json
 import logging
-import math
 import os
 import subprocess
 import time
@@ -249,37 +248,7 @@ class DrainResult:
 
 
 class OutboxSource(Protocol):
-    def fetch(self, *, limit: int) -> list[OperationalOutboxRow]:
-        # ONE unordered global read, not 32 ordered per-shard reads. Spanner
-        # stores rows in primary-key order, so results arrive
-        # (shard, commit_ts)-ordered per split anyway; delivery order does not
-        # matter (delete is by key, ClickHouse dedups by event) and this same
-        # statement doubles as the emptiness probe. The per-shard ORDER BY
-        # fan-out this replaces ran 64 statements every ~1.5s around the
-        # clock -- measured at ~25% of the whole 300-PU instance on
-        # 2026-08-25 -- to mostly discover an empty table. This path is
-        # interim: the direct sink (trusted_router.operational_analytics_direct)
-        # removes the outbox entirely; this drainer then only clears residue.
-        rows: list[OperationalOutboxRow] = []
-        with self._database.snapshot() as snapshot:
-            results = snapshot.execute_sql(
-                # OUTBOX_TABLE is a module constant, not caller input.
-                "SELECT shard, commit_ts, event_kind, event_id, payload "  # noqa: S608
-                f"FROM {OUTBOX_TABLE} LIMIT @limit",
-                params={"limit": limit},
-                param_types={"limit": self._pt.INT64},
-            )
-            for row in results:
-                rows.append(
-                    OperationalOutboxRow(
-                        shard=int(row[0]),
-                        commit_ts=row[1],
-                        event_kind=str(row[2]),
-                        event_id=str(row[3]),
-                        payload=str(row[4]),
-                    )
-                )
-        return rows
+    def fetch(self, *, limit: int) -> list[OperationalOutboxRow]: ...
 
     def delete(self, rows: list[OperationalOutboxRow]) -> None: ...
 
@@ -319,37 +288,32 @@ class SpannerOperationalOutboxSource:
     def fetch(self, *, limit: int) -> list[OperationalOutboxRow]:
         if limit < 1:
             return []
-        per_shard = max(1, math.ceil(limit / self._shard_count) * 2)
+        # Delivery order is not load-bearing: ClickHouse replacement uses the
+        # stable outbox commit timestamp as its version, and delete addresses
+        # only the exact fetched primary keys after every insert succeeds.
+        # Quarantine rows are append-only diagnostics and can repeat after a
+        # partial insert retry, but they have no ordering semantics.
+        # One global LIMIT therefore replaces the ordered query per shard.
         rows: list[OperationalOutboxRow] = []
-        with self._database.snapshot(multi_use=True) as snapshot:
-            for shard in range(self._shard_count):
-                values = snapshot.execute_sql(
-                    "SELECT shard, commit_ts, event_kind, event_id, payload "
-                    "FROM tr_operational_analytics_outbox "
-                    "WHERE shard=@shard ORDER BY commit_ts, event_kind, event_id "
-                    "LIMIT @limit",
-                    params={"shard": shard, "limit": per_shard},
-                    param_types={"shard": self._pt.INT64, "limit": self._pt.INT64},
-                )
-                rows.extend(
-                    OperationalOutboxRow(
-                        shard=int(row[0]),
-                        commit_ts=_utc(row[1]),
-                        event_kind=str(row[2]),
-                        event_id=str(row[3]),
-                        payload=str(row[4]),
-                    )
-                    for row in values
-                )
-        rows.sort(
-            key=lambda row: (
-                row.commit_ts,
-                row.shard,
-                row.event_kind,
-                row.event_id,
+        with self._database.snapshot() as snapshot:
+            values = snapshot.execute_sql(
+                # OUTBOX_TABLE is a module constant, not caller input.
+                "SELECT shard, commit_ts, event_kind, event_id, payload "  # noqa: S608
+                f"FROM {OUTBOX_TABLE} LIMIT @limit",
+                params={"limit": limit},
+                param_types={"limit": self._pt.INT64},
             )
-        )
-        return rows[:limit]
+            rows.extend(
+                OperationalOutboxRow(
+                    shard=int(row[0]),
+                    commit_ts=_utc(row[1]),
+                    event_kind=str(row[2]),
+                    event_id=str(row[3]),
+                    payload=str(row[4]),
+                )
+                for row in values
+            )
+        return rows
 
     def delete(self, rows: list[OperationalOutboxRow]) -> None:
         if not rows:
