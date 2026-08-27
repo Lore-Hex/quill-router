@@ -93,8 +93,94 @@
       "input_token_price_per_m": 135000,
       "output_token_price_per_m": 450000,
       "cached_input_token_price_per_m": 27000
+    },
+    {
+      "display_name": "deepseek-v4-flash-0731",
+      "title": "deepseek-v4-flash-0731",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek-v4-flash-0731",
+      "context_length": 1048576,
+      "routable": true,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "input_token_price_per_m": 45000,
+      "output_token_price_per_m": 90000,
+      "cached_input_token_price_per_m": 9000
+    },
+    {
+      "display_name": "kimi-k3",
+      "title": "kimi-k3",
+      "model_type": "chat",
+      "input_modalities": [
+        "image",
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "kimi-k3",
+      "context_length": 1048576,
+      "routable": true,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "input_token_price_per_m": 1500000,
+      "output_token_price_per_m": 7500000,
+      "cached_input_token_price_per_m": 150000
+    },
+    {
+      "display_name": "qwen3.8-27b",
+      "title": "qwen3.8-27b",
+      "model_type": "chat",
+      "input_modalities": [
+        "image",
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-27b",
+      "upstream_id": "qwen3.8-27b",
+      "context_length": 1000000,
+      "routable": true,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "input_token_price_per_m": 45000,
+      "output_token_price_per_m": 320000,
+      "cached_input_token_price_per_m": 15000
     }
   ],
-  "generated_at": "2026-08-27T13:51:47Z",
-  "model_count": 3
+  "generated_at": "2026-08-27T17:36:42Z",
+  "model_count": 6
 }
