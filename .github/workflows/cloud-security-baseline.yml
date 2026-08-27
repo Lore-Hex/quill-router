@@ -78,6 +78,12 @@ jobs:
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
 
       - uses: google-github-actions/setup-gcloud@v2
+        with:
+          # Alert-policy and notification-channel commands still live in the
+          # alpha component. Without it gcloud exits nonzero; the baseline now
+          # reports that as an unreadable control rather than inventing a mass
+          # deletion, but the scheduled evidence run must install the command.
+          install_components: alpha
 
       - name: Check GCP security baseline
         id: check
@@ -104,5 +110,12 @@ jobs:
           if [ -n "$NUM" ]; then
             gh issue comment "$NUM" --body "$BODY"
           else
-            gh issue create --title "$TITLE" --label security --body "$BODY"
+            # Labels are optional repository metadata, not part of the alert
+            # path. A missing `security` label used to make the reporting step
+            # fail after the baseline had already detected real drift.
+            LABEL_ARGS=()
+            if gh label list --limit 100 --json name --jq '.[].name' | grep -Fxq security; then
+              LABEL_ARGS=(--label security)
+            fi
+            gh issue create --title "$TITLE" "${LABEL_ARGS[@]}" --body "$BODY"
           fi
