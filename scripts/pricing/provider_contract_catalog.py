@@ -35,6 +35,11 @@ _MODEL_V2_FIELDS = _MODEL_FIELDS | {"reliability"}
 _CAPABILITY_FIELDS = frozenset(
     {"streaming", "tools", "structured_output", "reasoning", "prompt_caching"}
 )
+_CAPABILITY_V2_OPTIONAL_FIELDS = frozenset({"receipts"})
+_RECEIPT_FIELDS = frozenset({"spec", "algorithms", "delivery"})
+_RECEIPT_SPECS = frozenset({"inference-receipt/1"})
+_RECEIPT_ALGORITHMS = frozenset({"EdDSA"})
+_RECEIPT_DELIVERY = frozenset({"header", "stream-chunk"})
 _PRICING_FIELDS = frozenset(
     {
         "currency",
@@ -89,12 +94,13 @@ def _require_exact_fields(
     expected: frozenset[str],
     *,
     label: str,
+    optional: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RuntimeError(f"{label} must be an object")
     keys = frozenset(str(key) for key in value)
     missing = sorted(expected - keys)
-    extra = sorted(keys - expected)
+    extra = sorted(keys - expected - optional)
     if missing or extra:
         raise RuntimeError(f"{label} fields invalid: missing={missing}, extra={extra}")
     return value
@@ -296,12 +302,40 @@ def discover_provider_contract_catalog(
         )
 
         capabilities = _require_exact_fields(
-            row["capabilities"], _CAPABILITY_FIELDS, label=f"{label}.capabilities"
+            row["capabilities"],
+            _CAPABILITY_FIELDS,
+            label=f"{label}.capabilities",
+            optional=_CAPABILITY_V2_OPTIONAL_FIELDS if is_v2 else frozenset(),
         )
         parsed_capabilities = {
-            key: _require_bool(value, label=f"{label}.capabilities.{key}")
-            for key, value in capabilities.items()
+            key: _require_bool(
+                capabilities[key], label=f"{label}.capabilities.{key}"
+            )
+            for key in _CAPABILITY_FIELDS
         }
+        if "receipts" in capabilities:
+            receipts = _require_exact_fields(
+                capabilities["receipts"],
+                _RECEIPT_FIELDS,
+                label=f"{label}.capabilities.receipts",
+            )
+            receipt_spec = _require_string(
+                receipts["spec"], label=f"{label}.capabilities.receipts.spec"
+            )
+            if receipt_spec not in _RECEIPT_SPECS:
+                raise RuntimeError(
+                    f"{label}.capabilities.receipts.spec is unsupported"
+                )
+            _require_string_set(
+                receipts["algorithms"],
+                allowed=_RECEIPT_ALGORITHMS,
+                label=f"{label}.capabilities.receipts.algorithms",
+            )
+            _require_string_set(
+                receipts["delivery"],
+                allowed=_RECEIPT_DELIVERY,
+                label=f"{label}.capabilities.receipts.delivery",
+            )
         pricing = _require_exact_fields(
             row["pricing"], _PRICING_FIELDS, label=f"{label}.pricing"
         )
