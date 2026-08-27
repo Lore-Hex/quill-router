@@ -37,11 +37,38 @@ ARCHIVE_BUCKET="${ARCHIVE_BUCKET:-quill-cloud-proxy-tr-clickhouse-archive}"
 INGEST_THRESHOLD_BYTES="${INGEST_THRESHOLD_BYTES:-8589934592}"   # 8 GiB/day.
 
 FAIL=0
-ok(){    printf '  ok    %s\n' "$*"; }
-drift(){ printf '  DRIFT %s\n' "$*"; FAIL=1; }
-note(){  printf '  note  %s\n' "$*"; }
-sec(){   printf '\n=== %s\n' "$*"; }
-g(){ gcloud "$@" --project="$PROJECT" 2>/dev/null; }
+UNKNOWN=0
+ok(){      printf '  ok    %s\n' "$*"; }
+drift(){   printf '  DRIFT %s\n' "$*"; FAIL=1; }
+note(){    printf '  note  %s\n' "$*"; }
+unknown(){ printf '  UNKNOWN %s\n' "$*"; UNKNOWN=1; FAIL=1; }
+sec(){     printf '\n=== %s\n' "$*"; }
+
+# g() runs a gcloud read and DISTINGUISHES "returned nothing" from "could not read".
+#
+# It previously ended in `2>/dev/null`, which discarded every error. When a call failed
+# — alpha component absent on the runner, API unreachable, permission edge — the caller
+# received an empty string, jq matched nothing, and the script reported DRIFT ... missing.
+#
+# That is worse than a false alarm. A detector that reports "missing" whenever it cannot
+# read is saturated: a real deletion produces the same output as a failed query, so the
+# genuine event is undetectable. Observed 2026-08-26 — six CIS drifts reported against
+# resources that demonstrably existed.
+#
+# This is the same defect the ISMS records as "empty result is not absence", and which
+# line ~200 of this very script already guards against for essential-contacts. The lesson
+# was applied in one place and not the others.
+#
+# On failure g() emits nothing on stdout, records the stderr in G_ERR, and returns the
+# gcloud exit status. Callers MUST check: `if ! OUT="$(g ...)"; then unknown "..."; fi`
+G_ERR=""
+g(){
+  local out rc
+  out="$(gcloud "$@" --project="$PROJECT" 2>/tmp/g_stderr.$$)"; rc=$?
+  G_ERR="$(cat /tmp/g_stderr.$$ 2>/dev/null || true)"; rm -f /tmp/g_stderr.$$
+  if [ $rc -ne 0 ]; then return $rc; fi
+  printf '%s' "$out"
+}
 
 # ---------------------------------------------------------------------------
 # 1. Audit log configuration — and the cost guard on it.
@@ -113,7 +140,10 @@ check_metric cis-sqlinstance-changes \
 # 3. Alert policies, the channel they point at, and duplicates of it.
 # ---------------------------------------------------------------------------
 sec "alert policies and notification channel"
-CHANNELS="$(g alpha monitoring channels list --format=json)"
+if ! CHANNELS="$(g alpha monitoring channels list --format=json)"; then
+  unknown "could not read notification channels — NOT treating as absent: ${G_ERR%%$'\n'*}"
+  CHANNELS="__UNREADABLE__"
+fi
 CH_COUNT="$(jq -r '[.[] | select(.displayName=="TrustedRouter security alerts")] | length' <<<"${CHANNELS:-[]}")"
 case "$CH_COUNT" in
   1) ok "exactly one 'TrustedRouter security alerts' channel" ;;
@@ -124,7 +154,10 @@ case "$CH_COUNT" in
   *) drift "$CH_COUNT duplicate 'TrustedRouter security alerts' channels — the old hardening script was re-run" ;;
 esac
 
-POLICIES="$(g alpha monitoring policies list --format=json)"
+if ! POLICIES="$(g alpha monitoring policies list --format=json)"; then
+  unknown "could not read alert policies — NOT treating as absent: ${G_ERR%%$'\n'*}"
+  POLICIES="__UNREADABLE__"
+fi
 for want in "CIS: IAM configuration changes" "CIS: VPC firewall rule changes" \
             "CIS: VPC network route changes" "CIS: Cloud SQL instance configuration changes"; do
   if jq -e --arg d "$want" '[.[] | select(.displayName==$d and .enabled==true)] | length > 0' <<<"${POLICIES:-[]}" >/dev/null 2>&1; then
