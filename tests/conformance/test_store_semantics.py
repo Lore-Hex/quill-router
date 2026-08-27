@@ -34,11 +34,64 @@ from psycopg.types.numeric import Int8
 
 from trusted_router.storage_gcp import _auth_record
 from trusted_router.storage_key_usage import api_key_from_json
-from trusted_router.storage_models import ApiKey
+from trusted_router.storage_models import ApiKey, OAuthApp
 from trusted_router.store_protocol import Store
 from trusted_router.typed_balance import live_credit_summary
 
 from .conftest import BACKENDS, make_benchmark_sample, make_synthetic_probe_sample
+
+
+def test_oauth_app_registry_is_unique_owner_scoped_and_identity_immutable(
+    store: Store,
+    user_id: str,
+    unique: str,
+) -> None:
+    app_id = f"app-{unique}"
+    original = OAuthApp(
+        id=app_id,
+        owner_user_id=user_id,
+        name="Original app",
+        redirect_uris=["https://app.example/callback"],
+    )
+
+    assert store.create_oauth_app(original) == original
+    assert store.get_oauth_app(app_id) == original
+    assert store.list_oauth_apps_for_user(user_id) == [original]
+    assert store.list_oauth_apps_for_user(f"other-{unique}") == []
+
+    with pytest.raises(ValueError, match="oauth_app_id_taken"):
+        store.create_oauth_app(
+            OAuthApp(
+                id=app_id,
+                owner_user_id=f"other-{unique}",
+                name="Duplicate",
+                redirect_uris=["https://other.example/callback"],
+            )
+        )
+
+    updated = store.update_oauth_app(
+        app_id,
+        patch={
+            "name": "Updated app",
+            "redirect_uris": ["native-app://callback"],
+            "logo_url": "https://app.example/logo.png",
+            "markup_basis_points": 30_000,
+            "suspended": True,
+        },
+    )
+    assert updated is not None
+    assert updated.id == app_id
+    assert updated.owner_user_id == user_id
+    assert updated.name == "Updated app"
+    assert updated.redirect_uris == ["native-app://callback"]
+    assert updated.logo_url == "https://app.example/logo.png"
+    assert updated.markup_basis_points == 30_000
+    assert updated.suspended is True
+    assert store.get_oauth_app(app_id) == updated
+
+    with pytest.raises(ValueError, match="invalid_oauth_app_patch"):
+        store.update_oauth_app(app_id, patch={"owner_user_id": f"other-{unique}"})
+    assert store.update_oauth_app(f"missing-{unique}", patch={"name": "No app"}) is None
 
 # --------------------------------------------------------------------------
 # Exactly-once money
@@ -796,6 +849,30 @@ def test_api_key_scopes_round_trip_across_storage(
     assert stored_scoped.scopes == ["inference", "profile"]
 
 
+def test_api_key_app_id_round_trips_and_old_keys_default_empty(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+    unique: str,
+) -> None:
+    _legacy_raw, legacy = store.create_api_key(
+        workspace_id=workspace_id,
+        name=f"legacy-app-id-{unique}",
+        creator_user_id=user_id,
+    )
+    _app_raw, attributed = store.create_api_key(
+        workspace_id=workspace_id,
+        name=f"attributed-app-id-{unique}",
+        creator_user_id=user_id,
+        app_id=f"app-{unique}",
+    )
+
+    stored_legacy = store.get_key_by_hash(legacy.hash)
+    stored_attributed = store.get_key_by_hash(attributed.hash)
+    assert stored_legacy is not None and stored_legacy.app_id == ""
+    assert stored_attributed is not None and stored_attributed.app_id == f"app-{unique}"
+
+
 def test_old_api_key_raw_json_without_scopes_decodes_as_legacy() -> None:
     """Exercise both real entity decoders with the field genuinely absent."""
     raw = json.dumps(
@@ -812,7 +889,9 @@ def test_old_api_key_raw_json_without_scopes_decodes_as_legacy() -> None:
     )
 
     assert api_key_from_json(raw).scopes == []
+    assert api_key_from_json(raw).app_id == ""
     assert _auth_record(raw, ApiKey).scopes == []
+    assert _auth_record(raw, ApiKey).app_id == ""
 
 
 def test_auth_session_lifecycle(store: Store, user_id: str) -> None:
@@ -1400,11 +1479,12 @@ def _authorize(store: Store, workspace_id: str, key_hash: str, **kw: object) -> 
 
 
 def test_gateway_authorization_round_trips(store: Store, workspace_id: str, unique: str) -> None:
-    auth = _authorize(store, workspace_id, f"gw-{unique}")
+    auth = _authorize(store, workspace_id, f"gw-{unique}", app_id=f"app-{unique}")
     fetched = store.get_gateway_authorization(auth.id)  # type: ignore[attr-defined]
     assert fetched is not None
     assert fetched.id == auth.id  # type: ignore[attr-defined]
     assert fetched.settled is False
+    assert fetched.app_id == f"app-{unique}"
 
 
 def test_gateway_authorization_idempotency_key_dedupes(

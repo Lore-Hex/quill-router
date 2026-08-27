@@ -11,7 +11,12 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import ValidationError
 
-from trusted_router.auth import ManagementPrincipal, SettingsDep, principal_from_request
+from trusted_router.auth import (
+    ManagementPrincipal,
+    Principal,
+    SettingsDep,
+    principal_from_request,
+)
 from trusted_router.config import Settings
 from trusted_router.domains import request_control_origin
 from trusted_router.errors import api_error, assert_workspace_billing_active
@@ -25,7 +30,7 @@ from trusted_router.schemas import CheckoutRequest
 from trusted_router.scopes import DEFAULT_DELEGATED_SCOPES
 from trusted_router.serialization import key_shape
 from trusted_router.services.stripe_billing import create_checkout_session
-from trusted_router.storage import STORE, OAuthAuthorizationCode
+from trusted_router.storage import STORE, OAuthApp, OAuthAuthorizationCode
 from trusted_router.typed_balance import live_credit_summary
 from trusted_router.types import ErrorType
 from trusted_router.verification import identity_payload
@@ -41,6 +46,7 @@ OAUTH_DEFAULT_KEY_LIMIT = "20"
 NATIVE_CALLBACK_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]{1,63}$")
 UNSAFE_CALLBACK_SCHEMES = {"data", "file", "javascript"}
 OAUTH_AUTHORIZATION_FIELDS = (
+    "client_id",
     "callback_url",
     "code_challenge",
     "code_challenge_method",
@@ -57,12 +63,16 @@ def register_oauth_key_routes(router: APIRouter) -> None:
     @router.get(OAUTH_AUTHORIZATION_ENDPOINT_PATH)
     async def oauth_authorize_page(request: Request, settings: SettingsDep) -> Response:
         params = _oauth_params_from_query(request)
+        oauth_app = _registered_oauth_app(params)
         try:
             principal = principal_from_request(request, settings)
         except HTTPException as exc:
             if exc.status_code != 401:
                 raise
-            return HTMLResponse(_signin_html(request, settings, params), status_code=401)
+            return HTMLResponse(
+                _signin_html(request, settings, params, oauth_app=oauth_app),
+                status_code=401,
+            )
         if not principal.is_management:
             raise api_error(403, "Only management users can delegate credits", ErrorType.FORBIDDEN)
         _deny_scoped_delegator(principal)
@@ -71,6 +81,7 @@ def register_oauth_key_routes(router: APIRouter) -> None:
                 params,
                 workspace_name=principal.workspace.name,
                 workspace_id=principal.workspace.id,
+                oauth_app=oauth_app,
             )
         )
 
@@ -147,6 +158,7 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> JSONResponse:
         params = await _oauth_params_from_json(request)
+        _require_programmatic_app_ownership(params, principal)
         raw_code, code = _create_code(params, principal, settings)
         return JSONResponse(
             {
@@ -168,6 +180,10 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         if code is None:
             raise api_error(403, "Invalid or expired authorization code", ErrorType.FORBIDDEN)
         _verify_pkce(code, body)
+        if code.client_app_id:
+            app = STORE.get_oauth_app(code.client_app_id)
+            if app is None or app.suspended:
+                raise api_error(403, "OAuth app is unavailable", ErrorType.FORBIDDEN)
         # Quiesce: a pre-pause OAuth code must not mint a key during pause.
         assert_workspace_billing_active(STORE.get_workspace(code.workspace_id))
         raw_key, key = STORE.create_api_key(
@@ -179,6 +195,7 @@ def register_oauth_key_routes(router: APIRouter) -> None:
             limit_reset=code.limit_reset,
             expires_at=code.expires_at,
             scopes=DEFAULT_DELEGATED_SCOPES,
+            app_id=code.client_app_id,
         )
         # Return the signed-in user's identity alongside the key so the app
         # knows WHO signed in without a second /auth/userinfo round-trip
@@ -206,6 +223,7 @@ def _create_code(
     limit_reset = _limit_reset(params.get("usage_limit_type"))
     expires_at = _expires_at(params.get("expires_at"))
     key_label = _key_label(params.get("key_label"), callback_url)
+    oauth_app = _registered_oauth_app(params)
     user_id = _principal_user_id(principal)
     return STORE.create_oauth_authorization_code(
         workspace_id=principal.workspace.id,
@@ -221,6 +239,7 @@ def _create_code(
         code_challenge_method=code_challenge_method,
         spawn_agent=_optional_str(params.get("spawn_agent")),
         spawn_cloud=_optional_str(params.get("spawn_cloud")),
+        client_app_id=oauth_app.id if oauth_app is not None else "",
     )
 
 
@@ -257,6 +276,49 @@ def _validate_code_request(params: dict[str, Any]) -> None:
     _limit_reset(params.get("usage_limit_type"))
     _expires_at(params.get("expires_at"))
     _key_label(params.get("key_label"), str(params.get("callback_url") or ""))
+    _registered_oauth_app(params)
+
+
+def _registered_oauth_app(params: dict[str, Any]) -> OAuthApp | None:
+    client_id = _optional_str(params.get("client_id"))
+    if client_id is None:
+        return None
+    app = STORE.get_oauth_app(client_id)
+    if app is None or app.suspended:
+        raise api_error(400, "client_id is unknown or suspended", ErrorType.BAD_REQUEST)
+    callback_url = _validate_callback_url(str(params.get("callback_url") or ""))
+    if callback_url not in app.redirect_uris:
+        raise api_error(
+            400,
+            "callback_url is not registered for client_id",
+            ErrorType.BAD_REQUEST,
+        )
+    return app
+
+
+def _require_programmatic_app_ownership(
+    params: dict[str, Any], principal: Principal
+) -> None:
+    """Prevent management programs from forging another app's attribution."""
+    client_id = _optional_str(params.get("client_id"))
+    if client_id is None:
+        return
+    app = STORE.get_oauth_app(client_id)
+    actor_user_id = (
+        principal.user.id
+        if principal.user is not None
+        else (
+            principal.api_key.creator_user_id
+            if principal.api_key is not None
+            else None
+        )
+    )
+    if app is None or actor_user_id != app.owner_user_id:
+        raise api_error(
+            403,
+            "Only the OAuth app owner can mint a code with this client_id",
+            ErrorType.FORBIDDEN,
+        )
 
 
 def _validate_callback_url(callback_url: str) -> str:
@@ -430,12 +492,22 @@ def _deny_scoped_delegator(principal: Any) -> None:
         )
 
 
-def _signin_html(request: Request, settings: Settings, params: dict[str, Any]) -> str:
+def _signin_html(
+    request: Request,
+    settings: Settings,
+    params: dict[str, Any],
+    *,
+    oauth_app: OAuthApp | None,
+) -> str:
     next_path = str(request.url.path) + ("?" + str(request.url.query) if request.url.query else "")
     return render_template(
         "auth/oauth_signin.html",
         page_title="Authorize TrustedRouter",
-        app_name=_key_label(params.get("key_label"), str(params.get("callback_url") or "")),
+        app_name=(
+            oauth_app.name
+            if oauth_app is not None
+            else _key_label(params.get("key_label"), str(params.get("callback_url") or ""))
+        ),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         # Use the same urllib.parse.quote shape the test asserts against —
@@ -449,9 +521,26 @@ def _consent_html(
     *,
     workspace_name: str,
     workspace_id: str,
+    oauth_app: OAuthApp | None,
 ) -> str:
+    app_owner_line = ""
+    if oauth_app is not None:
+        owner = STORE.get_user(oauth_app.owner_user_id)
+        verified_name = (owner.identity_verified_name or "").strip() if owner else ""
+        if not verified_name:
+            raise api_error(
+                403,
+                "This app cannot be presented because its owner's verified name is "
+                "unavailable; the owner must re-verify.",
+                ErrorType.VERIFICATION_REQUIRED,
+            )
+        app_owner_line = f"by {verified_name} (identity-verified)"
+
     callback_url = _validate_callback_url(str(params.get("callback_url") or ""))
     key_label = _key_label(params.get("key_label"), callback_url)
+    consent_app_name = (
+        f"{oauth_app.name} · {oauth_app.id}" if oauth_app is not None else key_label
+    )
     limit = _limit_microdollars(params.get("limit"))
     effective_limit = OAUTH_DEFAULT_KEY_LIMIT if limit is None else microdollars_to_decimal(limit)
     reset = _limit_reset(params.get("usage_limit_type")) or ""
@@ -468,11 +557,18 @@ def _consent_html(
     checkout_status = str(params.get("checkout") or "")
     if checkout_status not in {"success", "cancel", "mock"}:
         checkout_status = ""
+    template_name = (
+        "auth/oauth_consent_registered.html"
+        if oauth_app is not None
+        else "auth/oauth_consent.html"
+    )
     return render_template(
-        "auth/oauth_consent.html",
-        page_title=f"Authorize {key_label}",
-        key_label=key_label,
+        template_name,
+        page_title=f"Authorize {consent_app_name}",
+        key_label=consent_app_name,
         callback_host=urlsplit(callback_url).hostname or callback_url,
+        app_logo_url=oauth_app.logo_url if oauth_app is not None else None,
+        app_owner_line=app_owner_line,
         cancel_url=_callback_with_error(callback_url, "access_denied"),
         workspace_name=workspace_name,
         available_display=format_money_display(available),

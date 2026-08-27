@@ -120,6 +120,7 @@ class InMemoryApiKeys:
         budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
         scopes: list[str] | None = None,
+        app_id: str = "",
     ) -> tuple[str, ApiKey]:
         with self._lock:
             validated_scopes = validate_api_key_scopes(scopes, management=management)
@@ -138,6 +139,7 @@ class InMemoryApiKeys:
                 workspace_id=workspace_id,
                 creator_user_id=creator_user_id,
                 scopes=validated_scopes,
+                app_id=app_id,
                 management=management,
                 limit_microdollars=limit_microdollars,
                 limit_reset=limit_reset,
@@ -437,6 +439,7 @@ class InMemoryApiKeys:
         idempotency_key: str | None = None,
         tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
+        app_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         user_provided_model_id: str | None = None,
@@ -487,6 +490,7 @@ class InMemoryApiKeys:
                 idempotency_key=idempotency_key,
                 tags=dict(tags or {}),
                 idempotency_fingerprint=idempotency_fingerprint,
+                app_id=app_id,
                 custom_model_id=custom_model_id,
                 custom_model_revision=custom_model_revision,
                 user_provided_model_id=user_provided_model_id,

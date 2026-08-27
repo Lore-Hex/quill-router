@@ -589,6 +589,9 @@ def _authorize_gateway_sync(
                 ErrorType.CONFLICT,
             )
         return _replay_response(existing_authorization)
+    # Suspension stops NEW authorizations. Resolve replay first so a lost
+    # response can be recovered and in-flight work can settle under frozen terms.
+    _assert_oauth_app_allows_new_authorization(api_key)
     # Minted up front so a user-model concurrency slot can be keyed by it
     # before the reservation exists. It is a fresh uuid — never derived from
     # the caller's Idempotency-Key: a deterministic id would outlive its
@@ -702,6 +705,7 @@ def _authorize_gateway_sync(
                     candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
                     idempotency_key=request_idempotency_key,
                     idempotency_fingerprint=request_fingerprint,
+                    app_id=api_key.app_id,
                     tags=effective_tags,
                     expires_at=expires_at,
                     lease_ttl_seconds=settings.regional_quota_lease_ttl_seconds,
@@ -729,6 +733,7 @@ def _authorize_gateway_sync(
                     idempotency_key=request_idempotency_key,
                     tags=effective_tags,
                     idempotency_fingerprint=request_fingerprint,
+                    app_id=api_key.app_id,
                     key_usage_shards=key_usage_shards,
                     custom_model_id=custom_model.id if custom_model else None,
                     custom_model_revision=custom_model.revision if custom_model else None,
@@ -907,6 +912,7 @@ def _authorize_gateway_sync(
             idempotency_key=request_idempotency_key,
             tags=effective_tags,
             idempotency_fingerprint=request_fingerprint,
+            app_id=api_key.app_id,
             custom_model_id=custom_model.id if custom_model else None,
             custom_model_revision=custom_model.revision if custom_model else None,
             user_provided_model_id=user_model.id if user_model else None,
@@ -1567,6 +1573,39 @@ def _assert_gateway_key_scope(api_key: Any) -> None:
             f"API key is missing required scope: {SCOPE_INFERENCE}",
             ErrorType.INSUFFICIENT_SCOPE,
         )
+
+
+def _assert_oauth_app_allows_new_authorization(api_key: Any) -> None:
+    if not api_key.app_id:
+        return
+
+    suspended = _oauth_app_is_suspended_for_key(api_key)
+
+    if suspended:
+        # Do not report INVALID_API_KEY: enclaves negative-cache that result,
+        # so un-suspending the app would not promptly restore its valid key.
+        raise api_error(
+            403,
+            "OAuth app is missing or suspended; new authorizations are forbidden",
+            ErrorType.FORBIDDEN,
+        )
+
+
+def _oauth_app_is_suspended_for_key(api_key: Any) -> bool:
+    """Resolve app suspension from the key's authoritative provenance."""
+    if getattr(api_key, "federated_home", ""):
+        # Case 1: a federated key trusts only the restriction served by home.
+        # App slugs are namespaced per plane, so a peer's local row with the
+        # same slug is unrelated and meaningless for this key.
+        return bool(getattr(api_key, "federated_app_suspended", False))
+
+    app = STORE.get_oauth_app(api_key.app_id)
+    if app is not None:
+        # Case 2: a home-plane key uses its authoritative local app row.
+        return bool(app.suspended)
+
+    # Case 3: an orphaned home-plane app key fails closed after app deletion.
+    return True
 
 
 def _federated_key_still_valid(cached: Any | None, lookup_hash: str) -> Any | None:
@@ -2331,6 +2370,9 @@ def _settle_gateway_authorization(
         # correlation id is useful to them, the client telemetry object is not.
         broadcast_settle_body = dict(settle_body)
         broadcast_settle_body.pop("client", None)
+        # App attribution is frozen from the key at authorize. Never let a
+        # caller-supplied root field become forgeable broadcast metadata.
+        broadcast_settle_body.pop("app_id", None)
         broadcast_settle_body.pop("price_tier_input_tokens", None)
         enqueue_metadata_broadcast(generation, settle_body=broadcast_settle_body)
         if should_drain_inline(settings) and background_tasks is not None:
