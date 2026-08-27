@@ -3279,7 +3279,11 @@ class SpannerBigtableStore:
         key_limit_exceeded/key_missing/idempotency_mismatch, or
         "key_window_limit_exceeded:<daily|weekly|monthly>" when a per-window cap
         blocked (see authorize_atomic's window_limits contract)."""
-        from trusted_router.storage_gcp_authorize import AuthorizeOutcome, authorize_atomic
+        from trusted_router.storage_gcp_authorize import (
+            AuthorizeOutcome,
+            authorize_atomic,
+            bounded_credit_shard_candidates,
+        )
         from trusted_router.storage_gcp_keys import (
             _gateway_authorization_idempotency_index_id,
         )
@@ -3385,7 +3389,11 @@ class SpannerBigtableStore:
                 build_authorization=build_authorization,
                 build_auth_body=build_body,
                 request_record_write_mode=self.request_record_write_mode,
-                credit_shard_candidates=candidates,
+                # Retain `candidates` in full outside this transaction for the
+                # lock-free aggregate check and cold rebalance below. A depleted
+                # workspace must never make one rejected transaction lock every
+                # configured shard.
+                credit_shard_candidates=bounded_credit_shard_candidates(candidates),
                 key_shard_candidates=key_shard_candidates,
                 authorization_id=authorization_id,
             )

@@ -60,6 +60,21 @@ from trusted_router.storage_models import GatewayAuthorization, Generation, User
 
 log = logging.getLogger(__name__)
 
+# A rejected conditional UPDATE keeps its row lock until the transaction rolls
+# back. Scanning every configured shard therefore lets one depleted tenant turn
+# N concurrent authorizations into N * shard_count contended row locks. Keep the
+# hot transaction small; the caller retains the full shard set for its lock-free
+# aggregate precheck and cold-path escrow rebalance.
+MAX_CREDIT_SHARD_ATTEMPTS_PER_TRANSACTION = 4
+
+
+def bounded_credit_shard_candidates(candidates: tuple[int, ...]) -> tuple[int, ...]:
+    """Return the fixed, pre-randomized hot-path subset for one transaction."""
+
+    if not candidates:
+        raise ValueError("credit_shard_candidates must not be empty")
+    return candidates[:MAX_CREDIT_SHARD_ATTEMPTS_PER_TRANSACTION]
+
 
 class AuthorizeOutcome:
     ACCEPTED = "accepted"
@@ -235,7 +250,9 @@ def authorize_atomic(
     candidate, else BYOK). `has_credit_candidate` gates the credit hold.
     `credit_shard_candidates` is a bounded, pre-randomized order built outside
     the transaction so Spanner retries use the same order. The first shard with
-    enough independent sub-budget is recorded durably on the reservation.
+    enough independent sub-budget is recorded durably on the reservation. The
+    store wrapper applies `bounded_credit_shard_candidates`; direct callers must
+    likewise pass no more than the hot-path limit.
 
     Per-window key caps are checked by the CALLER via check_key_window_limits on
     a lock-free snapshot BEFORE this transaction — deliberately NOT in here: a

@@ -19,6 +19,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from trusted_router.routes.internal.gateway import (
+    _BILLING_PATH_SPANNER_BUDGET_SECONDS,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 GATEWAY = ROOT / "src" / "trusted_router" / "routes" / "internal" / "gateway.py"
 
@@ -66,3 +70,9 @@ def test_no_blank_line_between_the_budget_and_its_function() -> None:
                 f"{number + 1} is followed by {following!r}, so it binds to "
                 f"whatever function appears next instead of the one below it"
             )
+
+
+def test_billing_budget_finishes_before_enclave_header_timeout() -> None:
+    """The enclave's direct control-plane client has a 25-second header cap."""
+
+    assert _BILLING_PATH_SPANNER_BUDGET_SECONDS < 25.0

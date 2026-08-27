@@ -131,6 +131,55 @@ def test_true_exhaustion_skips_rw_rebalance(monkeypatch: pytest.MonkeyPatch) -> 
     assert calls["count"] == 0
 
 
+def test_true_exhaustion_bounds_conditional_credit_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A depleted tenant must not lock every configured credit shard."""
+    from trusted_router import storage_gcp_authorize as authorize_mod
+
+    store, _database, key = _seed([100] * 16, usage=[100] * 16)
+    attempts: list[tuple[int, ...]] = []
+    original = authorize_mod.authorize_atomic
+
+    def spy(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        candidates = tuple(kwargs["credit_shard_candidates"])
+        attempts.append(candidates)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(authorize_mod, "authorize_atomic", spy)
+
+    outcome, authorization = _typed_authorize(store, key, estimate=1)
+
+    assert outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS
+    assert authorization is None
+    assert attempts
+    assert max(len(candidates) for candidates in attempts) <= 4
+
+
+def test_bounded_attempts_repair_headroom_outside_hot_subset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bounding the write set must not turn aggregate funds into a false 402."""
+    totals = [0] * 16
+    totals[7] = 100
+    store, database, key = _seed(totals)
+    candidates = tuple(range(16))
+    monkeypatch.setattr(store, "_credit_shard_candidates", lambda _workspace_id: candidates)
+    monkeypatch.setattr(
+        store,
+        "_refresh_credit_shard_candidates",
+        lambda _workspace_id: candidates,
+    )
+
+    outcome, authorization = _typed_authorize(store, key, estimate=80)
+
+    assert outcome == AuthorizeOutcome.ACCEPTED
+    assert authorization is not None
+    rows = database.typed[CREDIT_BALANCE_TABLE]
+    assert rows[(WORKSPACE_ID, 0)]["reserved"] == 80
+    assert rows[(WORKSPACE_ID, 7)]["total_credits"] == 20
+
+
 def test_fragmented_sufficient_still_rebalances_and_accepts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
