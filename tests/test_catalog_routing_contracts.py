@@ -2294,3 +2294,8 @@ def test_parasail_qwen_397b_uses_working_native_upstream_id() -> None:
     assert byok.upstream_id == "parasail-qwen35-397b-a17b"
     assert prepaid.prompt_price_microdollars_per_million_tokens == 527_500
     assert prepaid.completion_price_microdollars_per_million_tokens == 3_798_000
+
+
+def test_parasail_glm_53_flash_stays_dark_until_price_is_published() -> None:
+    assert "z-ai/glm-5.3-flash@parasail/prepaid" not in MODEL_ENDPOINTS
+    assert "z-ai/glm-5.3-flash@parasail/byok" not in MODEL_ENDPOINTS

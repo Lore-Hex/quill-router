@@ -162,6 +162,7 @@ _NATIVE_TO_OR_ID = {
     "parasail-glm-52": "z-ai/glm-5.2",
     "zai-org/GLM-5.2": "z-ai/glm-5.2",
     "zai-org/GLM-5.2-FP8": "z-ai/glm-5.2",
+    "zai-org/GLM-5.3-Flash": "z-ai/glm-5.3-flash",
     "parasail-glm47": "z-ai/glm-4.7",
     "zai-org/GLM-4.7": "z-ai/glm-4.7",
     "zai-org/GLM-4.7-FP8": "z-ai/glm-4.7",
@@ -204,6 +205,7 @@ _NATIVE_TO_OR_ID = {
     "ByteDance-Seed/UI-TARS-1.5-7B": "bytedance/ui-tars-1.5-7b",
 }
 UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}
+_LIVE_MODEL_IDS: set[str] = set()
 
 # SKIPPED — not yet supported by TR's chat-completions path:
 #   - parasail-bge-m3 / BAAI/bge-m3 (embedding model)
@@ -224,6 +226,7 @@ UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.ite
 # a page row NOT in this map lands in notes as "unmapped" so the
 # operator adds it deliberately.
 _DISPLAY_TO_OR_ID = {
+    "GLM-5.3 Flash": "z-ai/glm-5.3-flash",
     "GLM-5.2": "z-ai/glm-5.2",
     "GLM-5.1": "z-ai/glm-5.1",
     "GLM-5": "z-ai/glm-5",
@@ -334,6 +337,9 @@ def _http_client() -> httpx.Client:
 def fetch() -> ProviderPricingResult:
     """Scrape prices from the public pricing page, gate on /v1/models
     liveness, and return prices only for models that appear in BOTH."""
+    global _LIVE_MODEL_IDS  # noqa: PLW0603
+
+    _LIVE_MODEL_IDS = set()
     notes: list[str] = []
 
     # Price source: the public pricing page. A fetch/parse failure
@@ -384,6 +390,7 @@ def fetch() -> ProviderPricingResult:
         if provider_model_retired(SLUG, or_id, native_id):
             continue
         or_ids_live.add(or_id)
+    _LIVE_MODEL_IDS = or_ids_live
 
     prices: dict[str, ModelPrice] = {}
     for or_id, rates in sorted(page_prices.items()):
@@ -424,6 +431,25 @@ def fetch() -> ProviderPricingResult:
 # Metadata (context/modalities) mirrors the OR snapshot entries for
 # the same checkpoints served by other providers.
 _MANIFEST_ROW_TEMPLATES: dict[str, dict[str, Any]] = {
+    "z-ai/glm-5.3-flash": {
+        "id": "z-ai/glm-5.3-flash",
+        "upstream_id": "zai-org/GLM-5.3-Flash",
+        "display_name": "Parasail GLM 5.3 Flash",
+        "title": "z-ai/glm-5.3-flash",
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "model_type": "chat",
+        "features": [
+            "reasoning",
+            "function-calling",
+            "structured-outputs",
+            "serverless",
+        ],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+    },
     "z-ai/glm-5.2": {
         "id": "z-ai/glm-5.2",
         "upstream_id": "parasail-glm-52",
@@ -528,6 +554,25 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     }
     updated: list[str] = []
     appended: list[str] = []
+
+    # Current-family routes can appear in Parasail's authenticated catalog
+    # before its public pricing table. Keep the known route visible as dark
+    # metadata so discovery coverage is complete, but never authorize it until
+    # the authoritative pricing page publishes positive rates.
+    for model_id, template in sorted(_MANIFEST_ROW_TEMPLATES.items()):
+        if model_id in existing_by_id or model_id not in _LIVE_MODEL_IDS:
+            continue
+        if model_id != "z-ai/glm-5.3-flash":
+            continue
+        row = dict(template)
+        if model_id not in result.prices:
+            row["routable"] = False
+            row["routable_reason"] = "awaiting-price"
+            row["unresolved_since"] = datetime.now(UTC).date().isoformat()
+        rows.append(row)
+        existing_by_id[model_id] = row
+        appended.append(model_id)
+
     for model_id, price in sorted(result.prices.items()):
         row = existing_by_id.get(model_id)
         if row is None:
@@ -545,6 +590,10 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
             row["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
         else:
             row.pop("cached_input_token_price_per_m", None)
+        if row.get("routable_reason") == "awaiting-price":
+            row.pop("routable", None)
+            row.pop("routable_reason", None)
+            row.pop("unresolved_since", None)
         updated.append(model_id)
 
     missing = sorted(set(_MANIFEST_EXPECTED) - set(updated))
