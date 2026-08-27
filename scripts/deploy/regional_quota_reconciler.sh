@@ -187,8 +187,12 @@ if [ "$verification_complete" = true ]; then
       previous_kept=1
       continue
     fi
+    # A synchronous gcloud delete polls GetJob until it observes NOT_FOUND.
+    # Cloud Audit Logs records that successful terminal poll as ERROR, which
+    # creates false production alerts. Cleanup is best effort, so submit the
+    # deletion and let Cloud Run complete it without the noisy poll.
     if ! gc run jobs delete "$old_job" \
-        --region "$JOB_REGION" --quiet >/dev/null; then
+        --region "$JOB_REGION" --async --quiet >/dev/null; then
       log "WARN: unable to remove stale regional quota job ${old_job}"
     fi
   done < <(
