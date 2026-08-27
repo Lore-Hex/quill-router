@@ -141,7 +141,8 @@ const claims = await verifyReceipt(compactReceipt, {
       </tbody>
     </table>
   </div>
-  <p style="margin-top:12px">Streaming receipts embed the attestation, so nothing extra is fetched. For compact receipts, note that keys are per-instance: routing is DNS-based, so either resolve the gateway hostname's A records and ask each instance for its <code>/receipt-key</code> until the <code>kid</code> matches, or look the <code>kid</code> up in the key log.</p>
+  <p style="margin-top:12px">Streaming receipts embed the attestation, so nothing extra is fetched and they verify forever from the captured bytes alone. For compact receipts, keys are per-instance and routing is DNS-based, so fetch deterministically: resolve the gateway hostname's A records and ask each instance directly (pin Host/SNI to the hostname while connecting by IP) for its <code>/receipt-key</code> until the <code>kid</code> matches — polling the hostname is a lottery that can miss instances behind connection reuse. The key log covers keys after their instance is gone.</p>
+  <p><strong>Archive the attestation with the receipt.</strong> If a receipt matters to you — an audit trail, a dispute, an eval run — store the matching attestation document (and for streams, the captured wire bytes) next to it at verification time. That bundle verifies offline forever with no dependency on TrustedRouter, the signing instance, or the key log being reachable.</p>
 </section>
 
 <section class="status-section" style="margin-top:48px" id="threat-model">
