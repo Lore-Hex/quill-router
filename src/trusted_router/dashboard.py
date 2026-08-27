@@ -1318,6 +1318,15 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "without adding them to model prompts or provider payloads."
         ),
     ),
+    "docs/provider-routing": PublicPage(
+        template="public/provider_routing.html",
+        title="Provider Routing And Pinning",
+        description=(
+            "Pin, prefer, or exclude providers per request with the OpenRouter-compatible "
+            "provider object: only, ignore, order, allow_fallbacks, sort, hard privacy "
+            "floors, billing path, and jurisdiction filters that fail closed."
+        ),
+    ),
     "docs/receipts": PublicPage(
         template="public/receipts.html",
         title="Signed Inference Receipts",

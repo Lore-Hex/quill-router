@@ -846,6 +846,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def tagging_docs() -> str:
         return public_page_html(settings, "docs/tagging")
 
+    @public_html_route("/docs/provider-routing")
+    async def provider_routing_docs() -> str:
+        return public_page_html(settings, "docs/provider-routing")
+
     @public_html_route("/docs/receipts")
     async def receipts_docs() -> str:
         return public_page_html(settings, "docs/receipts")
