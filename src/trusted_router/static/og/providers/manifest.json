@@ -181,10 +181,10 @@
   },
   "engy": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 6,
     "name": "Engy",
     "privacy": "Zero retention",
-    "route_count": 3,
+    "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "engy"
   },
