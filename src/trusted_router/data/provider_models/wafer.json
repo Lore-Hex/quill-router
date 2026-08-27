@@ -2,10 +2,10 @@
   "_about": "Provider-native supplement for Wafer serverless API. Refreshed hourly from Wafer's OpenAI-compatible /v1/models feed.",
   "provider": "wafer",
   "source": "https://pass.wafer.ai/v1/models",
-  "generated_at": "2026-08-25T18:42:44Z",
+  "generated_at": "2026-08-27T13:51:51Z",
   "price_scale": "microdollars_per_million",
   "zdr_header": "Wafer-ZDR: required",
-  "model_count": 9,
+  "model_count": 10,
   "models": [
     {
       "id": "minimax/minimax-m3",
@@ -178,6 +178,19 @@
       "missing_since": "2026-08-19",
       "routable": false,
       "routable_reason": "delisted-upstream"
+    },
+    {
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "GLM-5.3-Flash",
+      "display_name": "GLM-5.3-Flash",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "zdr_supported": true,
+      "context_length": 1048576,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 30000
     }
   ]
 }

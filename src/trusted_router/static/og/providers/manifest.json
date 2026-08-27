@@ -10,10 +10,10 @@
   },
   "akashml": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 7,
     "name": "AkashML",
     "privacy": "Policy documented",
-    "route_count": 6,
+    "route_count": 7,
     "route_mode": "Prepaid",
     "slug": "akashml"
   },
@@ -64,10 +64,10 @@
   },
   "baseten": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 14,
     "name": "Baseten",
     "privacy": "Zero retention",
-    "route_count": 25,
+    "route_count": 27,
     "route_mode": "Prepaid + BYOK",
     "slug": "baseten"
   },
@@ -181,10 +181,10 @@
   },
   "engy": {
     "card_version": 2,
-    "model_count": 2,
+    "model_count": 3,
     "name": "Engy",
     "privacy": "Zero retention",
-    "route_count": 2,
+    "route_count": 3,
     "route_mode": "Prepaid",
     "slug": "engy"
   },
@@ -208,19 +208,19 @@
   },
   "friendli": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 7,
     "name": "FriendliAI",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 14,
     "route_mode": "Prepaid + BYOK",
     "slug": "friendli"
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 67,
+    "model_count": 69,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 72,
+    "route_count": 74,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
@@ -442,10 +442,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 114,
+    "model_count": 116,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 210,
+    "route_count": 214,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -649,10 +649,10 @@
   },
   "telnyx": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 15,
     "name": "Telnyx",
     "privacy": "Policy documented",
-    "route_count": 28,
+    "route_count": 30,
     "route_mode": "Prepaid + BYOK",
     "slug": "telnyx"
   },
@@ -730,10 +730,10 @@
   },
   "wafer": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 5,
     "name": "Wafer",
     "privacy": "Policy documented",
-    "route_count": 8,
+    "route_count": 10,
     "route_mode": "Prepaid + BYOK",
     "slug": "wafer"
   },

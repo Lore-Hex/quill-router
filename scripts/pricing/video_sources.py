@@ -51,11 +51,14 @@ def _microdollars(value: str) -> int:
 def parse_ltx_rates(document: str) -> dict[str, dict[str, int]]:
     rates: dict[str, dict[str, int]] = {}
     current_model = ""
-    # The same model name appears again for audio, editing, and upscale with
-    # different rates. TrustedRouter currently exposes only text/image video
-    # generation, so stop before those unrelated billing tables.
-    video_generation = document.split("## Audio-to-Video", 1)[0]
-    for raw_line in video_generation.splitlines():
+    # LTX repeats model tables for each endpoint. Parse one complete section so
+    # an unrecognized newer model cannot inherit the previous model's identity
+    # when the next endpoint table begins.
+    _, heading, remainder = document.partition("## Text-to-Video")
+    if not heading:
+        raise ValueError("could not find LTX Text-to-Video pricing section")
+    text_to_video = remainder.split("\n## ", 1)[0]
+    for raw_line in text_to_video.splitlines():
         match = _LTX_ROW_RE.match(raw_line.strip())
         if not match:
             continue
@@ -120,7 +123,11 @@ def _audit_ltx(fetch_text: Callable[[str], str]) -> VideoPriceAudit:
         actual = parse_ltx_rates(fetch_text(LTX_PRICING_URL))
     except Exception as exc:  # noqa: BLE001 - network/parser errors are audit results
         return _provider_failure("ltx", f"unavailable ({type(exc).__name__}: {exc})", hard=False)
-    if actual != _LTX_EXPECTED_MICRODOLLARS_PER_SECOND:
+    production_contract = {
+        model: {resolution: actual.get(model, {}).get(resolution) for resolution in expected_rates}
+        for model, expected_rates in _LTX_EXPECTED_MICRODOLLARS_PER_SECOND.items()
+    }
+    if production_contract != _LTX_EXPECTED_MICRODOLLARS_PER_SECOND:
         return _provider_failure(
             "ltx",
             "does not match the production LTX-2.3 per-second contract",

@@ -715,8 +715,17 @@ def test_read_only_default_off_lets_writes_through() -> None:
     assert resp.status_code != 503
 
 
-def test_read_only_keeps_storage_free_local_rate_limit() -> None:
+def test_read_only_keeps_storage_free_local_rate_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Read-only cutovers retain admission now that it performs no writes."""
+    from trusted_router import storage_rate_limits
+
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: dt.datetime(2026, 7, 14, 20, 48, 30, tzinfo=dt.UTC),
+    )
     locked_app = create_app(
         Settings(
             environment="test",
