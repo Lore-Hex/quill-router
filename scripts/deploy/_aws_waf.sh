@@ -55,6 +55,7 @@ _aws_waf_rules_json() {
   TR_AWS_WAF_EVALUATION_WINDOW_SECONDS="$window" \
   TR_AWS_WAF_ALLOWED_HOSTS="$allowed_hosts" \
     python3 - <<'PY'
+import base64
 import json
 import os
 
@@ -74,7 +75,9 @@ def visibility(metric: str) -> dict[str, object]:
 def byte_match(field: dict[str, object], value: str) -> dict[str, object]:
     return {
         "ByteMatchStatement": {
-            "SearchString": value,
+            # AWS CLI JSON represents blob values as base64. Passing the raw
+            # string works with shorthand syntax but fails for --rules JSON.
+            "SearchString": base64.b64encode(value.encode("utf-8")).decode("ascii"),
             "FieldToMatch": field,
             "TextTransformations": [{"Priority": 0, "Type": "LOWERCASE"}],
             "PositionalConstraint": "EXACTLY",

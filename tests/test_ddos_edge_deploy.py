@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -249,9 +250,26 @@ _aws_waf_rules_json tr-eu.example.awsapprunner.com
         "AggregateKeyType": "IP",
     }
     assert preview_rules["AllowedHosts"]["Action"] == {"Count": {}}
-    allowed_host_json = json.dumps(preview_rules["AllowedHosts"])
-    assert "aws.trustedrouter.com" in allowed_host_json
-    assert "aws.trustedrouter.com:443" in allowed_host_json
+    search_strings: list[str] = []
+
+    def collect_search_strings(value: object) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == "SearchString":
+                    assert isinstance(child, str)
+                    search_strings.append(child)
+                else:
+                    collect_search_strings(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect_search_strings(child)
+
+    collect_search_strings(preview_rules["AllowedHosts"])
+    decoded_search_strings = {
+        base64.b64decode(value, validate=True).decode("utf-8") for value in search_strings
+    }
+    assert "aws.trustedrouter.com" in decoded_search_strings
+    assert "aws.trustedrouter.com:443" in decoded_search_strings
     assert preview_rules["StateChangingRate"]["Action"] == {"Count": {}}
     assert preview_rules["AwsManagedCommon"]["OverrideAction"] == {"Count": {}}
 

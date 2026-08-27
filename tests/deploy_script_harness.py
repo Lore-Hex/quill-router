@@ -1468,19 +1468,19 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
         },
         responses=(
             (
-                r"vm list-ip-addresses.*tr-azure-clickhouse-uaenorth",
+                r"vm list-ip-addresses.*tr-azure-clickhouse-1",
                 "10.61.3.4",
             ),
             (
-                r"keyvault secret show.*clickhouse-default-password.*--query id",
-                "https://tr-azure-analytics-kv.vault.azure.net/secrets/"
-                "clickhouse-default-password/harness-version",
+                r"keyvault secret show.*tr-azure-clickhouse-password.*--query id",
+                "https://trquillkv.vault.azure.net/secrets/"
+                "tr-azure-clickhouse-password/harness-version",
             ),
             (
-                r"identity show.*tr-azure-analytics-uaenorth-id.*--query id",
+                r"identity show.*tr-azure-clickhouse-identity.*--query id",
                 "/subscriptions/harness/resourceGroups/tr-azure/providers/"
                 "Microsoft.ManagedIdentity/userAssignedIdentities/"
-                "tr-azure-analytics-uaenorth-id",
+                "tr-azure-clickhouse-identity",
             ),
             (r"acr build|acr import", "harness"),
             (r"--query .?loginServer", "trazureuaenorthacr.azurecr.io"),
