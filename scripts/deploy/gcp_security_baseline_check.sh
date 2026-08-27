@@ -43,6 +43,34 @@ note(){  printf '  note  %s\n' "$*"; }
 sec(){   printf '\n=== %s\n' "$*"; }
 g(){ gcloud "$@" --project="$PROJECT" 2>/dev/null; }
 
+# Read a project-scoped JSON resource without turning an authorization or CLI
+# failure into "the resource is missing". Monitoring's channel and policy
+# commands still live in the alpha component; a runner without that component
+# used to return no JSON, and the checks below then reported every live alert
+# as absent. The same ambiguity happens when a deliberately read-only operator
+# identity lacks one list permission. Both are checker failures, not proof that
+# production alerting disappeared.
+read_project_json(){ # output-variable human-label gcloud-args...
+  local output_variable="$1" label="$2" stderr_file output status=0 detail
+  shift 2
+  stderr_file="$(mktemp "${TMPDIR:-/tmp}/tr-gcp-baseline.XXXXXX")"
+  output="$(gcloud "$@" --project="$PROJECT" --format=json 2>"$stderr_file")" || status=$?
+  if [ "$status" -ne 0 ]; then
+    detail="$(tr '\n' ' ' <"$stderr_file" | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
+    rm -f "$stderr_file"
+    drift "could not read $label (gcloud exit $status): ${detail:-no diagnostic}"
+    printf -v "$output_variable" '%s' '[]'
+    return 1
+  fi
+  rm -f "$stderr_file"
+  if ! jq -e . >/dev/null 2>&1 <<<"$output"; then
+    drift "could not read $label: gcloud returned invalid JSON"
+    printf -v "$output_variable" '%s' '[]'
+    return 1
+  fi
+  printf -v "$output_variable" '%s' "$output"
+}
+
 # ---------------------------------------------------------------------------
 # 1. Audit log configuration — and the cost guard on it.
 # ---------------------------------------------------------------------------
@@ -113,43 +141,49 @@ check_metric cis-sqlinstance-changes \
 # 3. Alert policies, the channel they point at, and duplicates of it.
 # ---------------------------------------------------------------------------
 sec "alert policies and notification channel"
-CHANNELS="$(g alpha monitoring channels list --format=json)"
-CH_COUNT="$(jq -r '[.[] | select(.displayName=="TrustedRouter security alerts")] | length' <<<"${CHANNELS:-[]}")"
-case "$CH_COUNT" in
-  1) ok "exactly one 'TrustedRouter security alerts' channel" ;;
-  0) drift "notification channel 'TrustedRouter security alerts' missing — the CIS alerts are deaf" ;;
-  # This is the specific damage the old script does. `channels create` is not
-  # idempotent, so each run mints another channel and repoints policies at the
-  # new id, orphaning the previous one. Seeing >1 means it was re-run.
-  *) drift "$CH_COUNT duplicate 'TrustedRouter security alerts' channels — the old hardening script was re-run" ;;
-esac
+CHANNELS='[]'
+if read_project_json CHANNELS "Monitoring notification channels" \
+    alpha monitoring channels list; then
+  CH_COUNT="$(jq -r '[.[] | select(.displayName=="TrustedRouter security alerts")] | length' <<<"$CHANNELS")"
+  case "$CH_COUNT" in
+    1) ok "exactly one 'TrustedRouter security alerts' channel" ;;
+    0) drift "notification channel 'TrustedRouter security alerts' missing — the CIS alerts are deaf" ;;
+    # This is the specific damage the old script does. `channels create` is not
+    # idempotent, so each run mints another channel and repoints policies at the
+    # new id, orphaning the previous one. Seeing >1 means it was re-run.
+    *) drift "$CH_COUNT duplicate 'TrustedRouter security alerts' channels — the old hardening script was re-run" ;;
+  esac
+fi
 
-POLICIES="$(g alpha monitoring policies list --format=json)"
-for want in "CIS: IAM configuration changes" "CIS: VPC firewall rule changes" \
-            "CIS: VPC network route changes" "CIS: Cloud SQL instance configuration changes"; do
-  if jq -e --arg d "$want" '[.[] | select(.displayName==$d and .enabled==true)] | length > 0' <<<"${POLICIES:-[]}" >/dev/null 2>&1; then
-    if jq -e --arg d "$want" '[.[] | select(.displayName==$d) | select((.notificationChannels // []) | length > 0)] | length > 0' <<<"$POLICIES" >/dev/null 2>&1; then
-      ok "policy \"$want\""
+POLICIES='[]'
+if read_project_json POLICIES "Monitoring alert policies" \
+    alpha monitoring policies list; then
+  for want in "CIS: IAM configuration changes" "CIS: VPC firewall rule changes" \
+              "CIS: VPC network route changes" "CIS: Cloud SQL instance configuration changes"; do
+    if jq -e --arg d "$want" '[.[] | select(.displayName==$d and .enabled==true)] | length > 0' <<<"$POLICIES" >/dev/null 2>&1; then
+      if jq -e --arg d "$want" '[.[] | select(.displayName==$d) | select((.notificationChannels // []) | length > 0)] | length > 0' <<<"$POLICIES" >/dev/null 2>&1; then
+        ok "policy \"$want\""
+      else
+        # A policy with no channel is the quietest possible failure: it evaluates,
+        # it opens incidents, and nobody is told.
+        drift "policy \"$want\" has NO notification channel — it fires into nothing"
+      fi
     else
-      # A policy with no channel is the quietest possible failure: it evaluates,
-      # it opens incidents, and nobody is told.
-      drift "policy \"$want\" has NO notification channel — it fires into nothing"
+      drift "policy \"$want\" missing or disabled"
     fi
-  else
-    drift "policy \"$want\" missing or disabled"
-  fi
-done
+  done
 
-THRESH="$(jq -r '[.[] | select(.displayName | startswith("TR Logging: ingestion volume spike")) | .conditions[].conditionThreshold.thresholdValue] | first // empty' <<<"${POLICIES:-[]}")"
-if [ -z "$THRESH" ]; then
-  drift "ingestion-spike cost guard missing"
-elif [ "${THRESH%.*}" = "$INGEST_THRESHOLD_BYTES" ]; then
-  ok "ingestion cost guard at $((INGEST_THRESHOLD_BYTES/1073741824)) GiB/day"
-else
-  # Raised 5 -> 8 GiB on 2026-08-17 because steady state is ~4.1 GiB/day and
-  # 5 GiB sat only 20% above baseline. Anything that resets it to 5 has
-  # re-applied a stale snapshot.
-  note "ingestion threshold is $(( ${THRESH%.*} / 1073741824 )) GiB/day, expected $((INGEST_THRESHOLD_BYTES/1073741824)) GiB; raised 5 -> 8 on 2026-08-17 because steady state is ~4.1"
+  THRESH="$(jq -r '[.[] | select(.displayName | startswith("TR Logging: ingestion volume spike")) | .conditions[].conditionThreshold.thresholdValue] | first // empty' <<<"$POLICIES")"
+  if [ -z "$THRESH" ]; then
+    drift "ingestion-spike cost guard missing"
+  elif [ "${THRESH%.*}" = "$INGEST_THRESHOLD_BYTES" ]; then
+    ok "ingestion cost guard at $((INGEST_THRESHOLD_BYTES/1073741824)) GiB/day"
+  else
+    # Raised 5 -> 8 GiB on 2026-08-17 because steady state is ~4.1 GiB/day and
+    # 5 GiB sat only 20% above baseline. Anything that resets it to 5 has
+    # re-applied a stale snapshot.
+    note "ingestion threshold is $(( ${THRESH%.*} / 1073741824 )) GiB/day, expected $((INGEST_THRESHOLD_BYTES/1073741824)) GiB; raised 5 -> 8 on 2026-08-17 because steady state is ~4.1"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -188,11 +222,14 @@ fi
 # obvious way reports this control missing, and an --apply acting on that would
 # create a duplicate. `compute` resolves the effective set.
 sec "essential contacts"
-EC="$(gcloud essential-contacts compute --project="$PROJECT" --notification-categories=security --format=json 2>/dev/null)"
-if jq -e 'length > 0' <<<"${EC:-[]}" >/dev/null 2>&1; then
-  ok "security contact: $(jq -r '.[0].email' <<<"$EC") (inherited from org $ORG_ID)"
-else
-  drift "no effective SECURITY essential contact for $PROJECT"
+EC='[]'
+if read_project_json EC "effective SECURITY Essential Contacts" \
+    essential-contacts compute --notification-categories=security; then
+  if jq -e 'length > 0' <<<"$EC" >/dev/null 2>&1; then
+    ok "security contact: $(jq -r '.[0].email' <<<"$EC") (effective for project; may be inherited from org $ORG_ID)"
+  else
+    drift "no effective SECURITY essential contact for $PROJECT"
+  fi
 fi
 
 # ---------------------------------------------------------------------------

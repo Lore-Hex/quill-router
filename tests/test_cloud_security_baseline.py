@@ -29,6 +29,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 GCP = ROOT / "scripts/deploy/gcp_security_baseline_check.sh"
 AZURE = ROOT / "scripts/deploy/azure_security_baseline_check.sh"
+WORKFLOW = ROOT / ".github/workflows/cloud-security-baseline.yml"
 CHECK_ONLY = (GCP, AZURE)
 
 
@@ -130,6 +131,29 @@ def test_gcp_detects_duplicate_notification_channels() -> None:
     orphaning the previous one -- so >1 channel is evidence it was re-run."""
     body = GCP.read_text()
     assert "duplicate" in body.lower()
+
+
+def test_gcp_monitoring_reads_fail_closed_without_inventing_absence() -> None:
+    """A missing alpha component or list permission is not evidence that all
+    security alerts were deleted. The read must produce valid JSON before any
+    presence assertion runs."""
+    body = _executable_lines(GCP)
+    assert 'read_project_json CHANNELS "Monitoring notification channels"' in body
+    assert 'read_project_json POLICIES "Monitoring alert policies"' in body
+    assert 'read_project_json EC "effective SECURITY Essential Contacts"' in body
+    assert 'drift "could not read $label' in body
+
+
+def test_gcp_workflow_installs_monitoring_alpha_component() -> None:
+    body = WORKFLOW.read_text()
+    assert "install_components: alpha" in body
+
+
+def test_gcp_workflow_does_not_require_optional_security_label() -> None:
+    body = WORKFLOW.read_text()
+    assert 'LABEL_ARGS=()' in body
+    assert 'LABEL_ARGS=(--label security)' in body
+    assert 'gh issue create --title "$TITLE" "${LABEL_ARGS[@]}"' in body
 
 
 def test_gcp_checks_the_iap_path_before_asserting_ssh_is_closed() -> None:
