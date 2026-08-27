@@ -139,6 +139,12 @@ if [[ " $* " == *" run jobs list "* ]] && \
   printf '%s\n' "$HARNESS_VERSIONED_JOB_NAME"
 fi
 
+if [[ " $* " == *" run jobs list "* ]] && \
+   [[ " $* " == *" --sort-by="* ]] && \
+   [ -n "${HARNESS_STALE_JOB_NAMES:-}" ]; then
+  printf '%s\n' "$HARNESS_STALE_JOB_NAMES"
+fi
+
 if [[ " $* " == *" projects describe "* ]]; then
   printf '%s\n' '123456789'
 fi
@@ -154,6 +160,7 @@ def _run_regional_quota_reconciler(
     describe_rc: int = 0,
     describe_stderr: str = "",
     versioned_job_exists: bool = False,
+    stale_job_names: str = "",
 ) -> HarnessRun:
     monkeypatch.setitem(
         SCRIPT_FIXTURES,
@@ -167,6 +174,7 @@ def _run_regional_quota_reconciler(
                 "HARNESS_VERSIONED_JOB_NAME": (
                     "trusted-router-regional-quota-reconciler-existing"
                 ),
+                "HARNESS_STALE_JOB_NAMES": stale_job_names,
                 "TR_REGIONAL_QUOTA_RECONCILER_JOB": (
                     "trusted-router-regional-quota-reconciler-existing"
                     if versioned_job_exists
@@ -642,6 +650,29 @@ def test_regional_quota_reconciler_updates_existing_version_without_get_probe(
     assert len(_gcloud_calls(run, "run", "jobs", "update")) == 1
     assert not _gcloud_calls(run, "run", "jobs", "create")
     assert not _gcloud_calls(run, "run", "jobs", "deploy")
+
+
+def test_regional_quota_reconciler_deletes_stale_jobs_without_polling_get(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = "trusted-router-regional-quota-reconciler-existing"
+    previous = "trusted-router-regional-quota-reconciler-previous"
+    stale = "trusted-router-regional-quota-reconciler-stale"
+    run = _run_regional_quota_reconciler(
+        tmp_path,
+        monkeypatch,
+        state="ENABLED",
+        versioned_job_exists=True,
+        stale_job_names=f"{current}\n{previous}\n{stale}",
+    )
+
+    assert run.returncode == 0, summarise(run)
+    deletes = _gcloud_calls(run, "run", "jobs", "delete")
+    assert len(deletes) == 1
+    assert stale in deletes[0]
+    assert "--async" in deletes[0]
+    assert previous not in deletes[0]
 
 
 def test_regional_quota_reconciler_creates_only_when_scheduler_is_not_found(

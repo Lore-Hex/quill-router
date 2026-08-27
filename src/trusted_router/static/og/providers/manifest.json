@@ -199,10 +199,10 @@
   },
   "fireworks": {
     "card_version": 2,
-    "model_count": 21,
+    "model_count": 15,
     "name": "Fireworks AI",
     "privacy": "Policy documented",
-    "route_count": 40,
+    "route_count": 29,
     "route_mode": "Prepaid + BYOK",
     "slug": "fireworks"
   },
