@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from tests.fakes.spanner import make_fake_store
+from trusted_router.storage_errors import StoreUnavailable
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 from trusted_router.storage_gcp_credit_rebalance import (
@@ -171,13 +172,20 @@ def test_bounded_attempts_repair_headroom_outside_hot_subset(
         lambda _workspace_id: candidates,
     )
 
+    calls = _install_rebalance_spy(monkeypatch)
+
     outcome, authorization = _typed_authorize(store, key, estimate=80)
+    followup_outcome, followup_authorization = _typed_authorize(store, key, estimate=20)
 
     assert outcome == AuthorizeOutcome.ACCEPTED
     assert authorization is not None
+    assert followup_outcome == AuthorizeOutcome.ACCEPTED
+    assert followup_authorization is not None
     rows = database.typed[CREDIT_BALANCE_TABLE]
-    assert rows[(WORKSPACE_ID, 0)]["reserved"] == 80
-    assert rows[(WORKSPACE_ID, 7)]["total_credits"] == 20
+    assert rows[(WORKSPACE_ID, 0)]["reserved"] == 0
+    assert rows[(WORKSPACE_ID, 7)]["reserved"] == 100
+    assert rows[(WORKSPACE_ID, 7)]["total_credits"] == 100
+    assert calls["count"] == 0
 
 
 def test_fragmented_sufficient_still_rebalances_and_accepts(
@@ -251,7 +259,7 @@ def test_rebalance_precheck_incomplete_and_nonpositive_are_read_only() -> None:
     assert _typed_rows(database) == before
 
 
-def test_rebalance_cooldown_suppresses_immediate_followers(
+def test_rebalance_cooldown_returns_retryable_error_not_false_402(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from trusted_router import storage_gcp_credit_rebalance as rebalance_mod
@@ -274,14 +282,13 @@ def test_rebalance_cooldown_suppresses_immediate_followers(
     database.reservation_idemp.clear()
     _set_credit_rows(database, [100, 100], usage=[60, 60])
 
-    second_outcome, second_authorization = _typed_authorize(
-        store,
-        key,
-        estimate=60,
-        idempotency_key="second",
-    )
-    assert second_outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS
-    assert second_authorization is None
+    with pytest.raises(StoreUnavailable, match="rebalance is busy"):
+        _typed_authorize(
+            store,
+            key,
+            estimate=60,
+            idempotency_key="second",
+        )
     assert calls["count"] == 1
 
     monkeypatch.setattr(rebalance_mod, "REBALANCE_COOLDOWN_SECONDS", 0.0)
@@ -296,6 +303,23 @@ def test_rebalance_cooldown_suppresses_immediate_followers(
     assert third_outcome == AuthorizeOutcome.ACCEPTED
     assert third_authorization is not None
     assert calls["count"] == 2
+
+
+def test_repeated_headroom_races_return_retryable_error_not_false_402(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bounded retry limit is not evidence that aggregate funds are gone."""
+    from trusted_router import storage_gcp_authorize as authorize_mod
+
+    store, _database, key = _seed([100, 100])
+
+    def always_stolen(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+        return {"outcome": AuthorizeOutcome.INSUFFICIENT_CREDITS}
+
+    monkeypatch.setattr(authorize_mod, "authorize_atomic", always_stolen)
+
+    with pytest.raises(StoreUnavailable, match="changed concurrently"):
+        _typed_authorize(store, key, estimate=50)
 
 
 def test_reject_path_refresh_dedupes_loader(monkeypatch: pytest.MonkeyPatch) -> None:

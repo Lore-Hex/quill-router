@@ -82,7 +82,11 @@ from trusted_router.storage_activity import (
     usage_bucket_key,
 )
 from trusted_router.storage_auth_context import build_session_auth_context
-from trusted_router.storage_errors import is_duplicate_key_error, is_transient_store_error
+from trusted_router.storage_errors import (
+    StoreUnavailable,
+    is_duplicate_key_error,
+    is_transient_store_error,
+)
 from trusted_router.storage_gcp_analytics_outbox import SpannerAnalyticsOutbox
 from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
 from trusted_router.storage_gcp_auth_sessions import SpannerAuthSessions
@@ -3450,24 +3454,32 @@ class SpannerBigtableStore:
             # from the snapshot precheck before entering the RW repair.
             forced_reload_done = False
             cooldown_passed = False
+            aggregate_exhaustion_proven = False
             for _attempt in range(3):
                 if (
                     result["outcome"] != AuthorizeOutcome.INSUFFICIENT_CREDITS
                     or len(credit_shard_candidates) <= 1
                 ):
                     break
-                verdict = rebalance_mod.rebalance_precheck(
+                precheck = rebalance_mod.credit_headroom_precheck(
                     self._database,
                     self._param_types,
                     workspace_id=workspace_id,
                     shard_count=len(credit_shard_candidates),
-                    target_shard=credit_shard_candidates[0],
+                    shard_candidates=credit_shard_candidates,
                     estimate=estimate,
                 )
+                verdict = precheck.outcome
                 if verdict == rebalance_mod.RebalanceOutcome.INSUFFICIENT:
+                    aggregate_exhaustion_proven = True
                     break
                 if verdict == rebalance_mod.RebalanceOutcome.NOT_NEEDED:
-                    result = run_authorize(credit_shard_candidates)
+                    if precheck.candidate_shard is None:  # pragma: no cover - invariant
+                        raise RuntimeError("credit headroom precheck omitted its candidate")
+                    # The bounded random prefix missed a funded later shard.
+                    # Retry that exact row instead of either returning a false
+                    # 402 or expanding into an all-shard write transaction.
+                    result = run_authorize((precheck.candidate_shard,))
                     continue
                 if verdict == rebalance_mod.RebalanceOutcome.INCOMPLETE and not forced_reload_done:
                     # The observed shard set doesn't match the count we hold —
@@ -3500,7 +3512,11 @@ class SpannerBigtableStore:
                 # be blocked by our own just-recorded timestamp.
                 if not cooldown_passed:
                     if not self._credit_rebalance_cooldown_allows(workspace_id):
-                        break
+                        # Aggregate funds exist but are genuinely fragmented.
+                        # The cooldown protects Spanner from a rebalance
+                        # stampede; reporting 402 here would be an accounting
+                        # lie, so ask the caller to retry instead.
+                        raise StoreUnavailable("credit escrow rebalance is busy; retry")
                     cooldown_passed = True
                 rebalance_result = rebalance(credit_shard_candidates)
                 log.info(
@@ -3523,6 +3539,16 @@ class SpannerBigtableStore:
                     result = run_authorize(credit_shard_candidates)
                     continue
                 break
+            if (
+                result["outcome"] == AuthorizeOutcome.INSUFFICIENT_CREDITS
+                and len(credit_shard_candidates) > 1
+                and not aggregate_exhaustion_proven
+            ):
+                # A bounded retry race or incomplete precheck is not proof that
+                # the customer's aggregate balance is exhausted. Preserve the
+                # accounting contract by returning retryable unavailability;
+                # only the explicit read-only aggregate verdict above may 402.
+                raise StoreUnavailable("credit headroom changed concurrently; retry")
         outcome = result["outcome"]
         authorization: GatewayAuthorization | None = None
         if outcome in (AuthorizeOutcome.ACCEPTED, AuthorizeOutcome.REPLAY):

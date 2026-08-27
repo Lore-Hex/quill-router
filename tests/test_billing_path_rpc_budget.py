@@ -75,4 +75,4 @@ def test_no_blank_line_between_the_budget_and_its_function() -> None:
 def test_billing_budget_finishes_before_enclave_header_timeout() -> None:
     """The enclave's direct control-plane client has a 25-second header cap."""
 
-    assert _BILLING_PATH_SPANNER_BUDGET_SECONDS < 25.0
+    assert _BILLING_PATH_SPANNER_BUDGET_SECONDS == 20.0

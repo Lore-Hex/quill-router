@@ -159,10 +159,10 @@ from trusted_router.user_model_rules import (
 
 logger = logging.getLogger(__name__)
 REQUEST_METADATA_VERSION = 1
-# The enclave stops waiting for response headers after 25 seconds. Leave enough
-# room for this process to serialize a structured retryable 503 and for network
-# transit instead of letting the enclave surface an ambiguous upstream timeout.
-_BILLING_PATH_SPANNER_BUDGET_SECONDS = 18.0
+# The enclave stops waiting for response headers after 25 seconds. Preserve the
+# transaction layer's 20-second retry budget while leaving five seconds for this
+# process to serialize a structured retryable 503 and for network transit.
+_BILLING_PATH_SPANNER_BUDGET_SECONDS = 20.0
 _AUTHORIZE_ADMISSION = KeyedConcurrencyAdmission()
 _NATIVE_BATCH_ROUTE_PREFIX = "batch.native."
 _NATIVE_BATCH_BILLED_FRACTION_BPS = {
