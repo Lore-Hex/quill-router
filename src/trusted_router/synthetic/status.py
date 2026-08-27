@@ -104,8 +104,31 @@ def status_snapshot(
     precomputed_rollups = rollups or []
     ordered = sorted(samples, key=lambda sample: sample.created_at, reverse=True)
     freshness = _monitor_freshness(ordered, now=now)
+    published_component_ids = {
+        str(definition["id"]) for definition in applicable_component_definitions(settings)
+    }
+    published_probe_types = {
+        probe_type
+        for component_id in published_component_ids
+        for probe_type in component_probe_types(component_id)
+    }
+    scoped_slo_samples = [
+        sample
+        for sample in ordered
+        if not sample_component_ids(sample)
+        or any(
+            component_id in published_component_ids
+            for component_id in sample_component_ids(sample)
+        )
+    ]
+    scoped_slo_rollups = [
+        rollup for rollup in precomputed_rollups if rollup.component in published_component_ids
+    ]
     router_core_samples = [
-        sample for sample in ordered if ROUTER_CORE_SLO_ID in sample_slo_class_ids(sample)
+        sample
+        for sample in scoped_slo_samples
+        if ROUTER_CORE_SLO_ID in sample_slo_class_ids(sample)
+        and sample.probe_type in published_probe_types
     ]
     gateway_region_components = published_gateway_region_components(settings)
     # `current.checks` is the MACHINE-readable surface, not a second copy of
@@ -126,6 +149,7 @@ def status_snapshot(
         rollup
         for rollup in precomputed_rollups
         if ROUTER_CORE_SLO_ID in rollup_slo_class_ids(rollup)
+        and rollup.component in published_component_ids
     ]
     five_minute = _scoped_window(
         router_core_samples,
@@ -150,11 +174,11 @@ def status_snapshot(
     )
     monthly = _monthly_history(router_core_rollups)
     components = _components(ordered, now=now, rollups=precomputed_rollups, settings=settings)
-    slo_classes = _slo_classes(ordered, precomputed_rollups, now=now)
+    slo_classes = _slo_classes(scoped_slo_samples, scoped_slo_rollups, now=now)
     slo_history = {
         str(definition["id"]): _slo_long_term_history(
-            ordered,
-            precomputed_rollups,
+            scoped_slo_samples,
+            scoped_slo_rollups,
             slo_id=str(definition["id"]),
         )
         for definition in SLO_DEFINITIONS

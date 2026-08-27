@@ -556,7 +556,11 @@ def _aws_settings(**overrides: Any) -> Settings:
 
 
 def _gcp_settings() -> Settings:
-    return Settings(environment="test", sentry_dsn=None)
+    return Settings(
+        environment="test",
+        sentry_dsn=None,
+        internal_gateway_token="test-gateway-token",  # noqa: S106
+    )
 
 
 def test_unset_configuration_is_exactly_todays_target_list() -> None:
@@ -817,8 +821,6 @@ def test_configured_aws_publishes_a_component_per_region() -> None:
         "eu_west_1_gateway",
         "eu_west_3_gateway",
         "attestation",
-        "billing_settlement",
-        "provider_fallback",
     )
 
 

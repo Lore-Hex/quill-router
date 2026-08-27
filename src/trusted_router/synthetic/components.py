@@ -291,6 +291,11 @@ COMPONENT_REQUIRED_CAPABILITIES: dict[str, Callable[[Settings], bool]] = {
     # deployment without one never samples the model path, so publishing the
     # row there would be a permanent "unknown".
     "model_inference": lambda settings: bool(settings.synthetic_monitor_api_key),
+    # These probes call the private authorize/settle surface. Standalone
+    # observer planes deliberately carry only their observer credential, not
+    # the billing gateway credential, so they cannot emit these samples.
+    "billing_settlement": lambda settings: bool(settings.internal_gateway_token),
+    "provider_fallback": lambda settings: bool(settings.internal_gateway_token),
 }
 
 

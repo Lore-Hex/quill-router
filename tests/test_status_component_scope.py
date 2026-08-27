@@ -50,7 +50,11 @@ REGIONAL_GCP_COMPONENT_IDS = (
 
 def _gcp_settings() -> Settings:
     """Production GCP shape: four warm attested regions."""
-    return Settings(environment="test", sentry_dsn=None)
+    return Settings(
+        environment="test",
+        sentry_dsn=None,
+        internal_gateway_token="test-gateway-token",  # noqa: S106 - test fixture.
+    )
 
 
 def _aws_eu_settings() -> Settings:
@@ -179,12 +183,7 @@ def test_aws_eu_does_not_advertise_gcp_regional_gateways() -> None:
         str(definition["id"]) for definition in applicable_component_definitions(_aws_eu_settings())
     )
 
-    assert ids == (
-        "canonical_api",
-        "attestation",
-        "billing_settlement",
-        "provider_fallback",
-    )
+    assert ids == ("canonical_api", "attestation")
     for component_id in REGIONAL_GCP_COMPONENT_IDS:
         assert component_id not in ids
 
@@ -202,6 +201,8 @@ def test_aws_eu_status_snapshot_publishes_no_unmeasurable_components() -> None:
     # them is a row that can never resolve.
     assert "canonical_api" in published
     assert "attestation" in published
+    assert "billing_settlement" not in published
+    assert "provider_fallback" not in published
 
 
 def test_scope_follows_configuration_not_a_hardcoded_cloud_list() -> None:
@@ -328,6 +329,57 @@ def test_aws_eu_status_snapshot_has_no_unknown_component_rows() -> None:
     assert isinstance(components, list)
     unknown = [str(row["id"]) for row in components if row["status"] == "unknown"]
     assert unknown == []
+    assert "billing_settlement" not in _published_ids(snapshot)
+    assert "provider_fallback" not in _published_ids(snapshot)
+    current = snapshot["current"]
+    assert isinstance(current, dict)
+    checks = current["checks"]
+    assert isinstance(checks, list)
+    assert {row["probe_type"] for row in checks} == {"tls_health", "attestation_nonce"}
+
+
+def test_retired_gateway_samples_cannot_poison_standalone_current_status() -> None:
+    """A secret-removal deploy must not leave its status page red forever."""
+    now = utcnow()
+    samples = [
+        _tls_sample(created_at=_iso(now - dt.timedelta(seconds=10))),
+        SyntheticProbeSample(
+            id="syn-attestation-current",
+            probe_type="attestation_nonce",
+            target="canonical",
+            target_url="https://api-aws.trustedrouter.com/attestation",
+            monitor_region="eu-west-3",
+            status="up",
+            created_at=_iso(now - dt.timedelta(seconds=10)),
+        ),
+        SyntheticProbeSample(
+            id="syn-billing-retired",
+            probe_type="gateway_authorize_settle",
+            target="control-plane",
+            target_url="https://aws.trustedrouter.com",
+            monitor_region="eu-west-3",
+            status="up",
+            created_at=_iso(now - dt.timedelta(hours=1)),
+        ),
+        SyntheticProbeSample(
+            id="syn-fallback-retired",
+            probe_type="provider_fallback",
+            target="control-plane",
+            target_url="https://aws.trustedrouter.com",
+            monitor_region="eu-west-3",
+            status="up",
+            created_at=_iso(now - dt.timedelta(hours=1)),
+        ),
+    ]
+
+    snapshot = status_snapshot(samples, now=now, settings=_aws_eu_settings())
+
+    assert snapshot["current"]["overall_status"] == "up"
+    assert snapshot["slo_classes"]["router_core"]["status"] == "up"
+    assert {row["probe_type"] for row in snapshot["current"]["checks"]} == {
+        "tls_health",
+        "attestation_nonce",
+    }
 
 
 def test_a_probe_target_alone_does_not_make_a_component_measurable() -> None:
@@ -339,7 +391,10 @@ def test_a_probe_target_alone_does_not_make_a_component_measurable() -> None:
     from trusted_router.config import Settings as _Settings
 
     without_image_job = _Settings(
-        environment="test", sentry_dsn=None, synthetic_image_probe_enabled=False
+        environment="test",
+        sentry_dsn=None,
+        synthetic_image_probe_enabled=False,
+        internal_gateway_token="test-gateway-token",  # noqa: S106 - test fixture.
     )
 
     ids = tuple(
