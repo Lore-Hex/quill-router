@@ -1,0 +1,85 @@
+name: Check repository security coverage
+
+# Every public repository should accept a vulnerability report: private
+# vulnerability reporting enabled, and a SECURITY.md telling a researcher where
+# to go. Both properties were set by a one-time sweep across the repositories
+# that existed that day, and then maintained by nothing.
+#
+# They drifted. Internal audit IA-2026-01 (2026-08-26) found `trpi` publishing a
+# SECURITY.md pointing at an advisories URL whose backing setting was disabled —
+# an advertised inbound channel that could not receive a report — and
+# `trusted-router-sdk-conformance` with neither property. Both were created after
+# the sweep. Nothing enrolled them, so nothing noticed for as long as they
+# existed.
+#
+# This job asserts the properties over the LIVE set of public repositories, so a
+# repository created tomorrow is in scope tomorrow.
+
+on:
+  schedule:
+    # Weekly. The property changes only when a repository is created or a
+    # setting is flipped, so a daily run would add noise without adding signal.
+    - cron: "40 7 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/security/check_repo_security_coverage.py"
+      - ".github/workflows/check-repo-security-coverage.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: repo-security-coverage
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert coverage across public repositories
+        id: check
+        env:
+          # Reading private-vulnerability-reporting requires repository
+          # administration rights, which the default GITHUB_TOKEN does not have
+          # outside this repository. Without REPO_SECURITY_TOKEN the PVR half
+          # reports `unreadable` — never `covered` — and --allow-unreadable
+          # keeps the run green on that alone, so the SECURITY.md half still
+          # provides signal until the token exists.
+          REPO_SECURITY_TOKEN: ${{ secrets.REPO_SECURITY_TOKEN || github.token }}
+        run: |
+          set -o pipefail
+          ARGS=""
+          if [ -z "${{ secrets.REPO_SECURITY_TOKEN }}" ]; then
+            echo "::warning::REPO_SECURITY_TOKEN not set — private vulnerability"\
+              " reporting state cannot be read and is NOT being asserted."
+            ARGS="--allow-unreadable"
+          fi
+          python3 scripts/security/check_repo_security_coverage.py \
+            --org "${GITHUB_REPOSITORY_OWNER}" $ARGS 2>&1 | tee /tmp/coverage.txt
+
+      - name: File or update an issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BODY=$(printf '%s\n\n```\n%s\n```\n' \
+            "A public repository cannot receive a vulnerability report. Enable private vulnerability reporting and add a SECURITY.md, then re-run this workflow." \
+            "$(tail -40 /tmp/coverage.txt)")
+          EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" \
+            --label security --state open \
+            --search "Repository security coverage gap in:title" \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "Repository security coverage gap" \
+              --label security \
+              --body "$BODY"
+          fi
