@@ -960,6 +960,8 @@ def test_public_privacy_terms_and_support_pages_are_distinct(client: TestClient)
     assert "github.com/Lore-Hex/quill-router/issues" in support.text
     assert "Never send an API key" in support.text
     assert "status.trustedrouter.com" in support.text
+    assert support.text.count('href="https://discord.gg/FREVts9KAG"') == 3
+    assert "Join Discord" in support.text
 
 
 def test_privacy_terms_and_support_are_in_core_sitemap(client: TestClient) -> None:
@@ -1481,6 +1483,8 @@ def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> 
     assert 'href="/resources"' in footer.text
     assert 'href="/customers/robot-robot-human"' in footer.text
     assert 'href="/careers"' in footer.text
+    assert 'href="https://discord.gg/FREVts9KAG"' in footer.text
+    assert "Discord community" in footer.text
     footer_markup = footer.text.split('<footer class="site-footer"', maxsplit=1)[1]
     assert 'href="/china-ai-models"' not in footer_markup
 
