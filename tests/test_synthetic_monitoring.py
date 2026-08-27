@@ -880,7 +880,11 @@ def test_status_keeps_provider_failures_out_of_global_slo_classes() -> None:
     snapshot = status_snapshot(
         samples,
         now=now,
-        settings=Settings(environment="test", synthetic_monitor_api_key="sk-tr-monitor-test"),
+        settings=Settings(
+            environment="test",
+            synthetic_monitor_api_key="sk-tr-monitor-test",
+            internal_gateway_token="test-gateway-token",  # noqa: S106 - test fixture.
+        ),
     )
 
     # Provider-effective failures stay out of the SLO math (July decision),
@@ -978,7 +982,14 @@ def test_status_router_core_burn_rate_alerts_on_short_window_failures() -> None:
         ),
     ]
 
-    snapshot = status_snapshot(samples, now=now)
+    snapshot = status_snapshot(
+        samples,
+        now=now,
+        settings=Settings(
+            environment="test",
+            internal_gateway_token="test-gateway-token",  # noqa: S106 - test fixture.
+        ),
+    )
 
     assert snapshot["slo_classes"]["router_core"]["status"] == "down"
     alert = next(
@@ -1266,7 +1277,13 @@ def test_status_components_group_regions_and_control_plane() -> None:
         ),
     ]
 
-    snapshot = status_snapshot(samples)
+    snapshot = status_snapshot(
+        samples,
+        settings=Settings(
+            environment="test",
+            internal_gateway_token="test-gateway-token",  # noqa: S106 - test fixture.
+        ),
+    )
     components = {component["id"]: component for component in snapshot["components"]}
 
     assert components["canonical_api"]["status"] == "up"
