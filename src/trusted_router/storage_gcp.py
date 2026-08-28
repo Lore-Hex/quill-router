@@ -2767,12 +2767,58 @@ class SpannerBigtableStore:
         authorization = self.get_gateway_authorization(authorization_id)
         if authorization is None or authorization.credit_reservation_id is None:
             return TypedFinalizeResult(finalized=False, activity_indexed=False)
+        regional_hold_unknown = False
         if authorization.settlement == "regional_lease":
-            self._finalize_regional_quota_hold(
-                authorization,
-                success=success,
-                actual_microdollars=actual_microdollars,
+            from trusted_router.services.regional_quota_leases import (
+                LeaseState,
+                UnknownRegionalReservationError,
             )
+
+            try:
+                self._finalize_regional_quota_hold(
+                    authorization,
+                    success=success,
+                    actual_microdollars=actual_microdollars,
+                )
+            except UnknownRegionalReservationError:
+                # A pre-CAS-fix stale Bigtable writer could erase a newer hold
+                # while the request's Spanner reservation remained durable.
+                # Disable further issuance from the damaged lease before the
+                # direct booking; otherwise its erased capacity could be spent
+                # again during the remaining TTL. Claim the Spanner reservation
+                # below as the exactly-once boundary. Every failure to durably
+                # drain remains retryable/fail-closed.
+                ledger = self._regional_quota_ledger
+                assert ledger is not None
+                local = ledger.get(
+                    str(authorization.regional_lease_id),
+                    region=str(authorization.region),
+                )
+                if local is None:
+                    from trusted_router.regional_quota_ledger import (
+                        RegionalLeaseNotFound,
+                    )
+
+                    raise RegionalLeaseNotFound("regional lease was not found") from None
+                if local.state == LeaseState.ACTIVE:
+                    local = ledger.begin_drain(
+                        local.lease_id,
+                        region=local.region,
+                        fencing_token=local.fencing_token,
+                    )
+                if local.state not in {
+                    LeaseState.DRAINING,
+                    LeaseState.CLOSED,
+                    LeaseState.QUARANTINED,
+                }:
+                    raise RuntimeError("damaged regional lease remained available") from None
+                regional_hold_unknown = True
+                log.error(
+                    "regional quota hold missing; using typed reservation fallback "
+                    "authorization_id=%s lease_id=%s",
+                    authorization.id,
+                    authorization.regional_lease_id,
+                )
         actual_usage_type = UsageType.coerce(selected_usage_type)
         generation_writes: list[tuple[str, str, str]] = []
         if success and generation is not None:
@@ -2816,6 +2862,7 @@ class SpannerBigtableStore:
             ),
             user_model_payout=user_model_payout,
             app_markup_payout=app_markup_payout,
+            regional_hold_unknown=regional_hold_unknown,
         )
         spanner_ms = (time.perf_counter() - spanner_start) * 1000
         if result["outcome"] == SettleOutcome.ERROR:
@@ -3107,7 +3154,7 @@ class SpannerBigtableStore:
         region = authorization.region
         if not lease_id or not fencing_token or not hold_id or not region:
             raise RuntimeError("regional authorization is missing lease identity")
-        if actual_microdollars > authorization.estimated_microdollars:
+        if not 0 <= actual_microdollars <= authorization.estimated_microdollars:
             raise RuntimeError("regional settlement exceeds its exact reservation")
         if success:
             ledger.settle(

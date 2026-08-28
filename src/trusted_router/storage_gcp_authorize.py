@@ -844,6 +844,7 @@ def typed_finalize_atomic(
     operational_analytics_outbox: Any | None = None,
     user_model_payout: UserModelPayout | None = None,
     app_markup_payout: AppMarkupPayout | None = None,
+    regional_hold_unknown: bool = False,
 ) -> dict:
     """Full DML-only finalize for the typed path (codex 3e, Option B).
 
@@ -909,6 +910,24 @@ def typed_finalize_atomic(
             )
             if credit_count != 1:
                 raise _SettleError("credit release row-count != 1")
+        elif regional_hold_unknown and res.get("hold_usage_type") == "RegionalCredits":
+            # The regional grant already reserved this money, but a historical
+            # stale-CAS overwrite can leave no per-request Bigtable hold for the
+            # reconciler to import. Charge against the reservation's atomic
+            # claim without releasing the still-bounded lease grant. Closing
+            # reconciliation later releases that grant as unused, leaving this
+            # direct charge as the single durable booking.
+            credit_actual = book_actual if settled_usage_type == "Credits" else 0
+            credit_count = release_credit(
+                transaction,
+                pt,
+                res["workspace_id"],
+                0,
+                credit_actual,
+                shard=res["credit_shard"],
+            )
+            if credit_count != 1:
+                raise _SettleError("regional fallback credit booking row-count != 1")
 
         if success and user_model_payout is not None and user_model_payout.amount_microdollars > 0:
             # Deliberately NOT wrapped in a swallow. The payout is two DML
