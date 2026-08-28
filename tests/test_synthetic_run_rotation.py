@@ -103,7 +103,13 @@ def no_network_probes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 async def _drain_background_runs() -> None:
     while tasks := tuple(synthetic_route._BACKGROUND_RUNS):  # noqa: SLF001
-        await asyncio.gather(*tasks)
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            # Task done callbacks run on the next event-loop turn. Remove the
+            # tasks explicitly so this cleanup cannot spin on completed tasks
+            # while starving the callbacks that would otherwise remove them.
+            synthetic_route._BACKGROUND_RUNS.difference_update(tasks)  # noqa: SLF001
 
 
 def _post_run(settings: Settings, body: dict[str, Any]) -> Any:

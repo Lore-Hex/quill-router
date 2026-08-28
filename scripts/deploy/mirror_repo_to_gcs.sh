@@ -96,7 +96,10 @@ run() {
 
 ensure_bucket() {
   log "ensuring versioned private mirror bucket gs://${MIRROR_BUCKET}"
-  run gc services enable storage.googleapis.com
+  # Storage is a project bootstrap prerequisite, not a permission this daily
+  # backup job should hold. Re-enabling an already enabled API still requires
+  # serviceusage.services.enable, so doing it here made the least-privileged
+  # CI identity fail before it could inspect or update the mirror bucket.
   if ! gc storage buckets describe "gs://${MIRROR_BUCKET}" >/dev/null 2>&1; then
     run gc storage buckets create "gs://${MIRROR_BUCKET}" \
       --location=US \
