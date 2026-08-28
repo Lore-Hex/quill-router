@@ -91,6 +91,18 @@ def test_operational_deploy_resumes_live_ingest_before_backfills() -> None:
     assert 'id_column="event_id"' in script
 
 
+def test_gcp_spanner_drain_is_notify_watchdog_managed() -> None:
+    unit = (ROOT / "clickhouse/tr-clickhouse-operational-ingest.service").read_text()
+    drain = (ROOT / "clickhouse/ingest_operational_outbox.py").read_text()
+
+    assert "Type=notify" in unit
+    assert "NotifyAccess=main" in unit
+    assert "WatchdogSec=600" in unit
+    assert "Restart=always" in unit
+    assert 'sd_notify("READY=1")' in drain
+    assert 'sd_notify("WATCHDOG=1")' in drain
+
+
 def test_clickhouse_manual_deploys_bundle_only_valid_committed_source() -> None:
     helper = (ROOT / "scripts/deploy/_clickhouse_bundle.sh").read_text()
     assert "git -C \"$root\" status --porcelain" in helper

@@ -16,6 +16,8 @@ from .deploy_script_harness import (
 )
 
 SCRIPT = "scripts/deploy/azure_clickhouse_drain_install.sh"
+ROOT = Path(__file__).resolve().parents[1]
+UNIT = ROOT / "clickhouse/tr-clickhouse-operational-ingest-postgres.service"
 
 
 def _fixture(
@@ -83,6 +85,15 @@ def test_preflight_authenticates_to_postgres_and_clickhouse(
         if "keyvault secret show" in call
     ]
     assert len(secret_checks) == 2
+
+
+def test_installed_unit_is_notify_watchdog_managed() -> None:
+    unit = UNIT.read_text()
+
+    assert "Type=notify" in unit
+    assert "NotifyAccess=main" in unit
+    assert "WatchdogSec=600" in unit
+    assert "Restart=always" in unit
 
 
 def test_final_verification_requires_a_clickhouse_row_count_to_advance(

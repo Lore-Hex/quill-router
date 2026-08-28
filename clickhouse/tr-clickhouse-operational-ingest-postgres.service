@@ -4,7 +4,11 @@ After=network-online.target clickhouse-server.service
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+# The drain pings per shard. One normal shard is bounded by 60s Postgres fetch
+# + 60s ClickHouse write + 60s Postgres delete = 180s; 3x is 540s, plus 60s.
+WatchdogSec=600
 User=tr-clickhouse-ingest
 Group=tr-clickhouse-ingest
 WorkingDirectory=/opt/tr-clickhouse

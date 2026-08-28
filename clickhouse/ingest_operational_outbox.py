@@ -14,6 +14,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from clickhouse._sdnotify import sd_notify
+
 PROJECT = "quill-cloud-proxy"
 SPANNER_INSTANCE = "trusted-router-nam6"
 SPANNER_DATABASE = "trusted-router"
@@ -742,7 +744,9 @@ def main() -> int:
     # watermark this replaces was the single largest query load on the
     # production Spanner instance (measured 2026-08-25).
     idle_delay = max(0.1, args.poll_seconds)
+    sd_notify("READY=1")
     while True:
+        sd_notify("WATCHDOG=1")
         result = drain_once(source, writer, batch_size=max(1, args.batch_size))
         if result.fetched:
             log.info(
