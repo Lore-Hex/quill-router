@@ -44,6 +44,10 @@ class LeaseSettlementError(RegionalQuotaLeaseError):
     pass
 
 
+class UnknownRegionalReservationError(LeaseSettlementError):
+    """The durable lease snapshot no longer contains a request hold."""
+
+
 @dataclass(frozen=True, slots=True)
 class QuotaLeaseHold:
     hold_id: str
@@ -253,7 +257,7 @@ class RegionalQuotaLease:
     def _required_hold(self, hold_id: str) -> QuotaLeaseHold:
         hold = self._hold(hold_id)
         if hold is None:
-            raise LeaseSettlementError("unknown regional reservation")
+            raise UnknownRegionalReservationError("unknown regional reservation")
         return hold
 
     def _replace_hold(self, replacement: QuotaLeaseHold) -> RegionalQuotaLease:
