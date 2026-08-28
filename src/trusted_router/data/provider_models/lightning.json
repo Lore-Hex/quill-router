@@ -60,7 +60,9 @@
       "context_length": 200000,
       "input_token_price_per_m": 15000000,
       "output_token_price_per_m": 75000000,
-      "missing_since": "2026-08-28"
+      "missing_since": "2026-08-28",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Claude Opus 4.5",
@@ -887,7 +889,7 @@
     }
   ],
   "source": "https://lightning.ai/api/v1/models",
-  "generated_at": "2026-08-28T05:52:57Z",
+  "generated_at": "2026-08-28T09:26:22Z",
   "price_scale": "microdollars_per_million",
   "model_count": 44
 }

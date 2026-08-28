@@ -927,7 +927,7 @@
     }
   ],
   "source": "https://api.intelligence.io.solutions/api/v1/models",
-  "generated_at": "2026-08-28T05:52:57Z",
+  "generated_at": "2026-08-28T09:26:22Z",
   "price_scale": "microdollars_per_million",
   "model_count": 34
 }

@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-08-28T05:52:57Z",
+  "generated_at": "2026-08-28T09:26:22Z",
   "model_count": 150,
   "models": [
     {
@@ -4232,9 +4232,9 @@
       "created": 1787737609,
       "context_length": 1000000,
       "max_output_tokens": 131072,
-      "input_token_price_per_m": 5000,
+      "input_token_price_per_m": 4200,
       "output_token_price_per_m": 30000,
-      "cached_input_token_price_per_m": 1000
+      "cached_input_token_price_per_m": 850
     },
     {
       "id": "qwen/qwen3.8-flash",

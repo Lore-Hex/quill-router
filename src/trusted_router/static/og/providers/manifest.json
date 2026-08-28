@@ -136,10 +136,10 @@
   },
   "databricks": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 10,
     "name": "Databricks",
     "privacy": "Policy documented",
-    "route_count": 11,
+    "route_count": 10,
     "route_mode": "Prepaid",
     "slug": "databricks"
   },
@@ -217,19 +217,19 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 69,
+    "model_count": 70,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 74,
+    "route_count": 75,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 12,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 24,
+    "route_count": 22,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
@@ -316,10 +316,10 @@
   },
   "lightning": {
     "card_version": 2,
-    "model_count": 36,
+    "model_count": 35,
     "name": "Lightning AI",
     "privacy": "Policy documented",
-    "route_count": 61,
+    "route_count": 60,
     "route_mode": "Prepaid + BYOK",
     "slug": "lightning"
   },
@@ -460,10 +460,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 15,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 14,
+    "route_count": 15,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -676,10 +676,10 @@
   },
   "together": {
     "card_version": 2,
-    "model_count": 19,
+    "model_count": 15,
     "name": "Together",
     "privacy": "Zero retention",
-    "route_count": 38,
+    "route_count": 30,
     "route_mode": "Prepaid + BYOK",
     "slug": "together"
   },
