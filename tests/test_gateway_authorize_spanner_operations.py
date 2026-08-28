@@ -6,6 +6,7 @@ import pytest
 from starlette.requests import Request
 
 from tests.fakes.spanner import make_fake_store
+from trusted_router import storage_gcp_authorize, storage_gcp_key_escrow
 from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeRequest
@@ -113,6 +114,72 @@ def test_typed_authorize_replay_and_mismatch_still_come_from_transaction() -> No
     with pytest.raises(Exception) as raised:
         gateway._authorize_gateway_sync(_request(), changed, settings)
     assert getattr(raised.value, "status_code", None) == 409
+
+
+def test_typed_replay_race_returns_stored_authorization_without_second_reservation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation guard: restoring the reservation-id assert makes this fail."""
+    store, database, key = _seed_typed_gateway_store()
+    key.usage_shard_count = 2
+    store._write_entity("api_key", key.hash, key)
+    settings = Settings(environment="test")
+    first = gateway._authorize_gateway_sync(_request(), _body(key.hash), settings)
+
+    real_authorize_atomic = storage_gcp_authorize.authorize_atomic
+    forced_retry = False
+
+    def force_cold_retry(*args: object, **kwargs: object) -> dict[str, object]:
+        nonlocal forced_retry
+        result = real_authorize_atomic(*args, **kwargs)
+        if not forced_retry:
+            assert result["outcome"] == AuthorizeOutcome.REPLAY
+            forced_retry = True
+            return {"outcome": AuthorizeOutcome.KEY_LIMIT_EXCEEDED}
+        return result
+
+    monkeypatch.setattr(storage_gcp_authorize, "authorize_atomic", force_cold_retry)
+    monkeypatch.setattr(
+        storage_gcp_key_escrow,
+        "rebalance_key_limit_headroom",
+        lambda *_args, **_kwargs: True,
+    )
+
+    replay = gateway._authorize_gateway_sync(_request(), _body(key.hash), settings)
+
+    assert forced_retry is True
+    assert replay["data"]["idempotent_replay"] is True
+    assert replay["data"]["authorization_id"] == first["data"]["authorization_id"]
+    assert (
+        replay["data"]["credit_reservation_id"]
+        == first["data"]["credit_reservation_id"]
+    )
+    assert list(database.reservations) == [first["data"]["credit_reservation_id"]]
+
+
+def test_typed_replay_has_exact_sequential_spanner_operation_count() -> None:
+    _store, database, key = _seed_typed_gateway_store()
+    gateway._BROADCAST_EMPTY_CACHE.clear()
+    assert gateway._broadcast_destinations_for_authorize(key.workspace_id) == []
+    gateway._authorize_gateway_sync(_request(), _body(key.hash), Settings(environment="test"))
+    before = (
+        database.snapshot_execute_sql_calls,
+        database.transaction_execute_sql_calls,
+        database.transaction_execute_update_calls,
+    )
+
+    replay = gateway._authorize_gateway_sync(
+        _request(), _body(key.hash), Settings(environment="test")
+    )
+
+    after = (
+        database.snapshot_execute_sql_calls,
+        database.transaction_execute_sql_calls,
+        database.transaction_execute_update_calls,
+    )
+    operation_count = sum(end - start for start, end in zip(before, after, strict=True))
+    assert replay["data"]["idempotent_replay"] is True
+    assert operation_count == 6
 
 
 def test_typed_accepted_authorization_is_returned_without_post_commit_read(
