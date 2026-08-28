@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "scripts" / "deploy"
 
@@ -44,6 +46,54 @@ def test_high_priority_cpu_alert_keeps_short_spikes_visible() -> None:
     assert "perSeriesAligner: ALIGN_MAX" in policy
     assert "thresholdValue: 0.45" in policy
     assert "duration: 300s" in policy
+
+
+def test_contention_alert_has_distinct_slow_and_fast_lock_wait_burns() -> None:
+    policy_path = DEPLOY / "spanner-alerts" / "contention.yaml"
+    policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    conditions = {condition["displayName"]: condition for condition in policy["conditions"]}
+
+    slow = conditions["Lock wait exceeds two seconds per second for 10 minutes"][
+        "conditionThreshold"
+    ]
+    aborts = conditions["More than 100 aborted commits per minute for 10 minutes"][
+        "conditionThreshold"
+    ]
+    fast = conditions[
+        "Fast burn (vs 10-minute slow burn): lock wait exceeds 30 seconds per second for 5 minutes"
+    ]["conditionThreshold"]
+
+    assert len(policy["conditions"]) == 3
+    assert aborts["thresholdValue"] == 1.666666667
+    assert aborts["duration"] == "600s"
+    assert aborts["aggregations"] == [
+        {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_RATE",
+            "crossSeriesReducer": "REDUCE_SUM",
+        }
+    ]
+    assert slow["thresholdValue"] == 2
+    assert slow["duration"] == "600s"
+    assert slow["aggregations"] == [
+        {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_RATE",
+            "crossSeriesReducer": "REDUCE_SUM",
+        }
+    ]
+    assert fast["filter"] == slow["filter"]
+    assert fast["thresholdValue"] == 30
+    assert fast["duration"] == "300s"
+    assert fast["aggregations"] == [
+        {
+            "alignmentPeriod": "60s",
+            "perSeriesAligner": "ALIGN_RATE",
+            "crossSeriesReducer": "REDUCE_SUM",
+        }
+    ]
+    assert "2026-08-27" in policy["documentation"]["content"]
+    assert "600-second window" in policy["documentation"]["content"]
 
 
 def test_backup_copy_workflow_is_deterministic_and_idempotent() -> None:

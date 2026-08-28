@@ -68,6 +68,10 @@ ssh_node --command="sudo sh -c '
     /etc/systemd/system/tr-clickhouse-workspace-directory.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-workspace-directory.timer \
     /etc/systemd/system/tr-clickhouse-workspace-directory.timer
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-overrun-rollup.service \
+    /etc/systemd/system/tr-clickhouse-overrun-rollup.service
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-overrun-rollup.timer \
+    /etc/systemd/system/tr-clickhouse-overrun-rollup.timer
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-archive.service \
     /etc/systemd/system/tr-clickhouse-archive.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-archive.timer \
@@ -95,6 +99,8 @@ ssh_node --command="sudo sh -c '
     --multiquery < /opt/tr-clickhouse/clickhouse/010_workspace_directory.sql
   clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr \
     --multiquery < /opt/tr-clickhouse/clickhouse/012_activity_generations_workspace_id.sql
+  clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr \
+    --multiquery < /opt/tr-clickhouse/clickhouse/014_reservation_overruns.sql
   systemctl daemon-reload
   systemctl enable tr-clickhouse-ingest.service
   systemctl restart tr-clickhouse-ingest.service
@@ -114,6 +120,7 @@ ssh_node --command="sudo sh -c '
     fi
   done
   systemctl enable --now tr-clickhouse-workspace-directory.timer
+  systemctl enable --now tr-clickhouse-overrun-rollup.timer
   systemctl enable --now tr-clickhouse-reconcile.timer
   systemctl enable --now tr-clickhouse-archive.timer
   systemctl enable --now tr-clickhouse-archive-restore.timer
@@ -121,6 +128,7 @@ ssh_node --command="sudo sh -c '
   systemctl enable --now tr-clickhouse-rollup-daily.timer
   systemctl is-active tr-clickhouse-ingest.service
   systemctl is-active tr-clickhouse-reconcile.timer
+  systemctl is-active tr-clickhouse-overrun-rollup.timer
   systemctl is-active tr-clickhouse-archive.timer
   systemctl is-active tr-clickhouse-archive-restore.timer
   systemctl is-active tr-clickhouse-rollup-hourly.timer

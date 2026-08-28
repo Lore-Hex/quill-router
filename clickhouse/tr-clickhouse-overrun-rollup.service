@@ -1,0 +1,18 @@
+[Unit]
+Description=TrustedRouter reservation overrun rollup from Spanner
+After=network-online.target clickhouse-server.service
+
+[Service]
+Type=oneshot
+User=tr-clickhouse-ingest
+Group=tr-clickhouse-ingest
+WorkingDirectory=/opt/tr-clickhouse
+Environment=PYTHONPATH=/opt/tr-clickhouse/src
+EnvironmentFile=/etc/tr-clickhouse-ingest.env
+ExecStart=/opt/tr-clickhouse/venv/bin/python -m clickhouse.rollup_reservation_overruns
+TimeoutStartSec=5m
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/tr-clickhouse-ingest

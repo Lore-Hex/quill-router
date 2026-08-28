@@ -599,6 +599,9 @@ class Settings(BaseSettings):
     # budget. Keep one API key from filling every worker in a service instance
     # while still allowing ordinary low-latency traffic to scale horizontally.
     gateway_authorize_max_in_flight_per_key: int = 4
+    # Settlement has a wider gate because it closes already-issued holds, but
+    # one hot key must not consume every Spanner session in an instance.
+    settle_per_key_inflight_limit: int = 16
     # Only front doors that overwrite X-TrustedRouter-Client-IP may opt into
     # edge_header. Public origins that cannot perform that overwrite must stay
     # on the safe default and aggregate into the untrusted_lb bucket.
@@ -1215,6 +1218,7 @@ class Settings(BaseSettings):
                 "TR_GATEWAY_AUTHORIZE_MAX_IN_FLIGHT_PER_KEY",
                 self.gateway_authorize_max_in_flight_per_key,
             ),
+            ("TR_SETTLE_PER_KEY_INFLIGHT_LIMIT", self.settle_per_key_inflight_limit),
         ):
             if value <= 0:
                 raise ValueError(f"{name} must be positive")

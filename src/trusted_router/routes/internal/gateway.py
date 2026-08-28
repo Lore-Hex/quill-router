@@ -154,6 +154,7 @@ from trusted_router.storage_errors import (
 from trusted_router.storage_gcp_io import spanner_rpc_budget
 from trusted_router.storage_models import (
     AppMarkupPayout,
+    GatewayAuthorization,
     SettleOutboxRow,
     TypedFinalizeResult,
     UserModelPayout,
@@ -177,6 +178,11 @@ REQUEST_METADATA_VERSION = 1
 # process to serialize a structured retryable 503 and for network transit.
 _BILLING_PATH_SPANNER_BUDGET_SECONDS = 20.0
 _AUTHORIZE_ADMISSION = KeyedConcurrencyAdmission()
+# Process-local harm limitation: this keeps one key from exhausting this
+# instance's Spanner session pool. It cannot stop a fleet-wide settle convoy;
+# at the 2026-08-25 incident scale, roughly 76 concurrent settles still survive
+# the independent per-instance gates and can contend on the same Spanner key.
+_SETTLE_ADMISSION = KeyedConcurrencyAdmission()
 _BROADCAST_EMPTY_CACHE_TTL_SECONDS = 60.0
 _BROADCAST_EMPTY_CACHE_MAX_ENTRIES = 1_024
 _BROADCAST_EMPTY_CACHE: OrderedDict[str, float] = OrderedDict()
@@ -290,6 +296,22 @@ async def authorize_gateway(
         return await run_in_threadpool(_authorize_gateway_sync, request, body, settings)
     finally:
         _AUTHORIZE_ADMISSION.release(subject)
+
+
+async def settle_gateway(
+    request: Request,
+    body: GatewaySettleRequest,
+    settings: Settings,
+    background_tasks: BackgroundTasks | None = None,
+) -> dict[str, Any]:
+    """Run one settlement off-loop behind the process-local per-key gate."""
+    require_internal_gateway(request, settings)
+    return await run_in_threadpool(
+        _settle_gateway_with_admission_sync,
+        body,
+        settings=settings,
+        background_tasks=background_tasks,
+    )
 
 
 @spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)
@@ -1237,16 +1259,7 @@ def register(router: APIRouter) -> None:
         settings: SettingsDep,
         background_tasks: BackgroundTasks,
     ) -> dict[str, Any]:
-        require_internal_gateway(request, settings)
-        # background_tasks.add_task is a plain list append inside the sync core;
-        # the tasks themselves still run on the loop after the response.
-        return await run_in_threadpool(
-            _settle_gateway_authorization,
-            body,
-            success=True,
-            settings=settings,
-            background_tasks=background_tasks,
-        )
+        return await settle_gateway(request, body, settings, background_tasks)
 
     @router.post("/internal/gateway/refund")
     async def gateway_refund(
@@ -1927,19 +1940,62 @@ def _report_route_fallbacks(body: GatewaySettleRequest) -> None:
 
 
 @spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)
+def _settle_gateway_with_admission_sync(
+    body: GatewaySettleRequest,
+    *,
+    settings: Settings,
+    background_tasks: BackgroundTasks | None = None,
+) -> dict[str, Any]:
+    authorization = STORE.get_gateway_authorization(body.authorization_id)
+    if authorization is None:
+        raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
+    subject = authorization.key_hash
+    if not _SETTLE_ADMISSION.try_acquire(
+        subject,
+        limit=settings.settle_per_key_inflight_limit,
+    ):
+        logger.warning(
+            "billing.settle_admission_limited",
+            extra={
+                "key_subject_fingerprint": hashlib.sha256(subject.encode("utf-8")).hexdigest()[
+                    :16
+                ],
+                "limit": settings.settle_per_key_inflight_limit,
+            },
+        )
+        raise api_error(
+            503,
+            "Settlement is temporarily unavailable; retry shortly.",
+            ErrorType.SERVICE_UNAVAILABLE,
+            headers={"Retry-After": "1"},
+        )
+    try:
+        return _settle_gateway_authorization(
+            body,
+            success=True,
+            settings=settings,
+            background_tasks=background_tasks,
+            _authorization=authorization,
+        )
+    finally:
+        _SETTLE_ADMISSION.release(subject)
+
+
+@spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)
 def _settle_gateway_authorization(
     body: GatewaySettleRequest,
     *,
     success: bool,
     settings: Settings,
     background_tasks: BackgroundTasks | None = None,
+    _authorization: GatewayAuthorization | None = None,
 ) -> dict[str, Any]:
     timing_start = perf_counter()
     # getattr: some callers/tests build the settle body via model_construct,
     # which skips defaults for unset fields.
     if success and getattr(body, "route_fallbacks", None):
         _report_route_fallbacks(body)
-    authorization = STORE.get_gateway_authorization(body.authorization_id)
+    authorization = _authorization or STORE.get_gateway_authorization(body.authorization_id)
     if authorization is None:
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
     if authorization.settled:
