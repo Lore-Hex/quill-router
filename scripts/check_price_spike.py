@@ -145,6 +145,94 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             Decimal("0.000006"),
             Decimal("0.00002"),
         ),
+        # DigitalOcean's official pricing page currently publishes these
+        # exact rates. Approve only the observed old-to-current transitions;
+        # every other DigitalOcean increase remains guarded:
+        # https://docs.digitalocean.com/products/inference/details/pricing/
+        (
+            "deepseek/deepseek-v3.2 [digitalocean:digitalocean:deepseek-3.2]",
+            "prompt",
+            Decimal("0.00000025"),
+            Decimal("0.0000005"),
+        ),
+        (
+            "deepseek/deepseek-v3.2 [digitalocean:digitalocean:deepseek-3.2]",
+            "completion",
+            Decimal("0.0000008"),
+            Decimal("0.0000016"),
+        ),
+        (
+            "deepseek/deepseek-v3.2 "
+            "[digitalocean:digitalocean:deepseek-3.2] cached-input",
+            "prompt",
+            Decimal("0.000000075"),
+            Decimal("0.00000015"),
+        ),
+        (
+            "deepseek/deepseek-v4-flash "
+            "[digitalocean:digitalocean:deepseek-4-flash]",
+            "prompt",
+            Decimal("0.000000068"),
+            Decimal("0.00000014"),
+        ),
+        (
+            "deepseek/deepseek-v4-pro "
+            "[digitalocean:digitalocean:deepseek-v4-pro]",
+            "prompt",
+            Decimal("0.00000087"),
+            Decimal("0.00000174"),
+        ),
+        (
+            "deepseek/deepseek-v4-pro "
+            "[digitalocean:digitalocean:deepseek-v4-pro]",
+            "completion",
+            Decimal("0.00000174"),
+            Decimal("0.00000348"),
+        ),
+        (
+            "deepseek/deepseek-v4-pro "
+            "[digitalocean:digitalocean:deepseek-v4-pro] cached-input",
+            "prompt",
+            Decimal("0.000000174"),
+            Decimal("0.000000348"),
+        ),
+        (
+            "xiaomi/mimo-v2.5-pro [digitalocean:digitalocean:mimo-v2.5-pro]",
+            "prompt",
+            Decimal("0.0000004"),
+            Decimal("0.0000008"),
+        ),
+        (
+            "xiaomi/mimo-v2.5-pro [digitalocean:digitalocean:mimo-v2.5-pro]",
+            "completion",
+            Decimal("0.0000015"),
+            Decimal("0.000003"),
+        ),
+        (
+            "xiaomi/mimo-v2.5-pro "
+            "[digitalocean:digitalocean:mimo-v2.5-pro] cached-input",
+            "prompt",
+            Decimal("0.00000008"),
+            Decimal("0.00000016"),
+        ),
+        (
+            "z-ai/glm-5.2 [digitalocean:digitalocean:glm-5.2]",
+            "prompt",
+            Decimal("0.0000007"),
+            Decimal("0.0000014"),
+        ),
+        (
+            "z-ai/glm-5.2 [digitalocean:digitalocean:glm-5.2]",
+            "completion",
+            Decimal("0.0000022"),
+            Decimal("0.0000044"),
+        ),
+        (
+            "z-ai/glm-5.2 [digitalocean:digitalocean:glm-5.2] cached-input",
+            "prompt",
+            Decimal("0.000000105"),
+            Decimal("0.00000021"),
+        ),
         # IO.NET's authenticated model catalog is the provider-owned source
         # used by the hourly adapter. The dashboard documentation confirms
         # that model-specific prices are published in the Models UI/API:
@@ -168,7 +256,7 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             "[io-net:io-net:zai-org/GLM-5.3-Flash] cached-input",
             "prompt",
             Decimal("0.00000003"),
-            Decimal("0.00000006"),
+            Decimal("0.000000075"),
         ),
     }
 )
