@@ -169,6 +169,15 @@ def _update_all_or_rollback(
             persisted = STORE.get_key_by_hash(key_hash)
             if persisted is None or getattr(persisted, field) != value:
                 raise RuntimeError("OAuth grant update verification failed")
+    except NotImplementedError as exc:
+        # This backend cannot write keys at all, so nothing was changed and
+        # there is nothing to repair. Falling into the repair path would raise
+        # again and escalate a phantom "keys disagree" alert.
+        raise api_error(
+            501,
+            "This deployment cannot modify OAuth grants",
+            ErrorType.ENDPOINT_NOT_SUPPORTED,
+        ) from exc
     except Exception as exc:
         # Repair every key, including the write which may have persisted and
         # then raised before the caller could record that it succeeded.

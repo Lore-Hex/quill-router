@@ -251,3 +251,31 @@ def test_delete_disables_all_keys_gateway_denies_and_second_delete_succeeds(
     assert denied.status_code == 401
     assert len(STORE.list_keys(workspace_id)) == 2  # activity linkage remains intact
     assert STORE.get_generation(f"gen-{APP_ID}-0") is not None
+
+
+def test_backend_without_key_writes_reports_why_not_a_phantom_repair_failure(
+    client: TestClient,
+    user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PostgresStore.update_key is still increment-1 unimplemented.
+
+    Without this branch the NotImplementedError falls into the repair path,
+    which calls update_key again, raises again, and escalates a critical
+    "keys disagree" alert -- for a backend that never wrote anything at all.
+    The operator gets a data-integrity page for a capability gap.
+    """
+    _grant()
+
+    def unimplemented(*_args: object, **_kwargs: object) -> None:
+        raise NotImplementedError("PostgresStore.update_key is not implemented in increment 1")
+
+    monkeypatch.setattr(InMemoryStore, "update_key", unimplemented)
+    response = client.patch(
+        f"/v1/oauth/authorized-apps/{APP_ID}",
+        headers=user_headers,
+        json={"monthly_budget": "50"},
+    )
+
+    assert response.status_code == 501
+    assert response.json()["error"]["type"] == "endpoint_not_supported"
