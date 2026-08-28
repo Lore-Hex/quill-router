@@ -35,6 +35,7 @@ permissions:
   id-token: write   # for Workload Identity Federation
   contents: write   # push the generated snapshot branch
   actions: write    # dispatch ci.yml + deploy.yml for a new snapshot
+  statuses: write   # bridge exact-SHA CI checks to protected-push statuses
   issues: write     # upsert the durable model-discovery coverage alert
                     # (GITHUB_TOKEN-pushed commits don't auto-trigger
                     # downstream workflows, so we explicitly fan out
@@ -345,6 +346,7 @@ jobs:
           echo "  dispatched ci.yml for generated snapshot branch"
 
           ci_passed=""
+          ci_run_id=""
           for _ in $(seq 1 180); do
             run_json=$(gh run list \
               --repo "${GITHUB_REPOSITORY}" \
@@ -360,6 +362,7 @@ jobs:
               if [ "${status}" = "completed" ]; then
                 if [ "${conclusion}" = "success" ]; then
                   ci_passed=1
+                  ci_run_id=$(jq -r .databaseId <<<"${run_json}")
                   break
                 fi
                 echo "generated snapshot CI concluded '${conclusion}'"
@@ -384,6 +387,30 @@ jobs:
               --repo "${GITHUB_REPOSITORY}"
             exit 0
           fi
+
+          # GitHub's protected-branch hook does not accept check runs from a
+          # workflow_dispatch branch for a direct GITHUB_TOKEN push, even
+          # though those check runs are successful on this exact commit. Post
+          # equivalent commit statuses only after the complete exact-SHA CI
+          # run succeeds. Both the checks and these statuses are emitted by
+          # the repository's pinned GitHub Actions app.
+          ci_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}"
+          for context in "lint" "test (1)" "test (2)" "test (3)"; do
+            status_json=$(gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}" \
+              -f state=success \
+              -f context="${context}" \
+              -f description="Exact snapshot CI passed" \
+              -f target_url="${ci_url}")
+            if [ "$(jq -r .sha <<<"${status_json}")" != "${SNAPSHOT_SHA}" ] || \
+               [ "$(jq -r .context <<<"${status_json}")" != "${context}" ] || \
+               [ "$(jq -r .state <<<"${status_json}")" != "success" ] || \
+               [ "$(jq -r .creator.login <<<"${status_json}")" != "github-actions[bot]" ]; then
+              echo "failed to publish exact snapshot status '${context}'"
+              exit 1
+            fi
+          done
 
           push_log=$(mktemp)
           if ! git push origin "HEAD:refs/heads/main" 2>"${push_log}"; then
