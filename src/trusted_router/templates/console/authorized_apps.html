@@ -1,0 +1,39 @@
+{% extends "console/_layout.html" %}
+{% block body %}
+{% if saved == 'budget' %}<div class="console-flash success" role="status">Budget updated for every key held by the app.</div>{% endif %}
+{% if saved == 'revoked' %}<div class="console-flash success" role="status">App access revoked.</div>{% endif %}
+{% if saved == 'invalid-budget' %}<div class="console-flash error" role="status">Budget must be a non-negative dollar amount.</div>{% endif %}
+
+{% if not apps %}
+<section class="panel">
+  <div class="panel-body empty">No apps are authorized for this workspace.</div>
+</section>
+{% endif %}
+
+{% for app in apps %}
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h2>{{ app.name }}</h2>
+      <p class="panel-kicker"><code>{{ app.app_id }}</code> · by {{ app.owner_verified_legal_name }} (identity-verified)</p>
+    </div>
+    {% if app.logo_url %}<img src="{{ app.logo_url }}" alt="" width="48" height="48" loading="lazy">{% endif %}
+  </div>
+  <div class="panel-body">
+    <p><strong>Permissions:</strong> {{ app.scopes|join(', ') }}</p>
+    {% if app.markup_disclosure %}<p>{{ app.markup_disclosure }}</p>{% endif %}
+    <p>Monthly usage: <strong>{{ money(app.budget.used_microdollars) }}</strong>{% if app.budget.limit_microdollars is not none %} of {{ money(app.budget.limit_microdollars) }}{% else %} · no limit{% endif %}. Resets monthly.</p>
+    <p>{{ app.key_count }} active key{{ '' if app.key_count == 1 else 's' }} · authorized {{ app.created_at }}{% if app.last_used_at %} · last used {{ app.last_used_at }}{% endif %}</p>
+    <form class="form" method="post" action="/console/authorized-apps/{{ app.app_id }}/budget">
+      <label>Monthly budget (USD; blank means no limit)
+        <input name="monthly_budget" type="text" inputmode="decimal" value="{{ app.budget.monthly_budget or '' }}" placeholder="No limit">
+      </label>
+      <button class="btn" type="submit">Save budget</button>
+    </form>
+    <form class="inline-form" method="post" action="/console/authorized-apps/{{ app.app_id }}/revoke" onsubmit="return confirm('Revoke {{ app.name|e }}? Its keys will immediately stop authorizing new requests.');">
+      <button class="btn danger" type="submit">Revoke access</button>
+    </form>
+  </div>
+</section>
+{% endfor %}
+{% endblock %}

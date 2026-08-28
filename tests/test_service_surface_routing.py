@@ -262,6 +262,10 @@ def test_t2_through_t4_and_legacy_alias_paths_are_not_public(path: str) -> None:
         "/oauth/apps/verified-app",
         "/v1/oauth/apps",
         "/v1/oauth/apps/verified-app",
+        "/oauth/authorized-apps",
+        "/oauth/authorized-apps/verified-app",
+        "/v1/oauth/authorized-apps",
+        "/v1/oauth/authorized-apps/verified-app",
     ],
 )
 def test_oauth_app_registry_paths_route_to_control(path: str) -> None:
