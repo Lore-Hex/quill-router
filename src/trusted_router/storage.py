@@ -52,6 +52,7 @@ from trusted_router.storage_models import (
     BroadcastDeliveryJob,
     BroadcastDestination,
     ByokProviderConfig,
+    ConsentRequest,
     CreditAccount,
     CreditMoney,
     CreditMovement,
@@ -80,6 +81,7 @@ from trusted_router.storage_models import (
     VideoJob,
     WalletChallenge,
     Workspace,
+    _is_expired,
     federated_api_key_from_record,
     federated_workspace_from_record,
     iso_now,
@@ -158,6 +160,7 @@ class InMemoryStore:
         self.auth_session_store = InMemoryAuthSessions(lock=self._lock)
         self.oauth_code_store = InMemoryOAuthCodes(lock=self._lock)
         self.oauth_app_store = InMemoryOAuthApps(lock=self._lock)
+        self.consent_requests: dict[str, ConsentRequest] = {}
         self.rate_limit_store = InMemoryRateLimits(lock=self._lock)
         self.wallet_challenges = InMemoryWalletChallenges()
         self.verification_tokens = InMemoryVerificationTokens()
@@ -196,6 +199,7 @@ class InMemoryStore:
             self.auth_session_store.reset()
             self.oauth_code_store.reset()
             self.oauth_app_store.reset()
+            self.consent_requests.clear()
             self.rate_limit_store.reset()
             self.wallet_challenges.reset()
             self.verification_tokens.reset()
@@ -2232,6 +2236,7 @@ class InMemoryStore:
         spawn_agent: str | None = None,
         spawn_cloud: str | None = None,
         client_app_id: str = "",
+        scopes: list[str] | None = None,
     ) -> tuple[str, OAuthAuthorizationCode]:
         return self.oauth_code_store.create(
             workspace_id=workspace_id,
@@ -2248,10 +2253,28 @@ class InMemoryStore:
             spawn_agent=spawn_agent,
             spawn_cloud=spawn_cloud,
             client_app_id=client_app_id,
+            scopes=scopes,
         )
 
     def consume_oauth_authorization_code(self, raw_code: str) -> OAuthAuthorizationCode | None:
         return self.oauth_code_store.consume(raw_code)
+
+    def create_consent_request(self, consent: ConsentRequest) -> ConsentRequest:
+        with self._lock:
+            self.consent_requests[consent.id] = consent
+            return consent
+
+    def get_consent_request(self, consent_id: str) -> ConsentRequest | None:
+        with self._lock:
+            return self.consent_requests.get(consent_id)
+
+    def consume_consent_request(self, consent_id: str) -> ConsentRequest | None:
+        with self._lock:
+            consent = self.consent_requests.get(consent_id)
+            if consent is None or consent.consumed_at is not None or _is_expired(consent.consent_expires_at):
+                return None
+            consent.consumed_at = iso_now()
+            return consent
 
     def create_oauth_app(self, app: OAuthApp) -> OAuthApp:
         return self.oauth_app_store.create(app)

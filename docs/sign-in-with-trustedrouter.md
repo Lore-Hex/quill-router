@@ -1,5 +1,71 @@
 # Sign in with TrustedRouter
 
+## OAuth 2.1 quickstart
+
+TrustedRouter is an OAuth 2.1 authorization server for registered apps. App
+registration requires a browser session and an identity-verified owner;
+`redirect_uri` must exactly match the app registry. Public clients must use
+authorization-code flow with PKCE S256 (no client secret or refresh token).
+
+Open the browser at:
+
+```text
+https://trustedrouter.com/v1/oauth/authorize?response_type=code&client_id=my-app&redirect_uri=https%3A%2F%2Fapp.example%2Fcallback&scope=inference%20profile%20balance%3Aread&state=CSRF_VALUE&code_challenge=BASE64URL_SHA256_VERIFIER&code_challenge_method=S256
+```
+
+Validate the returned `state`, then exchange the single-use code:
+
+```bash
+curl https://trustedrouter.com/v1/oauth/token \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode grant_type=authorization_code \
+  --data-urlencode code="$CODE" \
+  --data-urlencode code_verifier="$VERIFIER" \
+  --data-urlencode client_id=my-app \
+  --data-urlencode redirect_uri=https://app.example/callback
+```
+
+The response contains `access_token` (the delegated key), `token_type:
+bearer`, granted `scope`, and `trustedrouter` metadata with
+`verification_level`, `app_id`, and `workspace_id`. Verification is ordered
+`none < email < phone < identity`. Errors use RFC 6749 `error` and
+`error_description`; token responses are non-cacheable.
+
+### Scopes
+
+| Scope | Grant |
+| --- | --- |
+| `inference` | Run model work and read generations created by this key. |
+| `profile` | Read user id, email, and verification level. |
+| `balance:read` | Read prepaid-credit summary, not management billing. |
+| `activity:read` | Read activity attributed to this app. |
+
+The default is `inference profile balance:read`. Unknown scopes produce
+`invalid_scope`; protected resources return `insufficient_scope` when needed.
+
+### Consent, markup, and budgets
+
+Consent identifies the app id and identity-verified owner and binds client,
+redirect, scopes, PKCE, and state server-side. If markup is nonzero, the page
+says “This app adds N% on top of TrustedRouter token costs.” Users choose $5,
+$20, $100, or no monthly limit; $20/month is selected by default. An app's
+`suggested_monthly_budget` is displayed but never auto-applied above $20.
+Budget exhaustion uses normal key-limit errors, including `Retry-After` where
+applicable. Authorized apps can be inspected, rebudgeted, and revoked.
+
+### Legacy migration
+
+`GET /v1/auth` and JSON `POST /v1/auth/keys` remain byte-compatible but are
+deprecated. New clients should use registered `client_id`, `redirect_uri`,
+space-delimited `scope`, required PKCE S256, and form-encoded
+`POST /v1/oauth/token`.
+
+All four hand-off gaps are closed: scoped balance reads, conformant OAuth
+2.1/PKCE, explicit server-bound scope consent, and end-to-end `app_id`
+attribution.
+
+## Legacy compatibility reference
+
 "Sign in with TrustedRouter" lets a third-party app authenticate a user with
 their TrustedRouter account and receive a **user-scoped API key** — so LLM
 calls the app makes are billed to *that user's* TrustedRouter credits, not the

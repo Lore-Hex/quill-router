@@ -1,5 +1,25 @@
 # Security Notes
 
+## OAuth and exchange rate limits
+
+Registered apps use `/v1/oauth/authorize` and `/v1/oauth/token`. Redirect URIs
+are exact-matched before errors may redirect. PKCE S256 is mandatory and the
+verifier is 43–128 RFC 7636 unreserved characters. Authorization codes and
+consent records are short-lived and single-use.
+
+Consent is a server-side JSON entity. Approval posts only its opaque id, a
+constant-time-compared CSRF token, and the visible budget choice; client,
+callback, scopes, state, and PKCE values come from the record. Stripe URLs
+carry only the consent id and checkout result—never callback or PKCE material.
+
+`/v1/oauth/token` and legacy `/v1/auth/keys` share a dedicated process-local
+per-IP 30/minute bucket. A limited request returns 429 with `Retry-After`.
+Conformant token errors use RFC 6749 envelopes and no-store headers; the legacy
+endpoint preserves its historical envelope and statuses.
+
+The four OAuth hand-off gaps are closed: scoped balance reads, conformant
+OAuth 2.1/PKCE, server-bound explicit consent, and end-to-end app attribution.
+
 ## Prompt And Output Data
 
 TrustedRouter never logs prompt or output content. Ordinary synchronous and

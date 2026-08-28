@@ -47,6 +47,7 @@ class SpannerOAuthCodes:
         spawn_agent: str | None = None,
         spawn_cloud: str | None = None,
         client_app_id: str = "",
+        scopes: list[str] | None = None,
     ) -> tuple[str, OAuthAuthorizationCode]:
         raw = new_api_key(prefix="auth_code")
         code_id = new_key_id(prefix="oauth")
@@ -74,6 +75,7 @@ class SpannerOAuthCodes:
             spawn_agent=spawn_agent,
             spawn_cloud=spawn_cloud,
             client_app_id=client_app_id,
+            scopes=list(scopes or []),
         )
         with self._io.database.batch() as batch:
             self._io.write_entity_batch(batch, "oauth_code", code.hash, code)

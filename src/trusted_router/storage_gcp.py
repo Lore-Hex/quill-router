@@ -45,6 +45,7 @@ from trusted_router.storage import (
     BroadcastDeliveryJob,
     BroadcastDestination,
     ByokProviderConfig,
+    ConsentRequest,
     CreditAccount,
     CreditTransfer,
     CustomModel,
@@ -1300,6 +1301,7 @@ class SpannerBigtableStore:
         spawn_agent: str | None = None,
         spawn_cloud: str | None = None,
         client_app_id: str = "",
+        scopes: list[str] | None = None,
     ) -> tuple[str, OAuthAuthorizationCode]:
         return self.oauth_code_store.create(
             workspace_id=workspace_id,
@@ -1316,10 +1318,28 @@ class SpannerBigtableStore:
             spawn_agent=spawn_agent,
             spawn_cloud=spawn_cloud,
             client_app_id=client_app_id,
+            scopes=scopes,
         )
 
     def consume_oauth_authorization_code(self, raw_code: str) -> OAuthAuthorizationCode | None:
         return self.oauth_code_store.consume(raw_code)
+
+    def create_consent_request(self, consent: ConsentRequest) -> ConsentRequest:
+        self._write_entity("consent_request", consent.id, consent)
+        return consent
+
+    def get_consent_request(self, consent_id: str) -> ConsentRequest | None:
+        return self._read_entity("consent_request", consent_id, ConsentRequest)
+
+    def consume_consent_request(self, consent_id: str) -> ConsentRequest | None:
+        def txn(transaction: Any) -> ConsentRequest | None:
+            consent = self._read_entity_tx(transaction, "consent_request", consent_id, ConsentRequest)
+            if consent is None or consent.consumed_at is not None or _is_expired(consent.consent_expires_at):
+                return None
+            consent.consumed_at = iso_now()
+            self._write_entity_tx(transaction, "consent_request", consent.id, consent)
+            return consent
+        return self._run_in_transaction(txn)
 
     def create_oauth_app(self, app: OAuthApp) -> OAuthApp:
         return self.oauth_app_store.create(app)
