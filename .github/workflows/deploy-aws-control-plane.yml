@@ -22,6 +22,10 @@ on:
       attestation_pcr0:
         description: "Published enclave PCR0 pin (from trust/aws-release.json) - the script refuses to run without it; pinning is the point"
         required: true
+      bake_override_reason:
+        description: "Non-empty ONLY to override the cloud bake gate (TR_CLOUD_BAKE_OVERRIDE); state the incident/justification - it is recorded in the run log"
+        required: false
+        default: ""
 
 concurrency:
   group: deploy-aws-control-plane
@@ -64,4 +68,5 @@ jobs:
         env:
           SKIP_EVENTBRIDGE: ${{ inputs.skip_eventbridge }}
           ATTESTATION_PCR0: ${{ inputs.attestation_pcr0 }}
+          TR_CLOUD_BAKE_OVERRIDE: ${{ inputs.bake_override_reason }}
         run: bash scripts/deploy/aws_eu_control_plane.sh
