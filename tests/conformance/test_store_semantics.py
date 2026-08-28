@@ -34,7 +34,7 @@ from psycopg.types.numeric import Int8
 
 from trusted_router.storage_gcp import _auth_record
 from trusted_router.storage_key_usage import api_key_from_json
-from trusted_router.storage_models import ApiKey, Generation, OAuthApp
+from trusted_router.storage_models import ApiKey, ConsentRequest, Generation, OAuthApp
 from trusted_router.store_protocol import Store
 from trusted_router.typed_balance import live_credit_summary
 from trusted_router.types import UsageType
@@ -804,6 +804,51 @@ def test_oauth_authorization_code_is_single_use(store: Store, workspace_id: str)
     )
     assert store.consume_oauth_authorization_code(raw_code) is not None
     assert store.consume_oauth_authorization_code(raw_code) is None
+
+
+@pytest.mark.parametrize(
+    ("wrong_field", "wrong_value"),
+    [
+        ("csrf_token", "wrong-csrf"),
+        ("user_id", "wrong-user"),
+        ("workspace_id", "wrong-workspace"),
+    ],
+)
+def test_consent_binding_mismatch_does_not_consume(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+    unique: str,
+    wrong_field: str,
+    wrong_value: str,
+) -> None:
+    consent = ConsentRequest(
+        id=f"consent-{unique}-{wrong_field}",
+        csrf_token=f"csrf-{unique}",
+        user_id=user_id,
+        workspace_id=workspace_id,
+        client_app_id="app",
+        callback_url="https://app.example/callback",
+        scopes=["inference"],
+        code_challenge="challenge",
+        code_challenge_method="S256",
+        key_label="Conformance",
+        limit_microdollars=None,
+        limit_reset=None,
+        expires_at=None,
+        state="state",
+        consent_expires_at=(dt.datetime.now(dt.UTC) + dt.timedelta(minutes=5)).isoformat(),
+    )
+    store.create_consent_request(consent)
+    correct = {
+        "user_id": user_id,
+        "workspace_id": workspace_id,
+        "csrf_token": consent.csrf_token,
+    }
+    mismatched = {**correct, wrong_field: wrong_value}
+
+    assert store.consume_consent_request(consent.id, **mismatched) is None
+    assert store.consume_consent_request(consent.id, **correct) is not None
 
 
 # --------------------------------------------------------------------------

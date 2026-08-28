@@ -55,6 +55,27 @@ def test_consent_is_server_bound_csrf_protected_and_single_use(client: TestClien
     assert _approve(client, page).status_code == 400
 
 
+def test_conformant_redirect_omits_user_id_but_legacy_keeps_it(client: TestClient) -> None:
+    _setup(client)
+    app = STORE.get_oauth_app(APP_ID)
+    assert app is not None
+    redirect_with_query = f"{REDIRECT}?existing=value"
+    app.redirect_uris.append(redirect_with_query)
+    conformant = _approve(client, _authorize(client, redirect_uri=redirect_with_query))
+    assert set(parse_qs(urlsplit(conformant.headers["location"]).query)) == {"code", "state"}
+
+    legacy_page = client.get(
+        "/v1/auth",
+        params={"client_id": APP_ID, "callback_url": REDIRECT, "state": "legacy-state"},
+    )
+    legacy = _approve(client, legacy_page)
+    assert set(parse_qs(urlsplit(legacy.headers["location"]).query)) == {
+        "code",
+        "state",
+        "user_id",
+    }
+
+
 def test_consent_rejects_expiry_and_other_user(client: TestClient) -> None:
     _setup(client)
     page = _authorize(client)
@@ -91,6 +112,8 @@ def test_conformant_token_happy_path_binding_replay_and_budget(client: TestClien
     assert key is not None and key.limit_microdollars == 5_000_000 and key.limit_reset == "monthly"
     replay = client.post("/v1/oauth/token", data=form)
     assert replay.status_code == 400 and replay.json()["error"] == "invalid_grant"
+    assert replay.headers["cache-control"] == "no-store"
+    assert replay.headers["pragma"] == "no-cache"
 
 
 def test_token_rejects_verifier_and_redirect_in_rfc_envelope(client: TestClient) -> None:
@@ -141,6 +164,8 @@ def test_token_rate_limit_has_retry_after(client: TestClient) -> None:
         client.post("/v1/oauth/token", data={})
     limited = client.post("/v1/oauth/token", data={})
     assert limited.status_code == 429 and "retry-after" in limited.headers
+    assert limited.headers["cache-control"] == "no-store"
+    assert limited.headers["pragma"] == "no-cache"
 
 
 def test_legacy_exchange_keeps_its_house_envelope_and_plain_pkce(

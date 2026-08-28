@@ -1721,6 +1721,7 @@ class ConsentRequest:
     limit_reset: str | None
     expires_at: str | None
     state: str
+    rfc_conformant: bool = False
     suggested_monthly_budget: str = ""
     created_at: str = field(default_factory=iso_now)
     consent_expires_at: str | None = None

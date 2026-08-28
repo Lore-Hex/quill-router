@@ -35,9 +35,19 @@ def _mint_app_key(
         },
     )
     assert created.status_code == 201, created.text
+    consent_page = client.get(
+        "/auth",
+        params={"client_id": app_id, "callback_url": "https://app.example/callback"},
+    )
+    assert consent_page.status_code == 200, consent_page.text
+
+    def form_value(name: str) -> str:
+        marker = f'name="{name}" value="'
+        return consent_page.text.split(marker, 1)[1].split('"', 1)[0]
+
     approved = client.post(
         "/auth/approve",
-        data={"client_id": app_id, "callback_url": "https://app.example/callback"},
+        data={"consent": form_value("consent"), "csrf_token": form_value("csrf_token")},
         follow_redirects=False,
     )
     code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]

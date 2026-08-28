@@ -65,6 +65,7 @@ OAUTH_AUTHORIZATION_FIELDS = (
 
 
 def register_oauth_key_routes(router: APIRouter) -> None:
+
     @router.get(OAUTH_AUTHORIZATION_ENDPOINT_PATH)
     async def oauth_authorize_page(request: Request, settings: SettingsDep) -> Response:
         if request.query_params.get("consent"):
@@ -100,7 +101,7 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         if not principal.is_management:
             raise api_error(403, "Only management users can delegate credits", ErrorType.FORBIDDEN)
         _deny_scoped_delegator(principal)
-        consent = _create_consent(params, principal, settings, oauth_app=app)
+        consent = _create_consent(params, principal, settings, oauth_app=app, rfc_conformant=True)
         return HTMLResponse(_consent_html_for_record(consent, principal.workspace.name, app))
 
     @router.post("/auth/fund")
@@ -169,16 +170,24 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         chosen = str(form.get("monthly_budget") or "20")
         if consent.client_app_id and chosen not in {"5", "20", "100", "none"}:
             raise api_error(400, "Invalid monthly budget", ErrorType.BAD_REQUEST)
-        consumed = STORE.consume_consent_request(consent.id)
+        consumed = STORE.consume_consent_request(
+            consent.id,
+            user_id=str(_principal_user_id(principal) or ""),
+            workspace_id=principal.workspace.id,
+            csrf_token=str(form.get("csrf_token") or ""),
+        )
         if consumed is None:
             raise api_error(400, "Consent request is expired or already used", ErrorType.BAD_REQUEST)
         if consumed.client_app_id:
             consumed.limit_microdollars = None if chosen == "none" else dollars_to_microdollars(chosen)
             consumed.limit_reset = None if chosen == "none" else "monthly"
         raw_code, code = _create_code_from_consent(consumed, settings)
-        return RedirectResponse(
-            url=_callback_with_code(code.callback_url, raw_code, code.user_id, state=consumed.state), status_code=302
+        callback_url = (
+            _conformant_callback_with_code(code.callback_url, raw_code, state=consumed.state)
+            if consumed.rfc_conformant
+            else _callback_with_code(code.callback_url, raw_code, code.user_id, state=consumed.state)
         )
+        return RedirectResponse(url=callback_url, status_code=302)
 
     @router.post("/auth/keys/code")
     async def auth_keys_code(
@@ -569,6 +578,16 @@ def _callback_with_code(callback_url: str, raw_code: str, user_id: str | None, *
     )
 
 
+def _conformant_callback_with_code(callback_url: str, raw_code: str, *, state: str = "") -> str:
+    parsed = urlsplit(callback_url)
+    query = [("code", raw_code)]
+    if state:
+        query.append(("state", state))
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment)
+    )
+
+
 def _optional_str(raw: Any) -> str | None:
     if raw in {None, ""}:
         return None
@@ -585,7 +604,12 @@ def _deny_scoped_delegator(principal: Any) -> None:
 
 
 def _create_consent(
-    params: dict[str, Any], principal: Any, settings: Settings, *, oauth_app: OAuthApp | None
+    params: dict[str, Any],
+    principal: Any,
+    settings: Settings,
+    *,
+    oauth_app: OAuthApp | None,
+    rfc_conformant: bool = False,
 ) -> ConsentRequest:
     callback_url = _validate_callback_url(str(params.get("callback_url") or ""))
     suggested = str(params.get("suggested_monthly_budget") or "")
@@ -604,6 +628,7 @@ def _create_consent(
         limit_reset=("monthly" if oauth_app else _limit_reset(params.get("usage_limit_type"))),
         expires_at=_expires_at(params.get("expires_at")),
         state=str(params.get("state") or ""),
+        rfc_conformant=rfc_conformant,
         suggested_monthly_budget=suggested,
         consent_expires_at=(dt.datetime.now(dt.UTC) + dt.timedelta(seconds=settings.oauth_authorization_code_ttl_seconds)).isoformat().replace("+00:00", "Z"),
     )
@@ -682,7 +707,14 @@ def _oauth_error_redirect(uri: str, error: str, description: str, state: str) ->
 
 
 def _oauth_error(error: str, description: str, *, status: int = 400, headers: dict[str, str] | None = None) -> JSONResponse:
-    return JSONResponse({"error": error, "error_description": description}, status_code=status, headers=headers)
+    response_headers = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+    if headers:
+        response_headers.update(headers)
+    return JSONResponse(
+        {"error": error, "error_description": description},
+        status_code=status,
+        headers=response_headers,
+    )
 
 
 def _pkce_matches(code: OAuthAuthorizationCode, verifier: str) -> bool:

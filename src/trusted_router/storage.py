@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import hmac
 import threading
 import uuid
 from typing import Any, cast
@@ -2268,10 +2269,19 @@ class InMemoryStore:
         with self._lock:
             return self.consent_requests.get(consent_id)
 
-    def consume_consent_request(self, consent_id: str) -> ConsentRequest | None:
+    def consume_consent_request(
+        self, consent_id: str, *, user_id: str, workspace_id: str, csrf_token: str
+    ) -> ConsentRequest | None:
         with self._lock:
             consent = self.consent_requests.get(consent_id)
-            if consent is None or consent.consumed_at is not None or _is_expired(consent.consent_expires_at):
+            if (
+                consent is None
+                or consent.consumed_at is not None
+                or _is_expired(consent.consent_expires_at)
+                or consent.user_id != user_id
+                or consent.workspace_id != workspace_id
+                or not hmac.compare_digest(consent.csrf_token, csrf_token)
+            ):
                 return None
             consent.consumed_at = iso_now()
             return consent

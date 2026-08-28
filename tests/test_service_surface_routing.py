@@ -269,6 +269,23 @@ def test_oauth_app_registry_paths_route_to_control(path: str) -> None:
 
 
 @pytest.mark.parametrize("prefix", ["", "/v1"])
+@pytest.mark.parametrize("path", ["/oauth/authorize", "/oauth/token"])
+def test_conformant_oauth_protocol_paths_route_to_control(prefix: str, path: str) -> None:
+    """Consent and token exchange belong beside their legacy twins.
+
+    /oauth/authorize renders the consent page from the user's session cookie
+    and /oauth/token mints an API key and can touch Stripe -- control-plane
+    capabilities. Serving them from public would hand the anonymous-read
+    surface store writes and key minting. The unversioned aliases matter
+    most: unmatched paths default to public, so without an explicit control
+    rule they would silently land on a surface that does not mount them.
+    """
+    full_path = f"{prefix}{path}"
+    assert URL_MAP.route_surface(full_path) == "control"
+    assert _emitted_backend(_emitted_map(), full_path) == LEGACY_BACKEND
+
+
+@pytest.mark.parametrize("prefix", ["", "/v1"])
 @pytest.mark.parametrize(
     "path",
     [

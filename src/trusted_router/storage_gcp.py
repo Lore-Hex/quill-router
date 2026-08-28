@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -1331,10 +1332,19 @@ class SpannerBigtableStore:
     def get_consent_request(self, consent_id: str) -> ConsentRequest | None:
         return self._read_entity("consent_request", consent_id, ConsentRequest)
 
-    def consume_consent_request(self, consent_id: str) -> ConsentRequest | None:
+    def consume_consent_request(
+        self, consent_id: str, *, user_id: str, workspace_id: str, csrf_token: str
+    ) -> ConsentRequest | None:
         def txn(transaction: Any) -> ConsentRequest | None:
             consent = self._read_entity_tx(transaction, "consent_request", consent_id, ConsentRequest)
-            if consent is None or consent.consumed_at is not None or _is_expired(consent.consent_expires_at):
+            if (
+                consent is None
+                or consent.consumed_at is not None
+                or _is_expired(consent.consent_expires_at)
+                or consent.user_id != user_id
+                or consent.workspace_id != workspace_id
+                or not hmac.compare_digest(consent.csrf_token, csrf_token)
+            ):
                 return None
             consent.consumed_at = iso_now()
             self._write_entity_tx(transaction, "consent_request", consent.id, consent)
