@@ -2358,40 +2358,44 @@ async def provider_rotation_probe(
         default_first_token_seconds=default_timeout_seconds,
     )
     try:
-        async with client.stream(
-            "POST",
-            url,
-            json=body,
-            headers=_auth_headers(api_key),
-            timeout=httpx.Timeout(deadline.first_token_seconds),
-        ) as response:
-            served_provider = response.headers.get("x-trustedrouter-provider") or provider
-            served_model = response.headers.get("x-trustedrouter-served-model") or model
-            if response.status_code != 200:
-                await response.aread()
-                error_type, error_status, message = _response_error(response)
-                return _rotation_error_sample(
-                    served_provider,
-                    served_model,
-                    region=monitor_region,
-                    elapsed_ms=_elapsed_ms(started),
-                    error_status=error_status,
-                    error_type=error_type,
-                    error_message=message,
-                )
-            observation = await _observe_provider_stream(response, started=started)
-            if observation.stream_error is not None:
-                error_type, status, message = observation.stream_error
-                return _rotation_error_sample(
-                    served_provider,
-                    served_model,
-                    region=monitor_region,
-                    elapsed_ms=observation.elapsed_milliseconds,
-                    error_status=status or 502,
-                    error_type=error_type,
-                    error_message=message,
-                )
-    except (httpx.HTTPError, ValueError) as exc:
+        # httpx's read timeout resets whenever another chunk arrives. The
+        # outer wall-clock deadline is therefore the primary bound for a
+        # provider that trickles bytes forever without completing the stream.
+        async with asyncio.timeout(deadline.first_token_seconds):
+            async with client.stream(
+                "POST",
+                url,
+                json=body,
+                headers=_auth_headers(api_key),
+                timeout=httpx.Timeout(deadline.first_token_seconds),
+            ) as response:
+                served_provider = response.headers.get("x-trustedrouter-provider") or provider
+                served_model = response.headers.get("x-trustedrouter-served-model") or model
+                if response.status_code != 200:
+                    await response.aread()
+                    error_type, error_status, message = _response_error(response)
+                    return _rotation_error_sample(
+                        served_provider,
+                        served_model,
+                        region=monitor_region,
+                        elapsed_ms=_elapsed_ms(started),
+                        error_status=error_status,
+                        error_type=error_type,
+                        error_message=message,
+                    )
+                observation = await _observe_provider_stream(response, started=started)
+                if observation.stream_error is not None:
+                    error_type, status, message = observation.stream_error
+                    return _rotation_error_sample(
+                        served_provider,
+                        served_model,
+                        region=monitor_region,
+                        elapsed_ms=observation.elapsed_milliseconds,
+                        error_status=status or 502,
+                        error_type=error_type,
+                        error_message=message,
+                    )
+    except (TimeoutError, httpx.HTTPError, ValueError) as exc:
         return _rotation_error_sample(
             served_provider,
             served_model,
