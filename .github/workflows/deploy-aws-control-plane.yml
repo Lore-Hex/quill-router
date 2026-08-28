@@ -26,6 +26,7 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   deploy:
@@ -34,10 +35,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The account's GitHub OIDC provider is pre-existing; this role is the
+      # quill-router deploy grant (the TR_AWS_* repo secrets are dead - the
+      # first dispatch failed on them with "security token invalid").
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.TR_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.TR_AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: arn:aws:iam::330422590279:role/tr-router-github-deploy
           aws-region: eu-west-3
 
       - uses: docker/setup-buildx-action@v3
