@@ -279,3 +279,64 @@ def test_backend_without_key_writes_reports_why_not_a_phantom_repair_failure(
 
     assert response.status_code == 501
     assert response.json()["error"]["type"] == "endpoint_not_supported"
+
+
+def test_not_implemented_after_a_successful_write_repairs_instead_of_501(
+    client: TestClient,
+    user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A capability gap is only a capability gap before anything is written.
+
+    The first version of the 501 branch wrapped the whole mutation, so a
+    NotImplementedError raised after a write had already landed returned 501
+    and skipped repair -- misreporting a genuine failure AND leaving the
+    app's keys disagreeing. Only the first write, proven not to have
+    persisted, may be treated as an unsupported backend.
+    """
+    _user_id, workspace_id, _raw = _grant()
+    original = InMemoryStore.update_key
+    calls = {"n": 0}
+
+    def fail_after_first(self: InMemoryStore, key_hash: str, patch: dict[str, object]):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise NotImplementedError("simulated late capability failure")
+        return original(self, key_hash, patch)
+
+    monkeypatch.setattr(InMemoryStore, "update_key", fail_after_first)
+    response = client.patch(
+        f"/v1/oauth/authorized-apps/{APP_ID}",
+        headers=user_headers,
+        json={"monthly_budget": "50"},
+    )
+    monkeypatch.setattr(InMemoryStore, "update_key", original)
+
+    assert response.status_code == 500
+    assert response.json()["error"]["type"] != "endpoint_not_supported"
+    budgets = {
+        key.limit_monthly_microdollars
+        for key in STORE.list_keys(workspace_id)
+        if key.app_id == APP_ID
+    }
+    assert len(budgets) == 1, f"keys left disagreeing: {budgets}"
+
+
+def test_revoke_also_reports_an_unwritable_backend(
+    client: TestClient,
+    user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DELETE shares the helper, so it must report the gap the same way."""
+    _grant()
+
+    def unimplemented(*_args: object, **_kwargs: object) -> None:
+        raise NotImplementedError("PostgresStore.update_key is not implemented in increment 1")
+
+    monkeypatch.setattr(InMemoryStore, "update_key", unimplemented)
+    response = client.delete(
+        f"/v1/oauth/authorized-apps/{APP_ID}", headers=user_headers
+    )
+
+    assert response.status_code == 501
+    assert response.json()["error"]["type"] == "endpoint_not_supported"

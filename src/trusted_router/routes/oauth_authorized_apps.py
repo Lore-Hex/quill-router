@@ -160,8 +160,30 @@ def _update_all_or_rollback(
     value: Any,
 ) -> None:
     originals = {key.hash: getattr(key, field) for key in keys}
+    # A backend that cannot write keys at all (PostgresStore.update_key is
+    # still increment-1 unimplemented) would otherwise raise, fall into the
+    # repair path, raise again, and escalate a critical "keys disagree" alert
+    # for a backend that never wrote anything. Decide that BEFORE any
+    # mutation: only the very first write, proven not to have persisted, can
+    # be a capability gap. A NotImplementedError raised any later is a genuine
+    # failure and must repair like any other.
+    first_hash = next(iter(originals))
     try:
-        for key_hash in originals:
+        first_result = STORE.update_key(first_hash, {field: value})
+    except NotImplementedError as exc:
+        if not _write_persisted(first_hash, field, originals[first_hash]):
+            raise api_error(
+                501,
+                "This deployment cannot modify OAuth grants",
+                ErrorType.ENDPOINT_NOT_SUPPORTED,
+            ) from exc
+        _repair_all(originals, field, keys)
+        raise api_error(500, "OAuth grant update failed", ErrorType.INTERNAL_ERROR) from exc
+
+    try:
+        if first_result is None or getattr(first_result, field) != value:
+            raise RuntimeError("OAuth grant update did not persist")
+        for key_hash in list(originals)[1:]:
             result = STORE.update_key(key_hash, {field: value})
             if result is None or getattr(result, field) != value:
                 raise RuntimeError("OAuth grant update did not persist")
@@ -169,47 +191,59 @@ def _update_all_or_rollback(
             persisted = STORE.get_key_by_hash(key_hash)
             if persisted is None or getattr(persisted, field) != value:
                 raise RuntimeError("OAuth grant update verification failed")
-    except NotImplementedError as exc:
-        # This backend cannot write keys at all, so nothing was changed and
-        # there is nothing to repair. Falling into the repair path would raise
-        # again and escalate a phantom "keys disagree" alert.
-        raise api_error(
-            501,
-            "This deployment cannot modify OAuth grants",
-            ErrorType.ENDPOINT_NOT_SUPPORTED,
-        ) from exc
     except Exception as exc:
-        # Repair every key, including the write which may have persisted and
-        # then raised before the caller could record that it succeeded.
-        for key_hash, original in originals.items():
-            try:
-                STORE.update_key(key_hash, {field: original})
-            except Exception as repair_exc:
-                log.error(
-                    "oauth_grant_repair_write_failed key_id=%s error=%s",
-                    key_hash,
-                    repair_exc,
-                )
-        disagreeing = []
-        for key_hash, original in originals.items():
-            try:
-                persisted = STORE.get_key_by_hash(key_hash)
-            except Exception:
-                persisted = None
-            if persisted is None or getattr(persisted, field) != original:
-                disagreeing.append(key_hash)
-        if disagreeing:
-            app_ids = sorted({key.app_id for key in keys})
-            log.critical(
-                "oauth_grant_repair_failed app_ids=%s disagreeing_key_ids=%s",
-                app_ids,
-                disagreeing,
-            )
+        _repair_all(originals, field, keys)
         raise api_error(
             500,
             "Could not update every key in the OAuth grant",
             ErrorType.INTERNAL_ERROR,
         ) from exc
+
+
+def _write_persisted(key_hash: str, field: str, original: Any) -> bool:
+    """True if a write took effect despite raising.
+
+    A capability stub raises before touching anything; anything that changed
+    the row is a genuine failure that still owes a repair.
+    """
+    try:
+        persisted = STORE.get_key_by_hash(key_hash)
+    except Exception:
+        # Cannot prove nothing was written, so assume the unsafe case.
+        return True
+    return persisted is not None and getattr(persisted, field) != original
+
+
+def _repair_all(originals: dict[str, Any], field: str, keys: Iterable[ApiKey]) -> None:
+    """Restore every key, verify the restore, and escalate what disagrees.
+
+    Repairs every key regardless of which writes were recorded as succeeding:
+    a write can persist and then raise before the caller learns it worked.
+    """
+    for key_hash, original in originals.items():
+        try:
+            STORE.update_key(key_hash, {field: original})
+        except Exception as repair_exc:
+            log.error(
+                "oauth_grant_repair_write_failed key_id=%s error=%s",
+                key_hash,
+                repair_exc,
+            )
+    disagreeing = []
+    for key_hash, original in originals.items():
+        try:
+            persisted = STORE.get_key_by_hash(key_hash)
+        except Exception:
+            persisted = None
+        if persisted is None or getattr(persisted, field) != original:
+            disagreeing.append(key_hash)
+    if disagreeing:
+        app_ids = sorted({key.app_id for key in keys})
+        log.critical(
+            "oauth_grant_repair_failed app_ids=%s disagreeing_key_ids=%s",
+            app_ids,
+            disagreeing,
+        )
 
 
 def _authorized_app_shape(
