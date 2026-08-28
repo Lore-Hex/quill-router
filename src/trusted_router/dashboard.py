@@ -3467,7 +3467,8 @@ def _model_discovery_sort_key(model: Mapping[str, object]) -> tuple[int, int, in
         except (TypeError, ValueError):
             pass
     section = 2 if model.get("is_meta") else 1
-    provider_count = int(model.get("provider_count") or 0)
+    raw_provider_count = model.get("provider_count")
+    provider_count = raw_provider_count if isinstance(raw_provider_count, int) else 0
     return (section, ai_iq_rank, -provider_count, str(model["name"]).casefold())
 
 
