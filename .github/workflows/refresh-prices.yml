@@ -395,6 +395,7 @@ jobs:
           # run succeeds. Both the checks and these statuses are emitted by
           # the repository's pinned GitHub Actions app.
           ci_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}"
+          expected_status_url="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}"
           for context in "lint" "test (1)" "test (2)" "test (3)"; do
             status_json=$(gh api \
               --method POST \
@@ -403,11 +404,28 @@ jobs:
               -f context="${context}" \
               -f description="Exact snapshot CI passed" \
               -f target_url="${ci_url}")
-            if [ "$(jq -r .sha <<<"${status_json}")" != "${SNAPSHOT_SHA}" ] || \
+            status_id=$(jq -r '.id // empty' <<<"${status_json}")
+            if ! [[ "${status_id}" =~ ^[0-9]+$ ]] || \
+               [ "$(jq -r .url <<<"${status_json}")" != "${expected_status_url}" ] || \
                [ "$(jq -r .context <<<"${status_json}")" != "${context}" ] || \
                [ "$(jq -r .state <<<"${status_json}")" != "success" ] || \
-               [ "$(jq -r .creator.login <<<"${status_json}")" != "github-actions[bot]" ]; then
+               [ "$(jq -r .target_url <<<"${status_json}")" != "${ci_url}" ]; then
               echo "failed to publish exact snapshot status '${context}'"
+              exit 1
+            fi
+
+            # The create-status response currently omits `creator` and `sha`.
+            # Re-read this exact status from the SHA-scoped endpoint before
+            # trusting it for protected-main promotion.
+            verified_status=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}" \
+              --jq "map(select(.id == ${status_id}))[0] // empty")
+            if [ -z "${verified_status}" ] || \
+               [ "$(jq -r .context <<<"${verified_status}")" != "${context}" ] || \
+               [ "$(jq -r .state <<<"${verified_status}")" != "success" ] || \
+               [ "$(jq -r .target_url <<<"${verified_status}")" != "${ci_url}" ] || \
+               [ "$(jq -r .creator.login <<<"${verified_status}")" != "github-actions[bot]" ]; then
+              echo "failed to verify exact snapshot status '${context}'"
               exit 1
             fi
           done

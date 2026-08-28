@@ -34,10 +34,13 @@ def test_price_refresh_checks_exact_branch_sha_before_advancing_main() -> None:
     assert status_bridge in workflow
     assert 'for context in "lint" "test (1)" "test (2)" "test (3)"' in workflow
     assert '-f target_url="${ci_url}"' in workflow
-    assert '$(jq -r .sha <<<"${status_json}")' in workflow
+    assert 'expected_status_url="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}"' in workflow
+    assert "status_id=$(jq -r '.id // empty'" in workflow
+    assert '$(jq -r .url <<<"${status_json}")' in workflow
     assert '$(jq -r .context <<<"${status_json}")' in workflow
     assert '$(jq -r .state <<<"${status_json}")' in workflow
-    assert '$(jq -r .creator.login <<<"${status_json}")' in workflow
+    assert '--jq "map(select(.id == ${status_id}))[0] // empty"' in workflow
+    assert '$(jq -r .creator.login <<<"${verified_status}")' in workflow
     assert '!= "github-actions[bot]"' in workflow
     main_push = 'git push origin "HEAD:refs/heads/main"'
     assert main_push in workflow
