@@ -152,6 +152,31 @@ test_raw_issuance_input_is_normalized_in_shell() {
   fi
 }
 
+test_revision_env_accepts_cloud_run_empty_plain_values() {
+  local name_only='{"spec":{"containers":[{"env":[{"name":"EMPTY"}]}]}}'
+  [ "$(regional_quota_revision_env "$name_only" EMPTY fallback)" = "" ] ||
+    fail "Cloud Run name-only empty value was not preserved"
+
+  local explicit_empty='{"spec":{"containers":[{"env":[{"name":"EMPTY","value":""}]}]}}'
+  [ "$(regional_quota_revision_env "$explicit_empty" EMPTY fallback)" = "" ] ||
+    fail "explicit empty value was not preserved"
+
+  [ "$(regional_quota_revision_env "$name_only" MISSING fallback)" = "fallback" ] ||
+    fail "missing environment variable did not use its default"
+}
+
+test_revision_env_rejects_non_plain_values() {
+  local secret_ref='{"spec":{"containers":[{"env":[{"name":"SECRET","valueFrom":{"secretKeyRef":{"name":"secret","key":"latest"}}}]}]}}'
+  if regional_quota_revision_env "$secret_ref" SECRET fallback >/dev/null 2>&1; then
+    fail "secret-backed environment variable was accepted as plain text"
+  fi
+
+  local non_string='{"spec":{"containers":[{"env":[{"name":"INVALID","value":false}]}]}}'
+  if regional_quota_revision_env "$non_string" INVALID fallback >/dev/null 2>&1; then
+    fail "non-string environment variable was accepted as plain text"
+  fi
+}
+
 test_missing_issuance_marker_blocks_enable() {
   SCENARIO=missing_marker
   if regional_quota_preflight_issuance_fleet >/dev/null 2>&1; then
@@ -180,7 +205,9 @@ test_ambiguous_traffic_fails_closed
 test_read_errors_are_not_fresh_environments
 test_only_exact_service_not_found_is_a_fresh_environment
 test_raw_issuance_input_is_normalized_in_shell
+test_revision_env_accepts_cloud_run_empty_plain_values
+test_revision_env_rejects_non_plain_values
 test_missing_issuance_marker_blocks_enable
 test_capability_false_blocks_enable
 test_all_compatible_active_revisions_pass
-printf '%s\n' 'regional quota rollout shell tests: 8 passed'
+printf '%s\n' 'regional quota rollout shell tests: 10 passed'
