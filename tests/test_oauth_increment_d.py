@@ -216,3 +216,40 @@ def test_legacy_exchange_keeps_its_house_envelope_and_plain_pkce(
     legacy_key = STORE.get_key_by_raw(payload["key"])
     assert legacy_key is not None
     assert list(legacy_key.scopes) == DEFAULT_DELEGATED_SCOPES
+
+
+def test_app_supplied_budget_hint_is_normalised_to_dollars_or_dropped(
+    client: TestClient,
+) -> None:
+    """The consent page prints this right after a "$".
+
+    An app sending microdollars rendered "The app suggests a $20000000/month
+    budget" on our own page -- app-controlled text presented as a figure the
+    user is being asked to agree to. Anything that is not a plain dollar
+    amount within the same bound as the limit input is now dropped rather
+    than shown.
+    """
+    _setup(client)
+
+    def hint(page) -> str | None:
+        line = next((row for row in page.text.splitlines() if "suggests a" in row), "")
+        return line.split("suggests a ", 1)[1].split("/month", 1)[0] if line else None
+
+    # Both entry points, because each normalises independently: a regression
+    # at one site alone is invisible if the test only drives the other.
+    entries = {
+        "conformant": lambda raw: _authorize(client, suggested_monthly_budget=raw),
+        "legacy": lambda raw: client.get(
+            "/auth",
+            params={
+                "client_id": APP_ID,
+                "callback_url": REDIRECT,
+                "suggested_monthly_budget": raw,
+            },
+        ),
+    }
+    for name, entry in entries.items():
+        assert hint(entry("25")) == "$25", name
+        assert hint(entry("25.50")) == "$25.50", name
+        for rejected in ("20000000", "abc", "-5", "0", "999999999", "<b>x</b>"):
+            assert hint(entry(rejected)) is None, f"{name}: {rejected} was rendered"

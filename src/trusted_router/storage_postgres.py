@@ -2579,6 +2579,9 @@ class PostgresStore:
         )
         _ = limit_micro  # read for the BYOK/uncapped guard above only.
 
+    def supports_key_writes(self) -> bool:
+        return False
+
     def update_key(
         self,
         key_hash: str,

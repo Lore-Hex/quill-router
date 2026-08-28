@@ -267,10 +267,7 @@ def test_backend_without_key_writes_reports_why_not_a_phantom_repair_failure(
     """
     _grant()
 
-    def unimplemented(*_args: object, **_kwargs: object) -> None:
-        raise NotImplementedError("PostgresStore.update_key is not implemented in increment 1")
-
-    monkeypatch.setattr(InMemoryStore, "update_key", unimplemented)
+    monkeypatch.setattr(InMemoryStore, "supports_key_writes", lambda self: False)
     response = client.patch(
         f"/v1/oauth/authorized-apps/{APP_ID}",
         headers=user_headers,
@@ -319,7 +316,9 @@ def test_not_implemented_after_a_successful_write_repairs_instead_of_501(
         for key in STORE.list_keys(workspace_id)
         if key.app_id == APP_ID
     }
-    assert len(budgets) == 1, f"keys left disagreeing: {budgets}"
+    assert budgets == {20 * MICRODOLLARS_PER_DOLLAR}, (
+        f"keys must be repaired to the ORIGINAL budget, got {budgets}"
+    )
 
 
 def test_revoke_also_reports_an_unwritable_backend(
@@ -330,10 +329,7 @@ def test_revoke_also_reports_an_unwritable_backend(
     """DELETE shares the helper, so it must report the gap the same way."""
     _grant()
 
-    def unimplemented(*_args: object, **_kwargs: object) -> None:
-        raise NotImplementedError("PostgresStore.update_key is not implemented in increment 1")
-
-    monkeypatch.setattr(InMemoryStore, "update_key", unimplemented)
+    monkeypatch.setattr(InMemoryStore, "supports_key_writes", lambda self: False)
     response = client.delete(
         f"/v1/oauth/authorized-apps/{APP_ID}", headers=user_headers
     )

@@ -160,30 +160,19 @@ def _update_all_or_rollback(
     value: Any,
 ) -> None:
     originals = {key.hash: getattr(key, field) for key in keys}
-    # A backend that cannot write keys at all (PostgresStore.update_key is
-    # still increment-1 unimplemented) would otherwise raise, fall into the
-    # repair path, raise again, and escalate a critical "keys disagree" alert
-    # for a backend that never wrote anything. Decide that BEFORE any
-    # mutation: only the very first write, proven not to have persisted, can
-    # be a capability gap. A NotImplementedError raised any later is a genuine
-    # failure and must repair like any other.
-    first_hash = next(iter(originals))
+    # Ask BEFORE writing. Discovering an unimplemented backend by catching the
+    # raise mid-sequence cannot tell "nothing was written" from "a write landed
+    # then raised" -- an idempotent write is indistinguishable either way -- and
+    # guessing wrong either skips a repair the keys need or reports a plain
+    # capability gap as data corruption.
+    if not STORE.supports_key_writes():
+        raise api_error(
+            501,
+            "This deployment cannot modify OAuth grants",
+            ErrorType.ENDPOINT_NOT_SUPPORTED,
+        )
     try:
-        first_result = STORE.update_key(first_hash, {field: value})
-    except NotImplementedError as exc:
-        if not _write_persisted(first_hash, field, originals[first_hash]):
-            raise api_error(
-                501,
-                "This deployment cannot modify OAuth grants",
-                ErrorType.ENDPOINT_NOT_SUPPORTED,
-            ) from exc
-        _repair_all(originals, field, keys)
-        raise api_error(500, "OAuth grant update failed", ErrorType.INTERNAL_ERROR) from exc
-
-    try:
-        if first_result is None or getattr(first_result, field) != value:
-            raise RuntimeError("OAuth grant update did not persist")
-        for key_hash in list(originals)[1:]:
+        for key_hash in originals:
             result = STORE.update_key(key_hash, {field: value})
             if result is None or getattr(result, field) != value:
                 raise RuntimeError("OAuth grant update did not persist")
@@ -198,20 +187,6 @@ def _update_all_or_rollback(
             "Could not update every key in the OAuth grant",
             ErrorType.INTERNAL_ERROR,
         ) from exc
-
-
-def _write_persisted(key_hash: str, field: str, original: Any) -> bool:
-    """True if a write took effect despite raising.
-
-    A capability stub raises before touching anything; anything that changed
-    the row is a genuine failure that still owes a repair.
-    """
-    try:
-        persisted = STORE.get_key_by_hash(key_hash)
-    except Exception:
-        # Cannot prove nothing was written, so assume the unsafe case.
-        return True
-    return persisted is not None and getattr(persisted, field) != original
 
 
 def _repair_all(originals: dict[str, Any], field: str, keys: Iterable[ApiKey]) -> None:

@@ -23,6 +23,7 @@ from trusted_router.config import Settings
 from trusted_router.domains import request_control_origin
 from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.money import (
+    MICRODOLLARS_PER_DOLLAR,
     dollars_to_microdollars,
     format_money_display,
     microdollars_to_decimal,
@@ -475,6 +476,30 @@ def _pkce_method(raw: Any, *, has_challenge: bool) -> str | None:
     return method
 
 
+#: The consent page prints this straight after a "$", so it is app-supplied
+#: text on our own page. An app that sends microdollars (or anything else)
+#: must not be able to render "$20000000/month" as if the user were agreeing
+#: to it. Anything not a plain dollar amount within the same bound as the
+#: limit input is dropped rather than shown.
+SUGGESTED_BUDGET_MAX_DOLLARS = 10_000
+
+
+def _suggested_monthly_budget(raw: Any) -> str:
+    """Normalise an app's budget hint to dollars, or drop it."""
+    if raw in {None, ""}:
+        return ""
+    try:
+        microdollars = dollars_to_microdollars(str(raw))
+    except (ValueError, ArithmeticError):
+        return ""
+    if microdollars <= 0 or microdollars > SUGGESTED_BUDGET_MAX_DOLLARS * MICRODOLLARS_PER_DOLLAR:
+        return ""
+    whole, fraction = divmod(microdollars, MICRODOLLARS_PER_DOLLAR)
+    # Match the preset labels ($5, $20, $100) for whole dollars; keep cents
+    # padded so a fractional hint reads as money, not "$25.5".
+    return str(whole) if fraction == 0 else f"{whole}.{round(fraction / 10_000):02d}"
+
+
 def _limit_microdollars(raw: Any) -> int | None:
     if raw in {None, ""}:
         return None
@@ -612,7 +637,7 @@ def _create_consent(
     rfc_conformant: bool = False,
 ) -> ConsentRequest:
     callback_url = _validate_callback_url(str(params.get("callback_url") or ""))
-    suggested = str(params.get("suggested_monthly_budget") or "")
+    suggested = _suggested_monthly_budget(params.get("suggested_monthly_budget"))
     consent = ConsentRequest(
         id=f"consent_{secrets.token_urlsafe(24)}",
         csrf_token=secrets.token_urlsafe(32),
@@ -695,7 +720,7 @@ def _conformant_authorize_params(request: Request) -> tuple[dict[str, Any], OAut
         return redirected("invalid_request", "code_challenge is required")
     if raw.get("code_challenge_method") != "S256":
         return redirected("invalid_request", "code_challenge_method must be S256")
-    return {"client_id": client_id, "callback_url": redirect_uri, "scopes": requested, "state": state, "code_challenge": str(raw["code_challenge"]), "code_challenge_method": "S256", "suggested_monthly_budget": str(raw.get("suggested_monthly_budget") or "")}, app, None
+    return {"client_id": client_id, "callback_url": redirect_uri, "scopes": requested, "state": state, "code_challenge": str(raw["code_challenge"]), "code_challenge_method": "S256", "suggested_monthly_budget": _suggested_monthly_budget(raw.get("suggested_monthly_budget"))}, app, None
 
 
 def _oauth_error_redirect(uri: str, error: str, description: str, state: str) -> str:
