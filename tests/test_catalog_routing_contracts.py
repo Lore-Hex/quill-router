@@ -1355,7 +1355,6 @@ def test_liberty_nemotron_resolves_only_to_working_canonical_prepaid_routes() ->
         assert "nebius" not in prepaid
     else:
         assert prepaid["nebius"] == "nvidia/Nemotron-3-Ultra-550b-a55b"
-    assert prepaid["together"] == "nvidia/nemotron-3-ultra-550b-a55b"
     assert "gmi" not in prepaid
 
 

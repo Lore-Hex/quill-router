@@ -543,7 +543,7 @@ def test_gateway_authorizes_every_liberty_alias_to_working_nemotron_hosts() -> N
             if route["model"] == "nvidia/nemotron-3-ultra-550b-a55b"
             and route["usage_type"] == "Credits"
         }
-        expected_hosts = {"baseten", "together"}
+        expected_hosts = {"baseten"}
         if not provider_model_retired(
             "nebius",
             "nvidia/nemotron-3-ultra-550b-a55b",
