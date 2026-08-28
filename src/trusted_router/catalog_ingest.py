@@ -15,6 +15,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from trusted_router.catalog_capabilities import (
+    manifest_supported_parameters,
+    union_supported_parameters,
+)
 from trusted_router.catalog_data import (
     _EMBEDDING_SPECS,
     _PROVIDER_SERVED_MODEL_ALLOWLIST,
@@ -102,6 +106,14 @@ def _endpoint(
         provider=provider_slug,
         usage_type="BYOK" if usage_type.lower() == "byok" else "Credits",
         upstream_id=upstream_id or model.upstream_id,
+        supported_parameters=union_supported_parameters(
+            model.supported_parameters,
+            manifest_supported_parameters(
+                {},
+                supports_chat=model.supports_chat,
+                supports_embeddings=model.supports_embeddings,
+            ),
+        ),
         prompt_price_microdollars_per_million_tokens=model.prompt_price_microdollars_per_million_tokens,
         completion_price_microdollars_per_million_tokens=model.completion_price_microdollars_per_million_tokens,
         published_prompt_price_microdollars_per_million_tokens=model.published_prompt_price_microdollars_per_million_tokens,
@@ -710,6 +722,12 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
         architecture = raw_model.get("architecture")
         if not isinstance(architecture, dict):
             architecture = {}
+        supported_parameters = union_supported_parameters(
+            *(
+                manifest_supported_parameters(raw_ep)
+                for _p, _c, _t, _slug, raw_ep in per_endpoint_prices
+            )
+        )
         prepaid_available = any(
             slug in GATEWAY_PREPAID_PROVIDER_SLUGS for _p, _c, _t, slug, _ep in per_endpoint_prices
         )
@@ -720,6 +738,7 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
             context_length=context_length,
             supports_chat=True,
             supports_messages=supports_messages,
+            supported_parameters=supported_parameters,
             input_modalities=_modalities(
                 architecture.get("input_modalities"),
                 default=("text",),
@@ -750,6 +769,7 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
                     provider=slug,
                     usage_type="Credits",
                     upstream_id=upstream_id,
+                    supported_parameters=manifest_supported_parameters(raw_ep),
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -765,6 +785,7 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
                     provider=slug,
                     usage_type="BYOK",
                     upstream_id=upstream_id,
+                    supported_parameters=manifest_supported_parameters(raw_ep),
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -970,6 +991,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
             )
             context_length = _as_positive_int(raw_model.get("context_length"))
             name = str(raw_model.get("display_name") or raw_model.get("title") or model_id)
+            supported_parameters = manifest_supported_parameters(raw_model)
             reliability = raw_model.get("reliability")
             if not isinstance(reliability, dict):
                 reliability = {}
@@ -982,6 +1004,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 upstream_id=upstream_id,
                 supports_chat="chat/completions" in endpoint_types,
                 supports_messages=publisher == "anthropic",
+                supported_parameters=supported_parameters,
                 input_modalities=_modalities(
                     raw_model.get("input_modalities"),
                     default=("text",),
@@ -1026,6 +1049,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                     provider=provider_slug,
                     usage_type="Credits",
                     upstream_id=upstream_id,
+                    supported_parameters=supported_parameters,
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -1052,6 +1076,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                     provider=provider_slug,
                     usage_type="BYOK",
                     upstream_id=upstream_id,
+                    supported_parameters=supported_parameters,
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -1100,6 +1125,9 @@ def _embedding_models() -> dict[str, Model]:
             supports_chat=False,
             supports_messages=False,
             supports_embeddings=True,
+            supported_parameters=manifest_supported_parameters(
+                {}, supports_chat=False, supports_embeddings=True
+            ),
             prepaid_available=True,
             byok_available=True,
             prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -1158,6 +1186,9 @@ def _embedding_models() -> dict[str, Model]:
                 supports_chat=False,
                 supports_messages=False,
                 supports_embeddings=True,
+                supported_parameters=manifest_supported_parameters(
+                    {}, supports_chat=False, supports_embeddings=True
+                ),
                 input_modalities=input_modalities,
                 output_modalities=("embeddings",),
                 prepaid_available=provider.supports_prepaid,
