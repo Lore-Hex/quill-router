@@ -186,6 +186,14 @@ from trusted_router.types import IdentityVerificationStatus, UsageType
 T = TypeVar("T")
 log = logging.getLogger(__name__)
 
+
+class _AuthorizationReplay(Exception):
+    """Divert a rebuilt authorization into the transaction's replay read."""
+
+    def __init__(self, authorization_id: str) -> None:
+        super().__init__(authorization_id)
+        self.authorization_id = authorization_id
+
 #: Whole-call budget for the /status.json outbox-lag read. Same 3s as
 #: `readiness_check`, and the same rule: a public page degrades rather than
 #: waits. See `SpannerBigtableStore.operational_analytics_outbox_freshness`.
@@ -3367,7 +3375,14 @@ class SpannerBigtableStore:
         ) -> GatewayAuthorization:
             existing = built_authorizations.get(authorization_id)
             if existing is not None:
-                assert existing.credit_reservation_id == reservation_id
+                if existing.credit_reservation_id != reservation_id:
+                    # A cold-path retry can race an already-committed attempt
+                    # after the route's pre-transaction idempotency probe was
+                    # removed. Do not let the fresh reservation reach the hold
+                    # DML with an authorization object tied to the old hold.
+                    # The typed signal below rebuilds once, then the atomic
+                    # transaction's first read returns the stored winner.
+                    raise _AuthorizationReplay(authorization_id)
                 return existing
             built = GatewayAuthorization(
                 id=authorization_id,
@@ -3459,28 +3474,39 @@ class SpannerBigtableStore:
         )
 
         def run_authorize(candidates: tuple[int, ...]) -> dict[str, Any]:
-            return authorize_atomic(
-                self._database,
-                self._param_types,
-                workspace_id=workspace_id,
-                key_hash=key_hash,
-                estimate=estimate,
-                has_credit_candidate=has_credit_candidate,
-                reservation_usage_type=str(usage),
-                idempotency_scope=scope,
-                idempotency_fingerprint=idempotency_fingerprint,
-                expires_at=expires_at,
-                build_authorization=build_authorization,
-                build_auth_body=build_body,
-                request_record_write_mode=self.request_record_write_mode,
-                # Retain `candidates` in full outside this transaction for the
-                # lock-free aggregate check and cold rebalance below. A depleted
-                # workspace must never make one rejected transaction lock every
-                # configured shard.
-                credit_shard_candidates=bounded_credit_shard_candidates(candidates),
-                key_shard_candidates=key_shard_candidates,
-                authorization_id=authorization_id,
-            )
+            def invoke() -> dict[str, Any]:
+                return authorize_atomic(
+                    self._database,
+                    self._param_types,
+                    workspace_id=workspace_id,
+                    key_hash=key_hash,
+                    estimate=estimate,
+                    has_credit_candidate=has_credit_candidate,
+                    reservation_usage_type=str(usage),
+                    idempotency_scope=scope,
+                    idempotency_fingerprint=idempotency_fingerprint,
+                    expires_at=expires_at,
+                    build_authorization=build_authorization,
+                    build_auth_body=build_body,
+                    request_record_write_mode=self.request_record_write_mode,
+                    # Retain `candidates` in full outside this transaction for the
+                    # lock-free aggregate check and cold rebalance below. A depleted
+                    # workspace must never make one rejected transaction lock every
+                    # configured shard.
+                    credit_shard_candidates=bounded_credit_shard_candidates(candidates),
+                    key_shard_candidates=key_shard_candidates,
+                    authorization_id=authorization_id,
+                )
+
+            try:
+                return invoke()
+            except _AuthorizationReplay as replay:
+                # authorize_atomic builds its response object before opening
+                # the transaction. Drop that stale object and enter once more:
+                # the transaction's first operation is the scoped idempotency
+                # read, so a winner replays before any new key/credit hold DML.
+                built_authorizations.pop(replay.authorization_id, None)
+                return invoke()
 
         result = run_authorize(credit_shard_candidates)
         if result["outcome"] == AuthorizeOutcome.KEY_LIMIT_EXCEEDED and key_counter_shards > 1:
