@@ -29,7 +29,11 @@ GATEWAY = ROOT / "src" / "trusted_router" / "routes" / "internal" / "gateway.py"
 #: The billing path: everything that authorizes or settles gateway spend. These
 #: hold the budget because an RPC stall here stalls inference authorization.
 BILLING_PATH_FUNCTIONS = frozenset(
-    {"_authorize_gateway_sync", "_settle_gateway_authorization"}
+    {
+        "_authorize_gateway_sync",
+        "_settle_gateway_with_admission_sync",
+        "_settle_gateway_authorization",
+    }
 )
 
 _BUDGET = "spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)"

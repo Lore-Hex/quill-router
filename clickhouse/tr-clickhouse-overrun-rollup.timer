@@ -1,0 +1,10 @@
+[Unit]
+Description=Roll up reservation overruns into ClickHouse hourly
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -502,6 +502,7 @@ ENV_VARS=(
   # into one 240/min bucket. #712 removes this exception while installing each
   # split service's edge identity and independent capacity policy.
   "TR_RATE_LIMIT_ENABLED=false"
+  "TR_SETTLE_PER_KEY_INFLIGHT_LIMIT=16"
   "TR_RELEASE=${TR_DEPLOY_RELEASE_ID:-$(git rev-parse --short HEAD 2>/dev/null || echo local)}"
   # Request-based Cloud Run CPU can pause background coroutines. The scheduled
   # synthetic job invokes /internal/synthetic/remediate instead.
