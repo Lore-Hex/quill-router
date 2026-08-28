@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for FriendliAI serverless Model API routes. Verified against https://api.friendli.ai/serverless/v1/models on 2026-06-22.",
   "provider": "friendli",
   "source": "https://api.friendli.ai/serverless/v1/models",
-  "generated_at": "2026-08-28T11:30:19Z",
-  "model_count": 11,
+  "generated_at": "2026-08-28T16:32:22Z",
+  "model_count": 12,
   "models": [
     {
       "id": "meta-llama/llama-3.3-70b-instruct",
@@ -280,6 +280,27 @@
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 500000,
       "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "zai-org/GLM-5.3",
+      "title": "zai-org/GLM-5.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "zai-org/GLM-5.3",
+      "context_length": 1048576,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000
     }
   ]
 }

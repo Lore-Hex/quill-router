@@ -2,9 +2,9 @@
   "_about": "Provider-native Telnyx inference routes, context windows, capabilities, and reconciled account-billable prices refreshed hourly from Telnyx-owned sources.",
   "provider": "telnyx",
   "source": "https://api.telnyx.com/v2/ai/openai/models",
-  "generated_at": "2026-08-28T11:30:19Z",
+  "generated_at": "2026-08-28T16:32:22Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 15,
+  "model_count": 16,
   "models": [
     {
       "display_name": "gemma-2b-it",
@@ -386,6 +386,28 @@
       "input_token_price_per_m": 75000,
       "output_token_price_per_m": 250000,
       "cached_input_token_price_per_m": 15000
+    },
+    {
+      "display_name": "GLM-5.3",
+      "title": "zai-org/GLM-5.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "zai-org/GLM-5.3",
+      "context_length": 1048576,
+      "provider_regions": [],
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000
     }
   ]
 }

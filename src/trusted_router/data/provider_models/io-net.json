@@ -884,7 +884,7 @@
       "status": 1,
       "id": "z-ai/glm-5.3",
       "upstream_id": "zai-org/GLM-5.3",
-      "context_length": 1048576,
+      "context_length": 262144,
       "max_output_tokens": 131072,
       "supported_features": [
         "tools",
@@ -927,7 +927,7 @@
     }
   ],
   "source": "https://api.intelligence.io.solutions/api/v1/models",
-  "generated_at": "2026-08-28T11:30:19Z",
+  "generated_at": "2026-08-28T16:32:22Z",
   "price_scale": "microdollars_per_million",
   "model_count": 34
 }

@@ -64,10 +64,10 @@
   },
   "baseten": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 15,
     "name": "Baseten",
     "privacy": "Zero retention",
-    "route_count": 27,
+    "route_count": 29,
     "route_mode": "Prepaid + BYOK",
     "slug": "baseten"
   },
@@ -109,10 +109,10 @@
   },
   "cloudflare-workers-ai": {
     "card_version": 2,
-    "model_count": 26,
+    "model_count": 27,
     "name": "Cloudflare Workers AI",
     "privacy": "Policy documented",
-    "route_count": 26,
+    "route_count": 27,
     "route_mode": "Prepaid",
     "slug": "cloudflare-workers-ai"
   },
@@ -154,10 +154,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 95,
+    "model_count": 100,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 188,
+    "route_count": 194,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -199,19 +199,19 @@
   },
   "fireworks": {
     "card_version": 2,
-    "model_count": 15,
+    "model_count": 16,
     "name": "Fireworks AI",
     "privacy": "Policy documented",
-    "route_count": 29,
+    "route_count": 31,
     "route_mode": "Prepaid + BYOK",
     "slug": "fireworks"
   },
   "friendli": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 8,
     "name": "FriendliAI",
     "privacy": "Policy documented",
-    "route_count": 14,
+    "route_count": 16,
     "route_mode": "Prepaid + BYOK",
     "slug": "friendli"
   },
@@ -226,10 +226,10 @@
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 12,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 24,
+    "route_count": 22,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
@@ -649,10 +649,10 @@
   },
   "telnyx": {
     "card_version": 2,
-    "model_count": 15,
+    "model_count": 16,
     "name": "Telnyx",
     "privacy": "Policy documented",
-    "route_count": 30,
+    "route_count": 32,
     "route_mode": "Prepaid + BYOK",
     "slug": "telnyx"
   },
