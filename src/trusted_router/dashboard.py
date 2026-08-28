@@ -3422,13 +3422,10 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
             ),
             models=models,
             total_model_count=len(all_models),
-            total_provider_count=len(
-                {
-                    str(provider["slug"])
-                    for model in all_models
-                    for provider in cast(list[dict[str, str]], model["providers"])
-                }
-            ),
+            # Count the complete public provider catalog, not only providers with
+            # a currently routable model. TrustedRouter itself is the router,
+            # rather than an upstream provider.
+            total_provider_count=sum(slug != "trustedrouter" for slug in PROVIDERS),
             initial_page_size=MODEL_DISCOVERY_PAGE_SIZE,
             active_filter=normalized_filter,
             model_filters=[
