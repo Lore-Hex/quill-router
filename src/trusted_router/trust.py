@@ -141,11 +141,9 @@ def gcp_release_json(settings: Settings) -> str:
 def aws_release(settings: Settings, *, metadata: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Publish the AWS Nitro serving plane's measurement.
 
-    Deploy-time configured rather than resolved live: the enclave answers
-    attestation over a self-signed certificate, so fetching it from here would
-    mean the control plane making an unauthenticated TLS connection and parsing
-    CBOR on a public route. The staleness that trade buys is checked out of band
-    by scripts/verify_trust_measurements.py, which .github/workflows/trust-drift.yml
+    Mirrored from the plane-owned release record rather than resolved from a
+    live attestation here. Its staleness is checked out of band by
+    scripts/verify_trust_measurements.py, which .github/workflows/trust-drift.yml
     runs hourly in --strict mode — until that workflow existed, nothing executed
     the comparison this docstring relies on.
     """
@@ -155,31 +153,48 @@ def aws_release(settings: Settings, *, metadata: Mapping[str, Any] | None = None
     if metadata is not None:
         pcr0 = str(metadata.get("pcr0") or NOT_CONFIGURED)
         accepted = tuple(str(v) for v in metadata.get("accepted_pcr0s", []) if v != NOT_CONFIGURED)
+        mirrored_source_commit = metadata.get("source_commit")
+        source_commit_provenance = (
+            metadata.get("source_commit_provenance")
+            if mirrored_source_commit is not None
+            else None
+        )
+        release_state = metadata.get("release_state")
     else:
         pcr0 = settings.trust_aws_pcr0 or NOT_CONFIGURED
         accepted = settings.trust_aws_accepted_pcr0_list
+        mirrored_source_commit = None
+        source_commit_provenance = None
+        release_state = None
+    source_commit = mirrored_source_commit or settings.trust_aws_source_commit or NOT_CONFIGURED
     return {
         "platform": "aws-nitro-enclaves",
         "source_repo": ATTESTED_GATEWAY_REPO,
         "source_repositories": _source_repositories(),
-        "source_commit": settings.trust_aws_source_commit or NOT_CONFIGURED,
+        "source_commit": source_commit,
+        **(
+            {"source_commit_provenance": source_commit_provenance}
+            if source_commit_provenance is not None
+            else {}
+        ),
         "image_reference": settings.trust_aws_image_reference or NOT_CONFIGURED,
         # PCR0 measures the enclave image file: kernel, ramdisk, and
         # application, as built by nitro-cli build-enclave.
         "measurement_type": "nitro-pcr0-sha384",
         "pcr0": pcr0,
         "accepted_pcr0s": list(accepted),
+        **({"release_state": release_state} if release_state is not None else {}),
         "release_metadata_status": ("configured" if accepted else NOT_CONFIGURED),
         "attestation_format": "cose-sign1-nitro-attestation-document",
         "attestation_root": AWS_ATTESTATION_ROOT,
         "api_base_url": f"https://{AWS_API_HOSTNAME}/v1",
         "tls": {
-            # Deliberately not a public-CA certificate. The enclave generates
-            # its own key, and binds the certificate fingerprint and the TLS
-            # exporter value into the attestation's user_data, so the connection
-            # you are on is the connection that was attested. Chain validation
-            # is replaced by that binding, not dropped.
-            "mode": "attested-self-signed-inside-enclave",
+            # The enclave obtains a public-CA (Let's Encrypt) certificate via
+            # ACME dns01 running inside the enclave, so normal WebPKI chain
+            # validation works. The attestation still binds the served
+            # certificate's SHA-256 into user_data[0:32]; that stronger anchor
+            # is unchanged from the self-signed era.
+            "mode": "acme-inside-nitro-enclave",
             "hostname": AWS_API_HOSTNAME,
             # Measured against the live enclave 2026-08-15, 8/8 samples:
             # user_data is 96 bytes and [0:32] is SHA-256 of the served

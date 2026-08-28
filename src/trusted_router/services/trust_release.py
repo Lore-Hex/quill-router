@@ -324,7 +324,30 @@ def validated_aws_metadata(payload: object) -> Mapping[str, Any]:
         # A record whose accepted set excludes its own current measurement would
         # have a verifier reject the enclave that is answering them.
         raise ValueError("AWS pcr0 is absent from its own accepted set")
-    return {"pcr0": pcr0, "accepted_pcr0s": accepted}
+    metadata: dict[str, Any] = {"pcr0": pcr0, "accepted_pcr0s": accepted}
+
+    if "release_state" in payload:
+        release_state = payload["release_state"]
+        if not isinstance(release_state, str) or release_state not in {"current", "rolling"}:
+            raise ValueError("invalid AWS release state")
+        metadata["release_state"] = release_state
+
+    source_commit_present = "source_commit" in payload
+    if source_commit_present:
+        source_commit = payload["source_commit"]
+        if not isinstance(source_commit, str) or _COMMIT_RE.fullmatch(source_commit) is None:
+            raise ValueError("invalid AWS source commit")
+        metadata["source_commit"] = source_commit
+
+    if "source_commit_provenance" in payload:
+        provenance = payload["source_commit_provenance"]
+        if not source_commit_present:
+            raise ValueError("AWS source commit provenance requires source commit")
+        if not isinstance(provenance, str) or provenance not in {"operator-asserted", "ci"}:
+            raise ValueError("invalid AWS source commit provenance")
+        metadata["source_commit_provenance"] = provenance
+
+    return metadata
 
 
 #: Optional descriptions a region entry may carry, copied verbatim and not
