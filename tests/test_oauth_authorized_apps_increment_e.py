@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
-from trusted_router.storage import STORE, Generation, OAuthApp
+from trusted_router.storage import STORE, Generation, InMemoryStore, OAuthApp
 from trusted_router.types import UsageType
 
 APP_ID = "budget-app"
@@ -102,6 +102,23 @@ def test_list_groups_keys_and_reports_budget_usage_scopes_and_disclosure(
     assert "key" not in row
 
 
+def test_list_reports_latest_real_key_usage_and_none_for_unused_app(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    _grant()
+    _user_id, _workspace_id, _raw_keys = _grant(app_id="unused-app")
+    for generation_id in ("gen-unused-app-0", "gen-unused-app-1"):
+        STORE.generation_store.generations.pop(generation_id)
+    rows = client.get("/v1/oauth/authorized-apps", headers=user_headers).json()["data"]
+    used = next(row for row in rows if row["app_id"] == APP_ID)
+    unused = next(row for row in rows if row["app_id"] == "unused-app")
+    latest = STORE.get_generation(f"gen-{APP_ID}-1")
+    assert latest is not None
+    assert used["last_used_at"] == latest.created_at
+    assert unused["last_used_at"] is None
+
+
 def test_zero_markup_has_no_disclosure(
     client: TestClient,
     user_headers: dict[str, str],
@@ -135,6 +152,58 @@ def test_patch_updates_every_live_key_and_rejects_bad_values(
         assert response.status_code == 400
 
 
+def test_patch_repairs_a_write_that_persists_then_raises_and_can_retry(
+    client: TestClient,
+    user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _user_id, workspace_id, _raw_keys = _grant()
+    raw, _key = STORE.create_api_key(
+        workspace_id=workspace_id,
+        name="delegated 3",
+        creator_user_id=_user_id,
+        scopes=["inference"],
+        app_id=APP_ID,
+        limit_monthly_microdollars=20 * MICRODOLLARS_PER_DOLLAR,
+    )
+    assert raw
+    original = InMemoryStore.update_key
+    calls = 0
+
+    def persist_then_raise(self, key_hash, patch):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        result = original(self, key_hash, patch)
+        if calls == 2:
+            raise RuntimeError("injected post-persist failure")
+        return result
+
+    monkeypatch.setattr(InMemoryStore, "update_key", persist_then_raise)
+    failed = client.patch(
+        f"/v1/oauth/authorized-apps/{APP_ID}",
+        headers=user_headers,
+        json={"monthly_budget": "42"},
+    )
+    assert failed.status_code == 500
+    keys = [key for key in STORE.list_keys(workspace_id) if key.app_id == APP_ID]
+    assert len(keys) == 3
+    assert {key.limit_monthly_microdollars for key in keys} == {
+        20 * MICRODOLLARS_PER_DOLLAR
+    }
+    monkeypatch.setattr(InMemoryStore, "update_key", original)
+    retried = client.patch(
+        f"/v1/oauth/authorized-apps/{APP_ID}",
+        headers=user_headers,
+        json={"monthly_budget": "42"},
+    )
+    assert retried.status_code == 200, retried.text
+    assert {
+        key.limit_monthly_microdollars
+        for key in STORE.list_keys(workspace_id)
+        if key.app_id == APP_ID
+    } == {42 * MICRODOLLARS_PER_DOLLAR}
+
+
 def test_other_workspace_is_not_listed_or_mutable(
     client: TestClient,
 ) -> None:
@@ -161,9 +230,20 @@ def test_delete_disables_all_keys_gateway_denies_and_second_delete_succeeds(
     assert first.status_code == second.status_code == 200
     keys = [key for key in STORE.list_keys(workspace_id) if key.app_id == APP_ID]
     assert len(keys) == 2 and all(key.disabled for key in keys)
-    denied = client.get(
-        "/v1/key", headers={"authorization": f"Bearer {raw_keys[0]}"}
+    key = STORE.get_key_by_raw(raw_keys[0])
+    assert key is not None
+    denied = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_lookup_hash": key.lookup_hash,
+            "model": "anthropic/claude-haiku-4.5",
+            "estimated_input_tokens": 1,
+            "max_output_tokens": 1,
+            "idempotency_key": "revoked-oauth-app",
+        },
     )
+    # Regression proof: deleting gateway.py's api_key.disabled check turns
+    # this assertion red; the test intentionally drives the real gateway.
     assert denied.status_code == 401
     assert len(STORE.list_keys(workspace_id)) == 2  # activity linkage remains intact
     assert STORE.get_generation(f"gen-{APP_ID}-0") is not None

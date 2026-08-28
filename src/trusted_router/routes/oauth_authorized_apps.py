@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from typing import Annotated, Any
 
@@ -11,6 +12,8 @@ from trusted_router.money import dollars_to_microdollars, microdollars_to_decima
 from trusted_router.routes.helpers import json_body
 from trusted_router.storage import STORE, ApiKey, ApiKeyUsageSnapshot, OAuthApp
 from trusted_router.types import ErrorType
+
+log = logging.getLogger(__name__)
 
 
 def require_authorized_app_management(
@@ -157,20 +160,42 @@ def _update_all_or_rollback(
     value: Any,
 ) -> None:
     originals = {key.hash: getattr(key, field) for key in keys}
-    updated: list[str] = []
     try:
         for key_hash in originals:
             result = STORE.update_key(key_hash, {field: value})
             if result is None or getattr(result, field) != value:
                 raise RuntimeError("OAuth grant update did not persist")
-            updated.append(key_hash)
         for key_hash in originals:
             persisted = STORE.get_key_by_hash(key_hash)
             if persisted is None or getattr(persisted, field) != value:
                 raise RuntimeError("OAuth grant update verification failed")
     except Exception as exc:
-        for key_hash in updated:
-            STORE.update_key(key_hash, {field: originals[key_hash]})
+        # Repair every key, including the write which may have persisted and
+        # then raised before the caller could record that it succeeded.
+        for key_hash, original in originals.items():
+            try:
+                STORE.update_key(key_hash, {field: original})
+            except Exception as repair_exc:
+                log.error(
+                    "oauth_grant_repair_write_failed key_id=%s error=%s",
+                    key_hash,
+                    repair_exc,
+                )
+        disagreeing = []
+        for key_hash, original in originals.items():
+            try:
+                persisted = STORE.get_key_by_hash(key_hash)
+            except Exception:
+                persisted = None
+            if persisted is None or getattr(persisted, field) != original:
+                disagreeing.append(key_hash)
+        if disagreeing:
+            app_ids = sorted({key.app_id for key in keys})
+            log.critical(
+                "oauth_grant_repair_failed app_ids=%s disagreeing_key_ids=%s",
+                app_ids,
+                disagreeing,
+            )
         raise api_error(
             500,
             "Could not update every key in the OAuth grant",
@@ -190,6 +215,10 @@ def _authorized_app_shape(
     monthly_limit = next(iter(monthly_limits)) if len(monthly_limits) == 1 else None
     monthly_usage = sum(snapshot.windows.get("monthly", 0) for snapshot in snapshots)
     created_at = min(key.created_at for key in keys)
+    last_used_at = max(
+        (snapshot.last_used_at for snapshot in snapshots if snapshot.last_used_at),
+        default=None,
+    )
     markup_disclosure = (
         f"This app adds {app.markup_basis_points / 100:g}% on top of "
         "TrustedRouter token costs."
@@ -214,7 +243,5 @@ def _authorized_app_shape(
         },
         "key_count": len(keys),
         "created_at": created_at,
-        # ApiKey currently has no trustworthy last-used timestamp. Do not
-        # relabel updated_at (budget/config edits) as usage activity.
-        "last_used_at": None,
+        "last_used_at": last_used_at,
     }

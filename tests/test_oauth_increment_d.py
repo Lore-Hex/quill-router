@@ -157,13 +157,30 @@ def test_stripe_round_trip_contains_only_consent_authority(client: TestClient) -
 
 
 def test_token_rate_limit_has_retry_after(client: TestClient) -> None:
+    """Fill the bucket directly, then make ONE request.
+
+    Driving the cap with 30 sequential HTTP calls raced the limiter's own
+    60s window: on a loaded CI shard the calls spanned longer than the
+    window, so early hits aged out and the cap was never reached (400, not
+    429). Filling the bucket in-process removes the wall clock from the
+    test while still exercising the endpoint's real 429 response.
+    """
     from trusted_router.routes import helpers
+    from trusted_router.routes.oauth_keys import OAUTH_TOKEN_RATE_LIMIT
 
     helpers._CLIENT_EVENT_RATE_LIMITS.reset()
-    for _ in range(30):
-        client.post("/v1/oauth/token", data={})
+    subject = f"{id(client.app)}:testclient"
+    for _ in range(OAUTH_TOKEN_RATE_LIMIT):
+        helpers.enforce_rate_limit(
+            "oauth_token", subject, OAUTH_TOKEN_RATE_LIMIT, window_seconds=60
+        )
+
     limited = client.post("/v1/oauth/token", data={})
-    assert limited.status_code == 429 and "retry-after" in limited.headers
+
+    assert limited.status_code == 429
+    assert limited.headers["retry-after"]
+    assert limited.headers["cache-control"] == "no-store"
+    assert limited.json()["error"] == "temporarily_unavailable"
     assert limited.headers["cache-control"] == "no-store"
     assert limited.headers["pragma"] == "no-cache"
 
