@@ -26,7 +26,7 @@
   ],
   "source": "https://api.perplexity.ai/v1/models",
   "pricing_source": "https://docs.perplexity.ai/docs/getting-started/pricing",
-  "generated_at": "2026-08-28T09:26:22Z",
+  "generated_at": "2026-08-28T11:30:19Z",
   "price_scale": "microdollars_per_million",
   "model_count": 1
 }

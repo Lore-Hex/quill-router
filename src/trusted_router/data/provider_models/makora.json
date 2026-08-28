@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-08-28T09:26:22Z",
+  "generated_at": "2026-08-28T11:30:19Z",
   "price_scale": "microdollars_per_million",
   "model_count": 12,
   "models": [
@@ -131,7 +131,8 @@
         "json_mode"
       ],
       "cached_input_token_price_per_m": 34000,
-      "routable": true
+      "routable": true,
+      "missing_since": "2026-08-28"
     },
     {
       "id": "z-ai/glm-5.2",

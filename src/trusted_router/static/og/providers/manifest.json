@@ -154,10 +154,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 99,
+    "model_count": 95,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 192,
+    "route_count": 188,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -226,10 +226,10 @@
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 22,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
@@ -760,7 +760,7 @@
     "model_count": 14,
     "name": "Z.AI",
     "privacy": "Policy documented",
-    "route_count": 27,
+    "route_count": 26,
     "route_mode": "Prepaid + BYOK",
     "slug": "zai"
   },
