@@ -83,6 +83,15 @@ def test_install_creates_what_the_unit_hardening_requires() -> None:
     assert "install -d -o '$SERVICE_USER' -g '$SERVICE_USER'" in script
 
 
+def test_drain_unit_is_notify_watchdog_managed() -> None:
+    unit = UNIT.read_text()
+
+    assert "Type=notify" in unit
+    assert "NotifyAccess=main" in unit
+    assert "WatchdogSec=600" in unit
+    assert "Restart=always" in unit
+
+
 def test_install_refuses_to_proceed_without_dsql_permission() -> None:
     """The one precondition that fails silently at runtime, so it fails loudly here.
 

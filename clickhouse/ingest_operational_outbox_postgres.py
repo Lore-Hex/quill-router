@@ -187,6 +187,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from clickhouse._sdnotify import sd_notify
 from clickhouse.ingest_operational_outbox import (
     ClickHouseOperationalWriter,
     OperationalOutboxRow,
@@ -317,6 +318,21 @@ DEFAULT_REPLICA_TIMEOUT_SECONDS = 60.0
 #: Age of the oldest undelivered row at which the backlog stops being normal
 #: catch-up and becomes something an operator has to decide about.
 DEFAULT_MAX_LAG_SECONDS = 3600.0
+
+#: Aurora DSQL expires connections at roughly one hour. Reconnect while the
+#: handle is still predictably usable instead of discovering expiry mid-poll.
+CONNECTION_MAX_AGE_SECONDS = 45 * 60
+
+LIBPQ_SOCKET_BOUNDS = {
+    "connect_timeout": 10,
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "keepalives_count": 3,
+    # Milliseconds. Linux bounds unacknowledged writes and idle-read stalls;
+    # it is a client socket option and needs no support from DSQL.
+    "tcp_user_timeout": 30_000,
+}
 
 #: Failures a single target may accumulate in one sweep before the rest of that
 #: sweep skips it. Bounds a wedged node's cost from "one timeout per shard" to
@@ -738,6 +754,7 @@ class PostgresOperationalOutboxSource:
         self._iam_region = iam_region
         self._attempts = attempts
         self._connection: Any = None
+        self._connected_at: float | None = None
 
     # -- connection ---------------------------------------------------------
 
@@ -745,6 +762,11 @@ class PostgresOperationalOutboxSource:
         if self._connection is not None:
             self._connection.close()
             self._connection = None
+            self._connected_at = None
+
+    def _record_connection(self, connection: Any) -> Any:
+        self._connected_at = time.monotonic()
+        return connection
 
     def _connect(self) -> Any:
         if not self._iam_auth:
@@ -757,7 +779,14 @@ class PostgresOperationalOutboxSource:
                     "DSN must not contain a password; set PGPASSWORD instead so the "
                     "secret does not appear in argv"
                 )
-            return self._psycopg.connect(self._dsn, autocommit=False)
+            return self._record_connection(
+                self._psycopg.connect(
+                    self._dsn,
+                    autocommit=False,
+                    options="-c statement_timeout=60000",
+                    **LIBPQ_SOCKET_BOUNDS,
+                )
+            )
         if self._iam_auth != "aws-dsql":
             raise ValueError(
                 f"Unsupported --iam-auth value {self._iam_auth!r}; expected 'aws-dsql' or empty"
@@ -785,11 +814,26 @@ class PostgresOperationalOutboxSource:
             else client.generate_db_connect_auth_token
         )
         token = mint(Hostname=hostname, Region=region, ExpiresIn=900)
-        return self._psycopg.connect(self._dsn, password=token, autocommit=False)
+        # Do not send statement_timeout to DSQL: support for that GUC is not
+        # assured. The libpq/kernel socket bounds remain entirely client-side.
+        return self._record_connection(
+            self._psycopg.connect(
+                self._dsn,
+                password=token,
+                autocommit=False,
+                **LIBPQ_SOCKET_BOUNDS,
+            )
+        )
 
     def _live_connection(self) -> Any:
         # Reused across statements: a fresh connect per shard would be 64+
         # handshakes per sweep, and on DSQL each one also mints an IAM token.
+        if (
+            self._connection is not None
+            and self._connected_at is not None
+            and time.monotonic() - self._connected_at >= CONNECTION_MAX_AGE_SECONDS
+        ):
+            self._discard_connection()
         if self._connection is None or getattr(self._connection, "closed", False):
             self._connection = self._connect()
         return self._connection
@@ -813,6 +857,7 @@ class PostgresOperationalOutboxSource:
 
     def _discard_connection(self) -> None:
         connection, self._connection = self._connection, None
+        self._connected_at = None
         if connection is None:
             return
         # Already broken; closing is best-effort cleanup, not a result.
@@ -997,6 +1042,9 @@ def drain_once(
         begin_sweep()
     started = time.monotonic()
     for shard in range(shard_count):
+        # A busy sweep can run much longer than WatchdogSec. Ping before each
+        # independently bounded shard so healthy backlog catch-up is not killed.
+        sd_notify("WATCHDOG=1")
         try:
             result = drain_shard_once(
                 source, writer, shard=shard, batch_size=batch_size, cursors=cursors
@@ -1104,7 +1152,9 @@ def main() -> int:
     # that could not be deleted is stepped over, and that only helps if the next
     # sweep remembers where it got to.
     cursors: dict[int, tuple[str, str]] = {}
+    sd_notify("READY=1")
     while True:
+        sd_notify("WATCHDOG=1")
         result = drain_once(
             source,
             writer,
