@@ -71,6 +71,14 @@ def _active_session(client: TestClient, email: str = "alice@example.com") -> Non
     client.cookies.set("tr_session", raw_session)
 
 
+def _consent_form(client: TestClient, params: dict[str, str]) -> dict[str, str]:
+    page = client.get("/auth", params=params)
+    assert page.status_code == 200, page.text
+    def value(name: str) -> str:
+        return page.text.split(f'name="{name}" value="', 1)[1].split('"', 1)[0]
+    return {"consent": value("consent"), "csrf_token": value("csrf_token")}
+
+
 def test_registration_crud_is_identity_gated_and_owner_scoped(
     client: TestClient,
     user_headers: dict[str, str],
@@ -504,7 +512,8 @@ def test_authorize_client_id_uses_exact_registry_identity_and_legacy_is_unchange
     assert "<h1>Authorize Spoofed name</h1>" not in registered.text
     assert 'src="https://registered.example/logo.png"' in registered.text
     assert 'referrerpolicy="no-referrer"' in registered.text
-    assert 'name="client_id" value="verified-app"' in registered.text
+    assert 'name="consent" value="consent_' in registered.text
+    assert 'name="client_id"' not in registered.text
 
 
 def test_registration_and_patch_require_verified_legal_name(
@@ -639,21 +648,16 @@ def test_funding_round_trip_preserves_registered_client_id(
         "trusted_router.services.stripe_billing.stripe.checkout.Session.create",
         create_session,
     ):
+        consent = _consent_form(client, {"client_id": APP_ID, "callback_url": CALLBACK_URL, "key_label": "Registered app key"})
         response = client.post(
             "/auth/fund",
-            data={
-                "client_id": APP_ID,
-                "callback_url": CALLBACK_URL,
-                "key_label": "Registered app key",
-                "fund_amount": "20",
-            },
+            data={"consent": consent["consent"], "fund_amount": "20"},
             follow_redirects=False,
         )
 
     assert response.status_code == 303
     success_query = parse_qs(urlsplit(captured["success_url"]).query)
-    assert success_query["client_id"] == [APP_ID]
-    assert success_query["callback_url"] == [CALLBACK_URL]
+    assert set(success_query) == {"consent", "checkout"}
 
 
 def test_registered_approve_exchange_stamps_key_while_legacy_stays_empty(
@@ -664,11 +668,7 @@ def test_registered_approve_exchange_stamps_key_while_legacy_stays_empty(
     _active_session(client)
     approved = client.post(
         "/auth/approve",
-        data={
-            "client_id": APP_ID,
-            "callback_url": CALLBACK_URL,
-            "key_label": "Ignored label",
-        },
+        data=_consent_form(client, {"client_id": APP_ID, "callback_url": CALLBACK_URL, "key_label": "Ignored label"}),
         follow_redirects=False,
     )
     code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
@@ -684,7 +684,7 @@ def test_registered_approve_exchange_stamps_key_while_legacy_stays_empty(
 
     legacy_approved = client.post(
         "/auth/approve",
-        data={"callback_url": "https://legacy.example/callback", "key_label": "Legacy"},
+        data=_consent_form(client, {"callback_url": "https://legacy.example/callback", "key_label": "Legacy"}),
         follow_redirects=False,
     )
     legacy_code = parse_qs(urlsplit(legacy_approved.headers["location"]).query)["code"][0]
@@ -856,7 +856,7 @@ def test_registered_app_end_to_end_reaches_authorization_generation_and_activity
     _active_session(client)
     approved = client.post(
         "/auth/approve",
-        data={"client_id": APP_ID, "callback_url": CALLBACK_URL},
+        data=_consent_form(client, {"client_id": APP_ID, "callback_url": CALLBACK_URL}),
         follow_redirects=False,
     )
     code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
@@ -907,7 +907,7 @@ def test_suspension_after_mint_denies_gateway_and_federation_until_unsuspended(
     _active_session(client)
     approved = client.post(
         "/auth/approve",
-        data={"client_id": APP_ID, "callback_url": CALLBACK_URL},
+        data=_consent_form(client, {"client_id": APP_ID, "callback_url": CALLBACK_URL}),
         follow_redirects=False,
     )
     code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
@@ -980,7 +980,7 @@ def test_suspension_allows_identical_authorization_replay_but_denies_new_work(
     _register_app(client, user_headers)
     approved = client.post(
         "/auth/approve",
-        data={"client_id": APP_ID, "callback_url": CALLBACK_URL},
+        data=_consent_form(client, {"client_id": APP_ID, "callback_url": CALLBACK_URL}),
         follow_redirects=False,
     )
     code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]

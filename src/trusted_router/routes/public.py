@@ -136,11 +136,6 @@ from trusted_router.provider_contract import (
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
 from trusted_router.request_limits import normalized_client_identity
 from trusted_router.routes.mcp import MCP_PROTOCOL_VERSION
-from trusted_router.routes.oauth_keys import (
-    OAUTH_AUTHORIZATION_ENDPOINT_PATH,
-    OAUTH_KEY_EXCHANGE_ENDPOINT_PATH,
-    PKCE_METHODS,
-)
 from trusted_router.scopes import KNOWN_SCOPES
 from trusted_router.serialization import user_model_public_shape
 from trusted_router.services.email import EmailMessage, get_email_service
@@ -1529,11 +1524,11 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return JSONResponse(
             {
                 "issuer": origin,
-                "authorization_endpoint": f"{origin}{OAUTH_AUTHORIZATION_ENDPOINT_PATH}",
-                "token_endpoint": f"{origin}{OAUTH_KEY_EXCHANGE_ENDPOINT_PATH}",
+                "authorization_endpoint": f"{origin}/oauth/authorize",
+                "token_endpoint": f"{origin}/oauth/token",
                 "response_types_supported": ["code"],
                 "grant_types_supported": ["authorization_code"],
-                "code_challenge_methods_supported": sorted(PKCE_METHODS),
+                "code_challenge_methods_supported": ["S256"],
                 "token_endpoint_auth_methods_supported": ["none"],
                 "service_documentation": f"{origin}/sign-in-with-trustedrouter",
                 "scopes_supported": sorted(KNOWN_SCOPES),

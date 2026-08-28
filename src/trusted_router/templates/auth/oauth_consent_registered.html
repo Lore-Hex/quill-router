@@ -11,6 +11,7 @@
 </div>
 <p><strong>{{ key_label }}</strong> will receive a delegated API key for
 <strong>{{ workspace_name }}</strong>.</p>
+{% if markup_percent %}<p>This app adds {{ markup_percent }}% on top of TrustedRouter token costs.</p>{% endif %}
 
 {% if checkout_status == "success" %}
 <div class="notice success" role="status">
@@ -60,20 +61,11 @@
   {% for name, value in hidden_fields %}
   <input type="hidden" name="{{ name }}" value="{{ value }}">
   {% endfor %}
-    <div class="limit-fields">
-      <label>
-        Maximum spend (USD)
-        <input type="number" name="limit" min="0" max="10000" step="0.01" inputmode="decimal" value="{{ effective_limit }}" required>
-      </label>
-      <label>
-        Limit resets
-        <select name="usage_limit_type">
-          <option value=""{% if not effective_reset %} selected{% endif %}>Never</option>
-          <option value="daily"{% if effective_reset == "daily" %} selected{% endif %}>Daily</option>
-          <option value="weekly"{% if effective_reset == "weekly" %} selected{% endif %}>Weekly</option>
-          <option value="monthly"{% if effective_reset == "monthly" %} selected{% endif %}>Monthly</option>
-        </select>
-      </label>
+    {% if suggested_monthly_budget %}<p>The app suggests a ${{ suggested_monthly_budget }}/month budget. You choose the limit below.</p>{% endif %}
+    <div class="limit-fields" role="radiogroup" aria-label="Monthly budget">
+      {% for value, label in [("5", "$5/month"), ("20", "$20/month"), ("100", "$100/month"), ("none", "No limit")] %}
+      <label><input type="radio" name="monthly_budget" value="{{ value }}"{% if value == "20" %} checked{% endif %}> {{ label }}</label>
+      {% endfor %}
     </div>
     <ul class="consent-facts">
       <li>Run model inference and read the requests this key made.</li>

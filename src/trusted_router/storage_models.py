@@ -1700,6 +1700,32 @@ class OAuthAuthorizationCode:
     # Real registered-app slug. The integer app_id above remains untouched for
     # OpenRouter compatibility.
     client_app_id: str = ""
+    scopes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ConsentRequest:
+    """Short-lived, one-shot server-side OAuth consent state."""
+
+    id: str
+    csrf_token: str
+    user_id: str
+    workspace_id: str
+    client_app_id: str
+    callback_url: str
+    scopes: list[str]
+    code_challenge: str | None
+    code_challenge_method: str | None
+    key_label: str
+    limit_microdollars: int | None
+    limit_reset: str | None
+    expires_at: str | None
+    state: str
+    rfc_conformant: bool = False
+    suggested_monthly_budget: str = ""
+    created_at: str = field(default_factory=iso_now)
+    consent_expires_at: str | None = None
+    consumed_at: str | None = None
 
 
 @dataclass

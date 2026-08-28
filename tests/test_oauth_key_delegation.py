@@ -44,6 +44,14 @@ def _create_code(
     return response.json()["data"]["id"], body
 
 
+def _consent_form(client: TestClient, params: dict[str, str]) -> dict[str, str]:
+    page = client.get("/auth", params=params)
+    assert page.status_code == 200, page.text
+    def value(name: str) -> str:
+        return page.text.split(f'name="{name}" value="', 1)[1].split('"', 1)[0]
+    return {"consent": value("consent"), "csrf_token": value("csrf_token")}
+
+
 def test_oauth_code_exchange_creates_delegated_inference_key(
     client: TestClient,
     user_headers: dict[str, str],
@@ -621,7 +629,9 @@ def test_oauth_browser_consent_page_for_active_session(client: TestClient) -> No
     assert response.status_code == 200
     assert "Authorize Example" in response.text
     assert 'action="/auth/approve"' in response.text
-    assert 'name="callback_url"' in response.text
+    assert 'name="consent" value="consent_' in response.text
+    assert 'name="csrf_token"' in response.text
+    assert 'name="callback_url"' not in response.text
 
 
 def test_oauth_browser_consent_defaults_funding_and_key_limit(client: TestClient) -> None:
@@ -695,17 +705,10 @@ def test_oauth_funding_checkout_saves_card_and_preserves_authorization(client: T
         "trusted_router.services.stripe_billing.stripe.checkout.Session.create",
         create_session,
     ):
+        consent = _consent_form(client, {"callback_url": "https://slopnazi.com/editor?state=csrf", "code_challenge": "challenge", "code_challenge_method": "S256", "key_label": "SlopNazi", "limit": "7.50", "usage_limit_type": "monthly"})
         response = client.post(
             "/auth/fund",
-            data={
-                "callback_url": "https://slopnazi.com/editor?state=csrf",
-                "code_challenge": "challenge",
-                "code_challenge_method": "S256",
-                "key_label": "SlopNazi",
-                "limit": "7.50",
-                "usage_limit_type": "monthly",
-                "fund_amount": "20",
-            },
+            data={"consent": consent["consent"], "fund_amount": "20"},
             follow_redirects=False,
         )
 
@@ -720,10 +723,7 @@ def test_oauth_funding_checkout_saves_card_and_preserves_authorization(client: T
     success = urlsplit(captured["success_url"])
     success_query = parse_qs(success.query)
     assert success.path == "/auth"
-    assert success_query["callback_url"] == ["https://slopnazi.com/editor?state=csrf"]
-    assert success_query["code_challenge"] == ["challenge"]
-    assert success_query["limit"] == ["7.50"]
-    assert success_query["usage_limit_type"] == ["monthly"]
+    assert set(success_query) == {"consent", "checkout"}
     assert success_query["checkout"] == ["success"]
 
 
@@ -739,12 +739,10 @@ def test_oauth_funding_rejects_unlisted_amounts(client: TestClient, amount: str)
     )
     client.cookies.set("tr_session", raw_session)
 
+    consent = _consent_form(client, {"callback_url": "https://app.example.com/callback"})
     response = client.post(
         "/auth/fund",
-        data={
-            "callback_url": "https://app.example.com/callback",
-            "fund_amount": amount,
-        },
+        data={"consent": consent["consent"], "fund_amount": amount},
     )
 
     assert response.status_code == 400
@@ -764,12 +762,7 @@ def test_oauth_browser_user_selected_limit_is_issued_to_app(client: TestClient) 
 
     approved = client.post(
         "/auth/approve",
-        data={
-            "callback_url": "https://app.example.com/callback",
-            "key_label": "Example app",
-            "limit": "3.25",
-            "usage_limit_type": "weekly",
-        },
+        data=_consent_form(client, {"callback_url": "https://app.example.com/callback", "key_label": "Example app", "limit": "3.25", "usage_limit_type": "weekly"}),
         follow_redirects=False,
     )
     code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
@@ -796,10 +789,7 @@ def test_oauth_browser_approve_redirects_with_code_and_user_id(client: TestClien
 
     response = client.post(
         "/auth/approve",
-        data={
-            "callback_url": "https://app.example.com/callback?state=abc",
-            "key_label": "Browser app",
-        },
+        data=_consent_form(client, {"callback_url": "https://app.example.com/callback?state=abc", "key_label": "Browser app"}),
         follow_redirects=False,
     )
 
@@ -837,7 +827,7 @@ def test_oauth_browser_approve_rejects_invalid_form_without_creating_code(client
     )
     client.cookies.set("tr_session", raw_session)
 
-    response = client.post("/auth/approve", data={"callback_url": "http://app.example.com/callback"})
+    response = client.post("/auth/approve", data={"consent": "missing", "csrf_token": "missing"})
 
     assert response.status_code == 400
     assert STORE.oauth_code_store.codes == {}

@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import hashlib
+import hmac
 import re
+import secrets
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -25,24 +27,27 @@ from trusted_router.money import (
     format_money_display,
     microdollars_to_decimal,
 )
-from trusted_router.routes.helpers import json_body
+from trusted_router.routes.helpers import enforce_rate_limit, json_body
 from trusted_router.schemas import CheckoutRequest
-from trusted_router.scopes import DEFAULT_DELEGATED_SCOPES
+from trusted_router.scopes import DEFAULT_DELEGATED_SCOPES, KNOWN_SCOPES
 from trusted_router.serialization import key_shape
 from trusted_router.services.stripe_billing import create_checkout_session
-from trusted_router.storage import STORE, OAuthApp, OAuthAuthorizationCode
+from trusted_router.storage import STORE, ConsentRequest, OAuthApp, OAuthAuthorizationCode
 from trusted_router.typed_balance import live_credit_summary
 from trusted_router.types import ErrorType
 from trusted_router.verification import identity_payload
 from trusted_router.views import render_template
 
 PKCE_METHODS = {"S256", "plain"}
+OAUTH_CONFORMANT_PKCE_METHODS = {"S256"}
 OAUTH_AUTHORIZATION_ENDPOINT_PATH = "/auth"
 OAUTH_KEY_EXCHANGE_ENDPOINT_PATH = "/auth/keys"
 RESET_INTERVALS = {"daily", "weekly", "monthly"}
 OAUTH_FUNDING_AMOUNTS = {"5", "20", "100"}
 OAUTH_DEFAULT_FUNDING_AMOUNT = "20"
 OAUTH_DEFAULT_KEY_LIMIT = "20"
+OAUTH_TOKEN_RATE_LIMIT = 30
+CODE_VERIFIER_RE = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
 NATIVE_CALLBACK_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]{1,63}$")
 UNSAFE_CALLBACK_SCHEMES = {"data", "file", "javascript"}
 OAUTH_AUTHORIZATION_FIELDS = (
@@ -60,8 +65,11 @@ OAUTH_AUTHORIZATION_FIELDS = (
 
 
 def register_oauth_key_routes(router: APIRouter) -> None:
+
     @router.get(OAUTH_AUTHORIZATION_ENDPOINT_PATH)
     async def oauth_authorize_page(request: Request, settings: SettingsDep) -> Response:
+        if request.query_params.get("consent"):
+            return _resume_consent(request, settings)
         params = _oauth_params_from_query(request)
         oauth_app = _registered_oauth_app(params)
         try:
@@ -76,20 +84,29 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         if not principal.is_management:
             raise api_error(403, "Only management users can delegate credits", ErrorType.FORBIDDEN)
         _deny_scoped_delegator(principal)
-        return HTMLResponse(
-            _consent_html(
-                params,
-                workspace_name=principal.workspace.name,
-                workspace_id=principal.workspace.id,
-                oauth_app=oauth_app,
-            )
-        )
+        consent = _create_consent(params, principal, settings, oauth_app=oauth_app)
+        return HTMLResponse(_consent_html_for_record(consent, principal.workspace.name, oauth_app))
+
+    @router.get("/oauth/authorize")
+    async def oauth_authorize(request: Request, settings: SettingsDep) -> Response:
+        params, app, error = _conformant_authorize_params(request)
+        if error is not None:
+            return error
+        try:
+            principal = principal_from_request(request, settings)
+        except HTTPException as exc:
+            if exc.status_code != 401:
+                raise
+            return HTMLResponse(_signin_html(request, settings, params, oauth_app=app), status_code=401)
+        if not principal.is_management:
+            raise api_error(403, "Only management users can delegate credits", ErrorType.FORBIDDEN)
+        _deny_scoped_delegator(principal)
+        consent = _create_consent(params, principal, settings, oauth_app=app, rfc_conformant=True)
+        return HTMLResponse(_consent_html_for_record(consent, principal.workspace.name, app))
 
     @router.post("/auth/fund")
     async def oauth_authorize_fund(request: Request, settings: SettingsDep) -> Response:
         form = dict(await request.form())
-        params = _authorization_params(form)
-        _validate_code_request(params)
         try:
             principal = principal_from_request(request, settings)
         except HTTPException as exc:
@@ -99,6 +116,7 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         if not principal.is_management:
             raise api_error(403, "Only management users can fund credits", ErrorType.FORBIDDEN)
         _deny_scoped_delegator(principal)
+        consent = _owned_consent(str(form.get("consent") or ""), principal)
 
         amount = str(form.get("fund_amount") or "")
         if amount not in OAUTH_FUNDING_AMOUNTS:
@@ -109,8 +127,8 @@ def register_oauth_key_routes(router: APIRouter) -> None:
                 amount=amount,
                 workspace_id=principal.workspace.id,
                 payment_method="card",
-                success_url=_authorization_return_url(origin, params, checkout="success"),
-                cancel_url=_authorization_return_url(origin, params, checkout="cancel"),
+                success_url=_consent_return_url(origin, consent.id, checkout="success"),
+                cancel_url=_consent_return_url(origin, consent.id, checkout="cancel"),
             )
         except ValidationError as exc:
             raise api_error(400, "Invalid checkout request", ErrorType.BAD_REQUEST) from exc
@@ -129,14 +147,14 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         )
         if str(data.get("mode") or "").startswith("mock"):
             return RedirectResponse(
-                url=_authorization_return_url(origin, params, checkout="mock"),
+                url=_consent_return_url(origin, consent.id, checkout="mock"),
                 status_code=303,
             )
         return RedirectResponse(url=str(data["url"]), status_code=303)
 
     @router.post("/auth/approve")
     async def oauth_authorize_approve(request: Request, settings: SettingsDep) -> Response:
-        params = _oauth_params_from_form(await request.form())
+        form = dict(await request.form())
         try:
             principal = principal_from_request(request, settings)
         except HTTPException as exc:
@@ -146,10 +164,30 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         if not principal.is_management:
             raise api_error(403, "Only management users can delegate credits", ErrorType.FORBIDDEN)
         _deny_scoped_delegator(principal)
-        raw_code, code = _create_code(params, principal, settings)
-        return RedirectResponse(
-            url=_callback_with_code(code.callback_url, raw_code, code.user_id), status_code=302
+        consent = _owned_consent(str(form.get("consent") or ""), principal)
+        if not hmac.compare_digest(str(form.get("csrf_token") or ""), consent.csrf_token):
+            raise api_error(403, "Invalid consent CSRF token", ErrorType.FORBIDDEN)
+        chosen = str(form.get("monthly_budget") or "20")
+        if consent.client_app_id and chosen not in {"5", "20", "100", "none"}:
+            raise api_error(400, "Invalid monthly budget", ErrorType.BAD_REQUEST)
+        consumed = STORE.consume_consent_request(
+            consent.id,
+            user_id=str(_principal_user_id(principal) or ""),
+            workspace_id=principal.workspace.id,
+            csrf_token=str(form.get("csrf_token") or ""),
         )
+        if consumed is None:
+            raise api_error(400, "Consent request is expired or already used", ErrorType.BAD_REQUEST)
+        if consumed.client_app_id:
+            consumed.limit_microdollars = None if chosen == "none" else dollars_to_microdollars(chosen)
+            consumed.limit_reset = None if chosen == "none" else "monthly"
+        raw_code, code = _create_code_from_consent(consumed, settings)
+        callback_url = (
+            _conformant_callback_with_code(code.callback_url, raw_code, state=consumed.state)
+            if consumed.rfc_conformant
+            else _callback_with_code(code.callback_url, raw_code, code.user_id, state=consumed.state)
+        )
+        return RedirectResponse(url=callback_url, status_code=302)
 
     @router.post("/auth/keys/code")
     async def auth_keys_code(
@@ -172,6 +210,9 @@ def register_oauth_key_routes(router: APIRouter) -> None:
 
     @router.post(OAUTH_KEY_EXCHANGE_ENDPOINT_PATH)
     async def auth_keys(request: Request) -> JSONResponse:
+        limited = _rate_limit_exchange(request, rfc=False)
+        if limited is not None:
+            return limited
         body = await json_body(request)
         raw_code = str(body.get("code") or "")
         if not raw_code:
@@ -210,6 +251,43 @@ def register_oauth_key_routes(router: APIRouter) -> None:
             }
         )
 
+    @router.post("/oauth/token")
+    async def oauth_token(request: Request) -> JSONResponse:
+        limited = _rate_limit_exchange(request, rfc=True)
+        if limited is not None:
+            return limited
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/x-www-form-urlencoded":
+            return _oauth_error("invalid_request", "Content-Type must be application/x-www-form-urlencoded")
+        form = dict(await request.form())
+        if str(form.get("grant_type") or "") != "authorization_code":
+            return _oauth_error("invalid_request", "grant_type must be authorization_code")
+        required = ("code", "code_verifier", "client_id", "redirect_uri")
+        if any(not form.get(field) for field in required):
+            return _oauth_error("invalid_request", "code, code_verifier, client_id, and redirect_uri are required")
+        verifier = str(form["code_verifier"])
+        if not CODE_VERIFIER_RE.fullmatch(verifier):
+            return _oauth_error("invalid_request", "code_verifier is not valid RFC 7636 syntax")
+        code = STORE.consume_oauth_authorization_code(str(form["code"]))
+        if code is None:
+            return _oauth_error("invalid_grant", "Authorization code is invalid, expired, or already used")
+        if code.client_app_id != str(form["client_id"]) or code.callback_url != str(form["redirect_uri"]):
+            return _oauth_error("invalid_grant", "Authorization code binding does not match")
+        if code.code_challenge_method != "S256" or not _pkce_matches(code, verifier):
+            return _oauth_error("invalid_grant", "code_verifier does not match")
+        app = STORE.get_oauth_app(code.client_app_id)
+        if app is None or app.suspended:
+            return _oauth_error("invalid_grant", "OAuth app is unavailable")
+        assert_workspace_billing_active(STORE.get_workspace(code.workspace_id))
+        raw_key, _key = STORE.create_api_key(
+            workspace_id=code.workspace_id, name=code.key_label,
+            creator_user_id=code.user_id, management=False,
+            limit_microdollars=code.limit_microdollars, limit_reset=code.limit_reset,
+            expires_at=code.expires_at, scopes=code.scopes, app_id=code.client_app_id,
+        )
+        user = STORE.get_user(code.user_id) if code.user_id else None
+        identity = identity_payload(user, code.workspace_id) or {"verification_level": "none"}
+        return JSONResponse({"access_token": raw_key, "token_type": "bearer", "scope": " ".join(code.scopes), "trustedrouter": {"verification_level": identity["verification_level"], "app_id": code.client_app_id, "workspace_id": code.workspace_id}}, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
+
 
 def _create_code(
     params: dict[str, Any], principal: Any, settings: Settings
@@ -240,6 +318,27 @@ def _create_code(
         spawn_agent=_optional_str(params.get("spawn_agent")),
         spawn_cloud=_optional_str(params.get("spawn_cloud")),
         client_app_id=oauth_app.id if oauth_app is not None else "",
+        scopes=DEFAULT_DELEGATED_SCOPES,
+    )
+
+
+def _create_code_from_consent(
+    consent: ConsentRequest, settings: Settings
+) -> tuple[str, OAuthAuthorizationCode]:
+    return STORE.create_oauth_authorization_code(
+        workspace_id=consent.workspace_id,
+        user_id=consent.user_id,
+        callback_url=consent.callback_url,
+        key_label=consent.key_label,
+        ttl_seconds=settings.oauth_authorization_code_ttl_seconds,
+        app_id=_app_id(consent.callback_url),
+        limit_microdollars=consent.limit_microdollars,
+        limit_reset=consent.limit_reset,
+        expires_at=consent.expires_at,
+        code_challenge=consent.code_challenge,
+        code_challenge_method=consent.code_challenge_method,
+        client_app_id=consent.client_app_id,
+        scopes=consent.scopes,
     )
 
 
@@ -466,12 +565,24 @@ def _app_id(callback_url: str) -> int:
     return int(digest[:8], 16)
 
 
-def _callback_with_code(callback_url: str, raw_code: str, user_id: str | None) -> str:
+def _callback_with_code(callback_url: str, raw_code: str, user_id: str | None, *, state: str = "") -> str:
     parsed = urlsplit(callback_url)
     query = parse_qsl(parsed.query, keep_blank_values=True)
     query.append(("code", raw_code))
     if user_id:
         query.append(("user_id", user_id))
+    if state:
+        query.append(("state", state))
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment)
+    )
+
+
+def _conformant_callback_with_code(callback_url: str, raw_code: str, *, state: str = "") -> str:
+    parsed = urlsplit(callback_url)
+    query = [("code", raw_code)]
+    if state:
+        query.append(("state", state))
     return urlunsplit(
         (parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment)
     )
@@ -490,6 +601,139 @@ def _deny_scoped_delegator(principal: Any) -> None:
             "A delegated API key cannot mint delegation codes",
             ErrorType.INSUFFICIENT_SCOPE,
         )
+
+
+def _create_consent(
+    params: dict[str, Any],
+    principal: Any,
+    settings: Settings,
+    *,
+    oauth_app: OAuthApp | None,
+    rfc_conformant: bool = False,
+) -> ConsentRequest:
+    callback_url = _validate_callback_url(str(params.get("callback_url") or ""))
+    suggested = str(params.get("suggested_monthly_budget") or "")
+    consent = ConsentRequest(
+        id=f"consent_{secrets.token_urlsafe(24)}",
+        csrf_token=secrets.token_urlsafe(32),
+        user_id=str(_principal_user_id(principal) or ""),
+        workspace_id=principal.workspace.id,
+        client_app_id=oauth_app.id if oauth_app else "",
+        callback_url=callback_url,
+        scopes=list(params.get("scopes") or DEFAULT_DELEGATED_SCOPES),
+        code_challenge=_optional_str(params.get("code_challenge")),
+        code_challenge_method=_pkce_method(params.get("code_challenge_method"), has_challenge=bool(params.get("code_challenge"))),
+        key_label=_key_label(params.get("key_label"), callback_url),
+        limit_microdollars=(dollars_to_microdollars(OAUTH_DEFAULT_KEY_LIMIT) if oauth_app else _limit_microdollars(params.get("limit"))),
+        limit_reset=("monthly" if oauth_app else _limit_reset(params.get("usage_limit_type"))),
+        expires_at=_expires_at(params.get("expires_at")),
+        state=str(params.get("state") or ""),
+        rfc_conformant=rfc_conformant,
+        suggested_monthly_budget=suggested,
+        consent_expires_at=(dt.datetime.now(dt.UTC) + dt.timedelta(seconds=settings.oauth_authorization_code_ttl_seconds)).isoformat().replace("+00:00", "Z"),
+    )
+    return STORE.create_consent_request(consent)
+
+
+def _owned_consent(consent_id: str, principal: Any) -> ConsentRequest:
+    consent = STORE.get_consent_request(consent_id)
+    if consent is None:
+        raise api_error(400, "Consent request is invalid", ErrorType.BAD_REQUEST)
+    if consent.user_id != str(_principal_user_id(principal) or "") or consent.workspace_id != principal.workspace.id:
+        raise api_error(403, "Consent request belongs to another user", ErrorType.FORBIDDEN)
+    if consent.consumed_at is not None or _consent_expired(consent):
+        raise api_error(400, "Consent request is expired or already used", ErrorType.BAD_REQUEST)
+    return consent
+
+
+def _consent_expired(consent: ConsentRequest) -> bool:
+    if not consent.consent_expires_at:
+        return True
+    return dt.datetime.fromisoformat(consent.consent_expires_at.replace("Z", "+00:00")) <= dt.datetime.now(dt.UTC)
+
+
+def _resume_consent(request: Request, settings: Settings) -> Response:
+    try:
+        principal = principal_from_request(request, settings)
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        raise api_error(401, "Sign in is required", ErrorType.UNAUTHORIZED) from exc
+    consent = _owned_consent(str(request.query_params.get("consent") or ""), principal)
+    app = STORE.get_oauth_app(consent.client_app_id) if consent.client_app_id else None
+    return HTMLResponse(_consent_html_for_record(consent, principal.workspace.name, app, checkout=str(request.query_params.get("checkout") or "")))
+
+
+def _consent_html_for_record(consent: ConsentRequest, workspace_name: str, app: OAuthApp | None, *, checkout: str = "") -> str:
+    params: dict[str, Any] = {
+        "callback_url": consent.callback_url, "client_id": consent.client_app_id,
+        "key_label": consent.key_label, "checkout": checkout,
+        "limit": (microdollars_to_decimal(consent.limit_microdollars) if consent.limit_microdollars is not None else ""),
+        "usage_limit_type": consent.limit_reset or "",
+    }
+    return _consent_html(params, workspace_name=workspace_name, workspace_id=consent.workspace_id, oauth_app=app, consent=consent)
+
+
+def _conformant_authorize_params(request: Request) -> tuple[dict[str, Any], OAuthApp | None, Response | None]:
+    raw = dict(request.query_params)
+    client_id = str(raw.get("client_id") or "")
+    redirect_uri = str(raw.get("redirect_uri") or "")
+    app = STORE.get_oauth_app(client_id) if client_id else None
+    if app is None or app.suspended:
+        return {}, None, _oauth_error("invalid_request", "client_id is unknown or suspended")
+    if not redirect_uri or redirect_uri not in app.redirect_uris:
+        return {}, None, _oauth_error("invalid_request", "redirect_uri is not registered")
+    state = str(raw.get("state") or "")
+    def redirected(error: str, description: str) -> tuple[dict[str, Any], OAuthApp | None, Response]:
+        return {}, app, RedirectResponse(_oauth_error_redirect(redirect_uri, error, description, state), status_code=302)
+    if raw.get("response_type") != "code":
+        return redirected("unsupported_response_type", "response_type must be code")
+    requested = str(raw.get("scope") or " ").split() if "scope" in raw else list(DEFAULT_DELEGATED_SCOPES)
+    if not requested or set(requested) - KNOWN_SCOPES:
+        return redirected("invalid_scope", "scope contains an unknown value")
+    if not raw.get("code_challenge"):
+        return redirected("invalid_request", "code_challenge is required")
+    if raw.get("code_challenge_method") != "S256":
+        return redirected("invalid_request", "code_challenge_method must be S256")
+    return {"client_id": client_id, "callback_url": redirect_uri, "scopes": requested, "state": state, "code_challenge": str(raw["code_challenge"]), "code_challenge_method": "S256", "suggested_monthly_budget": str(raw.get("suggested_monthly_budget") or "")}, app, None
+
+
+def _oauth_error_redirect(uri: str, error: str, description: str, state: str) -> str:
+    parsed = urlsplit(uri)
+    query = parse_qsl(parsed.query, keep_blank_values=True) + [("error", error), ("error_description", description)]
+    if state:
+        query.append(("state", state))
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
+
+
+def _oauth_error(error: str, description: str, *, status: int = 400, headers: dict[str, str] | None = None) -> JSONResponse:
+    response_headers = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+    if headers:
+        response_headers.update(headers)
+    return JSONResponse(
+        {"error": error, "error_description": description},
+        status_code=status,
+        headers=response_headers,
+    )
+
+
+def _pkce_matches(code: OAuthAuthorizationCode, verifier: str) -> bool:
+    expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).decode("ascii").rstrip("=")
+    return hmac.compare_digest(expected, str(code.code_challenge or ""))
+
+
+def _rate_limit_exchange(request: Request, *, rfc: bool) -> JSONResponse | None:
+    ip = request.client.host if request.client else "unknown"
+    # App identity keeps independently-created TestClient applications from
+    # sharing a bucket; production has one long-lived app per process.
+    subject = f"{id(request.app)}:{ip}"
+    hit = enforce_rate_limit("oauth_token", subject, OAUTH_TOKEN_RATE_LIMIT, window_seconds=60)
+    if hit is None or hit.allowed:
+        return None
+    headers = {"Retry-After": str(hit.retry_after_seconds)}
+    if rfc:
+        return _oauth_error("temporarily_unavailable", "Token exchange rate limit exceeded", status=429, headers=headers)
+    return JSONResponse({"error": {"message": "Token exchange rate limit exceeded", "type": "rate_limited", "status": 429}}, status_code=429, headers=headers)
 
 
 def _signin_html(
@@ -522,6 +766,7 @@ def _consent_html(
     workspace_name: str,
     workspace_id: str,
     oauth_app: OAuthApp | None,
+    consent: ConsentRequest | None = None,
 ) -> str:
     app_owner_line = ""
     if oauth_app is not None:
@@ -546,14 +791,8 @@ def _consent_html(
     reset = _limit_reset(params.get("usage_limit_type")) or ""
     summary = live_credit_summary(workspace_id)
     available = summary["available"] if summary else 0
-    hidden_fields = _hidden_authorization_fields(params, exclude={"limit", "usage_limit_type"})
-    funding_hidden_fields = _hidden_authorization_fields(
-        {
-            **params,
-            "limit": effective_limit,
-            "usage_limit_type": reset,
-        }
-    )
+    hidden_fields = [("consent", consent.id), ("csrf_token", consent.csrf_token)] if consent else _hidden_authorization_fields(params, exclude={"limit", "usage_limit_type"})
+    funding_hidden_fields = [("consent", consent.id)] if consent else _hidden_authorization_fields({**params, "limit": effective_limit, "usage_limit_type": reset})
     checkout_status = str(params.get("checkout") or "")
     if checkout_status not in {"success", "cancel", "mock"}:
         checkout_status = ""
@@ -580,6 +819,9 @@ def _consent_html(
         funding_hidden_fields=funding_hidden_fields,
         funding_amounts=("5", "20", "100"),
         default_funding_amount=OAUTH_DEFAULT_FUNDING_AMOUNT,
+        consent=consent,
+        suggested_monthly_budget=consent.suggested_monthly_budget if consent else "",
+        markup_percent=(f"{oauth_app.markup_basis_points / 100:g}" if oauth_app and oauth_app.markup_basis_points else ""),
     )
 
 
@@ -607,6 +849,10 @@ def _hidden_authorization_fields(
 def _authorization_return_url(origin: str, params: dict[str, Any], *, checkout: str) -> str:
     query = urlencode([*params.items(), ("checkout", checkout)])
     return f"{origin}/auth?{query}"
+
+
+def _consent_return_url(origin: str, consent_id: str, *, checkout: str) -> str:
+    return f"{origin}/auth?{urlencode({'consent': consent_id, 'checkout': checkout})}"
 
 
 def _callback_with_error(callback_url: str, error: str) -> str:

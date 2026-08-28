@@ -28,6 +28,7 @@ from trusted_router.storage_models import (
     BroadcastDeliveryJob,
     BroadcastDestination,
     ByokProviderConfig,
+    ConsentRequest,
     CreditAccount,
     CreditMovement,
     CreditTransfer,
@@ -272,8 +273,14 @@ class Store(Protocol):
         spawn_agent: str | None = ...,
         spawn_cloud: str | None = ...,
         client_app_id: str = ...,
+        scopes: list[str] | None = ...,
     ) -> tuple[str, OAuthAuthorizationCode]: ...
     def consume_oauth_authorization_code(self, raw_code: str) -> OAuthAuthorizationCode | None: ...
+    def create_consent_request(self, consent: ConsentRequest) -> ConsentRequest: ...
+    def get_consent_request(self, consent_id: str) -> ConsentRequest | None: ...
+    def consume_consent_request(
+        self, consent_id: str, *, user_id: str, workspace_id: str, csrf_token: str
+    ) -> ConsentRequest | None: ...
 
     # Registered OAuth applications -----------------------------------------
     def create_oauth_app(self, app: OAuthApp) -> OAuthApp: ...
