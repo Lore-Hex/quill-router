@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from trusted_router.catalog import endpoints_for_model
+from trusted_router.catalog import PROVIDERS, endpoints_for_model
 from trusted_router.dashboard import PUBLIC_PAGES
 from trusted_router.storage import STORE
 
@@ -282,6 +282,8 @@ def test_public_pricing_matches_five_point_five_percent_billing_policy(
     assert "Cheaper. Smarter. More reliable. More secure." in pricing.text
     assert "5.5% pay as you go fee on credit purchases" in pricing.text
     assert 'href="https://openrouter.ai/pricing"' in pricing.text
+    assert "provider-specific prices are listed on the Models page" in pricing.text
+    assert '<a class="btn secondary" href="/models">Browse model prices</a>' in pricing.text
     assert "10% markup" not in pricing.text
 
     comparison = client.get("/compare/openrouter")
@@ -518,12 +520,29 @@ def test_public_models_page_is_a_ranked_searchable_price_explorer(
     assert 'href="/for-developers"' in body
     assert 'href="/docs/quickstart"' not in body
     assert 'data-endpoints-url="/v1/models/z-ai/glm-5.3-flash/endpoints"' in body
+    public_provider_count = sum(slug != "trustedrouter" for slug in PROVIDERS)
+    assert f"{public_provider_count} providers" in body
 
     glm = body.index('data-model-id="z-ai/glm-5.3-flash"')
     kimi = body.index('data-model-id="moonshotai/kimi-k3"')
     deepseek = body.index('data-model-id="deepseek/deepseek-v4-pro-0813"')
     router_alias = body.index('data-model-id="trustedrouter/auto"')
     assert glm < kimi < deepseek < router_alias
+
+
+def test_public_providers_page_has_search_and_collapsed_policy_notes(
+    client: TestClient,
+) -> None:
+    response = client.get("/providers")
+
+    assert response.status_code == 200
+    assert 'type="search"' in response.text
+    assert 'data-provider-search' in response.text
+    assert 'data-provider-row data-provider-id="tinfoil"' in response.text
+    assert '<details class="provider-policy-details">' in response.text
+    assert "Show more" in response.text
+    assert "Show less" in response.text
+    assert "/static/providers.js" in response.text
 
 
 def test_public_model_detail_lists_distinct_serving_providers(client: TestClient) -> None:
