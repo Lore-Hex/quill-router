@@ -567,12 +567,16 @@ https://docs.phala.com/phala-cloud/confidential-ai/confidential-model/confidenti
 
 The append-only inference-receipt key log is fed by a Cloud Scheduler job
 (created 2026-08-26; recreate with the same internal-token header as the
-settle-outbox drain if it is ever lost):
+settle-outbox drain if it is ever lost). The schedule MUST beat the fleet
+page's heartbeat staleness threshold (`HEARTBEAT_STALE_SECONDS` = 11 min in
+`synthetic/fleet.py`) or `job:receipt-key-collector` reads stale for most of
+every cycle and the remediator pages on a healthy collector — this happened
+at the original 30-minute cadence (fixed to 5 minutes 2026-08-28):
 
 ```
 gcloud scheduler jobs create http trusted-router-receipt-key-collect \
   --location us-central1 \
-  --schedule "*/30 * * * *" \
+  --schedule "*/5 * * * *" \
   --uri "https://trusted-router-vsjf6qu4la-uc.a.run.app/v1/internal/gateway/receipt-keys/collect" \
   --http-method POST \
   --headers "x-trustedrouter-internal-token=<internal gateway token>"
