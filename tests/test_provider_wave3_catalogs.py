@@ -1203,7 +1203,7 @@ def test_price_coverage_failure_blocks_commit_and_deploy() -> None:
 
     audit = workflow.index("- name: Price-source coverage audit")
     blocker = workflow.index("- name: Block unsafe coverage before publication")
-    commit = workflow.index("- name: Commit and push if changed")
+    commit = workflow.index("- name: Commit, verify, and push if changed")
     assert audit < blocker < commit
     blocker_step = workflow[blocker:commit]
     assert "steps.coverage_audit.outcome == 'failure'" in blocker_step
