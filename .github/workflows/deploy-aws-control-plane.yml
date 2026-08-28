@@ -46,6 +46,18 @@ jobs:
           role-to-assume: arn:aws:iam::330422590279:role/tr-router-github-deploy
           aws-region: eu-west-3
 
+      # The production deploy mutex lives in GCS (deploy_mutex.sh) so ONE
+      # lock covers every cloud's deploy tooling; this AWS deploy therefore
+      # needs GCP auth too, via the repo's existing workload identity.
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Deploy tr-eu from this commit
