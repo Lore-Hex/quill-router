@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 from trusted_router.operational_analytics_freshness import OutboxFreshness
+from trusted_router.spend_leases import SpendLeaseArtifact, SpendLeaseBoot
 from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage_models import (
     AcquisitionAttribution,
@@ -785,6 +786,7 @@ class Store(Protocol):
         settlement: str = ...,
         expires_at: str | None = ...,
         deferred_cap_microdollars: int | None = ...,
+        spend_lease: SpendLeaseArtifact | None = ...,
     ) -> GatewayAuthorization: ...
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None: ...
     def get_gateway_authorization_by_idempotency_key(
@@ -804,6 +806,7 @@ class Store(Protocol):
     # Generations + activity --------------------------------------------------
     def add_generation(self, generation: Generation) -> None: ...
     def record_client_events_batch(self, payload: dict[str, Any]) -> None: ...
+    def record_spend_lease_shadow(self, event_id: str, payload: dict[str, Any]) -> None: ...
     def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None: ...
     def provider_benchmark_samples(
         self,
@@ -900,6 +903,22 @@ class Store(Protocol):
     def observe_receipt_key(self, record: ReceiptKey) -> str: ...
     def list_receipt_keys(self, *, limit: int = ...) -> list[ReceiptKey]: ...
 
+    # Stage A spend-lease boot identity + monotonic grant generation --------
+    def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot: ...
+    def get_spend_lease_boot(self, kid: str) -> SpendLeaseBoot | None: ...
+    def next_spend_lease_generation(self, key_hash: str, boot_kid: str) -> int: ...
+    def get_active_spend_lease(
+        self, key_hash: str, boot_kid: str
+    ) -> SpendLeaseArtifact | None: ...
+    def retain_spend_lease(
+        self,
+        key_hash: str,
+        boot_kid: str,
+        candidate: SpendLeaseArtifact,
+        *,
+        replace: bool,
+    ) -> SpendLeaseArtifact: ...
+
     # Rate limiting -----------------------------------------------------------
     def hit_rate_limit(
         self,
@@ -961,6 +980,7 @@ class TypedBillingStore(Protocol):
         native_batch_eligible: bool = ...,
         expires_at: Any = ...,
         window_limits: dict[str, int] | None = ...,
+        spend_lease: SpendLeaseArtifact | None = ...,
     ) -> tuple[str, GatewayAuthorization | None]: ...
 
     def typed_finalize_gateway_authorization(

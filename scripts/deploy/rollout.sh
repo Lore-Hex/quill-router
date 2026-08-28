@@ -479,6 +479,36 @@ if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ]; then
   regional_quota_preflight_issuance_fleet
 fi
 
+# Stage A advisory spend leases follow the regional pilot's preserve-live
+# idiom. A fresh deployment writes the explicit false marker; later rollouts
+# retain operator configuration unless the invoking environment overrides it.
+SPEND_LEASE_ISSUANCE_ENABLED="${TR_SPEND_LEASE_ISSUANCE_ENABLED:-$(
+  read_primary_regional_quota_env "TR_SPEND_LEASE_ISSUANCE_ENABLED" "false"
+)}"
+case "$SPEND_LEASE_ISSUANCE_ENABLED" in
+  true|false) ;;
+  *)
+    log "refusing rollout: TR_SPEND_LEASE_ISSUANCE_ENABLED must be true or false"
+    exit 1
+    ;;
+esac
+SPEND_LEASE_PILOT_WORKSPACE_IDS="${TR_SPEND_LEASE_PILOT_WORKSPACE_IDS:-$(
+  read_primary_regional_quota_env "TR_SPEND_LEASE_PILOT_WORKSPACE_IDS"
+)}"
+SPEND_LEASE_SIGNING_SECRET_NAME="${TR_SPEND_LEASE_SIGNING_SECRET_NAME:-$(
+  read_primary_regional_quota_env "TR_SPEND_LEASE_SIGNING_SECRET_NAME"
+)}"
+SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="${TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS:-$(
+  read_primary_regional_quota_env "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS"
+)}"
+if [ "$SPEND_LEASE_ISSUANCE_ENABLED" = "true" ] && {
+  [ -z "$SPEND_LEASE_PILOT_WORKSPACE_IDS" ] ||
+  [ -z "$SPEND_LEASE_SIGNING_SECRET_NAME" ];
+}; then
+  log "refusing rollout: spend-lease issuance requires pilot workspaces and a signing secret name"
+  exit 1
+fi
+
 # Prefer the private three-replica ClickHouse load balancer once provisioned.
 # The direct node-1 address remains only as a migration fallback for projects
 # that have not run clickhouse_cluster.sh yet.
@@ -684,6 +714,11 @@ ENV_VARS=(
   "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT=${REGIONAL_QUOTA_LEASE_SHARD_COUNT}"
   "TR_REGIONAL_QUOTA_BIGTABLE_TABLE=${REGIONAL_QUOTA_BIGTABLE_TABLE}"
   "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=${REGIONAL_QUOTA_BIGTABLE_APP_PROFILES}"
+  # Stage A advisory spend-lease issuance and its allowlisted pilot.
+  "TR_SPEND_LEASE_ISSUANCE_ENABLED=${SPEND_LEASE_ISSUANCE_ENABLED}"
+  "TR_SPEND_LEASE_PILOT_WORKSPACE_IDS=${SPEND_LEASE_PILOT_WORKSPACE_IDS}"
+  "TR_SPEND_LEASE_SIGNING_SECRET_NAME=${SPEND_LEASE_SIGNING_SECRET_NAME}"
+  "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS=${SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS}"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 

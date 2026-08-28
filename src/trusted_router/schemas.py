@@ -254,6 +254,21 @@ class EarningsTransferRequest(_Strict):
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=64)
 
 
+class SpendLeaseEcho(_Strict):
+    lease_id: str | None = Field(default=None, max_length=64)
+    state: str = Field(min_length=1, max_length=64)
+    remaining_micro: int | None = Field(default=None, ge=0)
+    enclave_estimate_micro: int | None = Field(default=None, ge=0)
+    catalog_version: str | None = Field(default=None, max_length=128)
+    would_admit: bool | None = None
+
+
+class SpendLeaseBootRegistrationRequest(_Strict):
+    jwk: dict[str, Any]
+    attestation: str = Field(min_length=1, max_length=2 * 1024 * 1024)
+    attestation_kind: Literal["gcp-cs-jwt", "aws-nitro-cose", "azure-maa-jwt"]
+
+
 class GatewayAuthorizeRequest(_Lenient):
     api_key_hash: str | None = Field(default=None, min_length=1)
     api_key_lookup_hash: str | None = Field(default=None, min_length=1)
@@ -286,6 +301,7 @@ class GatewayAuthorizeRequest(_Lenient):
     # atomic hold as their planner model call. This is internal-only and is
     # accepted only for enclave-owned hosted tools and asynchronous media.
     additional_cost_reservation_microdollars: int = Field(default=0, ge=0, le=100_000_000)
+    spend_lease_echo: SpendLeaseEcho | None = None
 
     @model_validator(mode="after")
     def key_identifier_required(self) -> GatewayAuthorizeRequest:

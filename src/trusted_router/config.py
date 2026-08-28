@@ -847,6 +847,18 @@ class Settings(BaseSettings):
     # Comma-separated region=single-cluster-app-profile pairs. A fixed profile
     # is required because one lease has exactly one regional writer authority.
     regional_quota_bigtable_app_profiles: str = ""
+    # Stage A spend leases are signed advisory artifacts only. This one flag
+    # gates both minting and shadow evidence; default-off deploys never touch
+    # Secret Manager. The accepted digest CSV preserves both sides of a GCP
+    # rolling deploy; when empty, the embedded trust digest is the singleton.
+    spend_lease_issuance_enabled: bool = False
+    spend_lease_pilot_workspace_ids: str = ""
+    spend_lease_signing_secret_name: str = ""
+    spend_lease_accepted_gcp_image_digests: str = ""
+    spend_lease_ttl_seconds: int = 60
+    spend_lease_skew_seconds: int = 10
+    spend_lease_max_microdollars: int = 1_000_000
+    spend_lease_max_available_basis_points: int = 1_000
     # Operational read-only flag. When set, write paths (credit
     # reservations, gateway authorize, signup, etc.) return 503 with
     # `Retry-After`; reads keep working. Used for the Spanner →
@@ -1296,6 +1308,42 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED requires "
                     "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"
+                )
+        if not 5 <= self.spend_lease_ttl_seconds <= 300:
+            raise ValueError("TR_SPEND_LEASE_TTL_SECONDS must be between 5 and 300")
+        if not 0 <= self.spend_lease_skew_seconds <= 30:
+            raise ValueError("TR_SPEND_LEASE_SKEW_SECONDS must be between 0 and 30")
+        if self.spend_lease_max_microdollars <= 0:
+            raise ValueError("TR_SPEND_LEASE_MAX_MICRODOLLARS must be positive")
+        if not 1 <= self.spend_lease_max_available_basis_points <= 5_000:
+            raise ValueError(
+                "TR_SPEND_LEASE_MAX_AVAILABLE_BASIS_POINTS must be between 1 and 5000"
+            )
+        configured_spend_digests = self.spend_lease_accepted_gcp_image_digests.split(",")
+        for digest in configured_spend_digests:
+            digest = digest.strip()
+            if digest and not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                raise ValueError(
+                    "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS entries must be sha256 digests"
+                )
+        if self.spend_lease_issuance_enabled:
+            if not self.spend_lease_pilot_workspace_ids.strip():
+                raise ValueError(
+                    "TR_SPEND_LEASE_ISSUANCE_ENABLED requires "
+                    "TR_SPEND_LEASE_PILOT_WORKSPACE_IDS"
+                )
+            if not self.spend_lease_signing_secret_name.strip():
+                raise ValueError(
+                    "TR_SPEND_LEASE_ISSUANCE_ENABLED requires "
+                    "TR_SPEND_LEASE_SIGNING_SECRET_NAME"
+                )
+            if not (
+                self.operational_analytics_outbox_enabled
+                or self.operational_analytics_sink == "direct"
+            ):
+                raise ValueError(
+                    "TR_SPEND_LEASE_ISSUANCE_ENABLED requires the operational "
+                    "analytics outbox or direct sink"
                 )
         if self.regional_quota_leases_enabled:
             if environment not in {"local", "test"}:
@@ -1843,6 +1891,25 @@ class Settings(BaseSettings):
             for workspace_id in self.regional_quota_lease_pilot_workspace_ids.split(",")
             if workspace_id.strip()
         )
+
+    @property
+    def spend_lease_pilot_workspaces(self) -> frozenset[str]:
+        return frozenset(
+            workspace_id.strip()
+            for workspace_id in self.spend_lease_pilot_workspace_ids.split(",")
+            if workspace_id.strip()
+        )
+
+    @property
+    def spend_lease_accepted_gcp_digests(self) -> frozenset[str]:
+        configured = frozenset(
+            digest.strip()
+            for digest in self.spend_lease_accepted_gcp_image_digests.split(",")
+            if digest.strip()
+        )
+        if configured:
+            return configured
+        return frozenset({self.trust_gcp_image_digest}) if self.trust_gcp_image_digest else frozenset()
 
     @property
     def regional_quota_bigtable_app_profile_map(self) -> dict[str, str]:

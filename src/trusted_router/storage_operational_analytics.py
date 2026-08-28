@@ -1,11 +1,12 @@
 """Backend-neutral shape of the operational-analytics outbox.
 
 The tenant-activity and synthetic-status stream has the same privacy contract
-on every cloud: raw workspace ids and API key hashes never leave the system of
-record, ClickHouse receives stable one-way surrogates and content-free request
-metadata only.  That contract lives in the payload projection, so the
-projection must be shared rather than reimplemented per backend — a second
-copy is a second place for a raw identifier to leak in.
+on every cloud: ClickHouse receives stable one-way surrogates and content-free
+request metadata only. Spend-lease shadow evidence is the one explicit
+exception: its v1 design-record schema carries workspace_id and the already
+one-way key_hash so divergence can gate a workspace pilot. No stream carries
+key material, lease tokens, prompts, or outputs. These contracts live in the
+payload projection, so it must be shared rather than reimplemented per backend.
 
 Only the *durability mechanism* differs per backend (Spanner commit
 timestamps vs a Postgres primary key), so only the writer classes are
@@ -46,12 +47,14 @@ class OperationalAnalyticsWriter(Protocol):
     def enqueue_synthetic(self, sample: Any) -> None: ...
     def enqueue_synthetic_tx(self, transaction: Any, sample: Any) -> None: ...
     def enqueue_client_events(self, payload: dict[str, Any]) -> None: ...
+    def enqueue_spend_lease_shadow(self, event_id: str, payload: dict[str, Any]) -> None: ...
     def oldest_enqueued_at(self, *, timeout: float | None = None) -> dt.datetime | None: ...
 
 
 ACTIVITY_EVENT_KIND = "activity"
 SYNTHETIC_EVENT_KIND = "synthetic"
 CLIENT_EVENTS_EVENT_KIND = "client_events"
+SPEND_LEASE_SHADOW_EVENT_KIND = "spend_lease_shadow"
 
 
 def operational_analytics_shard(

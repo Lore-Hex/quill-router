@@ -25,6 +25,7 @@ from trusted_router.security import (
     new_key_id,
     verify_api_key,
 )
+from trusted_router.spend_leases import SpendLeaseArtifact
 from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage_gcp_codec import workspace_key_id as _workspace_key_id
 from trusted_router.storage_gcp_counters import (
@@ -450,6 +451,7 @@ class SpannerApiKeys:
         settlement: str = "local",
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
+        spend_lease: SpendLeaseArtifact | None = None,
     ) -> GatewayAuthorization:
         if deferred_cap_microdollars is not None:
             # Deferred settlement is a PEER-plane mechanism: a plane spending
@@ -504,6 +506,16 @@ class SpannerApiKeys:
             user_model_owner_user_id=user_model_owner_user_id,
             additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
             native_batch_eligible=native_batch_eligible,
+            spend_lease_token=spend_lease.token if spend_lease else None,
+            spend_lease_id=spend_lease.lease_id if spend_lease else None,
+            spend_lease_cap_micro=spend_lease.cap_micro if spend_lease else None,
+            spend_lease_gen=spend_lease.gen if spend_lease else None,
+            spend_lease_iat=spend_lease.iat if spend_lease else None,
+            spend_lease_exp=spend_lease.exp if spend_lease else None,
+            spend_lease_issuer_kid=spend_lease.issuer_kid if spend_lease else None,
+            spend_lease_boot_kid=spend_lease.boot_kid if spend_lease else None,
+            spend_lease_catalog_version=(spend_lease.catalog_version if spend_lease else None),
+            spend_lease_status=spend_lease.lease_status if spend_lease else None,
         )
         if idempotency_key is None:
             self._io.write_entity("gateway_authorization", auth.id, auth)

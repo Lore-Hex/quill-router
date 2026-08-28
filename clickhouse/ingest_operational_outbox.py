@@ -128,6 +128,23 @@ SYNTHETIC_COLUMNS = (
     "output_match",
     "created_at",
 )
+SPEND_LEASE_SHADOW_COLUMNS = (
+    "event_id",
+    "created_at",
+    "workspace_id",
+    "key_hash",
+    "boot_kid",
+    "boot_verified",
+    "lease_id",
+    "echo_state",
+    "would_admit",
+    "enclave_estimate_micro",
+    "server_estimate_micro",
+    "server_verdict",
+    "catalog_version",
+    "divergence",
+    "schema_version",
+)
 
 CLIENT_REQUEST_COLUMNS = (
     "event_id",
@@ -212,6 +229,7 @@ CLIENT_COUNTER_COLUMNS = (
 EVENT_TABLES = {
     "activity": "activity_generations",
     "synthetic": "synthetic_probe_samples",
+    "spend_lease_shadow": "spend_lease_shadow",
     "client_events": ("client_request_events", "client_minute_counters"),
     "client_request": "client_request_events",
     "client_counter": "client_minute_counters",
@@ -629,6 +647,13 @@ def normalise_operational_event(
     elif row.event_kind == "synthetic":
         allowed = SYNTHETIC_COLUMNS
         required = SYNTHETIC_COLUMNS
+    elif row.event_kind == "spend_lease_shadow":
+        allowed = SPEND_LEASE_SHADOW_COLUMNS
+        required = SPEND_LEASE_SHADOW_COLUMNS
+        if raw.get("schema_version") != 1:
+            raise ValueError("spend_lease_shadow schema_version must be 1")
+        if raw.get("event_id") != row.event_id:
+            raise ValueError("spend_lease_shadow event_id does not match its outbox key")
     else:
         raise ValueError(f"unsupported operational event kind: {row.event_kind}")
     missing = [column for column in required if column not in raw]
@@ -642,6 +667,12 @@ def normalise_operational_event(
             if default is not None:
                 value = default
         if row.event_kind == "activity" and column in ACTIVITY_BOOLEAN_COLUMNS:
+            if value is not None:
+                value = int(bool(value))
+        if row.event_kind == "spend_lease_shadow" and column in {
+            "boot_verified",
+            "would_admit",
+        }:
             if value is not None:
                 value = int(bool(value))
         canonical[column] = value

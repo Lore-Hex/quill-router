@@ -876,7 +876,7 @@ def test_the_replacing_engine_backing_this_fake_is_real() -> None:
         line for line in schema.splitlines() if not line.strip().startswith("--")
     )
 
-    assert ddl.count("ENGINE = ReplacingMergeTree(ingest_version)") == 4
+    assert ddl.count("ENGINE = ReplacingMergeTree(ingest_version)") == 5
     # Explicitly NOT the Replicated variant: two regions cannot form a Keeper
     # quorum, so a member loss would freeze writes on the survivor.
     assert "ReplicatedReplacingMergeTree" not in ddl

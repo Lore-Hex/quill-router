@@ -637,6 +637,20 @@ class GatewayAuthorization:
     regional_lease_id: str | None = None
     regional_fencing_token: int | None = None
     regional_hold_id: str | None = None
+    # Stage A spend-lease replay record. The compact token is immutable; the
+    # status beside it is authoritative and may advance independently in later
+    # stages. These fields live in the shared JSON payload used by Spanner's
+    # typed authorization table and the Postgres entity store.
+    spend_lease_token: str | None = None
+    spend_lease_id: str | None = None
+    spend_lease_cap_micro: int | None = None
+    spend_lease_gen: int | None = None
+    spend_lease_iat: int | None = None
+    spend_lease_exp: int | None = None
+    spend_lease_issuer_kid: str | None = None
+    spend_lease_boot_kid: str | None = None
+    spend_lease_catalog_version: str | None = None
+    spend_lease_status: str | None = None
     # Only deferred authorizations carry an expiry: it is what lets the reaper
     # reclaim the outstanding-counter estimate when the enclave dies between
     # authorize and settle. Local authorizations keep their pre-existing

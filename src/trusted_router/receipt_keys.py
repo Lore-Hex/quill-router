@@ -398,3 +398,28 @@ def verify_gcp_attestation_chain(
     }
     if bad_debug_values:
         raise ValueError("GCP Confidential Space debug status is enabled")
+
+
+def gcp_attestation_image_digest(att: str) -> str:
+    """Extract the single measured image digest from a parsed GCP JWT.
+
+    Chain verification is deliberately separate so tests can inject issuer
+    keys and callers cannot mistake extraction for authentication.
+    """
+    _, payload, _, _ = _parse_jwt(att)
+    values = {
+        value.strip().casefold()
+        for item in _walk_named_values(payload, "image_digest")
+        for value in _flatten_strings(item)
+        if value.strip()
+    }
+    if len(values) != 1:
+        raise ValueError("GCP attestation must carry exactly one image digest")
+    digest = next(iter(values))
+    if not digest.startswith("sha256:") or len(digest) != 71:
+        raise ValueError("GCP attestation image digest is malformed")
+    try:
+        bytes.fromhex(digest.removeprefix("sha256:"))
+    except ValueError as exc:
+        raise ValueError("GCP attestation image digest is malformed") from exc
+    return digest

@@ -391,7 +391,7 @@ journalctl -u $SERVICE --no-pager -n 200 | grep -E 'outbox\.(metrics|targets|con
 echo '--- clickhouse ---'
 export CLICKHOUSE_PASSWORD=\"\$('$REMOTE_ROOT/venv/bin/python' -c \"import boto3;print(boto3.client('secretsmanager',region_name='${REGION}').get_secret_value(SecretId='${SECRET_ID}')['SecretString'],end='')\")\"
 clickhouse-client --user '$CH_USER' --database '$CH_DATABASE' --query \\
-  'SELECT (SELECT count() FROM activity_generations) AS activity, (SELECT count() FROM synthetic_probe_samples) AS synthetic FORMAT TSVWithNames'
+  'SELECT (SELECT count() FROM activity_generations) AS activity, (SELECT count() FROM synthetic_probe_samples) AS synthetic, (SELECT count() FROM spend_lease_shadow) AS spend_lease_shadow FORMAT TSVWithNames'
 "
 
 cat <<EOF
