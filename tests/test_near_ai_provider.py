@@ -146,6 +146,47 @@ def test_near_ai_fetch_fails_closed_on_direct_domain_drift(
         near_ai.fetch()
 
 
+def test_near_ai_fetch_keeps_last_known_good_when_live_endpoint_loses_price(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dsv4 = "deepseek-ai/DeepSeek-V4-Flash"
+    glm = "z-ai/glm-5.2"
+    gemma = "google/gemma-4-31B-it"
+    catalog = {"data": [_catalog_row(dsv4), _catalog_row(glm)]}
+    endpoint_payload = _endpoints(dsv4, glm, gemma)
+
+    class FakeResponse:
+        def __init__(self, payload: object) -> None:
+            self.payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> object:
+            return copy.deepcopy(self.payload)
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None:
+            return None
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def get(self, url: str, **_kwargs: object) -> FakeResponse:
+            return FakeResponse(catalog if url == near_ai.CATALOG_URL else endpoint_payload)
+
+    monkeypatch.setenv("NEAR_API_KEY", "test-key")
+    monkeypatch.setattr(near_ai.httpx, "Client", FakeClient)
+
+    with pytest.raises(RuntimeError, match="endpoint remains published without a pricing row"):
+        near_ai.fetch()
+    assert near_ai.MANIFEST_STALE_FALLBACK is True
+    assert near_ai.INCLUDE_IN_PRICE_INDEX is True
+
+
 def test_near_ai_parser_rejects_bad_money_and_untrusted_endpoint_shapes() -> None:
     assert near_ai._microdollars_per_million_from_per_token("0.00000017") == 170_000
     assert near_ai._microdollars_per_million_from_per_token("NaN") is None
