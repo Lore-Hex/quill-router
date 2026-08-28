@@ -884,21 +884,7 @@ class InMemoryStore:
         return self.api_keys.list_for_workspace(workspace_id)
 
     def list_api_keys_with_usage(self, workspace_id: str) -> list[ApiKeyUsageSnapshot]:
-        snapshots = self.api_keys.list_with_usage_for_workspace(workspace_id)
-        last_used_by_key: dict[str, str] = {}
-        for generation in self.generation_store.generations.values():
-            if generation.workspace_id != workspace_id:
-                continue
-            current = last_used_by_key.get(generation.key_hash)
-            if current is None or generation.created_at > current:
-                last_used_by_key[generation.key_hash] = generation.created_at
-        return [
-            dataclasses.replace(
-                snapshot,
-                last_used_at=last_used_by_key.get(snapshot.api_key.hash),
-            )
-            for snapshot in snapshots
-        ]
+        return self.api_keys.list_with_usage_for_workspace(workspace_id)
 
     def delete_key(self, key_hash: str) -> bool:
         return self.api_keys.delete(key_hash)

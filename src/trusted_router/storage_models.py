@@ -288,7 +288,6 @@ class ApiKeyUsageSnapshot:
     byok_usage_microdollars: int
     reserved_microdollars: int
     windows: dict[str, int]
-    last_used_at: str | None = None
 
 
 @dataclass

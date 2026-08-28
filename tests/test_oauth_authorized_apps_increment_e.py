@@ -102,21 +102,25 @@ def test_list_groups_keys_and_reports_budget_usage_scopes_and_disclosure(
     assert "key" not in row
 
 
-def test_list_reports_latest_real_key_usage_and_none_for_unused_app(
+def test_list_reports_no_field_that_only_one_backend_can_populate(
     client: TestClient,
     user_headers: dict[str, str],
 ) -> None:
+    """Every listed field must be populated by the real backends.
+
+    A `last_used_at` derived from generation timestamps was dropped: only
+    InMemoryStore could supply it, so Spanner and Postgres would have shown
+    a permanently-null field, and the test that "covered" it reached into
+    STORE.generation_store directly -- proving the in-memory path only.
+    Recency is already conveyed by the usage windows, which every backend
+    populates from the typed tr_key_limit shards.
+    """
     _grant()
-    _user_id, _workspace_id, _raw_keys = _grant(app_id="unused-app")
-    for generation_id in ("gen-unused-app-0", "gen-unused-app-1"):
-        STORE.generation_store.generations.pop(generation_id)
-    rows = client.get("/v1/oauth/authorized-apps", headers=user_headers).json()["data"]
-    used = next(row for row in rows if row["app_id"] == APP_ID)
-    unused = next(row for row in rows if row["app_id"] == "unused-app")
-    latest = STORE.get_generation(f"gen-{APP_ID}-1")
-    assert latest is not None
-    assert used["last_used_at"] == latest.created_at
-    assert unused["last_used_at"] is None
+
+    row = client.get("/v1/oauth/authorized-apps", headers=user_headers).json()["data"][0]
+
+    assert "last_used_at" not in row
+    assert row["budget"]["used_microdollars"] > 0
 
 
 def test_zero_markup_has_no_disclosure(

@@ -23,7 +23,7 @@
     <p><strong>Permissions:</strong> {{ app.scopes|join(', ') }}</p>
     {% if app.markup_disclosure %}<p>{{ app.markup_disclosure }}</p>{% endif %}
     <p>Monthly usage: <strong>{{ money(app.budget.used_microdollars) }}</strong>{% if app.budget.limit_microdollars is not none %} of {{ money(app.budget.limit_microdollars) }}{% else %} · no limit{% endif %}. Resets monthly.</p>
-    <p>{{ app.key_count }} active key{{ '' if app.key_count == 1 else 's' }} · authorized {{ app.created_at }}{% if app.last_used_at %} · last used {{ app.last_used_at }}{% endif %}</p>
+    <p>{{ app.key_count }} active key{{ '' if app.key_count == 1 else 's' }} · authorized {{ app.created_at }}</p>
     <form class="form" method="post" action="/console/authorized-apps/{{ app.app_id }}/budget">
       <label>Monthly budget (USD; blank means no limit)
         <input name="monthly_budget" type="text" inputmode="decimal" value="{{ app.budget.monthly_budget or '' }}" placeholder="No limit">

@@ -215,10 +215,6 @@ def _authorized_app_shape(
     monthly_limit = next(iter(monthly_limits)) if len(monthly_limits) == 1 else None
     monthly_usage = sum(snapshot.windows.get("monthly", 0) for snapshot in snapshots)
     created_at = min(key.created_at for key in keys)
-    last_used_at = max(
-        (snapshot.last_used_at for snapshot in snapshots if snapshot.last_used_at),
-        default=None,
-    )
     markup_disclosure = (
         f"This app adds {app.markup_basis_points / 100:g}% on top of "
         "TrustedRouter token costs."
@@ -243,5 +239,4 @@ def _authorized_app_shape(
         },
         "key_count": len(keys),
         "created_at": created_at,
-        "last_used_at": last_used_at,
     }
