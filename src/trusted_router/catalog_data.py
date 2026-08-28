@@ -334,6 +334,7 @@ class Model:
     supports_messages: bool = False
     supports_embeddings: bool = False
     supports_video: bool = False
+    supported_parameters: tuple[str, ...] = ()
     input_modalities: tuple[str, ...] = ("text",)
     output_modalities: tuple[str, ...] = ("text",)
     prepaid_available: bool = False
@@ -362,6 +363,7 @@ class ModelEndpoint:
     provider: str
     usage_type: str
     upstream_id: str | None = None
+    supported_parameters: tuple[str, ...] = ()
     prompt_price_microdollars_per_million_tokens: int = 0
     completion_price_microdollars_per_million_tokens: int = 0
     published_prompt_price_microdollars_per_million_tokens: int = 0

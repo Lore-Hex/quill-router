@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime
 
+from trusted_router.catalog_capabilities import (
+    manifest_supported_parameters,
+    provider_extension_parameters,
+    union_supported_parameters,
+)
 from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-compat
     _EMBEDDING_SPECS,
     _MODEL_PROVIDER_PRIVACY_OVERRIDES,
@@ -525,6 +530,15 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     byok_available = (
         False if is_meta else any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
     )
+    supported_parameters = union_supported_parameters(
+        manifest_supported_parameters(
+            {},
+            supports_chat=model.supports_chat,
+            supports_embeddings=model.supports_embeddings,
+        ),
+        model.supported_parameters,
+        *(endpoint.supported_parameters for endpoint in endpoints),
+    )
 
     # For meta routers, derive prompt/completion price from the candidate range
     # rather than the catalog's hard-coded 0. Most OpenRouter-compat
@@ -685,6 +699,12 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                 "provider_us_based": PROVIDERS[endpoint.provider].provider_headquarters_country
                 == PROVIDER_JURISDICTION_US,
                 "provider_eu_focused": endpoint.provider in EU_FOCUSED_PROVIDER_ORDER,
+                "supported_parameters": list(
+                    union_supported_parameters(
+                        endpoint.supported_parameters,
+                        provider_extension_parameters(endpoint.provider),
+                    )
+                ),
                 "request_price_microdollars": endpoint.request_price_microdollars,
             }
             for endpoint in endpoints
@@ -722,6 +742,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
             "is_moderated": False,
         },
         "per_request_limits": None,
+        "supported_parameters": list(supported_parameters),
         "trustedrouter": tr_block,
     }
 

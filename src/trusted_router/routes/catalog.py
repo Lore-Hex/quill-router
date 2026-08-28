@@ -31,6 +31,10 @@ from trusted_router.catalog import (
     provider_to_openrouter_shape,
     providers_for_display,
 )
+from trusted_router.catalog_capabilities import (
+    provider_extension_parameters,
+    union_supported_parameters,
+)
 from trusted_router.image_generation import (
     IMAGE_MODEL_ID_SET,
     image_input_modalities,
@@ -232,19 +236,6 @@ def _truthy_query(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _endpoint_supported_parameters(provider: str) -> list[str]:
-    parameters = [
-        "messages",
-        "temperature",
-        "top_p",
-        "max_tokens",
-        "stream",
-    ]
-    if provider == "openai":
-        parameters.append("service_tier")
-    return parameters
-
-
 def _openai_service_tier_metadata(provider: str, model_id: str) -> dict[str, Any]:
     if provider != "openai":
         return {}
@@ -305,6 +296,17 @@ def _public_model_matches_filters(shape: dict[str, Any], request: Request) -> bo
     )
     if region in {"eu", "europe"} and not trustedrouter.get("eu_focused_provider_available"):
         return False
+    requested_parameters = {
+        parameter.strip()
+        for raw in request.query_params.getlist("supported_parameters")
+        for parameter in raw.split(",")
+        if parameter.strip()
+    }
+    supported_parameters = {
+        str(parameter) for parameter in (shape.get("supported_parameters") or [])
+    }
+    if not requested_parameters.issubset(supported_parameters):
+        return False
     requested_output_modalities = {
         modality.strip().lower()
         for raw in request.query_params.getlist("output_modalities")
@@ -334,6 +336,7 @@ def _has_public_model_filters(request: Request) -> bool:
             "provider.region",
             "region",
             "output_modalities",
+            "supported_parameters",
         )
     )
 
@@ -517,7 +520,12 @@ def register_catalog_routes(router: APIRouter) -> None:
                     "completion_price_microdollars_per_million_tokens": (
                         endpoint.completion_price_microdollars_per_million_tokens
                     ),
-                    "supported_parameters": _endpoint_supported_parameters(endpoint.provider),
+                    "supported_parameters": list(
+                        union_supported_parameters(
+                            endpoint.supported_parameters,
+                            provider_extension_parameters(endpoint.provider),
+                        )
+                    ),
                     "trustedrouter": {
                         "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,
                         "stores_content": endpoint_stores_content(endpoint),
