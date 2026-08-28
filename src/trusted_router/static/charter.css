@@ -2671,6 +2671,83 @@ body.auth.auth-shell {
   font-size: 14px;
 }
 
+.provider-explorer-toolbar {
+  grid-template-columns: minmax(0, 1fr) auto;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.provider-explorer-count {
+  align-self: end;
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.provider-policy-cell {
+  width: 260px;
+  min-width: 220px;
+}
+
+.provider-policy-details summary {
+  display: grid;
+  gap: 7px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.provider-policy-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.provider-policy-preview {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-body);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.provider-policy-toggle {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.provider-policy-hide,
+.provider-policy-details[open] .provider-policy-preview,
+.provider-policy-details[open] .provider-policy-show {
+  display: none;
+}
+
+.provider-policy-details[open] .provider-policy-hide {
+  display: inline;
+}
+
+.provider-policy-full {
+  padding-top: 8px;
+  color: var(--text-body);
+}
+
+.provider-policy-full p {
+  margin: 0 0 8px;
+}
+
+.provider-explorer-empty {
+  padding: 32px 24px;
+  border-top: 1px solid var(--border-hairline);
+  text-align: center;
+}
+
+.provider-explorer-empty p {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+}
+
 .model-quick-row {
   display: flex;
   flex-wrap: wrap;

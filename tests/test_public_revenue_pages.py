@@ -530,6 +530,21 @@ def test_public_models_page_is_a_ranked_searchable_price_explorer(
     assert glm < kimi < deepseek < router_alias
 
 
+def test_public_providers_page_has_search_and_collapsed_policy_notes(
+    client: TestClient,
+) -> None:
+    response = client.get("/providers")
+
+    assert response.status_code == 200
+    assert 'type="search"' in response.text
+    assert 'data-provider-search' in response.text
+    assert 'data-provider-row data-provider-id="tinfoil"' in response.text
+    assert '<details class="provider-policy-details">' in response.text
+    assert "Show more" in response.text
+    assert "Show less" in response.text
+    assert "/static/providers.js" in response.text
+
+
 def test_public_model_detail_lists_distinct_serving_providers(client: TestClient) -> None:
     model_id = "moonshotai/kimi-k2.6"
     response = client.get(f"/models/{model_id}")
