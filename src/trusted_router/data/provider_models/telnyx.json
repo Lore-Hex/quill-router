@@ -2,7 +2,7 @@
   "_about": "Provider-native Telnyx inference routes, context windows, capabilities, and reconciled account-billable prices refreshed hourly from Telnyx-owned sources.",
   "provider": "telnyx",
   "source": "https://api.telnyx.com/v2/ai/openai/models",
-  "generated_at": "2026-08-27T13:51:46Z",
+  "generated_at": "2026-08-28T05:52:57Z",
   "price_scale": "microdollars_per_million",
   "model_count": 15,
   "models": [
@@ -333,11 +333,7 @@
       "id": "deepseek/deepseek-v4-flash-0731",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
       "context_length": 1048576,
-      "provider_regions": [
-        "ap-southeast-2",
-        "us-east-1",
-        "us-west-1"
-      ],
+      "provider_regions": [],
       "input_token_price_per_m": 130000,
       "output_token_price_per_m": 260000,
       "cached_input_token_price_per_m": 30000
@@ -373,7 +369,8 @@
       "title": "zai-org/GLM-5.3-Flash",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"

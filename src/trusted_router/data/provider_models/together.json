@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Together AI routes that are live ahead of the shared OpenRouter snapshot. Verified against https://api.together.xyz/v1/models on 2026-06-22.",
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
-  "generated_at": "2026-08-25T18:42:44Z",
+  "generated_at": "2026-08-28T05:52:57Z",
   "model_count": 22,
   "models": [
     {
@@ -52,7 +52,8 @@
       "context_length": 512000,
       "input_token_price_per_m": 1740000,
       "output_token_price_per_m": 3480000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 200000,
+      "missing_since": "2026-08-28"
     },
     {
       "display_name": "Gemma 3N E4B Instruct",
@@ -75,7 +76,8 @@
       ],
       "context_length": 32768,
       "input_token_price_per_m": 60000,
-      "output_token_price_per_m": 120000
+      "output_token_price_per_m": 120000,
+      "missing_since": "2026-08-28"
     },
     {
       "display_name": "Gemma 4 31B-it FP8",
@@ -172,7 +174,8 @@
       "context_length": 524288,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
-      "cached_input_token_price_per_m": 60000
+      "cached_input_token_price_per_m": 60000,
+      "missing_since": "2026-08-28"
     },
     {
       "display_name": "Kimi K2.6 Fp4",
@@ -247,7 +250,8 @@
       "context_length": 512288,
       "input_token_price_per_m": 600000,
       "output_token_price_per_m": 3600000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 200000,
+      "missing_since": "2026-08-28"
     },
     {
       "display_name": "OpenAI GPT-OSS 120B",
@@ -316,7 +320,8 @@
       ],
       "context_length": 262144,
       "input_token_price_per_m": 280000,
-      "output_token_price_per_m": 860000
+      "output_token_price_per_m": 860000,
+      "missing_since": "2026-08-28"
     },
     {
       "display_name": "Ternary Bonsai 27B",

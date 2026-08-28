@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-08-27T17:37:32Z",
+  "generated_at": "2026-08-28T05:52:57Z",
   "model_count": 119,
   "models": [
     {
@@ -896,7 +896,7 @@
       "display_name": "nvidia/llama-3.1-nemotron-nano-8b-v1",
       "model_type": "chat",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "status": 1,
       "input_modalities": [
         "text"
@@ -916,7 +916,7 @@
       "upstream_id": "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
       "display_name": "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
       "model_type": "chat",
-      "routable": true,
+      "routable": false,
       "status": 1,
       "input_modalities": [
         "text",
@@ -930,7 +930,8 @@
       ],
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "missing_since": "2026-08-27"
+      "missing_since": "2026-08-27",
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
@@ -1005,7 +1006,7 @@
       "upstream_id": "nvidia/llama-3.3-nemotron-super-49b-v1",
       "display_name": "nvidia/llama-3.3-nemotron-super-49b-v1",
       "model_type": "chat",
-      "routable": true,
+      "routable": false,
       "status": 1,
       "input_modalities": [
         "text"
@@ -1018,14 +1019,15 @@
       ],
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "missing_since": "2026-08-27"
+      "missing_since": "2026-08-27",
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
       "upstream_id": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
       "display_name": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
       "model_type": "chat",
-      "routable": true,
+      "routable": false,
       "status": 1,
       "input_modalities": [
         "text"
@@ -1038,7 +1040,8 @@
       ],
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "missing_since": "2026-08-27"
+      "missing_since": "2026-08-27",
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "nvidia/llama-nemotron-embed-1b-v2",
@@ -1286,7 +1289,7 @@
       "upstream_id": "nvidia/nemotron-mini-4b-instruct",
       "display_name": "nvidia/nemotron-mini-4b-instruct",
       "model_type": "chat",
-      "routable": true,
+      "routable": false,
       "status": 1,
       "input_modalities": [
         "text"
@@ -1299,14 +1302,15 @@
       ],
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "missing_since": "2026-08-27"
+      "missing_since": "2026-08-27",
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "nvidia/nemotron-nano-12b-v2-vl",
       "upstream_id": "nvidia/nemotron-nano-12b-v2-vl",
       "display_name": "nvidia/nemotron-nano-12b-v2-vl",
       "model_type": "chat",
-      "routable": true,
+      "routable": false,
       "status": 1,
       "input_modalities": [
         "text",
@@ -1320,7 +1324,8 @@
       ],
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "missing_since": "2026-08-27"
+      "missing_since": "2026-08-27",
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "nvidia/nemotron-nano-3-30b-a3b",
@@ -1618,7 +1623,7 @@
       "upstream_id": "thinkingmachines/inkling",
       "display_name": "thinkingmachines/inkling",
       "model_type": "chat",
-      "routable": true,
+      "routable": false,
       "status": 1,
       "input_modalities": [
         "text"
@@ -1631,7 +1636,8 @@
       ],
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "missing_since": "2026-08-27"
+      "missing_since": "2026-08-27",
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "writer/palmyra-creative-122b",
@@ -1811,10 +1817,11 @@
       "status": 1,
       "id": "meta-llama/llama-3.1-70b-instruct",
       "upstream_id": "meta/llama-3.1-70b-instruct",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "missing_since": "2026-08-27"
+      "missing_since": "2026-08-27",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "meta/llama-3.1-8b-instruct",
@@ -1832,10 +1839,11 @@
       "status": 1,
       "id": "meta-llama/llama-3.1-8b-instruct",
       "upstream_id": "meta/llama-3.1-8b-instruct",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "missing_since": "2026-08-27"
+      "missing_since": "2026-08-27",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "meta/llama-3.2-11b-vision-instruct",
@@ -1874,10 +1882,11 @@
       "status": 1,
       "id": "meta-llama/llama-3.2-1b-instruct",
       "upstream_id": "meta/llama-3.2-1b-instruct",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "missing_since": "2026-08-27"
+      "missing_since": "2026-08-27",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "meta/llama-3.2-3b-instruct",
@@ -1895,10 +1904,11 @@
       "status": 1,
       "id": "meta-llama/llama-3.2-3b-instruct",
       "upstream_id": "meta/llama-3.2-3b-instruct",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "missing_since": "2026-08-27"
+      "missing_since": "2026-08-27",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "meta/llama-3.2-90b-vision-instruct",
@@ -1938,7 +1948,7 @@
       "id": "meta-llama/llama-3.3-70b-instruct",
       "upstream_id": "meta/llama-3.3-70b-instruct",
       "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable_reason": "delisted-upstream",
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
       "missing_since": "2026-08-27"
@@ -2057,10 +2067,11 @@
       "status": 1,
       "id": "nvidia/nemotron-nano-9b-v2",
       "upstream_id": "nvidia/nvidia-nemotron-nano-9b-v2",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "missing_since": "2026-08-27"
+      "missing_since": "2026-08-27",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "deepseek-ai/deepseek-v4-pro-0813",

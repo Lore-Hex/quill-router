@@ -611,16 +611,38 @@
       "status": 1,
       "id": "z-ai/glm-5.2",
       "upstream_id": "zai-org/GLM-5.2",
-      "context_length": 262144,
+      "context_length": 1048576,
       "routable": true,
       "input_token_price_per_m": 760000,
       "output_token_price_per_m": 2420000,
       "cached_input_token_price_per_m": 140000
+    },
+    {
+      "display_name": "IBM Granite 4.2 8B",
+      "title": "ibm-granite/granite-4.2-8b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "ibm-granite/granite-4.2-8b",
+      "upstream_id": "ibm-granite/granite-4.2-8b",
+      "context_length": 131072,
+      "routable": true,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 150000,
+      "cached_input_token_price_per_m": 50000
     }
   ],
   "source": "https://api.inference.wandb.ai/v1/models",
   "pricing_source": "https://wandb.ai/site/pricing/inference/",
-  "generated_at": "2026-08-25T18:42:44Z",
+  "generated_at": "2026-08-28T05:52:57Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 28
+  "model_count": 29
 }

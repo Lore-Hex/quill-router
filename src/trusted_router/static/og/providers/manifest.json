@@ -109,10 +109,10 @@
   },
   "cloudflare-workers-ai": {
     "card_version": 2,
-    "model_count": 25,
+    "model_count": 26,
     "name": "Cloudflare Workers AI",
     "privacy": "Policy documented",
-    "route_count": 25,
+    "route_count": 26,
     "route_mode": "Prepaid",
     "slug": "cloudflare-workers-ai"
   },
@@ -460,10 +460,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 25,
+    "model_count": 14,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 25,
+    "route_count": 14,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -739,10 +739,10 @@
   },
   "wandb": {
     "card_version": 2,
-    "model_count": 24,
+    "model_count": 25,
     "name": "Weights & Biases",
     "privacy": "Policy documented",
-    "route_count": 24,
+    "route_count": 25,
     "route_mode": "Prepaid",
     "slug": "wandb"
   },

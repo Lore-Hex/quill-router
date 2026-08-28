@@ -2,7 +2,7 @@
   "provider": "perplexity",
   "models": [
     {
-      "display_name": "perplexity/sonar",
+      "display_name": "sonar",
       "title": "perplexity/sonar",
       "model_type": "chat",
       "input_modalities": [
@@ -26,7 +26,7 @@
   ],
   "source": "https://api.perplexity.ai/v1/models",
   "pricing_source": "https://docs.perplexity.ai/docs/getting-started/pricing",
-  "generated_at": "2026-08-25T00:00:00Z",
+  "generated_at": "2026-08-28T05:52:57Z",
   "price_scale": "microdollars_per_million",
   "model_count": 1
 }

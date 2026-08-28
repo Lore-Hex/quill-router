@@ -44,7 +44,8 @@
       "context_length": 262144,
       "input_token_price_per_m": 130000,
       "output_token_price_per_m": 400000,
-      "cached_input_token_price_per_m": 26000
+      "cached_input_token_price_per_m": 26000,
+      "missing_since": "2026-08-28"
     },
     {
       "display_name": "openai/gpt-oss-120b",
@@ -66,7 +67,8 @@
       "context_length": 131072,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 550000,
-      "cached_input_token_price_per_m": 30000
+      "cached_input_token_price_per_m": 30000,
+      "missing_since": "2026-08-28"
     },
     {
       "display_name": "Qwen/Qwen3-VL-30B-A3B-Instruct",
@@ -112,7 +114,8 @@
       "context_length": 262144,
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 3200000,
-      "cached_input_token_price_per_m": 80000
+      "cached_input_token_price_per_m": 80000,
+      "missing_since": "2026-08-28"
     },
     {
       "display_name": "Qwen/Qwen3.6-27B-FP8",
@@ -135,7 +138,8 @@
       "context_length": 262144,
       "input_token_price_per_m": 325000,
       "output_token_price_per_m": 3250000,
-      "cached_input_token_price_per_m": 160000
+      "cached_input_token_price_per_m": 160000,
+      "missing_since": "2026-08-28"
     },
     {
       "display_name": "Qwen/Qwen3.6-35B-A3B-FP8",
@@ -229,7 +233,7 @@
   ],
   "source": "https://completions.near.ai/endpoints",
   "pricing_source": "https://cloud-api.near.ai/v1/models",
-  "generated_at": "2026-08-25T18:42:44Z",
+  "generated_at": "2026-08-28T05:52:57Z",
   "price_scale": "microdollars_per_million",
   "model_count": 10
 }

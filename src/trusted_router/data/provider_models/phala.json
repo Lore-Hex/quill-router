@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Phala routes live ahead of the shared snapshot. phala/* upstream IDs select the Confidential AI tier. Upstream-author pass-through routes are separately classified and must not inherit the confidential or ZDR posture of phala/* routes.",
   "provider": "phala",
   "source": "https://api.redpill.ai/v1/models",
-  "generated_at": "2026-08-28T02:31:04Z",
+  "generated_at": "2026-08-28T05:52:57Z",
   "model_count": 3,
   "models": [
     {
@@ -60,7 +60,7 @@
       "max_output_tokens": 65535,
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 15000000,
-      "cached_input_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 300000,
       "model_type": "chat",
       "features": [
         "reasoning",
@@ -70,7 +70,8 @@
       ],
       "input_modalities": [
         "text",
-        "image"
+        "image",
+        "video"
       ],
       "output_modalities": [
         "text"
