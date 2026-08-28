@@ -122,8 +122,23 @@ def test_phala_parser_publishes_confidential_and_standard_pass_through_routes(
     payload = {
         "data": [
             {
-                "id": "phala/glm-5.2",
-                "pricing": {"prompt": "0.0000003", "completion": "0.000002"},
+                "id": "z-ai/glm-5.2",
+                "name": "Z.ai: GLM 5.2",
+                "context_length": 1_048_576,
+                "max_output_length": 131_072,
+                "input_modalities": ["text"],
+                "output_modalities": ["text"],
+                "supported_features": [
+                    "json_mode",
+                    "reasoning",
+                    "structured_outputs",
+                    "tools",
+                ],
+                "pricing": {
+                    "prompt": "0.00000126",
+                    "completion": "0.000003",
+                    "input_cache_read": "0.00000022",
+                },
             },
             {
                 "id": "openai/gpt-5.5",
@@ -198,7 +213,7 @@ def test_phala_parser_publishes_confidential_and_standard_pass_through_routes(
         "z-ai/glm-5.2",
         "z-ai/glm-5.3-flash",
     }
-    assert phala.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "phala/glm-5.2"
+    assert phala.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "z-ai/glm-5.2"
     assert phala.UPSTREAM_ID_MAP["moonshotai/kimi-k3"] == "moonshotai/kimi-k3"
     assert phala.UPSTREAM_ID_MAP["z-ai/glm-5.3-flash"] == "z-ai/glm-5.3-flash"
     assert result.prices["moonshotai/kimi-k3"] == ModelPrice(
@@ -210,6 +225,10 @@ def test_phala_parser_publishes_confidential_and_standard_pass_through_routes(
         150_000,
         500_000,
         prompt_cached_micro_per_m=30_000,
+    )
+    assert (
+        phala._DISCOVERED_MANIFEST_ROWS["z-ai/glm-5.2"]["upstream_id"]
+        == "z-ai/glm-5.2"
     )
     assert (
         phala._DISCOVERED_MANIFEST_ROWS["moonshotai/kimi-k3"]["upstream_id"] == "moonshotai/kimi-k3"
@@ -247,6 +266,10 @@ def test_phala_parser_publishes_confidential_and_standard_pass_through_routes(
 
     written = json.loads(manifest_path.read_text(encoding="utf-8"))
     rows_by_id = {row["id"]: row for row in written["models"]}
+    assert rows_by_id["z-ai/glm-5.2"]["upstream_id"] == "z-ai/glm-5.2"
+    assert rows_by_id["z-ai/glm-5.2"]["input_token_price_per_m"] == 1_260_000
+    assert rows_by_id["z-ai/glm-5.2"]["cached_input_token_price_per_m"] == 220_000
+    assert rows_by_id["z-ai/glm-5.2"]["output_token_price_per_m"] == 3_000_000
     assert rows_by_id["moonshotai/kimi-k3"]["upstream_id"] == "moonshotai/kimi-k3"
     assert rows_by_id["moonshotai/kimi-k3"]["input_token_price_per_m"] == 3_000_000
     assert rows_by_id["z-ai/glm-5.3-flash"]["input_token_price_per_m"] == 150_000

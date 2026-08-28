@@ -2261,7 +2261,7 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert deepinfra.upstream_id == "zai-org/GLM-5.2"
     assert fireworks.upstream_id == "accounts/fireworks/models/glm-5p2"
     assert novita.upstream_id == "zai-org/glm-5.2"
-    assert phala.upstream_id == "phala/glm-5.2"
+    assert phala.upstream_id == "z-ai/glm-5.2"
     assert siliconflow.upstream_id == "zai-org/GLM-5.2"
     assert tinfoil.upstream_id == "glm-5-2"
     assert together.upstream_id == "zai-org/GLM-5.2"
