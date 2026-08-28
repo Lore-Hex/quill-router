@@ -62,6 +62,15 @@
     "route_mode": "Prepaid",
     "slug": "azure"
   },
+  "baidu": {
+    "card_version": 2,
+    "model_count": 3,
+    "name": "Baidu Qianfan",
+    "privacy": "Policy documented",
+    "route_count": 3,
+    "route_mode": "Prepaid",
+    "slug": "baidu"
+  },
   "baseten": {
     "card_version": 2,
     "model_count": 15,
@@ -134,6 +143,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "crusoe"
   },
+  "darkbloom": {
+    "card_version": 2,
+    "model_count": 3,
+    "name": "Darkbloom",
+    "privacy": "Policy documented",
+    "route_count": 3,
+    "route_mode": "Prepaid",
+    "slug": "darkbloom"
+  },
   "databricks": {
     "card_version": 2,
     "model_count": 10,
@@ -187,6 +205,15 @@
     "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "engy"
+  },
+  "fal": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "fal.ai",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "fal"
   },
   "featherless": {
     "card_version": 2,
@@ -568,11 +595,11 @@
   },
   "riverflow": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 1,
     "name": "Riverflow",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 1,
+    "route_mode": "Prepaid",
     "slug": "riverflow"
   },
   "runway": {
@@ -656,6 +683,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "telnyx"
   },
+  "tencent-cloud": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Tencent Cloud",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "tencent-cloud"
+  },
   "thinkingmachines": {
     "card_version": 2,
     "model_count": 2,
@@ -721,11 +757,11 @@
   },
   "vultr": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 4,
     "name": "Vultr",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 4,
+    "route_mode": "Prepaid",
     "slug": "vultr"
   },
   "wafer": {

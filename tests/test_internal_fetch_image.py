@@ -28,6 +28,9 @@ _TINY_PNG = bytes.fromhex(
     "0000000d4944415478da636400010000000500010d0a2db40000000049454e44ae"
     "426082"
 )
+_TINY_WEBP = bytes.fromhex(
+    "524946461e000000574542505650384c110000002f000000100750ef8ed7baf38188e87f0000"
+)
 
 
 @pytest.fixture
@@ -176,9 +179,27 @@ def test_fetch_sniffs_content_type_when_missing(
     assert resp.json()["data"]["media_type"] == "image/png"
 
 
-def test_fetch_caps_size(
+def test_fetch_accepts_and_sniffs_webp(
     fetch_image_client: TestClient, httpx_mock: HTTPXMock
 ) -> None:
+    httpx_mock.add_response(
+        url="https://example.com/result.webp",
+        method="GET",
+        content=_TINY_WEBP,
+    )
+    resp = fetch_image_client.post(
+        "/v1/internal/gateway/fetch-image",
+        headers=_internal_headers(),
+        json={"url": "https://example.com/result.webp"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["media_type"] == "image/webp"
+    request = httpx_mock.get_request()
+    assert request is not None
+    assert "image/webp" in request.headers["accept"]
+
+
+def test_fetch_caps_size(fetch_image_client: TestClient, httpx_mock: HTTPXMock) -> None:
     huge = b"\x89PNG\r\n\x1a\n" + b"x" * (11 * 1024 * 1024)
     httpx_mock.add_response(
         url="https://example.com/huge.png",

@@ -80,15 +80,15 @@ READY = {
 SPECIALIZED_READY = {
     "perplexity",
     "krea",
+    "riverflow",
 }
 IMPLEMENTED = READY | SPECIALIZED_READY
 RUNTIME_ONLY_READY = (READY - {"io-net", "sakana"}) | {"nscale"}
-ROUTABLE_READY = READY | {"perplexity"}
+ROUTABLE_READY = READY | {"perplexity", "riverflow"}
 PENDING = {
     "perceptron",
     "modal",
     "byteplus",
-    "riverflow",
     "liquid",
 }
 MODULES = (
@@ -538,41 +538,17 @@ def test_perplexity_parses_exact_low_context_request_fee() -> None:
     assert perplexity._parse_low_context_request_price(html) == 5_000
 
 
-def test_perceptron_filters_media_free_and_unpriced_rows() -> None:
-    rows = perceptron._normalize_rows(
-        [
-            {
-                "id": "ok",
-                "input_modalities": ["text"],
-                "output_modalities": ["text"],
-                "pricing": {"input_price_per_1m": "1", "output_price_per_1m": "2"},
-            },
-            {
-                "id": "image",
-                "input_modalities": ["text"],
-                "output_modalities": ["image"],
-                "pricing": {"input_price_per_1m": "1", "output_price_per_1m": "2"},
-            },
-            {
-                "id": "free",
-                "is_free": True,
-                "pricing": {"input_price_per_1m": "1", "output_price_per_1m": "2"},
-            },
-            {
-                "id": "zero",
-                "pricing": {"input_price_per_1m": "0", "output_price_per_1m": "0"},
-            },
-            {
-                "id": "zero-input-only",
-                "pricing": {"input_price_per_1m": "0", "output_price_per_1m": "2"},
-            },
-            {
-                "id": "zero-output-only",
-                "pricing": {"input_price_per_1m": "1", "output_price_per_1m": "0"},
-            },
-        ]
+def test_perceptron_inc_catalog_is_not_confused_with_perceptron_cloud() -> None:
+    assert perceptron.BASE_URL == "https://api.perceptron.inc"
+    assert perceptron.URL == "https://api.perceptron.inc/v1/models"
+    assert (
+        perceptron._model_ids(
+            {"data": [{"id": model_id} for model_id in perceptron.EXPECTED_MODEL_IDS]}
+        )
+        == perceptron.EXPECTED_MODEL_IDS
     )
-    assert [row["id"] for row in rows] == ["ok"]
+    assert PROVIDERS["perceptron"].supports_chat is False
+    assert PROVIDERS["perceptron"].supports_prepaid is False
 
 
 def test_io_net_normalizes_exact_prices_capabilities_and_limits() -> None:

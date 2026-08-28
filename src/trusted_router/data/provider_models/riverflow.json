@@ -1,0 +1,36 @@
+{
+  "provider": "riverflow",
+  "models": [
+    {
+      "display_name": "Riverflow 2 Fast",
+      "title": "riverflow-2-fast",
+      "model_type": "image",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "riverflow/riverflow-2-fast",
+      "upstream_id": "riverflow-2-fast",
+      "supported_features": [
+        "image-generation"
+      ],
+      "fixed_output_price_microdollars": {
+        "1k": 20000
+      },
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    }
+  ],
+  "source": "https://www.riverflow.ai/developers/docs",
+  "pricing_source": "https://www.riverflow.ai/developers/docs",
+  "generated_at": "2026-08-28T22:58:39Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 1
+}

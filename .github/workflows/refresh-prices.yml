@@ -179,6 +179,10 @@ jobs:
                       SAKANA_API_KEY:trustedrouter-sakana-api-key \
                       PERPLEXITY_API_KEY:trustedrouter-perplexity-api-key \
                       KREA_API_KEY:trustedrouter-krea-api-key \
+                      VULTR_API_KEY:trustedrouter-vultr-api-key \
+                      DARKBLOOM_API_KEY:trustedrouter-darkbloom-api-key \
+                      BAIDU_API_KEY:trustedrouter-baidu-api-key \
+                      RIVERFLOW_API_KEY:trustedrouter-riverflow-api-key \
                       WANDB_API_KEY:trustedrouter-wandb-api-key; do
             env="${pair%%:*}"
             secret="${pair#*:}"

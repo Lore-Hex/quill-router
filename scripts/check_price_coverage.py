@@ -42,7 +42,9 @@ from scripts.pricing.providers import (
     aion_labs,
     akashml,
     arcee,
+    baidu,
     bfl,
+    darkbloom,
     decart,
     featherless,
     inception,
@@ -58,12 +60,14 @@ from scripts.pricing.providers import (
     recraft,
     reka,
     relace,
+    riverflow,
     sail_research,
     sakana,
     sambanova,
     scaleway,
     stepfun,
     upstage,
+    vultr,
     wandb,
 )
 from scripts.pricing.video_sources import (
@@ -503,6 +507,9 @@ _CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
     featherless,
     sakana,
     wandb,
+    vultr,
+    darkbloom,
+    baidu,
 )
 
 _STALE_MANIFEST_PROVIDER_MODULES = (
@@ -519,6 +526,7 @@ _STALE_MANIFEST_PROVIDER_MODULES = (
     recraft,
     relace,
     stepfun,
+    riverflow,
 )
 
 _STALE_MANIFEST_PROVIDER_MODULE_BY_SLUG = {
