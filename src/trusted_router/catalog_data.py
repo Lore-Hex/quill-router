@@ -287,26 +287,26 @@ _MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOve
             "trustedrouter/zdr and provider.min_privacy=zdr routing."
         ),
     ),
-    (
-        "moonshotai/kimi-k3",
-        "phala",
-    ): ModelProviderPrivacyOverride(
-        privacy_tier=PRIVACY_TIER_STANDARD,
-        stores_content=True,
-        provider_zero_data_retention=False,
-        provider_confidential_compute=False,
-        provider_e2ee=False,
-        provider_policy=(
-            "Phala currently serves this model through the upstream-author "
-            "pass-through route, not a phala/* Confidential AI endpoint. "
-            "TrustedRouter therefore makes no ZDR, confidential-compute, or "
-            "E2EE claim for this exact route."
-        ),
-        provider_policy_url=(
-            "https://docs.phala.com/phala-cloud/confidential-ai/"
-            "confidential-model/confidential-ai-api"
-        ),
-    ),
+    **{
+        (model_id, "phala"): ModelProviderPrivacyOverride(
+            privacy_tier=PRIVACY_TIER_STANDARD,
+            stores_content=True,
+            provider_zero_data_retention=False,
+            provider_confidential_compute=False,
+            provider_e2ee=False,
+            provider_policy=(
+                "Phala currently serves this model through an upstream-author "
+                "pass-through route, not a phala/* Confidential AI endpoint. "
+                "TrustedRouter therefore makes no ZDR, confidential-compute, or "
+                "E2EE claim for this exact route."
+            ),
+            provider_policy_url=(
+                "https://docs.phala.com/phala-cloud/confidential-ai/"
+                "confidential-model/confidential-ai-api"
+            ),
+        )
+        for model_id in ("moonshotai/kimi-k3", "z-ai/glm-5.3-flash")
+    },
     **{
         (model_id, "venice"): ModelProviderPrivacyOverride(
             privacy_tier=PRIVACY_TIER_ZERO_RETENTION,

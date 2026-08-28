@@ -46,6 +46,10 @@ def test_featherless_uses_shared_canonical_model_ids() -> None:
         == "deepseek/deepseek-v4-flash-0731"
     )
     assert featherless.CATALOG.model_id("zai-org/GLM-5.2") == "z-ai/glm-5.2"
+    assert (
+        featherless.CATALOG.model_id("zai-org/GLM-5.3-Flash")
+        == "z-ai/glm-5.3-flash"
+    )
     assert featherless.CATALOG.model_id("moonshotai/Kimi-K3") == "moonshotai/kimi-k3"
 
 

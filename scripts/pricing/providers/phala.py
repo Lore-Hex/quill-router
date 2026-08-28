@@ -68,6 +68,7 @@ EXPECTED_MODELS = [
     "deepseek/deepseek-v3.2",
     "z-ai/glm-5",
     "z-ai/glm-5.2",
+    "z-ai/glm-5.3-flash",
     "moonshotai/kimi-k2.6",
     "moonshotai/kimi-k3",
     "google/gemma-3-27b-it",
@@ -105,6 +106,7 @@ _STANDARD_PASSTHROUGH_TO_OR_ID = {
     # Direct visible-content canary passed on 2026-07-29. This is not a
     # phala/* Confidential AI ID, so catalog_data.py forces Standard privacy.
     "moonshotai/kimi-k3": "moonshotai/kimi-k3",
+    "z-ai/glm-5.3-flash": "z-ai/glm-5.3-flash",
 }
 _DISCOVERED_ID_MAP = {
     **_NATIVE_TO_OR_ID,

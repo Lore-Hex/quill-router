@@ -280,6 +280,17 @@ def test_phala_kimi_k3_pass_through_is_standard_not_confidential() -> None:
     assert endpoint_e2ee(endpoint) is False
 
 
+def test_phala_glm_53_pass_through_is_standard_not_confidential() -> None:
+    endpoint = MODEL_ENDPOINTS["z-ai/glm-5.3-flash@phala/prepaid"]
+
+    assert endpoint.upstream_id == "z-ai/glm-5.3-flash"
+    assert endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD
+    assert endpoint_stores_content(endpoint) is True
+    assert endpoint_zero_data_retention(endpoint) is False
+    assert endpoint_confidential_compute(endpoint) is False
+    assert endpoint_e2ee(endpoint) is False
+
+
 def test_kimi_k3_public_catalog_reports_route_specific_phala_posture(
     client: TestClient,
 ) -> None:
