@@ -9,18 +9,33 @@ def test_ci_accepts_explicit_dispatch_for_bot_commits() -> None:
     assert "workflow_dispatch: {}" in workflow
 
 
-def test_price_refresh_dispatches_ci_before_deploy_and_fails_closed() -> None:
+def test_price_refresh_checks_exact_branch_sha_before_advancing_main() -> None:
     workflow = (ROOT / ".github/workflows/refresh-prices.yml").read_text(
         encoding="utf-8"
     )
-    ci_dispatch = 'gh workflow run ci.yml --ref main --repo "${GITHUB_REPOSITORY}"'
+    branch_ci_dispatch = "gh workflow run ci.yml \\\n"
     deploy_dispatch = (
         'gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}"'
     )
 
-    assert ci_dispatch in workflow
+    assert 'BRANCH="automation/price-refresh-${GITHUB_RUN_ID}"' in workflow
+    assert "SNAPSHOT_SHA=$(git rev-parse HEAD)" in workflow
+    assert 'git push origin "HEAD:refs/heads/${BRANCH}"' in workflow
+    assert branch_ci_dispatch in workflow
+    assert '--ref "${BRANCH}"' in workflow
+    assert '--branch "${BRANCH}"' in workflow
+    assert 'select(.headSha == \\"${SNAPSHOT_SHA}\\")' in workflow
+    assert 'if [ "${conclusion}" = "success" ]' in workflow
+    assert 'if [ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" ]' in workflow
+    assert "git rebase" not in workflow
+    main_push = 'git push origin "HEAD:refs/heads/main"'
+    assert main_push in workflow
     assert deploy_dispatch in workflow
-    assert workflow.index(ci_dispatch) < workflow.index(deploy_dispatch)
+    assert workflow.index(branch_ci_dispatch) < workflow.index(main_push)
+    assert workflow.index('if [ "${conclusion}" = "success" ]') < workflow.index(
+        main_push
+    )
+    assert workflow.index(main_push) < workflow.index(deploy_dispatch)
     assert "WARN: failed to dispatch deploy.yml" not in workflow
 
 
@@ -29,7 +44,7 @@ def test_price_refresh_validates_generated_catalog_before_committing() -> None:
         encoding="utf-8"
     )
     validation_step = "- name: Validate generated catalog before commit"
-    commit_step = "- name: Commit and push if changed"
+    commit_step = "- name: Commit, verify, and push if changed"
 
     assert validation_step in workflow
     assert workflow.index(validation_step) < workflow.index(commit_step)
@@ -46,7 +61,7 @@ def test_model_discovery_gap_alerts_without_freezing_safe_provider_updates() -> 
         encoding="utf-8"
     )
     coverage_step = "- name: Price-source coverage audit"
-    commit_step = "- name: Commit and push if changed"
+    commit_step = "- name: Commit, verify, and push if changed"
     final_alert = "- name: Reconcile model-discovery coverage issue"
 
     assert workflow.index(coverage_step) < workflow.index(commit_step)
