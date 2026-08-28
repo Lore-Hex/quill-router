@@ -511,6 +511,7 @@ _STALE_MANIFEST_PROVIDER_MODULES = (
     io_net,
     jina,
     krea,
+    near_ai,
     bfl,
     decart,
     nscale,
