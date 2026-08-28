@@ -64,11 +64,33 @@
       "routable": true,
       "input_token_price_per_m": 750000,
       "output_token_price_per_m": 2400000
+    },
+    {
+      "display_name": "zai-org/GLM-5.3-Flash",
+      "title": "zai-org/GLM-5.3-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "zai-org/GLM-5.3-Flash",
+      "context_length": 262144,
+      "routable": true,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 30000
     }
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/pricing",
-  "generated_at": "2026-08-25T18:42:44Z",
+  "generated_at": "2026-08-28T02:31:04Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 3
+  "model_count": 4
 }

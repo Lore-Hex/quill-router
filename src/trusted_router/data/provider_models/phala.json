@@ -1,9 +1,9 @@
 {
-  "_about": "Provider-native supplement for Phala routes live ahead of the shared snapshot. phala/* upstream IDs select the Confidential AI tier. Kimi K3 currently uses the separately classified upstream-author pass-through route and must not inherit the confidential or ZDR posture of phala/* routes.",
+  "_about": "Provider-native supplement for Phala routes live ahead of the shared snapshot. phala/* upstream IDs select the Confidential AI tier. Upstream-author pass-through routes are separately classified and must not inherit the confidential or ZDR posture of phala/* routes.",
   "provider": "phala",
   "source": "https://api.redpill.ai/v1/models",
-  "generated_at": "2026-07-30T00:02:56Z",
-  "model_count": 2,
+  "generated_at": "2026-08-28T02:31:04Z",
+  "model_count": 3,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -72,6 +72,54 @@
       "supported_sampling_parameters": [
         "frequency_penalty",
         "logit_bias",
+        "max_tokens",
+        "min_p",
+        "presence_penalty",
+        "repetition_penalty",
+        "seed",
+        "stop",
+        "temperature",
+        "top_k",
+        "top_p"
+      ]
+    },
+    {
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "z-ai/glm-5.3-flash",
+      "display_name": "Z.ai: GLM 5.3 Flash",
+      "title": "z-ai/glm-5.3-flash",
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 30000,
+      "model_type": "chat",
+      "features": [
+        "reasoning",
+        "function-calling",
+        "structured-outputs",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "supported_features": [
+        "json_mode",
+        "logprobs",
+        "reasoning",
+        "structured_outputs",
+        "tools"
+      ],
+      "supported_sampling_parameters": [
+        "frequency_penalty",
         "max_tokens",
         "min_p",
         "presence_penalty",

@@ -115,7 +115,7 @@ def test_phala_hourly_parser_applies_announced_policy() -> None:
     assert after["z-ai/glm-5.2"] == prices["z-ai/glm-5.2"]
 
 
-def test_phala_parser_publishes_confidential_routes_and_verified_k3_pass_through(
+def test_phala_parser_publishes_confidential_and_standard_pass_through_routes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -141,6 +141,25 @@ def test_phala_parser_publishes_confidential_routes_and_verified_k3_pass_through
                     "prompt": "0.000003",
                     "completion": "0.000015",
                     "input_cache_read": "0.0000015",
+                },
+            },
+            {
+                "id": "z-ai/glm-5.3-flash",
+                "name": "Z.ai: GLM 5.3 Flash",
+                "context_length": 1_048_576,
+                "max_output_length": 131_072,
+                "input_modalities": ["text", "image"],
+                "output_modalities": ["text"],
+                "supported_features": [
+                    "json_mode",
+                    "reasoning",
+                    "structured_outputs",
+                    "tools",
+                ],
+                "pricing": {
+                    "prompt": "0.00000015",
+                    "completion": "0.00000050",
+                    "input_cache_read": "0.00000003",
                 },
             },
             {
@@ -174,16 +193,30 @@ def test_phala_parser_publishes_confidential_routes_and_verified_k3_pass_through
 
     result = phala.fetch()
 
-    assert set(result.prices) == {"moonshotai/kimi-k3", "z-ai/glm-5.2"}
+    assert set(result.prices) == {
+        "moonshotai/kimi-k3",
+        "z-ai/glm-5.2",
+        "z-ai/glm-5.3-flash",
+    }
     assert phala.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "phala/glm-5.2"
     assert phala.UPSTREAM_ID_MAP["moonshotai/kimi-k3"] == "moonshotai/kimi-k3"
+    assert phala.UPSTREAM_ID_MAP["z-ai/glm-5.3-flash"] == "z-ai/glm-5.3-flash"
     assert result.prices["moonshotai/kimi-k3"] == ModelPrice(
         3_000_000,
         15_000_000,
         prompt_cached_micro_per_m=1_500_000,
     )
+    assert result.prices["z-ai/glm-5.3-flash"] == ModelPrice(
+        150_000,
+        500_000,
+        prompt_cached_micro_per_m=30_000,
+    )
     assert (
         phala._DISCOVERED_MANIFEST_ROWS["moonshotai/kimi-k3"]["upstream_id"] == "moonshotai/kimi-k3"
+    )
+    assert (
+        phala._DISCOVERED_MANIFEST_ROWS["z-ai/glm-5.3-flash"]["upstream_id"]
+        == "z-ai/glm-5.3-flash"
     )
     assert "openai/gpt-5.5" not in phala._DISCOVERED_MANIFEST_ROWS
 
@@ -216,6 +249,9 @@ def test_phala_parser_publishes_confidential_routes_and_verified_k3_pass_through
     rows_by_id = {row["id"]: row for row in written["models"]}
     assert rows_by_id["moonshotai/kimi-k3"]["upstream_id"] == "moonshotai/kimi-k3"
     assert rows_by_id["moonshotai/kimi-k3"]["input_token_price_per_m"] == 3_000_000
+    assert rows_by_id["z-ai/glm-5.3-flash"]["input_token_price_per_m"] == 150_000
+    assert rows_by_id["z-ai/glm-5.3-flash"]["cached_input_token_price_per_m"] == 30_000
+    assert rows_by_id["z-ai/glm-5.3-flash"]["output_token_price_per_m"] == 500_000
     assert "openai/gpt-5.5" not in rows_by_id
     assert "unmapped/ordinary-pass-through" not in rows_by_id
 
