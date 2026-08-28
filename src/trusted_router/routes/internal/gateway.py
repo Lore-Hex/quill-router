@@ -87,6 +87,14 @@ from trusted_router.provider_contracts import (
     provider_model_requires_exact_global_settlement,
 )
 from trusted_router.provider_types import estimate_tokens_from_text
+from trusted_router.receipt_keys import (
+    GCP_ATTESTATION_KIND,
+    attestation_commits_to_jwk,
+    gcp_attestation_image_digest,
+    normalize_receipt_jwk,
+    receipt_kid,
+    verify_gcp_attestation_chain,
+)
 from trusted_router.regional_quota_ledger import RegionalLeaseLedgerError
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.request_attribution import (
@@ -108,6 +116,7 @@ from trusted_router.schemas import (
     GatewayResolveCustomModelRequest,
     GatewaySettleRequest,
     GatewayValidateRequest,
+    SpendLeaseBootRegistrationRequest,
 )
 from trusted_router.scopes import SCOPE_INFERENCE
 from trusted_router.security import lookup_hash_api_key
@@ -139,6 +148,19 @@ from trusted_router.services.user_model_slots import (
     acquire_user_model_slot,
     release_user_model_slot,
 )
+from trusted_router.spend_leases import (
+    BootAuthHeader,
+    SpendLeaseArtifact,
+    SpendLeaseBoot,
+    SpendLeaseEchoValue,
+    SpendLeaseSigner,
+    build_spend_lease_shadow_event,
+    freeze_spend_lease_catalog,
+    mint_shadow_spend_lease,
+    parse_boot_auth_header,
+    spend_lease_eligible,
+    verify_boot_auth,
+)
 from trusted_router.storage import (
     STORE,
     Generation,
@@ -152,6 +174,7 @@ from trusted_router.storage_errors import (
     conflict_store_error_types,
 )
 from trusted_router.storage_gcp_io import spanner_rpc_budget
+from trusted_router.storage_gcp_secrets import secret_manager_seed_loader
 from trusted_router.storage_models import (
     AppMarkupPayout,
     GatewayAuthorization,
@@ -159,6 +182,7 @@ from trusted_router.storage_models import (
     TypedFinalizeResult,
     UserModelPayout,
     UserProvidedModel,
+    iso_now,
 )
 from trusted_router.synthetic.fleet import record_heartbeat
 from trusted_router.synthetic.funding import ensure_monitor_funding, monitor_lookup_hash
@@ -187,6 +211,8 @@ _BROADCAST_EMPTY_CACHE_TTL_SECONDS = 60.0
 _BROADCAST_EMPTY_CACHE_MAX_ENTRIES = 1_024
 _BROADCAST_EMPTY_CACHE: OrderedDict[str, float] = OrderedDict()
 _BROADCAST_EMPTY_CACHE_LOCK = threading.Lock()
+_SPEND_LEASE_SIGNERS: dict[tuple[str, str], SpendLeaseSigner] = {}
+_SPEND_LEASE_SIGNERS_LOCK = threading.Lock()
 _NATIVE_BATCH_ROUTE_PREFIX = "batch.native."
 _NATIVE_BATCH_BILLED_FRACTION_BPS = {
     "openai": 5_000,
@@ -255,6 +281,62 @@ _SETTLE_REPAIR_FIELDS = frozenset(
 )
 
 
+def _spend_lease_signer(settings: Settings) -> SpendLeaseSigner:
+    cache_key = (settings.gcp_project_id, settings.spend_lease_signing_secret_name)
+    with _SPEND_LEASE_SIGNERS_LOCK:
+        signer = _SPEND_LEASE_SIGNERS.get(cache_key)
+        if signer is None:
+            signer = SpendLeaseSigner(
+                secret_manager_seed_loader(
+                    project_id=settings.gcp_project_id,
+                    secret_name=settings.spend_lease_signing_secret_name,
+                )
+            )
+            _SPEND_LEASE_SIGNERS[cache_key] = signer
+        return signer
+
+
+def _register_spend_lease_boot_sync(
+    request: Request,
+    body: SpendLeaseBootRegistrationRequest,
+    settings: Settings,
+) -> dict[str, Any]:
+    require_internal_gateway(request, settings)
+    try:
+        jwk = normalize_receipt_jwk(body.jwk)
+        kid = receipt_kid(jwk)
+        if not attestation_commits_to_jwk(body.attestation, body.attestation_kind, jwk):
+            raise ValueError("attestation does not commit to the receipt public key")
+        verified = False
+        approved = False
+        image_digest = ""
+        if body.attestation_kind == GCP_ATTESTATION_KIND:
+            verify_gcp_attestation_chain(body.attestation)
+            image_digest = gcp_attestation_image_digest(body.attestation)
+            verified = True
+            approved = image_digest in settings.spend_lease_accepted_gcp_digests
+        record = SpendLeaseBoot(
+            kid=kid,
+            jwk=jwk,
+            approved=approved,
+            verified=verified,
+            image_digest=image_digest,
+            attestation_kind=body.attestation_kind,
+            registered_at=iso_now(),
+        )
+        stored = STORE.observe_spend_lease_boot(record)
+    except ValueError as exc:
+        raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
+    return {
+        "data": {
+            "boot_kid": stored.kid,
+            "verified": stored.verified,
+            "approved": stored.approved,
+            "image_digest": stored.image_digest or None,
+        }
+    }
+
+
 async def authorize_gateway(
     request: Request,
     body: GatewayAuthorizeRequest,
@@ -293,7 +375,19 @@ async def authorize_gateway(
             headers={"Retry-After": "1"},
         )
     try:
-        return await run_in_threadpool(_authorize_gateway_sync, request, body, settings)
+        try:
+            raw_body = await request.body()
+        except RuntimeError:
+            # Direct unit callers may construct a Request without an ASGI receive
+            # channel. Real routed requests always provide the exact cached bytes.
+            raw_body = b""
+        return await run_in_threadpool(
+            _authorize_gateway_sync,
+            request,
+            body,
+            settings,
+            raw_body,
+        )
     finally:
         _AUTHORIZE_ADMISSION.release(subject)
 
@@ -319,6 +413,72 @@ def _authorize_gateway_sync(
     request: Request,
     body: GatewayAuthorizeRequest,
     settings: Settings,
+    raw_body: bytes = b"",
+) -> dict[str, Any]:
+    boot_auth_headers = request.headers.getlist("X-TR-Boot-Auth")
+    boot_auth = (
+        parse_boot_auth_header(boot_auth_headers[0])
+        if len(boot_auth_headers) == 1
+        else None
+    )
+    echo = (
+        SpendLeaseEchoValue(**body.spend_lease_echo.model_dump())
+        if body.spend_lease_echo is not None
+        else None
+    )
+    context: dict[str, Any] = {
+        "raw_body": raw_body,
+        "workspace_id": "",
+        "key_hash": str(body.api_key_hash or body.api_key_lookup_hash or ""),
+        "boot_auth": boot_auth,
+        "boot_kid": boot_auth.kid if boot_auth is not None else "",
+        "boot_verified": False,
+        "echo": echo,
+        "server_estimate_micro": None,
+    }
+    try:
+        response = _authorize_gateway_sync_impl(request, body, settings, context)
+    except Exception as exc:
+        if settings.spend_lease_issuance_enabled:
+            status = int(getattr(exc, "status_code", 500))
+            verdict = "declined_funds" if status in {402, 429} else "declined_other"
+            _record_spend_lease_shadow(context, verdict=verdict)
+        raise
+    if settings.spend_lease_issuance_enabled:
+        data = response.get("data")
+        if isinstance(data, dict):
+            context["event_id"] = str(data.get("authorization_id") or uuid.uuid4())
+        _record_spend_lease_shadow(context, verdict="accepted")
+    return response
+
+
+def _record_spend_lease_shadow(
+    context: dict[str, Any],
+    *,
+    verdict: str,
+) -> None:
+    try:
+        event = build_spend_lease_shadow_event(
+            event_id=str(context.get("event_id") or uuid.uuid4()),
+            created_at=iso_now(),
+            workspace_id=str(context.get("workspace_id") or ""),
+            key_hash=str(context.get("key_hash") or ""),
+            boot_kid=str(context.get("boot_kid") or ""),
+            boot_verified=bool(context.get("boot_verified")),
+            echo=cast(SpendLeaseEchoValue | None, context.get("echo")),
+            server_estimate_micro=cast(int | None, context.get("server_estimate_micro")),
+            server_verdict=cast(Any, verdict),
+        )
+        STORE.record_spend_lease_shadow(event.event_id, event.payload())
+    except Exception:
+        logger.exception("spend_lease_shadow_enqueue_failed")
+
+
+def _authorize_gateway_sync_impl(
+    request: Request,
+    body: GatewayAuthorizeRequest,
+    settings: Settings,
+    spend_context: dict[str, Any],
 ) -> dict[str, Any]:
     """Core gateway-authorize logic, extracted from the route closure so it is a
     named, directly unit-testable function (#40). The registered route handler is
@@ -328,6 +488,20 @@ def _authorize_gateway_sync(
     if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
         raise api_error(401, "Invalid API key", ErrorType.INVALID_API_KEY)
     _assert_gateway_key_scope(api_key)
+    spend_context["workspace_id"] = api_key.workspace_id
+    spend_context["key_hash"] = api_key.hash
+    boot_auth = cast(BootAuthHeader | None, spend_context["boot_auth"])
+    if settings.spend_lease_issuance_enabled and boot_auth is not None:
+        boot = STORE.get_spend_lease_boot(boot_auth.kid)
+        spend_context["boot_verified"] = verify_boot_auth(
+            boot=boot,
+            auth=boot_auth,
+            method=request.method,
+            path=request.url.path,
+            exact_body_bytes=cast(bytes, spend_context["raw_body"]),
+            signed_lookup_hash=body.api_key_lookup_hash,
+            resolved_lookup_hash=api_key.lookup_hash,
+        )
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
@@ -663,6 +837,7 @@ def _authorize_gateway_sync(
         # Settle-side caps compare against this frozen hold. If authorize held
         # only the base, those caps would claw the app markup back at settle.
         estimate += app_markup_microdollars(estimate, app_markup_basis_points)
+    spend_context["server_estimate_micro"] = estimate
     # Minted up front so a user-model concurrency slot can be keyed by it
     # before the reservation exists. It is a fresh uuid — never derived from
     # the caller's Idempotency-Key: a deterministic id would outlive its
@@ -670,6 +845,124 @@ def _authorize_gateway_sync(
     # (silently dropping a later payout) and let a mismatching concurrent
     # request release the winner's slot.
     authorization_id = _new_gateway_authorization_id()
+    regional_authorize = getattr(_typed_store, "authorize_gateway_regional", None)
+    regional_eligible = (
+        settings.regional_quota_leases_enabled
+        and settings.regional_quota_lease_issuance_enabled
+        and workspace.id in settings.regional_quota_lease_pilot_workspaces
+        and callable(regional_authorize)
+        and estimate > 0
+        and body.route_type in {None, "chat.completions", "responses"}
+        and all(
+            UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
+            for _candidate_model, candidate_endpoint in endpoint_candidates
+        )
+        and not any(
+            provider_model_requires_exact_global_settlement(
+                candidate_endpoint.provider,
+                candidate_endpoint.model_id,
+            )
+            for _candidate_model, candidate_endpoint in endpoint_candidates
+        )
+        and api_key.limit_microdollars is None
+        and api_key.limit_daily_microdollars is None
+        and api_key.limit_weekly_microdollars is None
+        and api_key.limit_monthly_microdollars is None
+        and custom_model is None
+        and user_model is None
+        and partner_mode is None
+        and additional_cost_reservation == 0
+        and not native_batch_eligible
+        and app_markup_basis_points == 0
+    )
+    spend_lease: SpendLeaseArtifact | None = None
+    if (
+        settings.spend_lease_issuance_enabled
+        and bool(spend_context["boot_verified"])
+        and boot_auth is not None
+        and spend_lease_eligible(
+            workspace_id=workspace.id,
+            pilot_workspace_ids=settings.spend_lease_pilot_workspaces,
+            api_key=api_key,
+            route_type=body.route_type,
+            endpoint_candidates=endpoint_candidates,
+            custom_model=custom_model,
+            user_model=user_model,
+            partner_mode=partner_mode,
+            additional_cost_reservation_microdollars=additional_cost_reservation,
+            native_batch_eligible=native_batch_eligible,
+            app_markup_basis_points=app_markup_basis_points,
+            regional_lease_authorization=bool(regional_eligible),
+        )
+    ):
+        try:
+            boot_kid = boot_auth.kid
+            echo = cast(SpendLeaseEchoValue | None, spend_context.get("echo"))
+            active = STORE.get_active_spend_lease(api_key.hash, boot_kid)
+            echo_ends_active = bool(
+                active is not None
+                and echo is not None
+                and echo.lease_id == active.lease_id
+                and echo.state in {"exhausted", "expired", "terminal"}
+            )
+            active_expired = active is not None and active.exp <= int(time.time())
+            replace_active = echo_ends_active or active_expired
+            if active is not None and not replace_active:
+                spend_lease = active
+            else:
+                snapshot_reader = getattr(STORE, "typed_credit_snapshot", None)
+                snapshot = (
+                    snapshot_reader(workspace.id) if callable(snapshot_reader) else None
+                )
+                if snapshot is None:
+                    memory_snapshot = getattr(STORE, "credit_money_snapshot", None)
+                    snapshot = (
+                        memory_snapshot(workspace.id)
+                        if callable(memory_snapshot)
+                        else None
+                    )
+                if snapshot is not None:
+                    available = max(
+                        0, int(snapshot[0]) - int(snapshot[1]) - int(snapshot[2])
+                    )
+                    post_request_headroom = max(0, available - estimate)
+                    cap_micro = min(
+                        settings.spend_lease_max_microdollars,
+                        post_request_headroom
+                        * settings.spend_lease_max_available_basis_points
+                        // 10_000,
+                    )
+                    if cap_micro > 0:
+                        generation = STORE.next_spend_lease_generation(
+                            api_key.hash,
+                            boot_kid,
+                        )
+                        catalog = freeze_spend_lease_catalog(
+                            endpoint_candidates,
+                            region=region,
+                            route_type=cast(str, body.route_type),
+                            service_tier=service_tier,
+                        )
+                        candidate = mint_shadow_spend_lease(
+                            signer=_spend_lease_signer(settings),
+                            key_hash=api_key.hash,
+                            workspace_id=workspace.id,
+                            boot_kid=boot_kid,
+                            cap_micro=cap_micro,
+                            gen=generation,
+                            catalog=catalog,
+                            ttl_seconds=settings.spend_lease_ttl_seconds,
+                        )
+                        spend_lease = STORE.retain_spend_lease(
+                            api_key.hash,
+                            boot_kid,
+                            candidate,
+                            replace=replace_active,
+                        )
+        except Exception:
+            # Signer, Secret Manager, catalog, and generation failures all
+            # degrade to today's synchronous authorization with no lease.
+            logger.exception("spend_lease_mint_failed")
     user_model_slot_acquired = False
     if user_model is not None:
         user_model_slot_acquired = acquire_user_model_slot(
@@ -723,40 +1016,6 @@ def _authorize_gateway_sync(
         )
         key_usage_shards = key_usage_shard_count(api_key)
         try:
-            regional_authorize = getattr(
-                _typed_store,
-                "authorize_gateway_regional",
-                None,
-            )
-            regional_eligible = (
-                settings.regional_quota_leases_enabled
-                and settings.regional_quota_lease_issuance_enabled
-                and workspace.id in settings.regional_quota_lease_pilot_workspaces
-                and callable(regional_authorize)
-                and estimate > 0
-                and body.route_type in {None, "chat.completions", "responses"}
-                and all(
-                    UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
-                    for _candidate_model, candidate_endpoint in endpoint_candidates
-                )
-                and not any(
-                    provider_model_requires_exact_global_settlement(
-                        candidate_endpoint.provider,
-                        candidate_endpoint.model_id,
-                    )
-                    for _candidate_model, candidate_endpoint in endpoint_candidates
-                )
-                and api_key.limit_microdollars is None
-                and api_key.limit_daily_microdollars is None
-                and api_key.limit_weekly_microdollars is None
-                and api_key.limit_monthly_microdollars is None
-                and custom_model is None
-                and user_model is None
-                and partner_mode is None
-                and additional_cost_reservation == 0
-                and not native_batch_eligible
-                and app_markup_basis_points == 0
-            )
             outcome = "unavailable"
             authorization = None
             if regional_eligible:
@@ -827,6 +1086,7 @@ def _authorize_gateway_sync(
                     native_batch_eligible=native_batch_eligible,
                     expires_at=expires_at,
                     window_limits=window_limits or None,
+                    spend_lease=spend_lease,
                 )
         except conflict_store_error_types() as exc:
             release_user_model_slot_after_error()
@@ -1013,6 +1273,7 @@ def _authorize_gateway_sync(
                 if settlement == _DEFERRED_HOME_SETTLEMENT
                 else None
             ),
+            spend_lease=spend_lease,
         )
         try:
             authorization = create_authorization()
@@ -1251,6 +1512,19 @@ def register(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> dict[str, Any]:
         return await authorize_gateway(request, body, settings)
+
+    @router.post("/internal/gateway/spend-lease/boot/register")
+    async def gateway_spend_lease_boot_register(
+        request: Request,
+        body: SpendLeaseBootRegistrationRequest,
+        settings: SettingsDep,
+    ) -> dict[str, Any]:
+        return await run_in_threadpool(
+            _register_spend_lease_boot_sync,
+            request,
+            body,
+            settings,
+        )
 
     @router.post("/internal/gateway/settle")
     async def gateway_settle(
@@ -1541,6 +1815,7 @@ def _gateway_authorize_response(
             ),
             "request_metadata_version": REQUEST_METADATA_VERSION,
             "native_batch_eligible": authorization.native_batch_eligible,
+            **_gateway_spend_lease_payload(authorization),
             "tags": dict(authorization.tags),
             "custom_model": None
             if custom_model is None
@@ -1559,6 +1834,19 @@ def _gateway_authorize_response(
             ],
         }
     }
+
+
+def _gateway_spend_lease_payload(authorization: GatewayAuthorization) -> dict[str, Any]:
+    token = authorization.spend_lease_token
+    if not token:
+        return {}
+    stored_status = authorization.spend_lease_status or "active"
+    if stored_status == "terminal":
+        status = "terminal"
+    else:
+        expires_at = int(authorization.spend_lease_exp or 0)
+        status = "expired" if int(time.time()) >= expires_at else "active"
+    return {"spend_lease": {"token": token, "lease_status": status}}
 
 
 #: GatewayAuthorization.settlement value for spend booked as debt to the home

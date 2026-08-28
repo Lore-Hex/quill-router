@@ -71,6 +71,7 @@ sed "s/__PASSWORD_SHA256__/${writer_hash}/g" >"$config" <<'XML'
       <grants>
         <query>GRANT INSERT ON tr.activity_generations</query>
         <query>GRANT INSERT ON tr.synthetic_probe_samples</query>
+        <query>GRANT INSERT ON tr.spend_lease_shadow</query>
         <query>GRANT INSERT ON tr.client_request_events</query>
         <query>GRANT INSERT ON tr.client_minute_counters</query>
         <query>GRANT INSERT ON tr.operational_outbox_quarantine</query>

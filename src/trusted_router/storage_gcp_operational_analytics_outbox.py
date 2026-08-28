@@ -23,6 +23,7 @@ from trusted_router.storage_operational_analytics import (
     ACTIVITY_EVENT_KIND,
     CLIENT_EVENTS_EVENT_KIND,
     OPERATIONAL_ANALYTICS_OUTBOX_SHARDS,
+    SPEND_LEASE_SHADOW_EVENT_KIND,
     SYNTHETIC_EVENT_KIND,
     activity_payload,
     analytics_surrogate,
@@ -35,6 +36,7 @@ __all__ = [
     "CLIENT_EVENTS_EVENT_KIND",
     "OPERATIONAL_ANALYTICS_OUTBOX_SHARDS",
     "SYNTHETIC_EVENT_KIND",
+    "SPEND_LEASE_SHADOW_EVENT_KIND",
     "SpannerOperationalAnalyticsOutbox",
     "activity_payload",
     "analytics_surrogate",
@@ -104,6 +106,13 @@ class SpannerOperationalAnalyticsOutbox:
         self._enqueue(
             event_kind=CLIENT_EVENTS_EVENT_KIND,
             event_id=f"{payload['tenant_id']}:{payload['batch_id']}",
+            payload=payload,
+        )
+
+    def enqueue_spend_lease_shadow(self, event_id: str, payload: dict[str, Any]) -> None:
+        self._enqueue(
+            event_kind=SPEND_LEASE_SHADOW_EVENT_KIND,
+            event_id=event_id,
             payload=payload,
         )
 

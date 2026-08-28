@@ -28,6 +28,7 @@ from trusted_router.receipt_keys import (
     ReceiptKeyWriteOutcome,
     merge_receipt_key_observation,
 )
+from trusted_router.spend_leases import SpendLeaseArtifact, SpendLeaseBoot
 from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage_attribution import InMemoryAcquisitionAttribution
 from trusted_router.storage_auth_context import build_session_auth_context
@@ -131,7 +132,11 @@ class InMemoryStore:
         self.credit_transfer_claims: dict[str, dict[str, Any]] = {}
         self.client_events_batches: list[dict[str, Any]] = []
         self.client_event_ids: set[str] = set()
+        self.spend_lease_shadow_events: dict[str, dict[str, Any]] = {}
         self.receipt_keys: dict[str, ReceiptKey] = {}
+        self.spend_lease_boots: dict[str, SpendLeaseBoot] = {}
+        self.spend_lease_generations: dict[tuple[str, str], int] = {}
+        self.active_spend_leases: dict[tuple[str, str], SpendLeaseArtifact] = {}
         #: Federated settlement claims, keyed (source_plane, authorization_id).
         #: Insert-once: the recorded terms are the verdict for every replay.
         self.federated_settlement_claims: dict[tuple[str, str], dict[str, Any]] = {}
@@ -186,7 +191,11 @@ class InMemoryStore:
             self.credit_transfer_claims.clear()
             self.client_events_batches.clear()
             self.client_event_ids.clear()
+            self.spend_lease_shadow_events.clear()
             self.receipt_keys.clear()
+            self.spend_lease_boots.clear()
+            self.spend_lease_generations.clear()
+            self.active_spend_leases.clear()
             self.api_keys.reset()
             self.acquisition_store.reset()
             self.bedrock_group_buy_store.reset()
@@ -222,6 +231,58 @@ class InMemoryStore:
         bounded = max(0, min(limit, 10_000))
         with self._lock:
             return [self.receipt_keys[kid] for kid in sorted(self.receipt_keys)[:bounded]]
+
+    def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot:
+        with self._lock:
+            existing = self.spend_lease_boots.get(record.kid)
+            if existing is not None and (
+                existing.jwk != record.jwk
+                or existing.image_digest != record.image_digest
+                or existing.attestation_kind != record.attestation_kind
+            ):
+                raise ValueError("spend-lease boot kid collision")
+            if existing is not None:
+                record = dataclasses.replace(
+                    existing,
+                    approved=existing.approved or record.approved,
+                    verified=existing.verified or record.verified,
+                    image_digest=(record.image_digest or existing.image_digest),
+                )
+            self.spend_lease_boots[record.kid] = record
+            return record
+
+    def get_spend_lease_boot(self, kid: str) -> SpendLeaseBoot | None:
+        with self._lock:
+            return self.spend_lease_boots.get(kid)
+
+    def next_spend_lease_generation(self, key_hash: str, boot_kid: str) -> int:
+        with self._lock:
+            key = (key_hash, boot_kid)
+            generation = self.spend_lease_generations.get(key, 0) + 1
+            self.spend_lease_generations[key] = generation
+            return generation
+
+    def get_active_spend_lease(
+        self, key_hash: str, boot_kid: str
+    ) -> SpendLeaseArtifact | None:
+        with self._lock:
+            return self.active_spend_leases.get((key_hash, boot_kid))
+
+    def retain_spend_lease(
+        self,
+        key_hash: str,
+        boot_kid: str,
+        candidate: SpendLeaseArtifact,
+        *,
+        replace: bool,
+    ) -> SpendLeaseArtifact:
+        with self._lock:
+            key = (key_hash, boot_kid)
+            existing = self.active_spend_leases.get(key)
+            if existing is None or (replace and candidate.gen > existing.gen):
+                self.active_spend_leases[key] = candidate
+                return candidate
+            return existing
 
     def ensure_user(
         self,
@@ -1876,6 +1937,7 @@ class InMemoryStore:
         settlement: str = "local",
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
+        spend_lease: SpendLeaseArtifact | None = None,
     ) -> GatewayAuthorization:
         return self.api_keys.create_gateway_authorization(
             workspace_id=workspace_id,
@@ -1911,6 +1973,7 @@ class InMemoryStore:
             settlement=settlement,
             expires_at=expires_at,
             deferred_cap_microdollars=deferred_cap_microdollars,
+            spend_lease=spend_lease,
         )
 
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:
@@ -1991,6 +2054,10 @@ class InMemoryStore:
             if len(self.client_events_batches) > 1_000:
                 removed = self.client_events_batches.pop(0)
                 self.client_event_ids.discard(f"{removed['tenant_id']}:{removed['batch_id']}")
+
+    def record_spend_lease_shadow(self, event_id: str, payload: dict[str, Any]) -> None:
+        with self._lock:
+            self.spend_lease_shadow_events.setdefault(event_id, dict(payload))
 
     def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None:
         self.generation_store.record_benchmark(sample)

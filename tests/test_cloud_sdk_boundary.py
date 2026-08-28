@@ -40,6 +40,8 @@ ALLOWED = {
     "storage_gcp_google_ads.py",
     "storage_gcp_io.py",
     "storage_gcp_regional_quota.py",
+    # GCP Secret Manager adapter for the lazy spend-lease issuer seed.
+    "storage_gcp_secrets.py",
     "storage_gcp_settle_outbox.py",
     "storage_gcp_synthetic_rollups.py",
     "storage_gcp_synthetic_index.py",

@@ -294,7 +294,7 @@ echo 'delivery proof: waiting for ClickHouse row movement'
 TOKEN=\$(curl -fsS -H Metadata:true 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net' | jq -r .access_token)
 CH_PW=\$(curl -fsS -H \"Authorization: Bearer \$TOKEN\" 'https://${VAULT}.vault.azure.net/secrets/${CH_SECRET}?api-version=7.4' | jq -r .value)
 test -n \"\$CH_PW\"
-DELIVERY_COUNT_SQL='SELECT sum(c) FROM (SELECT count() AS c FROM activity_generations UNION ALL SELECT count() AS c FROM synthetic_probe_samples UNION ALL SELECT count() AS c FROM client_request_events UNION ALL SELECT count() AS c FROM client_minute_counters)'
+DELIVERY_COUNT_SQL='SELECT sum(c) FROM (SELECT count() AS c FROM activity_generations UNION ALL SELECT count() AS c FROM synthetic_probe_samples UNION ALL SELECT count() AS c FROM spend_lease_shadow UNION ALL SELECT count() AS c FROM client_request_events UNION ALL SELECT count() AS c FROM client_minute_counters)'
 before=\$(CLICKHOUSE_PASSWORD=\"\$CH_PW\" clickhouse-client --user '${CH_USER}' --database '${CH_DATABASE}' --query \"\$DELIVERY_COUNT_SQL\")
 moved=0
 for attempt in \$(seq 1 12); do

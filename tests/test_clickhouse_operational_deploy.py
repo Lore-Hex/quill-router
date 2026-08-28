@@ -36,19 +36,19 @@ import trusted_router.storage_operational_analytics
 
 def test_operational_schema_is_replicated_bounded_and_content_free() -> None:
     schema = (ROOT / "clickhouse/004_operational_analytics_replicated.sql").read_text()
-    assert schema.count("ENGINE = ReplicatedReplacingMergeTree") == 4
+    assert schema.count("ENGINE = ReplicatedReplacingMergeTree") == 5
     assert "INTERVAL 400 DAY" in schema
     assert "INTERVAL 14 DAY" in schema
     assert "INTERVAL 24 MONTH" in schema
     for forbidden_column in (
         "prompt_content",
         "output_content",
-        "workspace_id ",
-        "key_hash ",
         "api_key ",
         "authorization_header",
     ):
         assert forbidden_column not in schema.lower()
+    assert "CREATE TABLE IF NOT EXISTS spend_lease_shadow" in schema
+    assert "lease_token" not in schema.lower()
 
 
 def test_provider_rollup_schema_replicates_all_published_granularities() -> None:

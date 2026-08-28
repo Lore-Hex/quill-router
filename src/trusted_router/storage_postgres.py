@@ -60,6 +60,13 @@ from trusted_router.security import (
     new_key_id,
     verify_api_key,
 )
+from trusted_router.spend_leases import (
+    SPEND_LEASE_ACTIVE_GRANT_KIND,
+    SPEND_LEASE_BOOT_KIND,
+    SPEND_LEASE_GENERATION_KIND,
+    SpendLeaseArtifact,
+    SpendLeaseBoot,
+)
 from trusted_router.spend_windows import (
     KeyLimitExceeded,
     KeyWindowLimitDecision,
@@ -685,6 +692,99 @@ class PostgresStore:
             ReceiptKey,
             limit=max(0, min(limit, 10_000)),
         )
+
+    def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot:
+        def operation(conn: Any) -> SpendLeaseBoot:
+            existing = self._read_entity_tx(
+                conn,
+                SPEND_LEASE_BOOT_KIND,
+                record.kid,
+                SpendLeaseBoot,
+                for_update=True,
+            )
+            if existing is not None and (
+                existing.jwk != record.jwk
+                or existing.image_digest != record.image_digest
+                or existing.attestation_kind != record.attestation_kind
+            ):
+                raise ValueError("spend-lease boot kid collision")
+            merged = record
+            if existing is not None:
+                merged = dataclasses.replace(
+                    existing,
+                    approved=existing.approved or record.approved,
+                    verified=existing.verified or record.verified,
+                    image_digest=record.image_digest or existing.image_digest,
+                )
+            self._write_entity_tx(conn, SPEND_LEASE_BOOT_KIND, record.kid, merged)
+            return merged
+
+        return self._run_transaction(operation)
+
+    def get_spend_lease_boot(self, kid: str) -> SpendLeaseBoot | None:
+        return self._read_entity(SPEND_LEASE_BOOT_KIND, kid, SpendLeaseBoot)
+
+    def next_spend_lease_generation(self, key_hash: str, boot_kid: str) -> int:
+        entity_id = hashlib.sha256(f"{key_hash}\0{boot_kid}".encode()).hexdigest()
+
+        def operation(conn: Any) -> int:
+            existing = self._read_entity_tx(
+                conn,
+                SPEND_LEASE_GENERATION_KIND,
+                entity_id,
+                dict,
+                for_update=True,
+            )
+            generation = int((existing or {}).get("generation", 0)) + 1
+            self._write_entity_tx(
+                conn,
+                SPEND_LEASE_GENERATION_KIND,
+                entity_id,
+                {"key_hash": key_hash, "boot_kid": boot_kid, "generation": generation},
+            )
+            return generation
+
+        return self._run_transaction(operation)
+
+    @staticmethod
+    def _spend_lease_pair_id(key_hash: str, boot_kid: str) -> str:
+        return hashlib.sha256(f"{key_hash}\0{boot_kid}".encode()).hexdigest()
+
+    def get_active_spend_lease(
+        self, key_hash: str, boot_kid: str
+    ) -> SpendLeaseArtifact | None:
+        return self._read_entity(
+            SPEND_LEASE_ACTIVE_GRANT_KIND,
+            self._spend_lease_pair_id(key_hash, boot_kid),
+            SpendLeaseArtifact,
+        )
+
+    def retain_spend_lease(
+        self,
+        key_hash: str,
+        boot_kid: str,
+        candidate: SpendLeaseArtifact,
+        *,
+        replace: bool,
+    ) -> SpendLeaseArtifact:
+        entity_id = self._spend_lease_pair_id(key_hash, boot_kid)
+
+        def operation(conn: Any) -> SpendLeaseArtifact:
+            existing = self._read_entity_tx(
+                conn,
+                SPEND_LEASE_ACTIVE_GRANT_KIND,
+                entity_id,
+                SpendLeaseArtifact,
+                for_update=True,
+            )
+            if existing is None or (replace and candidate.gen > existing.gen):
+                self._write_entity_tx(
+                    conn, SPEND_LEASE_ACTIVE_GRANT_KIND, entity_id, candidate
+                )
+                return candidate
+            return existing
+
+        return self._run_transaction(operation)
 
     def _list_entities(
         self,
@@ -4063,6 +4163,7 @@ class PostgresStore:
         settlement: str = "local",
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
+        spend_lease: SpendLeaseArtifact | None = None,
     ) -> GatewayAuthorization:
         """Record an authorization, deduplicating on the idempotency key.
 
@@ -4119,6 +4220,16 @@ class PostgresStore:
             native_batch_eligible=native_batch_eligible,
             settlement=settlement,
             expires_at=expires_at,
+            spend_lease_token=spend_lease.token if spend_lease else None,
+            spend_lease_id=spend_lease.lease_id if spend_lease else None,
+            spend_lease_cap_micro=spend_lease.cap_micro if spend_lease else None,
+            spend_lease_gen=spend_lease.gen if spend_lease else None,
+            spend_lease_iat=spend_lease.iat if spend_lease else None,
+            spend_lease_exp=spend_lease.exp if spend_lease else None,
+            spend_lease_issuer_kid=spend_lease.issuer_kid if spend_lease else None,
+            spend_lease_boot_kid=spend_lease.boot_kid if spend_lease else None,
+            spend_lease_catalog_version=(spend_lease.catalog_version if spend_lease else None),
+            spend_lease_status=spend_lease.lease_status if spend_lease else None,
         )
 
         def create(conn: Any) -> GatewayAuthorization:
@@ -4590,6 +4701,13 @@ class PostgresStore:
                 },
             )
             raise
+
+    def record_spend_lease_shadow(self, event_id: str, payload: dict[str, Any]) -> None:
+        outbox = self._operational_analytics_outbox
+        if outbox is None:
+            log.warning("postgres.spend_lease_shadow_outbox_disabled_drop")
+            return
+        outbox.enqueue_spend_lease_shadow(event_id, payload)
 
     def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None:
         self._run_transaction(
