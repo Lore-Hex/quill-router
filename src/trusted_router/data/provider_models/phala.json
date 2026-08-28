@@ -7,20 +7,20 @@
   "models": [
     {
       "id": "z-ai/glm-5.2",
-      "upstream_id": "phala/glm-5.2",
-      "display_name": "Phala GLM 5.2",
+      "upstream_id": "z-ai/glm-5.2",
+      "display_name": "Z.ai: GLM 5.2",
       "title": "z-ai/glm-5.2",
       "context_length": 1048576,
       "max_output_tokens": 131072,
-      "input_token_price_per_m": 1400000,
-      "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 700000,
+      "input_token_price_per_m": 1260000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 220000,
       "model_type": "chat",
       "features": [
         "reasoning",
         "function-calling",
         "structured-outputs",
-        "confidential-compute"
+        "serverless"
       ],
       "input_modalities": [
         "text"
@@ -32,7 +32,24 @@
         "chat/completions"
       ],
       "status": 1,
-      "missing_since": "2026-07-30"
+      "supported_features": [
+        "json_mode",
+        "reasoning",
+        "structured_outputs",
+        "tools"
+      ],
+      "supported_sampling_parameters": [
+        "frequency_penalty",
+        "max_tokens",
+        "min_p",
+        "presence_penalty",
+        "repetition_penalty",
+        "seed",
+        "stop",
+        "temperature",
+        "top_k",
+        "top_p"
+      ]
     },
     {
       "id": "moonshotai/kimi-k3",

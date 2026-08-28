@@ -87,7 +87,6 @@ _NATIVE_TO_OR_ID = {
     "phala/gemma-3-27b-it": "google/gemma-3-27b-it",
     "phala/glm-5": "z-ai/glm-5",
     "phala/glm-5.1": "z-ai/glm-5.1",
-    "phala/glm-5.2": "z-ai/glm-5.2",
     "phala/glm-4.7": "z-ai/glm-4.7",
     "phala/glm-4.7-flash": "z-ai/glm-4.7-flash",
     "phala/kimi-k2.5": "moonshotai/kimi-k2.5",
@@ -103,8 +102,10 @@ _NATIVE_TO_OR_ID = {
     "phala/minimax-m2.5": "minimax/minimax-m2.5",
 }
 _STANDARD_PASSTHROUGH_TO_OR_ID = {
-    # Direct visible-content canary passed on 2026-07-29. This is not a
-    # phala/* Confidential AI ID, so catalog_data.py forces Standard privacy.
+    # These are not phala/* Confidential AI IDs, so catalog_data.py forces
+    # Standard privacy. GLM 5.2 moved from phala/glm-5.2 to the upstream-author
+    # ID on 2026-08-27; a direct visible-content canary returned exact PONG.
+    "z-ai/glm-5.2": "z-ai/glm-5.2",
     "moonshotai/kimi-k3": "moonshotai/kimi-k3",
     "z-ai/glm-5.3-flash": "z-ai/glm-5.3-flash",
 }

@@ -305,7 +305,11 @@ _MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOve
                 "confidential-model/confidential-ai-api"
             ),
         )
-        for model_id in ("moonshotai/kimi-k3", "z-ai/glm-5.3-flash")
+        for model_id in (
+            "moonshotai/kimi-k3",
+            "z-ai/glm-5.2",
+            "z-ai/glm-5.3-flash",
+        )
     },
     **{
         (model_id, "venice"): ModelProviderPrivacyOverride(
