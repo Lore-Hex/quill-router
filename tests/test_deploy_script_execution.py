@@ -781,6 +781,7 @@ def test_aws_observer_executes_bounded_capacity_tcp_health_and_waf_before_schedu
     assert len(service_updates) == 1
     service_config = service_updates[0][service_updates[0].index("--source-configuration") + 1]
     assert '"TR_SYNTHETIC_SCHEDULER_INTERVAL_SECONDS": "0"' in service_config
+    assert '"TR_SYNTHETIC_RUN_DEADLINE_SECONDS": "240"' in service_config
     assert '"TR_REMEDIATOR_IN_PROCESS_ENABLED": "false"' in service_config
     observer_secret_reads = [
         call
@@ -819,6 +820,9 @@ def test_aws_observer_executes_bounded_capacity_tcp_health_and_waf_before_schedu
     assert len(scheduler_targets) == 1
     targets = json.loads(scheduler_targets[0][scheduler_targets[0].index("--targets") + 1])
     assert len(targets) == 1
+    assert targets[0]["DeadLetterConfig"] == {
+        "Arn": "arn:aws:sqs:eu-west-3:330422590279:tr-eu-synthetic-dlq"
+    }
     scheduled_body = json.loads(targets[0]["Input"])
     assert scheduled_body == {
         "monitor_region": "eu-west-3",
@@ -826,6 +830,61 @@ def test_aws_observer_executes_bounded_capacity_tcp_health_and_waf_before_schedu
         "run_remediator": True,
         "detach": True,
     }
+    (queue_policy_call,) = [
+        call for call in run.calls if call[:3] == ["aws", "sqs", "set-queue-attributes"]
+    ]
+    queue_attributes = json.loads(
+        queue_policy_call[queue_policy_call.index("--attributes") + 1]
+    )
+    queue_policy = json.loads(queue_attributes["Policy"])
+    assert queue_policy["Statement"][0]["Principal"] == {
+        "Service": "events.amazonaws.com"
+    }
+    assert queue_policy["Statement"][0]["Condition"] == {
+        "ArnEquals": {
+            "aws:SourceArn": "arn:aws:events:eu-west-3:330422590279:rule/tr-eu-synthetic-1min"
+        }
+    }
+    dlq_role_policies = [
+        call
+        for call in run.calls
+        if call[:3] == ["aws", "iam", "put-role-policy"]
+        and "tr-eu-synthetic-dlq-send" in call
+    ]
+    assert len(dlq_role_policies) == 1
+    role_policy = json.loads(
+        dlq_role_policies[0][dlq_role_policies[0].index("--policy-document") + 1]
+    )
+    assert role_policy["Statement"][0]["Action"] == "sqs:SendMessage"
+    assert role_policy["Statement"][0]["Resource"] == (
+        "arn:aws:sqs:eu-west-3:330422590279:tr-eu-synthetic-dlq"
+    )
+    alarms = [
+        call
+        for call in run.calls
+        if call[:3] == ["aws", "cloudwatch", "put-metric-alarm"]
+    ]
+    assert {call[call.index("--alarm-name") + 1] for call in alarms} == {
+        "tr-eu-synthetic-failed-invocations",
+        "tr-eu-synthetic-dlq-messages-visible",
+    }
+    failed_alarm = next(
+        call for call in alarms if "tr-eu-synthetic-failed-invocations" in call
+    )
+    assert failed_alarm[failed_alarm.index("--metric-name") + 1] == "FailedInvocations"
+    assert failed_alarm[failed_alarm.index("--evaluation-periods") + 1] == "3"
+    assert failed_alarm[failed_alarm.index("--period") + 1] == "300"
+    dlq_alarm = next(call for call in alarms if "tr-eu-synthetic-dlq-messages-visible" in call)
+    assert (
+        dlq_alarm[dlq_alarm.index("--metric-name") + 1]
+        == "ApproximateNumberOfMessagesVisible"
+    )
+    assert all("--actions-enabled" in call for call in alarms)
+    assert all(
+        call[call.index("--alarm-actions") + 1]
+        == "arn:aws:sns:eu-west-3:330422590279:tr-eu-synthetic-alarms"
+        for call in alarms
+    )
     assert waf_attach_index < scheduler_index
 
 

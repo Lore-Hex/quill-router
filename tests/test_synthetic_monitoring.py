@@ -3652,6 +3652,47 @@ async def test_provider_rotation_probe_measures_ttfb_and_ttft() -> None:
 
 
 @pytest.mark.asyncio
+async def test_provider_rotation_probe_has_total_deadline_for_trickling_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An httpx read timeout resets on each chunk; total wall time must not."""
+    from trusted_router.synthetic import probes as probes_module
+
+    class _Trickle(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            while True:
+                await asyncio.sleep(0.005)
+                yield b" "
+
+    class _Deadline:
+        first_token_seconds = 0.03
+
+    monkeypatch.setattr(
+        probes_module,
+        "model_deadlines",
+        lambda *_args, **_kwargs: _Deadline(),
+    )
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=_Trickle())
+
+    target = SyntheticTarget("rotation", "https://api.trustedrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await provider_rotation_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            provider="slow-provider",
+            model="slow/model",
+        )
+
+    assert sample.status == "error"
+    assert sample.error_type == "TimeoutError"
+    assert sample.error_status is None
+
+
+@pytest.mark.asyncio
 async def test_provider_rotation_probe_counts_reasoning_as_token_flow() -> None:
     body = (
         b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n'

@@ -5,6 +5,7 @@ import datetime as dt
 import logging
 import random
 import threading
+import time
 from dataclasses import asdict
 from typing import Any
 
@@ -65,6 +66,50 @@ _OPERATION_SLOTS = {
 _BACKGROUND_RUNS: set[asyncio.Task[dict[str, Any]]] = set()
 
 
+class _HeldOperationSlot:
+    """A semaphore admission that can cross an unkillable worker thread.
+
+    Async run tasks release their raw BoundedSemaphore in ``finally``. A
+    remediator pass is different: cancelling the threadpool await cannot stop
+    the worker. This lease lets the deadline owner free capacity immediately
+    while making the worker's eventual ``finally`` a no-op instead of an
+    over-release. The underlying semaphore remains bounded as the guard on
+    every real release.
+    """
+
+    def __init__(self, semaphore: threading.BoundedSemaphore) -> None:
+        self._semaphore = semaphore
+        self._lock = threading.Lock()
+        self._released = False
+
+    def release(self) -> bool:
+        with self._lock:
+            if self._released:
+                return False
+            self._semaphore.release()
+            self._released = True
+            return True
+
+
+def _background_run_done(
+    task: asyncio.Task[dict[str, Any]],
+    slot: _HeldOperationSlot,
+) -> None:
+    # A task can be cancelled before its coroutine executes even one line, in
+    # which case no coroutine finally block runs. The callback is the last
+    # cancellation backstop for the admission.
+    slot.release()
+    _BACKGROUND_RUNS.discard(task)
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None and not isinstance(error, TimeoutError):
+        log.error(
+            "synthetic.background_run_failed",
+            exc_info=(type(error), error, error.__traceback__),
+        )
+
+
 def _admit_operation(name: str) -> threading.BoundedSemaphore:
     slot = _OPERATION_SLOTS[name]
     if not slot.acquire(blocking=False):
@@ -94,10 +139,68 @@ def _admit_operation(name: str) -> threading.BoundedSemaphore:
 async def _run_with_held_slot(
     settings: Settings,
     body: dict[str, Any],
-    slot: threading.BoundedSemaphore,
+    slot: _HeldOperationSlot,
 ) -> dict[str, Any]:
     try:
         return await _run_and_record(settings, body)
+    finally:
+        slot.release()
+
+
+async def _run_with_deadline(
+    settings: Settings,
+    body: dict[str, Any],
+    slot: _HeldOperationSlot,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    try:
+        return await asyncio.wait_for(
+            _run_with_held_slot(settings, body, slot),
+            timeout=settings.synthetic_run_deadline_seconds,
+        )
+    except TimeoutError:
+        log.error(
+            "synthetic.run_deadline_exceeded elapsed_seconds=%.3f pass_args=%r",
+            time.monotonic() - started,
+            body,
+        )
+        raise
+    finally:
+        # Covers cancellation before wait_for has started the child coroutine.
+        # The child's own finally remains the normal owner; this is a no-op
+        # after that release.
+        slot.release()
+
+
+async def _run_high_authority_with_held_slot(
+    settings: Settings,
+    body: dict[str, Any],
+    slot: _HeldOperationSlot,
+) -> dict[str, Any]:
+    try:
+        return await _run_high_authority_and_record(settings, body)
+    finally:
+        slot.release()
+
+
+async def _run_high_authority_with_deadline(
+    settings: Settings,
+    body: dict[str, Any],
+    slot: _HeldOperationSlot,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    try:
+        return await asyncio.wait_for(
+            _run_high_authority_with_held_slot(settings, body, slot),
+            timeout=settings.synthetic_run_deadline_seconds,
+        )
+    except TimeoutError:
+        log.error(
+            "synthetic.run_deadline_exceeded elapsed_seconds=%.3f pass_args=%r",
+            time.monotonic() - started,
+            body,
+        )
+        raise
     finally:
         slot.release()
 
@@ -242,7 +345,7 @@ async def _run_and_record_impl(
 
 def _run_remediator_with_held_slot(
     settings: Settings,
-    slot: threading.BoundedSemaphore,
+    slot: _HeldOperationSlot,
 ) -> int:
     try:
         record_heartbeat("scheduler:remediator", settings=settings)
@@ -253,10 +356,32 @@ def _run_remediator_with_held_slot(
         slot.release()
 
 
+async def _run_remediator_with_deadline(
+    settings: Settings,
+    slot: _HeldOperationSlot,
+) -> int:
+    started = time.monotonic()
+    try:
+        return await asyncio.wait_for(
+            run_in_threadpool(_run_remediator_with_held_slot, settings, slot),
+            timeout=settings.synthetic_run_deadline_seconds,
+        )
+    except TimeoutError:
+        # The worker thread cannot be killed. Relinquish its admission now;
+        # its own finally calls release() too, but the lease makes that late
+        # call a no-op rather than a BoundedSemaphore over-release.
+        slot.release()
+        log.error(
+            "synthetic.remediator_deadline_exceeded elapsed_seconds=%.3f",
+            time.monotonic() - started,
+        )
+        raise
+
+
 async def _run_scheduled_remediator_pass(settings: Settings) -> int | None:
     """Run the EventBridge-owned pass without sacrificing its synthetic tick."""
     try:
-        slot = _admit_operation("remediate")
+        slot = _HeldOperationSlot(_admit_operation("remediate"))
     except HTTPException:
         log.warning("scheduled remediator skipped because another pass owns the slot")
         return None
@@ -265,7 +390,7 @@ async def _run_scheduled_remediator_pass(settings: Settings) -> int | None:
         # be cancelled while TestClient (or the server) tears down its event
         # loop; separate threadpool awaits allowed that cancellation to land
         # after the first heartbeat and before remediation was dispatched.
-        return await run_in_threadpool(_run_remediator_with_held_slot, settings, slot)
+        return await _run_remediator_with_deadline(settings, slot)
     except Exception:
         # A remediation read/decision failure must remain visible, but it must
         # not discard the independent synthetic results from the same tick.
@@ -280,17 +405,13 @@ async def run_synthetic_pass(settings: Settings, *, rotation_count: int = 0) -> 
     scheduler still gets a monitor. Same code path as the route, so the two
     cannot drift into measuring different things.
     """
-    slot = _OPERATION_SLOTS["run"]
-    if not slot.acquire(blocking=False):
+    semaphore = _OPERATION_SLOTS["run"]
+    if not semaphore.acquire(blocking=False):
         log.info("synthetic.pass_skipped_already_running")
         return {"data": {"scheduled": False, "reason": "already_running"}}
-    try:
-        return await _run_high_authority_and_record(
-            settings,
-            {"rotation_count": rotation_count} if rotation_count else {},
-        )
-    finally:
-        slot.release()
+    slot = _HeldOperationSlot(semaphore)
+    body: dict[str, Any] = {"rotation_count": rotation_count} if rotation_count else {}
+    return await _run_high_authority_with_deadline(settings, body, slot)
 
 
 def register(router: APIRouter) -> None:
@@ -388,8 +509,8 @@ def register(router: APIRouter) -> None:
         even while the durable analytics copy catches up.
         """
         require_internal_gateway(request, settings)
-        slot = _admit_operation("remediate")
-        decisions = await run_in_threadpool(_run_remediator_with_held_slot, settings, slot)
+        slot = _HeldOperationSlot(_admit_operation("remediate"))
+        decisions = await _run_remediator_with_deadline(settings, slot)
         return {"data": {"decisions": decisions}}
 
     @router.post("/internal/synthetic/run")
@@ -397,7 +518,7 @@ def register(router: APIRouter) -> None:
         request: Request, settings: SettingsDep, response: Response
     ) -> dict[str, Any]:
         require_internal_gateway(request, settings)
-        slot = _admit_operation("run")
+        slot = _HeldOperationSlot(_admit_operation("run"))
         try:
             body = await json_body(request)
         except BaseException:
@@ -417,15 +538,15 @@ def register(router: APIRouter) -> None:
         # so we do not pretend: the body says scheduled, not recorded.
         if _is_true(body.get("detach")):
             try:
-                task = asyncio.create_task(_run_with_held_slot(settings, body, slot))
+                task = asyncio.create_task(_run_with_deadline(settings, body, slot))
             except Exception:
                 slot.release()
                 raise
             _BACKGROUND_RUNS.add(task)
-            task.add_done_callback(_BACKGROUND_RUNS.discard)
+            task.add_done_callback(lambda done: _background_run_done(done, slot))
             response.status_code = 202
             return {"data": {"scheduled": True}}
-        return await _run_with_held_slot(settings, body, slot)
+        return await _run_with_deadline(settings, body, slot)
 
 
 def _record_probe_samples(samples: list[SyntheticProbeSample]) -> None:

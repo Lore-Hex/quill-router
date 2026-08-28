@@ -1064,6 +1064,11 @@ class Settings(BaseSettings):
     # /responses probe in europe-west4 can legitimately take >10s on slow
     # cheap monitor routes, so 10s creates false downtime.
     synthetic_monitor_timeout_seconds: float = 20.0
+    # Hard wall-clock ceiling for one admitted synthetic run. Eight provider
+    # calls under the billing-concurrency limit of two take four ~20s p99
+    # waves; adding the normal 10-17s probe work gives ~97s. 240s is ~2.47x
+    # that budget while ensuring a wedged read cannot own the run slot forever.
+    synthetic_run_deadline_seconds: float = 240.0
     # Monthly self-funding for the monitor workspace, applied lazily on its
     # own gateway-authorize path (synthetic/funding.py). Each deployment has
     # its own database, so each cloud's monitor funds itself from config —
@@ -1200,6 +1205,8 @@ class Settings(BaseSettings):
                 )
         if self.max_request_body_bytes <= 0:
             raise ValueError("TR_MAX_REQUEST_BODY_BYTES must be positive")
+        if self.synthetic_run_deadline_seconds <= 0:
+            raise ValueError("TR_SYNTHETIC_RUN_DEADLINE_SECONDS must be positive")
         if self.max_in_flight_request_body_bytes < self.max_request_body_bytes:
             raise ValueError(
                 "TR_MAX_IN_FLIGHT_REQUEST_BODY_BYTES must be at least TR_MAX_REQUEST_BODY_BYTES"
