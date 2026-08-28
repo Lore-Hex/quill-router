@@ -129,6 +129,18 @@ PROVIDER_PERFORMANCE_INDEX_MIN_SAMPLES = 20
 MODEL_COMPARE_URL_LIMIT = 2_600
 MODEL_COMPARE_MODEL_LIMIT = 73
 MODEL_COMPARE_PAGE_SIZE = 100
+MODEL_DISCOVERY_PAGE_SIZE = 24
+MODEL_DISCOVERY_PRIORITY: tuple[str, ...] = (
+    "z-ai/glm-5.3-flash",
+    "z-ai/glm-5.3",
+    "moonshotai/kimi-k3",
+    "deepseek/deepseek-v4-pro-0813",
+    "deepseek/deepseek-v4-flash-0731",
+    "minimax/minimax-m3",
+)
+_MODEL_DISCOVERY_PRIORITY_INDEX = {
+    model_id: index for index, model_id in enumerate(MODEL_DISCOVERY_PRIORITY)
+}
 SEO_CORE_PATHS: tuple[str, ...] = (
     "/azure-openai-alternative",
     "/deepseek-api-privacy",
@@ -3368,14 +3380,22 @@ def subprocessors_json(settings: Settings) -> str:
 
 def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
     test_mode = settings.environment == "test"
-    models = [_model_view(model, test_mode=test_mode) for model in MODELS.values()]
+    all_models = [_model_view(model, test_mode=test_mode) for model in MODELS.values()]
+    all_models.sort(key=_model_discovery_sort_key)
+    models = all_models
     normalized_filter = model_filter.strip().lower()
-    if normalized_filter == "open":
+    if normalized_filter in {"open", "open-weight"}:
+        normalized_filter = "open"
         models = [model for model in models if model.get("open_weights")]
     elif normalized_filter == "us":
         models = [model for model in models if model.get("us_provider_available")]
     elif normalized_filter == "eu":
         models = [model for model in models if model.get("eu_focused_provider_available")]
+    elif normalized_filter == "zdr":
+        models = [model for model in models if model.get("zdr_available")]
+    elif normalized_filter in {"e2e", "confidential"}:
+        normalized_filter = "e2e"
+        models = [model for model in models if model.get("e2e_available")]
     else:
         normalized_filter = "all"
     item_list_rows: list[dict[str, object]] = []
@@ -3401,12 +3421,23 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
                 "privacy policy, and live API routes. Filter open-weight, US, and EU options."
             ),
             models=models,
+            total_model_count=len(all_models),
+            total_provider_count=len(
+                {
+                    str(provider["slug"])
+                    for model in all_models
+                    for provider in cast(list[dict[str, str]], model["providers"])
+                }
+            ),
+            initial_page_size=MODEL_DISCOVERY_PAGE_SIZE,
             active_filter=normalized_filter,
             model_filters=[
                 {"id": "all", "label": "All", "href": "/models"},
                 {"id": "open", "label": "Open weights", "href": "/models?filter=open"},
                 {"id": "us", "label": "US providers", "href": "/models?filter=us"},
                 {"id": "eu", "label": "EU-focused", "href": "/models?filter=eu"},
+                {"id": "zdr", "label": "ZDR available", "href": "/models?filter=zdr"},
+                {"id": "e2e", "label": "E2EE available", "href": "/models?filter=e2e"},
             ],
             json_ld_blob=_json_ld_graph(
                 settings,
@@ -3421,6 +3452,24 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
             static_version=_static_version(settings),
         )
     )
+
+
+def _model_discovery_sort_key(model: Mapping[str, object]) -> tuple[int, int, int, str]:
+    model_id = str(model["id"])
+    featured_rank = _MODEL_DISCOVERY_PRIORITY_INDEX.get(model_id)
+    if featured_rank is not None:
+        return (0, featured_rank, 0, "")
+    ai_iq = model.get("ai_iq")
+    ai_iq_rank = 1_000_000
+    if isinstance(ai_iq, Mapping):
+        try:
+            ai_iq_rank = int(ai_iq.get("rank", ai_iq_rank))
+        except (TypeError, ValueError):
+            pass
+    section = 2 if model.get("is_meta") else 1
+    raw_provider_count = model.get("provider_count")
+    provider_count = raw_provider_count if isinstance(raw_provider_count, int) else 0
+    return (section, ai_iq_rank, -provider_count, str(model["name"]).casefold())
 
 
 def public_benchmarks_html(settings: Settings) -> str:
@@ -4667,12 +4716,14 @@ def docs_llms_full_txt(settings: Settings) -> str:
 
 def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
-    endpoints = endpoints_for_model(model.id) if model.id not in META_MODEL_IDS else []
+    is_meta = model.id in META_MODEL_IDS
+    endpoints = endpoints_for_model(model.id) if not is_meta else []
+    route_endpoints = _model_route_endpoints(model)
     ai_iq = (
         ai_iq_for_model(model.id, test_mode=test_mode) if model.id not in META_MODEL_IDS else None
     )
     if (
-        model.id in META_MODEL_IDS
+        is_meta
         and model.prompt_price_microdollars_per_million_tokens == 0
         and model.completion_price_microdollars_per_million_tokens == 0
     ):
@@ -4687,6 +4738,13 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
     else:
         prompt = _price(model.prompt_price_microdollars_per_million_tokens)
         completion = _price(model.completion_price_microdollars_per_million_tokens)
+    cached_prices = _cached_prompt_prices(route_endpoints)
+    if cached_prices:
+        cached_prompt = _price_values_range(cached_prices)
+    elif is_meta:
+        cached_prompt = "selected route"
+    else:
+        cached_prompt = "Not published"
     providers = _endpoint_provider_views(endpoints, fallback_provider=model.provider)
     endpoint_postures = {
         (
@@ -4710,14 +4768,35 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         provider_confidential_compute,
         provider_e2ee,
     ) = next(iter(endpoint_postures))
+    prompt_price_sort = _minimum_model_price(
+        model,
+        endpoints=route_endpoints,
+        attr="prompt_price_microdollars_per_million_tokens",
+    )
+    completion_price_sort = _minimum_model_price(
+        model,
+        endpoints=route_endpoints,
+        attr="completion_price_microdollars_per_million_tokens",
+    )
+    provider_search_terms = [
+        term
+        for provider_view in providers
+        for term in (provider_view["slug"], provider_view["name"])
+    ]
     return {
         "id": model.id,
         "name": model.name,
         "provider": provider.name,
         "publisher_slug": model.provider,
         "context_length": f"{model.context_length:,}",
+        "context_length_compact": _compact_token_count(model.context_length),
+        "context_length_int": model.context_length,
         "prompt_price": prompt,
+        "cached_prompt_price": cached_prompt,
         "completion_price": completion,
+        "prompt_price_sort": prompt_price_sort,
+        "cached_price_sort": min(cached_prices) if cached_prices else None,
+        "completion_price_sort": completion_price_sort,
         # Derive from endpoints (not the raw Model flag): supplemental
         # provider-native models carry prepaid_available=False as a catalog
         # dedup marker, but DO have a priced Credits endpoint and are fully
@@ -4735,6 +4814,19 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
             "varies by route" if len(providers) == 1 else "varies by provider"
         ),
         "open_weights": model_open_weights(model),
+        "is_meta": is_meta,
+        "featured_rank": _MODEL_DISCOVERY_PRIORITY_INDEX.get(model.id),
+        "zdr_available": any(
+            endpoint_zero_data_retention(endpoint) is True for endpoint in route_endpoints
+        ),
+        "confidential_available": any(
+            endpoint_confidential_compute(endpoint) is True for endpoint in route_endpoints
+        ),
+        "e2e_available": any(
+            endpoint_confidential_compute(endpoint) is True
+            and endpoint_e2ee(endpoint) is True
+            for endpoint in route_endpoints
+        ),
         "orchestration_primitive": orchestration_primitive(model.id),
         "orchestration_role": orchestration_role(model.id),
         "canonical_model_id": canonical_orchestration_model_id(model.id),
@@ -4743,6 +4835,16 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         "ai_iq": ai_iq,
         "us_provider_available": model_us_provider_available(model),
         "eu_focused_provider_available": model_eu_focused_provider_available(model),
+        "search_text": " ".join(
+            (
+                model.id,
+                model.name,
+                model.provider,
+                provider.name,
+                *provider_search_terms,
+            )
+        ).casefold(),
+        "endpoints_url": None if is_meta else f"/v1/models/{model.id}/endpoints",
         "detail_href": f"/models/{model.id}",
         "benchmarks_href": (
             f"/models/{model.id}/benchmarks"
@@ -4760,6 +4862,60 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
             else None
         ),
     }
+
+
+def _model_route_endpoints(
+    model: Model,
+    *,
+    _seen: frozenset[str] = frozenset(),
+) -> list[ModelEndpoint]:
+    """Return reachable concrete endpoints without exposing hidden compositions."""
+    if model.id in _seen:
+        return []
+    if model.id not in META_MODEL_IDS:
+        return endpoints_for_model(model.id)
+    if model.hidden_public_metadata:
+        return []
+    next_seen = frozenset((*_seen, model.id))
+    return [
+        endpoint
+        for candidate in meta_candidate_models(model.id)
+        for endpoint in _model_route_endpoints(candidate, _seen=next_seen)
+    ]
+
+
+def _cached_prompt_prices(endpoints: Sequence[ModelEndpoint]) -> list[int]:
+    prices: list[int] = []
+    for endpoint in endpoints:
+        tiers = endpoint.price_tiers or ()
+        for tier in tiers:
+            cached = tier.prompt_cached_price_microdollars_per_million_tokens
+            if cached is not None and cached > 0:
+                prices.append(cached)
+    return prices
+
+
+def _minimum_model_price(
+    model: Model,
+    *,
+    endpoints: Sequence[ModelEndpoint],
+    attr: str,
+) -> int | None:
+    values = [getattr(endpoint, attr) for endpoint in endpoints if getattr(endpoint, attr) > 0]
+    if values:
+        return min(values)
+    model_value = getattr(model, attr)
+    return model_value if model_value > 0 else None
+
+
+def _compact_token_count(value: int) -> str:
+    if value >= 1_000_000:
+        compact = f"{Decimal(value) / Decimal(1_000_000):.2f}".rstrip("0").rstrip(".")
+        return f"{compact}M"
+    if value >= 1_000:
+        compact = f"{Decimal(value) / Decimal(1_000):.0f}"
+        return f"{compact}K"
+    return str(value)
 
 
 def _endpoint_provider_views(
@@ -5832,6 +5988,10 @@ def _endpoint_price_range(endpoints: Sequence[ModelEndpoint], attr: str) -> str:
     values = [getattr(ep, attr) for ep in endpoints if getattr(ep, attr) > 0]
     if not values:
         return _price(0)
+    return _price_values_range(values)
+
+
+def _price_values_range(values: Sequence[int]) -> str:
     low = min(values)
     high = max(values)
     if low == high:

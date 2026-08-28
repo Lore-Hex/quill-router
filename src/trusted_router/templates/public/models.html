@@ -1,117 +1,160 @@
 {% extends "public/_base.html" %}
-{% from "public/_provider_privacy_badges.html" import provider_privacy_badges %}
-{% from "public/_provider_identity.html" import provider_identity %}
-{% block body %}
-<section class="public-proof-strip">
-  <div><strong>Public catalog</strong><span>No auth needed to inspect routes.</span></div>
-  <div><strong>trustedrouter/auto</strong><span>Provider failover target.</span></div>
-  <div><strong>trustedrouter/eu</strong><span>EU-focused routing target.</span></div>
-  <div><strong>trustedrouter/zdr</strong><span>Zero-retention routing target.</span></div>
-  <div><strong>trustedrouter/e2e</strong><span>Confidential + E2EE routes. Alias: trustedrouter/confidential.</span></div>
-  <div><strong>Hard privacy floor</strong><span>Use provider.min_privacy = "confidential" with any selected model.</span></div>
-  <div><strong>Synth presets</strong><span>Iris, Prometheus, Zeus, and code variants.</span></div>
-  <div><strong>Streaming</strong><span>No buffering in the prompt path.</span></div>
-  <div><strong>Hundreds of models</strong><span>More provider routes are added as keys and pricing are verified.</span></div>
-</section>
-
-<section class="model-catalog">
-  <div class="model-catalog-head">
-    <div>
-      <span class="eyebrow">Models</span>
-      <h2>Route by model, provider, price, or privacy posture.</h2>
-    </div>
-    <p>API JSON remains at <span class="mono">{{ api_base_url }}/models</span> with an API key. <a href="/compare/models">Compare models</a>. By jurisdiction: <a href="/us-ai-models">US AI models</a>, <a href="/eu-ai-models">EU AI models</a>, <a href="/china-ai-models">Chinese AI models</a>.</p>
+{% block hero %}
+<section class="models-page-hero">
+  <div>
+    <div class="kicker">Public catalog · {{ total_model_count }} models · {{ total_provider_count }} providers</div>
+    <h1>Find the right model.</h1>
+    <p>Hundreds of models, searchable by name, family, or provider. Compare input and output prices, inspect cached-input rates, and open every provider route without leaving the page.</p>
   </div>
-  <div class="model-filter-row" aria-label="Model filters">
+  <div class="models-page-hero-links">
+    <a href="/choose">Guided model chooser</a>
+    <a href="/compare/models">Compare models</a>
+    <a href="/for-developers">API quickstart</a>
+  </div>
+</section>
+{% endblock %}
+{% block body %}
+<section class="model-explorer" data-model-explorer data-page-size="{{ initial_page_size }}">
+  <div class="model-explorer-toolbar">
+    <label class="model-search-field">
+      <span class="model-control-label">Search models</span>
+      <input
+        type="search"
+        aria-label="Search models"
+        placeholder="Search GLM, Kimi, DeepSeek, provider, or model ID"
+        autocomplete="off"
+        spellcheck="false"
+        data-model-search
+      >
+    </label>
+    <label class="model-sort-field">
+      <span class="model-control-label">Sort by</span>
+      <select data-model-sort aria-label="Sort models">
+        <option value="featured">Featured</option>
+        <option value="input">Lowest input price</option>
+        <option value="cached">Lowest cached-input price</option>
+        <option value="output">Lowest output price</option>
+        <option value="context">Largest context</option>
+        <option value="providers">Most providers</option>
+        <option value="name">Name</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="model-quick-row" aria-label="Popular model searches">
+    <span>Popular now</span>
+    <button type="button" data-model-query="glm 5.3">GLM 5.3</button>
+    <button type="button" data-model-query="kimi k3">Kimi K3</button>
+    <button type="button" data-model-query="deepseek">DeepSeek</button>
+  </div>
+
+  <nav class="model-filter-row" aria-label="Model filters">
     {% for item in model_filters %}
     <a class="pill {% if active_filter == item.id %}good{% endif %}" href="{{ item.href }}">{{ item.label }}</a>
     {% endfor %}
-  </div>
-  <div class="model-table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>Model</th>
-          <th>Publisher</th>
-          <th>AI IQ</th>
-          <th>Context</th>
-          <th>Providers</th>
-          <th>Provider policy</th>
-          <th>Prompt</th>
-          <th>Completion</th>
-          <th>Routes</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for model in models %}
-        <tr>
-          <td>
-            {% if model.detail_href %}<a href="{{ model.detail_href }}"><code>{{ model.id }}</code></a>{% else %}<code>{{ model.id }}</code>{% endif %}
-            <br>{{ model.name }}
-            <div class="mini-links">
-              {% if model.open_weights %}<span class="pill good">open weights</span>{% endif %}
-              {% if model.us_provider_available %}<span class="pill">US providers</span>{% endif %}
-              {% if model.eu_focused_provider_available %}<span class="pill">EU-focused</span>{% endif %}
-            </div>
-            {% if model.benchmarks_href or model.providers_href or model.pricing_href %}
-            <div class="mini-links">
-              {% if model.benchmarks_href %}<a href="{{ model.benchmarks_href }}">benchmarks</a>{% endif %}
-              {% if model.providers_href %}<a href="{{ model.providers_href }}">providers</a>{% endif %}
-              {% if model.pricing_href %}<a href="{{ model.pricing_href }}">pricing</a>{% endif %}
-            </div>
-            {% endif %}
-          </td>
-          <td>{{ provider_identity(model.publisher_slug, model.provider, "/providers/" ~ model.publisher_slug) }}</td>
-          <td>
-            {% if model.ai_iq %}
-            <a class="ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener">
-              <strong>IQ {{ model.ai_iq.iq }}</strong>
-              <span>#{{ model.ai_iq.rank }}</span>
-            </a>
-            {% else %}
-            <span class="muted-copy">—</span>
-            {% endif %}
-          </td>
-          <td>{{ model.context_length }}</td>
-          <td>
-            <div class="provider-chip-list" aria-label="{{ model.provider_count }} provider{{ '' if model.provider_count == 1 else 's' }}">
-              {% for provider in model.providers %}
-              <a class="pill provider-chip" href="/providers/{{ provider.slug }}" title="{{ provider.slug }}"><img class="provider-logo" src="{{ provider.logo_url }}" alt="{{ provider.name }} logo" aria-hidden="true" width="22" height="22" loading="lazy" decoding="async"><span>{{ provider.name }}</span></a>
-              {% endfor %}
-            </div>
-          </td>
-          <td>
-            {{ provider_privacy_badges(model) }}
-          </td>
-          <td>{{ model.prompt_price }}</td>
-          <td>{{ model.completion_price }}</td>
-          <td>
-            {% if model.prepaid %}<span class="pill good">prepaid</span>{% endif %}
-            {% if model.byok %}<span class="pill">BYOK</span>{% endif %}
-            {% if model.attested %}<span class="pill good">TR router attested</span>{% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
+  </nav>
 
-<section class="marketing-grid three">
-  <div class="marketing-card">
-    <span class="card-label">Coverage</span>
-    <h3>Top models first.</h3>
-    <p>The catalog includes frontier, open weight, fast, cheap, image capable, and provider specific routes.</p>
+  <div class="model-explorer-status">
+    <p><strong data-model-result-count>{{ models|length }} models</strong><span data-model-result-detail> in the public catalog</span></p>
+    <button class="model-clear-button" type="button" data-model-clear hidden>Clear search</button>
   </div>
-  <div class="marketing-card">
-    <span class="card-label">Latency</span>
-    <h3>Streaming path.</h3>
-    <p>Streaming responses pass through the gateway so clients can render tokens as providers emit them.</p>
+
+  <div class="model-results" data-model-results>
+    {% for model in models %}
+    <article
+      class="model-result-card"
+      data-model-card
+      data-model-id="{{ model.id }}"
+      data-search-text="{{ model.search_text }}"
+      data-initial-index="{{ loop.index0 }}"
+      data-featured-rank="{{ model.featured_rank if model.featured_rank is not none else '' }}"
+      data-input-price="{{ model.prompt_price_sort if model.prompt_price_sort is not none else '' }}"
+      data-cached-price="{{ model.cached_price_sort if model.cached_price_sort is not none else '' }}"
+      data-output-price="{{ model.completion_price_sort if model.completion_price_sort is not none else '' }}"
+      data-context="{{ model.context_length_int }}"
+      data-provider-count="{{ model.provider_count }}"
+      {% if loop.index0 >= initial_page_size %}hidden{% endif %}
+    >
+      <div class="model-card-main">
+        <div class="model-card-heading">
+          <a class="model-publisher-logo" href="/providers/{{ model.publisher_slug }}" aria-label="{{ model.provider }} provider page">
+            <img src="/static/provider-logos/{{ model.publisher_slug }}.png" alt="{{ model.provider }} logo" width="36" height="36" loading="lazy" decoding="async">
+          </a>
+          <div class="model-card-title">
+            <div class="model-card-title-line">
+              <h2><a href="{{ model.detail_href }}">{{ model.name }}</a></h2>
+              {% if model.featured_rank is not none %}<span class="model-featured-badge">Popular</span>{% endif %}
+            </div>
+            <code>{{ model.id }}</code>
+          </div>
+        </div>
+
+        <div class="model-price-grid" aria-label="{{ model.name }} pricing and context">
+          <div><span>Input</span><strong>{{ model.prompt_price }}</strong></div>
+          <div><span>Cached input</span><strong>{{ model.cached_prompt_price }}</strong></div>
+          <div><span>Output</span><strong>{{ model.completion_price }}</strong></div>
+          <div><span>Context</span><strong title="{{ model.context_length }} tokens">{{ model.context_length_compact }}</strong></div>
+        </div>
+      </div>
+
+      <div class="model-card-meta">
+        <div class="model-card-badges" aria-label="Model attributes">
+          {% if model.open_weights %}<span class="pill good">Open weights</span>{% endif %}
+          {% if model.attested %}<span class="pill good">TR router attested</span>{% endif %}
+          {% if model.provider_policy_varies %}<span class="pill warn">{{ model.provider_policy_variation_label }}</span>{% endif %}
+          {% if model.zdr_available %}<span class="pill good">ZDR route</span>{% endif %}
+          {% if model.e2e_available %}<span class="pill good">E2EE route</span>{% endif %}
+          {% if model.us_provider_available %}<span class="pill">US</span>{% endif %}
+          {% if model.eu_focused_provider_available %}<span class="pill">EU</span>{% endif %}
+          {% if model.ai_iq %}
+          <a class="pill model-iq-pill" href="{{ model.ai_iq.url }}" rel="nofollow noopener">IQ {{ model.ai_iq.iq }} · #{{ model.ai_iq.rank }}</a>
+          {% endif %}
+          {% if model.is_meta %}<span class="pill">Router alias</span>{% endif %}
+        </div>
+
+        <div class="provider-chip-list model-card-providers" aria-label="{{ model.provider_count }} provider{{ '' if model.provider_count == 1 else 's' }}">
+          {% for provider in model.providers %}
+          <a class="pill provider-chip{% if loop.index > 6 %} provider-chip-overflow{% endif %}" href="/providers/{{ provider.slug }}" title="{{ provider.slug }}"><img class="provider-logo" src="{{ provider.logo_url }}" alt="{{ provider.name }} logo" aria-hidden="true" width="22" height="22" loading="lazy" decoding="async"><span>{{ provider.name }}</span></a>
+          {% endfor %}
+          {% if model.provider_count > 6 %}<span class="pill model-provider-more">+{{ model.provider_count - 6 }} more</span>{% endif %}
+        </div>
+      </div>
+
+      {% if model.endpoints_url %}
+      <details class="model-route-details" data-endpoints-url="{{ model.endpoints_url }}">
+        <summary>
+          <span>Compare {{ model.provider_count }} provider{{ '' if model.provider_count == 1 else 's' }} and prices</span>
+          <span aria-hidden="true">+</span>
+        </summary>
+        <div class="model-route-results" data-route-results>
+          <p class="model-route-loading">Open to load current provider routes.</p>
+        </div>
+      </details>
+      {% else %}
+      <div class="model-card-footer">
+        <a href="{{ model.detail_href }}">View routing details</a>
+      </div>
+      {% endif %}
+    </article>
+    {% endfor %}
   </div>
-  <div class="marketing-card">
-    <span class="card-label">Price</span>
-    <h3>Visible before you call.</h3>
-    <p>Model pages show prompt and completion pricing per provider route.</p>
+
+  <div class="model-explorer-empty" data-model-empty hidden>
+    <strong>No matching models</strong>
+    <p>Try a model family, publisher, provider, or exact API ID.</p>
+    <button class="btn" type="button" data-model-clear>Clear search</button>
+  </div>
+
+  <div class="model-show-more-wrap">
+    <button class="btn" type="button" data-model-show-more>Show more models</button>
+  </div>
+
+  <div class="model-catalog-note">
+    <p><strong>API JSON remains</strong> at <code>{{ api_base_url }}/models</code> with an API key. Use <code>trustedrouter/auto</code> for general routing, <code>trustedrouter/eu</code> for EU-focused routes, or a privacy floor such as <code>trustedrouter/zdr</code> or <code>trustedrouter/e2e</code>.</p>
+    <p>Prices are customer prices per one million tokens. Cached input is shown only when a provider publishes a distinct cache-read rate. Filter open weights or browse <a href="/us-ai-models">US</a>, <a href="/eu-ai-models">European</a>, and <a href="/china-ai-models">Chinese</a> model guides.</p>
   </div>
 </section>
+{% endblock %}
+{% block body_scripts %}
+<script src="/static/models.js?v={{ static_version|default('local') }}"></script>
 {% endblock %}

@@ -503,6 +503,29 @@ def test_public_models_page_does_not_require_api_key(client: TestClient) -> None
     assert "IQ 116" in response.text
 
 
+def test_public_models_page_is_a_ranked_searchable_price_explorer(
+    client: TestClient,
+) -> None:
+    response = client.get("/models")
+
+    assert response.status_code == 200
+    body = response.text
+    assert 'type="search"' in body
+    assert 'data-model-search' in body
+    assert 'data-model-sort' in body
+    assert "Cached input" in body
+    assert "/static/models.js" in body
+    assert 'href="/for-developers"' in body
+    assert 'href="/docs/quickstart"' not in body
+    assert 'data-endpoints-url="/v1/models/z-ai/glm-5.3-flash/endpoints"' in body
+
+    glm = body.index('data-model-id="z-ai/glm-5.3-flash"')
+    kimi = body.index('data-model-id="moonshotai/kimi-k3"')
+    deepseek = body.index('data-model-id="deepseek/deepseek-v4-pro-0813"')
+    router_alias = body.index('data-model-id="trustedrouter/auto"')
+    assert glm < kimi < deepseek < router_alias
+
+
 def test_public_model_detail_lists_distinct_serving_providers(client: TestClient) -> None:
     model_id = "moonshotai/kimi-k2.6"
     response = client.get(f"/models/{model_id}")
