@@ -26,15 +26,30 @@ def test_price_refresh_checks_exact_branch_sha_before_advancing_main() -> None:
     assert '--branch "${BRANCH}"' in workflow
     assert 'select(.headSha == \\"${SNAPSHOT_SHA}\\")' in workflow
     assert 'if [ "${conclusion}" = "success" ]' in workflow
+    assert "statuses: write" in workflow
+    assert 'ci_run_id=$(jq -r .databaseId <<<"${run_json}")' in workflow
     assert 'if [ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" ]' in workflow
     assert "git rebase" not in workflow
+    status_bridge = '"repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}"'
+    assert status_bridge in workflow
+    assert 'for context in "lint" "test (1)" "test (2)" "test (3)"' in workflow
+    assert '-f target_url="${ci_url}"' in workflow
+    assert '$(jq -r .sha <<<"${status_json}")' in workflow
+    assert '$(jq -r .context <<<"${status_json}")' in workflow
+    assert '$(jq -r .state <<<"${status_json}")' in workflow
+    assert '$(jq -r .creator.login <<<"${status_json}")' in workflow
+    assert '!= "github-actions[bot]"' in workflow
     main_push = 'git push origin "HEAD:refs/heads/main"'
     assert main_push in workflow
     assert deploy_dispatch in workflow
     assert workflow.index(branch_ci_dispatch) < workflow.index(main_push)
     assert workflow.index('if [ "${conclusion}" = "success" ]') < workflow.index(
-        main_push
+        status_bridge
     )
+    assert workflow.index(
+        'if [ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" ]'
+    ) < workflow.index(status_bridge)
+    assert workflow.index(status_bridge) < workflow.index(main_push)
     assert workflow.index(main_push) < workflow.index(deploy_dispatch)
     assert "WARN: failed to dispatch deploy.yml" not in workflow
 
