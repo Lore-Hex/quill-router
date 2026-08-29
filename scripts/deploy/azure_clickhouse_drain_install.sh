@@ -297,7 +297,10 @@ test -n \"\$CH_PW\"
 DELIVERY_COUNT_SQL='SELECT sum(c) FROM (SELECT count() AS c FROM activity_generations UNION ALL SELECT count() AS c FROM synthetic_probe_samples UNION ALL SELECT count() AS c FROM spend_lease_shadow UNION ALL SELECT count() AS c FROM client_request_events UNION ALL SELECT count() AS c FROM client_minute_counters)'
 before=\$(CLICKHOUSE_PASSWORD=\"\$CH_PW\" clickhouse-client --user '${CH_USER}' --database '${CH_DATABASE}' --query \"\$DELIVERY_COUNT_SQL\")
 moved=0
-for attempt in \$(seq 1 12); do
+# 36x5s = 3 minutes: the Azure producers deliver on a minutes-scale
+# cadence, and a 60s window failed twice on pure timing (2026-08-29,
+# rows advanced at ~75s) while each retry costs a ~40-minute chunk-ship.
+for attempt in \$(seq 1 36); do
   sleep 5
   after=\$(CLICKHOUSE_PASSWORD=\"\$CH_PW\" clickhouse-client --user '${CH_USER}' --database '${CH_DATABASE}' --query \"\$DELIVERY_COUNT_SQL\")
   if [ \"\$after\" -gt \"\$before\" ]; then
