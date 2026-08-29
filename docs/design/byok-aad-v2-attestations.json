@@ -81,7 +81,7 @@
       "census_positive_control_rows": 9074020,
       "census_source": "spanner:projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trusted-router (from CLI arguments, not asked of the server)",
       "operator": "joseph@jperla.com",
-      "note": "Fresh Step 4 precondition audit after the fourteen-day retention window using the tr-ops-local read-only Spanner identity. The multi-use snapshot found zero whole-body V1 literals and its same-column literal-search positive control matched the populated production table."
+      "note": "Fresh Step 4 precondition audit after the fourteen-day retention window, authenticated as tr-ops-local@quill-cloud-proxy.iam.gserviceaccount.com and targeting projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trusted-router. The multi-use snapshot found zero whole-body V1 literals and its same-column literal-search positive control matched 9,074,020 rows in the populated production table. The database name is still client-composed, as census_source states; the observed production row count is the independent live-service corroboration."
     }
   }
 }
