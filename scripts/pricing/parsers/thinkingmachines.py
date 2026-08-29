@@ -15,6 +15,9 @@ _SERVERLESS_IDS = {
         "thinkingmachines/inkling"
     ),
 }
+_SAMPLER_IDS = {
+    "zai-org/GLM-5.3:peft:262144": "z-ai/glm-5.3",
+}
 _LEGACY_INKLING_256K_ID = "thinkingmachines/Inkling:peft:262144"
 _LEGACY_CANONICAL_ID = "thinkingmachines/inkling"
 
@@ -69,6 +72,34 @@ def parse(html: str) -> dict[str, dict[str, int]]:
             cache_span = cells[3].select_one(".price-cached")
         if cache_span is None:
             raise ValueError(f"{canonical_id} serverless row has no cached-input rate")
+        prices[canonical_id] = {
+            "prompt_micro_per_m": _microdollars_per_million(
+                input_span.get_text(" ", strip=True)
+            ),
+            "completion_micro_per_m": _microdollars_per_million(
+                output_span.get_text(" ", strip=True)
+            ),
+            "prompt_cached_micro_per_m": _microdollars_per_million(
+                cache_span.get_text(" ", strip=True)
+            ),
+        }
+    for row in soup.select("#model-tbody tr"):
+        model_cell = row.select_one("td.tinker-id")
+        if model_cell is None:
+            continue
+        canonical_id = _SAMPLER_IDS.get(model_cell.get_text(strip=True))
+        if canonical_id is None:
+            continue
+        cells = row.find_all("td", recursive=False)
+        if len(cells) < 8:
+            continue
+        input_span = _price_span(cells[6], mode)
+        output_span = _price_span(cells[7], mode)
+        cache_span = input_span.select_one(".price-cached") or cells[6].select_one(
+            ".price-cached"
+        )
+        if cache_span is None:
+            raise ValueError(f"{canonical_id} sampler row has no cached-input rate")
         prices[canonical_id] = {
             "prompt_micro_per_m": _microdollars_per_million(
                 input_span.get_text(" ", strip=True)
