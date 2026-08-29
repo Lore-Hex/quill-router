@@ -1,6 +1,39 @@
 # Backfilling `synthetic` on historical monitor rows
 
-**Status: proposed, not run. Needs Joseph's approval before any `ALTER`.**
+**Status: EXECUTED 2026-08-29 ~21:19 UTC** (Joseph approved, framing it as a
+backup test as much as a correction). Mutation `0000000002`, issued once on
+`tr-clickhouse-1`, `is_done=1` on all three replicas with no failures.
+
+What the run measured, kept because the numbers below informed the plan:
+
+* Before, `FINAL`, identical on all three replicas: 303,687 unflagged
+  pre-cutover rows (the 330,606 in the scope section is the raw physical
+  count including replaced duplicates — the mutation rewrites those too, but
+  303,687 is the logical population).
+* After, each replica queried directly: unflagged 0, flagged 303,687.
+* August external revenue moved by the predicted ~$41 (the August-partition
+  share of $54.12).
+
+The backup test it doubled as, all on the real service identity
+(`tr-clickhouse-ingest`, unit environment reproduced):
+
+* Re-archiving a mutated day (`2026-08-10`) detected fingerprint drift and cut
+  a new immutable revision (`skipped=False`); an immediate rerun of the same
+  day reused it (`skipped=True`) — drift detection and immutability both hold.
+* Restore drills on `2026-08-10` (43,023 rows) and the boundary day
+  `2026-08-16` (21,378 rows) round-tripped the new revisions from GCS and
+  verified content.
+* A full `--backfill --table activity_generations` sweep then re-archived
+  **every day back to 2026-05-04**, not just the mutated window — the
+  `workspace_id` backfill (mutation `0000000001`, ~2026-08-19) had changed
+  every historical row, and the nightly `--lookback-days 7` never re-archives
+  older days, so the May–July archives had been silently stale against the
+  live table for ten days. **After ANY mutation on an archived table, run the
+  archive with `--backfill` for that table**; the freshness workflow only
+  checks that yesterday's pointer advanced and cannot see this.
+
+The sections below are kept as the rationale for the statement that ran and
+the playbook for re-running it (see the reversion hazard).
 
 Every usage and revenue query filters `WHERE synthetic = 0`, so the synthetic
 monitoring workspace's unflagged rows are counted as real customer traffic.
