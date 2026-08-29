@@ -16,7 +16,7 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
   const homepageStats = page.locator(".charter-stat-band .charter-stat");
   await expect(homepageStats).toHaveCount(3);
   await expect(homepageStats.nth(0)).toContainText("600+AI models");
-  await expect(homepageStats.nth(1)).toContainText("81+providers");
+  await expect(homepageStats.nth(1)).toContainText("90+providers");
   await expect(homepageStats.last()).toContainText("3 cloudsGCP · AWS · Azure");
   await expect(page.locator(".region-map-card")).toHaveCount(0);
   await expect(page.locator("body")).toHaveCSS("font-size", "15.5px");

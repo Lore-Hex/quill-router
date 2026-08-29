@@ -540,8 +540,8 @@ def test_public_providers_page_has_search_and_collapsed_policy_notes(
     assert 'data-provider-search' in response.text
     assert 'data-provider-row data-provider-id="tinfoil"' in response.text
     assert '<details class="provider-policy-details">' in response.text
-    assert "Show more" in response.text
-    assert "Show less" in response.text
+    assert "Show policy" in response.text
+    assert "Hide policy" in response.text
     assert "/static/providers.js" in response.text
 
 
@@ -739,7 +739,7 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     assert "One Unified Interface." in response.text
     assert "Privacy with proof." in response.text
     assert "Better privacy, better prices, better uptime, no subscriptions." in response.text
-    assert '<strong>81+</strong><span>providers</span>' in response.text
+    assert '<strong>90+</strong><span>providers</span>' in response.text
     assert '<strong>3 clouds</strong><span>GCP · AWS · Azure</span>' in response.text
     assert 'class="region-map-card"' not in response.text
     assert "Provable privacy." not in response.text

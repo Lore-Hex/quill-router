@@ -4963,12 +4963,19 @@ def _provider_view(provider: Provider) -> dict[str, object]:
         "confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
         "zero_data_retention_label": (
-            "prepaid only"
-            if provider.prepaid_zero_data_retention
-            and provider.provider_zero_data_retention is not True
+            "yes"
+            if provider.provider_zero_data_retention is True
+            or provider.prepaid_zero_data_retention
             else f"scheduled {provider.prepaid_zero_data_retention_effective_on}"
             if provider.prepaid_zero_data_retention_effective_on
             else _policy_label(provider.provider_zero_data_retention)
+        ),
+        "zero_data_retention_scope_label": (
+            "All routes"
+            if provider.provider_zero_data_retention is True
+            else "TR-funded routes"
+            if provider.prepaid_zero_data_retention
+            else None
         ),
         "confidential_compute_label": _policy_label(provider.provider_confidential_compute),
         "provider_e2ee_label": _policy_label(provider.provider_e2ee),
@@ -5011,7 +5018,7 @@ def _provider_faq_items(
         )
     elif provider.prepaid_zero_data_retention:
         zdr_answer = (
-            f"TrustedRouter records managed prepaid {provider.name} routes as zero data "
+            f"TrustedRouter records its managed {provider.name} routes as zero data "
             "retention. That classification does not automatically cover every direct or "
             "BYOK account. Use provider.min_privacy=zdr to require an eligible route."
         )
@@ -5061,9 +5068,9 @@ def _provider_privacy_tier(provider: Provider) -> str:
     if provider.provider_e2ee and provider.provider_confidential_compute:
         return "Confidential"
     if provider.provider_zero_data_retention:
-        return "No logs"
+        return "ZDR"
     if provider.prepaid_zero_data_retention:
-        return "No logs (prepaid)"
+        return "ZDR"
     if provider.provider_confidential_compute:
         return "Confidential compute"
     return "No provider claim"

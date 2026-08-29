@@ -103,7 +103,8 @@ def test_zdr_alias_can_use_openai_only_through_contracted_credits_route() -> Non
 def test_public_pages_explain_active_openai_prepaid_scope(client: TestClient) -> None:
     providers = client.get("/providers")
     assert providers.status_code == 200
-    assert "prepaid only" in providers.text
+    assert "TR-funded routes" in providers.text
+    assert "prepaid only" not in providers.text
     assert "Contracted Zero Data Retention is active" in providers.text
     assert "July 28, 2026" in providers.text
     assert "verified on July 29, 2026" in providers.text
