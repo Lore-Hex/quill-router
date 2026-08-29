@@ -180,6 +180,7 @@ def test_token_rate_limit_has_retry_after(
     assert limited.status_code == 429
     assert limited.headers["retry-after"]
     assert limited.headers["cache-control"] == "no-store"
+    assert limited.headers["pragma"] == "no-cache"
     assert limited.json()["error"] == "temporarily_unavailable"
 
 
