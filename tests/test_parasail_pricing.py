@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import parasail
 
 
@@ -238,6 +241,107 @@ def test_write_provider_manifest_appends_new_models(tmp_path, monkeypatch) -> No
     assert "input_token_price_per_m" not in unresolved
     assert saved["model_count"] == len(saved["models"])
     assert any("appended" in n for n in notes)
+
+
+def test_write_provider_manifest_tombstones_api_delisting_without_blocking_refresh(
+    tmp_path, monkeypatch
+) -> None:  # noqa: ANN001
+    kimi_id = "moonshotai/kimi-k2.7-code"
+    minimax_id = "minimax/minimax-m3"
+    manifest = {
+        "provider": "parasail",
+        "models": [
+            {
+                **parasail._MANIFEST_ROW_TEMPLATES[kimi_id],
+                "input_token_price_per_m": 750_000,
+                "output_token_price_per_m": 3_500_000,
+            },
+            {
+                **parasail._MANIFEST_ROW_TEMPLATES[minimax_id],
+                "input_token_price_per_m": 300_000,
+                "output_token_price_per_m": 1_200_000,
+            },
+        ],
+    }
+    path = tmp_path / "parasail.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(parasail, "MANIFEST_PATH", path)
+    monkeypatch.setattr(parasail, "_MANIFEST_EXPECTED", [kimi_id, minimax_id])
+    monkeypatch.setattr(parasail, "_LIVE_MODEL_IDS", {minimax_id})
+
+    live_result = ProviderPricingResult(
+        slug="parasail",
+        prices={minimax_id: ModelPrice(300_000, 1_200_000)},
+        source="api",
+        fetched_url=parasail.PRICING_URL,
+    )
+
+    # One fresh omission may be transient, so retain the route but record it.
+    parasail.write_provider_manifest(live_result)
+    first = {
+        row["id"]: row
+        for row in json.loads(path.read_text(encoding="utf-8"))["models"]
+    }
+    assert first[kimi_id]["missing_since"]
+    assert first[kimi_id].get("routable") is not False
+
+    # A second fresh omission confirms the delisting and fails the route closed.
+    parasail.write_provider_manifest(live_result)
+    second = {
+        row["id"]: row
+        for row in json.loads(path.read_text(encoding="utf-8"))["models"]
+    }
+    assert second[kimi_id]["routable"] is False
+    assert second[kimi_id]["routable_reason"] == "delisted-upstream"
+
+    # A fresh live, priced row clears only the machine-owned tombstone.
+    monkeypatch.setattr(parasail, "_LIVE_MODEL_IDS", {kimi_id, minimax_id})
+    restored_result = ProviderPricingResult(
+        slug="parasail",
+        prices={
+            kimi_id: ModelPrice(750_000, 3_500_000),
+            minimax_id: ModelPrice(300_000, 1_200_000),
+        },
+        source="api",
+        fetched_url=parasail.PRICING_URL,
+    )
+    parasail.write_provider_manifest(restored_result)
+    restored = {
+        row["id"]: row
+        for row in json.loads(path.read_text(encoding="utf-8"))["models"]
+    }
+    assert restored[kimi_id]["routable"] is True
+    assert "routable_reason" not in restored[kimi_id]
+    assert "missing_since" not in restored[kimi_id]
+
+
+def test_write_provider_manifest_still_requires_prices_for_live_expected_models(
+    tmp_path, monkeypatch
+) -> None:  # noqa: ANN001
+    model_id = "moonshotai/kimi-k2.7-code"
+    path = tmp_path / "parasail.json"
+    path.write_text(
+        json.dumps(
+            {
+                "provider": "parasail",
+                "models": [dict(parasail._MANIFEST_ROW_TEMPLATES[model_id])],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(parasail, "MANIFEST_PATH", path)
+    monkeypatch.setattr(parasail, "_MANIFEST_EXPECTED", [model_id])
+    monkeypatch.setattr(parasail, "_LIVE_MODEL_IDS", {model_id})
+
+    with pytest.raises(RuntimeError, match="did not update expected model"):
+        parasail.write_provider_manifest(
+            ProviderPricingResult(
+                slug="parasail",
+                prices={},
+                source="api",
+                fetched_url=parasail.PRICING_URL,
+            )
+        )
 
 
 def test_write_provider_manifest_promotes_glm_53_only_after_official_price(
