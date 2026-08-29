@@ -20,5 +20,18 @@ test("provider catalog searches and expands policy notes", async ({ page }) => {
   await policy.locator("summary").click();
   await expect(policy).toHaveAttribute("open", "");
   await expect(policy.locator(".provider-policy-full")).toBeVisible();
-  await expect(policy.getByText("Show less", { exact: true })).toBeVisible();
+  await expect(policy.getByText("Hide policy", { exact: true })).toBeVisible();
+});
+
+test("provider catalog fits a mobile viewport without horizontal scrolling", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/providers");
+
+  const dimensions = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+
+  expect(dimensions.scrollWidth).toBe(dimensions.clientWidth);
+  await expect(page.locator(".provider-catalog-grid")).toHaveCSS("grid-template-columns", "320px");
 });

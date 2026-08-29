@@ -475,7 +475,7 @@ PROVIDERS: dict[str, Provider] = {
             "Contracted Zero Data Retention is active for TrustedRouter's managed "
             "OpenAI account, effective July 28, 2026, and live enforcement was "
             "verified on July 29, 2026. This guarantee applies only to "
-            "TrustedRouter-funded prepaid routes; customer BYOK credentials use the "
+            "TrustedRouter-funded routes; customer BYOK credentials use the "
             "data controls on the customer's own OpenAI organization or project."
         ),
         provider_policy_url=(
@@ -509,7 +509,7 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy=(
             "TrustedRouter's managed Vertex AI account is covered by contractual "
             "Zero Data Retention. This guarantee applies only to TrustedRouter-funded "
-            "prepaid routes. TrustedRouter does not invoke Google Search or Maps "
+            "routes. TrustedRouter does not invoke Google Search or Maps "
             "grounding or Gemini Live session resumption on these routes. Google AI "
             "Studio is classified separately."
         ),

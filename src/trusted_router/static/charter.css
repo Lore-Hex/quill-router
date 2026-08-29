@@ -2685,9 +2685,93 @@ body.auth.auth-shell {
   white-space: nowrap;
 }
 
-.provider-policy-cell {
-  width: 260px;
-  min-width: 220px;
+.provider-catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.provider-catalog-card {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+  align-content: start;
+  padding: 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-card);
+  background: var(--surface-raised);
+}
+
+.provider-catalog-card[hidden] {
+  display: none;
+}
+
+.provider-card-head {
+  display: flex;
+  min-width: 0;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.provider-card-head .provider-identity {
+  min-width: 0;
+}
+
+.provider-card-head .provider-identity-copy strong,
+.provider-card-head .provider-identity-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-card-trust {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.provider-card-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.provider-card-facts > div {
+  min-width: 0;
+}
+
+.provider-card-facts dt {
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.provider-card-facts dd {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 0;
+}
+
+.provider-card-facts small,
+.provider-scope-note {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.provider-catalog-card > .provider-policy-details {
+  min-width: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-hairline);
 }
 
 .provider-policy-details summary {
@@ -2735,6 +2819,7 @@ body.auth.auth-shell {
 
 .provider-policy-full p {
   margin: 0 0 8px;
+  overflow-wrap: anywhere;
 }
 
 .provider-explorer-empty {
@@ -3117,6 +3202,10 @@ body.auth.auth-shell {
     justify-content: flex-start;
   }
 
+  .provider-catalog-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .model-card-main {
     gap: 16px;
   }
@@ -3144,6 +3233,21 @@ body.auth.auth-shell {
     font-family: var(--font-ui);
     font-size: 9px;
     text-transform: uppercase;
+  }
+}
+
+@media (max-width: 520px) {
+  .provider-explorer-toolbar,
+  .provider-card-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .provider-explorer-count {
+    margin: 0;
+  }
+
+  .provider-card-head {
+    align-items: flex-start;
   }
 }
 

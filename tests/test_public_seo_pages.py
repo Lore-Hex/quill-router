@@ -530,6 +530,7 @@ def test_homepage_has_plain_llm_seo_positioning(client: TestClient) -> None:
     assert "Cheaper routes" in response.text
     assert "Faster migration" in response.text
     assert "More reliable inference" in response.text
+    assert "<strong>90+</strong><span>providers</span>" in response.text
     assert 'href="/llms.txt"' in response.text
 
 
@@ -542,6 +543,9 @@ def test_public_provider_route_defaults_to_html_for_link_checkers(client: TestCl
         in response.text
     )
     assert "Provider transparency" in response.text
+    assert 'class="provider-catalog-grid"' in response.text
+    assert 'class="provider-catalog-table"' not in response.text
+    assert "No logs (prepaid)" not in response.text
     assert "application/json" not in response.headers["content-type"]
 
     json_response = client.get("/providers", headers={"accept": "application/json"})
@@ -1101,16 +1105,31 @@ def test_provider_detail_page_links_served_models(client: TestClient) -> None:
     assert "FAQPage" in json.dumps(provider_schema)
 
 
-def test_vertex_provider_page_scopes_zdr_to_managed_prepaid_routes(
+def test_vertex_provider_page_presents_zdr_with_managed_route_scope(
     client: TestClient,
 ) -> None:
     response = client.get("/providers/google-vertex")
 
     assert response.status_code == 200
-    assert "No logs (prepaid)" in response.text
-    assert "prepaid only" in response.text
+    assert ">ZDR</span>" in response.text
+    assert ">yes</span>" in response.text
+    assert "TR-funded routes" in response.text
+    assert "No logs (prepaid)" not in response.text
+    assert "prepaid only" not in response.text
     assert "contractual Zero Data Retention" in response.text
     assert "Google AI Studio is classified separately" in response.text
+
+
+def test_openai_provider_page_presents_zdr_with_managed_route_scope(
+    client: TestClient,
+) -> None:
+    response = client.get("/providers/openai")
+
+    assert response.status_code == 200
+    assert ">ZDR</span>" in response.text
+    assert ">yes</span>" in response.text
+    assert "TR-funded routes" in response.text
+    assert "No logs (prepaid)" not in response.text
 
 
 def test_provider_detail_links_indexable_performance_page(
