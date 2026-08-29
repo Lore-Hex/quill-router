@@ -47,6 +47,18 @@ def _serverless_pricing_html() -> str:
     """
 
 
+def _glm53_pricing_html() -> str:
+    return """
+    <table><tbody id="model-tbody"><tr>
+      <td>GLM-5.3 (256K)</td>
+      <td class="tinker-id">zai-org/GLM-5.3:peft:262144</td>
+      <td>256K</td><td>Large</td><td>MoE</td><td>Reasoning</td>
+      <td class="price">$4.86<span class="price-cached">$0.972 (cached)</span></td>
+      <td class="price">$12.15</td>
+    </tr></tbody></table>
+    """
+
+
 def test_parser_reads_all_serverless_inference_models() -> None:
     assert parse(_serverless_pricing_html()) == {
         "thinkingmachines/inkling-small": {
@@ -59,6 +71,46 @@ def test_parser_reads_all_serverless_inference_models() -> None:
             "completion_micro_per_m": 4_050_000,
             "prompt_cached_micro_per_m": 170_000,
         },
+    }
+
+
+def test_parser_reads_glm53_base_model_pricing() -> None:
+    assert parse(_glm53_pricing_html()) == {
+        "z-ai/glm-5.3": {
+            "prompt_micro_per_m": 4_860_000,
+            "completion_micro_per_m": 12_150_000,
+            "prompt_cached_micro_per_m": 972_000,
+        }
+    }
+
+
+def test_parser_reads_glm53_serverless_variant() -> None:
+    html = """
+    <table><tbody id="serverless-tbody"><tr>
+      <td>GLM-5.3</td>
+      <td class="tinker-id">zai-org/GLM-5.3:peft:262144:sampling-nvfp4</td>
+      <td>256K</td>
+      <td class="price">$4.86<span class="price-cached">$0.972 (cached)</span></td>
+      <td class="price">$12.15</td>
+    </tr></tbody></table>
+    """
+
+    assert parse(html) == {
+        "z-ai/glm-5.3": {
+            "prompt_micro_per_m": 4_860_000,
+            "completion_micro_per_m": 12_150_000,
+            "prompt_cached_micro_per_m": 972_000,
+        }
+    }
+
+
+def test_parser_merges_serverless_and_base_model_tables() -> None:
+    parsed = parse(_serverless_pricing_html() + _glm53_pricing_html())
+
+    assert set(parsed) == {
+        "thinkingmachines/inkling",
+        "thinkingmachines/inkling-small",
+        "z-ai/glm-5.3",
     }
 
 
@@ -114,7 +166,12 @@ def test_manifest_writer_updates_integer_rates(tmp_path, monkeypatch) -> None:  
                         "id": "thinkingmachines/inkling-small",
                         "input_token_price_per_m": 1,
                         "output_token_price_per_m": 1,
-                    }
+                    },
+                    {
+                        "id": "z-ai/glm-5.3",
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 1,
+                    },
                 ]
             }
         ),
@@ -134,22 +191,24 @@ def test_manifest_writer_updates_integer_rates(tmp_path, monkeypatch) -> None:  
                 completion_micro_per_m=1_200_000,
                 prompt_cached_micro_per_m=60_000,
             ),
+            "z-ai/glm-5.3": ModelPrice(
+                prompt_micro_per_m=4_860_000,
+                completion_micro_per_m=12_150_000,
+                prompt_cached_micro_per_m=972_000,
+            ),
         },
         source="deterministic",
     )
 
     thinkingmachines.write_provider_manifest(result)
 
-    rows = {
-        row["id"]: row
-        for row in json.loads(manifest.read_text(encoding="utf-8"))["models"]
-    }
+    rows = {row["id"]: row for row in json.loads(manifest.read_text(encoding="utf-8"))["models"]}
     assert rows["thinkingmachines/inkling"]["input_token_price_per_m"] == 1_000_000
     assert rows["thinkingmachines/inkling"]["output_token_price_per_m"] == 4_050_000
     assert rows["thinkingmachines/inkling"]["cached_input_token_price_per_m"] == 170_000
     assert rows["thinkingmachines/inkling-small"]["input_token_price_per_m"] == 300_000
     assert rows["thinkingmachines/inkling-small"]["output_token_price_per_m"] == 1_200_000
-    assert (
-        rows["thinkingmachines/inkling-small"]["cached_input_token_price_per_m"]
-        == 60_000
-    )
+    assert rows["thinkingmachines/inkling-small"]["cached_input_token_price_per_m"] == 60_000
+    assert rows["z-ai/glm-5.3"]["input_token_price_per_m"] == 4_860_000
+    assert rows["z-ai/glm-5.3"]["output_token_price_per_m"] == 12_150_000
+    assert rows["z-ai/glm-5.3"]["cached_input_token_price_per_m"] == 972_000

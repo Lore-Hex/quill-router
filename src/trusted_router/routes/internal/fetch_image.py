@@ -46,7 +46,7 @@ from trusted_router.types import ErrorType
 _MAX_IMAGE_BYTES = 10 * 1024 * 1024
 _MAX_REDIRECTS = 3
 _FETCH_TIMEOUT_SECONDS = 15.0
-_ACCEPT_HEADER = "image/png,image/jpeg"
+_ACCEPT_HEADER = "image/png,image/jpeg,image/webp"
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 
@@ -80,13 +80,9 @@ async def _fetch_with_redirect_chain(client: httpx.AsyncClient, url: str) -> tup
             async for chunk in resp.aiter_raw():
                 buf.extend(chunk)
                 if len(buf) > _MAX_IMAGE_BYTES:
-                    raise api_error(
-                        400, "image fetch: image too large", ErrorType.BAD_REQUEST
-                    )
+                    raise api_error(400, "image fetch: image too large", ErrorType.BAD_REQUEST)
             return media_type, bytes(buf)
-    raise api_error(
-        400, "image fetch: too many redirects", ErrorType.BAD_REQUEST
-    )
+    raise api_error(400, "image fetch: too many redirects", ErrorType.BAD_REQUEST)
 
 
 def register(router: APIRouter) -> None:
@@ -99,30 +95,22 @@ def register(router: APIRouter) -> None:
         require_internal_gateway(request, settings)
         url = body.url.strip()
         if not url:
-            raise api_error(
-                400, "image fetch: url is required", ErrorType.BAD_REQUEST
-            )
+            raise api_error(400, "image fetch: url is required", ErrorType.BAD_REQUEST)
         # Pre-flight scheme/host check before opening any client. The
         # actual per-hop SSRF check happens inside the redirect loop.
         validate_url_scheme(url)
         timeout = httpx.Timeout(_FETCH_TIMEOUT_SECONDS, connect=_FETCH_TIMEOUT_SECONDS)
-        async with httpx.AsyncClient(
-            follow_redirects=False, timeout=timeout
-        ) as client:
+        async with httpx.AsyncClient(follow_redirects=False, timeout=timeout) as client:
             try:
                 media_type, data = await _fetch_with_redirect_chain(client, url)
             except httpx.TimeoutException as exc:
-                raise api_error(
-                    400, "image fetch: timeout", ErrorType.BAD_REQUEST
-                ) from exc
+                raise api_error(400, "image fetch: timeout", ErrorType.BAD_REQUEST) from exc
             except httpx.HTTPError as exc:
-                raise api_error(
-                    400, "image fetch: fetch failed", ErrorType.BAD_REQUEST
-                ) from exc
+                raise api_error(400, "image fetch: fetch failed", ErrorType.BAD_REQUEST) from exc
         if not media_type:
             # Sniff a minimal media type — match the Go enclave's
             # contentTypeMedia + http.DetectContentType behavior on
-            # magic bytes for png/jpeg. Anything else falls through to
+            # magic bytes for png/jpeg/webp. Anything else falls through to
             # normalizeImageBytes' "unsupported image media type" error
             # at the enclave; better to label it now so the caller
             # gets a clear diagnostic.
@@ -130,6 +118,8 @@ def register(router: APIRouter) -> None:
                 media_type = "image/png"
             elif data[:3] == b"\xff\xd8\xff":
                 media_type = "image/jpeg"
+            elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+                media_type = "image/webp"
             else:
                 media_type = "application/octet-stream"
         return {

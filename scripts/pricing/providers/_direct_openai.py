@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -59,6 +61,10 @@ class DirectOpenAIProviderSpec:
     catalog_loader: CatalogLoader | None = None
     include: IncludeRow | None = None
     normalize_rows: NormalizeRows | None = None
+    # Only enable when normalize_rows constructs the upstream ID locally.
+    # Raw provider catalogs are not trusted to redirect one priced model ID to
+    # another model silently.
+    accept_normalized_upstream_id: bool = False
     # Operator safety holds are applied after every canary. Keeping them in
     # the shared fetcher prevents a healthy PONG from making a deliberately
     # dark route live during a refactor or manifest rebuild.
@@ -67,6 +73,7 @@ class DirectOpenAIProviderSpec:
     canary_expected_content: str | None = None
     canary_endpoint_path: str = "/chat/completions"
     canary_extra_body: dict[str, Any] = field(default_factory=dict)
+    canary_concurrency: int = 1
 
 
 def _catalog_rows(payload: object, *, slug: str) -> list[dict[str, Any]]:
@@ -90,6 +97,10 @@ class DirectOpenAIProvider:
     def __init__(self, spec: DirectOpenAIProviderSpec, *, manifest_path: Path) -> None:
         if spec.static_prices and spec.price_loader is not None:
             raise ValueError(f"{spec.slug}: configure static_prices or price_loader, not both")
+        if spec.accept_normalized_upstream_id and spec.normalize_rows is None:
+            raise ValueError(f"{spec.slug}: accept_normalized_upstream_id requires normalize_rows")
+        if not 1 <= spec.canary_concurrency <= 16:
+            raise ValueError(f"{spec.slug}: canary_concurrency must be between 1 and 16")
         self.spec = spec
         self.manifest_path = manifest_path
         self.upstream_id_map = {
@@ -167,6 +178,7 @@ class DirectOpenAIProvider:
                 explicit_map=explicit_model_map,
                 upstream_id_map=self.upstream_id_map,
                 include=self.spec.include,
+                accept_source_upstream_id=self.spec.accept_normalized_upstream_id,
             )
             prices = {model_id: joined_prices[model_id] for model_id in discovered}
         else:
@@ -175,6 +187,7 @@ class DirectOpenAIProvider:
                 explicit_map=explicit_model_map,
                 upstream_id_map=self.upstream_id_map,
                 include=self.spec.include,
+                accept_source_upstream_id=self.spec.accept_normalized_upstream_id,
             )
         if not prices:
             raise RuntimeError(f"{self.spec.slug}: no priced chat models discovered")
@@ -194,10 +207,9 @@ class DirectOpenAIProvider:
             self.manifest_path,
             (set(discovered) & set(prices)) - self.spec.operator_hold_reasons.keys(),
         )
-        healthy = {
-            model_id
-            for model_id in checked
-            if probe_openai_chat(
+
+        def probe(model_id: str) -> tuple[str, bool]:
+            return model_id, probe_openai_chat(
                 base_url=self.spec.base_url,
                 api_key=api_key,
                 model=self.upstream_id_map[model_id],
@@ -206,7 +218,28 @@ class DirectOpenAIProvider:
                 endpoint_path=self.spec.canary_endpoint_path,
                 extra_body=self.spec.canary_extra_body,
             )
-        }
+
+        if self.spec.canary_concurrency == 1 or len(checked) <= 1:
+            outcomes = [probe(model_id) for model_id in sorted(checked)]
+        else:
+            with ThreadPoolExecutor(
+                max_workers=min(self.spec.canary_concurrency, len(checked)),
+                thread_name_prefix=f"{self.spec.slug}-canary",
+            ) as executor:
+                outcomes = list(executor.map(probe, sorted(checked)))
+            failed = sorted(model_id for model_id, succeeded in outcomes if not succeeded)
+            if failed:
+                # A bounded parallel catalog sweep can briefly trip a provider's
+                # shared-key rate limit. Retry only those failures once, serially,
+                # before holding routes dark. A genuinely broken route still fails
+                # closed, while self-inflicted 429s do not shrink the catalog.
+                time.sleep(1.0)
+                retry_outcomes = dict(probe(model_id) for model_id in failed)
+                outcomes = [
+                    (model_id, succeeded or retry_outcomes.get(model_id, False))
+                    for model_id, succeeded in outcomes
+                ]
+        healthy = {model_id for model_id, succeeded in outcomes if succeeded}
         apply_canary_results(
             discovered,
             checked_model_ids=checked,

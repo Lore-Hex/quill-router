@@ -1,0 +1,412 @@
+{
+  "provider": "baidu",
+  "models": [
+    {
+      "display_name": "Baidu Qianfan: Qianfan-OCR-Fast",
+      "title": "qianfan-ocr-fast",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "baidu/qianfan-ocr-fast",
+      "upstream_id": "qianfan-ocr-fast",
+      "context_length": 65536,
+      "max_output_tokens": 28672,
+      "supported_features": [],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 680000,
+      "output_token_price_per_m": 2810000,
+      "cached_input_token_price_per_m": 0
+    },
+    {
+      "display_name": "Baidu Qianfan: DeepSeek-V3.2",
+      "title": "deepseek-v3.2-intl",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v3.2",
+      "upstream_id": "deepseek-v3.2-intl",
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 280000,
+      "output_token_price_per_m": 420000,
+      "cached_input_token_price_per_m": 28000
+    },
+    {
+      "display_name": "Baidu Qianfan: DeepSeek-V4-Flash",
+      "title": "deepseek-v4-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash",
+      "upstream_id": "deepseek-v4-flash",
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "stop",
+        "max_tokens"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 28000
+    },
+    {
+      "display_name": "Baidu Qianfan: DeepSeek-V4-Flash-0731",
+      "title": "deepseek-v4-flash-0731",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek-v4-flash-0731",
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "stop",
+        "max_tokens"
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 28000
+    },
+    {
+      "display_name": "Baidu Qianfan: DeepSeek-V4-Pro",
+      "title": "deepseek-v4-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-pro",
+      "upstream_id": "deepseek-v4-pro",
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "supported_features": [
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "stop",
+        "max_tokens"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 1690000,
+      "output_token_price_per_m": 3380000,
+      "cached_input_token_price_per_m": 140000
+    },
+    {
+      "display_name": "Baidu Qianfan: Kimi-K2.6",
+      "title": "kimi-k2.6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2.6",
+      "upstream_id": "kimi-k2.6",
+      "context_length": 262144,
+      "max_output_tokens": 262144,
+      "supported_features": [
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "stop",
+        "max_tokens"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 950000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 160000
+    },
+    {
+      "display_name": "Baidu Qianfan: Hy3",
+      "title": "hy3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "tencent/hy3",
+      "upstream_id": "hy3",
+      "context_length": 262144,
+      "max_output_tokens": 262144,
+      "supported_features": [
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "max_tokens"
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 132000,
+      "output_token_price_per_m": 528000,
+      "cached_input_token_price_per_m": 33000
+    },
+    {
+      "display_name": "Baidu Qianfan: MiMo-V2.5",
+      "title": "mimo-v2.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "xiaomi/mimo-v2.5",
+      "upstream_id": "mimo-v2.5",
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "max_tokens"
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 2800
+    },
+    {
+      "display_name": "Baidu Qianfan: GLM-5",
+      "title": "glm-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5",
+      "upstream_id": "glm-5",
+      "context_length": 202752,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 700000,
+      "output_token_price_per_m": 2240000,
+      "cached_input_token_price_per_m": 140000
+    },
+    {
+      "display_name": "Baidu Qianfan: GLM-5.1",
+      "title": "glm-5.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.1",
+      "upstream_id": "glm-5.1",
+      "context_length": 202752,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "max_tokens"
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000
+    },
+    {
+      "display_name": "Baidu Qianfan: GLM-5.2",
+      "title": "glm-5.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "glm-5.2",
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "max_tokens"
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000
+    }
+  ],
+  "source": "https://qianfan.baidubce.com/v1/models",
+  "generated_at": "2026-08-28T22:58:07Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 11
+}

@@ -110,6 +110,7 @@ PROVIDER_SLUGS = [
     "friendli",
     "baseten",
     "thinkingmachines",
+    "huggingface",
     "wafer",
     "crusoe",
     "minimax",
@@ -155,6 +156,10 @@ PROVIDER_SLUGS = [
     "nscale",
     "perplexity",
     "krea",
+    "vultr",
+    "darkbloom",
+    "baidu",
+    "riverflow",
     # 0G Private Computer publishes exact per-route prices and trust metadata
     # in its public marketplace hydration data. The adapter admits only
     # healthy TeeML/private chat routes and keeps them dark until a keyed PONG.

@@ -888,6 +888,10 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "sakana",
         "perplexity",
         "krea",
+        "vultr",
+        "darkbloom",
+        "baidu",
+        "riverflow",
         "meta",
         "openrouter",
     ):

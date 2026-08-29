@@ -24,6 +24,7 @@ _NEW_AUTOMATIC_FEED_MODELS = {
     "x-ai/grok-4.6",
     "deepseek/deepseek-v4-flash",
     "deepseek/deepseek-v4-flash-0731",
+    "google/gemma-4-26b",
     "mistralai/mistral-small-2603",
     "perplexity/sonar",
     "z-ai/glm-5.2",
@@ -124,6 +125,12 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "z-ai/glm-5.2"}]}
     if "api.perplexity.ai" in url:
         return {"data": [{"id": "perplexity/sonar"}]}
+    if "api.vultrinference.com" in url:
+        return {"data": [{"id": "deepseek-v4-flash-0731"}]}
+    if "api.darkbloom.dev" in url:
+        return {"data": [{"id": "gemma-4-26b"}]}
+    if "qianfan.baidubce.com" in url:
+        return {"data": [{"id": "deepseek-v4-flash"}]}
     return {"data": []}
 
 

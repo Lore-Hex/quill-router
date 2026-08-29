@@ -137,6 +137,8 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
             "akashml",
             "arcee",
             "byteplus",
+            "darkbloom",
+            "fal",
             "inception",
             "io-net",
             "krea",
@@ -1372,6 +1374,20 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://tinker-docs.thinkingmachines.ai/tinker/models/",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "huggingface": Provider(
+        slug="huggingface",
+        name="Hugging Face",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Hugging Face Inference Providers forwards each request to the "
+            "downstream provider pinned in the route. TrustedRouter tracks no "
+            "contractual ZDR, confidential-compute, or E2EE claim for this "
+            "account, so these routes are Standard."
+        ),
+        provider_policy_url="https://huggingface.co/docs/inference-providers/pricing",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
     # Xiaomi MiMo — OpenAI-compatible chat (api.xiaomimimo.com/v1). MiMo-V2 /
     # V2.5 agent models. Models + prices are in data/provider_models/xiaomi.json.
     "xiaomi": Provider(
@@ -1623,15 +1639,72 @@ PROVIDERS: dict[str, Provider] = {
     "perceptron": Provider(
         slug="perceptron",
         name="Perceptron",
+        supports_chat=False,
         supports_prepaid=False,
         supports_byok=False,
         provider_policy=(
-            "No contractual zero-retention, confidential-compute, or E2EE claim "
-            "is tracked for TrustedRouter's Perceptron account. Its public catalog "
-            "is priced, but the configured inference credential did not authenticate "
-            "during the live canary, so routes remain dark."
+            "The Perceptron Inc credential authenticates against api.perceptron.inc "
+            "and lists its Isaac and Perceptron visual models. Its catalog does not "
+            "publish exact billable prices and its perception API is not the shared "
+            "chat contract, so routes remain dark until a specialized adapter and "
+            "exact billing contract are implemented. No ZDR or confidential-compute "
+            "claim is tracked."
         ),
-        provider_policy_url="https://perceptron.cloud/docs/inference",
+        provider_policy_url="https://docs.perceptron.inc/",
+    ),
+    "darkbloom": Provider(
+        slug="darkbloom",
+        name="Darkbloom",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Darkbloom publishes hardware-attestation metadata, but TrustedRouter "
+            "does not yet verify and pin that evidence inside the enclave. Routes "
+            "use exact authenticated catalog prices and are classified Standard, "
+            "not confidential or E2EE."
+        ),
+        provider_policy_url="https://darkbloom.dev/",
+    ),
+    "baidu": Provider(
+        slug="baidu",
+        name="Baidu Qianfan",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Baidu Qianfan international routes use exact prices from the "
+            "authenticated first-party catalog. No contractual zero-retention, "
+            "confidential-compute, or E2EE claim is tracked for this account, so "
+            "these routes are Standard."
+        ),
+        provider_policy_url="https://intl.cloud.baidu.com/en/doc/qianfan/",
+        provider_headquarters_country=PROVIDER_JURISDICTION_CN,
+    ),
+    "tencent-cloud": Provider(
+        slug="tencent-cloud",
+        name="Tencent Cloud",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Tencent Cloud TokenHub is not enabled for this account. The available "
+            "root credential is deliberately not copied into the prompt path. "
+            "Routes remain dark until TokenHub is enabled and a scoped inference "
+            "credential passes model discovery, pricing, and paid canaries."
+        ),
+        provider_policy_url="https://www.tencentcloud.com/document/product/1729",
+        provider_headquarters_country=PROVIDER_JURISDICTION_CN,
+    ),
+    "fal": Provider(
+        slug="fal",
+        name="fal.ai",
+        supports_chat=False,
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "fal.ai's pricing API authenticates, but the inference account is "
+            "currently locked for exhausted balance. No route is published until "
+            "a paid canary succeeds and exact per-output billing is enforced."
+        ),
+        provider_policy_url="https://fal.ai/docs/documentation/model-apis/pricing",
     ),
     "inception": Provider(
         slug="inception",
@@ -1693,9 +1766,10 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=False,
         supports_byok=False,
         provider_policy=(
-            "BytePlus ModelArk requires region-specific activated model endpoint IDs. "
-            "The API key alone is insufficient to create safe routes, so this "
-            "provider remains non-routable pending endpoint configuration."
+            "The BytePlus credential authenticates and discovers the ModelArk "
+            "catalog, but no model is activated for this account and the console "
+            "currently rejects the selected region. Routes remain non-routable "
+            "until at least one model can pass a paid inference canary."
         ),
         provider_policy_url="https://docs.byteplus.com/en/docs/ModelArk",
     ),
@@ -1703,13 +1777,13 @@ PROVIDERS: dict[str, Provider] = {
         slug="riverflow",
         name="Riverflow",
         supports_chat=False,
-        supports_prepaid=False,
+        supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
-            "Riverflow is a variable-credit media workflow API, not a shared "
-            "token-priced chat endpoint. Its configured credential is rejected by "
-            "the live MCP endpoint, and no exact per-job billable receipt is exposed. "
-            "It remains fail-closed until both contracts are available."
+            "Riverflow is an asynchronous media API, not a chat endpoint. "
+            "TrustedRouter currently exposes only Riverflow 2 Fast at 1K, verifies "
+            "the final USD job receipt against the authorized fixed price, and "
+            "fails closed on drift. No ZDR or confidential-compute claim is tracked."
         ),
         provider_policy_url=("https://www.riverflow.ai/research/introducing-sourceful-riverflow-1"),
     ),
@@ -1788,13 +1862,13 @@ PROVIDERS: dict[str, Provider] = {
     "vultr": Provider(
         slug="vultr",
         name="Vultr",
-        supports_prepaid=False,
+        supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
-            "Not routable: the configured credential is rejected by both Vultr's "
-            "account API and Serverless Inference API. Vultr issues a distinct "
-            "inference key per subscription; the provider stays listed until that "
-            "key is available."
+            "Vultr Serverless Inference routes use exact per-token prices and model "
+            "capabilities from its authenticated catalog. No contractual ZDR, "
+            "confidential-compute, or E2EE claim is tracked, so these routes are "
+            "Standard."
         ),
         provider_policy_url="https://docs.vultr.com/products/serverless-inference/",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
@@ -1908,6 +1982,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "baseten",
         "telnyx",
         "thinkingmachines",
+        "huggingface",
         "wafer",
         "crusoe",
         "makora",
@@ -1946,6 +2021,10 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "sakana",
         "perplexity",
         "krea",
+        "vultr",
+        "darkbloom",
+        "baidu",
+        "riverflow",
         "nvidia-nim",
         "jina",
         "nebius",

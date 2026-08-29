@@ -80,15 +80,15 @@ READY = {
 SPECIALIZED_READY = {
     "perplexity",
     "krea",
+    "riverflow",
 }
 IMPLEMENTED = READY | SPECIALIZED_READY
 RUNTIME_ONLY_READY = (READY - {"io-net", "sakana"}) | {"nscale"}
-ROUTABLE_READY = READY | {"perplexity"}
+ROUTABLE_READY = READY | {"perplexity", "riverflow"}
 PENDING = {
     "perceptron",
     "modal",
     "byteplus",
-    "riverflow",
     "liquid",
 }
 MODULES = (
@@ -445,6 +445,52 @@ def test_direct_provider_operator_hold_survives_canary_and_relist(
     assert probed == ["vendor/live"] * 4
 
 
+def test_parallel_canary_retries_failures_once_serially(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, int] = {}
+    monkeypatch.setenv("RETRY_PROVIDER_API_KEY", "test-secret")
+    monkeypatch.setattr(
+        _direct_openai,
+        "fetch_json",
+        lambda *_args, **_kwargs: {"data": [{"id": "vendor/a"}, {"id": "vendor/b"}]},
+    )
+    monkeypatch.setattr(
+        _direct_openai,
+        "models_requiring_canary",
+        lambda _path, model_ids: set(model_ids),
+    )
+    monkeypatch.setattr(_direct_openai.time, "sleep", lambda _seconds: None)
+
+    def probe(**kwargs: object) -> bool:
+        model = str(kwargs["model"])
+        calls[model] = calls.get(model, 0) + 1
+        return model == "vendor/a" or calls[model] > 1
+
+    monkeypatch.setattr(_direct_openai, "probe_openai_chat", probe)
+    catalog = DirectOpenAIProvider(
+        DirectOpenAIProviderSpec(
+            slug="retry-provider",
+            base_url="https://example.invalid/v1",
+            api_key_env="RETRY_PROVIDER_API_KEY",
+            explicit_model_map={"vendor/a": "vendor/a", "vendor/b": "vendor/b"},
+            static_prices={
+                "vendor/a": ModelPrice(1, 2),
+                "vendor/b": ModelPrice(1, 2),
+            },
+            canary_concurrency=2,
+        ),
+        manifest_path=tmp_path / "retry-provider.json",
+    )
+
+    result = catalog.fetch()
+
+    assert set(result.prices) == {"vendor/a", "vendor/b"}
+    assert calls == {"vendor/a": 1, "vendor/b": 2}
+    assert all(row.get("routable") is not False for row in catalog.discovered_rows.values())
+
+
 def test_direct_provider_normalization_is_the_single_audit_policy() -> None:
     cases = {
         arcee: {
@@ -538,41 +584,17 @@ def test_perplexity_parses_exact_low_context_request_fee() -> None:
     assert perplexity._parse_low_context_request_price(html) == 5_000
 
 
-def test_perceptron_filters_media_free_and_unpriced_rows() -> None:
-    rows = perceptron._normalize_rows(
-        [
-            {
-                "id": "ok",
-                "input_modalities": ["text"],
-                "output_modalities": ["text"],
-                "pricing": {"input_price_per_1m": "1", "output_price_per_1m": "2"},
-            },
-            {
-                "id": "image",
-                "input_modalities": ["text"],
-                "output_modalities": ["image"],
-                "pricing": {"input_price_per_1m": "1", "output_price_per_1m": "2"},
-            },
-            {
-                "id": "free",
-                "is_free": True,
-                "pricing": {"input_price_per_1m": "1", "output_price_per_1m": "2"},
-            },
-            {
-                "id": "zero",
-                "pricing": {"input_price_per_1m": "0", "output_price_per_1m": "0"},
-            },
-            {
-                "id": "zero-input-only",
-                "pricing": {"input_price_per_1m": "0", "output_price_per_1m": "2"},
-            },
-            {
-                "id": "zero-output-only",
-                "pricing": {"input_price_per_1m": "1", "output_price_per_1m": "0"},
-            },
-        ]
+def test_perceptron_inc_catalog_is_not_confused_with_perceptron_cloud() -> None:
+    assert perceptron.BASE_URL == "https://api.perceptron.inc"
+    assert perceptron.URL == "https://api.perceptron.inc/v1/models"
+    assert (
+        perceptron._model_ids(
+            {"data": [{"id": model_id} for model_id in perceptron.EXPECTED_MODEL_IDS]}
+        )
+        == perceptron.EXPECTED_MODEL_IDS
     )
-    assert [row["id"] for row in rows] == ["ok"]
+    assert PROVIDERS["perceptron"].supports_chat is False
+    assert PROVIDERS["perceptron"].supports_prepaid is False
 
 
 def test_io_net_normalizes_exact_prices_capabilities_and_limits() -> None:

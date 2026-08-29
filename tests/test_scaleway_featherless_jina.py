@@ -46,10 +46,7 @@ def test_featherless_uses_shared_canonical_model_ids() -> None:
         == "deepseek/deepseek-v4-flash-0731"
     )
     assert featherless.CATALOG.model_id("zai-org/GLM-5.2") == "z-ai/glm-5.2"
-    assert (
-        featherless.CATALOG.model_id("zai-org/GLM-5.3-Flash")
-        == "z-ai/glm-5.3-flash"
-    )
+    assert featherless.CATALOG.model_id("zai-org/GLM-5.3-Flash") == "z-ai/glm-5.3-flash"
     assert featherless.CATALOG.model_id("moonshotai/Kimi-K3") == "moonshotai/kimi-k3"
 
 
@@ -104,27 +101,27 @@ def test_jina_discovers_only_priced_embedding_models(
     assert {tuple(row["endpoints"]) for row in manifest["models"]} == {("embeddings",)}
 
 
-def test_blocked_providers_remain_public_but_have_no_routes(client: TestClient) -> None:
+def test_blocked_providers_remain_public_while_vultr_is_routable(client: TestClient) -> None:
     displayed = {provider.slug for provider in providers_for_display()}
     assert {"ovhcloud", "vultr"} <= displayed
-    assert not any(
-        endpoint.provider in {"ovhcloud", "vultr"}
-        for endpoint in MODEL_ENDPOINTS.values()
-    )
-    for slug in ("ovhcloud", "vultr"):
-        assert PROVIDERS[slug].supports_prepaid is False
-        html = client.get(f"/providers/{slug}")
-        assert html.status_code == 200
-        assert "Not routable" in html.text
+    assert not any(endpoint.provider == "ovhcloud" for endpoint in MODEL_ENDPOINTS.values())
+    assert any(endpoint.provider == "vultr" for endpoint in MODEL_ENDPOINTS.values())
+
+    assert PROVIDERS["ovhcloud"].supports_prepaid is False
+    ovh_html = client.get("/providers/ovhcloud")
+    assert ovh_html.status_code == 200
+    assert "Not routable" in ovh_html.text
+
+    assert PROVIDERS["vultr"].supports_prepaid is True
+    vultr_html = client.get("/providers/vultr")
+    assert vultr_html.status_code == 200
 
     payload = client.get("/providers", headers={"accept": "application/json"}).json()
     rows = {row["id"]: row for row in payload["data"]}
     assert rows["ovhcloud"]["routing_status"] == "blocked"
-    assert rows["vultr"]["routing_status_reason"]
+    assert rows["vultr"]["routing_status"] == "active"
 
 
 def test_new_provider_manifests_expire_without_hiding_ci_secret_failures() -> None:
     assert {"scaleway", "featherless", "jina"} <= EXPIRING_PROVIDER_MANIFEST_SLUGS
-    assert {"scaleway", "featherless", "jina"}.isdisjoint(
-        RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS
-    )
+    assert {"scaleway", "featherless", "jina"}.isdisjoint(RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS)

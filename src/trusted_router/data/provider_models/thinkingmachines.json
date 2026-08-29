@@ -1,10 +1,10 @@
 {
   "source": "https://tinker-docs.thinkingmachines.ai/tinker/models/",
-  "generated_at": "2026-08-28T16:32:22Z",
+  "generated_at": "2026-08-29T02:54:03Z",
   "provider": "thinkingmachines",
   "currency": "USD",
   "price_unit": "microdollars_per_million_tokens",
-  "model_count": 2,
+  "model_count": 3,
   "models": [
     {
       "id": "thinkingmachines/inkling",
@@ -43,6 +43,24 @@
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
       "cached_input_token_price_per_m": 60000
+    },
+    {
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "zai-org/GLM-5.3:peft:262144",
+      "display_name": "GLM 5.3 256K on Tinker",
+      "context_length": 262144,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 4860000,
+      "output_token_price_per_m": 12150000,
+      "cached_input_token_price_per_m": 972000
     }
   ]
 }
