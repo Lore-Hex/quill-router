@@ -1,0 +1,77 @@
+# This workflow itself must be in the WIF provider allowlist. The Terraform in
+# infra/ manages that allowlist; chicken-and-egg is resolved by the operator
+# adding infra-apply.yml once by hand (already scripted for the operator).
+
+name: Terraform static infrastructure
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/**"
+  workflow_dispatch:
+
+concurrency:
+  group: infra-apply
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Check Terraform formatting
+        run: terraform -chdir=infra fmt -check
+
+      - name: Initialize Terraform without backend
+        run: terraform -chdir=infra init -backend=false
+
+      - name: Validate Terraform
+        run: terraform -chdir=infra validate
+
+  apply:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # Keep the repository below the workspace root. The GCP auth action
+      # writes gha-creds-* into that root, so src/ remains a clean work tree.
+      - uses: actions/checkout@v4
+        with:
+          path: src
+
+      - name: Authenticate to AWS via GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::330422590279:role/tr-router-github-deploy
+          aws-region: eu-west-3
+
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Plan static infrastructure
+        run: terraform -chdir=src/infra init && terraform -chdir=src/infra plan -out=tfplan
+
+      - name: Apply reviewed plan
+        run: terraform -chdir=src/infra apply tfplan
