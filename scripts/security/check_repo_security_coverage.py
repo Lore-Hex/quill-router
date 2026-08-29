@@ -157,9 +157,22 @@ PROTECTED_REPOS = {
 }
 
 
-def check_branch_protection(org: str, token: str) -> list[str]:
-    """Return a list of problems. Empty means the protection still holds."""
+def check_branch_protection(org: str, token: str) -> tuple[list[str], list[str]]:
+    """Return (problems, unreadable).
+
+    These are separated deliberately. Reading branch protection requires admin
+    rights on the repository, which the default GITHUB_TOKEN does not have — not
+    even for the repository it is running in. Treating "could not read" as a
+    failure therefore made this job fail on every scheduled run and file an issue
+    saying a repository could not receive a vulnerability report, while its own
+    output read `covered: 39/39`. That is a false alarm on a weekly timer, which
+    is the fastest way to train someone to ignore a security check.
+
+    Unreadable is reported, never silently passed, and never counted as a real
+    problem unless a token that can actually read the setting is supplied.
+    """
     problems: list[str] = []
+    unreadable: list[str] = []
     for repo, required in sorted(PROTECTED_REPOS.items()):
         status, body = _get(f"/repos/{org}/{repo}/branches/main/protection", token)
         if status == 404:
@@ -167,7 +180,9 @@ def check_branch_protection(org: str, token: str) -> list[str]:
             continue
         if status != 200 or not isinstance(body, dict):
             # Same rule as everywhere else here: could-not-read is its own state.
-            problems.append(f"{repo}: could not read protection (HTTP {status}) — NOT treating as unprotected")
+            unreadable.append(
+                f"{repo}: could not read protection (HTTP {status}) — NOT treating as unprotected"
+            )
             continue
 
         checks = body.get("required_status_checks") or {}
@@ -189,7 +204,7 @@ def check_branch_protection(org: str, token: str) -> list[str]:
             "required_approving_review_count"
         )
         print(f"  {repo}: contexts={sorted(contexts)} enforce_admins={admins} required_reviews={reviews}")
-    return problems
+    return problems, unreadable
 
 
 def main() -> int:
@@ -209,12 +224,20 @@ def main() -> int:
         raise SystemExit("REPO_SECURITY_TOKEN or GITHUB_TOKEN must be set")
 
     print("branch protection on production repositories:")
-    protection_problems = check_branch_protection(args.org, token)
+    protection_problems, protection_unreadable = check_branch_protection(args.org, token)
     if protection_problems:
         print("\n  BRANCH PROTECTION PROBLEMS:")
         for line in protection_problems:
             print(f"    - {line}")
-    else:
+    if protection_unreadable:
+        print("\n  BRANCH PROTECTION NOT ASSERTED (could not read):")
+        for line in protection_unreadable:
+            print(f"    - {line}")
+        print(
+            "    Reading branch protection needs Administration: read. Set the\n"
+            "    REPO_SECURITY_TOKEN secret to turn this half into a real assertion."
+        )
+    if not protection_problems and not protection_unreadable:
         print("  ok — protection holds on all production repositories")
     print()
 
@@ -265,7 +288,7 @@ def main() -> int:
 
     if uncovered or protection_problems:
         return 1
-    if unreadable:
+    if unreadable or protection_unreadable:
         return 0 if args.allow_unreadable else 1
     return 0
 
