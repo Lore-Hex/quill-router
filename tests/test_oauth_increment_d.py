@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import datetime as dt
 import hashlib
 from typing import Any
 from unittest.mock import patch
@@ -160,9 +161,13 @@ def test_token_rate_limit_has_retry_after(client: TestClient) -> None:
     from trusted_router.routes import helpers
 
     helpers._CLIENT_EVENT_RATE_LIMITS.reset()
-    for _ in range(30):
-        client.post("/v1/oauth/token", data={})
-    limited = client.post("/v1/oauth/token", data={})
+    # Freeze the limiter clock so this test cannot straddle a tumbling-minute
+    # boundary while a slower CI shard is running.
+    now = dt.datetime(2026, 1, 1, 0, 0, 30, tzinfo=dt.UTC)
+    with patch("trusted_router.storage_rate_limits.utcnow", return_value=now):
+        for _ in range(30):
+            client.post("/v1/oauth/token", data={})
+        limited = client.post("/v1/oauth/token", data={})
     assert limited.status_code == 429 and "retry-after" in limited.headers
     assert limited.headers["cache-control"] == "no-store"
     assert limited.headers["pragma"] == "no-cache"
