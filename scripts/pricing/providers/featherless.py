@@ -25,6 +25,7 @@ CURATED_NATIVE_MODELS = (
     "deepseek-ai/DeepSeek-V4-Flash-0731",
     "moonshotai/Kimi-K3",
     "zai-org/GLM-5.2",
+    "zai-org/GLM-5.3",
     "zai-org/GLM-5.3-Flash",
 )
 
@@ -53,6 +54,7 @@ CATALOG = DirectOpenAIProvider(
             "deepseek/deepseek-v4-flash-0731",
             "moonshotai/kimi-k3",
             "z-ai/glm-5.2",
+            "z-ai/glm-5.3",
             "z-ai/glm-5.3-flash",
         ),
         catalog_url=URL,

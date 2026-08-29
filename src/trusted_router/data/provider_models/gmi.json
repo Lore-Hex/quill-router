@@ -2,8 +2,8 @@
   "_about": "Provider-native GMI Cloud catalog. Account-visible models are intersected with GMI's official billing feed; explicitly approved routes omitted from /v1/models remain current only after an exact visible-content PONG canary succeeds.",
   "provider": "gmi",
   "source": "https://console.gmicloud.ai/api/v1/billing/model_prices",
-  "generated_at": "2026-08-28T16:32:22Z",
-  "model_count": 92,
+  "generated_at": "2026-08-29T04:37:18Z",
+  "model_count": 93,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -468,9 +468,9 @@
       "id": "deepseek/deepseek-v4-flash-0731",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
       "context_length": 1048575,
-      "input_token_price_per_m": 140000,
-      "output_token_price_per_m": 280000,
-      "cached_input_token_price_per_m": 28000
+      "input_token_price_per_m": 440000,
+      "output_token_price_per_m": 1320000,
+      "cached_input_token_price_per_m": 14000
     },
     {
       "display_name": "DeepSeek-V4-Pro",
@@ -2173,6 +2173,27 @@
       "input_token_price_per_m": 834000,
       "output_token_price_per_m": 2501000,
       "cached_input_token_price_per_m": 42000
+    },
+    {
+      "display_name": "ZAI: GLM-5.3",
+      "title": "zai-org/GLM-5.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "zai-org/GLM-5.3",
+      "context_length": 1048576,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000
     }
   ],
   "price_scale": "microdollars_per_million"

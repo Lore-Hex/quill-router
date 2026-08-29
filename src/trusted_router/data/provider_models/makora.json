@@ -3,9 +3,9 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-08-28T16:32:22Z",
+  "generated_at": "2026-08-29T04:31:25Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 12,
+  "model_count": 13,
   "models": [
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -173,7 +173,8 @@
         "json_mode",
         "structured_outputs",
         "logprobs"
-      ]
+      ],
+      "missing_since": "2026-08-29"
     },
     {
       "id": "moonshotai/kimi-k2.7-code",
@@ -476,6 +477,41 @@
       "input_token_price_per_m": 2550000,
       "output_token_price_per_m": 12750000,
       "cached_input_token_price_per_m": 256000
+    },
+    {
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "zai-org/GLM-5.3-Flash",
+      "display_name": "zai-org/GLM-5.3-Flash",
+      "title": "zai-org/GLM-5.3-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "context_length": 1048576,
+      "features": [
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "seed",
+        "stop",
+        "max_tokens"
+      ],
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 470000,
+      "cached_input_token_price_per_m": 24000
     }
   ]
 }

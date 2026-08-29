@@ -72,6 +72,23 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             Decimal("0.000000695999"),
             Decimal("0.000001392"),
         ),
+        # GMI's billing API now distinguishes the 0731 route from the cheaper
+        # unversioned route. Pin the correction to this exact endpoint and
+        # values so future GMI changes still stop publication for review.
+        (
+            "deepseek/deepseek-v4-flash-0731 "
+            "[gmi:gmi:deepseek-ai/DeepSeek-V4-Flash-0731]",
+            "prompt",
+            Decimal("0.00000014"),
+            Decimal("0.00000044"),
+        ),
+        (
+            "deepseek/deepseek-v4-flash-0731 "
+            "[gmi:gmi:deepseek-ai/DeepSeek-V4-Flash-0731]",
+            "completion",
+            Decimal("0.00000028"),
+            Decimal("0.00000132"),
+        ),
         # Atlas's authenticated /v1/models feed distinguishes the cheap
         # unversioned route from the newer 0731 weights. The old snapshot had
         # inherited the unversioned rate; approve only the exact correction.

@@ -26,6 +26,21 @@ def _page(*rows: str, batch_rows: str = "") -> str:
     )
 
 
+def _table_page(*rows: tuple[str, str, str, str]) -> str:
+    body = "".join(
+        f"<tr><th scope='row'>{display}</th><td>${prompt}</td>"
+        f"<td>${completion}</td><td>${cached}</td></tr>"
+        for display, prompt, completion, cached in rows
+    )
+    return (
+        "<html><div id='pricing-panel-serverless'><table><tbody>"
+        f"{body}</tbody></table></div>"
+        "<div id='pricing-panel-dedicated'><table><tbody>"
+        "<tr><th scope='row'>Do Not Parse</th><td>$99</td><td>$99</td>"
+        "<td>$99</td></tr></tbody></table></div></html>"
+    )
+
+
 class FakeResponse:
     def __init__(self, *, payload: dict | None = None, text: str = "") -> None:
         self._payload = payload
@@ -75,6 +90,22 @@ def test_parse_pricing_page_reads_rows_and_skips_variants() -> None:
         "Kimi K2.7 Code": (0.75, 3.50, 0.16),
         "gpt-oss-120b": (0.10, 0.75, 0.055),
     }
+    assert notes == []
+
+
+def test_parse_pricing_page_reads_current_serverless_table_only() -> None:
+    html = _table_page(
+        ("GLM-5.3 Flash", "0.15", "0.50", "0.03"),
+        ("GLM-5.3", "1.40", "4.40", "0.26"),
+    )
+
+    rows, notes = parasail._parse_pricing_page(html)
+
+    assert rows == {
+        "GLM-5.3 Flash": (0.15, 0.50, 0.03),
+        "GLM-5.3": (1.40, 4.40, 0.26),
+    }
+    assert "Do Not Parse" not in rows
     assert notes == []
 
 
@@ -166,6 +197,7 @@ def test_write_provider_manifest_appends_new_models(tmp_path, monkeypatch) -> No
     monkeypatch.setattr(parasail, "MANIFEST_PATH", path)
 
     html = _page(
+        _row("GLM-5.3", "1.40", "4.40", "0.26"),
         _row("GLM-5.2", "1.40", "4.40", "0.26"),
         _row("Qwen3.5 397B-A17B", "0.50", "3.60", "0.30"),
         _row("Kimi K2.7 Code", "0.75", "3.50", "0.16"),
@@ -173,6 +205,8 @@ def test_write_provider_manifest_appends_new_models(tmp_path, monkeypatch) -> No
     )
     models_payload = {
         "data": [
+            {"id": "parasail-glm-53"},
+            {"id": "zai-org/GLM-5.3"},
             {"id": "zai-org/GLM-5.2"},
             {"id": "Qwen/Qwen3.5-397B-A17B"},
             {"id": "moonshotai/Kimi-K2.7-Code"},
@@ -189,6 +223,9 @@ def test_write_provider_manifest_appends_new_models(tmp_path, monkeypatch) -> No
 
     # existing row updated in place
     assert by_id["z-ai/glm-5.2"]["input_token_price_per_m"] == 1_400_000
+    assert by_id["z-ai/glm-5.3"]["input_token_price_per_m"] == 1_400_000
+    assert by_id["z-ai/glm-5.3"]["output_token_price_per_m"] == 4_400_000
+    assert by_id["z-ai/glm-5.3"]["upstream_id"] == "parasail-glm-53"
     # new ahead-of-snapshot rows appended from templates with prices
     assert by_id["moonshotai/kimi-k2.7-code"]["input_token_price_per_m"] == 750_000
     assert by_id["moonshotai/kimi-k2.7-code"]["upstream_id"] == "parasail-kimi-k27-code"
@@ -238,6 +275,23 @@ def test_write_provider_manifest_promotes_glm_53_only_after_official_price(
     assert "routable" not in row
     assert "routable_reason" not in row
     assert "unresolved_since" not in row
+
+
+def test_fetch_maps_full_glm_53_live_ids_and_prices(monkeypatch) -> None:  # noqa: ANN001
+    html = _table_page(("GLM-5.3", "1.40", "4.40", "0.26"))
+    _fake_clients(
+        monkeypatch,
+        html,
+        {"data": [{"id": "parasail-glm-53"}, {"id": "zai-org/GLM-5.3"}]},
+    )
+
+    result = parasail.fetch()
+
+    price = result.prices["z-ai/glm-5.3"].tiers[0]
+    assert price.prompt_micro_per_m == 1_400_000
+    assert price.completion_micro_per_m == 4_400_000
+    assert price.prompt_cached_micro_per_m == 260_000
+    assert parasail.UPSTREAM_ID_MAP["z-ai/glm-5.3"] == "parasail-glm-53"
 
 
 def test_write_provider_manifest_does_not_invent_unseen_glm_53(tmp_path, monkeypatch) -> None:  # noqa: ANN001

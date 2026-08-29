@@ -14,19 +14,15 @@ Page-only rows (e.g. Nemotron 3 Ultra as of 2026-07-13) and
 API-only models (e.g. qwen3.5-9b) surface as notes so an operator
 notices, but never produce a price.
 
-The pricing page's row structure this parser depends on:
+The current pricing page uses a normal table inside
+``#pricing-panel-serverless``. A legacy ``ptbl-row`` fallback remains so
+historical fixtures and a provider rollback still parse safely. Dedicated and
+batch tables are excluded by scoping to the serverless panel.
 
-    <div class="ptbl-row" ...>
-      <div class="mdl" ...><span class="ep" ...>DISPLAY NAME</span></div>
-      <div ...><span class="num" ...>$IN</span></div>
-      <div ...><span class="num" ...>$OUT</span></div>
-      <div ...><span class="num" ...>$CACHED</span></div>
+    <div id="pricing-panel-serverless">
+      <table><tbody><tr><th>MODEL</th><td>$IN</td><td>$OUT</td><td>$CACHED</td>
+      </tr></tbody></table>
     </div>
-
-scoped to the section between "Per-token model pricing" and
-"Reserved GPU pricing" (the later "Self-service batch pricing"
-tables reuse the same row markup for per-param-size tiers and must
-not be parsed as models).
 """
 from __future__ import annotations
 
@@ -38,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from bs4 import BeautifulSoup
 
 from scripts.pricing.base import (
     PROVIDER_FETCH_TIMEOUT,
@@ -87,6 +84,7 @@ EXPECTED_MODELS = [
     "z-ai/glm-5",
     "z-ai/glm-5.1",
     "z-ai/glm-5.2",
+    "z-ai/glm-5.3",
     "moonshotai/kimi-k2.6",
     "moonshotai/kimi-k2.7-code",
     "minimax/minimax-m2.5",
@@ -163,6 +161,9 @@ _NATIVE_TO_OR_ID = {
     "zai-org/GLM-5.2": "z-ai/glm-5.2",
     "zai-org/GLM-5.2-FP8": "z-ai/glm-5.2",
     "zai-org/GLM-5.3-Flash": "z-ai/glm-5.3-flash",
+    "parasail-glm-53-flash": "z-ai/glm-5.3-flash",
+    "zai-org/GLM-5.3": "z-ai/glm-5.3",
+    "parasail-glm-53": "z-ai/glm-5.3",
     "parasail-glm47": "z-ai/glm-4.7",
     "zai-org/GLM-4.7": "z-ai/glm-4.7",
     "zai-org/GLM-4.7-FP8": "z-ai/glm-4.7",
@@ -227,6 +228,7 @@ _LIVE_MODEL_IDS: set[str] = set()
 # operator adds it deliberately.
 _DISPLAY_TO_OR_ID = {
     "GLM-5.3 Flash": "z-ai/glm-5.3-flash",
+    "GLM-5.3": "z-ai/glm-5.3",
     "GLM-5.2": "z-ai/glm-5.2",
     "GLM-5.1": "z-ai/glm-5.1",
     "GLM-5": "z-ai/glm-5",
@@ -289,16 +291,34 @@ def _parse_pricing_page(html: str) -> tuple[dict[str, tuple[float, float, float 
     """Parse the per-token table into display-name → ($/M in, $/M out,
     $/M cached | None). Returns (rows, notes)."""
     notes: list[str] = []
-    start = html.find(_SECTION_START)
-    if start < 0:
-        raise ValueError(f"pricing page missing section marker {_SECTION_START!r}")
-    end = html.find(_SECTION_END, start)
-    section = html[start : end if end > start else len(html)]
-
     rows: dict[str, tuple[float, float, float | None]] = {}
-    for match in _ROW_RE.finditer(section):
-        display = match.group(1).strip()
-        nums = [float(n) for n in _NUM_RE.findall(match.group(2))]
+    soup = BeautifulSoup(html, "html.parser")
+    serverless_panel = soup.find(id="pricing-panel-serverless")
+    if serverless_panel is not None:
+        parsed_rows = []
+        for table_row in serverless_panel.select("tbody tr"):
+            heading = table_row.find("th")
+            if heading is None:
+                continue
+            display = heading.get_text(" ", strip=True)
+            nums = [
+                float(value)
+                for cell in table_row.find_all("td")
+                if (value := next(iter(_NUM_RE.findall(cell.get_text(" ", strip=True))), None))
+            ]
+            parsed_rows.append((display, nums))
+    else:
+        start = html.find(_SECTION_START)
+        if start < 0:
+            raise ValueError(f"pricing page missing section marker {_SECTION_START!r}")
+        end = html.find(_SECTION_END, start)
+        section = html[start : end if end > start else len(html)]
+        parsed_rows = [
+            (match.group(1).strip(), [float(n) for n in _NUM_RE.findall(match.group(2))])
+            for match in _ROW_RE.finditer(section)
+        ]
+
+    for display, nums in parsed_rows:
         if display in _DISPLAY_SKIP:
             continue
         if len(nums) < 2:
@@ -431,6 +451,25 @@ def fetch() -> ProviderPricingResult:
 # Metadata (context/modalities) mirrors the OR snapshot entries for
 # the same checkpoints served by other providers.
 _MANIFEST_ROW_TEMPLATES: dict[str, dict[str, Any]] = {
+    "z-ai/glm-5.3": {
+        "id": "z-ai/glm-5.3",
+        "upstream_id": "parasail-glm-53",
+        "display_name": "Parasail GLM 5.3",
+        "title": "z-ai/glm-5.3",
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "model_type": "chat",
+        "features": [
+            "reasoning",
+            "function-calling",
+            "structured-outputs",
+            "serverless",
+        ],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+    },
     "z-ai/glm-5.3-flash": {
         "id": "z-ai/glm-5.3-flash",
         "upstream_id": "zai-org/GLM-5.3-Flash",
@@ -510,6 +549,7 @@ _MANIFEST_ROW_TEMPLATES: dict[str, dict[str, Any]] = {
 
 # Manifest rows that must always end up priced after a refresh.
 _MANIFEST_EXPECTED = [
+    "z-ai/glm-5.3",
     "z-ai/glm-5.2",
     "qwen/qwen3.5-397b-a17b",
     "moonshotai/kimi-k2.7-code",
@@ -562,7 +602,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     for model_id, template in sorted(_MANIFEST_ROW_TEMPLATES.items()):
         if model_id in existing_by_id or model_id not in _LIVE_MODEL_IDS:
             continue
-        if model_id != "z-ai/glm-5.3-flash":
+        if model_id not in {"z-ai/glm-5.3", "z-ai/glm-5.3-flash"}:
             continue
         row = dict(template)
         if model_id not in result.prices:
