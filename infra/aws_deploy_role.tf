@@ -39,6 +39,11 @@ resource "aws_iam_role_policy" "tr_eu_role_writes" {
           "iam:PutRolePolicy",
           "iam:PassRole",
           "iam:GetRole",
+          # Terraform must READ inline policies to import/manage them;
+          # run 33281943857 failed planning the dlq-send import without.
+          "iam:GetRolePolicy",
+          "iam:ListRolePolicies",
+          "iam:ListAttachedRolePolicies",
         ]
         Resource = "arn:aws:iam::${local.aws_account_id}:role/tr-eu-*"
       },
