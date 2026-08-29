@@ -202,8 +202,44 @@
       "routable": true,
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 120000
+    },
+    {
+      "display_name": "tool-choice",
+      "title": "neurometric/tool-choice",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "neurometric/tool-choice",
+      "upstream_id": "neurometric/tool-choice",
+      "context_length": 32768,
+      "max_output_tokens": 16384,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "input_token_price_per_m": 10000,
+      "output_token_price_per_m": 100000,
+      "supported_parameters": [
+        "tool_choice"
+      ]
     }
   ],
-  "generated_at": "2026-08-28T16:32:22Z",
-  "model_count": 6
+  "generated_at": "2026-08-29T13:45:34Z",
+  "model_count": 7
 }
