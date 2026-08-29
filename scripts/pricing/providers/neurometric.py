@@ -36,6 +36,7 @@ MANIFEST_PATH = (
     / "neurometric.json"
 )
 EXPECTED_MODELS = ["ibm-granite/granite-4.1-8b"]
+TOOL_CHOICE_MODELS = frozenset({"neurometric/tool-choice"})
 UPSTREAM_ID_MAP: dict[str, str] = {}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 _LIVE_CANARY_OK = False
@@ -68,6 +69,8 @@ def fetch() -> ProviderPricingResult:
         payload,
         upstream_id_map=UPSTREAM_ID_MAP,
     )
+    for model_id in TOOL_CHOICE_MODELS & discovered.keys():
+        discovered[model_id]["supported_parameters"] = ["tool_choice"]
     _DISCOVERED_MANIFEST_ROWS = discovered
     canary_model = UPSTREAM_ID_MAP.get(EXPECTED_MODELS[0], EXPECTED_MODELS[0])
     _LIVE_CANARY_OK = probe_openai_chat(

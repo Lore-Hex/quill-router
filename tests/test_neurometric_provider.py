@@ -149,6 +149,7 @@ def test_neurometric_fetch_discovers_new_models_and_runs_canary(
 ) -> None:
     rows = [
         _model_row(),
+        _model_row("neurometric/tool-choice"),
         _model_row("qwen/qwen3-vl-8b-instruct"),
     ]
 
@@ -180,9 +181,13 @@ def test_neurometric_fetch_discovers_new_models_and_runs_canary(
 
     assert set(result.prices) == {
         "ibm-granite/granite-4.1-8b",
+        "neurometric/tool-choice",
         "qwen/qwen3-vl-8b-instruct",
     }
     assert set(neurometric._DISCOVERED_MANIFEST_ROWS) == set(result.prices)
+    assert neurometric._DISCOVERED_MANIFEST_ROWS["neurometric/tool-choice"][
+        "supported_parameters"
+    ] == ["tool_choice"]
     assert neurometric._LIVE_CANARY_OK is True
 
 
@@ -270,9 +275,16 @@ def test_neurometric_catalog_routes_are_prepaid_only_and_no_store() -> None:
         for endpoint in endpoints
     } >= {
         "ibm-granite/granite-4.1-8b",
+        "neurometric/tool-choice",
         "qwen/qwen3-vl-8b-instruct",
         "qwen/qwen3-vl-8b-thinking",
     }
+    tool_choice = next(
+        endpoint
+        for endpoint in endpoints
+        if endpoint.upstream_id == "neurometric/tool-choice"
+    )
+    assert "tool_choice" in tool_choice.supported_parameters
 
 
 def test_neurometric_public_api_exposes_provider_and_exact_endpoint(client: Any) -> None:
@@ -298,6 +310,16 @@ def test_neurometric_public_api_exposes_provider_and_exact_endpoint(client: Any)
     assert neurometric["upstream_id"] == "ibm-granite/granite-4.1-8b"
     assert neurometric["pricing"]["prompt"] == "0.00000005275"
     assert neurometric["pricing"]["completion"] == "0.0000001055"
+
+    response = client.get("/v1/models/neurometric/tool-choice/endpoints")
+    assert response.status_code == 200
+    endpoints = response.json()["data"]
+    tool_choice = next(
+        endpoint for endpoint in endpoints if endpoint["provider_name"] == "Neurometric AI"
+    )
+    assert tool_choice["upstream_id"] == "neurometric/tool-choice"
+    assert tool_choice["pricing"]["prompt"] == "0.00000001055"
+    assert tool_choice["pricing"]["completion"] == "0.0000001055"
 
 
 def test_neurometric_hourly_refresh_and_secret_wiring_are_complete() -> None:
