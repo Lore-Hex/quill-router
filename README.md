@@ -294,7 +294,8 @@ remains available.
   first, and `trustedrouter/e2e` forces confidential + E2EE routes with
   Tinfoil first. Chat requests also honor OpenRouter-style `models` and
   `provider` routing filters (`order`, `only`, `ignore`, `allow_fallbacks`,
-  `min_privacy`, `data_collection`, and `sort`) so clients can request explicit
+  `min_privacy`, `data_collection`, `sort`, `max_price`, `require_parameters`,
+  and `zdr`) so clients can request explicit
   fallback chains or provider preferences. `provider.order` is a preference
   while fallbacks are enabled, and unlisted providers remain eligible after the
   preferred list. With `allow_fallbacks=false`, routing is restricted to the
@@ -306,6 +307,9 @@ remains available.
   hard provider-side confidential-compute + E2EE requirement and fails closed;
   the request-value aliases `e2e` and `e2ee` select the same tier
   rather than falling back to a weaker route.
+  Unknown request or provider options return `400` with the exact field name.
+  Recognized OpenRouter controls that are not implemented return a stable
+  `501 not_supported_in_alpha`; they are never accepted as router no-ops.
 - Billing: prepaid credits and BYOK first; no subscription is required.
 - Trust: hosted open source, with the running API's source commit, image
   reference, image digest, and attestation policy published at
