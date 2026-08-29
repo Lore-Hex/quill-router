@@ -42,6 +42,7 @@ from scripts.pricing.base import (
     PROVIDER_FETCH_UA,
     ModelPrice,
     ProviderPricingResult,
+    reconcile_manifest_tombstones,
     validate,
 )
 from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
@@ -562,10 +563,10 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
 
     Mirrors the wafer.py hook: update existing supplement rows in
     place, append templates for newly-served ahead-of-snapshot models,
-    and stamp provenance. Rows are NOT removed when a model temporarily
-    drops off the page — the runtime treats stale supplement prices as
-    better than delisting a routable model mid-day; removal is an
-    operator decision."""
+    and stamp provenance. Rows are never deleted automatically. A model
+    absent from the authenticated serving catalog is retained on its first
+    fresh miss and marked unroutable on its second; a later reappearance
+    clears that machine-owned tombstone."""
     raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     rows = raw.get("models")
     if not isinstance(rows, list):
@@ -636,7 +637,26 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
             row.pop("unresolved_since", None)
         updated.append(model_id)
 
-    missing = sorted(set(_MANIFEST_EXPECTED) - set(updated))
+    # The public pricing table can lag the authenticated serving catalog in
+    # either direction. Require prices for every expected model that the fresh
+    # API still serves, but do not block the entire catalog when Parasail
+    # removes a historical route while its pricing row remains published.
+    # Shared tombstone semantics retain the route on the first fresh miss,
+    # disable it on the second, and recover it if it later reappears.
+    present_rows = {
+        model_id: dict(existing_by_id[model_id])
+        for model_id in _LIVE_MODEL_IDS
+        if model_id in existing_by_id
+    }
+    rows = reconcile_manifest_tombstones(
+        rows,
+        present_rows,
+        priced_ids=set(result.prices),
+        source=result.source,
+    )
+
+    live_expected = set(_MANIFEST_EXPECTED) & _LIVE_MODEL_IDS
+    missing = sorted(live_expected - set(updated))
     if missing:
         raise RuntimeError(f"parasail manifest did not update expected model(s): {missing}")
 
@@ -650,6 +670,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     raw["generated_at"] = datetime.now(UTC).replace(microsecond=0).isoformat().replace(
         "+00:00", "Z"
     )
+    raw["models"] = rows
     raw["model_count"] = len(rows)
     MANIFEST_PATH.write_text(
         json.dumps(raw, indent=2, ensure_ascii=False) + "\n",

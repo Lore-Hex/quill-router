@@ -181,6 +181,7 @@ def test_parasail_manifest_prunes_retired_rows_at_cutoff(
     }
     active_prices["moonshotai/kimi-k2.7-code"] = ModelPrice(750_000, 3_500_000)
     active_prices["z-ai/glm-5.3"] = ModelPrice(1_400_000, 4_400_000)
+    monkeypatch.setattr(parasail, "_LIVE_MODEL_IDS", set(active_prices))
     parasail.write_provider_manifest(
         ProviderPricingResult(
             slug="parasail",
