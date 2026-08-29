@@ -59,7 +59,7 @@ def test_boot_registration_accepts_verified_gcp_approved_digest(
     monkeypatch.setattr(gateway, "verify_gcp_attestation_chain", lambda _att: None)
     monkeypatch.setattr(gateway, "gcp_attestation_image_digest", lambda _att: digest)
     response = gateway._register_spend_lease_boot_sync(  # noqa: SLF001
-        _request("/v1/internal/gateway/spend-lease/boot/register"),
+        _request("/v1/internal/gateway/spend-lease/register-boot"),
         SpendLeaseBootRegistrationRequest(
             jwk=jwk,
             attestation="signed-gcp-evidence",
@@ -86,7 +86,7 @@ def test_boot_registration_rejects_wrong_gcp_image_digest(
     monkeypatch.setattr(gateway, "verify_gcp_attestation_chain", lambda _att: None)
     monkeypatch.setattr(gateway, "gcp_attestation_image_digest", lambda _att: observed)
     response = gateway._register_spend_lease_boot_sync(  # noqa: SLF001
-        _request("/v1/internal/gateway/spend-lease/boot/register"),
+        _request("/v1/internal/gateway/spend-lease/register-boot"),
         SpendLeaseBootRegistrationRequest(
             jwk=jwk,
             attestation="signed-gcp-evidence",
@@ -112,7 +112,7 @@ def test_boot_registration_rejects_bad_gcp_chain_without_storing(
     monkeypatch.setattr(gateway, "verify_gcp_attestation_chain", bad_chain)
     with pytest.raises(HTTPException, match="bad chain"):
         gateway._register_spend_lease_boot_sync(  # noqa: SLF001
-            _request("/v1/internal/gateway/spend-lease/boot/register"),
+            _request("/v1/internal/gateway/spend-lease/register-boot"),
             SpendLeaseBootRegistrationRequest(
                 jwk=jwk,
                 attestation="forged",
@@ -130,7 +130,7 @@ def test_boot_registration_records_aws_as_unverified(
     jwk = _jwk(Ed25519PrivateKey.generate())
     monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: True)
     response = gateway._register_spend_lease_boot_sync(  # noqa: SLF001
-        _request("/v1/internal/gateway/spend-lease/boot/register"),
+        _request("/v1/internal/gateway/spend-lease/register-boot"),
         SpendLeaseBootRegistrationRequest(
             jwk=jwk,
             attestation="bound-aws-cose",
