@@ -1513,7 +1513,7 @@ def register(router: APIRouter) -> None:
     ) -> dict[str, Any]:
         return await authorize_gateway(request, body, settings)
 
-    @router.post("/internal/gateway/spend-lease/boot/register")
+    @router.post("/internal/gateway/spend-lease/register-boot")
     async def gateway_spend_lease_boot_register(
         request: Request,
         body: SpendLeaseBootRegistrationRequest,
