@@ -1337,8 +1337,8 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         title="Provider Routing And Pinning",
         description=(
             "Pin, prefer, or exclude providers per request with the OpenRouter-compatible "
-            "provider object: only, ignore, order, allow_fallbacks, sort, hard privacy "
-            "floors, billing path, and jurisdiction filters that fail closed."
+            "provider object: only, ignore, order, allow_fallbacks, sort, max_price, "
+            "require_parameters, ZDR, and hard filters that fail closed."
         ),
     ),
     "docs/receipts": PublicPage(

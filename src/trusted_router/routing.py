@@ -4,6 +4,7 @@ import dataclasses
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any, TypeVar
 
 from trusted_router.catalog import (
@@ -17,6 +18,7 @@ from trusted_router.catalog import (
     META_MODEL_IDS,
     MODELS,
     PRIVACY_TIER_ALIASES,
+    PRIVACY_TIER_ZERO_RETENTION,
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
     ROUTING_MODEL_ALIAS_TARGETS,
@@ -48,6 +50,7 @@ class RoutePreferences:
     allow_fallbacks: bool = True
     data_collection: str | None = None
     sort: str | None = None
+    sort_partition: str = "model"
     usage_type: str | None = None
     provider_jurisdiction: str | None = None
     # Requested upstream privacy posture (see catalog.PRIVACY_TIER_*). These
@@ -57,6 +60,10 @@ class RoutePreferences:
     # such as both ZDR and confidential compute. The legacy rank remains for
     # API/debug compatibility; routing enforces every value in this set.
     privacy_requirements: frozenset[int] = frozenset()
+    require_parameters: bool = False
+    requested_parameters: frozenset[str] = frozenset()
+    max_prompt_price_microdollars_per_million_tokens: int | None = None
+    max_completion_price_microdollars_per_million_tokens: int | None = None
 
 
 _PROVIDER_ALIASES = {
@@ -95,6 +102,34 @@ _ROUTER_PROVIDER_SLUGS = frozenset(
         "quill-router",
     }
 )
+
+_PROVIDER_ROUTING_FIELDS = frozenset(
+    {
+        "allow_fallbacks",
+        "billing",
+        "country",
+        "data_collection",
+        "headquarters_country",
+        "ignore",
+        "jurisdiction",
+        "max_price",
+        "min_privacy",
+        "only",
+        "order",
+        "provider_country",
+        "require_parameters",
+        "sort",
+        "usage",
+        "usage_type",
+        "zdr",
+    }
+)
+
+_PARAMETER_CAPABILITY_ALIASES: dict[str, frozenset[str]] = {
+    "max_tokens": frozenset({"max_tokens", "max_completion_tokens"}),
+    "reasoning": frozenset({"reasoning", "reasoning_effort"}),
+    "response_format": frozenset({"response_format", "structured_outputs"}),
+}
 
 # OpenRouter-style model-id suffixes. Append `:nitro` to a model id to
 # re-sort the upstream provider list by throughput-first (equivalent to
@@ -391,6 +426,13 @@ def video_route_endpoint_candidates(
 def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
     raw_provider = body.get("provider")
     raw = raw_provider if isinstance(raw_provider, dict) else {}
+    unknown = sorted(set(raw) - _PROVIDER_ROUTING_FIELDS)
+    if unknown:
+        raise api_error(
+            400,
+            f"Unknown provider routing option: {unknown[0]}",
+            ErrorType.BAD_REQUEST,
+        )
 
     order = tuple(_provider_filter_list("order", raw.get("order")))
     only = frozenset(_provider_filter_list("only", raw.get("only")))
@@ -433,7 +475,7 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
                 ErrorType.BAD_REQUEST,
             )
 
-    sort = _sort_mode(raw.get("sort"))
+    sort, sort_partition = _sort_preferences(raw.get("sort"))
     usage_type = _usage_type(raw.get("usage") or raw.get("usage_type") or raw.get("billing"))
     provider_jurisdiction = _provider_jurisdiction(
         raw.get("jurisdiction")
@@ -458,6 +500,23 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
         min_privacy_rank = PRIVACY_TIER_ALIASES[key]
     privacy_requirements = frozenset({min_privacy_rank}) if min_privacy_rank else frozenset()
 
+    zdr = raw.get("zdr")
+    if zdr is not None and not isinstance(zdr, bool):
+        raise api_error(400, "provider.zdr must be a boolean", ErrorType.BAD_REQUEST)
+    if zdr:
+        privacy_requirements = privacy_requirements | frozenset({PRIVACY_TIER_ZERO_RETENTION})
+        min_privacy_rank = max(privacy_requirements)
+
+    require_parameters = raw.get("require_parameters", False)
+    if not isinstance(require_parameters, bool):
+        raise api_error(
+            400,
+            "provider.require_parameters must be a boolean",
+            ErrorType.BAD_REQUEST,
+        )
+    requested_parameters = _requested_parameters(body)
+    max_prompt_price, max_completion_price = _max_token_prices(raw.get("max_price"))
+
     return RoutePreferences(
         order=order,
         only=only,
@@ -467,9 +526,62 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
         min_privacy_rank=min_privacy_rank,
         privacy_requirements=privacy_requirements,
         sort=sort,
+        sort_partition=sort_partition,
         usage_type=usage_type,
         provider_jurisdiction=provider_jurisdiction,
+        require_parameters=require_parameters,
+        requested_parameters=requested_parameters,
+        max_prompt_price_microdollars_per_million_tokens=max_prompt_price,
+        max_completion_price_microdollars_per_million_tokens=max_completion_price,
     )
+
+
+def _requested_parameters(body: dict[str, Any]) -> frozenset[str]:
+    raw = body.get("requested_parameters")
+    if raw is None:
+        return frozenset()
+    if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+        raise api_error(400, "requested_parameters must be a string array", ErrorType.BAD_REQUEST)
+    return frozenset(item.strip() for item in raw if item.strip())
+
+
+def _max_token_prices(value: Any) -> tuple[int | None, int | None]:
+    if value is None:
+        return None, None
+    if not isinstance(value, dict):
+        raise api_error(400, "provider.max_price must be an object", ErrorType.BAD_REQUEST)
+    unknown = sorted(set(value) - {"prompt", "completion"})
+    if unknown:
+        raise api_error(
+            400,
+            f"Unsupported provider.max_price option: {unknown[0]}",
+            ErrorType.BAD_REQUEST,
+        )
+    return (
+        _price_limit_microdollars(value.get("prompt"), "provider.max_price.prompt"),
+        _price_limit_microdollars(value.get("completion"), "provider.max_price.completion"),
+    )
+
+
+def _price_limit_microdollars(value: Any, field: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise api_error(400, f"{field} must be a non-negative decimal", ErrorType.BAD_REQUEST)
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        raise api_error(400, f"{field} must be a non-negative decimal", ErrorType.BAD_REQUEST) from None
+    if not amount.is_finite() or amount < 0:
+        raise api_error(400, f"{field} must be a non-negative decimal", ErrorType.BAD_REQUEST)
+    microdollars = amount * Decimal(1_000_000)
+    if microdollars != microdollars.to_integral_value():
+        raise api_error(
+            400,
+            f"{field} supports at most six decimal places",
+            ErrorType.BAD_REQUEST,
+        )
+    return int(microdollars)
 
 
 def _strip_variant_suffix(model_id: str) -> tuple[str, dict[str, str]]:
@@ -751,6 +863,15 @@ def _apply_provider_filters(candidates: list[Model], prefs: RoutePreferences) ->
             for endpoint in model_endpoints
         ):
             continue
+        if (
+            prefs.require_parameters
+            or prefs.max_prompt_price_microdollars_per_million_tokens is not None
+            or prefs.max_completion_price_microdollars_per_million_tokens is not None
+        ) and not any(
+            _endpoint_matches_parameter_and_price_filters(endpoint, prefs)
+            for endpoint in model_endpoints
+        ):
+            continue
         out.append(model)
     return out
 
@@ -803,8 +924,43 @@ def _apply_endpoint_provider_filters(
             continue
         if prefs.usage_type is not None and endpoint.usage_type != prefs.usage_type:
             continue
+        if not _endpoint_matches_parameter_and_price_filters(endpoint, prefs):
+            continue
         out.append((model, endpoint))
     return out
+
+
+def _endpoint_supports_requested_parameters(
+    endpoint: ModelEndpoint,
+    requested: frozenset[str],
+) -> bool:
+    supported = frozenset(endpoint.supported_parameters)
+    for parameter in requested:
+        alternatives = _PARAMETER_CAPABILITY_ALIASES.get(parameter, frozenset({parameter}))
+        if supported.isdisjoint(alternatives):
+            return False
+    return True
+
+
+def _endpoint_matches_parameter_and_price_filters(
+    endpoint: ModelEndpoint,
+    prefs: RoutePreferences,
+) -> bool:
+    if prefs.require_parameters and not _endpoint_supports_requested_parameters(
+        endpoint, prefs.requested_parameters
+    ):
+        return False
+    if (
+        prefs.max_prompt_price_microdollars_per_million_tokens is not None
+        and endpoint.prompt_price_microdollars_per_million_tokens
+        > prefs.max_prompt_price_microdollars_per_million_tokens
+    ):
+        return False
+    return not (
+        prefs.max_completion_price_microdollars_per_million_tokens is not None
+        and endpoint.completion_price_microdollars_per_million_tokens
+        > prefs.max_completion_price_microdollars_per_million_tokens
+    )
 
 
 def _sort_endpoint_candidates(
@@ -816,9 +972,17 @@ def _sort_endpoint_candidates(
     candidate_model_ids = {model.id for model, _endpoint in candidates}
     single_model_id = next(iter(candidate_model_ids)) if len(candidate_model_ids) == 1 else None
 
-    def key(item: tuple[int, tuple[Model, ModelEndpoint]]) -> tuple[int, int, int]:
+    model_order: dict[str, int] = {}
+    for model, _endpoint in candidates:
+        model_order.setdefault(model.id, len(model_order))
+
+    def key(item: tuple[int, tuple[Model, ModelEndpoint]]) -> tuple[int, int, int, int]:
         original_index, (model, endpoint) = item
         order_rank = provider_order.get(endpoint.provider, len(provider_order))
+        # Provider preference ranks endpoints within each requested model. It
+        # must not reorder the caller's model fallback chain. The only explicit
+        # opt-out is OpenRouter's global sort partition.
+        model_rank = model_order[model.id] if prefs.sort_partition == "model" else 0
         if prefs.sort == "price":
             sort_rank = (
                 endpoint.prompt_price_microdollars_per_million_tokens
@@ -838,7 +1002,7 @@ def _sort_endpoint_candidates(
                 endpoint.provider,
                 _PROVIDER_PREFERENCE.get(endpoint.provider, _DEFAULT_PROVIDER_PREFERENCE),
             )
-        return order_rank, sort_rank, original_index
+        return model_rank, order_rank, sort_rank, original_index
 
     return [candidate for _, candidate in sorted(with_index, key=key)]
 
@@ -929,21 +1093,31 @@ def _string_list(field: str, value: Any) -> list[str]:
     return out
 
 
-def _sort_mode(value: Any) -> str | None:
+def _sort_preferences(value: Any) -> tuple[str | None, str]:
     if value is None:
-        return None
+        return None, "model"
+    partition = "model"
     if isinstance(value, str):
         candidate = value.strip().lower()
     elif isinstance(value, dict):
         raw = value.get("sort") or value.get("strategy") or value.get("by")
         candidate = str(raw or "").strip().lower()
+        raw_partition = value.get("partition")
+        if raw_partition is not None:
+            partition = str(raw_partition).strip().lower()
+            if partition not in {"model", "none"}:
+                raise api_error(
+                    400,
+                    "provider.sort.partition must be 'model' or 'none'",
+                    ErrorType.BAD_REQUEST,
+                )
     else:
         raise api_error(400, "provider.sort must be a string or object", ErrorType.BAD_REQUEST)
     if candidate in {"price", "latency", "throughput"}:
-        return candidate
+        return candidate, partition
     if candidate:
         raise api_error(400, "provider.sort is unsupported", ErrorType.BAD_REQUEST)
-    return None
+    return None, partition
 
 
 def _usage_type(value: Any) -> str | None:

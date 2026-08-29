@@ -13,7 +13,11 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
-from trusted_router.catalog import PROVIDER_JURISDICTION_US
+from trusted_router.catalog import (
+    PRIVACY_TIER_ZERO_RETENTION,
+    PROVIDER_JURISDICTION_US,
+    endpoint_meets_privacy_requirement,
+)
 from trusted_router.config import Settings
 from trusted_router.routing import (
     _sort_endpoint_candidates,
@@ -52,6 +56,7 @@ def test_chat_route_candidates_models_array_dedupes_and_preserves_order() -> Non
         },
         _settings(),
     )
+
     assert [c.id for c in candidates] == [
         "openai/gpt-5.4-nano",
         "mistralai/mistral-small-2603",
@@ -212,6 +217,96 @@ def test_provider_only_remains_hard_with_fallbacks_enabled() -> None:
 
     assert candidates
     assert {endpoint.provider for _model, endpoint in candidates} == {"tinfoil"}
+
+
+def test_provider_require_parameters_filters_incompatible_endpoints() -> None:
+    unfiltered = chat_route_endpoint_candidates(
+        {"model": "google/gemma-4-31b-it"},
+        _settings(),
+    )
+    filtered = chat_route_endpoint_candidates(
+        {
+            "model": "google/gemma-4-31b-it",
+            "requested_parameters": ["temperature", "tools"],
+            "provider": {"require_parameters": True},
+        },
+        _settings(),
+    )
+
+    assert filtered
+    assert len(filtered) < len(unfiltered)
+    assert all(
+        {"temperature", "tools"}.issubset(endpoint.supported_parameters)
+        for _model, endpoint in filtered
+    )
+
+
+def test_provider_max_price_filters_prompt_and_completion_prices() -> None:
+    candidates = chat_route_endpoint_candidates(
+        {
+            "model": "google/gemma-4-31b-it",
+            "provider": {
+                "max_price": {"prompt": "0.15", "completion": "0.40"},
+            },
+        },
+        _settings(),
+    )
+
+    assert candidates
+    assert all(
+        endpoint.prompt_price_microdollars_per_million_tokens <= 150_000
+        and endpoint.completion_price_microdollars_per_million_tokens <= 400_000
+        for _model, endpoint in candidates
+    )
+
+
+def test_provider_sort_partition_preserves_or_flattens_model_fallback_order() -> None:
+    body = {
+        "models": ["anthropic/claude-opus-4.8", "google/gemma-4-31b-it"],
+        "provider": {"sort": {"by": "price", "partition": "model"}},
+    }
+    model_partition = chat_route_endpoint_candidates(body, _settings())
+    assert model_partition[0][0].id == "anthropic/claude-opus-4.8"
+
+    body["provider"] = {"sort": {"by": "price", "partition": "none"}}
+    global_partition = chat_route_endpoint_candidates(body, _settings())
+    assert global_partition[0][0].id == "google/gemma-4-31b-it"
+
+
+def test_provider_order_never_promotes_a_fallback_model_over_primary() -> None:
+    candidates = chat_route_endpoint_candidates(
+        {
+            "models": ["anthropic/claude-opus-4.8", "google/gemma-4-31b-it"],
+            "provider": {"order": ["cerebras"]},
+        },
+        _settings(),
+    )
+
+    assert candidates[0][0].id == "anthropic/claude-opus-4.8"
+
+
+def test_provider_zdr_true_filters_to_zero_retention_endpoints() -> None:
+    candidates = chat_route_endpoint_candidates(
+        {
+            "model": "google/gemma-4-31b-it",
+            "provider": {"zdr": True},
+        },
+        _settings(),
+    )
+
+    assert candidates
+    assert all(
+        endpoint_meets_privacy_requirement(endpoint, PRIVACY_TIER_ZERO_RETENTION)
+        for _model, endpoint in candidates
+    )
+
+
+def test_unknown_provider_routing_option_fails_closed() -> None:
+    with pytest.raises(HTTPException) as ctx:
+        provider_route_preferences({"provider": {"future_router_option": True}})
+
+    assert ctx.value.status_code == 400
+    assert "future_router_option" in ctx.value.detail["error"]["message"]
 
 
 def test_disjoint_only_and_no_fallback_order_fail_closed() -> None:
@@ -789,7 +884,12 @@ def test_default_endpoint_routing_prefers_reliable_host_over_flaky() -> None:
     # tries deepinfra before parasail even when parasail is listed first.
     flaky = _credits_endpoint("parasail")
     reliable = _credits_endpoint("deepinfra")
-    ordered = _sort_endpoint_candidates([flaky, reliable], provider_route_preferences({}))
+    # Sorting providers is model-local. Reuse one model to isolate provider
+    # preference from the separate model fallback order contract.
+    ordered = _sort_endpoint_candidates(
+        [(flaky[0], flaky[1]), (flaky[0], reliable[1])],
+        provider_route_preferences({}),
+    )
     assert [ep.provider for _, ep in ordered] == ["deepinfra", "parasail"]
 
 
@@ -797,7 +897,10 @@ def test_explicit_provider_order_overrides_reliability_preference() -> None:
     flaky = _credits_endpoint("parasail")
     reliable = _credits_endpoint("deepinfra")
     prefs = provider_route_preferences({"provider": {"order": ["parasail"]}})
-    ordered = _sort_endpoint_candidates([flaky, reliable], prefs)
+    ordered = _sort_endpoint_candidates(
+        [(flaky[0], flaky[1]), (flaky[0], reliable[1])],
+        prefs,
+    )
     assert ordered[0][1].provider == "parasail"  # caller's explicit order wins
 
 
