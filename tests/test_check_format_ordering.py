@@ -1193,7 +1193,7 @@ def test_written_formats_fails_closed_when_it_cannot_derive_the_format(source: s
 def test_a_rehydration_site_is_allowed_only_where_it_rebuilds_a_stored_row() -> None:
     """`EncryptedSecretEnvelope(**stored)` reads a format, it does not choose one.
 
-    Two modules do this today and both are rebuilding a database row. The
+    One module does this today and it is rebuilding a database row. The
     allowlist is a refusal boundary, not a rule: the same shape anywhere else
     refuses until someone decides which kind it is. This asserts both halves.
     """
@@ -1231,7 +1231,6 @@ def test_the_real_write_surface_writes_exactly_v2_today() -> None:
 
     assert scan.formats == frozenset({V2})
     assert tuple(site.rsplit(":", 1)[0] for site in scan.rehydration_sites) == (
-        "src/trusted_router/byok_aad_backfill.py",
         "src/trusted_router/storage_models.py",
         "src/trusted_router/storage_models.py",
         "src/trusted_router/storage_models.py",

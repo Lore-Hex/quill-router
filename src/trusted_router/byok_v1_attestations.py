@@ -47,12 +47,12 @@ WHY EVERY CLOUD, AND NOT EACH CLOUD ON ITS OWN
 WHY THIS EXISTS AS A LEDGER AND NOT AS A SENTENCE
     Until now the only artifact standing between an engineer and permanently
     unreadable customer BYOK keys was a table cell in a markdown file. Step 4
-    is the one irreversible step in the plan: once `_aad`/`ALGORITHM` are gone
-    from the control plane and the enclave, a surviving v1 row is not a bug
-    that can be rolled back — the plaintext provider key is gone, because the
-    AAD that seals both the ciphertext and the wrapped DEK cannot be
-    reconstructed from a format nobody implements any more. A markdown claim is
-    not a precondition. A file that a test reads is.
+    is the one intentionally one-way production step in the plan: once
+    `_aad`/`ALGORITHM` are gone from the control plane and enclave, a V1 row
+    cannot be opened by the running fleet. Recovery would require an isolated
+    rollback to reviewed pre-Step-4 code (or equivalent dedicated recovery
+    tooling) with KMS access. A markdown claim is not a precondition. A file
+    that a test reads is.
 
 THE NEAR-MISS THIS ENCODES
     As of 2026-08-15 the migration doc renders step 3 as a green check on all
@@ -104,9 +104,10 @@ SCOPE LIMIT — what a full ledger does NOT establish
       than invisible. Compare it against the cloud the entry claims.
 
       Read that field knowing how each adapter obtains it, because they are
-      not equally strong. `PostgresEntityStore` asks the server
-      (`current_database()`, `current_user`, `inet_server_addr()`), so its
-      value is the server's own answer. `SpannerEntityStore` does not: it
+      not equally strong. `PostgresEntityStore` asks the server for
+      `current_database()` and `current_user`, then obtains host and port from
+      the negotiated connection (Aurora DSQL does not implement
+      `inet_server_addr()`). `SpannerEntityStore` does not: it
       composes the name client-side out of the `--project`,
       `--spanner-instance` and `--spanner-database` the CLI was given —
       `Database.name` is `Instance.name + "/databases/" + database_id` and
@@ -242,14 +243,15 @@ MIGRATED_KINDS: tuple[str, ...] = tuple(
 #: The census below searches row bodies for this string, and it has to keep
 #: working in the tree where step 4 has deleted that constant — a precondition
 #: that stops being expressible the moment someone starts the edit it guards is
-#: not a precondition. `tests/test_byok_v1_precondition.py` asserts the two are
-#: equal while both exist.
+#: not a precondition. Post-Step-4 tests keep this literal confined to the
+#: read-only census and explicit rejection fixtures.
 V1_ALGORITHM_LITERAL = "TR-BYOK-ENVELOPE-AES-256-GCM-V1"
 
-#: v2: `census_v1_literal_rows` and `census_source` became required, because a
-#: v1 attestation could be earned without either. Entries written under v1 are
-#: not upgradable — the runs behind them never asked those questions.
-SCHEMA = "trustedrouter/byok-aad-v1-zero-attestation/v2"
+#: v3: `census_positive_control_rows` became required so a zero literal count
+#: cannot pass until the same whole-body search path demonstrates that it can
+#: match a known-present JSON-object marker. Older runs never asked that
+#: question and are deliberately not upgradable by changing the schema string.
+SCHEMA = "trustedrouter/byok-aad-v1-zero-attestation/v3"
 
 OUTCOME_CLEAN = "clean"
 OUTCOME_EMPTY_WITNESSED = "empty_witnessed"
@@ -319,6 +321,9 @@ class Attestation:
     #: found without a kind filter and without assuming a body field name. The
     #: one count in here that is not downstream of `MIGRATED_SURFACES`.
     census_v1_literal_rows: int
+    #: Rows matched by the same whole-body literal-search path using a
+    #: known-present JSON-object marker. Must be positive for any passing run.
+    census_positive_control_rows: int
     #: Which database the census was taken from: the server's own answer on
     #: Postgres, the database the CLI was pointed at on Spanner (the string
     #: says which). Not proof of the right deployment; the thing a reviewer
@@ -343,6 +348,7 @@ class Attestation:
             "census_migrated_kind_counts": dict(sorted(self.census_migrated_kind_counts.items())),
             "census_sampled_kinds": sorted(self.census_sampled_kinds),
             "census_v1_literal_rows": self.census_v1_literal_rows,
+            "census_positive_control_rows": self.census_positive_control_rows,
             "census_source": self.census_source,
             "operator": self.operator,
             "note": self.note,
@@ -364,6 +370,7 @@ _REQUIRED_FIELDS = (
     "census_migrated_kind_counts",
     "census_sampled_kinds",
     "census_v1_literal_rows",
+    "census_positive_control_rows",
     "census_source",
     "operator",
 )
@@ -378,6 +385,17 @@ _INT_FIELDS = (
     "v2_envelopes",
     "missing_envelopes",
     "census_v1_literal_rows",
+    "census_positive_control_rows",
+)
+
+_COUNT_MAP_FIELDS = ("rows_scanned_by_kind", "census_migrated_kind_counts")
+_TEXT_FIELDS = (
+    "cloud",
+    "outcome",
+    "recorded_at",
+    "backend",
+    "surface_fingerprint",
+    "operator",
 )
 
 
@@ -449,6 +467,47 @@ def ledger_defects(ledger: dict[str, Any]) -> list[str]:
         if mistyped:
             defects.append(f"{cloud}: these counts are not integers: {', '.join(mistyped)}")
             continue
+        negative = [name for name in _INT_FIELDS if entry[name] < 0]
+        if negative:
+            defects.append(f"{cloud}: these counts are negative: {', '.join(negative)}")
+            continue
+        mistyped_text = [
+            name
+            for name in _TEXT_FIELDS
+            if not isinstance(entry[name], str) or not entry[name].strip()
+        ]
+        if mistyped_text:
+            defects.append(
+                f"{cloud}: these fields are not non-empty strings: {', '.join(mistyped_text)}"
+            )
+            continue
+        invalid_count_maps = [
+            name
+            for name in _COUNT_MAP_FIELDS
+            if not isinstance(entry[name], dict)
+            or any(
+                not isinstance(kind, str)
+                or not kind
+                or not isinstance(count, int)
+                or isinstance(count, bool)
+                or count < 0
+                for kind, count in (
+                    entry[name].items() if isinstance(entry[name], dict) else ()
+                )
+            )
+        ]
+        if invalid_count_maps:
+            defects.append(
+                f"{cloud}: these fields are not string-to-nonnegative-integer maps: "
+                f"{', '.join(invalid_count_maps)}"
+            )
+            continue
+        sampled_kinds = entry["census_sampled_kinds"]
+        if not isinstance(sampled_kinds, list) or any(
+            not isinstance(kind, str) or not kind for kind in sampled_kinds
+        ):
+            defects.append(f"{cloud}: census_sampled_kinds is not a list of non-empty strings")
+            continue
         if entry["cloud"] != cloud:
             defects.append(f"{cloud}: attestation records cloud={entry['cloud']!r}")
         if entry["outcome"] not in ALL_OUTCOMES:
@@ -462,8 +521,9 @@ def ledger_defects(ledger: dict[str, Any]) -> list[str]:
             )
         if entry["surface_fingerprint"] != fingerprint:
             defects.append(
-                f"{cloud}: attestation covers surfaces {entry['surface_fingerprint']} but this "
-                f"repository now writes {fingerprint} — re-run the precondition"
+                f"{cloud}: attestation surface fingerprint "
+                f"{entry['surface_fingerprint']} does not match this repository's "
+                f"{fingerprint} — re-run the precondition"
             )
         if entry["outcome"] == OUTCOME_CLEAN and not entry["envelopes_seen"]:
             defects.append(f"{cloud}: outcome 'clean' with envelopes_seen=0 is self-contradictory")
@@ -489,6 +549,12 @@ def ledger_defects(ledger: dict[str, Any]) -> list[str]:
                 f"{cloud}: attestation records census_v1_literal_rows="
                 f"{entry['census_v1_literal_rows']} — rows carrying the v1 algorithm literal "
                 "were counted in the table, so this run did not establish zero v1"
+            )
+        if entry["census_positive_control_rows"] <= 0:
+            defects.append(
+                f"{cloud}: attestation records census_positive_control_rows="
+                f"{entry['census_positive_control_rows']} — the whole-body literal search "
+                "never demonstrated that it could match"
             )
         if not isinstance(entry["census_source"], str) or not entry["census_source"].strip():
             defects.append(
@@ -561,6 +627,11 @@ def record_attestation(
             f"refusing to record a pass with census_v1_literal_rows="
             f"{attestation.census_v1_literal_rows}: rows carrying the v1 algorithm literal were "
             "counted in that table"
+        )
+    if attestation.census_positive_control_rows <= 0:
+        raise ValueError(
+            "refusing to record an attestation whose whole-body literal-search positive "
+            "control matched no rows"
         )
     if not attestation.census_source.strip():
         raise ValueError("refusing to record an attestation that does not name the database read")
