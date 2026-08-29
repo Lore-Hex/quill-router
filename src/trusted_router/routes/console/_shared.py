@@ -126,6 +126,7 @@ def _selected_console_workspace(
 def _console_path_for_active(active: str) -> str:
     return {
         "api-keys": "/console/api-keys",
+        "authorized-apps": "/console/authorized-apps",
         "byok": "/console/byok",
         "custom-models": "/console/custom-models",
         "user-models": "/console/user-models",

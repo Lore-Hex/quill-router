@@ -1582,6 +1582,9 @@ class SpannerBigtableStore:
     def delete_key(self, key_hash: str) -> bool:
         return self.api_keys.delete(key_hash)
 
+    def supports_key_writes(self) -> bool:
+        return True
+
     def update_key(self, key_hash: str, patch: dict[str, Any]) -> ApiKey | None:
         return self.api_keys.update(key_hash, patch)
 

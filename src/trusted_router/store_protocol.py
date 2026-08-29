@@ -68,6 +68,13 @@ class Store(Protocol):
 
     # Lifecycle ---------------------------------------------------------------
     def reset(self) -> None: ...
+
+    #: False on a backend whose key writes are unimplemented. Callers that
+    #: mutate keys check this BEFORE writing: discovering the gap by catching
+    #: the raise mid-sequence cannot distinguish "nothing was written" from
+    #: "a write landed then raised", and guessing wrong either skips a needed
+    #: repair or reports a capability gap as data corruption.
+    def supports_key_writes(self) -> bool: ...
     def readiness_check(self) -> None: ...
 
     # Users + workspaces ------------------------------------------------------

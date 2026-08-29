@@ -475,6 +475,39 @@ def _pkce_method(raw: Any, *, has_challenge: bool) -> str | None:
     return method
 
 
+#: The consent page prints this straight after a "$", so it is app-supplied
+#: text on our own page. An app that sends microdollars (or anything else)
+#: must not be able to render "$20000000/month" as if the user were agreeing
+#: to it. Anything not a plain dollar amount within the same bound as the
+#: limit input is dropped rather than shown.
+SUGGESTED_BUDGET_MAX_DOLLARS = 10_000
+
+
+#: Digits, optionally a decimal point and one or two more digits. Deliberately
+#: stricter than Decimal, which accepts "1e1", "+25" and " 25 " -- all of which
+#: would render on the consent page as a figure the app never plainly wrote.
+_PLAIN_DOLLARS = re.compile(r"^(0|[1-9][0-9]{0,4})(\.[0-9]{1,2})?$")
+
+
+def _suggested_monthly_budget(raw: Any) -> str:
+    """Normalise an app's budget hint to dollars, or drop it."""
+    if raw in {None, ""}:
+        return ""
+    text = str(raw)
+    if not _PLAIN_DOLLARS.match(text):
+        return ""
+    whole, _, cents = text.partition(".")
+    dollars = int(whole)
+    if dollars == 0 and int(cents.ljust(2, "0") or 0) == 0:
+        return ""
+    if dollars > SUGGESTED_BUDGET_MAX_DOLLARS:
+        return ""
+    # Match the preset labels ($5, $20, $100) for whole dollars; pad cents so a
+    # fractional hint reads as money, not "$25.5". The regex bounds the cents
+    # to two digits, so there is no rounding to carry.
+    return str(dollars) if not cents else f"{dollars}.{cents.ljust(2, '0')}"
+
+
 def _limit_microdollars(raw: Any) -> int | None:
     if raw in {None, ""}:
         return None
@@ -612,7 +645,7 @@ def _create_consent(
     rfc_conformant: bool = False,
 ) -> ConsentRequest:
     callback_url = _validate_callback_url(str(params.get("callback_url") or ""))
-    suggested = str(params.get("suggested_monthly_budget") or "")
+    suggested = _suggested_monthly_budget(params.get("suggested_monthly_budget"))
     consent = ConsentRequest(
         id=f"consent_{secrets.token_urlsafe(24)}",
         csrf_token=secrets.token_urlsafe(32),
@@ -695,7 +728,7 @@ def _conformant_authorize_params(request: Request) -> tuple[dict[str, Any], OAut
         return redirected("invalid_request", "code_challenge is required")
     if raw.get("code_challenge_method") != "S256":
         return redirected("invalid_request", "code_challenge_method must be S256")
-    return {"client_id": client_id, "callback_url": redirect_uri, "scopes": requested, "state": state, "code_challenge": str(raw["code_challenge"]), "code_challenge_method": "S256", "suggested_monthly_budget": str(raw.get("suggested_monthly_budget") or "")}, app, None
+    return {"client_id": client_id, "callback_url": redirect_uri, "scopes": requested, "state": state, "code_challenge": str(raw["code_challenge"]), "code_challenge_method": "S256", "suggested_monthly_budget": _suggested_monthly_budget(raw.get("suggested_monthly_budget"))}, app, None
 
 
 def _oauth_error_redirect(uri: str, error: str, description: str, state: str) -> str:

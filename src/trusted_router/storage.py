@@ -980,6 +980,9 @@ class InMemoryStore:
     ) -> None:
         self.api_keys.refund_limit(key_hash, reserved_microdollars, usage_type=usage_type)
 
+    def supports_key_writes(self) -> bool:
+        return True
+
     def update_key(self, key_hash: str, patch: dict[str, Any]) -> ApiKey | None:
         return self.api_keys.update(key_hash, patch)
 

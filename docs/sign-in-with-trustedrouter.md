@@ -266,3 +266,13 @@ backend for exactly this.)
   conservative default and let the user make the final choice.
 - Never put the delegated key in a URL, browser analytics, logs, or client-side
   durable storage. A server-backed app should exchange and store it server-side.
+# Reviewing and revoking authorized apps
+
+Users can open **Console → Authorized Apps** to review each app connected to the
+current workspace, see its permissions, owner, markup, budget, and usage, change
+its monthly budget, or revoke access. Revocation disables every key held by that
+app immediately for new requests; existing in-flight requests may still settle.
+
+App developers must expect users to change a budget or revoke access at any
+time. A delegated key can therefore begin returning `401` or `403`; handle both
+responses gracefully and ask the user to reconnect instead of retrying forever.
