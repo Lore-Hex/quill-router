@@ -1374,6 +1374,20 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://tinker-docs.thinkingmachines.ai/tinker/models/",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "huggingface": Provider(
+        slug="huggingface",
+        name="Hugging Face",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Hugging Face Inference Providers forwards each request to the "
+            "downstream provider pinned in the route. TrustedRouter tracks no "
+            "contractual ZDR, confidential-compute, or E2EE claim for this "
+            "account, so these routes are Standard."
+        ),
+        provider_policy_url="https://huggingface.co/docs/inference-providers/pricing",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
     # Xiaomi MiMo — OpenAI-compatible chat (api.xiaomimimo.com/v1). MiMo-V2 /
     # V2.5 agent models. Models + prices are in data/provider_models/xiaomi.json.
     "xiaomi": Provider(
@@ -1968,6 +1982,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "baseten",
         "telnyx",
         "thinkingmachines",
+        "huggingface",
         "wafer",
         "crusoe",
         "makora",

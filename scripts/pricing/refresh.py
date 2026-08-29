@@ -110,6 +110,7 @@ PROVIDER_SLUGS = [
     "friendli",
     "baseten",
     "thinkingmachines",
+    "huggingface",
     "wafer",
     "crusoe",
     "minimax",

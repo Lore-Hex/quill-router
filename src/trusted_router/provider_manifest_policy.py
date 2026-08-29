@@ -40,6 +40,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS | frozen
         "riverflow",
         "scaleway",
         "featherless",
+        "huggingface",
         "sakana",
         "jina",
         "near-ai",

@@ -29,9 +29,7 @@ def test_provider_owned_pricing_parsers_use_integer_microdollars() -> None:
         (ROOT / "tests/fixtures/pricing/morph.html").read_text(encoding="utf-8")
     )
     streamlake_prices = streamlake_parser.parse(
-        (ROOT / "tests/fixtures/pricing/streamlake.html").read_text(
-            encoding="utf-8"
-        )
+        (ROOT / "tests/fixtures/pricing/streamlake.html").read_text(encoding="utf-8")
     )
 
     assert morph_prices["z-ai/glm-5.2"] == {
@@ -123,6 +121,60 @@ def test_openai_catalog_preserves_exact_ids_and_filters_non_text_output() -> Non
     assert upstream_ids == {"vendor/exact-model": "Vendor/Exact-Model"}
 
 
+def test_openai_catalog_supports_explicit_pinned_upstream_id() -> None:
+    upstream_ids: dict[str, str] = {}
+    prices, rows = discover_openai_chat_catalog(
+        [
+            {
+                "id": "Vendor/Model",
+                "upstream_id": "Vendor/Model:pinned-provider",
+                "pricing": {"input": "0.000001", "output": "0.000002"},
+            }
+        ],
+        explicit_map={},
+        upstream_id_map=upstream_ids,
+        accept_source_upstream_id=True,
+    )
+
+    assert prices == {"vendor/model": ModelPrice(1_000_000, 2_000_000)}
+    assert rows["vendor/model"]["upstream_id"] == "Vendor/Model:pinned-provider"
+    assert upstream_ids == {"vendor/model": "Vendor/Model:pinned-provider"}
+
+
+def test_openai_catalog_ignores_untrusted_source_upstream_id_by_default() -> None:
+    upstream_ids: dict[str, str] = {}
+    _prices, rows = discover_openai_chat_catalog(
+        [
+            {
+                "id": "Vendor/Model",
+                "upstream_id": "Vendor/Different-Model",
+                "pricing": {"input": "0.000001", "output": "0.000002"},
+            }
+        ],
+        explicit_map={},
+        upstream_id_map=upstream_ids,
+    )
+
+    assert rows["vendor/model"]["upstream_id"] == "Vendor/Model"
+    assert upstream_ids == {"vendor/model": "Vendor/Model"}
+
+
+def test_openai_catalog_rejects_unsafe_trusted_upstream_id() -> None:
+    with pytest.raises(ValueError, match="unsafe pinned upstream model id"):
+        discover_openai_chat_catalog(
+            [
+                {
+                    "id": "Vendor/Model",
+                    "upstream_id": "Vendor/Model\nmalformed",
+                    "pricing": {"input": "0.000001", "output": "0.000002"},
+                }
+            ],
+            explicit_map={},
+            upstream_id_map={},
+            accept_source_upstream_id=True,
+        )
+
+
 def test_wave2_provider_privacy_and_gateway_registration() -> None:
     slugs = {"inceptron", "morph", "atlas-cloud", "streamlake"}
     assert slugs.issubset(GATEWAY_PREPAID_PROVIDER_SLUGS)
@@ -148,8 +200,7 @@ def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
     ]
     assert atlas_image_rows
     assert all(
-        row.get("routable") is False
-        and row.get("routable_reason") == "delisted-upstream"
+        row.get("routable") is False and row.get("routable_reason") == "delisted-upstream"
         for row in atlas_image_rows
     )
     assert all(row["upstream_id"] for raw in manifests.values() for row in raw["models"])
@@ -161,9 +212,7 @@ def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
         if endpoint.provider == "streamlake"
     }
     streamlake_manifest_models = {
-        row["id"]
-        for row in manifests["streamlake"]["models"]
-        if row.get("routable") is not False
+        row["id"] for row in manifests["streamlake"]["models"] if row.get("routable") is not False
     }
     assert streamlake_route_models == streamlake_manifest_models
     assert all(
@@ -174,17 +223,12 @@ def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
 
 def test_wave2_exact_upstream_ids_are_committed() -> None:
     inceptron_rows = {
-        row["id"]: row
-        for row in json.loads(inceptron.MANIFEST_PATH.read_text())["models"]
+        row["id"]: row for row in json.loads(inceptron.MANIFEST_PATH.read_text())["models"]
     }
     atlas_rows = {
-        row["id"]: row
-        for row in json.loads(atlas_cloud.MANIFEST_PATH.read_text())["models"]
+        row["id"]: row for row in json.loads(atlas_cloud.MANIFEST_PATH.read_text())["models"]
     }
-    assert (
-        inceptron_rows["moonshotai/kimi-k2.7-code"]["upstream_id"]
-        == "moonshotai/Kimi-K2.7-Code"
-    )
+    assert inceptron_rows["moonshotai/kimi-k2.7-code"]["upstream_id"] == "moonshotai/Kimi-K2.7-Code"
     assert atlas_rows["z-ai/glm-5.2"]["upstream_id"] == "zai-org/glm-5.2"
 
 
@@ -308,15 +352,11 @@ def test_model_canary_state_rejects_unchecked_healthy_models(tmp_path: Path) -> 
 
 
 def test_wave2_hourly_refresh_and_secret_wiring_are_complete() -> None:
-    assert {"inceptron", "morph", "atlas_cloud", "streamlake"}.issubset(
-        PROVIDER_SLUGS
-    )
+    assert {"inceptron", "morph", "atlas_cloud", "streamlake"}.issubset(PROVIDER_SLUGS)
     assert _PRICING_RESULT_PROVIDER_ALIASES["atlas_cloud"] == ("atlas-cloud",)
 
     secrets = (ROOT / "scripts/deploy/secrets.sh").read_text(encoding="utf-8")
-    workflow = (ROOT / ".github/workflows/refresh-prices.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = (ROOT / ".github/workflows/refresh-prices.yml").read_text(encoding="utf-8")
     for env_name, secret_name in {
         "INCEPTRON_API_KEY": "trustedrouter-inceptron-api-key",
         "MORPH_API_KEY": "trustedrouter-morph-api-key",

@@ -445,6 +445,52 @@ def test_direct_provider_operator_hold_survives_canary_and_relist(
     assert probed == ["vendor/live"] * 4
 
 
+def test_parallel_canary_retries_failures_once_serially(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, int] = {}
+    monkeypatch.setenv("RETRY_PROVIDER_API_KEY", "test-secret")
+    monkeypatch.setattr(
+        _direct_openai,
+        "fetch_json",
+        lambda *_args, **_kwargs: {"data": [{"id": "vendor/a"}, {"id": "vendor/b"}]},
+    )
+    monkeypatch.setattr(
+        _direct_openai,
+        "models_requiring_canary",
+        lambda _path, model_ids: set(model_ids),
+    )
+    monkeypatch.setattr(_direct_openai.time, "sleep", lambda _seconds: None)
+
+    def probe(**kwargs: object) -> bool:
+        model = str(kwargs["model"])
+        calls[model] = calls.get(model, 0) + 1
+        return model == "vendor/a" or calls[model] > 1
+
+    monkeypatch.setattr(_direct_openai, "probe_openai_chat", probe)
+    catalog = DirectOpenAIProvider(
+        DirectOpenAIProviderSpec(
+            slug="retry-provider",
+            base_url="https://example.invalid/v1",
+            api_key_env="RETRY_PROVIDER_API_KEY",
+            explicit_model_map={"vendor/a": "vendor/a", "vendor/b": "vendor/b"},
+            static_prices={
+                "vendor/a": ModelPrice(1, 2),
+                "vendor/b": ModelPrice(1, 2),
+            },
+            canary_concurrency=2,
+        ),
+        manifest_path=tmp_path / "retry-provider.json",
+    )
+
+    result = catalog.fetch()
+
+    assert set(result.prices) == {"vendor/a", "vendor/b"}
+    assert calls == {"vendor/a": 1, "vendor/b": 2}
+    assert all(row.get("routable") is not False for row in catalog.discovered_rows.values())
+
+
 def test_direct_provider_normalization_is_the_single_audit_policy() -> None:
     cases = {
         arcee: {

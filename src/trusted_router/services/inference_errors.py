@@ -74,6 +74,7 @@ def default_provider_secret_ref(provider: str) -> str:
         "kimi": "KIMI_API_KEY",
         "fireworks": "FIREWORKS_API_KEY",
         "thinkingmachines": "THINKING_MACHINES_API_KEY",
+        "huggingface": "HUGGING_FACE_API_KEY",
         "engy": "ENGY_API_KEY",
         "sail-research": "SAIL_RESEARCH_API_KEY",
         "aion-labs": "AION_LABS_API_KEY",

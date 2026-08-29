@@ -63,12 +63,32 @@ def _supports_text_output(row: dict[str, Any]) -> bool:
     return "text" in {str(item).casefold() for item in output_modalities}
 
 
+def _upstream_id(
+    source: dict[str, Any],
+    native_id: str,
+    *,
+    accept_source_upstream_id: bool,
+) -> str:
+    if not accept_source_upstream_id:
+        return native_id
+    pinned_id = source.get("upstream_id")
+    if not isinstance(pinned_id, str) or not pinned_id.strip():
+        return native_id
+    pinned_id = pinned_id.strip()
+    if len(pinned_id) > 512 or any(
+        ord(character) < 32 or ord(character) == 127 for character in pinned_id
+    ):
+        raise ValueError(f"unsafe pinned upstream model id: {pinned_id!r}")
+    return pinned_id
+
+
 def discover_openai_chat_catalog(
     rows: list[dict[str, Any]],
     *,
     explicit_map: dict[str, str],
     upstream_id_map: dict[str, str],
     include: Callable[[dict[str, Any]], bool] | None = None,
+    accept_source_upstream_id: bool = False,
 ) -> tuple[dict[str, ModelPrice], dict[str, dict[str, Any]]]:
     """Normalize text-chat rows while preserving exact upstream IDs.
 
@@ -82,6 +102,11 @@ def discover_openai_chat_catalog(
         native_id = source.get("id")
         if not isinstance(native_id, str) or not native_id.strip():
             continue
+        upstream_id = _upstream_id(
+            source,
+            native_id,
+            accept_source_upstream_id=accept_source_upstream_id,
+        )
         if include is not None and not include(source):
             continue
         if not _supports_text_output(source):
@@ -93,10 +118,10 @@ def discover_openai_chat_catalog(
         if price is None:
             continue
 
-        remember_upstream_id(upstream_id_map, model_id, native_id)
+        remember_upstream_id(upstream_id_map, model_id, upstream_id)
         row: dict[str, Any] = {
             "id": model_id,
-            "upstream_id": native_id,
+            "upstream_id": upstream_id,
             "display_name": str(source.get("name") or source.get("description") or native_id),
             "endpoints": ["chat/completions"],
         }
@@ -133,6 +158,7 @@ def discover_available_priced_chat_catalog(
     upstream_id_map: dict[str, str],
     include: Callable[[dict[str, Any]], bool] | None = None,
     preserve_unpriced_model_ids: Collection[str] = (),
+    accept_source_upstream_id: bool = False,
 ) -> dict[str, dict[str, Any]]:
     """Intersect an authenticated model list with independently sourced prices.
 
@@ -148,6 +174,11 @@ def discover_available_priced_chat_catalog(
         native_id = source.get("id")
         if not isinstance(native_id, str) or not native_id.strip():
             continue
+        upstream_id = _upstream_id(
+            source,
+            native_id,
+            accept_source_upstream_id=accept_source_upstream_id,
+        )
         if include is not None and not include(source):
             continue
         if not _supports_text_output(source):
@@ -157,10 +188,10 @@ def discover_available_priced_chat_catalog(
             model_id not in prices and model_id not in preserve_unpriced_model_ids
         ):
             continue
-        remember_upstream_id(upstream_id_map, model_id, native_id)
+        remember_upstream_id(upstream_id_map, model_id, upstream_id)
         row: dict[str, Any] = {
             "id": model_id,
-            "upstream_id": native_id,
+            "upstream_id": upstream_id,
             "display_name": str(source.get("name") or native_id),
             "endpoints": ["chat/completions"],
         }

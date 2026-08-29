@@ -293,6 +293,7 @@ def test_deploy_provider_secrets_include_priced_glm52_backends() -> None:
         "BASETEN_API_KEY": "trustedrouter-baseten-api-key",
         "TELNYX_API_KEY": "trustedrouter-telnyx-api-key",
         "THINKING_MACHINES_API_KEY": "trustedrouter-thinking-machines-api-key",
+        "HUGGING_FACE_API_KEY": "trustedrouter-huggingface-api-key",
         "WAFER_API_KEY": "trustedrouter-wafer-api-key",
         "CRUSOE_API_KEY": "trustedrouter-crusoe-api-key",
         "MAKORA_API_KEY": "trustedrouter-makora-api-key",

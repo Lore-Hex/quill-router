@@ -47,6 +47,7 @@ from scripts.pricing.providers import (
     darkbloom,
     decart,
     featherless,
+    huggingface,
     inception,
     io_net,
     jina,
@@ -515,6 +516,7 @@ _CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
 _STALE_MANIFEST_PROVIDER_MODULES = (
     *_DIRECT_OPENAI_DISCOVERY_MODULES,
     *_CI_DIRECT_OPENAI_DISCOVERY_MODULES,
+    huggingface,
     io_net,
     jina,
     krea,

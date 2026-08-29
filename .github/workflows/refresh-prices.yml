@@ -183,6 +183,7 @@ jobs:
                       DARKBLOOM_API_KEY:trustedrouter-darkbloom-api-key \
                       BAIDU_API_KEY:trustedrouter-baidu-api-key \
                       RIVERFLOW_API_KEY:trustedrouter-riverflow-api-key \
+                      HUGGING_FACE_API_KEY:trustedrouter-huggingface-api-key \
                       WANDB_API_KEY:trustedrouter-wandb-api-key; do
             env="${pair%%:*}"
             secret="${pair#*:}"
