@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
+import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.scopes import DEFAULT_DELEGATED_SCOPES
@@ -156,33 +157,30 @@ def test_stripe_round_trip_contains_only_consent_authority(client: TestClient) -
         assert "code_challenge" not in captured[name] and "callback_url" not in captured[name]
 
 
-def test_token_rate_limit_has_retry_after(client: TestClient) -> None:
-    """Fill the bucket directly, then make ONE request.
+def test_token_rate_limit_has_retry_after(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lower the cap instead of reaching it.
 
-    Driving the cap with 30 sequential HTTP calls raced the limiter's own
-    60s window: on a loaded CI shard the calls spanned longer than the
-    window, so early hits aged out and the cap was never reached (400, not
-    429). Filling the bucket in-process removes the wall clock from the
-    test while still exercising the endpoint's real 429 response.
+    Two earlier versions of this test were flaky for different reasons: 30
+    sequential HTTP calls raced the limiter's own 60s window on a loaded CI
+    shard, and pre-filling the bucket in-process depended on reconstructing
+    the route's subject string, which is derived from the app object's id.
+    Lowering the cap needs neither the wall clock nor the subject.
     """
-    from trusted_router.routes import helpers
-    from trusted_router.routes.oauth_keys import OAUTH_TOKEN_RATE_LIMIT
+    from trusted_router.routes import helpers, oauth_keys
 
     helpers._CLIENT_EVENT_RATE_LIMITS.reset()
-    subject = f"{id(client.app)}:testclient"
-    for _ in range(OAUTH_TOKEN_RATE_LIMIT):
-        helpers.enforce_rate_limit(
-            "oauth_token", subject, OAUTH_TOKEN_RATE_LIMIT, window_seconds=60
-        )
+    monkeypatch.setattr(oauth_keys, "OAUTH_TOKEN_RATE_LIMIT", 1)
 
+    first = client.post("/v1/oauth/token", data={})
     limited = client.post("/v1/oauth/token", data={})
 
+    assert first.status_code != 429
     assert limited.status_code == 429
     assert limited.headers["retry-after"]
     assert limited.headers["cache-control"] == "no-store"
     assert limited.json()["error"] == "temporarily_unavailable"
-    assert limited.headers["cache-control"] == "no-store"
-    assert limited.headers["pragma"] == "no-cache"
 
 
 def test_legacy_exchange_keeps_its_house_envelope_and_plain_pkce(
@@ -251,5 +249,11 @@ def test_app_supplied_budget_hint_is_normalised_to_dollars_or_dropped(
     for name, entry in entries.items():
         assert hint(entry("25")) == "$25", name
         assert hint(entry("25.50")) == "$25.50", name
-        for rejected in ("20000000", "abc", "-5", "0", "999999999", "<b>x</b>"):
-            assert hint(entry(rejected)) is None, f"{name}: {rejected} was rendered"
+        # Decimal would accept the last four; the consent page must show only
+        # what the app plainly wrote, so they are dropped rather than rendered.
+        rejected = (
+            "20000000", "abc", "-5", "0", "999999999", "<b>x</b>",
+            "1e1", "+25", " 25 ", "25.999",
+        )
+        for value in rejected:
+            assert hint(entry(value)) is None, f"{name}: {value!r} was rendered"

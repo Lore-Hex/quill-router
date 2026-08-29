@@ -268,6 +268,13 @@ def test_backend_without_key_writes_reports_why_not_a_phantom_repair_failure(
     _grant()
 
     monkeypatch.setattr(InMemoryStore, "supports_key_writes", lambda self: False)
+    writes: list[str] = []
+
+    def record(self: InMemoryStore, key_hash: str, patch: dict[str, object]):
+        writes.append(key_hash)
+        raise AssertionError("update_key must not be called on an unwritable backend")
+
+    monkeypatch.setattr(InMemoryStore, "update_key", record)
     response = client.patch(
         f"/v1/oauth/authorized-apps/{APP_ID}",
         headers=user_headers,
@@ -276,6 +283,9 @@ def test_backend_without_key_writes_reports_why_not_a_phantom_repair_failure(
 
     assert response.status_code == 501
     assert response.json()["error"]["type"] == "endpoint_not_supported"
+    # The point is not the status code but that nothing was attempted: without
+    # this the test passes even if a mutation moves ahead of the check.
+    assert writes == []
 
 
 def test_not_implemented_after_a_successful_write_repairs_instead_of_501(
@@ -330,9 +340,17 @@ def test_revoke_also_reports_an_unwritable_backend(
     _grant()
 
     monkeypatch.setattr(InMemoryStore, "supports_key_writes", lambda self: False)
+    writes: list[str] = []
+
+    def record(self: InMemoryStore, key_hash: str, patch: dict[str, object]):
+        writes.append(key_hash)
+        raise AssertionError("update_key must not be called on an unwritable backend")
+
+    monkeypatch.setattr(InMemoryStore, "update_key", record)
     response = client.delete(
         f"/v1/oauth/authorized-apps/{APP_ID}", headers=user_headers
     )
 
     assert response.status_code == 501
     assert response.json()["error"]["type"] == "endpoint_not_supported"
+    assert writes == []

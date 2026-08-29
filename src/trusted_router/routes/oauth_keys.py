@@ -23,7 +23,6 @@ from trusted_router.config import Settings
 from trusted_router.domains import request_control_origin
 from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.money import (
-    MICRODOLLARS_PER_DOLLAR,
     dollars_to_microdollars,
     format_money_display,
     microdollars_to_decimal,
@@ -484,20 +483,29 @@ def _pkce_method(raw: Any, *, has_challenge: bool) -> str | None:
 SUGGESTED_BUDGET_MAX_DOLLARS = 10_000
 
 
+#: Digits, optionally a decimal point and one or two more digits. Deliberately
+#: stricter than Decimal, which accepts "1e1", "+25" and " 25 " -- all of which
+#: would render on the consent page as a figure the app never plainly wrote.
+_PLAIN_DOLLARS = re.compile(r"^(0|[1-9][0-9]{0,4})(\.[0-9]{1,2})?$")
+
+
 def _suggested_monthly_budget(raw: Any) -> str:
     """Normalise an app's budget hint to dollars, or drop it."""
     if raw in {None, ""}:
         return ""
-    try:
-        microdollars = dollars_to_microdollars(str(raw))
-    except (ValueError, ArithmeticError):
+    text = str(raw)
+    if not _PLAIN_DOLLARS.match(text):
         return ""
-    if microdollars <= 0 or microdollars > SUGGESTED_BUDGET_MAX_DOLLARS * MICRODOLLARS_PER_DOLLAR:
+    whole, _, cents = text.partition(".")
+    dollars = int(whole)
+    if dollars == 0 and int(cents.ljust(2, "0") or 0) == 0:
         return ""
-    whole, fraction = divmod(microdollars, MICRODOLLARS_PER_DOLLAR)
-    # Match the preset labels ($5, $20, $100) for whole dollars; keep cents
-    # padded so a fractional hint reads as money, not "$25.5".
-    return str(whole) if fraction == 0 else f"{whole}.{round(fraction / 10_000):02d}"
+    if dollars > SUGGESTED_BUDGET_MAX_DOLLARS:
+        return ""
+    # Match the preset labels ($5, $20, $100) for whole dollars; pad cents so a
+    # fractional hint reads as money, not "$25.5". The regex bounds the cents
+    # to two digits, so there is no rounding to carry.
+    return str(dollars) if not cents else f"{dollars}.{cents.ljust(2, '0')}"
 
 
 def _limit_microdollars(raw: Any) -> int | None:
