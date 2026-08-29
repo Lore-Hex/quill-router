@@ -48,6 +48,9 @@ def _is_byok(usage_type: str | UsageType) -> bool:
     return UsageType.coerce(usage_type).is_byok()
 
 
+SYNTHETIC_APP_NAME = "TrustedRouter Synthetic"
+
+
 def _is_synthetic_metadata(metadata: Any) -> bool:
     return isinstance(metadata, dict) and str(metadata.get("trustedrouter_synthetic")).lower() in (
         "1",
@@ -55,6 +58,24 @@ def _is_synthetic_metadata(metadata: Any) -> bool:
         "yes",
         "on",
     )
+
+
+def resolve_synthetic(*, metadata: Any = None, app: Any = None) -> bool:
+    """The one rule that decides whether a generation is monitor traffic.
+
+    Every ``Generation`` constructor calls this. It exists because the rule
+    used to live in ``from_settle_body`` alone: the other two constructors
+    took the ``synthetic: bool = False`` field default, so a probe that
+    settled through the direct (non-attested) path was silently indexed as
+    real customer traffic. Two independent signals, either sufficient:
+
+    * ``metadata.trustedrouter_synthetic`` -- what the probes send, and the
+      only signal that survives a settle repair (see
+      ``_settle_repair_metadata``);
+    * the reserved app name, which the gateway stamps on synthetic
+      settlements and which survives when metadata does not.
+    """
+    return _is_synthetic_metadata(metadata) or app == SYNTHETIC_APP_NAME
 
 
 def _coerce_tool_calls(value: Any) -> list[dict[str, Any]] | None:
@@ -857,6 +878,7 @@ class Generation:
                 else None
             ),
             region=region,
+            synthetic=resolve_synthetic(app=app_name),
         )
 
     @classmethod
@@ -901,6 +923,7 @@ class Generation:
             provider=provider,
             elapsed_milliseconds=_seconds_to_milliseconds(elapsed_seconds),
             region=region,
+            synthetic=resolve_synthetic(app=app_name),
         )
 
     @classmethod
@@ -926,12 +949,10 @@ class Generation:
         first_byte = max(float(first_byte_raw), 0.001) if first_byte_raw is not None else None
         client_context = parse_client_context(body.get("client"))
         gateway_request_id = parse_gateway_request_id(body.get("gateway_request_id"))
-        synthetic = _is_synthetic_metadata(body.get("metadata")) or (
-            body.get("app") == "TrustedRouter Synthetic"
-        )
+        synthetic = resolve_synthetic(metadata=body.get("metadata"), app=body.get("app"))
         app = str(body.get("app") or "TrustedRouter Gateway")
         if synthetic:
-            app = "TrustedRouter Synthetic"
+            app = SYNTHETIC_APP_NAME
         return cls(
             id=generation_id_for_authorization(authorization.id),
             request_id=str(

@@ -1389,6 +1389,10 @@ async def video_generation_probe(
         "aspect_ratio": "16:9",
         "generate_audio": generate_audio,
         "provider": {"only": [provider], "allow_fallbacks": False},
+        "metadata": {
+            "trustedrouter_synthetic": "true",
+            "probe": "video_generation",
+        },
     }
     started = time.perf_counter()
     try:
