@@ -66,6 +66,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "google-ai-studio": ProviderBrand("https://ai.google.dev/"),
     "google-vertex": ProviderBrand("https://cloud.google.com/vertex-ai"),
     "grok": ProviderBrand("https://x.ai/"),
+    "huggingface": ProviderBrand("https://huggingface.co/"),
     "inceptron": ProviderBrand("https://www.inceptron.io/"),
     "kimi": ProviderBrand("https://www.kimi.com/"),
     "kling": ProviderBrand("https://kling.ai/"),
