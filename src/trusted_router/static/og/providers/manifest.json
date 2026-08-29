@@ -10,10 +10,10 @@
   },
   "akashml": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 8,
     "name": "AkashML",
     "privacy": "Policy documented",
-    "route_count": 7,
+    "route_count": 8,
     "route_mode": "Prepaid",
     "slug": "akashml"
   },
@@ -37,10 +37,10 @@
   },
   "arcee": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 7,
     "name": "Arcee AI",
     "privacy": "Policy documented",
-    "route_count": 6,
+    "route_count": 7,
     "route_mode": "Prepaid",
     "slug": "arcee"
   },
@@ -190,10 +190,10 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 5,
     "name": "Featherless AI",
     "privacy": "Policy documented",
-    "route_count": 4,
+    "route_count": 5,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
@@ -217,10 +217,10 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 70,
+    "model_count": 71,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 75,
+    "route_count": 76,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
@@ -343,10 +343,10 @@
   },
   "makora": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 6,
     "name": "Makora",
     "privacy": "Policy documented",
-    "route_count": 10,
+    "route_count": 12,
     "route_mode": "Prepaid + BYOK",
     "slug": "makora"
   },
@@ -496,10 +496,10 @@
   },
   "parasail": {
     "card_version": 2,
-    "model_count": 27,
+    "model_count": 29,
     "name": "Parasail",
     "privacy": "Zero retention",
-    "route_count": 53,
+    "route_count": 57,
     "route_mode": "Prepaid + BYOK",
     "slug": "parasail"
   },

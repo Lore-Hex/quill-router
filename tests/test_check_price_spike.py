@@ -631,6 +631,45 @@ def test_confirmed_deepseek_and_gmi_price_transitions_are_allowed(
     assert "deepseek/deepseek-v4-pro" in capsys.readouterr().out
 
 
+def test_confirmed_gmi_deepseek_flash_0731_transition_is_allowed(
+    tmp_path: Path, capsys
+) -> None:
+    from scripts.check_price_spike import main
+
+    before_payload = _make_endpoint_snapshot(
+        ("0.00000014", "0.00000028"),
+        [
+            (
+                "gmi",
+                "deepseek-ai/DeepSeek-V4-Flash-0731",
+                "0.00000014",
+                "0.00000028",
+            ),
+        ],
+        model_id="deepseek/deepseek-v4-flash-0731",
+    )
+    before_payload["models"][0]["endpoints"][0]["tag"] = "gmi"
+    before = _write(tmp_path, "before.json", before_payload)
+
+    after_payload = _make_endpoint_snapshot(
+        ("0.00000044", "0.00000132"),
+        [
+            (
+                "gmi",
+                "deepseek-ai/DeepSeek-V4-Flash-0731",
+                "0.00000044",
+                "0.00000132",
+            ),
+        ],
+        model_id="deepseek/deepseek-v4-flash-0731",
+    )
+    after_payload["models"][0]["endpoints"][0]["tag"] = "gmi"
+    after = _write(tmp_path, "after.json", after_payload)
+
+    assert main([str(before), str(after), "--summary"]) == 0
+    assert "deepseek/deepseek-v4-flash-0731" in capsys.readouterr().out
+
+
 def test_confirmed_atlas_v4_flash_0731_transition_is_allowed(
     tmp_path: Path, capsys
 ) -> None:

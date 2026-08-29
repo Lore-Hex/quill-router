@@ -74,6 +74,7 @@ from trusted_router.provider_manifest_policy import (
     EXPIRED_PROVIDER_MANIFEST,
     EXPIRING_PROVIDER_MANIFEST_SLUGS,
     RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS,
+    provider_manifest_canary_quarantine_valid_until,
     provider_manifest_valid_until,
 )
 
@@ -1044,7 +1045,33 @@ def _audit_fallback_manifest(
         max_age_days=max_age_days,
     )
     if deadline is None or deadline == EXPIRED_PROVIDER_MANIFEST:
-        return f"{slug}: {source_label} fails runtime route validity checks", None
+        quarantine_deadline = provider_manifest_canary_quarantine_valid_until(
+            slug,
+            raw,
+            max_age_days=max_age_days,
+        )
+        if quarantine_deadline is None or quarantine_deadline == EXPIRED_PROVIDER_MANIFEST:
+            return f"{slug}: {source_label} fails runtime route validity checks", None
+        remaining_days = (quarantine_deadline - now).total_seconds() / 86_400
+        age = max_age_days - remaining_days
+        if quarantine_deadline <= now:
+            return (
+                f"{slug}: {source_label} is {age:.0f}d stale "
+                f"(>= {max_age_days}d) — provider routes are quarantined",
+                None,
+            )
+        if remaining_days <= 3:
+            remaining = max(remaining_days, 0)
+            return (
+                f"{slug}: {source_label} expires in {remaining:.0f}d "
+                f"at the {max_age_days}d provider-route deadline",
+                None,
+            )
+        return (
+            None,
+            f"{slug}: {source_label} fresh; all priced routes remain safely "
+            "quarantined after provider canaries ✓",
+        )
     remaining_days = (deadline - now).total_seconds() / 86_400
     age = max_age_days - remaining_days
     if deadline <= now:

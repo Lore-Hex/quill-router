@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from scripts.pricing.video_sources import (
     KLING_CREDITS_POLICY_URL,
     KLING_VIDEO_GUIDE_URL,
@@ -67,6 +69,19 @@ def test_video_price_parsers_return_integer_upstream_rates() -> None:
     assert parse_kling_video3_rates(KLING_GUIDE) == frozenset({2, 6, 8, 9, 12})
 
 
+def test_kling_credit_parser_accepts_ssr_markup_between_words() -> None:
+    document = "Standard <strong>Pricing</strong>: $1&nbsp;USD = <span>66</span> Credits"
+
+    assert parse_kling_credit_policy(document) == 66
+
+
+def test_kling_credit_parser_rejects_conflicting_prices() -> None:
+    document = "Standard Pricing: $1 USD = 66 Credits Standard Pricing: $1 USD = 72 Credits"
+
+    with pytest.raises(ValueError, match="conflicting Kling standard credit prices"):
+        parse_kling_credit_policy(document)
+
+
 def test_video_price_audit_accepts_current_official_contract() -> None:
     result = audit_video_price_sources(_official_documents)
 
@@ -97,4 +112,22 @@ def test_video_price_audit_keeps_last_known_rate_on_source_outage() -> None:
 
     assert len(result.warnings) == 1
     assert result.warnings[0].startswith("ltx:")
+    assert result.hard_failures == ()
+
+
+def test_video_price_audit_retries_transient_kling_ssr_failure() -> None:
+    attempts = 0
+
+    def transient_kling(url: str) -> str:
+        nonlocal attempts
+        if url == KLING_CREDITS_POLICY_URL:
+            attempts += 1
+            if attempts == 1:
+                return "loading"
+        return _official_documents(url)
+
+    result = audit_video_price_sources(transient_kling)
+
+    assert attempts == 2
+    assert result.warnings == ()
     assert result.hard_failures == ()

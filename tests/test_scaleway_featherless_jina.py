@@ -50,7 +50,9 @@ def test_featherless_uses_shared_canonical_model_ids() -> None:
         featherless.CATALOG.model_id("zai-org/GLM-5.3-Flash")
         == "z-ai/glm-5.3-flash"
     )
+    assert featherless.CATALOG.model_id("zai-org/GLM-5.3") == "z-ai/glm-5.3"
     assert featherless.CATALOG.model_id("moonshotai/Kimi-K3") == "moonshotai/kimi-k3"
+    assert "zai-org/GLM-5.3" in featherless.CURATED_NATIVE_MODELS
 
 
 def test_jina_discovers_only_priced_embedding_models(

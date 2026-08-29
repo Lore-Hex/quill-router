@@ -2295,6 +2295,18 @@ def test_parasail_qwen_397b_uses_working_native_upstream_id() -> None:
     assert prepaid.completion_price_microdollars_per_million_tokens == 3_798_000
 
 
-def test_parasail_glm_53_flash_stays_dark_until_price_is_published() -> None:
-    assert "z-ai/glm-5.3-flash@parasail/prepaid" not in MODEL_ENDPOINTS
-    assert "z-ai/glm-5.3-flash@parasail/byok" not in MODEL_ENDPOINTS
+def test_parasail_glm_53_routes_publish_verified_prices() -> None:
+    flash_prepaid = MODEL_ENDPOINTS["z-ai/glm-5.3-flash@parasail/prepaid"]
+    flash_byok = MODEL_ENDPOINTS["z-ai/glm-5.3-flash@parasail/byok"]
+    full_prepaid = MODEL_ENDPOINTS["z-ai/glm-5.3@parasail/prepaid"]
+    full_byok = MODEL_ENDPOINTS["z-ai/glm-5.3@parasail/byok"]
+
+    assert flash_prepaid.upstream_id == "zai-org/GLM-5.3-Flash"
+    assert flash_byok.upstream_id == "zai-org/GLM-5.3-Flash"
+    assert flash_prepaid.prompt_price_microdollars_per_million_tokens == 158_250
+    assert flash_prepaid.completion_price_microdollars_per_million_tokens == 527_500
+
+    assert full_prepaid.upstream_id == "parasail-glm-53"
+    assert full_byok.upstream_id == "parasail-glm-53"
+    assert full_prepaid.prompt_price_microdollars_per_million_tokens == 1_477_000
+    assert full_prepaid.completion_price_microdollars_per_million_tokens == 4_642_000

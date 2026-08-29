@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -94,14 +95,25 @@ def parse_runway_gen45_rate(document: str) -> int:
 
 
 def parse_kling_credit_policy(document: str) -> int:
-    match = re.search(
-        r"Standard Pricing:\s*\$1\s*USD\s*=\s*([0-9]+)\s*Credits",
-        document,
-        re.IGNORECASE,
-    )
-    if not match:
+    # Kling's SSR occasionally inserts markup between words in the policy
+    # sentence. Normalize the provider-owned HTML before matching, but keep
+    # the value check strict and reject conflicting prices.
+    normalized = html.unescape(document)
+    normalized = re.sub(r"<[^>]+>", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
+    matches = {
+        int(value)
+        for value in re.findall(
+            r"Standard\s+Pricing\s*:\s*\$\s*1(?:\.0+)?\s*USD\s*=\s*([0-9]+)\s*Credits",
+            normalized,
+            re.IGNORECASE,
+        )
+    }
+    if not matches:
         raise ValueError("could not parse Kling standard credit price")
-    return int(match.group(1))
+    if len(matches) != 1:
+        raise ValueError(f"conflicting Kling standard credit prices: {sorted(matches)}")
+    return matches.pop()
 
 
 def parse_kling_video3_rates(document: str) -> frozenset[int]:
@@ -152,11 +164,27 @@ def _audit_runway(fetch_text: Callable[[str], str]) -> VideoPriceAudit:
 
 
 def _audit_kling(fetch_text: Callable[[str], str]) -> VideoPriceAudit:
-    try:
-        credits_per_usd = parse_kling_credit_policy(fetch_text(KLING_CREDITS_POLICY_URL))
-        rates = parse_kling_video3_rates(fetch_text(KLING_VIDEO_GUIDE_URL))
-    except Exception as exc:  # noqa: BLE001 - network/parser errors are audit results
-        return _provider_failure("kling", f"unavailable ({type(exc).__name__}: {exc})", hard=False)
+    last_error: Exception | None = None
+    credits_per_usd: int | None = None
+    rates: frozenset[int] | None = None
+    for _attempt in range(3):
+        try:
+            credits_per_usd = parse_kling_credit_policy(
+                fetch_text(KLING_CREDITS_POLICY_URL)
+            )
+            rates = parse_kling_video3_rates(fetch_text(KLING_VIDEO_GUIDE_URL))
+            break
+        except Exception as exc:  # noqa: BLE001 - network/parser errors are audit results
+            last_error = exc
+    else:
+        assert last_error is not None
+        return _provider_failure(
+            "kling",
+            f"unavailable ({type(last_error).__name__}: {last_error})",
+            hard=False,
+        )
+    assert credits_per_usd is not None
+    assert rates is not None
     if credits_per_usd != _KLING_CREDITS_PER_USD or not (
         _KLING_VIDEO3_BASE_CREDITS_PER_SECOND <= rates
     ):
