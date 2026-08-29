@@ -81,6 +81,8 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -90,6 +92,8 @@ from scripts import check_no_v1_envelopes as check_script
 from trusted_router.byok_aad_backfill import (
     EntityCensus,
     EntityRow,
+    PostgresEntityStore,
+    SpannerEntityStore,
     attestation_for,
     check_no_v1_envelopes,
 )
@@ -119,6 +123,120 @@ V1 = "TR-BYOK-ENVELOPE-AES-256-GCM-V1"
 V2 = "TR-BYOK-ENVELOPE-AES-256-GCM-V2"
 
 
+class _FakeParamTypes:
+    STRING = object()
+    INT64 = object()
+
+    @staticmethod
+    def Array(value: object) -> tuple[str, object]:
+        return ("array", value)
+
+
+class _FakeSpannerSnapshot:
+    def __enter__(self) -> _FakeSpannerSnapshot:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def execute_sql(self, sql: str, **kwargs: object) -> list[tuple[object, ...]]:
+        if "GROUP BY kind" in sql:
+            return [("byok", 1)]
+        if "STRPOS" in sql:
+            params = kwargs.get("params")
+            assert isinstance(params, dict)
+            return [(7 if params["literal"] == "{" else 0,)]
+        return [("workspace",)]
+
+
+class _FakeSpannerDatabase:
+    name = "projects/p/instances/i/databases/d"
+
+    def __init__(self) -> None:
+        self.snapshot_calls: list[dict[str, object]] = []
+
+    def snapshot(self, **kwargs: object) -> _FakeSpannerSnapshot:
+        self.snapshot_calls.append(kwargs)
+        return _FakeSpannerSnapshot()
+
+
+def test_spanner_census_uses_a_multi_use_snapshot() -> None:
+    database = _FakeSpannerDatabase()
+    store = SpannerEntityStore(database, _FakeParamTypes)
+
+    census = store.census()
+
+    assert database.snapshot_calls == [{"multi_use": True}]
+    assert census.migrated_kind_counts == {"byok": 1}
+    assert census.sampled_kinds == ("workspace",)
+    assert census.v1_literal_rows == 0
+    assert census.positive_control_rows == 7
+
+
+class _FakePostgresCursor:
+    def __init__(self, rows: list[tuple[object, ...]]) -> None:
+        self._rows = rows
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        return self._rows
+
+    def fetchone(self) -> tuple[object, ...] | None:
+        return self._rows[0] if self._rows else None
+
+
+class _FakePostgresConnection:
+    info = types.SimpleNamespace(host="dsql.example", port=5432)
+
+    def __init__(self) -> None:
+        self.executed: list[str] = []
+
+    def __enter__(self) -> _FakePostgresConnection:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def execute(self, sql: str, _params: object = None) -> _FakePostgresCursor:
+        self.executed.append(sql)
+        if "'v1_literal' AS metric" in sql:
+            assert "GROUP BY kind" in sql
+            assert "DISTINCT kind" in sql
+            assert "body::text LIKE" in sql
+            return _FakePostgresCursor(
+                [
+                    ("count", "byok", 1),
+                    ("sample", "workspace", 0),
+                    ("v1_literal", "", 0),
+                    ("positive_control", "", 7),
+                ]
+            )
+        if "current_database()" in sql:
+            assert "inet_server_addr" not in sql
+            return _FakePostgresCursor([("postgres", "admin")])
+        raise AssertionError(f"unexpected SQL: {sql}")
+
+
+def test_postgres_census_supports_dsql_without_inet_server_addr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_psycopg = types.ModuleType("psycopg")
+    connection = _FakePostgresConnection()
+    fake_psycopg.connect = lambda _dsn: connection  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "psycopg", fake_psycopg)
+
+    census = PostgresEntityStore("dbname=postgres").census()
+
+    assert census.v1_literal_rows == 0
+    assert census.positive_control_rows == 7
+    assert len(connection.executed) == 2
+    assert connection.executed[0].startswith("WITH sampled AS")
+    assert all(not sql.startswith("SET TRANSACTION") for sql in connection.executed)
+    assert census.source == (
+        "postgres:postgres@dsql.example:5432 as admin "
+        "(database/user from server; host/port from negotiated connection)"
+    )
+
+
 def _envelope(algorithm: str) -> dict[str, str]:
     """An envelope's shape, not its contents. The audit classifies on
     `algorithm` alone and never decrypts, so real ciphertext would add nothing
@@ -141,15 +259,11 @@ class FakeCloudDatabase:
 
     The important fidelity here is what the two halves SHARE, because that is
     where an earlier version of these tests lied. Both `scan` and the per-kind
-    census restrict to the same kind list, as both real adapters do — the
-    per-kind census from `MIGRATED_KINDS` on each, the scan from
-    `MIGRATED_KINDS` on `PostgresEntityStore` and from the same two names
-    hardcoded in SQL text on `SpannerEntityStore` — and the walk reads
+    census restrict to `MIGRATED_KINDS` on both real adapters, and the walk reads
     envelopes only out of the field names in `MIGRATED_SURFACES`. This fixture
-    models the shared list, which is the property that matters; it does not
-    model Spanner's duplicate copy of it, whose only failure mode is an
-    undercount, which is a refusal. So a test cannot make those two
-    disagree by renaming a kind — renaming it renames it in both — and any
+    models the shared list, which is the property that matters. So a test
+    cannot make those two disagree by renaming a kind — renaming it renames it
+    in both — and any
     fixture that pretends otherwise is testing a decoupling production cannot
     exhibit. `scan_returns_nothing` is kept for the one class where they really
     do diverge in production: a cursor, ordering or pagination bug in the paged
@@ -186,7 +300,6 @@ class FakeCloudDatabase:
                 kind=kind,
                 entity_id=entity_id,
                 body=copy.deepcopy(self.rows[(kind, entity_id)]),
-                original_body=copy.deepcopy(self.rows[(kind, entity_id)]),
             )
             for kind, entity_id in keys
         ]
@@ -209,6 +322,7 @@ class FakeCloudDatabase:
             v1_literal_rows=sum(
                 1 for body in self.rows.values() if V1_ALGORITHM_LITERAL in json.dumps(body)
             ),
+            positive_control_rows=len(self.rows),
             source=SOURCE,
         )
 
@@ -294,6 +408,27 @@ def test_a_zero_scan_is_not_reportable_as_zero_v1() -> None:
         attestation_for(result, backend="postgres", operator="you@lorehex.co")
 
 
+def test_a_populated_scan_cannot_substitute_for_an_unwitnessed_census() -> None:
+    census = EntityCensus(
+        migrated_kind_counts={"byok": 1},
+        sampled_kinds=(),
+        v1_literal_rows=0,
+        positive_control_rows=1,
+        source=SOURCE,
+    )
+    store = FakeCloudDatabase(
+        {("byok", "a"): _byok_row(V2)},
+        census=census,
+    )
+
+    result = check_no_v1_envelopes(store, cloud="aws", reporter=lambda _m: None)
+
+    assert result.stats.envelopes_seen == 1
+    assert result.outcome == OUTCOME_ZERO_SCAN
+    assert not result.passed
+    assert "zero evidence" in result.detail
+
+
 def test_an_empty_deployment_passes_only_with_a_census_witness() -> None:
     """Same scan result as the test above; different, corroborated conclusion.
 
@@ -312,6 +447,26 @@ def test_an_empty_deployment_passes_only_with_a_census_witness() -> None:
     assert result.outcome == OUTCOME_EMPTY_WITNESSED
     assert result.passed
     assert result.outcome != OUTCOME_CLEAN, "an absence is a weaker claim and is named as one"
+
+
+def test_a_zero_literal_count_without_a_working_positive_control_is_not_evidence() -> None:
+    census = EntityCensus(
+        migrated_kind_counts={},
+        sampled_kinds=("workspace",),
+        v1_literal_rows=0,
+        positive_control_rows=0,
+        source=SOURCE,
+    )
+    store = FakeCloudDatabase(
+        {("workspace", "w"): {"name": "acme"}},
+        census=census,
+    )
+
+    result = check_no_v1_envelopes(store, cloud="aws", reporter=lambda _m: None)
+
+    assert result.outcome == OUTCOME_SCAN_DISAGREES
+    assert not result.passed
+    assert "positive control matched none" in result.detail
 
 
 def test_rows_of_a_migrated_kind_that_hold_no_secret_are_not_a_failure() -> None:
@@ -519,6 +674,7 @@ def _passing_attestation(cloud: str, **overrides: Any) -> Attestation:
         "census_migrated_kind_counts": {"byok": 7},
         "census_sampled_kinds": ["byok", "workspace"],
         "census_v1_literal_rows": 0,
+        "census_positive_control_rows": 7,
         "census_source": SOURCE,
         "operator": "you@lorehex.co",
         "note": "",
@@ -595,6 +751,23 @@ def test_a_hand_written_pass_that_counted_v1_rows_is_reported_as_a_defect() -> N
     assert zero_v1_blockers(ledger) != []
 
 
+def test_a_hand_written_pass_without_a_literal_search_positive_control_is_a_defect() -> None:
+    ledger = empty_ledger()
+    ledger["attestations"]["aws"] = _passing_attestation(
+        "aws", census_positive_control_rows=0
+    ).to_dict()
+
+    defects = ledger_defects(ledger)
+
+    assert any("census_positive_control_rows=0" in defect for defect in defects)
+    assert zero_v1_blockers(ledger) != []
+    with pytest.raises(ValueError, match="positive control matched no rows"):
+        record_attestation(
+            _passing_attestation("aws", census_positive_control_rows=0),
+            ledger=empty_ledger(),
+        )
+
+
 def test_an_attestation_that_does_not_name_the_database_it_read_is_a_defect() -> None:
     """Since a wrong-but-populated database passes, the one mitigation is that
     the ledger says which database was read — the server's own answer on
@@ -617,11 +790,31 @@ def test_counts_written_as_strings_do_not_read_as_zero() -> None:
     ledger["attestations"]["aws"] = _passing_attestation("aws").to_dict()
     ledger["attestations"]["aws"]["v1_envelopes"] = "0"
     ledger["attestations"]["aws"]["census_v1_literal_rows"] = "0"
+    ledger["attestations"]["aws"]["census_positive_control_rows"] = "7"
 
     defects = ledger_defects(ledger)
 
     assert any("are not integers" in defect for defect in defects)
     assert any("v1_envelopes" in defect for defect in defects)
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value", "message"),
+    [
+        ("rows_scanned_by_kind", "none", "string-to-nonnegative-integer maps"),
+        ("census_migrated_kind_counts", {"byok": "0"}, "string-to-nonnegative-integer maps"),
+        ("census_sampled_kinds", "byok", "list of non-empty strings"),
+        ("census_sampled_kinds", [""], "list of non-empty strings"),
+    ],
+)
+def test_ledger_rejects_mistyped_census_witnesses(
+    field: str, bad_value: object, message: str
+) -> None:
+    ledger = empty_ledger()
+    ledger["attestations"]["aws"] = _passing_attestation("aws").to_dict()
+    ledger["attestations"]["aws"][field] = bad_value
+
+    assert any(message in defect for defect in ledger_defects(ledger))
 
 
 # ------------------------------------------------ one fleet, not three clouds ---
@@ -685,10 +878,10 @@ def test_an_empty_witnessed_entry_with_no_witness_is_a_zero_scan() -> None:
 def test_adding_an_encrypted_surface_invalidates_every_attestation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Open question #2 in the migration doc, made executable.
+    """The migration plan's registry-coverage limit, made executable.
 
-    "Are there envelopes outside the three surfaces?" — if the answer ever
-    becomes "yes, here is a fourth", every attestation recorded before it was
+    "Are there envelopes outside the registered surfaces?" — if the answer ever
+    becomes "yes, here is another", every attestation recorded before it was
     taken by a run that never walked that surface. The fingerprint makes those
     attestations stale rather than silently reusable.
     """
@@ -715,12 +908,11 @@ def test_adding_an_encrypted_surface_invalidates_every_attestation(
 
 
 def test_the_committed_ledger_is_well_formed() -> None:
-    """The real file, as committed. Empty is fine — forged is not.
+    """The committed fleet evidence parses and covers today's surfaces.
 
-    Recording nothing is the honest state today: nobody has run this against a
-    real database. What this asserts is that whatever is in there parses, is
-    for a known cloud, carries a passing outcome, and covers the surfaces this
-    repository writes now.
+    What this asserts is that every recorded entry is for a known cloud,
+    carries a passing outcome, and covers the surfaces this repository writes
+    now. It cannot prove the operator pointed at the intended database.
 
     The path assertion is not ceremony. A missing ledger reads as the empty
     ledger — the fail-closed choice — so a default path that quietly stopped
@@ -819,20 +1011,6 @@ def test_status_only_exits_nonzero_while_the_ledger_blocks(
     cleared = check_script.main(["--status-only", "--ledger", str(ledger_path)])
     assert cleared == 0
     assert "every standalone cloud attests" in capsys.readouterr().out
-
-
-def test_the_pinned_v1_literal_is_the_one_the_module_writes() -> None:
-    """The census searches for `V1_ALGORITHM_LITERAL`, which is a copy.
-
-    It is pinned rather than imported so that the check survives step 4
-    deleting `byok_crypto.ALGORITHM` — but a copy that drifts would search for
-    a string no row contains and report zero forever, which is the quietest
-    possible way for this whole file to stop meaning anything. Held equal while
-    both exist; delete this assertion with v1, not before.
-    """
-    from trusted_router.byok_crypto import ALGORITHM
-
-    assert V1_ALGORITHM_LITERAL == ALGORITHM == V1
 
 
 def test_the_script_reports_a_failed_run_as_inconclusive(

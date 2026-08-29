@@ -1,5 +1,87 @@
 {
-  "schema": "trustedrouter/byok-aad-v1-zero-attestation/v2",
+  "schema": "trustedrouter/byok-aad-v1-zero-attestation/v3",
   "about": "Recorded output of scripts/check_no_v1_envelopes.py, one entry per standalone cloud. Read by tests/test_byok_v1_removal_gate.py, which refuses the removal of v1 BYOK envelope support until EVERY cloud here attests zero v1 envelopes. It is one fleet-wide verdict, not three: an AWS or Azure enclave falls over to the home control plane when its own cannot be dialled, so a v1 envelope in any cloud's database can be handed to any cloud's enclave. An entry asserts that a run happened against that cloud's database; writing one by hand asserts a run that did not. The gate can check the shape, not the truth.",
-  "attestations": {}
+  "attestations": {
+    "aws": {
+      "cloud": "aws",
+      "outcome": "empty_witnessed",
+      "recorded_at": "2026-08-29T17:17:32+00:00",
+      "backend": "postgres",
+      "surface_fingerprint": "0b59aa80a894094a",
+      "rows_scanned": 0,
+      "rows_scanned_by_kind": {},
+      "envelopes_seen": 0,
+      "v1_envelopes": 0,
+      "v2_envelopes": 0,
+      "missing_envelopes": 0,
+      "census_migrated_kind_counts": {},
+      "census_sampled_kinds": [
+        "api_key",
+        "api_key_by_workspace",
+        "api_key_lookup",
+        "credit",
+        "email_user",
+        "gateway_authorization",
+        "synthetic_probe"
+      ],
+      "census_v1_literal_rows": 0,
+      "census_positive_control_rows": 4939183,
+      "census_source": "postgres:postgres@tnt642i3ofzpn5z62msacutpuu.dsql.eu-west-3.on.aws:5432 as admin (database/user from server; host/port from negotiated connection)",
+      "operator": "joseph@jperla.com",
+      "note": "Fresh Step 4 precondition audit after the fourteen-day retention window; single-statement read-only census with a literal-search positive control, using an AWS DSQL admin IAM token against the live multi-region cluster."
+    },
+    "azure": {
+      "cloud": "azure",
+      "outcome": "empty_witnessed",
+      "recorded_at": "2026-08-29T17:19:27+00:00",
+      "backend": "postgres",
+      "surface_fingerprint": "0b59aa80a894094a",
+      "rows_scanned": 0,
+      "rows_scanned_by_kind": {},
+      "envelopes_seen": 0,
+      "v1_envelopes": 0,
+      "v2_envelopes": 0,
+      "missing_envelopes": 0,
+      "census_migrated_kind_counts": {},
+      "census_sampled_kinds": [
+        "api_key",
+        "api_key_lookup",
+        "gateway_authorization"
+      ],
+      "census_v1_literal_rows": 0,
+      "census_positive_control_rows": 2634120,
+      "census_source": "postgres:trustedrouter@tr-azure-pg.postgres.database.azure.com:5432 as tradmin (database/user from server; host/port from negotiated connection)",
+      "operator": "joseph@jperla.com",
+      "note": "Fresh Step 4 precondition audit after the fourteen-day retention window, executed read-only inside live Azure revision tr-azure-vnet--0000007. The deployed scanner found zero migrated rows and zero V1 envelopes; the current Step 4 single-statement census found zero migrated rows, zero V1 literals, and 2,634,120 positive-control body rows. Private DNS resolved the configured PostgreSQL host to 10.61.2.4, and the connection identified database trustedrouter with effective role tradmin."
+    },
+    "gcp": {
+      "cloud": "gcp",
+      "outcome": "clean",
+      "recorded_at": "2026-08-29T17:16:17+00:00",
+      "backend": "spanner",
+      "surface_fingerprint": "0b59aa80a894094a",
+      "rows_scanned": 11,
+      "rows_scanned_by_kind": {
+        "byok": 10,
+        "user_provided_model": 1
+      },
+      "envelopes_seen": 11,
+      "v1_envelopes": 0,
+      "v2_envelopes": 11,
+      "missing_envelopes": 1,
+      "census_migrated_kind_counts": {
+        "byok": 10,
+        "user_provided_model": 1
+      },
+      "census_sampled_kinds": [
+        "acquisition_attribution",
+        "activation_reminder"
+      ],
+      "census_v1_literal_rows": 0,
+      "census_positive_control_rows": 9074020,
+      "census_source": "spanner:projects/quill-cloud-proxy/instances/trusted-router-nam6/databases/trusted-router (from CLI arguments, not asked of the server)",
+      "operator": "joseph@jperla.com",
+      "note": "Fresh Step 4 precondition audit after the fourteen-day retention window using the tr-ops-local read-only Spanner identity. The multi-use snapshot found zero whole-body V1 literals and its same-column literal-search positive control matched the populated production table."
+    }
+  }
 }

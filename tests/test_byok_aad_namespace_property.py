@@ -2,16 +2,16 @@
 
 AES-GCM gives cross-binding rejection — an envelope sealed for one context
 failing to open in another — only if the associated data map is injective.
-The BYOK AAD is
+The retired V1 BYOK AAD was
 
     f"trustedrouter:byok:{workspace_id}:{provider}"
 
-and `encrypt_control_secret` seals control secrets in the SAME namespace with
-its `purpose` in the `provider` slot. So a BYOK entry whose provider string
-equals a control purpose produces two envelopes in one workspace under
-identical associated data, and each opens the other.
+and the retired `encrypt_control_secret` path sealed control secrets in the
+same namespace with its `purpose` in the `provider` slot. A BYOK entry whose
+provider string equalled a control purpose therefore produced two envelopes in
+one workspace under identical associated data, and each opened the other.
 
-The console POST route accepted any lowercased string up to 64 characters as
+The console POST route formerly accepted any lowercased string up to 64 characters as
 `provider` and passed it straight into `encrypt_byok_secret`, so a tenant could
 create that collision through the ordinary UI. The API route already validated
 against the catalog. This module pins that both doors agree, and that no
@@ -22,11 +22,9 @@ catalog-valid provider slug can collide with a control purpose.
         and aad(workspace, p) differs from aad(workspace, purpose)
         for every control purpose
 
-Since step 2 of the migration this module also covers the v2 format, which
-length-prefixes every AAD component and adds a namespace separating provider
-keys from control secrets. v1 envelopes still exist in storage until the step-3
-backfill, so both formats must open and the v1 collision is still asserted
-below rather than quietly dropped.
+The completed migration uses the v2 format, which length-prefixes every AAD
+component and adds a namespace separating provider keys from control secrets.
+V1 is retained only as a fixed rejection fixture: production must never open it.
 
 The v2 encoding must stay byte-identical to aadV2 in quill-cloud-proxy. Both
 sides pin the same hex vector; see test_the_v2_vector_matches_the_enclave.
@@ -44,12 +42,10 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from trusted_router.byok_crypto import (
-    ALGORITHM,
     ALGORITHM_V2,
     NAMESPACE_CONTROL,
     NAMESPACE_PROVIDER,
     NAMESPACE_USER_MODEL,
-    _aad,
     _aad_v2,
     decrypt_byok_secret,
     decrypt_control_secret,
@@ -58,6 +54,7 @@ from trusted_router.byok_crypto import (
     encrypt_control_secret,
     encrypt_user_model_secret,
 )
+from trusted_router.byok_v1_attestations import V1_ALGORITHM_LITERAL
 from trusted_router.catalog import PROVIDERS
 from trusted_router.config import Settings
 from trusted_router.main import create_app
@@ -98,9 +95,8 @@ def _post_provider(console: TestClient, provider: str) -> str:
     assert response.status_code == 303
     return response.headers["location"]
 
-# The control-secret purposes that share the BYOK namespace. Broadcast
-# destination keys are the reachable family: their ids are short enough to fit
-# inside the console form's 64-character limit.
+# Control-secret purposes used by the historical collision regression. V2
+# places them in a separate namespace; production no longer has a V1 encoder.
 CONTROL_PURPOSES = [
     "broadcast:bdst_abc123:api-key",
     "broadcast:bdst_abc123:signing-key",
@@ -145,9 +141,9 @@ def test_whatever_the_console_stores_never_collides_with_a_control_purpose(
         return
 
     assert stored is not None
-    byok_aad = _aad(workspace_id, stored.provider)
+    byok_aad = _aad_v2(NAMESPACE_PROVIDER, workspace_id, stored.provider)
     for purpose in CONTROL_PURPOSES:
-        assert byok_aad != _aad(workspace_id, purpose), (
+        assert byok_aad != _aad_v2(NAMESPACE_CONTROL, workspace_id, purpose), (
             f"stored provider {stored.provider!r} shares associated data with "
             f"control purpose {purpose!r}"
         )
@@ -192,30 +188,7 @@ def test_console_and_api_agree_on_which_providers_are_acceptable(
         assert console_ok == api_ok, f"routes disagree about provider {provider!r}"
 
 
-# --------------------------------------------- known gap, asserted not hidden ---
-
-
-def test_aad_encoding_is_not_injective_in_general() -> None:
-    """A standing record of the unfixed half.
-
-    `_aad` joins with ":" without escaping or length-prefixing, so component
-    boundaries are ambiguous. Reaching this needs a colon inside a workspace
-    id, and all three backends mint str(uuid.uuid4()), so it is not reachable
-    by normal issuance — but the encoding is still wrong, and repairing it
-    needs a V2 envelope algorithm plus a dual-read migration because existing
-    ciphertexts and wrapped DEKs were sealed under the current AAD.
-
-    If this test ever starts FAILING, the encoding was fixed and this test
-    should be deleted along with the workaround it documents.
-    """
-    assert _aad("a:b", "c") == _aad("a", "b:c")
-
-
 # ---------------------------------------------------------------- v2 format ---
-#
-# Step 2 of docs/design/byok-aad-v2-migration.md. New envelopes are written v2,
-# whose AAD is length-prefixed and carries a namespace component. v1 envelopes
-# still exist in storage until the step-3 backfill, so both formats must open.
 
 
 def _settings() -> Settings:
@@ -261,9 +234,7 @@ def test_v2_aad_is_injective(namespace: str, workspace: str, context: str) -> No
             assert _aad_v2(*other) != encoded
 
 
-def test_v2_separates_the_two_v1_collision_classes() -> None:
-    """Both concrete v1 collisions are gone under v2."""
-    assert _aad("a:b", "c") == _aad("a", "b:c")  # v1, still true
+def test_v2_separates_ambiguous_components_and_namespaces() -> None:
     assert _aad_v2("provider", "a:b", "c") != _aad_v2("provider", "a", "b:c")
     assert _aad_v2(NAMESPACE_PROVIDER, "w", "x") != _aad_v2(NAMESPACE_CONTROL, "w", "x")
 
@@ -374,19 +345,14 @@ def test_user_model_secrets_are_v2_and_open_only_in_their_namespace() -> None:
         decrypt_user_model_secret(sealed, _settings(), workspace_id="ws-other", purpose=purpose)
 
 
-def test_v1_envelopes_still_decrypt() -> None:
-    """Rows written before the migration must keep working until the backfill.
-
-    Sealed here the way v1 sealed them, since nothing writes v1 any more.
-    """
+def test_v1_envelopes_are_explicitly_rejected() -> None:
+    """A real V1-shaped fixture must fail before any unwrap operation."""
     envelope = _seal_v1("legacy-secret", workspace_id=WORKSPACE, context="openai")
-    assert envelope.algorithm == ALGORITHM
-    assert (
+    assert envelope.algorithm == V1_ALGORITHM_LITERAL
+    with pytest.raises(ValueError, match="unsupported BYOK envelope algorithm"):
         decrypt_byok_secret(
             envelope, _settings(), workspace_id=WORKSPACE, provider="openai"
         )
-        == "legacy-secret"
-    )
 
 
 def test_an_unknown_algorithm_is_still_refused() -> None:
@@ -415,7 +381,7 @@ def test_v2_still_rejects_a_wrong_binding(workspace: str, context: str) -> None:
 
 
 def _seal_v1(secret: str, *, workspace_id: str, context: str):
-    """Seal an envelope the way v1 did, for backward-compatibility tests."""
+    """Seal the retired wire format without importing a production decoder."""
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
     from trusted_router.byok_crypto import _b64, _key_ref, _wrap_dek
@@ -423,9 +389,9 @@ def _seal_v1(secret: str, *, workspace_id: str, context: str):
     dek = secrets_module.token_bytes(32)
     nonce = secrets_module.token_bytes(12)
     dek_nonce = secrets_module.token_bytes(12)
-    aad = _aad(workspace_id, context)
+    aad = f"trustedrouter:byok:{workspace_id}:{context}".encode()
     return EncryptedSecretEnvelope(
-        algorithm=ALGORITHM,
+        algorithm=V1_ALGORITHM_LITERAL,
         key_ref=_key_ref(_settings()),
         encrypted_dek=_b64(_wrap_dek(dek, dek_nonce, aad, _settings())),
         dek_nonce=_b64(dek_nonce),
