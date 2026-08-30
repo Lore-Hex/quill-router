@@ -178,6 +178,83 @@ def test_gcp_current_checks_expose_regions_without_blending_router_core_slo() ->
     assert slo_classes["router_core"]["windows"]["5m"]["sample_count"] == 1
 
 
+def test_gcp_current_checks_keep_complete_regional_deploy_canaries() -> None:
+    """A bounded public sample tail cannot crowd deploy-gate PONGs out."""
+    now = utcnow()
+    created_at = _iso(now - dt.timedelta(seconds=10))
+    samples = [
+        _tls_sample(created_at=created_at),
+        _tls_sample(created_at=created_at, target="us-central1"),
+        SyntheticProbeSample(
+            id="syn-region-attestation",
+            probe_type="attestation_nonce",
+            target="us-central1",
+            target_region="us-central1",
+            target_url="https://api-us-central1.quillrouter.com/attestation",
+            monitor_region="europe-west4",
+            status="up",
+            created_at=created_at,
+        ),
+        SyntheticProbeSample(
+            id="syn-region-chat",
+            probe_type="openai_sdk_pong",
+            target="us-central1",
+            target_region="us-central1",
+            target_url="https://api-us-central1.quillrouter.com/v1/chat/completions",
+            monitor_region="europe-west4",
+            status="up",
+            created_at=created_at,
+        ),
+        SyntheticProbeSample(
+            id="syn-region-responses",
+            probe_type="responses_pong",
+            target="us-central1",
+            target_region="us-central1",
+            target_url="https://api-us-central1.quillrouter.com/v1/responses",
+            monitor_region="europe-west4",
+            status="down",
+            created_at=created_at,
+        ),
+    ]
+    samples.extend(
+        SyntheticProbeSample(
+            id=f"syn-newer-control-plane-{index}",
+            probe_type="gateway_authorize",
+            target="control-plane",
+            target_url="https://trustedrouter.com/internal/gateway/authorize",
+            monitor_region="europe-west4",
+            status="up",
+            created_at=_iso(now - dt.timedelta(seconds=1)),
+        )
+        for index in range(120)
+    )
+
+    snapshot = status_snapshot(samples, now=now, settings=_gcp_settings())
+    checks = snapshot["current"]["checks"]
+
+    assert {
+        row["probe_type"] for row in checks if row["target"] == "us-central1"
+    } == {
+        "attestation_nonce",
+        "openai_sdk_pong",
+        "responses_pong",
+        "tls_health",
+    }
+    assert not any(
+        row["target"] == "us-central1"
+        and row["probe_type"] in {"openai_sdk_pong", "responses_pong"}
+        for row in snapshot["samples"]
+    )
+    responses = next(
+        row
+        for row in checks
+        if row["target"] == "us-central1"
+        and row["probe_type"] == "responses_pong"
+    )
+    assert responses["effective_status"] == "down"
+    assert snapshot["slo_classes"]["router_core"]["status"] == "up"
+
+
 def test_aws_eu_does_not_advertise_gcp_regional_gateways() -> None:
     ids = tuple(
         str(definition["id"]) for definition in applicable_component_definitions(_aws_eu_settings())

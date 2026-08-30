@@ -124,6 +124,10 @@ BASE_ENV_VARS+=(
   # downtime, while still bounding true hangs.
   "TR_SYNTHETIC_MONITOR_TIMEOUT_SECONDS=30"
   "TR_SYNTHETIC_CONTROL_PLANE_URL=https://trustedrouter.com"
+  # Control-plane availability is a global service signal. Regional run.app
+  # URLs are not valid public origins when ingress is restricted to the load
+  # balancer, so probing a computed URL manufactures persistent 404 outages.
+  "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL=https://trustedrouter.com"
   # One bounded pass per scheduler tick. Sub-minute passes made
   # provider-effective timeouts stack up behind health probes and caused
   # Cloud Run Job self-timeouts.
