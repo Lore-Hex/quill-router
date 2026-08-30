@@ -772,6 +772,22 @@ def test_confirmed_gmi_deepseek_pro_cached_transition_is_allowed() -> None:
     assert removed == []
 
 
+def test_confirmed_gmi_canonical_deepseek_pro_cached_transition_is_allowed() -> None:
+    route = (
+        "deepseek/deepseek-v4-pro "
+        "[gmi:gmi:deepseek-ai/DeepSeek-V4-Pro] cached-input"
+    )
+
+    failures, changes, removed = check(
+        {route: {"prompt": "0.000000044", "completion": "0"}},
+        {route: {"prompt": "0.000000145", "completion": "0"}},
+    )
+
+    assert failures == []
+    assert len(changes) == 1
+    assert removed == []
+
+
 def test_confirmed_atlas_v4_flash_0731_transition_is_allowed(
     tmp_path: Path, capsys
 ) -> None:
