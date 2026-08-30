@@ -181,6 +181,19 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         if consumed.client_app_id:
             consumed.limit_microdollars = None if chosen == "none" else dollars_to_microdollars(chosen)
             consumed.limit_reset = None if chosen == "none" else "monthly"
+        else:
+            # The legacy consent page renders "Maximum spend (USD)" and "Limit
+            # resets" as editable fields, but only the app's query-suggested
+            # limit ever reached the key: the posted values were discarded, so
+            # an app that suggested nothing (the Cowork desktop flow) minted an
+            # UNCAPPED key while the page showed a $20 maximum, and a user who
+            # edited a suggested limit was silently overridden. Honor what the
+            # form actually posted; absent fields keep the consent's stored
+            # values so programmatic approvals are unchanged.
+            if "limit" in form:
+                consumed.limit_microdollars = _limit_microdollars(form.get("limit"))
+            if "usage_limit_type" in form:
+                consumed.limit_reset = _limit_reset(form.get("usage_limit_type"))
         raw_code, code = _create_code_from_consent(consumed, settings)
         callback_url = (
             _conformant_callback_with_code(code.callback_url, raw_code, state=consumed.state)

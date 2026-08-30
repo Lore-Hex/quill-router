@@ -776,6 +776,94 @@ def test_oauth_browser_user_selected_limit_is_issued_to_app(client: TestClient) 
     assert key.limit_reset == "weekly"
 
 
+def test_oauth_browser_approve_honors_the_limit_the_user_chose(client: TestClient) -> None:
+    # The consent page's "Maximum spend (USD)" field is what the user agrees
+    # to. When the app suggests no limit (the Cowork desktop flow), the posted
+    # value must cap the key -- it used to be discarded, minting an uncapped
+    # key under a page that displayed a $20 maximum.
+    user = STORE.ensure_user("alice@example.com")
+    raw_session, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="google",
+        label="alice@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    client.cookies.set("tr_session", raw_session)
+
+    form = _consent_form(
+        client,
+        {"callback_url": "https://app.example.com/callback", "key_label": "Example app"},
+    )
+    form["limit"] = "20"
+    form["usage_limit_type"] = ""
+    approved = client.post("/auth/approve", data=form, follow_redirects=False)
+
+    code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
+    exchanged = client.post("/v1/auth/keys", json={"code": code})
+
+    assert exchanged.status_code == 200
+    key = STORE.get_key_by_raw(exchanged.json()["key"])
+    assert key is not None
+    assert key.limit_microdollars == 20_000_000
+    assert key.limit_reset is None
+
+
+def test_oauth_browser_approve_lets_the_user_edit_a_suggested_limit(client: TestClient) -> None:
+    user = STORE.ensure_user("alice@example.com")
+    raw_session, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="google",
+        label="alice@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    client.cookies.set("tr_session", raw_session)
+
+    form = _consent_form(
+        client,
+        {
+            "callback_url": "https://app.example.com/callback",
+            "key_label": "Example app",
+            "limit": "5",
+            "usage_limit_type": "weekly",
+        },
+    )
+    form["limit"] = "2.50"
+    form["usage_limit_type"] = "monthly"
+    approved = client.post("/auth/approve", data=form, follow_redirects=False)
+
+    code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
+    exchanged = client.post("/v1/auth/keys", json={"code": code})
+
+    assert exchanged.status_code == 200
+    key = STORE.get_key_by_raw(exchanged.json()["key"])
+    assert key is not None
+    assert key.limit_microdollars == 2_500_000
+    assert key.limit_reset == "monthly"
+
+
+def test_oauth_browser_approve_rejects_a_malformed_posted_limit(client: TestClient) -> None:
+    user = STORE.ensure_user("alice@example.com")
+    raw_session, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="google",
+        label="alice@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    client.cookies.set("tr_session", raw_session)
+
+    form = _consent_form(
+        client,
+        {"callback_url": "https://app.example.com/callback", "key_label": "Example app"},
+    )
+    form["limit"] = "not-a-number"
+    response = client.post("/auth/approve", data=form, follow_redirects=False)
+
+    assert response.status_code == 400
+
+
 def test_oauth_browser_approve_redirects_with_code_and_user_id(client: TestClient) -> None:
     user = STORE.ensure_user("alice@example.com")
     raw_session, _ = STORE.create_auth_session(
