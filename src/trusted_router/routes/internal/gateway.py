@@ -222,6 +222,14 @@ _SPEND_LEASE_WIRE_ATTESTATION_KINDS = {
     "gcp": GCP_ATTESTATION_KIND,
 }
 _NATIVE_BATCH_ROUTE_PREFIX = "batch.native."
+_ADDITIONAL_COST_ROUTE_TYPES = frozenset(
+    {
+        "responses.web_search.planner",
+        "chat.completions.web_search.planner",
+        "images",
+        "videos",
+    }
+)
 _NATIVE_BATCH_BILLED_FRACTION_BPS = {
     "openai": 5_000,
     "parasail": 5_000,
@@ -700,7 +708,7 @@ def _authorize_gateway_sync_impl(
     )
     additional_cost_reservation = body.additional_cost_reservation_microdollars
     if additional_cost_reservation:
-        if body.route_type not in {"responses.web_search.planner", "images", "videos"}:
+        if body.route_type not in _ADDITIONAL_COST_ROUTE_TYPES:
             raise api_error(
                 400,
                 "additional cost reservations are only available for hosted search, image, or video",
@@ -2482,7 +2490,7 @@ def _settle_gateway_authorization(
             ErrorType.BAD_REQUEST,
         )
     if additional_cost:
-        if body.route_type not in {"responses.web_search.planner", "images", "videos"}:
+        if body.route_type not in _ADDITIONAL_COST_ROUTE_TYPES:
             raise api_error(
                 400,
                 "additional cost settlement is only available for hosted search, image, or video",
