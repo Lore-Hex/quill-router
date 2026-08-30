@@ -205,6 +205,21 @@ prepare_synthetic_ingest_target() {
   verify_synthetic_ingest_service_contract "$target_region"
 }
 
+synthetic_ingest_base_for_region() {
+  local target_region="$1"
+  if [ "$DEPLOYED_COMBINED_BRIDGE" = "true" ]; then
+    # The combined service now uses private Cloud Run ingress. Its run.app URL
+    # intentionally returns a Google platform 404, including to Cloud Run jobs
+    # without the split service's VPC path. Reach the same token-protected
+    # internal routes through the external load balancer until the dedicated
+    # internal observer service is active in every region.
+    printf '%s\n' "https://trustedrouter.com"
+  else
+    printf 'https://%s-%s.%s.run.app\n' \
+      "$SYNTHETIC_INGEST_SERVICE" "$PROJECT_NUMBER" "$target_region"
+  fi
+}
+
 if ! gc artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
   echo "ERROR: image ${IMAGE} does not exist. Run scripts/deploy/image.sh before synthetic.sh." >&2
   exit 1
@@ -252,7 +267,7 @@ IFS=',' read -ra _REGION_LIST <<<"$SYNTHETIC_MONITOR_REGIONS"
 monitor_index=0
 for monitor_region in "${_REGION_LIST[@]}"; do
   [ -n "$monitor_region" ] || continue
-  regional_ingest_base="https://${SYNTHETIC_INGEST_SERVICE}-${PROJECT_NUMBER}.${monitor_region}.run.app"
+  regional_ingest_base="$(synthetic_ingest_base_for_region "$monitor_region")"
   job_name="trusted-router-synthetic-${monitor_region//[^a-zA-Z0-9-]/-}"
   scheduler_name="${job_name}-every-three-minutes"
   legacy_scheduler_names=(
@@ -328,7 +343,7 @@ done
 # has a separate Cloud Run Job so a slow 512-token stream cannot delay or
 # overlap TLS, attestation, billing, fallback, or short provider probes.
 throughput_region="us-central1"
-throughput_ingest_base="https://${SYNTHETIC_INGEST_SERVICE}-${PROJECT_NUMBER}.${throughput_region}.run.app"
+throughput_ingest_base="$(synthetic_ingest_base_for_region "$throughput_region")"
 throughput_job_name="trusted-router-throughput-${throughput_region}"
 throughput_scheduler_name="${throughput_job_name}-every-five-minutes"
 legacy_throughput_scheduler_names=(
@@ -400,7 +415,7 @@ done
 # Image generation is materially more expensive than text PONG probes. Keep it
 # isolated and run one canonical end-to-end request every six hours.
 image_region="us-central1"
-image_ingest_base="https://${SYNTHETIC_INGEST_SERVICE}-${PROJECT_NUMBER}.${image_region}.run.app"
+image_ingest_base="$(synthetic_ingest_base_for_region "$image_region")"
 image_job_name="trusted-router-image-generation-${image_region}"
 image_scheduler_name="${image_job_name}-every-six-hours"
 image_env_vars=(
@@ -443,7 +458,7 @@ upsert_scheduler \
 # or about $10.71 per 30 days. max-retries=0 plus a date-scoped idempotency key
 # prevents duplicate billing.
 video_region="us-central1"
-video_ingest_base="https://${SYNTHETIC_INGEST_SERVICE}-${PROJECT_NUMBER}.${video_region}.run.app"
+video_ingest_base="$(synthetic_ingest_base_for_region "$video_region")"
 video_job_name="trusted-router-video-generation-${video_region}"
 video_scheduler_name="${video_job_name}-daily"
 video_env_vars=(

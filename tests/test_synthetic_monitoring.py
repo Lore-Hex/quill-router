@@ -3067,8 +3067,13 @@ def test_synthetic_deploy_targets_public_api_and_private_internal_ingest() -> No
     assert '"${throughput_job_name}-every-two-minutes"' in body
     assert 'image_job_name="trusted-router-image-generation-${image_region}"' in body
     assert (
-        'regional_ingest_base="https://${SYNTHETIC_INGEST_SERVICE}-${PROJECT_NUMBER}.'
-        '${monitor_region}.run.app"'
+        'regional_ingest_base="$(synthetic_ingest_base_for_region '
+        '"$monitor_region")"'
+        in body
+    )
+    assert 'printf \'%s\\n\' "https://trustedrouter.com"' in body
+    assert (
+        "printf 'https://%s-%s.%s.run.app\\n'"
         in body
     )
     assert (

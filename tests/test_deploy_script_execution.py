@@ -237,7 +237,7 @@ def _initialize_bake_harness_repo(harness: DeployScriptHarness) -> str:
     ).stdout.strip()
 
 
-def test_gcp_no_traffic_warm_preprovisions_and_tags_candidate(
+def test_gcp_no_traffic_warm_preprovisions_and_validates_private_candidate(
     harness: DeployScriptHarness,
 ) -> None:
     run = harness.run("scripts/deploy/rollout.sh")
@@ -252,6 +252,15 @@ def test_gcp_no_traffic_warm_preprovisions_and_tags_candidate(
     assert deploy[deploy.index("--min") + 1] == "2"
     assert deploy[deploy.index("--min-instances") + 1] == "2"
     assert "--no-traffic" in deploy
+    assert any(
+        call[0:4] == ["gcloud", "run", "revisions", "describe"]
+        and "trusted-router-candidate" in call
+        for call in run.calls
+    )
+    assert not any(
+        call[0] == "curl" and "staged-probe---" in call[-1]
+        for call in run.calls
+    )
 
 
 def test_rollout_lists_optional_secrets_once_without_missing_secret_probes(
@@ -351,9 +360,8 @@ def test_warm_primer_never_exceeds_a_cold_service_minimum(
     warm_index = next(
         index
         for index, call in enumerate(run.calls)
-        if call[0] == "curl"
-        and call[-1]
-        == "https://staged-probe---trusted-router-hash-uc.a.run.app/ready"
+        if call[0:4] == ["gcloud", "run", "revisions", "describe"]
+        and "trusted-router-candidate" in call
     )
     assert tag_index < warm_index
     assert not any("--remove-tags=staged-probe" in call for call in run.calls)
@@ -364,7 +372,7 @@ def test_gcp_failed_candidate_warm_restores_zero_traffic_capacity(
 ) -> None:
     run = harness.run(
         "scripts/deploy/rollout.sh",
-        extra_env={"HARNESS_PUBLIC_SMOKE_TRANSPORT_PATH": "/ready"},
+        extra_env={"HARNESS_ROLLOUT_CANDIDATE_READY": "0"},
     )
     assert run.returncode != 0
 
@@ -1965,7 +1973,8 @@ def test_synthetic_combined_bridge_restores_legacy_job_deploys(
         deploy_text = " ".join(deploy)
         deployed_env = _cloud_run_job_env(deploy)
         region = deploy[deploy.index("--region") + 1]
-        assert f"https://trusted-router-stub-output.{region}.run.app" in deploy_text
+        assert "https://trustedrouter.com/v1/internal/synthetic/" in deploy_text
+        assert f"https://trusted-router-stub-output.{region}.run.app" not in deploy_text
         assert (
             "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest" in deploy_text
         )
@@ -1979,9 +1988,9 @@ def test_synthetic_combined_bridge_restores_legacy_job_deploys(
         assert "--network" not in deploy
         assert "--subnet" not in deploy
         assert "--vpc-egress" not in deploy
-        # The combined service keeps ingress=all and the pre-#714 jobs reached it over
-        # the public run.app URL with no VPC; bridge mode must not grow a private path
-        # before the split actually restricts ingress.
+        # The combined service is private behind the load balancer. Bridge jobs
+        # reach token-protected ingest routes through that load balancer and must
+        # not grow a private VPC path before the split service is active.
         assert not any(
             arg == flag or arg.startswith(f"{flag}=")
             for arg in deploy

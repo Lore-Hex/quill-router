@@ -406,8 +406,22 @@ if tag_path.is_file():
             "tag": "staged-probe",
         }
     )
-print(json.dumps({"status": {"traffic": traffic}}, separators=(",", ":")))
+print(json.dumps({
+    "metadata": {"annotations": {
+        "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
+    }},
+    "status": {"traffic": traffic},
+}, separators=(",", ":")))
 PY
+    exit 0
+  fi
+  if [[ " $* " == *" run revisions describe trusted-router-candidate "* ]] \
+      && [[ " $* " == *" --format=json "* ]]; then
+    if [ "${HARNESS_ROLLOUT_CANDIDATE_READY:-1}" = "1" ]; then
+      printf '%s\n' '{"metadata":{"name":"trusted-router-candidate"},"status":{"conditions":[{"type":"Ready","status":"True"},{"type":"MinInstancesProvisioned","status":"True"}],"desiredReplicas":2}}'
+    else
+      printf '%s\n' '{"metadata":{"name":"trusted-router-candidate"},"status":{"conditions":[{"type":"Ready","status":"False"}],"desiredReplicas":0}}'
+    fi
     exit 0
   fi
   if [[ " $* " == *" run revisions describe trusted-router-public-active "* ]] \

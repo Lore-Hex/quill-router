@@ -775,6 +775,28 @@ cloud_run_min_instances_for_region() {
   fi
 }
 
+cloud_run_service_min_instances_for_region() {
+  local target="$1"
+  if [ -n "${TR_CLOUD_RUN_MIN_INSTANCES:-}" ]; then
+    printf '%s\n' "$TR_CLOUD_RUN_MIN_INSTANCES"
+  else
+    cloud_run_min_instances_for_region "$target"
+  fi
+}
+
+cloud_run_candidate_min_instances() {
+  local service_min="$1"
+  local prewarm_floor="${TR_CLOUD_RUN_PREWARM_MIN_INSTANCES:-2}"
+  if [[ ! "$prewarm_floor" =~ ^[0-9]+$ ]]; then
+    log "invalid TR_CLOUD_RUN_PREWARM_MIN_INSTANCES=${prewarm_floor}; using 2" >&2
+    prewarm_floor=2
+  fi
+  if [ "$service_min" != "default" ] && [ "$prewarm_floor" -gt "$service_min" ]; then
+    prewarm_floor="$service_min"
+  fi
+  printf '%s\n' "$prewarm_floor"
+}
+
 deploy_one_region() {
   local target="$1"
   local logfile="${2:-/dev/null}"
@@ -800,10 +822,8 @@ deploy_one_region() {
   # A global override wins. Otherwise use the per-region service minimum;
   # unknown warm regions retain one instance and unknown cold regions scale to
   # zero.
-  local min_instances="${TR_CLOUD_RUN_MIN_INSTANCES:-}"
-  if [ -z "$min_instances" ]; then
-    min_instances="$(cloud_run_min_instances_for_region "$target")"
-  fi
+  local min_instances
+  min_instances="$(cloud_run_service_min_instances_for_region "$target")"
   local revision_min_instances="default"
   if [ "${TR_DEPLOY_NO_TRAFFIC:-0}" = "1" ]; then
     # Cloud Run revisions are immutable: clearing a temporary revision minimum
@@ -818,17 +838,9 @@ deploy_one_region() {
     # 7m37 instead of ~2m; the 100%-stall cost moved into the warm and grew.
     # A small primer absorbs the 10% step instantly, and the staged
     # 10/50/100 ramp itself gives Cloud Run scale time for the rest.
-    local prewarm_floor="${TR_CLOUD_RUN_PREWARM_MIN_INSTANCES:-2}"
-    if [[ ! "$prewarm_floor" =~ ^[0-9]+$ ]]; then
-      log "invalid TR_CLOUD_RUN_PREWARM_MIN_INSTANCES=${prewarm_floor}; using 2"
-      prewarm_floor=2
-    fi
-    if [ "$min_instances" != "default" ] && [ "$prewarm_floor" -gt "$min_instances" ]; then
-      # Never prime ABOVE the service minimum: a cold region (min 0/1) should
-      # not pay for primer instances its steady state never runs.
-      prewarm_floor="$min_instances"
-    fi
-    revision_min_instances="$prewarm_floor"
+    # Never prime ABOVE the service minimum: a cold region (min 0/1) should
+    # not pay for primer instances its steady state never runs.
+    revision_min_instances="$(cloud_run_candidate_min_instances "$min_instances")"
     # CAVEAT (review F5): this bakes today's primer into the revision
     # forever — effective capacity is max(service, revision). With the primer
     # capped at min(2, service minimum), a later reduction of a region's
@@ -948,6 +960,7 @@ warm_no_traffic_candidate() {
   local revision="$2"
   local min_instances="$3"
   local base_url
+  local service_ingress
 
   # The tag mutation itself is traffic-free. Mark cleanup required before the
   # call because a failed reconciliation can still have applied the tag.
@@ -956,13 +969,27 @@ warm_no_traffic_candidate() {
   log "assigning ${WARM_PROBE_TAG} to ${revision} during the no-traffic warm"
   cloud_run_probe_tag_reconcile \
     "$SERVICE" "$target" "$PROJECT_ID" "$WARM_PROBE_TAG" "$revision"
-  base_url="$(cloud_run_probe_tagged_base_url \
-    "$SERVICE" "$target" "$PROJECT_ID" "$WARM_PROBE_TAG" "$revision")"
-  # The revision minimum is activated by the tag. A direct readiness request
-  # proves the tagged route has reached a started candidate before this warm
-  # process reports success; it never moves production traffic.
-  curl -fsS --max-time 30 --retry 5 --retry-all-errors \
-    "${base_url}/ready" >/dev/null
+  if ! service_ingress="$(cloud_run_service_ingress \
+      "$SERVICE" "$target" "$PROJECT_ID")"; then
+    echo "ERROR: could not determine Cloud Run ingress for ${SERVICE} in ${target}" >&2
+    return 1
+  fi
+  if [ "$service_ingress" = "all" ]; then
+    base_url="$(cloud_run_probe_tagged_base_url \
+      "$SERVICE" "$target" "$PROJECT_ID" "$WARM_PROBE_TAG" "$revision")"
+    # Public run.app ingress can prove the application route before traffic
+    # moves. Protected services deliberately return a Google platform 404 on
+    # this URL and use the capacity check below instead.
+    curl -fsS --max-time 30 --retry 5 --retry-all-errors \
+      "${base_url}/ready" >/dev/null
+  else
+    # The tag activates the revision minimum without assigning production
+    # traffic. Verify both process readiness and the requested warm capacity
+    # through the Cloud Run control plane. The staged LB watchdog below owns
+    # HTTP validation once the candidate receives canary traffic.
+    cloud_run_revision_capacity_ready \
+      "$SERVICE" "$target" "$PROJECT_ID" "$revision" "$min_instances"
+  fi
   log "capacity after ${target} warm: ${revision} ready at revision min=${min_instances}; service min unchanged"
 }
 
@@ -973,10 +1000,8 @@ if [ "${TR_DEPLOY_NO_TRAFFIC:-0}" = "1" ]; then
       echo "ERROR: could not find warmed Ready revision for ${warm_target}" >&2
       exit 1
     fi
-    warm_min_instances="${TR_CLOUD_RUN_MIN_INSTANCES:-}"
-    if [ -z "$warm_min_instances" ]; then
-      warm_min_instances="$(cloud_run_min_instances_for_region "$warm_target")"
-    fi
+    warm_service_min_instances="$(cloud_run_service_min_instances_for_region "$warm_target")"
+    warm_min_instances="$(cloud_run_candidate_min_instances "$warm_service_min_instances")"
     warm_no_traffic_candidate \
       "$warm_target" "$warm_revision" "$warm_min_instances"
   done
