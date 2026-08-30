@@ -121,11 +121,9 @@ def test_dark_manifest_rows_cannot_return_as_prepaid_snapshot_routes() -> None:
 
 
 def test_gmi_only_credits_serves_allowlisted_models() -> None:
-    # GMI's /models listing is aspirational: 7d probes (2026-07-18) showed four
-    # models served on our account and ~45 listed phantoms with zero successes
-    # ever. Kimi K3 joined the verified set after a direct visible-content
-    # canary passed on 2026-07-29. Credits endpoints must stay within the
-    # verified set; BYOK uses the customer's own key and keeps GMI's full
+    # GMI's /models listing has historically included routes that were not
+    # callable on our account. Credits endpoints must stay within the paid-
+    # canary-verified set; BYOK uses the customer's own key and keeps GMI's full
     # listing visible.
     allow = _PROVIDER_SERVED_MODEL_ALLOWLIST["gmi"]
     gmi_credits = {

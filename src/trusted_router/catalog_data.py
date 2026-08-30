@@ -2879,16 +2879,15 @@ _EMBEDDING_SPECS: tuple[_EmbeddingSpec, ...] = (
 )
 
 _PROVIDER_SERVED_MODEL_ALLOWLIST: dict[str, frozenset[str]] = {
-    # 2026-07-18: GMI's /models listing is aspirational — 7d synthetic probes
-    # show exactly four models served on our account (590-670 successes each)
-    # while the other ~45 listed models have ZERO successes ever (uniform
-    # upstream 404 "No matching target server found"). Route Credits traffic
-    # only to the verified set; BYOK stays visible (customer accounts may
-    # differ). A new GMI model earns its way in via probe successes.
+    # GMI's /models listing has historically included models that were not
+    # callable on our account. Route Credits traffic only to the verified set;
+    # BYOK stays visible because customer entitlements may differ. A new GMI
+    # model earns its way in through a paid exact-content canary.
     "gmi": frozenset(
         {
             "deepseek/deepseek-v4-pro",
             "moonshotai/kimi-k3",
+            "tencent/hy4-preview",
             "z-ai/glm-5",
             "z-ai/glm-5.1",
             "z-ai/glm-5.2",

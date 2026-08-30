@@ -18,6 +18,7 @@ from trusted_router.catalog_privacy import (
 )
 
 KIMI_K3 = "moonshotai/kimi-k3"
+HY4_PREVIEW = "tencent/hy4-preview"
 
 
 def test_gmi_hourly_parser_discovers_kimi_k3_exact_prices(
@@ -244,10 +245,20 @@ def test_gmi_kimi_k3_is_a_verified_prepaid_route() -> None:
     assert endpoint.completion_price_microdollars_per_million_tokens == 15_825_000
 
 
+def test_gmi_hy4_preview_is_a_verified_prepaid_route() -> None:
+    assert HY4_PREVIEW in gmi._VERIFIED_PREPAID_MODELS
+    endpoint = MODEL_ENDPOINTS[f"{HY4_PREVIEW}@gmi/prepaid"]
+
+    assert endpoint.upstream_id == HY4_PREVIEW
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 879_870
+    assert endpoint.completion_price_microdollars_per_million_tokens == 2_638_555
+
+
 def test_every_gmi_prepaid_route_is_billed_from_provider_list_price() -> None:
     list_prices = {
         "deepseek/deepseek-v4-pro": (1_320_000, 3_960_000),
         "moonshotai/kimi-k3": (3_000_000, 15_000_000),
+        "tencent/hy4-preview": (834_000, 2_501_000),
         "z-ai/glm-5": (1_000_000, 3_200_000),
         "z-ai/glm-5.1": (1_400_000, 4_400_000),
         "z-ai/glm-5.2": (1_400_000, 4_400_000),
