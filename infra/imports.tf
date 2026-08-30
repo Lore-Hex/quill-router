@@ -61,3 +61,33 @@ import {
   to = google_iam_workload_identity_pool_provider.github
   id = "projects/quill-cloud-proxy/locations/global/workloadIdentityPools/github-actions/providers/github"
 }
+
+# --- CIS security alarms and their alert route (clickops -> Terraform, 2026-08-30) ---
+# These predate this configuration. Values in aws_security_alarms.tf mirror the live
+# settings exactly so `terraform plan` reports "No changes" after import.
+
+import {
+  to = aws_sns_topic.tr_security_alarms
+  id = "arn:aws:sns:us-east-1:330422590279:tr-security-alarms"
+}
+
+import {
+  to = aws_cloudwatch_metric_alarm.cis_root_account_usage
+  id = "CIS-RootAccountUsage"
+}
+
+import {
+  to = aws_cloudwatch_metric_alarm.cis_unauthorized_api_calls
+  id = "CIS-UnauthorizedAPICalls"
+}
+
+# Log metric filter import ids are "<log-group-name>:<filter-name>".
+import {
+  to = aws_cloudwatch_log_metric_filter.root_account_usage
+  id = "/aws/cloudtrail/quill:RootAccountUsage"
+}
+
+import {
+  to = aws_cloudwatch_log_metric_filter.unauthorized_api_calls
+  id = "/aws/cloudtrail/quill:UnauthorizedAPICalls"
+}
