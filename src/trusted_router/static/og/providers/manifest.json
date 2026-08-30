@@ -62,6 +62,15 @@
     "route_mode": "Prepaid",
     "slug": "azure"
   },
+  "baidu": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Baidu AI Cloud Qianfan",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "baidu"
+  },
   "baseten": {
     "card_version": 2,
     "model_count": 15,
@@ -134,6 +143,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "crusoe"
   },
+  "darkbloom": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Darkbloom",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "darkbloom"
+  },
   "databricks": {
     "card_version": 2,
     "model_count": 10,
@@ -187,6 +205,15 @@
     "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "engy"
+  },
+  "fal": {
+    "card_version": 2,
+    "model_count": 1,
+    "name": "fal.ai",
+    "privacy": "Policy documented",
+    "route_count": 1,
+    "route_mode": "Prepaid",
+    "slug": "fal"
   },
   "featherless": {
     "card_version": 2,
@@ -250,6 +277,15 @@
     "route_count": 13,
     "route_mode": "Prepaid + BYOK",
     "slug": "grok"
+  },
+  "huggingface": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Hugging Face Inference Providers",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "huggingface"
   },
   "inception": {
     "card_version": 2,
@@ -539,6 +575,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "phala"
   },
+  "poolside": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Poolside",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "poolside"
+  },
   "recraft": {
     "card_version": 2,
     "model_count": 8,
@@ -655,6 +700,15 @@
     "route_count": 32,
     "route_mode": "Prepaid + BYOK",
     "slug": "telnyx"
+  },
+  "tencent": {
+    "card_version": 2,
+    "model_count": 0,
+    "name": "Tencent Cloud TokenHub",
+    "privacy": "Policy documented",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
+    "slug": "tencent"
   },
   "thinkingmachines": {
     "card_version": 2,

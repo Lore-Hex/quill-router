@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.manifest import guard_fixed_output_prices
-from scripts.pricing.providers import bfl, decart, krea, recraft
+from scripts.pricing.providers import bfl, decart, fal, krea, recraft
 from trusted_router.catalog_data import GATEWAY_PREPAID_PROVIDER_SLUGS
 from trusted_router.catalog_ingest import _supplemental_provider_models_and_endpoints
 from trusted_router.image_generation import (
@@ -118,7 +118,7 @@ def test_krea_pricing_parser_uses_exact_text_to_image_price() -> None:
 
 def test_media_manifests_match_runtime_fixed_price_contract() -> None:
     discovered: dict[str, dict[str, int]] = {}
-    for provider in ("recraft", "bfl", "decart", "nscale", "krea"):
+    for provider in ("recraft", "bfl", "decart", "nscale", "krea", "fal"):
         discovered.update(_manifest_prices(provider))
     assert discovered == FIXED_IMAGE_PRICES_MICRODOLLARS
     assert _manifest_video_prices("decart") == {
@@ -129,7 +129,7 @@ def test_media_manifests_match_runtime_fixed_price_contract() -> None:
 
 
 def test_media_providers_are_refreshable_prepaid_gateway_routes() -> None:
-    expected = {"recraft", "bfl", "decart", "nscale", "krea"}
+    expected = {"recraft", "bfl", "decart", "nscale", "krea", "fal"}
     assert expected <= set(refresh.PROVIDER_SLUGS)
     assert expected <= GATEWAY_PREPAID_PROVIDER_SLUGS
 
@@ -138,6 +138,7 @@ def test_media_providers_are_refreshable_prepaid_gateway_routes() -> None:
         ("recraft/recraftv4_1", "recraft"),
         ("black-forest-labs/flux-2-klein-4b", "bfl"),
         ("decart/lucy-image-2", "decart"),
+        (fal.MODEL_ID, fal.SLUG),
     ):
         assert model_id in models
         assert f"{model_id}@{provider}/prepaid" in endpoints
@@ -268,6 +269,7 @@ def test_media_and_nvidia_refresh_credentials_are_narrowly_wired() -> None:
         "BFL_API_KEY": "trustedrouter-bfl-api-key",
         "DECART_API_KEY": "trustedrouter-decart-api-key",
         "KREA_API_KEY": "trustedrouter-krea-api-key",
+        "FAL_API_KEY": "trustedrouter-fal-api-key",
         "NVIDIA_NIM_API_KEY": "trustedrouter-nvidia-nim-api-key",
     }
     for env_name, secret_name in expected.items():

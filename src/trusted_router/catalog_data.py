@@ -137,6 +137,10 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
             "akashml",
             "arcee",
             "byteplus",
+            "baidu",
+            "darkbloom",
+            "fal",
+            "huggingface",
             "inception",
             "io-net",
             "krea",
@@ -148,9 +152,11 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
             "perplexity",
             "reka",
             "riverflow",
+            "poolside",
             "sail-research",
             "sakana",
             "sambanova",
+            "tencent",
         )
     },
     "openrouter": (
@@ -1693,9 +1699,10 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=False,
         supports_byok=False,
         provider_policy=(
-            "BytePlus ModelArk requires region-specific activated model endpoint IDs. "
-            "The API key alone is insufficient to create safe routes, so this "
-            "provider remains non-routable pending endpoint configuration."
+            "The BytePlus ModelArk key authenticates and discovers direct model IDs, "
+            "but this account has not activated the model service. Routes remain "
+            "dark until activation, a paid canary, and exact first-party pricing "
+            "all succeed."
         ),
         provider_policy_url="https://docs.byteplus.com/en/docs/ModelArk",
     ),
@@ -1811,6 +1818,80 @@ PROVIDERS: dict[str, Provider] = {
             "remains non-routable until a concrete hosted endpoint is configured."
         ),
         provider_policy_url="https://docs.liquid.ai/",
+    ),
+    "fal": Provider(
+        slug="fal",
+        name="fal.ai",
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "TrustedRouter supports a bounded FAL image-generation route with "
+            "first-party per-megapixel pricing and a paid generation canary. "
+            "No contractual ZDR, confidential-compute, or E2EE claim is tracked."
+        ),
+        provider_policy_url="https://fal.ai/models/fal-ai/flux/schnell/api",
+    ),
+    "tencent": Provider(
+        slug="tencent",
+        name="Tencent Cloud TokenHub",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "The TokenHub inference key authenticates and its provider-native "
+            "catalog is discoverable, but inference is blocked by insufficient "
+            "account balance. Routes remain dark until a paid canary succeeds "
+            "and exact first-party postpaid prices are joined."
+        ),
+        provider_policy_url="https://www.tencentcloud.com/document/product/1300/80632",
+    ),
+    "baidu": Provider(
+        slug="baidu",
+        name="Baidu AI Cloud Qianfan",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Credentials are staged for provider discovery, but no canaried route "
+            "with exact first-party pricing is published yet. No contractual ZDR, "
+            "confidential-compute, or E2EE claim is tracked."
+        ),
+        provider_policy_url="https://cloud.baidu.com/doc/WENXINWORKSHOP/",
+    ),
+    "darkbloom": Provider(
+        slug="darkbloom",
+        name="Darkbloom",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Credentials are staged for provider discovery, but no canaried route "
+            "with exact first-party pricing is published yet. No contractual ZDR, "
+            "confidential-compute, or E2EE claim is tracked."
+        ),
+        provider_policy_url="https://darkbloom.dev/",
+    ),
+    "huggingface": Provider(
+        slug="huggingface",
+        name="Hugging Face Inference Providers",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Credentials are staged for provider discovery, but no canaried route "
+            "with an unambiguous downstream provider and exact price is published. "
+            "No contractual ZDR, confidential-compute, or E2EE claim is tracked."
+        ),
+        provider_policy_url="https://huggingface.co/docs/inference-providers/",
+    ),
+    "poolside": Provider(
+        slug="poolside",
+        name="Poolside",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Credentials are staged, but no shared canaried catalog with exact "
+            "first-party token pricing is published yet. No contractual ZDR, "
+            "confidential-compute, or E2EE claim is tracked."
+        ),
+        provider_policy_url="https://poolside.ai/",
     ),
     # Cohere — first-party embeddings (embed-v4.0, embed-*-v3.0) plus
     # Command chat models. Embeddings are Cohere's flagship retrieval
@@ -1946,6 +2027,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "sakana",
         "perplexity",
         "krea",
+        "fal",
         "nvidia-nim",
         "jina",
         "nebius",

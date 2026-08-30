@@ -1,0 +1,36 @@
+{
+  "provider": "fal",
+  "models": [
+    {
+      "display_name": "FLUX.1 Schnell on FAL",
+      "title": "fal-ai/flux/schnell",
+      "model_type": "image",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "endpoints": [
+        "images"
+      ],
+      "status": 1,
+      "id": "fal/flux-1-schnell",
+      "upstream_id": "fal-ai/flux/schnell",
+      "supported_features": [
+        "image-generation"
+      ],
+      "fixed_output_price_microdollars": {
+        "1k": 3146
+      },
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    }
+  ],
+  "source": "https://api.fal.ai/v1/models?endpoint_id=fal-ai%2Fflux%2Fschnell",
+  "pricing_source": "https://api.fal.ai/v1/models/pricing?endpoint_id=fal-ai%2Fflux%2Fschnell",
+  "generated_at": "2026-08-29T23:57:15Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 1
+}

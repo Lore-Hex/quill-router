@@ -214,6 +214,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "recraft",
         "bfl",
         "decart",
+        "fal",
         "nvidia-nim",
         "wandb",
         "nscale",
@@ -888,6 +889,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "sakana",
         "perplexity",
         "krea",
+        "fal",
         "meta",
         "openrouter",
     ):
