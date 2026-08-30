@@ -89,6 +89,32 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             Decimal("0.00000028"),
             Decimal("0.00000132"),
         ),
+        # GMI currently emits the same endpoint with its deployment precision
+        # in the tag. Approve that canonical live identity separately rather
+        # than normalizing tags and accidentally widening this exception.
+        (
+            "deepseek/deepseek-v4-flash-0731 "
+            "[gmi:gmicloud/fp8:deepseek-ai/DeepSeek-V4-Flash-0731]",
+            "prompt",
+            Decimal("0.00000014"),
+            Decimal("0.00000044"),
+        ),
+        (
+            "deepseek/deepseek-v4-flash-0731 "
+            "[gmi:gmicloud/fp8:deepseek-ai/DeepSeek-V4-Flash-0731]",
+            "completion",
+            Decimal("0.00000028"),
+            Decimal("0.00000132"),
+        ),
+        # GMI also reduced V4 Pro's cached-input discount. The public billing
+        # API reports the exact old and new per-token values approved here.
+        (
+            "deepseek/deepseek-v4-pro "
+            "[gmi:gmicloud/fp8:deepseek-ai/DeepSeek-V4-Pro] cached-input",
+            "prompt",
+            Decimal("0.000000044"),
+            Decimal("0.000000145"),
+        ),
         # Atlas's authenticated /v1/models feed distinguishes the cheap
         # unversioned route from the newer 0731 weights. The old snapshot had
         # inherited the unversioned rate; approve only the exact correction.

@@ -670,6 +670,108 @@ def test_confirmed_gmi_deepseek_flash_0731_transition_is_allowed(
     assert "deepseek/deepseek-v4-flash-0731" in capsys.readouterr().out
 
 
+def test_confirmed_gmi_snapshot_deepseek_price_transitions_are_allowed(
+    tmp_path: Path, capsys
+) -> None:
+    """Approve only the exact list-price corrections seen in GMI's feed."""
+
+    from scripts.check_price_spike import main
+
+    flash_before = _make_endpoint_snapshot(
+        ("0.00000014", "0.00000028"),
+        [
+            (
+                "gmi",
+                "deepseek-ai/DeepSeek-V4-Flash-0731",
+                "0.00000014",
+                "0.00000028",
+            )
+        ],
+        model_id="deepseek/deepseek-v4-flash-0731",
+    )
+    flash_after = _make_endpoint_snapshot(
+        ("0.00000044", "0.00000132"),
+        [
+            (
+                "gmi",
+                "deepseek-ai/DeepSeek-V4-Flash-0731",
+                "0.00000044",
+                "0.00000132",
+            )
+        ],
+        model_id="deepseek/deepseek-v4-flash-0731",
+    )
+    for payload in (flash_before, flash_after):
+        payload["models"][0]["endpoints"][0]["tag"] = "gmicloud/fp8"
+
+    pro_before = _make_endpoint_snapshot(
+        ("0.00000132", "0.00000396"),
+        [
+            (
+                "gmi",
+                "deepseek-ai/DeepSeek-V4-Pro",
+                "0.00000132",
+                "0.00000396",
+            )
+        ],
+        model_id="deepseek/deepseek-v4-pro",
+    )
+    pro_after = _make_endpoint_snapshot(
+        ("0.00000174", "0.00000348"),
+        [
+            (
+                "gmi",
+                "deepseek-ai/DeepSeek-V4-Pro",
+                "0.00000174",
+                "0.00000348",
+            )
+        ],
+        model_id="deepseek/deepseek-v4-pro",
+    )
+    for payload, cached in ((pro_before, "0.000000044"), (pro_after, "0.000000145")):
+        endpoint = payload["models"][0]["endpoints"][0]
+        endpoint["tag"] = "gmicloud/fp8"
+        endpoint["pricing"]["input_cache_read"] = cached
+
+    before = _write(
+        tmp_path,
+        "before.json",
+        {
+            "model_count": 2,
+            "models": flash_before["models"] + pro_before["models"],
+        },
+    )
+    after = _write(
+        tmp_path,
+        "after.json",
+        {
+            "model_count": 2,
+            "models": flash_after["models"] + pro_after["models"],
+        },
+    )
+
+    assert main([str(before), str(after), "--summary"]) == 0
+    output = capsys.readouterr().out
+    assert "deepseek/deepseek-v4-flash-0731" in output
+    assert "deepseek/deepseek-v4-pro" in output
+
+
+def test_confirmed_gmi_deepseek_pro_cached_transition_is_allowed() -> None:
+    route = (
+        "deepseek/deepseek-v4-pro "
+        "[gmi:gmicloud/fp8:deepseek-ai/DeepSeek-V4-Pro] cached-input"
+    )
+
+    failures, changes, removed = check(
+        {route: {"prompt": "0.000000044", "completion": "0"}},
+        {route: {"prompt": "0.000000145", "completion": "0"}},
+    )
+
+    assert failures == []
+    assert len(changes) == 1
+    assert removed == []
+
+
 def test_confirmed_atlas_v4_flash_0731_transition_is_allowed(
     tmp_path: Path, capsys
 ) -> None:
