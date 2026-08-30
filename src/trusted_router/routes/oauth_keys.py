@@ -171,7 +171,14 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         if consent.client_app_id and chosen not in {"5", "20", "100", "none"}:
             raise api_error(400, "Invalid monthly budget", ErrorType.BAD_REQUEST)
         posted_limit_present = "limit" in form
-        posted_limit = _limit_microdollars(form.get("limit")) if posted_limit_present else None
+        posted_limit = (
+            _limit_microdollars(
+                form.get("limit"),
+                maximum_microdollars=CONSENT_FORM_LIMIT_MAX_DOLLARS * 1_000_000,
+            )
+            if posted_limit_present
+            else None
+        )
         posted_reset_present = "usage_limit_type" in form
         posted_reset = _limit_reset(form.get("usage_limit_type")) if posted_reset_present else None
         consumed = STORE.consume_consent_request(
@@ -526,13 +533,23 @@ def _suggested_monthly_budget(raw: Any) -> str:
     return str(dollars) if not cents else f"{dollars}.{cents.ljust(2, '0')}"
 
 
-#: Server-side ceiling for a delegated key's spend limit, matching the maximum
-#: the consent page's input advertises. Also the overflow guard: Decimal happily
-#: parses 1e400, which then breaks BIGINT/INT64 microdollar columns downstream.
-LIMIT_MAX_DOLLARS = 10_000
+#: Ceiling for a limit typed into the consent page, matching the maximum the
+#: input advertises client-side. UI policy only -- the programmatic paths keep
+#: their documented no-maximum contract, bounded solely by storage safety.
+CONSENT_FORM_LIMIT_MAX_DOLLARS = 10_000
+
+#: Storage-safety ceiling for every path: the largest microdollar value the
+#: BIGINT/INT64 limit columns can hold. Decimal happily parses 1e400 into an
+#: integer that previously approved, burned the consent, and then failed (or
+#: 500d outright via decimal.Overflow) when the key was serialized.
+LIMIT_MAX_STORABLE_MICRODOLLARS = 2**63 - 1
 
 
-def _limit_microdollars(raw: Any) -> int | None:
+def _limit_microdollars(
+    raw: Any,
+    *,
+    maximum_microdollars: int = LIMIT_MAX_STORABLE_MICRODOLLARS,
+) -> int | None:
     if raw in {None, ""}:
         return None
     try:
@@ -541,10 +558,10 @@ def _limit_microdollars(raw: Any) -> int | None:
         raise api_error(400, "limit must be a dollar amount", ErrorType.BAD_REQUEST) from exc
     if value < 0:
         raise api_error(400, "limit must be non-negative", ErrorType.BAD_REQUEST)
-    if value > LIMIT_MAX_DOLLARS * 1_000_000:
+    if value > maximum_microdollars:
         raise api_error(
             400,
-            f"limit must be at most ${LIMIT_MAX_DOLLARS}",
+            f"limit must be at most ${maximum_microdollars // 1_000_000}",
             ErrorType.BAD_REQUEST,
         )
     return value

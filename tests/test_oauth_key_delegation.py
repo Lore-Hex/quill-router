@@ -867,6 +867,50 @@ def test_oauth_browser_approve_rejects_oversized_and_overflowing_limits(client: 
         assert response.status_code == 400, f"{bad!r}: {response.status_code}"
 
 
+def test_programmatic_limits_above_the_consent_ceiling_still_work(client: TestClient) -> None:
+    # The $10,000 ceiling is consent-page policy. The query/JSON contract
+    # documents no maximum, so a headless caller's $20,000 limit must still
+    # mint -- bounded only by what the storage columns can hold.
+    user = STORE.ensure_user("alice@example.com")
+    raw_session, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="google",
+        label="alice@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    client.cookies.set("tr_session", raw_session)
+
+    form = _consent_form(
+        client,
+        {
+            "callback_url": "https://app.example.com/callback",
+            "key_label": "Example app",
+            "limit": "20000",
+            "usage_limit_type": "monthly",
+        },
+    )
+    approved = client.post("/auth/approve", data=form, follow_redirects=False)
+    assert approved.status_code == 302
+    code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
+    exchanged = client.post("/v1/auth/keys", json={"code": code})
+    assert exchanged.status_code == 200
+    key = STORE.get_key_by_raw(exchanged.json()["key"])
+    assert key is not None
+    assert key.limit_microdollars == 20_000_000_000
+
+    # Storage safety still refuses what INT64 cannot hold, as a 400 not a 500.
+    oversized = client.get(
+        "/auth",
+        params={
+            "callback_url": "https://app.example.com/callback",
+            "key_label": "Example app",
+            "limit": "1e400",
+        },
+    )
+    assert oversized.status_code == 400
+
+
 def test_oauth_browser_approve_validation_failure_keeps_the_consent_usable(
     client: TestClient,
 ) -> None:
