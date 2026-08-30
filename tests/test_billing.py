@@ -477,9 +477,17 @@ def test_settlement_over_reservation_emits_bounded_billing_warning(
     assert context["output_tokens"] == 1_000
 
 
+@pytest.mark.parametrize(
+    "route_type",
+    (
+        "responses.web_search.planner",
+        "chat.completions.web_search.planner",
+    ),
+)
 def test_web_search_additional_cost_is_reserved_and_settled_exactly_once(
     user_headers: dict[str, str],
     client,
+    route_type: str,
 ) -> None:
     created = client.post("/v1/keys", headers=user_headers, json={"name": "web search"}).json()
     key_hash = created["data"]["hash"]
@@ -494,9 +502,9 @@ def test_web_search_additional_cost_is_reserved_and_settled_exactly_once(
             "model": "anthropic/claude-opus-4.7",
             "estimated_input_tokens": 20,
             "max_output_tokens": 4,
-            "route_type": "responses.web_search.planner",
+            "route_type": route_type,
             "additional_cost_reservation_microdollars": reserve_microdollars,
-            "idempotency_key": "web-search-cost-once",
+            "idempotency_key": f"web-search-cost-once:{route_type}",
         },
     )
     assert authorize.status_code == 200, authorize.text
@@ -515,8 +523,8 @@ def test_web_search_additional_cost_is_reserved_and_settled_exactly_once(
             "authorization_id": auth_data["authorization_id"],
             "actual_input_tokens": 20,
             "actual_output_tokens": 2,
-            "request_id": "web-search-cost-once",
-            "route_type": "responses.web_search.planner",
+            "request_id": f"web-search-cost-once:{route_type}",
+            "route_type": route_type,
             "additional_cost_microdollars": actual_search_microdollars,
             "elapsed_seconds": 0.5,
         },
@@ -535,7 +543,7 @@ def test_web_search_additional_cost_is_reserved_and_settled_exactly_once(
             "authorization_id": auth_data["authorization_id"],
             "actual_input_tokens": 20,
             "actual_output_tokens": 2,
-            "route_type": "responses.web_search.planner",
+            "route_type": route_type,
             "additional_cost_microdollars": actual_search_microdollars,
         },
     )
