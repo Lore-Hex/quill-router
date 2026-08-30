@@ -91,12 +91,16 @@
   <div class="panel-head"><h2>Current route evidence</h2><a href="/leaderboard">Live leaderboard</a></div>
   <div class="panel-body">
     <div class="public-proof-strip">
-      <div><strong>{{ route_evidence.lowest_prompt_price }}</strong><span>Lowest prepaid input price</span></div>
-      <div><strong>{{ route_evidence.lowest_completion_price }}</strong><span>Lowest prepaid output price</span></div>
+      {% if route_evidence.route_count %}
+      <div><strong>{{ route_evidence.lowest_prompt_price }}</strong><span>Lowest Credits input price</span></div>
+      <div><strong>{{ route_evidence.lowest_completion_price }}</strong><span>Lowest Credits output price</span></div>
+      {% else %}
+      <div><strong>Unavailable</strong><span>No Credits provider route</span></div>
+      {% endif %}
       <div><strong>{{ route_evidence.fastest_ttft }}</strong><span>Fastest measured p50 TTFT{% if route_evidence.fastest_ttft_provider %} via <a href="/providers/{{ route_evidence.fastest_ttft_provider }}">{{ route_evidence.fastest_ttft_provider }}</a>{% endif %}</span></div>
       <div><strong>{{ route_evidence.fastest_throughput }}</strong><span>Highest measured throughput{% if route_evidence.fastest_throughput_provider %} via <a href="/providers/{{ route_evidence.fastest_throughput_provider }}">{{ route_evidence.fastest_throughput_provider }}</a>{% endif %}</span></div>
     </div>
-    <p class="muted-copy">Recent provider-route uptime spans {{ route_evidence.uptime_range }} across {{ route_evidence.route_count }} route{{ '' if route_evidence.route_count == 1 else 's' }} and {{ route_evidence.provider_count }} provider{{ '' if route_evidence.provider_count == 1 else 's' }}. Price comes from the current prepaid catalog. Speed and uptime come from routed probes rather than vendor claims.</p>
+    <p class="muted-copy">Recent provider-route uptime spans {{ route_evidence.uptime_range }} across {{ route_evidence.route_count }} route{{ '' if route_evidence.route_count == 1 else 's' }} and {{ route_evidence.provider_count }} provider{{ '' if route_evidence.provider_count == 1 else 's' }}. Price comes from the current Credits catalog. Speed and uptime come from routed probes rather than vendor claims.</p>
     <div class="mini-links">
       {% if model.pricing_href %}<a href="{{ model.pricing_href }}">All route prices</a>{% endif %}
       {% if model.providers_href %}<a href="{{ model.providers_href }}">All providers</a>{% endif %}

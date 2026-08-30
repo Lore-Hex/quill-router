@@ -575,6 +575,9 @@ def test_byok_only_model_page_reports_no_credits_route(client: TestClient) -> No
     assert "no Credits provider route for Tencent: Hy3 preview" in response.text
     assert "<th>Billing</th>" not in response.text
     assert ">BYOK<" not in response.text
+    assert "BYOK only" not in response.text
+    assert "lowest prepaid" not in response.text
+    assert "No Credits provider route" in response.text
 
 
 def test_public_partner_model_discloses_fixed_price_and_minimum(
