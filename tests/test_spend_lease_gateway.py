@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from trusted_router.config import Settings
@@ -61,18 +62,14 @@ def test_boot_registration_accepts_verified_gcp_approved_digest(
     response = gateway._register_spend_lease_boot_sync(  # noqa: SLF001
         _request("/v1/internal/gateway/spend-lease/register-boot"),
         SpendLeaseBootRegistrationRequest(
-            jwk=jwk,
-            attestation="signed-gcp-evidence",
-            attestation_kind="gcp-cs-jwt",
+            kid=receipt_kid(jwk),
+            receipt_public_key=jwk,
+            attestation_evidence="signed-gcp-evidence",
+            attestation_kind="gcp",
         ),
         _registration_settings(digest),
     )
-    assert response["data"] == {
-        "boot_kid": receipt_kid(jwk),
-        "verified": True,
-        "approved": True,
-        "image_digest": digest,
-    }
+    assert response == {"data": {"verified": True}}
 
 
 def test_boot_registration_rejects_wrong_gcp_image_digest(
@@ -88,14 +85,14 @@ def test_boot_registration_rejects_wrong_gcp_image_digest(
     response = gateway._register_spend_lease_boot_sync(  # noqa: SLF001
         _request("/v1/internal/gateway/spend-lease/register-boot"),
         SpendLeaseBootRegistrationRequest(
-            jwk=jwk,
-            attestation="signed-gcp-evidence",
-            attestation_kind="gcp-cs-jwt",
+            kid=receipt_kid(jwk),
+            receipt_public_key=jwk,
+            attestation_evidence="signed-gcp-evidence",
+            attestation_kind="gcp",
         ),
         _registration_settings(configured),
     )
-    assert response["data"]["verified"] is True
-    assert response["data"]["approved"] is False
+    assert response == {"data": {"verified": True}}
     assert STORE.get_spend_lease_boot(receipt_kid(jwk)).approved is False  # type: ignore[union-attr]
 
 
@@ -114,9 +111,10 @@ def test_boot_registration_rejects_bad_gcp_chain_without_storing(
         gateway._register_spend_lease_boot_sync(  # noqa: SLF001
             _request("/v1/internal/gateway/spend-lease/register-boot"),
             SpendLeaseBootRegistrationRequest(
-                jwk=jwk,
-                attestation="forged",
-                attestation_kind="gcp-cs-jwt",
+                kid=receipt_kid(jwk),
+                receipt_public_key=jwk,
+                attestation_evidence="forged",
+                attestation_kind="gcp",
             ),
             _registration_settings("sha256:" + "11" * 32),
         )
@@ -132,14 +130,42 @@ def test_boot_registration_records_aws_as_unverified(
     response = gateway._register_spend_lease_boot_sync(  # noqa: SLF001
         _request("/v1/internal/gateway/spend-lease/register-boot"),
         SpendLeaseBootRegistrationRequest(
-            jwk=jwk,
-            attestation="bound-aws-cose",
-            attestation_kind="aws-nitro-cose",
+            kid=receipt_kid(jwk),
+            receipt_public_key=jwk,
+            attestation_evidence="bound-aws-cose",
+            attestation_kind="aws",
         ),
         _registration_settings("sha256:" + "11" * 32),
     )
-    assert response["data"]["verified"] is False
-    assert response["data"]["approved"] is False
+    assert response == {"data": {"verified": False}}
+    assert STORE.get_spend_lease_boot(receipt_kid(jwk)).approved is False  # type: ignore[union-attr]
+
+
+def test_boot_registration_wire_contract_accepts_literal_enclave_body(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wire_fixture = (
+        '{"kid":"testkid","receipt_public_key":{"kty":"OKP","crv":"Ed25519",'
+        '"x":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="},'
+        '"attestation_evidence":"<...>","attestation_kind":"gcp"}'
+    )
+    monkeypatch.setattr(gateway, "receipt_kid", lambda _jwk: "testkid")
+    monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: True)
+    monkeypatch.setattr(gateway, "verify_gcp_attestation_chain", lambda _att: None)
+    monkeypatch.setattr(gateway, "gcp_attestation_image_digest", lambda _att: "")
+
+    response = client.post(
+        "/internal/gateway/spend-lease/register-boot",
+        content=wire_fixture,
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert set(payload) == {"data"}
+    assert set(payload["data"]) == {"verified"}
+    assert isinstance(payload["data"]["verified"], bool)
 
 
 def _seed_authorize() -> tuple[Any, Any, Ed25519PrivateKey, SpendLeaseBoot]:

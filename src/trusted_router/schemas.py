@@ -264,9 +264,10 @@ class SpendLeaseEcho(_Strict):
 
 
 class SpendLeaseBootRegistrationRequest(_Strict):
-    jwk: dict[str, Any]
-    attestation: str = Field(min_length=1, max_length=2 * 1024 * 1024)
-    attestation_kind: Literal["gcp-cs-jwt", "aws-nitro-cose", "azure-maa-jwt"]
+    kid: str = Field(min_length=1, max_length=128)
+    receipt_public_key: dict[str, Any]
+    attestation_evidence: str = Field(min_length=1, max_length=2 * 1024 * 1024)
+    attestation_kind: str = Field(min_length=1, max_length=64)
 
 
 class GatewayAuthorizeRequest(_Lenient):
