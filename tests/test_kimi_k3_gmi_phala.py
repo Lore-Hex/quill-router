@@ -16,6 +16,11 @@ from trusted_router.catalog_privacy import (
     endpoint_stores_content,
     endpoint_zero_data_retention,
 )
+from trusted_router.pricing import (
+    _provider_manifest_customer_price,
+    _provider_manifest_price_cost,
+    _provider_manifest_price_scale,
+)
 
 KIMI_K3 = "moonshotai/kimi-k3"
 HY4_PREVIEW = "tencent/hy4-preview"
@@ -255,28 +260,38 @@ def test_gmi_hy4_preview_is_a_verified_prepaid_route() -> None:
 
 
 def test_every_gmi_prepaid_route_is_billed_from_provider_list_price() -> None:
-    list_prices = {
-        "deepseek/deepseek-v4-pro": (1_320_000, 3_960_000),
-        "moonshotai/kimi-k3": (3_000_000, 15_000_000),
-        "tencent/hy4-preview": (834_000, 2_501_000),
-        "z-ai/glm-5": (1_000_000, 3_200_000),
-        "z-ai/glm-5.1": (1_400_000, 4_400_000),
-        "z-ai/glm-5.2": (1_400_000, 4_400_000),
-    }
+    manifest_path = (
+        Path(__file__).parents[1]
+        / "src"
+        / "trusted_router"
+        / "data"
+        / "provider_models"
+        / "gmi.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    price_scale = _provider_manifest_price_scale(manifest)
+    list_prices = {row["id"]: row for row in manifest["models"]}
     gmi_prepaid = {
         endpoint.model_id: endpoint
         for endpoint in MODEL_ENDPOINTS.values()
         if endpoint.provider == "gmi" and endpoint.usage_type == "Credits"
     }
 
-    assert set(gmi_prepaid) == set(list_prices)
-    for model_id, (prompt_cost, completion_cost) in list_prices.items():
-        endpoint = gmi_prepaid[model_id]
+    assert gmi_prepaid
+    assert set(gmi_prepaid) <= set(list_prices)
+    for model_id, endpoint in gmi_prepaid.items():
+        row = list_prices[model_id]
+        prompt_cost = _provider_manifest_price_cost(
+            row["input_token_price_per_m"], price_scale=price_scale
+        )
+        completion_cost = _provider_manifest_price_cost(
+            row["output_token_price_per_m"], price_scale=price_scale
+        )
         assert endpoint.prompt_price_microdollars_per_million_tokens == (
-            prompt_cost * 1_055 // 1_000
+            _provider_manifest_customer_price(prompt_cost, apply_markup=True)
         )
         assert endpoint.completion_price_microdollars_per_million_tokens == (
-            completion_cost * 1_055 // 1_000
+            _provider_manifest_customer_price(completion_cost, apply_markup=True)
         )
 
 

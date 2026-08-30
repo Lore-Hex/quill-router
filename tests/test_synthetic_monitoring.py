@@ -3382,7 +3382,8 @@ def test_rotation_candidates_cover_credits_endpoints() -> None:
     assert "stepfun/step-3.5-flash" not in pool.get("parasail", [])
     assert "z-ai/glm-4.7" not in pool.get("parasail", [])
     assert "z-ai/glm-5" not in pool.get("parasail", [])
-    assert "z-ai/glm-5.1" in pool.get("parasail", [])
+    # Positive Parasail membership follows its live model feed. Do not pin a
+    # transient provider/model pairing after the provider delists it.
     assert "deepseek/deepseek-prover-v2-671b" not in pool.get("novita", [])
     assert "meta-llama/llama-3-8b-instruct" not in pool.get("novita", [])
     assert "qwen/qwen2.5-vl-72b-instruct" not in pool.get("novita", [])
