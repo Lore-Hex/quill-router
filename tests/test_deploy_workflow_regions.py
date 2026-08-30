@@ -20,28 +20,36 @@ def test_every_load_balanced_control_plane_region_is_staged() -> None:
         assert f'ramp_secondary "{region}"' in rollout
 
 
-def test_prod_smoke_checks_each_control_plane_region_directly() -> None:
+def test_prod_smoke_checks_public_origins_and_converges_private_regions() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
 
     assert (
         "for region in us-central1 us-east4 europe-west4 southamerica-east1; do"
         in workflow
     )
-    assert 'check_url "ready_${region}" "${service_url}/ready"' in workflow
-    assert 'check_url "status_${region}" "${service_url}/status.json"' in workflow
-    assert 'check_url "status_page_${region}" "${service_url}/status"' in workflow
-    assert 'check_url "leaderboard_${region}" "${service_url}/leaderboard"' in workflow
+    smoke = workflow.split("- name: Smoke test prod", 1)[1]
+    assert "source scripts/deploy/_cloud_run_revision_probe.sh" in smoke
+    assert "service_ingress=$(cloud_run_service_ingress" in smoke
+    assert 'if [ "${service_ingress}" = "all" ]; then' in smoke
+    direct = smoke.split('if [ "${service_ingress}" = "all" ]; then', 1)[1].split(
+        "else", 1
+    )[0]
+    assert 'check_url "ready_${region}" "${service_url}/ready"' in direct
+    assert 'check_url "status_${region}" "${service_url}/status.json"' in direct
+    assert 'check_url "status_page_${region}" "${service_url}/status"' in direct
+    assert 'check_url "leaderboard_${region}" "${service_url}/leaderboard"' in direct
     assert (
         'check_url "video_leaderboard_${region}" "${service_url}/leaderboard/video"'
-        in workflow
+        in direct
     )
-    assert 'active_revision=$(jq -r' in workflow
-    assert '[ "${active_count}" != "1" ]' in workflow
-    assert '[ "${active_revision}" != "${latest_ready}" ]' in workflow
-    assert '[ "${latest_ready}" != "${latest_created}" ]' in workflow
-    assert 'gcloud run revisions describe "${active_revision}"' in workflow
-    assert '[ "${active_release}" != "${SHA}" ]' in workflow
-    assert '[ "${retired_secret_count}" != "0" ]' in workflow
+    assert "private Cloud Run ingress" in smoke
+    assert 'active_revision=$(jq -r' in smoke
+    assert '[ "${active_count}" != "1" ]' in smoke
+    assert '[ "${active_revision}" != "${latest_ready}" ]' in smoke
+    assert '[ "${latest_ready}" != "${latest_created}" ]' in smoke
+    assert 'gcloud run revisions describe "${active_revision}"' in smoke
+    assert '[ "${active_release}" != "${SHA}" ]' in smoke
+    assert '[ "${retired_secret_count}" != "0" ]' in smoke
 
 
 def test_deploy_syncs_the_shared_public_snapshot_worker() -> None:
