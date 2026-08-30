@@ -19,7 +19,7 @@ from trusted_router.synthetic.components import (
     COMPONENT_PROBE_TARGETS,
     GATEWAY_REGION_TARGET_NAMES,
     OPS_PROBE_TYPES,
-    REGIONAL_GATEWAY_PROBES,
+    REGIONAL_DEPLOY_GATE_PROBES,
     SLO_DEFINITIONS,
     UNCATEGORIZED_COMPONENT,
     applicable_component_definitions,
@@ -340,7 +340,7 @@ def _machine_region_samples(
     *,
     settings: Settings,
 ) -> list[SyntheticProbeSample]:
-    """Regional gateway samples consumed by deploy and watchdog automation."""
+    """Complete regional canaries consumed by deploy and watchdog automation."""
     published = {
         COMPONENT_PROBE_TARGETS[component_id]
         for component_id in published_machine_region_components(settings)
@@ -350,7 +350,7 @@ def _machine_region_samples(
     return [
         sample
         for sample in samples
-        if sample.target in published and sample.probe_type in REGIONAL_GATEWAY_PROBES
+        if sample.target in published and sample.probe_type in REGIONAL_DEPLOY_GATE_PROBES
     ]
 
 

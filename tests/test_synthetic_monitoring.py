@@ -64,6 +64,7 @@ from trusted_router.synthetic.probes import (
     _sse_line_has_content,
     attestation_nonce_probe,
     choose_rotation_target,
+    control_plane_health_probe,
     gateway_billing_probe,
     gateway_fallback_probe,
     gateway_latency_phase_probes,
@@ -1667,6 +1668,30 @@ async def test_synthetic_http_probes_parse_success_shapes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_control_plane_health_is_global_not_primary_region() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "https://trustedrouter.com/health"
+        return httpx.Response(200, json={"status": "ok"})
+
+    target = SyntheticTarget(
+        "canonical",
+        "https://api.trustedrouter.com/v1",
+        "us-central1",
+        control_plane_url="https://trustedrouter.com",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await control_plane_health_probe(
+            client,
+            target,
+            monitor_region="europe-west4",
+        )
+
+    assert sample.status == "up"
+    assert sample.target == "control-plane"
+    assert sample.target_region is None
+
+
+@pytest.mark.asyncio
 async def test_attestation_http_error_is_availability_failure_not_format_failure() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, json={"error": {"message": "revision starting"}})
@@ -2205,6 +2230,7 @@ def test_configured_targets_include_primary_regional_gateway() -> None:
         api_base_url="https://api.trustedrouter.com/v1",
         regions="us-central1,us-east4,europe-west4,southamerica-east1",
         primary_region="us-central1",
+        synthetic_control_plane_health_url="https://trustedrouter.com",
     )
 
     targets = configured_targets(settings)
@@ -2212,6 +2238,7 @@ def test_configured_targets_include_primary_regional_gateway() -> None:
 
     assert by_name["canonical"].api_base_url == "https://api.trustedrouter.com/v1"
     assert by_name["canonical"].region == "us-central1"
+    assert by_name["canonical"].control_plane_url == "https://trustedrouter.com"
     assert by_name["us-central1"].api_base_url == (
         "https://api-us-central1.quillrouter.com/v1"
     )
@@ -2222,6 +2249,11 @@ def test_configured_targets_include_primary_regional_gateway() -> None:
     )
     assert by_name["southamerica-east1"].api_base_url == (
         "https://api-southamerica-east1.quillrouter.com/v1"
+    )
+    assert all(
+        target.control_plane_url is None
+        for name, target in by_name.items()
+        if name != "canonical"
     )
 
 

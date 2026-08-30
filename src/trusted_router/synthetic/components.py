@@ -51,6 +51,13 @@ OPS_PROBE_TYPES = frozenset(
 # probe that is recorded but surfaced nowhere is a signal that reports
 # success without measuring — this set is what makes the model path render.
 MODEL_INFERENCE_PROBES = {"openai_sdk_pong", "responses_pong"}
+# Deploy automation needs the end-to-end PONGs for every regional API target,
+# even though provider-effective failures remain outside router-core SLO math.
+# Keep this union named here so the status payload exports one complete
+# regional canary surface for deployment consumers.
+REGIONAL_DEPLOY_GATE_PROBES = frozenset(
+    REGIONAL_GATEWAY_PROBES | MODEL_INFERENCE_PROBES
+)
 
 COMPONENT_PROBES: dict[str, set[str]] = {
     "canonical_api": REGIONAL_GATEWAY_PROBES,

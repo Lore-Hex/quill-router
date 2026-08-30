@@ -76,15 +76,10 @@ class SyntheticTarget:
     name: str
     api_base_url: str
     region: str | None = None
-    # Cloud Run direct URL for this region's control plane. When set,
-    # the synthetic monitor probes /health here too — separately from
-    # api_base_url's enclave probe — so we get a distinct per-region
-    # signal even when api_base_url's regional hostname CNAMEs to the
-    # global LB (cold regions, or warm regions whose ACME cert hasn't
-    # been issued yet because the MIG is at targetSize=0).
-    #
-    # None for the canonical target since that probe already hits the
-    # global enclave LB by definition.
+    # Explicit control-plane origin. GCP assigns the canonical load-balanced
+    # origin here; standalone clouds use their own public origin. Regional
+    # run.app URLs are not derived because private-ingress services reject
+    # those requests before application code.
     control_plane_url: str | None = None
     # ATTESTED-CERT-ONLY target: the gateway serves a self-signed cert it
     # minted inside the TEE (AWS Nitro standalone deployments), so CA
@@ -365,12 +360,10 @@ async def _run_target_synthetic_probes(
         attestation_nonce_probe(client, target, monitor_region=monitor_region),
         gateway_latency_phase_probes(target, monitor_region=monitor_region),
     ]
-    # Per-region control plane health via Cloud Run direct URL.
-    # tls_health above probes target.api_base_url which is the
-    # ENCLAVE (api-{region}.quillrouter.com) — that path can be
-    # broken by an enclave-side issue (MIG at size 0, ACME cert
-    # not issued, etc.) while the regional Cloud Run is fine.
-    # This separate probe pins the control-plane signal per region.
+    # Control-plane health is configured explicitly on the canonical target.
+    # Regional run.app URLs are not public origins when Cloud Run ingress is
+    # restricted to the load balancer, so deriving them creates false 404s.
+    # Enclave health remains independently pinned by tls_health above.
     if target.control_plane_url:
         probes.append(control_plane_health_probe(client, target, monitor_region=monitor_region))
     # Two independent conditions, deliberately. `paid_probes` is the cost
@@ -843,26 +836,16 @@ async def control_plane_health_probe(
     *,
     monitor_region: str,
 ) -> SyntheticProbeSample:
-    """Probe `/health` on the per-region Cloud Run direct URL.
-
-    Distinct from tls_health_probe (which hits the enclave-fronted
-    api_base_url) — this one bypasses the enclave LB entirely and
-    pins the request to the specific Cloud Run service running in
-    `target.region`. It's the only way to tell:
-
-      * "the Cloud Run instance in us-east4 is fine but its enclave
-        cert hasn't issued yet" (control_plane up, tls_health down),
-      * "the regional Cloud Run is OOM-killing" (control_plane down,
-        tls_health up because LB routes around to a different region).
-
-    The endpoint is /health (not /healthz) — that's what FastAPI
-    registered in main.py: `@router.get("/health")`. /healthz returns
-    401 because it falls through to the auth-required catch-all.
-    """
+    """Probe the explicitly configured global control-plane `/health` route."""
+    sample_target = SyntheticTarget(
+        "control-plane",
+        target.control_plane_url or target.api_base_url,
+        None,
+    )
     if not target.control_plane_url:
         return _sample(
             "control_plane_health",
-            target,
+            sample_target,
             monitor_region,
             "(no control_plane_url configured)",
             status="down",
@@ -883,7 +866,7 @@ async def control_plane_health_probe(
         ok = response.status_code == 200 and _health_ok(response)
         return _sample(
             "control_plane_health",
-            target,
+            sample_target,
             monitor_region,
             url,
             status="up" if ok else "down",
@@ -895,7 +878,7 @@ async def control_plane_health_probe(
     except httpx.HTTPError as exc:
         return _sample(
             "control_plane_health",
-            target,
+            sample_target,
             monitor_region,
             url,
             status="down",
