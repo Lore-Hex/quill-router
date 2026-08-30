@@ -1913,6 +1913,64 @@ def test_synthetic_deploy_requires_explicit_split_billing_service_before_any_gcl
     assert run.calls == []
 
 
+def test_combined_synthetic_refresh_preserves_security_boundaries(tmp_path: Path) -> None:
+    script = "scripts/deploy/synthetic_image_refresh.sh"
+    isolated = DeployScriptHarness(tmp_path / "synthetic-image-refresh")
+
+    run = isolated.run(
+        script,
+        verifier_rc=0,
+        omit_env=("TR_BILLING_SERVICE", "TR_ALLOW_DEPLOYED_COMBINED_SURFACE"),
+    )
+
+    assert run.returncode == 0, summarise(run)
+    updates = [
+        call
+        for call in run.calls
+        if call[:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+        and call[4:6] == ["jobs", "update"]
+    ]
+    assert [(call[6], call[call.index("--region") + 1]) for call in updates] == [
+        ("trusted-router-synthetic-us-central1", "us-central1"),
+        ("trusted-router-synthetic-europe-west4", "europe-west4"),
+        ("trusted-router-throughput-us-central1", "us-central1"),
+        ("trusted-router-image-generation-us-central1", "us-central1"),
+        ("trusted-router-video-generation-us-central1", "us-central1"),
+    ]
+    assert not any(call[4:6] == ["jobs", "deploy"] for call in run.calls if len(call) > 5)
+    for update in updates:
+        update_text = " ".join(update)
+        assert "--image" in update
+        assert "--update-env-vars" in update
+        assert "TR_RELEASE=1234567" in update_text
+        assert "--set-secrets" not in update
+        assert "--update-secrets" not in update
+        assert "--service-account" not in update
+        assert "--network" not in update
+        assert "--subnet" not in update
+        assert "--vpc-egress" not in update
+    for update in updates[:2]:
+        assert (
+            "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL=https://trustedrouter.com"
+            in " ".join(update)
+        )
+
+
+def test_combined_synthetic_refresh_is_a_visible_release_gate() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
+    rollout = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
+        "\n  public-surface-companion:\n", 1
+    )[0]
+    synthetic_step = rollout.split(
+        "- name: Deploy synthetic monitor Cloud Run Job", 1
+    )[1].split("- name: Deploy Google Ads conversion uploader", 1)[0]
+
+    assert "synthetic_image_refresh.sh" in synthetic_step
+    assert "synthetic.sh" in synthetic_step
+    assert "continue-on-error" not in synthetic_step
+    assert "TR_ALLOW_DEPLOYED_COMBINED_SURFACE" not in synthetic_step
+
+
 def test_synthetic_combined_bridge_restores_legacy_job_deploys(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

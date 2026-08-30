@@ -870,6 +870,47 @@ _SYNTHETIC_INGEST_SERVICE_JSON = json.dumps(
     },
     separators=(",", ":"),
 )
+_SYNTHETIC_COMBINED_JOB_JSON = json.dumps(
+    {
+        "metadata": {"name": "trusted-router-synthetic-harness"},
+        "spec": {
+            "template": {
+                "spec": {
+                    "template": {
+                        "metadata": {"annotations": {}},
+                        "spec": {
+                            "serviceAccountName": (
+                                "44325983244-compute@developer.gserviceaccount.com"
+                            ),
+                            "containers": [
+                                {
+                                    "image": "example.invalid/trusted-router:old",
+                                    "env": [
+                                        {
+                                            "name": "TR_SERVICE_SURFACE",
+                                            "value": "combined",
+                                        },
+                                        {
+                                            "name": "TR_INTERNAL_GATEWAY_TOKEN",
+                                            "valueFrom": {
+                                                "secretKeyRef": {
+                                                    "name": (
+                                                        "trustedrouter-internal-gateway-token"
+                                                    ),
+                                                    "key": "latest",
+                                                }
+                                            },
+                                        },
+                                    ],
+                                }
+                            ],
+                        },
+                    }
+                }
+            }
+        },
+    }
+)
 
 _PUBLIC_SURFACE_LEGACY_SERVICE_JSON = json.dumps(
     {
@@ -1544,6 +1585,18 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
                 '"privateVisibilityConfig":{"networks":['
                 '{"networkUrl":"projects/quill-cloud-proxy/global/networks/default"}]}}',
             ),
+        ),
+    ),
+    "scripts/deploy/synthetic_image_refresh.sh": ScriptFixture(
+        env={
+            "IMAGE": (
+                "us-central1-docker.pkg.dev/quill-cloud-proxy/"
+                "trusted-router/trusted-router:harness"
+            ),
+            "SHA": "1234567890abcdef",
+        },
+        responses=(
+            (r"run jobs describe .*--format=json", _SYNTHETIC_COMBINED_JOB_JSON),
         ),
     ),
 }

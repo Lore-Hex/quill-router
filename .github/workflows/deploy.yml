@@ -977,13 +977,17 @@ jobs:
         # 06:00Z 2026-06-02 pong surge to persist after PR #14 + #15
         # "deployed".
         #
-        # The script is idempotent and gracefully no-ops if the
-        # synthetic monitor secret isn't present in this environment
-        # (test, staging). Failure here does NOT block the API rollout
-        # (continue-on-error) because synthetic monitoring is observability,
-        # not user-serving traffic.
-        continue-on-error: true
-        run: bash scripts/deploy/synthetic.sh
+        # Before the six-service cutover, refresh only existing jobs. This
+        # preserves their identities, networks, schedules, and secret bindings
+        # instead of bypassing synthetic.sh's split-service guard. Once the
+        # isolated billing service is configured, use the full deployment.
+        # Either path is a release gate: stale monitoring must not look green.
+        run: |
+          if [ -n "${TR_BILLING_SERVICE:-}" ]; then
+            bash scripts/deploy/synthetic.sh
+          else
+            bash scripts/deploy/synthetic_image_refresh.sh
+          fi
 
       - name: Deploy Google Ads conversion uploader
         if: ${{ steps.optional.outputs.deploy_google_data_manager == 'true' }}
