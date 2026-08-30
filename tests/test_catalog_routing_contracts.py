@@ -1504,7 +1504,6 @@ def test_prometheus_1m_uses_only_long_context_open_weight_components() -> None:
     assert model.name == "TrustedRouter Prometheus 1.0 1M"
     assert model.context_length == 1_048_576
     assert candidate_ids == [
-        "minimax/minimax-m3",
         "xiaomi/mimo-v2.5-pro",
         "z-ai/glm-5.2",
         DEEPSEEK_V4_PRO_0423_MODEL_ID,
