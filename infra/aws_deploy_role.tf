@@ -44,6 +44,10 @@ resource "aws_iam_role_policy" "tr_eu_role_writes" {
           "iam:GetRolePolicy",
           "iam:ListRolePolicies",
           "iam:ListAttachedRolePolicies",
+          # The drain installer's preflight asks whether the ClickHouse node
+          # may reach DSQL. Without this the simulation errors, and run
+          # 33335052109 reported a node permission gap that did not exist.
+          "iam:SimulatePrincipalPolicy",
         ]
         Resource = "arn:aws:iam::${local.aws_account_id}:role/tr-eu-*"
       },

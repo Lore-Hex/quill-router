@@ -169,11 +169,32 @@ NODE_ROLE="$(aws iam get-instance-profile --instance-profile-name "$NODE_ROLE" \
   --query 'InstanceProfile.Roles[0].RoleName' --output text)"
 CLUSTER_ARN="arn:aws:dsql:${DSQL_REGION}:${ACCOUNT}:cluster/${CLUSTER_ID}"
 log "node role: $NODE_ROLE; checking DSQL connect permission on $CLUSTER_ARN"
-DSQL_DECISION="$(aws iam simulate-principal-policy \
+# Distinguish "the node is not allowed" from "we could not ask". Discarding
+# the simulate error made a CALLER permission gap read as a NODE permission
+# gap: run 33335052109 printed the whole grant-the-node remediation while the
+# node already held dsql:DbConnect, and only the caller lacked
+# iam:SimulatePrincipalPolicy. A preflight that cannot run has not passed and
+# has not failed; say which.
+SIMULATE_ERROR=""
+if ! DSQL_DECISION="$(aws iam simulate-principal-policy \
   --policy-source-arn "arn:aws:iam::${ACCOUNT}:role/${NODE_ROLE}" \
   --action-names dsql:DbConnectAdmin dsql:DbConnect \
   --resource-arns "$CLUSTER_ARN" \
-  --query 'EvaluationResults[?EvalDecision==`allowed`].EvalActionName' --output text 2>/dev/null || true)"
+  --query 'EvaluationResults[?EvalDecision==`allowed`].EvalActionName' --output text 2>&1)"; then
+  SIMULATE_ERROR="$DSQL_DECISION"
+  DSQL_DECISION=""
+fi
+if [ -n "$SIMULATE_ERROR" ]; then
+  cat >&2 <<EOF
+
+FATAL: could not evaluate ${NODE_ROLE}'s DSQL permission; this says nothing
+about the node. The caller needs iam:SimulatePrincipalPolicy on
+arn:aws:iam::${ACCOUNT}:role/${NODE_ROLE}.
+
+  $SIMULATE_ERROR
+EOF
+  exit 1
+fi
 if [ -z "$DSQL_DECISION" ]; then
   cat >&2 <<EOF
 
