@@ -88,6 +88,8 @@ from trusted_router.provider_contracts import (
 )
 from trusted_router.provider_types import estimate_tokens_from_text
 from trusted_router.receipt_keys import (
+    AWS_ATTESTATION_KIND,
+    AZURE_ATTESTATION_KIND,
     GCP_ATTESTATION_KIND,
     attestation_commits_to_jwk,
     gcp_attestation_image_digest,
@@ -213,6 +215,11 @@ _BROADCAST_EMPTY_CACHE: OrderedDict[str, float] = OrderedDict()
 _BROADCAST_EMPTY_CACHE_LOCK = threading.Lock()
 _SPEND_LEASE_SIGNERS: dict[tuple[str, str], SpendLeaseSigner] = {}
 _SPEND_LEASE_SIGNERS_LOCK = threading.Lock()
+_SPEND_LEASE_WIRE_ATTESTATION_KINDS = {
+    "aws": AWS_ATTESTATION_KIND,
+    "azure": AZURE_ATTESTATION_KIND,
+    "gcp": GCP_ATTESTATION_KIND,
+}
 _NATIVE_BATCH_ROUTE_PREFIX = "batch.native."
 _NATIVE_BATCH_BILLED_FRACTION_BPS = {
     "openai": 5_000,
@@ -303,16 +310,26 @@ def _register_spend_lease_boot_sync(
 ) -> dict[str, Any]:
     require_internal_gateway(request, settings)
     try:
-        jwk = normalize_receipt_jwk(body.jwk)
+        jwk = normalize_receipt_jwk(body.receipt_public_key)
         kid = receipt_kid(jwk)
-        if not attestation_commits_to_jwk(body.attestation, body.attestation_kind, jwk):
+        if body.kid != kid:
+            raise ValueError("kid does not match the receipt public key")
+        attestation_kind = _SPEND_LEASE_WIRE_ATTESTATION_KINDS.get(
+            body.attestation_kind,
+            body.attestation_kind,
+        )
+        if not attestation_commits_to_jwk(
+            body.attestation_evidence,
+            attestation_kind,
+            jwk,
+        ):
             raise ValueError("attestation does not commit to the receipt public key")
         verified = False
         approved = False
         image_digest = ""
-        if body.attestation_kind == GCP_ATTESTATION_KIND:
-            verify_gcp_attestation_chain(body.attestation)
-            image_digest = gcp_attestation_image_digest(body.attestation)
+        if attestation_kind == GCP_ATTESTATION_KIND:
+            verify_gcp_attestation_chain(body.attestation_evidence)
+            image_digest = gcp_attestation_image_digest(body.attestation_evidence)
             verified = True
             approved = image_digest in settings.spend_lease_accepted_gcp_digests
         record = SpendLeaseBoot(
@@ -321,20 +338,13 @@ def _register_spend_lease_boot_sync(
             approved=approved,
             verified=verified,
             image_digest=image_digest,
-            attestation_kind=body.attestation_kind,
+            attestation_kind=attestation_kind,
             registered_at=iso_now(),
         )
         stored = STORE.observe_spend_lease_boot(record)
     except ValueError as exc:
         raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
-    return {
-        "data": {
-            "boot_kid": stored.kid,
-            "verified": stored.verified,
-            "approved": stored.approved,
-            "image_digest": stored.image_digest or None,
-        }
-    }
+    return {"data": {"verified": stored.verified}}
 
 
 async def authorize_gateway(
