@@ -128,12 +128,41 @@ def test_federated_settlement_is_booked_usage_not_drift() -> None:
     assert report.clean
 
     # And the arithmetic really did depend on those claims: drop them and the
-    # same counter becomes a violation of exactly their size.
+    # same counter loses full audit coverage by exactly their size. A positive
+    # remainder cannot be called a violation because terminal reservation rows
+    # also disappear under the production 30-day retention policy.
     for claim_id in ("c1", "c2"):
         del db.rows[(_CLAIM_KIND, claim_id)]
     regressed = audit_typed_invariants(store)
-    assert regressed.usage_violations == 1
-    assert regressed.samples[f"usage:{ws}"]["delta"] == 750_000
+    assert regressed.usage_violations == 0
+    assert regressed.usage_unauditable == 1
+    assert (
+        regressed.unauditable[f"usage-retained-history-gap:{ws}"]["unretained_history"]
+        == 750_000
+    )
+
+
+def test_expired_settlement_is_retention_gap_not_usage_violation() -> None:
+    """The exact production incident: total_usage is lifetime, reservations are not."""
+    store, db, _ = make_fake_store()
+    ws = "ws_retained"
+    _credit(store, db, ws, baseline=2_000_000, total_usage=2_450_000)
+    _settled(db, "expired", ws, 300_000)
+    _settled(db, "retained", ws, 150_000)
+
+    assert audit_typed_invariants(store).fully_audited
+
+    # Model Spanner's 30-day row-deletion policy removing one terminal row.
+    del db.reservations["expired"]
+    report = audit_typed_invariants(store)
+
+    assert report.clean
+    assert report.usage_violations == 0
+    assert report.usage_unauditable == 1
+    assert not report.fully_audited
+    sample = report.unauditable[f"usage-retained-history-gap:{ws}"]
+    assert sample["unretained_history"] == 300_000
+    assert "cannot be repaired downward" in sample["why"]
 
 
 def test_non_credits_settles_do_not_count_toward_usage() -> None:
@@ -187,9 +216,10 @@ def test_a_missing_baseline_is_unauditable_not_a_violation() -> None:
     # so an unauditable row left in there prints as "VIOLATION" underneath a
     # summary that says CLEAN. Production's first run printed 643 such lines.
     sample = report.unauditable[f"usage-unauditable:{ws}"]
-    # The remainder IS the number to record, so the report hands it over rather
-    # than only saying it could not check.
+    # The remainder is useful evidence, but is not automatically a pre-ledger
+    # baseline now that terminal reservation rows expire after 30 days.
     assert sample["unexplained"] == 9_999_999 - 1_000
+    assert "Do not record or repair" in sample["why"]
     assert not report.samples, "unauditable rows must not sit in the violation samples"
 
 
@@ -279,7 +309,7 @@ def test_repair_refuses_when_the_baseline_was_cleaned_up() -> None:
     assert any("baseline" in r for r in result.reasons)
 
 
-def test_repair_refuses_to_lower_usage_unless_told_to() -> None:
+def test_repair_refuses_to_lower_usage_without_independent_ledger_proof() -> None:
     """total_usage is monotonic, so a computed decrease means the ledger is
     missing rows -- not that the counter is too high."""
     store, db, _ = make_fake_store()
@@ -292,7 +322,17 @@ def test_repair_refuses_to_lower_usage_unless_told_to() -> None:
     assert any("refusing to lower" in r for r in refused.reasons)
     assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["total_usage"] == 5_000_000
 
-    forced = repair_typed_usage(store, ws, apply=True, allow_decrease=True)
+    still_refused = repair_typed_usage(store, ws, apply=True, allow_decrease=True)
+    assert not still_refused.ready and not still_refused.applied
+    assert any("retained ledger is complete" in r for r in still_refused.reasons)
+
+    forced = repair_typed_usage(
+        store,
+        ws,
+        apply=True,
+        allow_decrease=True,
+        retained_ledger_complete=True,
+    )
     assert forced.applied
     assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["total_usage"] == 1_000_000
 

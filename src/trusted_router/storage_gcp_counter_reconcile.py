@@ -40,9 +40,14 @@ _OPEN_REGIONAL_QUOTA_ESCROW = (
     "ORDER BY open_index.id"
 )
 _OPEN_REGIONAL_QUOTA_STATES = frozenset({"pending", "active", "draining", "quarantined"})
-# ── Typed `total_usage` ledger reconstruction ───────────────────────────────
-# `total_usage` has exactly TWO writers on this store, and both leave a durable
-# row, so the counter is reconstructible rather than merely trusted:
+# ── Typed `total_usage` retained-ledger check ───────────────────────────────
+# `total_usage` is a lifetime counter, while terminal request rows are retained
+# for only 30 days. The retained ledger can therefore prove that a counter is
+# BELOW booked usage, and can expose orphan bookings, but it cannot prove exact
+# lifetime equality once terminal rows begin expiring. A positive remainder is
+# coverage-limited history, never permission to lower the monotonic counter.
+#
+# Two retained booking record families represented in this view are:
 #
 #   1. the typed settle (storage_gcp_counter_dml.release_credit) adds `actual`,
 #      and only for Credits traffic -- storage_gcp_authorize passes
@@ -54,7 +59,8 @@ _OPEN_REGIONAL_QUOTA_STATES = frozenset({"pending", "active", "draining", "quara
 #      federated_settlement_claim.
 #
 # Summing only (1) -- which is what the retired PR #89 did -- reads every
-# federated microdollar as drift. Both arms are required.
+# federated microdollar as drift. Both arms are required while their rows are
+# retained, but neither makes the lifetime equality durable forever.
 #: Shard-0 only, unlike the fleet-wide form above, because its only caller --
 #: repair_typed_usage -- refuses a sharded workspace outright. Keeping the
 #: filter also makes it fail SAFE if one ever slipped through: booked would come
@@ -145,11 +151,12 @@ class InvariantReport:
     key_violations: int = 0
     regional_lease_violations: int = 0
     usage_rows: int = 0
-    usage_violations: int = 0  # total_usage != baseline + settled actuals + federated
-    #: Rows whose baseline is unrecoverable, so usage can be neither confirmed nor
-    #: faulted. Counted apart from violations: calling them clean would overstate
-    #: coverage, and calling them violations would cry wolf on every workspace the
-    #: JSON cleanup has already run against.
+    usage_violations: int = 0  # counter below retained ledger, or orphan booking
+    #: Rows whose lifetime equality is unrecoverable, either because the legacy
+    #: baseline is absent or because 30-day terminal-row retention has removed
+    #: part of the settled ledger. Counted apart from violations: calling them
+    #: fully audited would overstate coverage, while calling them violations would
+    #: turn normal TTL progress into a billing incident.
     usage_unauditable: int = 0
     #: Counter below its ledger. Reported, NOT faulted, and deliberately so.
     #: A settle credits the balance and marks its reservation in separate
@@ -375,7 +382,7 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
 
     report.credit_rows, report.credit_violations = _check(typed_credit, credit_holds, "credit")
     report.key_rows, report.key_violations = _check(typed_key, key_holds, "api_key")
-    # ── usage: total_usage must equal everything the ledger says was booked ──
+    # ── usage: total_usage must cover everything the RETAINED ledger booked ──
     # Both directions again, in the same spirit as _check: a federated claim or a
     # settled actual for a workspace with NO typed row is a booking that landed
     # nowhere, and iterating typed rows alone cannot see it.
@@ -407,9 +414,11 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
                 # ledger accounts for the counter exactly. Fleet-wide this is
                 # 604 of 643 workspaces, which used to report as uncheckable.
                 continue
-            # Counter exceeds the ledger by an amount only pre-ledger history
-            # explains. Genuinely uncheckable until that number is recorded --
-            # and the remainder below IS the number to record.
+            # Counter exceeds the retained ledger. Before request-row TTL this
+            # meant pre-ledger history; now it can also mean settled rows aged
+            # out normally. Those cases are indistinguishable from this
+            # snapshot, so never turn the remainder into a baseline
+            # automatically.
             report.usage_unauditable += 1
             _unauditable(
                 f"usage-unauditable:{workspace_id}",
@@ -417,15 +426,15 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
                     "typed_total_usage": actual_usage,
                     "ledger_booked": booked,
                     "unexplained": actual_usage - booked,
-                    "why": "usage predates the ledger and no baseline is "
-                    "recorded. `unexplained` is the value to record as "
-                    f"kind={USAGE_BASELINE_KIND!r} to make this workspace "
-                    "auditable.",
+                    "why": "usage is not represented by the retained ledger. "
+                    "It may predate typed billing or may have aged out under "
+                    "the 30-day terminal-row policy. Do not record or repair "
+                    "this remainder without independent historical evidence.",
                 },
             )
             continue
         expected = baseline + booked
-        if actual_usage != expected or actual_usage < 0:
+        if actual_usage < expected or actual_usage < 0:
             report.usage_violations += 1
             _sample(
                 f"usage:{workspace_id}",
@@ -436,6 +445,28 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
                     "settled_actuals": settled_actuals.get(workspace_id, 0),
                     "federated_applied": federated_applied.get(workspace_id, 0),
                     "delta": actual_usage - expected,
+                },
+            )
+        elif actual_usage > expected:
+            # Terminal reservations have a 30-day row-deletion policy. Once one
+            # expires, the retained sum falls while lifetime total_usage must not.
+            # This is incomplete audit coverage, not evidence that the customer's
+            # usage counter is too high. In particular, never feed this remainder
+            # to the downward repair path.
+            report.usage_unauditable += 1
+            _unauditable(
+                f"usage-retained-history-gap:{workspace_id}",
+                {
+                    "typed_total_usage": actual_usage,
+                    "retained_expected": expected,
+                    "baseline": baseline,
+                    "retained_settled_actuals": settled_actuals.get(workspace_id, 0),
+                    "federated_applied": federated_applied.get(workspace_id, 0),
+                    "unretained_history": actual_usage - expected,
+                    "why": "terminal reservation rows expire after 30 days while "
+                    "total_usage is lifetime and monotonic. This retained-ledger "
+                    "gap cannot be repaired downward; use a bounded delta audit "
+                    "or an independently verified historical checkpoint.",
                 },
             )
     for workspace_id in set(settled_actuals) | set(federated_applied):
@@ -531,10 +562,10 @@ def _confirm_behind_ledger(
 # mirror overwrote typed `reserved` with the stale JSON value, so already-typed
 # workspaces have `reserved` frozen far from the truth (auditor flags them). Fix:
 # set credit + each key `reserved` = SUM of that scope's OPEN typed holds. We do
-# NOT touch total_usage — it is monotonic and verified ledger-consistent
-# (JSON baseline + Σ settled actuals) for active workspaces; the lone usage-damaged
-# case (ea7dd3d8) is handled separately. Fail-closed: requires billing_paused so
-# the open-hold set is stable while we write.
+# NOT touch total_usage: it is monotonic, and exact lifetime reconstruction from
+# 30-day terminal rows is impossible after retention begins. Usage repair is a
+# separate, stronger-gated operation. Fail-closed: requires billing_paused so the
+# open-hold set is stable while we write.
 
 
 @dataclass
@@ -728,13 +759,16 @@ def repair_typed_usage(
     *,
     apply: bool = False,
     allow_decrease: bool = False,
+    retained_ledger_complete: bool = False,
 ) -> UsageRepairResult:
     """Set typed `total_usage` = JSON baseline + settled Credits actuals +
     federated settlement claims, for a fully drained PAUSED workspace.
 
     Read-only when apply=False (reports before/after). Fail-closed: refuses
     unless billing_paused, unsharded, fully drained, and the JSON baseline still
-    exists. Refuses to LOWER the counter unless allow_decrease=True."""
+    exists. Refuses to LOWER the counter unless both ``allow_decrease`` and
+    ``retained_ledger_complete`` are true; the latter must come from independent
+    evidence because terminal reservations expire after 30 days."""
     pt = store._param_types
     res = UsageRepairResult(workspace_id=workspace_id, ready=False)
     usage_row_sql = (
@@ -819,15 +853,20 @@ def repair_typed_usage(
         res.total_usage_before is not None
         and res.total_usage_after is not None
         and res.total_usage_after < res.total_usage_before
-        and not allow_decrease
     ):
-        res.reasons.append(
-            f"refusing to lower total_usage "
-            f"{res.total_usage_before} -> {res.total_usage_after}: it is monotonic, "
-            "so a decrease means the ledger is missing rows rather than the "
-            "counter being wrong. Investigate first; pass allow_decrease=True "
-            "only once you know why"
-        )
+        if not allow_decrease:
+            res.reasons.append(
+                f"refusing to lower total_usage "
+                f"{res.total_usage_before} -> {res.total_usage_after}: it is monotonic, "
+                "so a decrease means the retained ledger is missing rows rather "
+                "than the counter being wrong. Investigate first"
+            )
+        elif not retained_ledger_complete:
+            res.reasons.append(
+                "refusing to lower total_usage without independent proof that "
+                "the retained ledger is complete; 30-day terminal-row expiry "
+                "normally makes the computed target too low"
+            )
 
     res.ready = not res.reasons
     if not res.ready or not apply:
@@ -882,7 +921,9 @@ def repair_typed_usage(
         recomputed = fresh_base + fresh_booked
         if recomputed != target:
             return None  # the ledger moved under us — abort rather than write a stale total
-        if recomputed < int(current[0][0]) and not allow_decrease:
+        if recomputed < int(current[0][0]) and (
+            not allow_decrease or not retained_ledger_complete
+        ):
             return None
         transaction.insert_or_update(
             table="tr_credit_balance",
@@ -907,9 +948,10 @@ def repair_typed_usage(
 # ── Recording a pre-ledger usage baseline ───────────────────────────────────
 # For the workspaces whose JSON baseline was deleted before anything needed it.
 # The value is not invented: it is the remainder the ledger cannot account for,
-# which is by definition the usage booked before the ledger began. Recording it
-# makes the workspace auditable from then on; it changes no counter and moves no
-# money.
+# which was usage booked before the ledger began only while the retained ledger
+# was known complete. Once terminal rows can expire, the remainder is merely a
+# candidate that requires independent historical verification. Recording it
+# changes no counter and moves no money.
 
 
 @dataclass
@@ -926,10 +968,12 @@ class UsageBaselineProposal:
 
 
 def propose_usage_baselines(store: Any) -> list[UsageBaselineProposal]:
-    """Every workspace whose counter exceeds its ledger, with the value to record.
+    """Every workspace whose counter exceeds its retained ledger.
 
     Read-only. A workspace whose ledger already explains its counter is absent:
-    its baseline is zero and needs no row.
+    its baseline is zero and needs no row. A proposal is not proof that the
+    remainder predates typed billing: after 30-day expiry it can include normal
+    unretained settlement rows, so the writer requires independent verification.
     """
     report_rows: list[UsageBaselineProposal] = []
     with store._database.snapshot(multi_use=True) as snap:
@@ -973,17 +1017,22 @@ def record_usage_baseline(
     *,
     recorded_at: str,
     apply: bool = False,
+    retained_ledger_complete: bool = False,
 ) -> bool:
-    """Write ONE baseline row. Read-only when apply=False.
+    """Write ONE independently verified baseline row. Read-only when apply=False.
 
     Refuses to overwrite an existing row: a baseline is a statement about
     history, so a second, different value for the same workspace means one of
-    them is wrong and a human should decide which.
+    them is wrong and a human should decide which. Apply also requires explicit
+    evidence that 30-day retention has not removed any rows from the proposal's
+    ledger; otherwise its remainder is not provably pre-ledger usage.
     """
     if proposal.already_recorded is not None:
         return False
     if not apply:
         return proposal.needed
+    if not retained_ledger_complete:
+        return False
     if not proposal.needed:
         return False
 
