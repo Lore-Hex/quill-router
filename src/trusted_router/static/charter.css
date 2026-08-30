@@ -3089,7 +3089,7 @@ body.auth.auth-shell {
 .model-route-head,
 .model-route-row {
   display: grid;
-  grid-template-columns: minmax(150px, 1.25fr) minmax(80px, .7fr) repeat(3, minmax(105px, .9fr)) minmax(80px, .65fr);
+  grid-template-columns: minmax(150px, 1.25fr) repeat(3, minmax(105px, .9fr)) minmax(80px, .65fr);
   min-width: 0;
   gap: 10px;
   align-items: center;

@@ -54,6 +54,34 @@ def test_byok_only_model_stays_not_prepaid() -> None:
     # assert — not a failure.
 
 
+def test_model_detail_prices_credits_routes_once_and_shows_cached_input() -> None:
+    model_id = "z-ai/glm-5.3-flash"
+    endpoints = endpoints_for_model(model_id)
+    credits = [endpoint for endpoint in endpoints if endpoint.usage_type == "Credits"]
+
+    assert credits
+    assert any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
+    assert any(
+        tier.prompt_cached_price_microdollars_per_million_tokens is not None
+        for endpoint in credits
+        for tier in (endpoint.price_tiers or ())
+    )
+
+    view = _model_detail_view(MODELS[model_id])
+    rendered_endpoints = view["endpoints"]
+
+    assert isinstance(rendered_endpoints, list)
+    assert {endpoint["endpoint_id"] for endpoint in rendered_endpoints} == {
+        endpoint.id for endpoint in credits
+    }
+    assert all("usage_type" not in endpoint for endpoint in rendered_endpoints)
+    assert view["cached_prompt_price"] != "Not published"
+    assert any(
+        endpoint["cached_prompt_price"] != "Not published"
+        for endpoint in rendered_endpoints
+    )
+
+
 def test_cerebras_only_credits_serves_allowlisted_models() -> None:
     # Cerebras's public account-callable feed is authoritative for Credits.
     # The generated manifest replaces a stale source allowlist so new models

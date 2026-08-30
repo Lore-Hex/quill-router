@@ -70,14 +70,15 @@
       </div>
     </div>
     {% elif section == "providers" %}
-    <p class="muted-copy">All provider endpoints currently serving this model through TrustedRouter.</p>
+    <p class="muted-copy">Credits provider routes currently serving this model through TrustedRouter.</p>
+    {% if model.endpoints %}
     <table>
       <thead>
         <tr>
           <th>Provider</th>
-          <th>Usage</th>
-          <th>Prompt</th>
-          <th>Completion</th>
+          <th>Input</th>
+          <th>Cached input</th>
+          <th>Output</th>
           <th>Provider policy</th>
         </tr>
       </thead>
@@ -85,8 +86,8 @@
         {% for endpoint in model.endpoints %}
         <tr>
           <td>{{ provider_identity(endpoint.provider_slug, endpoint.provider, endpoint.provider_href, subtitle=endpoint.provider_slug) }}</td>
-          <td>{{ endpoint.usage_type }}</td>
           <td>{{ endpoint.prompt_price }}</td>
+          <td>{{ endpoint.cached_prompt_price }}</td>
           <td>{{ endpoint.completion_price }}</td>
           <td>
             {{ provider_privacy_badges(endpoint) }}
@@ -95,6 +96,9 @@
         {% endfor %}
       </tbody>
     </table>
+    {% else %}
+    <p class="muted-copy">No Credits provider route is currently published for this model.</p>
+    {% endif %}
     {% elif section == "performance" %}
     {% if measured %}
     <h3>Measured performance</h3>
@@ -138,14 +142,15 @@
     </div>
     <p class="signup-foot"><a href="/status">View public status</a> or inspect <a href="/models/{{ model.id }}/providers">provider routes</a>.</p>
     {% elif section == "pricing" %}
-    <p class="muted-copy">Prices are shown as USD per million tokens and billed internally as integer microdollars, not floats.</p>
+    <p class="muted-copy">Credits prices are shown as USD per million tokens and billed internally as integer microdollars, not floats. Cached input appears when the provider publishes a distinct cache-read rate.</p>
+    {% if model.endpoints %}
     <table>
       <thead>
         <tr>
           <th>Provider</th>
-          <th>Usage</th>
-          <th>Prompt</th>
-          <th>Completion</th>
+          <th>Input</th>
+          <th>Cached input</th>
+          <th>Output</th>
           <th>Schedule</th>
         </tr>
       </thead>
@@ -153,8 +158,8 @@
         {% for endpoint in model.endpoints %}
         <tr>
           <td>{{ provider_identity(endpoint.provider_slug, endpoint.provider, endpoint.provider_href) }}</td>
-          <td>{{ endpoint.usage_type }}</td>
           <td>{{ endpoint.prompt_price }}</td>
+          <td>{{ endpoint.cached_prompt_price }}</td>
           <td>{{ endpoint.completion_price }}</td>
           <td>
             {% if endpoint.pricing_schedule %}
@@ -167,6 +172,9 @@
         {% endfor %}
       </tbody>
     </table>
+    {% else %}
+    <p class="muted-copy">No Credits provider route is currently published for this model.</p>
+    {% endif %}
     {% elif section == "uptime" %}
     <div class="seo-two-col">
       <div>

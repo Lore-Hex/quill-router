@@ -28,6 +28,8 @@ test("models explorer loads provider cache prices without horizontal overflow", 
   await card.locator("summary").click();
   await expect(card.locator(".model-route-row").first()).toBeVisible();
   await expect(card.getByText("Cached input", { exact: true }).first()).toBeVisible();
+  await expect(card.locator(".model-route-head")).not.toContainText("Routes");
+  await expect(card.locator(".model-route-results")).not.toContainText("BYOK");
 
   for (const viewport of [
     { width: 1280, height: 800 },
