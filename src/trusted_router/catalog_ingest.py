@@ -709,11 +709,27 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
         # headline rate above).
         cheapest_tiers = next(t for p, _c, t, _s, _e in per_endpoint_prices if p == cheapest_prompt)
 
-        ctx_candidates = [
-            int(raw_model.get("context_length") or 0),
-            *(int(ep.get("context_length") or 0) for _p, _c, _t, _s, ep in per_endpoint_prices),
-        ]
-        context_length = max(ctx_candidates) or 0
+        # Model-level context is advertised, so like the price above it must
+        # not lie. `max()` over every endpoint takes the most optimistic
+        # number any reseller published, and resellers get this wrong:
+        # z-ai/glm-5.3-flash carries 1310720 on six third-party endpoints
+        # while Z.AI's own endpoint -- and upstream's `top_provider` -- say
+        # 1048576. Prefer `top_provider`, which is upstream's canonical
+        # capability summary for the model, and fall back to the endpoints
+        # only when it is absent.
+        top_provider = raw_model.get("top_provider")
+        if not isinstance(top_provider, dict):
+            top_provider = {}
+        context_length = int(top_provider.get("context_length") or 0)
+        if not context_length:
+            ctx_candidates = [
+                int(raw_model.get("context_length") or 0),
+                *(
+                    int(ep.get("context_length") or 0)
+                    for _p, _c, _t, _s, ep in per_endpoint_prices
+                ),
+            ]
+            context_length = max(ctx_candidates) or 0
 
         # Anthropic-native `/v1/messages` is only available for models
         # Anthropic actually serves; for everything else, /v1/messages is

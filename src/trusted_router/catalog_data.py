@@ -2488,8 +2488,11 @@ SYNTH_QUALITY_MODEL_ORDER = (
     DEEPSEEK_V4_PRO_0813_MODEL_ID,
 )
 
+# Every member must serve the 1M window this model advertises. minimax-m3 tops
+# out at 524288 and was only ever eligible here because upstream reseller
+# metadata over-reported its context; routing does not filter candidates by
+# capacity, so a large request could land on it and fail at the provider.
 SYNTH_QUALITY_1M_MODEL_ORDER = (
-    "minimax/minimax-m3",
     "xiaomi/mimo-v2.5-pro",
     "z-ai/glm-5.2",
     DEEPSEEK_V4_PRO_0423_MODEL_ID,
