@@ -867,6 +867,57 @@ def test_oauth_browser_approve_rejects_oversized_and_overflowing_limits(client: 
         assert response.status_code == 400, f"{bad!r}: {response.status_code}"
 
 
+def test_consent_page_clamps_an_oversized_suggestion_to_what_it_can_approve(
+    client: TestClient,
+) -> None:
+    # An app may suggest more than the form's $10,000 ceiling. The page must
+    # render the number the user can actually approve, and the approval must
+    # mint exactly that -- not the app's larger suggestion.
+    user = STORE.ensure_user("alice@example.com")
+    raw_session, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="google",
+        label="alice@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    client.cookies.set("tr_session", raw_session)
+
+    page = client.get(
+        "/auth",
+        params={
+            "callback_url": "https://app.example.com/callback",
+            "key_label": "Example app",
+            "limit": "20000",
+        },
+    )
+    assert page.status_code == 200
+    assert 'name="limit"' in page.text
+    assert 'value="10000"' in page.text
+    assert 'value="20000"' not in page.text
+
+    def value(name: str) -> str:
+        return page.text.split(f'name="{name}" value="', 1)[1].split('"', 1)[0]
+
+    approved = client.post(
+        "/auth/approve",
+        data={
+            "consent": value("consent"),
+            "csrf_token": value("csrf_token"),
+            "limit": "10000",
+            "usage_limit_type": "",
+        },
+        follow_redirects=False,
+    )
+    assert approved.status_code == 302
+    code = parse_qs(urlsplit(approved.headers["location"]).query)["code"][0]
+    exchanged = client.post("/v1/auth/keys", json={"code": code})
+    assert exchanged.status_code == 200
+    key = STORE.get_key_by_raw(exchanged.json()["key"])
+    assert key is not None
+    assert key.limit_microdollars == 10_000_000_000
+
+
 def test_programmatic_limits_above_the_consent_ceiling_still_work(client: TestClient) -> None:
     # The $10,000 ceiling is consent-page policy. The query/JSON contract
     # documents no maximum, so a headless caller's $20,000 limit must still

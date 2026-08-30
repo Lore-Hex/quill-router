@@ -867,7 +867,16 @@ def _consent_html(
         f"{oauth_app.name} · {oauth_app.id}" if oauth_app is not None else key_label
     )
     limit = _limit_microdollars(params.get("limit"))
+    # The consent input advertises max=10000 and the approve handler enforces
+    # the same ceiling on posted values, so render any larger app suggestion
+    # clamped: the user sees, edits, and approves the number that will actually
+    # bind. (Un-clamped, a $20,000 suggestion pre-filled an unsubmittable field
+    # -- and before posted values were honored at all, the browser forced the
+    # user to type a smaller number and then minted the app's larger one.)
+    # Headless callers who need more use the JSON path, which has no ceiling.
     effective_limit = OAUTH_DEFAULT_KEY_LIMIT if limit is None else microdollars_to_decimal(limit)
+    if limit is not None and limit > CONSENT_FORM_LIMIT_MAX_DOLLARS * 1_000_000:
+        effective_limit = CONSENT_FORM_LIMIT_MAX_DOLLARS
     reset = _limit_reset(params.get("usage_limit_type")) or ""
     summary = live_credit_summary(workspace_id)
     available = summary["available"] if summary else 0
