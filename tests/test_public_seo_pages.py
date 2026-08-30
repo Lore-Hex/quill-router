@@ -1202,7 +1202,7 @@ def test_model_overview_surfaces_cached_route_evidence(
 
     assert response.status_code == 200
     assert "Current route evidence" in response.text
-    assert "Lowest prepaid input price" in response.text
+    assert "Lowest Credits input price" in response.text
     assert "140 ms" in response.text
     assert "91 tok/s" in response.text
     assert "99.00% to 100.00%" in response.text
@@ -1239,8 +1239,8 @@ def test_model_route_evidence_does_not_invent_a_prepaid_price(
         test_mode=True,
     )
 
-    assert evidence["lowest_prompt_price"] == "BYOK only"
-    assert evidence["lowest_completion_price"] == "BYOK only"
+    assert evidence["lowest_prompt_price"] is None
+    assert evidence["lowest_completion_price"] is None
 
 
 def test_model_overview_links_canonical_related_comparisons(client: TestClient) -> None:

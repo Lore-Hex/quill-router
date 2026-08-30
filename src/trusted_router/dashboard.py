@@ -5566,9 +5566,9 @@ def _model_route_evidence(
         else None
     )
     return {
-        "lowest_prompt_price": _price(lowest_prompt) if lowest_prompt is not None else "BYOK only",
+        "lowest_prompt_price": _price(lowest_prompt) if lowest_prompt is not None else None,
         "lowest_completion_price": (
-            _price(lowest_completion) if lowest_completion is not None else "BYOK only"
+            _price(lowest_completion) if lowest_completion is not None else None
         ),
         "fastest_ttft_ms": fastest_ttft_ms,
         "fastest_ttft": (
@@ -5617,6 +5617,18 @@ def _model_faq_items(
     else:
         provider_answer = ", ".join(str(name) for name in provider_names[:-1])
         provider_answer = f"{provider_answer}, and {provider_names[-1]}"
+    if route_evidence["route_count"]:
+        price_answer = (
+            f"The current lowest Credits input price is "
+            f"{route_evidence['lowest_prompt_price']} and the lowest Credits output price is "
+            f"{route_evidence['lowest_completion_price']}. Prices are per one million tokens "
+            "and come from the current route catalog."
+        )
+    else:
+        price_answer = (
+            f"TrustedRouter currently publishes no Credits provider route for {model.name}, "
+            "so no public Credits price is available."
+        )
     return (
         (
             f"What model ID should I use for {model.name}?",
@@ -5630,9 +5642,7 @@ def _model_faq_items(
         ),
         (
             f"How much does {model.name} cost through TrustedRouter?",
-            f"The current lowest prepaid input price is {route_evidence['lowest_prompt_price']} "
-            f"and the lowest output price is {route_evidence['lowest_completion_price']}. "
-            "Prices are per one million tokens and come from the current route catalog.",
+            price_answer,
         ),
         (
             f"How do I require zero data retention for {model.name}?",
