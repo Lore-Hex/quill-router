@@ -89,6 +89,13 @@ jobs:
       - name: Install outbox drain and verify cloud completeness
         if: ${{ inputs.mode == 'drain-install' }}
         working-directory: src
+        env:
+          # The installer refuses an admin DSN: the ClickHouse host must not
+          # hold superuser-equivalent credentials for the operational
+          # database. tr_drain is the scoped DSQL role (LOGIN, plus SELECT
+          # and DELETE on the outbox table only) created once by an operator
+          # with admin, per the installer's own instructions.
+          DSQL_USER: tr_drain
         run: |
           bash scripts/deploy/aws_eu_clickhouse_drain_install.sh
           bash scripts/deploy/verify_cloud_complete.sh aws
