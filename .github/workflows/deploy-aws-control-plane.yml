@@ -103,5 +103,10 @@ jobs:
           # with admin, per the installer's own instructions.
           DSQL_USER: tr_drain
         run: |
+          # Schema first: the drain's own verification queries every
+          # operational table, so a node behind on migrations fails the
+          # install with a delivery-shaped error (run 33335255503, missing
+          # spend_lease_shadow). Applying is a no-op on a converged node.
+          bash scripts/deploy/aws_eu_clickhouse_schema_apply.sh
           bash scripts/deploy/aws_eu_clickhouse_drain_install.sh
           bash scripts/deploy/verify_cloud_complete.sh aws
