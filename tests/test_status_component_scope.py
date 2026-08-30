@@ -23,6 +23,8 @@ from trusted_router.synthetic.components import (
     COMPONENT_DEFINITIONS,
     COMPONENT_PROBE_TARGETS,
     applicable_component_definitions,
+    rollup_slo_class_ids,
+    sample_slo_class_ids,
 )
 from trusted_router.synthetic.status import status_snapshot
 
@@ -176,6 +178,62 @@ def test_gcp_current_checks_expose_regions_without_blending_router_core_slo() ->
     slo_classes = snapshot["slo_classes"]
     assert isinstance(slo_classes, dict)
     assert slo_classes["router_core"]["windows"]["5m"]["sample_count"] == 1
+
+
+def test_legacy_regional_control_plane_probes_do_not_burn_global_slo() -> None:
+    """Private run.app probe artifacts remain visible but never count as downtime."""
+    now = utcnow()
+    created_at = _iso(now - dt.timedelta(seconds=10))
+    canonical = SyntheticProbeSample(
+        id="syn-control-plane-global",
+        probe_type="control_plane_health",
+        target="control-plane",
+        target_url="https://trustedrouter.com/health",
+        monitor_region="us-central1",
+        status="up",
+        created_at=created_at,
+    )
+    legacy_regional = SyntheticProbeSample(
+        id="syn-control-plane-legacy-region",
+        probe_type="control_plane_health",
+        target="us-central1",
+        target_region="us-central1",
+        target_url="https://trusted-router.example.run.app/health",
+        monitor_region="us-central1",
+        status="down",
+        http_status=404,
+        created_at=created_at,
+    )
+    legacy_rollup = SyntheticRollup(
+        id="rollup-control-plane-legacy-region",
+        period="hour",
+        period_start=_iso(now.replace(minute=0, second=0, microsecond=0)),
+        component="uncategorized",
+        target="us-central1",
+        probe_type="control_plane_health",
+        monitor_region="us-central1",
+        target_region="us-central1",
+        sample_count=31,
+        down_count=31,
+        error_counts={"bad_health_response": 31},
+        last_checked_at=created_at,
+    )
+
+    assert sample_slo_class_ids(canonical) == ["control_plane"]
+    assert sample_slo_class_ids(legacy_regional) == []
+    assert rollup_slo_class_ids(legacy_rollup) == []
+
+    snapshot = status_snapshot(
+        [canonical, legacy_regional],
+        rollups=[legacy_rollup],
+        now=now,
+        settings=_gcp_settings(),
+    )
+    control_plane = snapshot["slo_classes"]["control_plane"]
+    assert control_plane["status"] == "up"
+    assert control_plane["windows"]["5m"]["sample_count"] == 1
+    assert control_plane["windows"]["5m"]["uptime_percent"] == 100.0
+    assert set(control_plane["current_by_region"]) == {"global"}
 
 
 def test_gcp_current_checks_keep_complete_regional_deploy_canaries() -> None:

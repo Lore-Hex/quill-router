@@ -468,7 +468,12 @@ def _slo_class_ids(*, probe_type: str, target: str) -> list[str]:
         target == "control-plane" and probe_type in BILLING_PROBES | {"provider_fallback"}
     ):
         ids.append("router_core")
-    if probe_type in CONTROL_PLANE_PROBES:
+    # Control-plane availability is a global load-balanced service signal.
+    # Older monitor images emitted region-targeted control_plane_health rows
+    # against private run.app origins; those requests were rejected by Cloud
+    # Run before reaching the application and must remain forensic telemetry,
+    # not SLO downtime. New probes use the explicit "control-plane" target.
+    if target == "control-plane" and probe_type in CONTROL_PLANE_PROBES:
         ids.append("control_plane")
     return ids
 
