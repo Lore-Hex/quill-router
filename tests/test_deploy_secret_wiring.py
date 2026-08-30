@@ -177,7 +177,17 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
     # the no-traffic deploy wait for that many Ready instances (us-east4 pins
     # 8; the warm step ran 7m37). The primer caps at min(2, service minimum).
     assert 'prewarm_floor="${TR_CLOUD_RUN_PREWARM_MIN_INSTANCES:-2}"' in rollout
-    assert 'revision_min_instances="$prewarm_floor"' in rollout
+    assert "cloud_run_candidate_min_instances()" in rollout
+    assert (
+        'revision_min_instances="$(cloud_run_candidate_min_instances '
+        '"$min_instances")"'
+        in rollout
+    )
+    assert (
+        'warm_min_instances="$(cloud_run_candidate_min_instances '
+        '"$warm_service_min_instances")"'
+        in rollout
+    )
     assert '--min-instances "$revision_min_instances"' in rollout
     assert '"TR_SPANNER_POOL_SIZE=${TR_SPANNER_POOL_SIZE}"' in rollout
 
