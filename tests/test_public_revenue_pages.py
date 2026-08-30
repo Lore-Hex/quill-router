@@ -551,13 +551,30 @@ def test_public_model_detail_lists_distinct_serving_providers(client: TestClient
 
     assert response.status_code == 200
     assert "Providers serving this model" in response.text
-    assert "Endpoints</th>" in response.text
+    assert "Credits routes</th>" in response.text
+    assert "Cached input</th>" in response.text
+    assert "Usage</th>" not in response.text
+    assert ">BYOK<" not in response.text
     assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
     assert "IQ 116" in response.text
-    expected_providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
+    expected_providers = {
+        endpoint.provider
+        for endpoint in endpoints_for_model(model_id)
+        if endpoint.usage_type == "Credits"
+    }
     assert "kimi" in expected_providers
     for provider in expected_providers:
         assert f'title="{provider}"' in response.text
+
+
+def test_byok_only_model_page_reports_no_credits_route(client: TestClient) -> None:
+    response = client.get("/models/tencent/hy3-preview")
+
+    assert response.status_code == 200
+    assert "No Credits provider route is currently published" in response.text
+    assert "no Credits provider route for Tencent: Hy3 preview" in response.text
+    assert "<th>Billing</th>" not in response.text
+    assert ">BYOK<" not in response.text
 
 
 def test_public_partner_model_discloses_fixed_price_and_minimum(

@@ -48,10 +48,13 @@
     <span>Context</span><span>{{ left.context_length }} tokens</span><span>{{ right.context_length }} tokens</span>
   </div>
   <div class="matrix-row">
-    <span>Provider routes</span><span>{{ left.endpoint_count }}</span><span>{{ right.endpoint_count }}</span>
+    <span>Credits provider routes</span><span>{{ left.endpoint_count }}</span><span>{{ right.endpoint_count }}</span>
   </div>
   <div class="matrix-row">
     <span>Cheapest route</span><span>{{ comparison.left_price }}</span><span>{{ comparison.right_price }}</span>
+  </div>
+  <div class="matrix-row">
+    <span>Cached input</span><span>{{ left.cached_prompt_price }}</span><span>{{ right.cached_prompt_price }}</span>
   </div>
   <div class="matrix-row">
     <span>Privacy posture</span><span>{{ comparison.left_privacy }}</span><span>{{ comparison.right_privacy }}</span>
@@ -85,8 +88,8 @@
     <div class="panel-head"><h2>{{ left.name }} routes</h2></div>
     <div class="panel-body">
       <ul class="link-list">
-        <li><a href="/models/{{ left.id }}">Overview</a><span>{{ left.endpoint_count }} endpoints</span></li>
-        {% if left.pricing_href %}<li><a href="{{ left.pricing_href }}">Pricing</a><span>Prompt and completion rates</span></li>{% endif %}
+        <li><a href="/models/{{ left.id }}">Overview</a><span>{{ left.endpoint_count }} Credits routes</span></li>
+        {% if left.pricing_href %}<li><a href="{{ left.pricing_href }}">Pricing</a><span>Input, cached input, and output rates</span></li>{% endif %}
         {% if left.benchmarks_href %}<li><a href="{{ left.benchmarks_href }}">Benchmarks</a><span>TrustedRouter and external sources</span></li>{% endif %}
         {% if left.providers_href %}<li><a href="{{ left.providers_href }}">Providers</a><span>All serving providers</span></li>{% endif %}
       </ul>
@@ -96,8 +99,8 @@
     <div class="panel-head"><h2>{{ right.name }} routes</h2></div>
     <div class="panel-body">
       <ul class="link-list">
-        <li><a href="/models/{{ right.id }}">Overview</a><span>{{ right.endpoint_count }} endpoints</span></li>
-        {% if right.pricing_href %}<li><a href="{{ right.pricing_href }}">Pricing</a><span>Prompt and completion rates</span></li>{% endif %}
+        <li><a href="/models/{{ right.id }}">Overview</a><span>{{ right.endpoint_count }} Credits routes</span></li>
+        {% if right.pricing_href %}<li><a href="{{ right.pricing_href }}">Pricing</a><span>Input, cached input, and output rates</span></li>{% endif %}
         {% if right.benchmarks_href %}<li><a href="{{ right.benchmarks_href }}">Benchmarks</a><span>TrustedRouter and external sources</span></li>{% endif %}
         {% if right.providers_href %}<li><a href="{{ right.providers_href }}">Providers</a><span>All serving providers</span></li>{% endif %}
       </ul>

@@ -151,20 +151,21 @@
 
   function renderRoutes(container, routes) {
     container.replaceChildren();
-    if (!routes.length) {
-      container.append(element("p", "model-route-error", "No active provider routes are published for this model."));
+    const creditRoutes = routes.filter((route) => route.usage_type === "Credits");
+    if (!creditRoutes.length) {
+      container.append(element("p", "model-route-error", "No active Credits provider routes are published for this model."));
       return;
     }
 
     const grouped = new Map();
-    routes.forEach((route) => {
+    creditRoutes.forEach((route) => {
       const key = route.provider || route.provider_name || "provider";
       if (!grouped.has(key)) grouped.set(key, []);
       grouped.get(key).push(route);
     });
 
     const header = element("div", "model-route-head");
-    ["Provider", "Routes", "Input", "Cached input", "Output", "Privacy"].forEach((label) => header.append(element("span", "", label)));
+    ["Provider", "Input", "Cached input", "Output", "Privacy"].forEach((label) => header.append(element("span", "", label)));
     container.append(header);
 
     [...grouped.entries()]
@@ -184,7 +185,6 @@
         providerCell.dataset.label = "Provider";
         providerCell.append(providerLink);
         row.append(providerCell);
-        row.append(routeCell("Routes", [...new Set(providerRoutes.map((route) => route.usage_type))].join(" + ")));
         row.append(routeCell("Input", priceRange(providerRoutes, "prompt"), "model-route-price"));
         row.append(routeCell("Cached input", priceRange(providerRoutes, "input_cache_read"), "model-route-price"));
         row.append(routeCell("Output", priceRange(providerRoutes, "completion"), "model-route-price"));
