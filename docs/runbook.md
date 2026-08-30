@@ -860,9 +860,14 @@ fails closed if the configured typed shard set is incomplete.
   11:43 UTC; a failing run alerts). It is now purely typed-INTERNAL: `reserved`
   equals the sum of that workspace/key's open typed-origin holds (both
   directions — it also flags an orphan open-hold group with no typed row), and
-  `reserved >= 0`. It does NOT compare against JSON (that book is dead), so a
-  stale JSON total can never false-alarm it. A failure means real drift between
-  the reserved counter and live holds — investigate, do not just re-run.
+  `reserved >= 0`. Its usage arm requires the lifetime counter to cover all
+  retained bookings and flags bookings with no typed balance. Terminal request
+  rows expire after 30 days, so a positive lifetime-counter remainder is
+  reported as partial history coverage, not a violation and never a reason to
+  lower `total_usage`. It does NOT compare against JSON (that book is dead), so
+  a stale JSON total can never false-alarm it. A hard failure means real drift
+  between typed counters and retained holds/bookings — investigate, do not just
+  re-run.
 - `repair_typed_reserved` — the fix for a drifted `reserved` (e.g. holds the
   reaper freed without decrementing under some past bug). Recomputes `reserved`
   from live open holds. Run read-only/dry first, then `--apply`. It still refuses

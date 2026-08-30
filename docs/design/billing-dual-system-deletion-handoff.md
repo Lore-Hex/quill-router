@@ -101,7 +101,15 @@ print("tr_reservation total", tot, "open", opn, "topopen", [(w[:8], c) for w, c 
 
 ## 4. STEP 2 — Fix `ea7dd3d8` $3.42 + finish #89 (only AFTER 1b)
 
-Now JSON usage is frozen, so `typed total_usage = JSON.total_usage + Σ settled-Credits actual_micro` is permanently correct.
+At cutover, before terminal-row retention began deleting settled reservations,
+`typed total_usage = JSON.total_usage + Σ settled-Credits actual_micro` was a
+valid reconciliation equation. It is **not a permanent lifetime invariant**:
+`total_usage` is monotonic and lifetime-scoped, while terminal
+`tr_reservation` rows are deleted after 30 days. After that boundary, a
+positive remainder is unretained history and must never be used to lower the
+customer counter. Standing audits may still fail on a counter below the
+retained ledger or on an orphan booking; exact lifetime equality requires a
+bounded delta audit or an independently verified historical checkpoint.
 
 1. **Reap `ea7dd3d8`'s 18 dead typed holds.** They expired 2026-06-25 15:36+ (settles failed in the clobber incident). Use **reviewed tooling** — either add a `reap` subcommand to `ramp_typed_billing.py` (thin wrapper over the tested `store.reap_expired_reservations(now, limit)`, `storage_gcp_authorize.py:238`; fleet-wide, oldest-expired first, claim-gated so a racing settle is safe) — codex-review + merge it — or rely on the scheduled reaper if one is wired. Verify `ea7dd3d8` open holds → 0 and its typed reserved → 0; auditor stays CLEAN.
 2. **Finish PR #89** (`billing-usage-reconcile` branch): its blocker was "can't prove no pending legacy settle" — now there *is* no legacy settle path, so the concern is moot. Either drop the JSON-stability worry entirely (document why: legacy settle path deleted in 1b) or keep the existing **drain guard** (no open typed holds; already added). Re-run codex; it should PASS now. Merge.

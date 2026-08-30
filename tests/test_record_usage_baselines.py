@@ -49,7 +49,9 @@ def test_recording_makes_the_workspace_auditable(monkeypatch: pytest.MonkeyPatch
     _seed(store, db, "ws_history", usage=5_000_000, settled=1_000_000)
     assert audit_typed_invariants(store).usage_unauditable == 1
 
-    assert record_usage_baselines.main(["--apply"], store=store) == 0
+    assert record_usage_baselines.main(
+        ["--apply", "--verified-retained-ledger-complete"], store=store
+    ) == 0
 
     report = audit_typed_invariants(store)
     assert report.usage_unauditable == 0
@@ -72,6 +74,20 @@ def test_dry_run_writes_nothing() -> None:
     assert audit_typed_invariants(store).usage_unauditable == 1
 
 
+def test_apply_refuses_without_independent_retained_ledger_verification(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-bigtable")
+    store, db, _ = make_fake_store()
+    _seed(store, db, "ws_history", usage=5_000_000, settled=1_000_000)
+
+    assert record_usage_baselines.main(["--apply"], store=store) == 2
+
+    assert (USAGE_BASELINE_KIND, "ws_history") not in db.rows
+    assert "30-day row expiry" in capsys.readouterr().err
+
+
 def test_an_existing_baseline_is_never_overwritten(monkeypatch: pytest.MonkeyPatch) -> None:
     """A second, different value for one workspace means one is wrong."""
     monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-bigtable")
@@ -83,7 +99,9 @@ def test_an_existing_baseline_is_never_overwritten(monkeypatch: pytest.MonkeyPat
         {"workspace_id": "ws_history", "baseline_microdollars": 123},
     )
 
-    assert record_usage_baselines.main(["--apply"], store=store) == 0
+    assert record_usage_baselines.main(
+        ["--apply", "--verified-retained-ledger-complete"], store=store
+    ) == 0
 
     body = json.loads(db.rows[(USAGE_BASELINE_KIND, "ws_history")].body)
     assert body["baseline_microdollars"] == 123
@@ -119,7 +137,11 @@ def test_a_baseline_recorded_between_propose_and_write_is_not_clobbered(
     )
 
     wrote = record_usage_baseline(
-        store, proposal, recorded_at="2026-08-25T00:00:00Z", apply=True
+        store,
+        proposal,
+        recorded_at="2026-08-25T00:00:00Z",
+        apply=True,
+        retained_ledger_complete=True,
     )
 
     assert wrote is False
