@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Together AI routes that are live ahead of the shared OpenRouter snapshot. Verified against https://api.together.xyz/v1/models on 2026-06-22.",
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
-  "generated_at": "2026-08-28T16:32:22Z",
+  "generated_at": "2026-08-30T10:10:39Z",
   "model_count": 22,
   "models": [
     {
@@ -229,7 +229,8 @@
       "context_length": 262144,
       "input_token_price_per_m": 950000,
       "output_token_price_per_m": 4000000,
-      "cached_input_token_price_per_m": 190000
+      "cached_input_token_price_per_m": 190000,
+      "missing_since": "2026-08-30"
     },
     {
       "display_name": "NVIDIA Nemotron 3 Ultra 550B A55B NVFP4",
@@ -500,7 +501,8 @@
       "context_length": 1048576,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
-      "cached_input_token_price_per_m": 30000
+      "cached_input_token_price_per_m": 30000,
+      "missing_since": "2026-08-30"
     },
     {
       "display_name": "Muse Glimmer 30B",

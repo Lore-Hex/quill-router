@@ -179,8 +179,36 @@
       "input_token_price_per_m": 45000,
       "output_token_price_per_m": 320000,
       "cached_input_token_price_per_m": 15000
+    },
+    {
+      "display_name": "glm-5.3",
+      "title": "glm-5.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "glm-5.3",
+      "context_length": 262144,
+      "routable": true,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "input_token_price_per_m": 980000,
+      "output_token_price_per_m": 3080000,
+      "cached_input_token_price_per_m": 180000
     }
   ],
-  "generated_at": "2026-08-28T16:32:22Z",
-  "model_count": 6
+  "generated_at": "2026-08-30T10:10:38Z",
+  "model_count": 7
 }

@@ -2,7 +2,7 @@
   "_about": "Provider-native GMI Cloud catalog. Account-visible models are intersected with GMI's official billing feed; explicitly approved routes omitted from /v1/models remain current only after an exact visible-content PONG canary succeeds.",
   "provider": "gmi",
   "source": "https://console.gmicloud.ai/api/v1/billing/model_prices",
-  "generated_at": "2026-08-29T04:37:18Z",
+  "generated_at": "2026-08-30T10:10:38Z",
   "model_count": 93,
   "models": [
     {
@@ -489,9 +489,9 @@
       "id": "deepseek/deepseek-v4-pro",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Pro",
       "context_length": 1048576,
-      "input_token_price_per_m": 1320000,
-      "output_token_price_per_m": 3960000,
-      "cached_input_token_price_per_m": 44000
+      "input_token_price_per_m": 1740000,
+      "output_token_price_per_m": 3480000,
+      "cached_input_token_price_per_m": 145000
     },
     {
       "display_name": "DeepSeek-V4-Pro-0813",

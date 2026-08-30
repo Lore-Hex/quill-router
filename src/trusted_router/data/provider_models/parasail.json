@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Parasail models live ahead of the shared snapshot. Prices refreshed hourly from the public pricing page (www.parasail.io/pricing); model liveness gated on api.parasail.io/v1/models.",
   "provider": "parasail",
   "source": "https://www.parasail.io/pricing",
-  "generated_at": "2026-08-29T04:28:49Z",
+  "generated_at": "2026-08-30T10:10:39Z",
   "model_count": 6,
   "models": [
     {
@@ -114,7 +114,8 @@
       "status": 1,
       "input_token_price_per_m": 750000,
       "output_token_price_per_m": 3500000,
-      "cached_input_token_price_per_m": 160000
+      "cached_input_token_price_per_m": 160000,
+      "missing_since": "2026-08-30"
     },
     {
       "id": "z-ai/glm-5.3-flash",

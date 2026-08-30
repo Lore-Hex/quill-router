@@ -1,8 +1,8 @@
 {
   "provider": "nebius",
   "source": "https://api.tokenfactory.nebius.com/v1/models?verbose=true",
-  "generated_at": "2026-08-28T16:32:22Z",
-  "model_count": 42,
+  "generated_at": "2026-08-30T10:10:39Z",
+  "model_count": 43,
   "models": [
     {
       "id": "meta-llama/Meta-Llama-3.1-8B-Instruct",
@@ -1055,6 +1055,32 @@
       "max_output_tokens": 65536,
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "zai-org/GLM-5.3-Flash",
+      "display_name": "GLM-5.3-Flash",
+      "title": "z-ai/glm-5.3-flash",
+      "created": 1787872621,
+      "context_length": 1024000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 500000,
       "model_type": "chat",
       "features": [
         "serverless",
