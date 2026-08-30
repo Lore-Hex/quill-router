@@ -54,6 +54,7 @@ def test_price_refresh_checks_exact_branch_sha_before_advancing_main() -> None:
     ) < workflow.index(status_bridge)
     assert workflow.index(status_bridge) < workflow.index(main_push)
     assert workflow.index(main_push) < workflow.index(deploy_dispatch)
+    assert "deploy_synthetic_monitor" not in workflow
     assert "WARN: failed to dispatch deploy.yml" not in workflow
 
 
