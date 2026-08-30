@@ -1010,6 +1010,7 @@ jobs:
       - name: Smoke test prod
         run: |
           set -euo pipefail
+          source scripts/deploy/_cloud_run_revision_probe.sh
           check_url() {
             local name="$1"
             local url="$2"
@@ -1047,18 +1048,26 @@ jobs:
             "https://trust.trustedrouter.com/trust/gcp-release.json?nocache=${GITHUB_RUN_ID}"
 
           # A global request can repeatedly land on a healthy warm region and
-          # miss a stale cold revision. Exercise the shared-storage reader in
-          # every load-balanced control-plane region directly.
+          # miss a stale cold revision. Public Cloud Run origins can be probed
+          # directly. Private origins intentionally return Google's platform
+          # 404 outside the load balancer, so retain the staged regional
+          # canaries above and require exact revision/config convergence here.
           for region in us-central1 us-east4 europe-west4 southamerica-east1; do
             service_json=$(gcloud run services describe "${SERVICE}" \
               --project="${PROJECT_ID}" --region="${region}" \
               --format=json)
-            service_url=$(jq -r '.status.url' <<<"${service_json}")
-            check_url "ready_${region}" "${service_url}/ready"
-            check_url "status_${region}" "${service_url}/status.json"
-            check_url "status_page_${region}" "${service_url}/status"
-            check_url "leaderboard_${region}" "${service_url}/leaderboard"
-            check_url "video_leaderboard_${region}" "${service_url}/leaderboard/video"
+            service_ingress=$(cloud_run_service_ingress \
+              "${SERVICE}" "${region}" "${PROJECT_ID}")
+            if [ "${service_ingress}" = "all" ]; then
+              service_url=$(jq -r '.status.url' <<<"${service_json}")
+              check_url "ready_${region}" "${service_url}/ready"
+              check_url "status_${region}" "${service_url}/status.json"
+              check_url "status_page_${region}" "${service_url}/status"
+              check_url "leaderboard_${region}" "${service_url}/leaderboard"
+              check_url "video_leaderboard_${region}" "${service_url}/leaderboard/video"
+            else
+              echo "${region}: private Cloud Run ingress (${service_ingress}); validated through staged regional canary and revision convergence"
+            fi
 
             latest_ready=$(jq -r '.status.latestReadyRevisionName // ""' \
               <<<"${service_json}")
