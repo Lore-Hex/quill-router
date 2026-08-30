@@ -170,6 +170,17 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         chosen = str(form.get("monthly_budget") or "20")
         if consent.client_app_id and chosen not in {"5", "20", "100", "none"}:
             raise api_error(400, "Invalid monthly budget", ErrorType.BAD_REQUEST)
+        posted_limit_present = "limit" in form
+        posted_limit = (
+            _limit_microdollars(
+                form.get("limit"),
+                maximum_microdollars=CONSENT_FORM_LIMIT_MAX_DOLLARS * 1_000_000,
+            )
+            if posted_limit_present
+            else None
+        )
+        posted_reset_present = "usage_limit_type" in form
+        posted_reset = _limit_reset(form.get("usage_limit_type")) if posted_reset_present else None
         consumed = STORE.consume_consent_request(
             consent.id,
             user_id=str(_principal_user_id(principal) or ""),
@@ -181,6 +192,20 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         if consumed.client_app_id:
             consumed.limit_microdollars = None if chosen == "none" else dollars_to_microdollars(chosen)
             consumed.limit_reset = None if chosen == "none" else "monthly"
+        else:
+            # The legacy consent page renders "Maximum spend (USD)" and "Limit
+            # resets" as editable fields, but only the app's query-suggested
+            # limit ever reached the key: the posted values were discarded, so
+            # an app that suggested nothing (the Cowork desktop flow) minted an
+            # UNCAPPED key while the page showed a $20 maximum, and a user who
+            # edited a suggested limit was silently overridden. Honor what the
+            # form actually posted (validated above, before the consent was
+            # consumed); absent fields keep the consent's stored values so
+            # programmatic approvals are unchanged.
+            if posted_limit_present:
+                consumed.limit_microdollars = posted_limit
+            if posted_reset_present:
+                consumed.limit_reset = posted_reset
         raw_code, code = _create_code_from_consent(consumed, settings)
         callback_url = (
             _conformant_callback_with_code(code.callback_url, raw_code, state=consumed.state)
@@ -508,15 +533,37 @@ def _suggested_monthly_budget(raw: Any) -> str:
     return str(dollars) if not cents else f"{dollars}.{cents.ljust(2, '0')}"
 
 
-def _limit_microdollars(raw: Any) -> int | None:
+#: Ceiling for a limit typed into the consent page, matching the maximum the
+#: input advertises client-side. UI policy only -- the programmatic paths keep
+#: their documented no-maximum contract, bounded solely by storage safety.
+CONSENT_FORM_LIMIT_MAX_DOLLARS = 10_000
+
+#: Storage-safety ceiling for every path: the largest microdollar value the
+#: BIGINT/INT64 limit columns can hold. Decimal happily parses 1e400 into an
+#: integer that previously approved, burned the consent, and then failed (or
+#: 500d outright via decimal.Overflow) when the key was serialized.
+LIMIT_MAX_STORABLE_MICRODOLLARS = 2**63 - 1
+
+
+def _limit_microdollars(
+    raw: Any,
+    *,
+    maximum_microdollars: int = LIMIT_MAX_STORABLE_MICRODOLLARS,
+) -> int | None:
     if raw in {None, ""}:
         return None
     try:
         value = dollars_to_microdollars(raw)
-    except ValueError as exc:
+    except (ValueError, ArithmeticError) as exc:
         raise api_error(400, "limit must be a dollar amount", ErrorType.BAD_REQUEST) from exc
     if value < 0:
         raise api_error(400, "limit must be non-negative", ErrorType.BAD_REQUEST)
+    if value > maximum_microdollars:
+        raise api_error(
+            400,
+            f"limit must be at most ${maximum_microdollars // 1_000_000}",
+            ErrorType.BAD_REQUEST,
+        )
     return value
 
 
@@ -820,7 +867,16 @@ def _consent_html(
         f"{oauth_app.name} · {oauth_app.id}" if oauth_app is not None else key_label
     )
     limit = _limit_microdollars(params.get("limit"))
+    # The consent input advertises max=10000 and the approve handler enforces
+    # the same ceiling on posted values, so render any larger app suggestion
+    # clamped: the user sees, edits, and approves the number that will actually
+    # bind. (Un-clamped, a $20,000 suggestion pre-filled an unsubmittable field
+    # -- and before posted values were honored at all, the browser forced the
+    # user to type a smaller number and then minted the app's larger one.)
+    # Headless callers who need more use the JSON path, which has no ceiling.
     effective_limit = OAUTH_DEFAULT_KEY_LIMIT if limit is None else microdollars_to_decimal(limit)
+    if limit is not None and limit > CONSENT_FORM_LIMIT_MAX_DOLLARS * 1_000_000:
+        effective_limit = microdollars_to_decimal(CONSENT_FORM_LIMIT_MAX_DOLLARS * 1_000_000)
     reset = _limit_reset(params.get("usage_limit_type")) or ""
     summary = live_credit_summary(workspace_id)
     available = summary["available"] if summary else 0
