@@ -876,7 +876,7 @@ def _consent_html(
     # Headless callers who need more use the JSON path, which has no ceiling.
     effective_limit = OAUTH_DEFAULT_KEY_LIMIT if limit is None else microdollars_to_decimal(limit)
     if limit is not None and limit > CONSENT_FORM_LIMIT_MAX_DOLLARS * 1_000_000:
-        effective_limit = CONSENT_FORM_LIMIT_MAX_DOLLARS
+        effective_limit = microdollars_to_decimal(CONSENT_FORM_LIMIT_MAX_DOLLARS * 1_000_000)
     reset = _limit_reset(params.get("usage_limit_type")) or ""
     summary = live_credit_summary(workspace_id)
     available = summary["available"] if summary else 0
