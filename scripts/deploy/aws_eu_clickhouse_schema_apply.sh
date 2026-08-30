@@ -33,6 +33,27 @@ INSTANCE_ID="${INSTANCE_ID:-}"
 SECRET_ID="${SECRET_ID:-quill/tr-eu-clickhouse-password}"
 CH_USER="${CH_USER:-default}"
 CH_DATABASE="${CH_DATABASE:-default}"
+REMOTE_ROOT="${REMOTE_ROOT:-/opt/tr-clickhouse}"
+
+# Reading the ClickHouse password on the node, without assuming a toolchain.
+# The node has NO AWS CLI (run 33335774959 died with `aws: not found`, exit
+# 127); the drain installer reaches Secrets Manager through boto3 in the
+# drain's own venv. Prefer that interpreter, fall back to a system python that
+# happens to carry boto3, and say plainly when neither exists rather than
+# failing with a bare 127 that names nothing.
+read -r -d '' REMOTE_CH_PW <<REMOTE || true
+PY=""
+for candidate in "${REMOTE_ROOT}/venv/bin/python" /usr/bin/python3 python3; do
+  command -v "\$candidate" >/dev/null 2>&1 || [ -x "\$candidate" ] || continue
+  if "\$candidate" -c 'import boto3' >/dev/null 2>&1; then PY="\$candidate"; break; fi
+done
+if [ -z "\$PY" ]; then
+  echo "no interpreter with boto3 on this node (tried ${REMOTE_ROOT}/venv/bin/python and system python3); this node also has no AWS CLI" >&2
+  exit 1
+fi
+CH_PW=\$("\$PY" -c "import boto3;print(boto3.client('secretsmanager',region_name='${REGION}').get_secret_value(SecretId='${SECRET_ID}')['SecretString'],end='')")
+test -n "\$CH_PW"
+REMOTE
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -92,8 +113,7 @@ SCHEMA_B64="$(base64 < "$WORK/schema.sql" | tr -d '\n')"
 log "applying schema"
 ssm "clickhouse: apply single-node schema" "
 set -eu
-CH_PW=\$(aws secretsmanager get-secret-value --region ${REGION} --secret-id ${SECRET_ID} --query SecretString --output text)
-test -n \"\$CH_PW\"
+${REMOTE_CH_PW}
 printf %s '${SCHEMA_B64}' | base64 -d > /tmp/tr-schema.sql
 CLICKHOUSE_PASSWORD=\"\$CH_PW\" clickhouse-client --user '${CH_USER}' --database '${CH_DATABASE}' --multiquery < /tmp/tr-schema.sql
 rm -f /tmp/tr-schema.sql
@@ -110,7 +130,7 @@ EXPECTED="$(grep -oiE 'CREATE TABLE IF NOT EXISTS [a-z0-9_]+' "$WORK/schema.sql"
 log "verifying every declared table exists"
 ssm "clickhouse: verify schema" "
 set -eu
-CH_PW=\$(aws secretsmanager get-secret-value --region ${REGION} --secret-id ${SECRET_ID} --query SecretString --output text)
+${REMOTE_CH_PW}
 EXPECTED='${EXPECTED}'
 missing=''
 for t in \$(echo \"\$EXPECTED\" | tr ',' ' '); do
