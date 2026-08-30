@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from scripts.pricing.providers import gmi
-from trusted_router.catalog import MODEL_ENDPOINTS
+from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, model_open_weights
 from trusted_router.catalog_data import PRIVACY_TIER_STANDARD
 from trusted_router.catalog_privacy import (
     endpoint_confidential_compute,
@@ -257,6 +257,7 @@ def test_gmi_hy4_preview_is_a_verified_prepaid_route() -> None:
     assert endpoint.upstream_id == HY4_PREVIEW
     assert endpoint.prompt_price_microdollars_per_million_tokens == 879_870
     assert endpoint.completion_price_microdollars_per_million_tokens == 2_638_555
+    assert model_open_weights(MODELS[HY4_PREVIEW]) is True
 
 
 def test_every_gmi_prepaid_route_is_billed_from_provider_list_price() -> None:

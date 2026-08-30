@@ -434,6 +434,7 @@ _OPEN_WEIGHT_PREFIXES = (
     "moonshotai/kimi",
     "nvidia/nemotron",
     "qwen/",
+    "tencent/hy4",
     "thinkingmachines/",
     "xiaomi/mimo",
     "z-ai/glm",
