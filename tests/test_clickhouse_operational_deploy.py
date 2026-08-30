@@ -6,6 +6,8 @@ import sys
 import tarfile
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parents[1]
 
 
@@ -48,7 +50,27 @@ def test_operational_schema_is_replicated_bounded_and_content_free() -> None:
     ):
         assert forbidden_column not in schema.lower()
     assert "CREATE TABLE IF NOT EXISTS spend_lease_shadow" in schema
+    assert "no_lease_reason             Nullable(String) DEFAULT NULL" in schema
+    assert "ADD COLUMN IF NOT EXISTS no_lease_reason" in schema
     assert "lease_token" not in schema.lower()
+
+
+@pytest.mark.parametrize(
+    "schema_name",
+    [
+        "004_operational_analytics_replicated.sql",
+        "006_operational_analytics_single_node.sql",
+    ],
+)
+def test_spend_lease_shadow_reason_column_is_additive_and_nullable(
+    schema_name: str,
+) -> None:
+    schema = (ROOT / "clickhouse" / schema_name).read_text()
+    assert "no_lease_reason             Nullable(String) DEFAULT NULL" in schema
+    assert (
+        "ADD COLUMN IF NOT EXISTS no_lease_reason Nullable(String) DEFAULT NULL"
+        in schema
+    )
 
 
 def test_provider_rollup_schema_replicates_all_published_granularities() -> None:

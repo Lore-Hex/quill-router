@@ -155,12 +155,13 @@ from trusted_router.spend_leases import (
     SpendLeaseArtifact,
     SpendLeaseBoot,
     SpendLeaseEchoValue,
+    SpendLeaseEligibilityFailure,
     SpendLeaseSigner,
     build_spend_lease_shadow_event,
     freeze_spend_lease_catalog,
     mint_shadow_spend_lease,
     parse_boot_auth_header,
-    spend_lease_eligible,
+    spend_lease_ineligibility_reason,
     verify_boot_auth,
 )
 from trusted_router.storage import (
@@ -443,6 +444,7 @@ def _authorize_gateway_sync(
         "boot_auth": boot_auth,
         "boot_kid": boot_auth.kid if boot_auth is not None else "",
         "boot_verified": False,
+        "no_lease_reason": None,
         "echo": echo,
         "server_estimate_micro": None,
     }
@@ -475,6 +477,10 @@ def _record_spend_lease_shadow(
             key_hash=str(context.get("key_hash") or ""),
             boot_kid=str(context.get("boot_kid") or ""),
             boot_verified=bool(context.get("boot_verified")),
+            no_lease_reason=cast(
+                SpendLeaseEligibilityFailure | None,
+                context.get("no_lease_reason"),
+            ),
             echo=cast(SpendLeaseEchoValue | None, context.get("echo")),
             server_estimate_micro=cast(int | None, context.get("server_estimate_micro")),
             server_verdict=cast(Any, verdict),
@@ -886,24 +892,26 @@ def _authorize_gateway_sync_impl(
         and app_markup_basis_points == 0
     )
     spend_lease: SpendLeaseArtifact | None = None
+    no_lease_reason = spend_lease_ineligibility_reason(
+        workspace_id=workspace.id,
+        pilot_workspace_ids=settings.spend_lease_pilot_workspaces,
+        api_key=api_key,
+        route_type=body.route_type,
+        endpoint_candidates=endpoint_candidates,
+        custom_model=custom_model,
+        user_model=user_model,
+        partner_mode=partner_mode,
+        additional_cost_reservation_microdollars=additional_cost_reservation,
+        native_batch_eligible=native_batch_eligible,
+        app_markup_basis_points=app_markup_basis_points,
+        regional_lease_authorization=bool(regional_eligible),
+    )
+    spend_context["no_lease_reason"] = no_lease_reason
     if (
         settings.spend_lease_issuance_enabled
         and bool(spend_context["boot_verified"])
         and boot_auth is not None
-        and spend_lease_eligible(
-            workspace_id=workspace.id,
-            pilot_workspace_ids=settings.spend_lease_pilot_workspaces,
-            api_key=api_key,
-            route_type=body.route_type,
-            endpoint_candidates=endpoint_candidates,
-            custom_model=custom_model,
-            user_model=user_model,
-            partner_mode=partner_mode,
-            additional_cost_reservation_microdollars=additional_cost_reservation,
-            native_batch_eligible=native_batch_eligible,
-            app_markup_basis_points=app_markup_basis_points,
-            regional_lease_authorization=bool(regional_eligible),
-        )
+        and no_lease_reason is None
     ):
         try:
             boot_kid = boot_auth.kid

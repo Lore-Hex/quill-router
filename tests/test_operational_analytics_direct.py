@@ -84,6 +84,7 @@ SPEND_LEASE_SHADOW_PAYLOAD = {
     "boot_kid": "boot-1",
     "boot_verified": True,
     "lease_id": None,
+    "no_lease_reason": "route_type",
     "echo_state": "empty",
     "would_admit": False,
     "enclave_estimate_micro": 12,
@@ -125,7 +126,9 @@ class TestCanonicalParityWithTheFrozenDrainer:
         )
         assert [(e.event_kind, e.row) for e in ours] == [(e.event_kind, e.row) for e in theirs]
 
-    def test_spend_lease_shadow_rows_identical_and_keep_invalid_evidence(self) -> None:
+    def test_spend_lease_shadow_v1_ingesters_accept_reason_and_keep_invalid_evidence(
+        self,
+    ) -> None:
         drainer = _load_drainer()
         payload = dict(SPEND_LEASE_SHADOW_PAYLOAD, divergence="echo_invalid")
         ours = normalise_operational_event(_row("spend_lease_shadow", payload))
@@ -143,7 +146,25 @@ class TestCanonicalParityWithTheFrozenDrainer:
         ]
         assert ours[0].row["boot_verified"] == 1
         assert ours[0].row["would_admit"] == 0
+        assert ours[0].row["no_lease_reason"] == "route_type"
         assert ours[0].row["divergence"] == "echo_invalid"
+
+    def test_spend_lease_shadow_v1_ingesters_default_missing_reason_to_null(self) -> None:
+        drainer = _load_drainer()
+        payload = dict(SPEND_LEASE_SHADOW_PAYLOAD)
+        del payload["no_lease_reason"]
+        ours = normalise_operational_event(_row("spend_lease_shadow", payload))
+        theirs = drainer.normalise_operational_event(
+            drainer.OperationalOutboxRow(
+                shard=0,
+                commit_ts=COMMIT_TS,
+                event_kind="spend_lease_shadow",
+                event_id="evt-1",
+                payload=json.dumps(payload),
+            )
+        )
+        assert ours[0].row["no_lease_reason"] is None
+        assert theirs[0].row["no_lease_reason"] is None
 
     def test_bad_payload_raises_in_both(self) -> None:
         drainer = _load_drainer()

@@ -23,6 +23,7 @@ from trusted_router.spend_leases import (
     parse_boot_auth_header,
     spend_lease_catalog_estimate,
     spend_lease_eligible,
+    spend_lease_ineligibility_reason,
     verify_boot_auth,
 )
 
@@ -73,6 +74,25 @@ def _eligible(**overrides: object) -> bool:
     }
     values.update(overrides)
     return spend_lease_eligible(**values)  # type: ignore[arg-type]
+
+
+def _ineligibility_reason(**overrides: object) -> str | None:
+    values: dict[str, object] = {
+        "workspace_id": "ws-pilot",
+        "pilot_workspace_ids": frozenset({"ws-pilot"}),
+        "api_key": _key(),
+        "route_type": "chat.completions",
+        "endpoint_candidates": _candidates(),
+        "custom_model": None,
+        "user_model": None,
+        "partner_mode": None,
+        "additional_cost_reservation_microdollars": 0,
+        "native_batch_eligible": False,
+        "app_markup_basis_points": 0,
+        "regional_lease_authorization": False,
+    }
+    values.update(overrides)
+    return spend_lease_ineligibility_reason(**values)  # type: ignore[arg-type]
 
 
 def test_spend_lease_eligibility_accepts_exact_credits_chat_cohort() -> None:
@@ -137,6 +157,37 @@ def test_spend_lease_eligibility_rejects_regional_lease_authorizations() -> None
 )
 def test_spend_lease_eligibility_rejects_each_window_limited_key(field: str) -> None:
     assert not _eligible(api_key=_key(**{field: 1_000_000}))
+
+
+@pytest.mark.parametrize(
+    ("expected", "overrides"),
+    [
+        ("not_pilot", {"workspace_id": "ws-other"}),
+        ("route_type", {"route_type": None}),
+        ("no_candidates", {"endpoint_candidates": []}),
+        ("candidate_not_credits", {"endpoint_candidates": _candidates(usage_type="BYOK")}),
+        ("custom_model", {"custom_model": object()}),
+        ("user_model", {"user_model": object()}),
+        ("partner_mode", {"partner_mode": object()}),
+        (
+            "additional_cost",
+            {"additional_cost_reservation_microdollars": 1},
+        ),
+        ("native_batch", {"native_batch_eligible": True}),
+        ("app_markup", {"app_markup_basis_points": 1}),
+        ("regional_lease", {"regional_lease_authorization": True}),
+        ("key_window_limit", {"api_key": _key(limit_daily_microdollars=1)}),
+    ],
+)
+def test_spend_lease_ineligibility_reason_names_each_security_clause(
+    expected: str,
+    overrides: dict[str, object],
+) -> None:
+    assert _ineligibility_reason(**overrides) == expected
+
+
+def test_spend_lease_ineligibility_reason_is_none_for_eligible_cohort() -> None:
+    assert _ineligibility_reason() is None
 
 
 def test_spend_lease_signer_round_trip_with_python_ed25519_verifier() -> None:
@@ -328,6 +379,7 @@ def test_shadow_event_constructs_declines_and_never_drops_invalid_echo() -> None
         key_hash="key",
         boot_kid="boot",
         boot_verified=False,
+        no_lease_reason="route_type",
         echo=echo,
         server_estimate_micro=None,
         server_verdict="declined_other",
@@ -335,6 +387,7 @@ def test_shadow_event_constructs_declines_and_never_drops_invalid_echo() -> None
     assert event.divergence == "echo_invalid"
     assert event.server_verdict == "declined_other"
     assert event.server_estimate_micro is None
+    assert event.no_lease_reason == "route_type"
     assert event.payload()["schema_version"] == 1
 
 

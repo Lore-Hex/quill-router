@@ -48,6 +48,20 @@ SPEND_LEASE_ACTIVE_GRANT_KIND = "spend_lease_active_grant"
 LeaseStatus = Literal["active", "terminal", "expired"]
 ShadowVerdict = Literal["accepted", "declined_funds", "declined_other"]
 ShadowDivergence = Literal["none", "admit_diverged", "estimate_low", "echo_invalid"]
+SpendLeaseEligibilityFailure = Literal[
+    "not_pilot",
+    "route_type",
+    "no_candidates",
+    "candidate_not_credits",
+    "custom_model",
+    "user_model",
+    "partner_mode",
+    "additional_cost",
+    "native_batch",
+    "app_markup",
+    "regional_lease",
+    "key_window_limit",
+]
 
 
 @dataclass(frozen=True)
@@ -116,6 +130,7 @@ class SpendLeaseShadowEvent:
     boot_kid: str
     boot_verified: bool
     lease_id: str | None
+    no_lease_reason: SpendLeaseEligibilityFailure | None
     echo_state: str
     would_admit: bool | None
     enclave_estimate_micro: int | None
@@ -140,6 +155,56 @@ def _has_window_limit(api_key: Any) -> bool:
     )
 
 
+def spend_lease_ineligibility_reason(
+    *,
+    workspace_id: str,
+    pilot_workspace_ids: frozenset[str],
+    api_key: Any,
+    route_type: str | None,
+    endpoint_candidates: Sequence[tuple[Model, ModelEndpoint]],
+    custom_model: Any | None,
+    user_model: Any | None,
+    partner_mode: Any | None,
+    additional_cost_reservation_microdollars: int,
+    native_batch_eligible: bool,
+    app_markup_basis_points: int,
+    regional_lease_authorization: bool,
+) -> SpendLeaseEligibilityFailure | None:
+    """Return the first failing Stage A cohort clause, or ``None`` if eligible.
+
+    Keep the clauses visibly separate: each represents an independently tested
+    security boundary and every fallback candidate must pass.
+    """
+    if workspace_id not in pilot_workspace_ids:
+        return "not_pilot"
+    if route_type not in SPEND_LEASE_ROUTE_TYPES:
+        return "route_type"
+    if not endpoint_candidates:
+        return "no_candidates"
+    if any(
+        UsageType.for_endpoint(endpoint) != UsageType.CREDITS
+        for _model, endpoint in endpoint_candidates
+    ):
+        return "candidate_not_credits"
+    if custom_model is not None:
+        return "custom_model"
+    if user_model is not None:
+        return "user_model"
+    if partner_mode is not None:
+        return "partner_mode"
+    if additional_cost_reservation_microdollars != 0:
+        return "additional_cost"
+    if native_batch_eligible:
+        return "native_batch"
+    if app_markup_basis_points != 0:
+        return "app_markup"
+    if regional_lease_authorization:
+        return "regional_lease"
+    if _has_window_limit(api_key):
+        return "key_window_limit"
+    return None
+
+
 def spend_lease_eligible(
     *,
     workspace_id: str,
@@ -155,39 +220,26 @@ def spend_lease_eligible(
     app_markup_basis_points: int,
     regional_lease_authorization: bool,
 ) -> bool:
-    """The complete Stage A cohort boundary (decision 8).
-
-    Keep the clauses visibly separate: each represents an independently tested
-    security boundary and every fallback candidate must pass.
-    """
-    if workspace_id not in pilot_workspace_ids:
-        return False
-    if route_type not in SPEND_LEASE_ROUTE_TYPES:
-        return False
-    if not endpoint_candidates:
-        return False
-    if any(
-        UsageType.for_endpoint(endpoint) != UsageType.CREDITS
-        for _model, endpoint in endpoint_candidates
-    ):
-        return False
-    if custom_model is not None:
-        return False
-    if user_model is not None:
-        return False
-    if partner_mode is not None:
-        return False
-    if additional_cost_reservation_microdollars != 0:
-        return False
-    if native_batch_eligible:
-        return False
-    if app_markup_basis_points != 0:
-        return False
-    if regional_lease_authorization:
-        return False
-    if _has_window_limit(api_key):
-        return False
-    return True
+    """Boolean compatibility wrapper for the Stage A cohort boundary."""
+    return (
+        spend_lease_ineligibility_reason(
+            workspace_id=workspace_id,
+            pilot_workspace_ids=pilot_workspace_ids,
+            api_key=api_key,
+            route_type=route_type,
+            endpoint_candidates=endpoint_candidates,
+            custom_model=custom_model,
+            user_model=user_model,
+            partner_mode=partner_mode,
+            additional_cost_reservation_microdollars=(
+                additional_cost_reservation_microdollars
+            ),
+            native_batch_eligible=native_batch_eligible,
+            app_markup_basis_points=app_markup_basis_points,
+            regional_lease_authorization=regional_lease_authorization,
+        )
+        is None
+    )
 
 
 def _tiers(endpoint: ModelEndpoint) -> tuple[PriceTier, ...]:
@@ -507,6 +559,7 @@ def build_spend_lease_shadow_event(
     key_hash: str,
     boot_kid: str,
     boot_verified: bool,
+    no_lease_reason: SpendLeaseEligibilityFailure | None,
     echo: SpendLeaseEchoValue | None,
     server_estimate_micro: int | None,
     server_verdict: ShadowVerdict,
@@ -530,6 +583,7 @@ def build_spend_lease_shadow_event(
         boot_kid=boot_kid,
         boot_verified=boot_verified,
         lease_id=echo.lease_id if echo else None,
+        no_lease_reason=no_lease_reason,
         echo_state=echo.state if echo else "missing",
         would_admit=echo.would_admit if echo else None,
         enclave_estimate_micro=echo.enclave_estimate_micro if echo else None,
