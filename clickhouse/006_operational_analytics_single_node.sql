@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS spend_lease_shadow
     boot_kid                    String,
     boot_verified               UInt8,
     lease_id                    Nullable(String),
+    no_lease_reason             Nullable(String) DEFAULT NULL,
     echo_state                  LowCardinality(String),
     would_admit                 Nullable(UInt8),
     enclave_estimate_micro      Nullable(Int64),
@@ -123,6 +124,9 @@ ENGINE = ReplacingMergeTree(ingest_version)
 PARTITION BY toYYYYMMDD(created_at)
 ORDER BY (workspace_id, created_at, event_id)
 TTL toDateTime(created_at) + INTERVAL 30 DAY;
+
+ALTER TABLE spend_lease_shadow
+    ADD COLUMN IF NOT EXISTS no_lease_reason Nullable(String) DEFAULT NULL AFTER lease_id;
 
 CREATE TABLE IF NOT EXISTS synthetic_status_rollups
 (

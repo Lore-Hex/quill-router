@@ -200,6 +200,7 @@ def _signed_authorize_body(
     *,
     idempotency_key: str = "spend-lease-replay",
     echo: dict[str, Any] | None = None,
+    route_type: str | None = "chat.completions",
 ) -> tuple[dict[str, Any], bytes, str]:
     body: dict[str, Any] = {
         "api_key_lookup_hash": key.lookup_hash,
@@ -207,7 +208,7 @@ def _signed_authorize_body(
         "model": "anthropic/claude-haiku-4.5",
         "estimated_input_tokens": 100,
         "max_tokens": 100,
-        "route_type": "chat.completions",
+        "route_type": route_type,
         "spend_lease_echo": echo
         or {
             "lease_id": None,
@@ -326,6 +327,56 @@ def test_authorize_retains_one_active_grant_until_exhaustion_then_increases_gen(
     third_claims = json.loads(b64url_decode(third.split(".")[1]))
     assert third != first
     assert third_claims["gen"] > first_claims["gen"]
+
+
+def test_authorize_shadow_records_reason_without_lease_and_null_when_minted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, key, private, boot = _seed_authorize()
+    monkeypatch.setattr(
+        gateway,
+        "_spend_lease_signer",
+        lambda _settings: SpendLeaseSigner(lambda: bytes(range(32))),
+    )
+    settings = Settings(
+        environment="test",
+        spend_lease_issuance_enabled=True,
+        operational_analytics_outbox_enabled=True,
+        spend_lease_pilot_workspace_ids=workspace.id,
+        spend_lease_signing_secret_name="test-secret-name",  # noqa: S106
+    )
+    rejected_dict, rejected_raw, rejected_header = _signed_authorize_body(
+        key,
+        private,
+        boot,
+        idempotency_key="shadow-reason-rejected",
+        route_type=None,
+    )
+    rejected = gateway._authorize_gateway_sync(  # noqa: SLF001
+        _request(boot_auth_header=rejected_header),
+        GatewayAuthorizeRequest(**rejected_dict),
+        settings,
+        rejected_raw,
+    )
+    minted_dict, minted_raw, minted_header = _signed_authorize_body(
+        key,
+        private,
+        boot,
+        idempotency_key="shadow-reason-minted",
+    )
+    minted = gateway._authorize_gateway_sync(  # noqa: SLF001
+        _request(boot_auth_header=minted_header),
+        GatewayAuthorizeRequest(**minted_dict),
+        settings,
+        minted_raw,
+    )
+
+    assert "spend_lease" not in rejected["data"]
+    assert "spend_lease" in minted["data"]
+    rejected_event = STORE.spend_lease_shadow_events[rejected["data"]["authorization_id"]]
+    minted_event = STORE.spend_lease_shadow_events[minted["data"]["authorization_id"]]
+    assert rejected_event["no_lease_reason"] == "route_type"
+    assert minted_event["no_lease_reason"] is None
 
 
 def test_authorize_shadow_events_include_accept_and_decline_and_keep_echo_invalid() -> None:
