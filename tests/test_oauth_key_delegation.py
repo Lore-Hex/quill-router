@@ -843,6 +843,70 @@ def test_oauth_browser_approve_lets_the_user_edit_a_suggested_limit(client: Test
     assert key.limit_reset == "monthly"
 
 
+def test_oauth_browser_approve_rejects_oversized_and_overflowing_limits(client: TestClient) -> None:
+    user = STORE.ensure_user("alice@example.com")
+    raw_session, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="google",
+        label="alice@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    client.cookies.set("tr_session", raw_session)
+
+    form = _consent_form(
+        client,
+        {"callback_url": "https://app.example.com/callback", "key_label": "Example app"},
+    )
+    for bad in ("10000.01", "20000", "1e400", "1e999999"):
+        response = client.post(
+            "/auth/approve",
+            data={**form, "limit": bad},
+            follow_redirects=False,
+        )
+        assert response.status_code == 400, f"{bad!r}: {response.status_code}"
+
+
+def test_oauth_browser_approve_validation_failure_keeps_the_consent_usable(
+    client: TestClient,
+) -> None:
+    # A 400 on a bad posted limit must not burn the consent: the user fixes the
+    # field and resubmits the same form successfully.
+    user = STORE.ensure_user("alice@example.com")
+    raw_session, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="google",
+        label="alice@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    client.cookies.set("tr_session", raw_session)
+
+    form = _consent_form(
+        client,
+        {"callback_url": "https://app.example.com/callback", "key_label": "Example app"},
+    )
+    rejected = client.post(
+        "/auth/approve",
+        data={**form, "limit": "not-a-number"},
+        follow_redirects=False,
+    )
+    assert rejected.status_code == 400
+
+    retried = client.post(
+        "/auth/approve",
+        data={**form, "limit": "20", "usage_limit_type": ""},
+        follow_redirects=False,
+    )
+    assert retried.status_code == 302
+    code = parse_qs(urlsplit(retried.headers["location"]).query)["code"][0]
+    exchanged = client.post("/v1/auth/keys", json={"code": code})
+    assert exchanged.status_code == 200
+    key = STORE.get_key_by_raw(exchanged.json()["key"])
+    assert key is not None
+    assert key.limit_microdollars == 20_000_000
+
+
 def test_oauth_browser_approve_rejects_a_malformed_posted_limit(client: TestClient) -> None:
     user = STORE.ensure_user("alice@example.com")
     raw_session, _ = STORE.create_auth_session(

@@ -170,6 +170,10 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         chosen = str(form.get("monthly_budget") or "20")
         if consent.client_app_id and chosen not in {"5", "20", "100", "none"}:
             raise api_error(400, "Invalid monthly budget", ErrorType.BAD_REQUEST)
+        posted_limit_present = "limit" in form
+        posted_limit = _limit_microdollars(form.get("limit")) if posted_limit_present else None
+        posted_reset_present = "usage_limit_type" in form
+        posted_reset = _limit_reset(form.get("usage_limit_type")) if posted_reset_present else None
         consumed = STORE.consume_consent_request(
             consent.id,
             user_id=str(_principal_user_id(principal) or ""),
@@ -188,12 +192,13 @@ def register_oauth_key_routes(router: APIRouter) -> None:
             # an app that suggested nothing (the Cowork desktop flow) minted an
             # UNCAPPED key while the page showed a $20 maximum, and a user who
             # edited a suggested limit was silently overridden. Honor what the
-            # form actually posted; absent fields keep the consent's stored
-            # values so programmatic approvals are unchanged.
-            if "limit" in form:
-                consumed.limit_microdollars = _limit_microdollars(form.get("limit"))
-            if "usage_limit_type" in form:
-                consumed.limit_reset = _limit_reset(form.get("usage_limit_type"))
+            # form actually posted (validated above, before the consent was
+            # consumed); absent fields keep the consent's stored values so
+            # programmatic approvals are unchanged.
+            if posted_limit_present:
+                consumed.limit_microdollars = posted_limit
+            if posted_reset_present:
+                consumed.limit_reset = posted_reset
         raw_code, code = _create_code_from_consent(consumed, settings)
         callback_url = (
             _conformant_callback_with_code(code.callback_url, raw_code, state=consumed.state)
@@ -521,15 +526,27 @@ def _suggested_monthly_budget(raw: Any) -> str:
     return str(dollars) if not cents else f"{dollars}.{cents.ljust(2, '0')}"
 
 
+#: Server-side ceiling for a delegated key's spend limit, matching the maximum
+#: the consent page's input advertises. Also the overflow guard: Decimal happily
+#: parses 1e400, which then breaks BIGINT/INT64 microdollar columns downstream.
+LIMIT_MAX_DOLLARS = 10_000
+
+
 def _limit_microdollars(raw: Any) -> int | None:
     if raw in {None, ""}:
         return None
     try:
         value = dollars_to_microdollars(raw)
-    except ValueError as exc:
+    except (ValueError, ArithmeticError) as exc:
         raise api_error(400, "limit must be a dollar amount", ErrorType.BAD_REQUEST) from exc
     if value < 0:
         raise api_error(400, "limit must be non-negative", ErrorType.BAD_REQUEST)
+    if value > LIMIT_MAX_DOLLARS * 1_000_000:
+        raise api_error(
+            400,
+            f"limit must be at most ${LIMIT_MAX_DOLLARS}",
+            ErrorType.BAD_REQUEST,
+        )
     return value
 
 
