@@ -1967,8 +1967,10 @@ def test_combined_synthetic_refresh_is_a_visible_release_gate() -> None:
 
     assert "synthetic_image_refresh.sh" in synthetic_step
     assert "synthetic.sh" in synthetic_step
+    assert "if:" not in synthetic_step
     assert "continue-on-error" not in synthetic_step
     assert "TR_ALLOW_DEPLOYED_COMBINED_SURFACE" not in synthetic_step
+    assert "deploy_synthetic_monitor" not in workflow
 
 
 def test_synthetic_combined_bridge_restores_legacy_job_deploys(
