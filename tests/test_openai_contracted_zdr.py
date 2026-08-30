@@ -113,6 +113,6 @@ def test_public_pages_explain_active_openai_prepaid_scope(client: TestClient) ->
     model = client.get("/models/openai/gpt-5.5")
     assert model.status_code == 200
     assert "Credits" in model.text
-    assert "BYOK" in model.text
+    assert "BYOK" not in model.text
     assert ">ZDR<" in model.text
-    assert "no verified privacy claim" in model.text
+    assert "no verified privacy claim" not in model.text
