@@ -688,14 +688,18 @@ ENV_VARS=(
   "TR_REGIONAL_QUOTA_LEASE_SHARD_COUNT=${REGIONAL_QUOTA_LEASE_SHARD_COUNT}"
   "TR_REGIONAL_QUOTA_BIGTABLE_TABLE=${REGIONAL_QUOTA_BIGTABLE_TABLE}"
   "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=${REGIONAL_QUOTA_BIGTABLE_APP_PROFILES}"
-  # 2026-08-29 pilot: TrustedRouter Synthetic Monitoring workspace only
-  # (first-party traffic). Shadow grants are authoritative=false and escrow
-  # nothing. Revert by removing these three pins and redeploying.
+  # 2026-08-30 pilot: Joseph's own Personal Workspace (first-party, his account,
+  # at his direction). The previous pilot, TrustedRouter Synthetic Monitoring
+  # (d385c399-b245-4147-a528-0a4f6f170c71), was structurally ineligible because
+  # it is the regional-quota pilot workspace and Stage A excludes regional-lease
+  # authorizations by design: no_lease_reason=regional_lease on 190 of 213 pilot
+  # events. Shadow grants are authoritative=false and escrow nothing. Revert by
+  # removing these three pins and redeploying.
   # Deliberately non-sticky: pilot state is source-controlled; the sticky idiom
   # is for operator-set values, and a source default cannot override an existing
   # deployed marker.
   "TR_SPEND_LEASE_ISSUANCE_ENABLED=true"
-  "TR_SPEND_LEASE_PILOT_WORKSPACE_IDS=d385c399-b245-4147-a528-0a4f6f170c71"
+  "TR_SPEND_LEASE_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d"
   "TR_SPEND_LEASE_SIGNING_SECRET_NAME=trustedrouter-spend-lease-signing-seed"
   "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS=${SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS}"
 )
