@@ -13,10 +13,10 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
-    "@typescript-eslint/eslint-plugin": "^8.67.0",
+    "@typescript-eslint/eslint-plugin": "^8.68.0",
     "@typescript-eslint/parser": "^8.18.0",
-    "alpinejs": "^3.16.1",
-    "eslint": "^10.9.0",
+    "alpinejs": "^3.16.3",
+    "eslint": "^10.9.1",
     "stylelint": "^17.14.1",
     "stylelint-config-standard": "^40.0.0",
     "typescript": "^5.7.2",
