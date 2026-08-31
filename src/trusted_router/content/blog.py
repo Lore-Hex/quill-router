@@ -43,7 +43,7 @@ class BlogPost:
 #: featured section looks exactly like a design choice.
 FEATURED_SLUGS: tuple[str, ...] = (
     "we-raised-1-25m-seed",
-    "synth-iris-prometheus-zeus",
+    "prometheus-2-new-draco-state-of-the-art",
     "they-are-still-training-on-your-data",
 )
 
@@ -82,6 +82,7 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
   <text x="72" y="570" font-size="25" font-weight="500" fill="#8ca397">Every model. Privacy with proof.</text>
   <text x="1128" y="570" text-anchor="end" font-size="25" font-weight="750" fill="#f4f1e8">TrustedRouter.com</text>
 </svg></figure>
+<p class="callout"><strong>Read the coverage in <a href="https://www.axios.com/2026/08/25/routing-is-coming-for-the-frontier-ai-labs">Axios: Routing is coming for the frontier AI labs</a>.</strong></p>
 <p>I'm excited to unveil our $1.25 million seed round to continue to build and grow this open source, encrypted, end-to-end verifiable router — a secure, safe way for everyone to send all of their prompts, low stakes and high stakes, through a router to save money and have better uptime for all of their AI needs.</p>
 
 <p>I'm lucky to have really forward-thinking people join this round — people who have backed, at the earliest stages, some of the leading companies of Silicon Valley. <a href="https://www.wlessin.com/">Sam Lessin</a>, of <a href="https://slow.co/">Slow Ventures</a>, former VP of Product at Facebook, is a very thoughtful guy who can see things happening in the future well before other people can, and is excited to be backing the next secure, open-source generation of AI. <a href="https://about.me/billtai">Bill Tai</a> wrote the first checks into <a href="https://www.zoom.com/">Zoom</a> and <a href="https://www.canva.com/">Canva</a> — he's obviously a legend, with a great eye for seeing the next important company way before anyone else does — and he was also the first check to wire for TrustedRouter. And <a href="https://www.linkedin.com/in/lindaavey/">Linda Avey</a>, who co-founded <a href="https://www.23andme.com/">23andMe</a>, is a generational entrepreneur who cares deeply about privacy and about every person being able to use AI in a safe way. Also pleased to have <a href="https://www.linkedin.com/in/georgexing">George Xing</a>, formerly leading data at <a href="https://stripe.com/">Stripe</a>, in the round.</p>

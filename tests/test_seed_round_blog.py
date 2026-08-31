@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from trusted_router.content.blog import BLOG_POSTS_BY_SLUG, FEATURED_SLUGS
 
 SLUG = "we-raised-1-25m-seed"
+AXIOS_URL = "https://www.axios.com/2026/08/25/routing-is-coming-for-the-frontier-ai-labs"
 
 
 def test_seed_round_post_is_featured_and_complete(client: TestClient) -> None:
@@ -16,6 +17,8 @@ def test_seed_round_post_is_featured_and_complete(client: TestClient) -> None:
     assert SLUG in FEATURED_SLUGS
     assert "We Raised a $1.25M Seed" in response.text
     assert "billion-tokens-in-one-day milestone" in response.text
+    assert AXIOS_URL in response.text
+    assert response.text.index(AXIOS_URL) < response.text.index("I'm excited to unveil")
     assert "[link]" not in response.text
 
 
