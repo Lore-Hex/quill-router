@@ -37,8 +37,10 @@ permissions:
   contents: read
   id-token: write
 
-# Billing maintenance is globally serialized. A second dispatch waits instead
-# of racing a workspace that may be paused between prepare and finish.
+# Billing maintenance is globally serialized. GitHub keeps only one pending
+# run per concurrency group and cancels older pending runs, even when
+# cancel-in-progress is false, so operators must dispatch multi-workspace
+# maintenance serially and verify each run before starting the next.
 concurrency:
   group: production-billing-workspace-reshard
   cancel-in-progress: false

@@ -190,6 +190,7 @@ def run_in_transaction_with_retry(
     attempts: int = 8,
     attempts_out: list[int] | None = None,
     total_budget_seconds: float = TXN_BUDGET_SECONDS,
+    transaction_tag: str | None = None,
 ) -> T:
     """Run a Spanner transaction, retrying on ABORTED within a wall-clock budget.
 
@@ -222,6 +223,10 @@ def run_in_transaction_with_retry(
 
     ``attempts_out``, if given, receives the winning attempt number (1 = no
     retry) — used to attribute finalize latency to contention.
+
+    ``transaction_tag`` is a stable, non-sensitive operation label forwarded
+    to Spanner on every retry. It makes lock-stat samples attributable without
+    placing workspace, key, request, or authorization identifiers in telemetry.
     """
     from google.api_core.exceptions import Aborted
 
@@ -238,7 +243,10 @@ def run_in_transaction_with_retry(
         # valid positive deadline for the final sliver).
         inner_timeout = max(remaining, _MIN_INNER_TIMEOUT_SECONDS)
         try:
-            result = database.run_in_transaction(func, timeout_secs=inner_timeout)
+            transaction_kwargs: dict[str, Any] = {"timeout_secs": inner_timeout}
+            if transaction_tag is not None:
+                transaction_kwargs["transaction_tag"] = transaction_tag
+            result = database.run_in_transaction(func, **transaction_kwargs)
         except Aborted as exc:
             last_aborted = exc
             if attempt >= attempts:

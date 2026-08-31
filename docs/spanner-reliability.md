@@ -47,10 +47,12 @@ policy:
   incident immediately.
 - Successful billing calls taking at least 10 seconds are counted. More than
   two per minute for three consecutive minutes opens one incident.
-- The general Spanner contention policy remains at 100 aborted commits per
-  minute for 10 minutes. It is intentionally separate because metadata,
-  rate-limit, and maintenance transactions must not be reported as
-  customer-facing billing degradation.
+- The general Spanner contention policy has three independent gates: more than
+  100 aborted commits per minute for 10 minutes, lock wait above 2 seconds per
+  second for 10 minutes, or lock wait above 30 seconds per second for 5
+  minutes. It is intentionally separate because metadata, rate-limit, and
+  maintenance transactions must not be reported as customer-facing billing
+  degradation.
 
 Every condition reduces all regions and revisions into one time series. The
 log-based `5xx` policy rate-limits notifications to one every 30 minutes and
@@ -106,6 +108,20 @@ For a gateway billing-path incident:
    hot workspace; never delete or rewrite live reservations.
 5. Confirm post-fix requests settle across multiple shards, no new `5xx`
    appears, and the invariant audit remains clean.
+
+Authorize, idempotency-replay, settle, refund, and typed-finalize transactions
+carry stable `tr_*` Spanner transaction tags. Tags identify the operation in
+transaction and lock insights without containing a workspace, key, request,
+authorization, prompt, or output. Hot row keys still identify the affected
+ledger row and must be decoded through the read-only operator path.
+
+The guarded online split briefly pauses new authorizations while existing holds
+drain and invariants are checked. A `503 Workspace billing is paused` during
+that interval is real customer impact, not an alert false positive. The gateway
+logs `billing.authorize_workspace_paused` with only workspace ID and request ID
+so the incident is attributable. Schedule proactive legacy-account splits
+serially in low-traffic windows; GitHub concurrency keeps at most one pending
+run and cancels older pending runs even when `cancel-in-progress` is false.
 
 ### Backup workflow
 

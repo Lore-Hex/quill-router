@@ -413,7 +413,11 @@ def authorize_atomic(
         }
 
     try:
-        return run_in_transaction_with_retry(database, txn)
+        return run_in_transaction_with_retry(
+            database,
+            txn,
+            transaction_tag="tr_authorize",
+        )
     except _Reject as reject:
         return {"outcome": reject.outcome}
     except AlreadyExists:
@@ -435,7 +439,11 @@ def authorize_atomic(
             return _replay(existing)
 
         try:
-            return run_in_transaction_with_retry(database, replay_txn)
+            return run_in_transaction_with_retry(
+                database,
+                replay_txn,
+                transaction_tag="tr_authorize_replay",
+            )
         except _Reject as reject:
             return {"outcome": reject.outcome}
 
@@ -617,7 +625,11 @@ def settle_atomic(
         }
 
     try:
-        result = run_in_transaction_with_retry(database, txn)
+        result = run_in_transaction_with_retry(
+            database,
+            txn,
+            transaction_tag="tr_settle" if success else "tr_refund",
+        )
         _log_missing_key_releases(result)
         return result
     except _SettleError:
@@ -1015,7 +1027,12 @@ def typed_finalize_atomic(
 
     try:
         attempts_box: list[int] = []
-        result = run_in_transaction_with_retry(database, txn, attempts_out=attempts_box)
+        result = run_in_transaction_with_retry(
+            database,
+            txn,
+            attempts_out=attempts_box,
+            transaction_tag="tr_finalize" if success else "tr_refund_finalize",
+        )
         result["attempts"] = attempts_box[0] if attempts_box else 1
         _log_missing_key_releases(result)
         return result
