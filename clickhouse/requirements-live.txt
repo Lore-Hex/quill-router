@@ -3,7 +3,7 @@ google-cloud-spanner>=3.50.0
 google-cloud-storage>=2.18.0
 # ingest_operational_outbox_postgres.py drains the AWS/Azure deployments,
 # whose system of record is Postgres-wire (Aurora DSQL today).
-psycopg[binary]>=3.2.0
+psycopg[binary]>=3.3.4
 # Imported only when --iam-auth aws-dsql is selected, to mint the DSQL
 # connect token. Unused by the Spanner-sourced drains.
 boto3>=1.35.0
