@@ -596,6 +596,15 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "prompt": microdollars_per_million_tokens_to_token_decimal(prompt_min),
         "completion": microdollars_per_million_tokens_to_token_decimal(completion_min),
     }
+    # The endpoint payloads have always published input_cache_read; the model
+    # headline never did, so /v1/models hid the cache-read discount on more
+    # than a thousand endpoints. OR convention, same field name.
+    model_tiers = getattr(model, "price_tiers", ()) or ()
+    model_cached = (
+        model_tiers[0].prompt_cached_price_microdollars_per_million_tokens if model_tiers else None
+    )
+    if model_cached is not None:
+        pricing["input_cache_read"] = microdollars_per_million_tokens_to_token_decimal(model_cached)
     if model.request_price_microdollars:
         pricing["request"] = microdollars_to_decimal(model.request_price_microdollars)
     fixed_image_prices = FIXED_IMAGE_PRICES_MICRODOLLARS.get(model.id)

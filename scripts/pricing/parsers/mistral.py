@@ -98,10 +98,20 @@ def _parse_embedded_json(html: str) -> dict:
         completion = _to_micro_per_m(output_match.group(1))
         if prompt is None or completion is None:
             continue
-        out[or_id] = {
+        row = {
             "prompt_micro_per_m": prompt,
             "completion_micro_per_m": completion,
         }
+        cached_match = re.search(
+            r'"value"\s*:\s*"Cached input[^"]*"[^}]*?"price_dollar"\s*:\s*"([^"]+)"',
+            prices_block,
+            re.DOTALL,
+        )
+        if cached_match:
+            cached = _to_micro_per_m(cached_match.group(1))
+            if cached is not None:
+                row["prompt_cached_micro_per_m"] = cached
+        out[or_id] = row
     return out
 
 
@@ -150,10 +160,18 @@ def _parse_rendered_cards(html: str) -> dict:
             prompt = _rendered_price(card, "Input (/M tokens)")
             completion = _rendered_price(card, "Output (/M tokens)")
             if prompt is not None and completion is not None:
-                out[or_id] = {
+                row = {
                     "prompt_micro_per_m": prompt,
                     "completion_micro_per_m": completion,
                 }
+                # Mistral prices cache hits at a flat -90%, and some cards
+                # carry the explicit "Cached input (/M tokens)" row. Emit it
+                # when present; the settle-time mistral fallback multiplier
+                # covers cards that omit it.
+                cached = _rendered_price(card, "Cached input (/M tokens)")
+                if cached is not None:
+                    row["prompt_cached_micro_per_m"] = cached
+                out[or_id] = row
                 break
             card = card.parent
     return out

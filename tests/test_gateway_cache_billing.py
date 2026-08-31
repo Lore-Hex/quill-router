@@ -250,3 +250,29 @@ def test_settle_records_cache_reads_on_the_generation() -> None:
     generation = STORE.get_generation(settle.json()["data"]["generation_id"])
     assert generation is not None
     assert generation.cached_input_tokens == 900
+
+
+def test_uniform_policy_fallback_multipliers_match_published_provider_policy() -> None:
+    """Providers with a confirmed flat published cache-read discount.
+
+    These fire only when an endpoint carries no per-model cached price.
+    Mistral publishes a flat -90% on cached input; Fireworks an automatic
+    -50%; Alibaba Model Studio bills implicit cache hits at 20% of input.
+    Before 2026-08-31 all three fell to the 1x default, so their cache
+    reads billed at full prompt price while the provider charged us the
+    discounted rate.
+    """
+    prompt_price = 1_000_000
+    for provider, expected_read in (
+        ("mistral", 100_000),
+        ("fireworks", 500_000),
+        ("alibaba", 200_000),
+    ):
+        read_price, _ = cache_token_prices_microdollars(provider, prompt_price)
+        assert read_price == expected_read, provider
+
+
+def test_unknown_provider_still_bills_cache_reads_at_full_prompt_price() -> None:
+    """The conservative default must survive the fallback additions."""
+    read_price, _ = cache_token_prices_microdollars("nebius", 1_000_000)
+    assert read_price == 1_000_000

@@ -2309,3 +2309,43 @@ def test_parasail_glm_53_routes_publish_verified_prices() -> None:
     assert full_byok.upstream_id == "parasail-glm-53"
     assert full_prepaid.prompt_price_microdollars_per_million_tokens == 1_477_000
     assert full_prepaid.completion_price_microdollars_per_million_tokens == 4_642_000
+
+
+def test_model_shape_publishes_cache_read_price_when_tiers_carry_one() -> None:
+    """/v1/models hid the cache-read discount even where billing applied it.
+
+    More than a thousand endpoints billed cache reads at a discounted
+    per-model price while the public model payload showed only prompt and
+    completion — a customer comparing us against a provider's own pricing
+    page could not see the discount at all. Same OR-convention field the
+    per-endpoint payloads have always used.
+    """
+    from trusted_router.catalog import MODELS, model_to_openrouter_shape
+
+    model = MODELS["deepseek/deepseek-v4-flash"]
+    tiers = model.price_tiers or ()
+    assert tiers and tiers[0].prompt_cached_price_microdollars_per_million_tokens, (
+        "fixture drift: deepseek-v4-flash no longer carries a cached tier price; "
+        "pick another model with one for this test"
+    )
+
+    shape = model_to_openrouter_shape(model)
+
+    cached = shape["pricing"]["input_cache_read"]
+    prompt = shape["pricing"]["prompt"]
+    assert float(cached) > 0
+    assert float(cached) < float(prompt)
+
+
+def test_model_shape_omits_cache_read_price_when_absent() -> None:
+    from trusted_router.catalog import MODELS, model_to_openrouter_shape
+
+    for model in MODELS.values():
+        tiers = model.price_tiers or ()
+        if tiers and all(
+            t.prompt_cached_price_microdollars_per_million_tokens is None for t in tiers
+        ):
+            shape = model_to_openrouter_shape(model)
+            assert "input_cache_read" not in shape["pricing"]
+            return
+    raise AssertionError("no model without a cached tier price found — test needs a new subject")
