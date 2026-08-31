@@ -259,6 +259,7 @@ def test_production_deploy_provisions_and_schedules_regional_quota_reconciliatio
     assert "trusted_router.regional_quota_reconcile_cli" in reconciler
     assert '"TR_ENVIRONMENT=worker"' in reconciler
     assert '"TR_SERVICE_SURFACE=control"' in reconciler
+    assert '"TR_SPANNER_POOL_SIZE=1"' in reconciler
     assert "--oauth-service-account-email=\"$RUN_SERVICE_ACCOUNT\"" in reconciler
     assert "--clear-headers" in reconciler
     assert "gc secrets" not in reconciler

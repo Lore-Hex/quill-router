@@ -62,6 +62,10 @@ env_vars=(
   "TR_GCP_PROJECT_ID=${PROJECT_ID}"
   "TR_SPANNER_INSTANCE_ID=${SPANNER_INSTANCE_ID}"
   "TR_SPANNER_DATABASE_ID=${SPANNER_DATABASE_ID}"
+  # This one-shot worker is strictly serial. Giving it the serving process's
+  # eight-session pool makes a cold run create seven unused Spanner sessions
+  # and can consume the entire 50-second fail-closed task budget.
+  "TR_SPANNER_POOL_SIZE=1"
   "TR_BIGTABLE_INSTANCE_ID=${BIGTABLE_INSTANCE_ID}"
   "TR_BIGTABLE_GENERATION_TABLE=${BIGTABLE_GENERATION_TABLE}"
   "TR_REQUEST_RECORD_WRITE_MODE=typed"
