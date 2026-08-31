@@ -2945,13 +2945,26 @@ def _settle_gateway_authorization(
         # caller-supplied root field become forgeable broadcast metadata.
         broadcast_settle_body.pop("app_id", None)
         broadcast_settle_body.pop("price_tier_input_tokens", None)
-        enqueue_metadata_broadcast(generation, settle_body=broadcast_settle_body)
-        if should_drain_inline(settings) and background_tasks is not None:
+        try:
+            enqueue_metadata_broadcast(generation, settle_body=broadcast_settle_body)
+            broadcast_enqueued = True
+        except Exception:
+            # Billing is already committed. Metadata observability is
+            # best-effort and must never rewrite a successful settlement as a
+            # retryable 5xx, which could make the enclave replay billed work.
+            logger.error(
+                "broadcast_metadata_enqueue_failed generation_id=%s workspace_id=%s",
+                generation.id,
+                generation.workspace_id,
+                exc_info=True,
+            )
+            broadcast_enqueued = False
+        if broadcast_enqueued and should_drain_inline(settings) and background_tasks is not None:
             background_tasks.add_task(
                 drain_broadcast_queue,
                 settings=settings,
             )
-        elif should_drain_inline(settings):
+        elif broadcast_enqueued and should_drain_inline(settings):
             drain_broadcast_queue(settings=settings)
     if not success and not _is_synthetic_settlement(body):
         STORE.record_provider_benchmark(
