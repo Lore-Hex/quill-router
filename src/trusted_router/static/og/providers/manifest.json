@@ -46,10 +46,10 @@
   },
   "atlas-cloud": {
     "card_version": 2,
-    "model_count": 75,
+    "model_count": 74,
     "name": "Atlas Cloud",
     "privacy": "Policy documented",
-    "route_count": 75,
+    "route_count": 74,
     "route_mode": "Prepaid",
     "slug": "atlas-cloud"
   },
