@@ -157,6 +157,7 @@ from trusted_router.spend_leases import (
     SpendLeaseEchoValue,
     SpendLeaseEligibilityFailure,
     SpendLeaseSigner,
+    boot_auth_fails_only_on_digest_approval,
     build_spend_lease_shadow_event,
     freeze_spend_lease_catalog,
     mint_shadow_spend_lease,
@@ -334,17 +335,19 @@ def _register_spend_lease_boot_sync(
         ):
             raise ValueError("attestation does not commit to the receipt public key")
         verified = False
-        approved = False
+        approved_at_registration = False
         image_digest = ""
         if attestation_kind == GCP_ATTESTATION_KIND:
             verify_gcp_attestation_chain(body.attestation_evidence)
             image_digest = gcp_attestation_image_digest(body.attestation_evidence)
             verified = True
-            approved = image_digest in settings.spend_lease_accepted_gcp_digests
+            approved_at_registration = (
+                image_digest in settings.spend_lease_accepted_gcp_digests
+            )
         record = SpendLeaseBoot(
             kid=kid,
             jwk=jwk,
-            approved=approved,
+            approved=approved_at_registration,
             verified=verified,
             image_digest=image_digest,
             attestation_kind=attestation_kind,
@@ -452,6 +455,7 @@ def _authorize_gateway_sync(
         "boot_auth": boot_auth,
         "boot_kid": boot_auth.kid if boot_auth is not None else "",
         "boot_verified": False,
+        "boot_failure_reason": None,
         "no_lease_reason": None,
         "echo": echo,
         "server_estimate_micro": None,
@@ -517,6 +521,7 @@ def _authorize_gateway_sync_impl(
     boot_auth = cast(BootAuthHeader | None, spend_context["boot_auth"])
     if settings.spend_lease_issuance_enabled and boot_auth is not None:
         boot = STORE.get_spend_lease_boot(boot_auth.kid)
+        accepted_image_digests = settings.spend_lease_accepted_gcp_digests
         spend_context["boot_verified"] = verify_boot_auth(
             boot=boot,
             auth=boot_auth,
@@ -525,7 +530,19 @@ def _authorize_gateway_sync_impl(
             exact_body_bytes=cast(bytes, spend_context["raw_body"]),
             signed_lookup_hash=body.api_key_lookup_hash,
             resolved_lookup_hash=api_key.lookup_hash,
+            accepted_image_digests=accepted_image_digests,
         )
+        if not spend_context["boot_verified"] and boot_auth_fails_only_on_digest_approval(
+            boot=boot,
+            auth=boot_auth,
+            method=request.method,
+            path=request.url.path,
+            exact_body_bytes=cast(bytes, spend_context["raw_body"]),
+            signed_lookup_hash=body.api_key_lookup_hash,
+            resolved_lookup_hash=api_key.lookup_hash,
+            accepted_image_digests=accepted_image_digests,
+        ):
+            spend_context["boot_failure_reason"] = "boot_digest_not_accepted"
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
@@ -923,7 +940,9 @@ def _authorize_gateway_sync_impl(
         app_markup_basis_points=app_markup_basis_points,
         regional_lease_authorization=bool(regional_eligible),
     )
-    spend_context["no_lease_reason"] = no_lease_reason
+    spend_context["no_lease_reason"] = no_lease_reason or spend_context.get(
+        "boot_failure_reason"
+    )
     if (
         settings.spend_lease_issuance_enabled
         and bool(spend_context["boot_verified"])

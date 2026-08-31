@@ -322,6 +322,7 @@ def test_boot_auth_verifies_exact_body_bytes_and_resolved_lookup_hash() -> None:
         exact_body_bytes=raw_body,
         signed_lookup_hash="lookup",
         resolved_lookup_hash="lookup",
+        accepted_image_digests={boot.image_digest},
     )
     assert not verify_boot_auth(
         boot=boot,
@@ -331,6 +332,7 @@ def test_boot_auth_verifies_exact_body_bytes_and_resolved_lookup_hash() -> None:
         exact_body_bytes=raw_body,
         signed_lookup_hash="lookup",
         resolved_lookup_hash="different",
+        accepted_image_digests={boot.image_digest},
     )
 
 
@@ -360,6 +362,36 @@ def test_boot_auth_rejects_one_byte_tamper_inside_received_echo_body() -> None:
         exact_body_bytes=bytes(mutated),
         signed_lookup_hash="lookup",
         resolved_lookup_hash="lookup",
+        accepted_image_digests={boot.image_digest},
+    )
+
+
+def test_boot_auth_refuses_unknown_digest_even_if_persisted_approved() -> None:
+    _private, boot, raw_body, auth = _boot_auth_fixture()
+    assert boot.approved is True
+    assert not verify_boot_auth(
+        boot=boot,
+        auth=auth,
+        method="POST",
+        path="/v1/internal/gateway/authorize",
+        exact_body_bytes=raw_body,
+        signed_lookup_hash="lookup",
+        resolved_lookup_hash="lookup",
+        accepted_image_digests={"sha256:" + "22" * 32},
+    )
+
+
+def test_boot_auth_empty_current_accepted_set_refuses_every_digest() -> None:
+    _private, boot, raw_body, auth = _boot_auth_fixture()
+    assert not verify_boot_auth(
+        boot=boot,
+        auth=auth,
+        method="POST",
+        path="/v1/internal/gateway/authorize",
+        exact_body_bytes=raw_body,
+        signed_lookup_hash="lookup",
+        resolved_lookup_hash="lookup",
+        accepted_image_digests=frozenset(),
     )
 
 

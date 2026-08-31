@@ -12,7 +12,7 @@ import json
 import threading
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
@@ -49,6 +49,7 @@ LeaseStatus = Literal["active", "terminal", "expired"]
 ShadowVerdict = Literal["accepted", "declined_funds", "declined_other"]
 ShadowDivergence = Literal["none", "admit_diverged", "estimate_low", "echo_invalid"]
 SpendLeaseEligibilityFailure = Literal[
+    "boot_digest_not_accepted",
     "not_pilot",
     "route_type",
     "no_candidates",
@@ -68,7 +69,7 @@ SpendLeaseEligibilityFailure = Literal[
 class SpendLeaseBoot:
     kid: str
     jwk: dict[str, str]
-    approved: bool
+    approved: bool  # At-registration observation only; never an authorization gate.
     verified: bool
     image_digest: str
     attestation_kind: str
@@ -425,26 +426,82 @@ def verify_boot_auth(
     exact_body_bytes: bytes,
     signed_lookup_hash: str | None,
     resolved_lookup_hash: str,
+    accepted_image_digests: Collection[str],
 ) -> bool:
-    """Verify a boot signature; every failure is a lease-less verdict."""
+    """Verify a boot against the current trust config and its signed request."""
+    return (
+        _boot_auth_failure_reason(
+            boot=boot,
+            auth=auth,
+            method=method,
+            path=path,
+            exact_body_bytes=exact_body_bytes,
+            signed_lookup_hash=signed_lookup_hash,
+            resolved_lookup_hash=resolved_lookup_hash,
+            accepted_image_digests=accepted_image_digests,
+        )
+        is None
+    )
+
+
+def boot_auth_fails_only_on_digest_approval(
+    *,
+    boot: SpendLeaseBoot | None,
+    auth: BootAuthHeader,
+    method: str,
+    path: str,
+    exact_body_bytes: bytes,
+    signed_lookup_hash: str | None,
+    resolved_lookup_hash: str,
+    accepted_image_digests: Collection[str],
+) -> bool:
+    """Return whether every boot-auth gate except current digest approval passed."""
+    return (
+        _boot_auth_failure_reason(
+            boot=boot,
+            auth=auth,
+            method=method,
+            path=path,
+            exact_body_bytes=exact_body_bytes,
+            signed_lookup_hash=signed_lookup_hash,
+            resolved_lookup_hash=resolved_lookup_hash,
+            accepted_image_digests=accepted_image_digests,
+        )
+        == "boot_digest_not_accepted"
+    )
+
+
+def _boot_auth_failure_reason(
+    *,
+    boot: SpendLeaseBoot | None,
+    auth: BootAuthHeader,
+    method: str,
+    path: str,
+    exact_body_bytes: bytes,
+    signed_lookup_hash: str | None,
+    resolved_lookup_hash: str,
+    accepted_image_digests: Collection[str],
+) -> Literal["boot_auth_invalid", "boot_digest_not_accepted"] | None:
     try:
-        if boot is None or not boot.approved or not boot.verified:
-            return False
+        if boot is None or not boot.verified:
+            return "boot_auth_invalid"
         if auth.kid != boot.kid:
-            return False
+            return "boot_auth_invalid"
         if signed_lookup_hash != resolved_lookup_hash:
-            return False
+            return "boot_auth_invalid"
         signature = b64url_decode(auth.signature)
         public_bytes = b64url_decode(normalize_receipt_jwk(boot.jwk)["x"])
         Ed25519PublicKey.from_public_bytes(public_bytes).verify(
             signature,
             boot_auth_digest(method, path, exact_body_bytes),
         )
-        return True
+        if boot.image_digest not in accepted_image_digests:
+            return "boot_digest_not_accepted"
+        return None
     except (TypeError, ValueError):
-        return False
+        return "boot_auth_invalid"
     except Exception:
-        return False
+        return "boot_auth_invalid"
 
 
 class SpendLeaseSigner:

@@ -227,6 +227,68 @@ def _signed_authorize_body(
     return body, raw_body, header
 
 
+def test_authorize_mutation_guard_uses_current_digest_not_persisted_approval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    STORE.reset()
+    user = STORE.ensure_user("spend-lease-current-approval@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    STORE.credit_workspace_once(workspace.id, 20_000_000, "seed")
+    _raw, key = STORE.create_api_key(
+        workspace_id=workspace.id,
+        name="spend lease current approval",
+        creator_user_id=user.id,
+    )
+    old_digest = "sha256:" + "11" * 32
+    boot_digest = "sha256:" + "22" * 32
+    private = Ed25519PrivateKey.generate()
+    jwk = _jwk(private)
+    monkeypatch.setattr(gateway, "attestation_commits_to_jwk", lambda *_args: True)
+    monkeypatch.setattr(gateway, "verify_gcp_attestation_chain", lambda _att: None)
+    monkeypatch.setattr(gateway, "gcp_attestation_image_digest", lambda _att: boot_digest)
+
+    gateway._register_spend_lease_boot_sync(  # noqa: SLF001
+        _request("/v1/internal/gateway/spend-lease/register-boot"),
+        SpendLeaseBootRegistrationRequest(
+            kid=receipt_kid(jwk),
+            receipt_public_key=jwk,
+            attestation_evidence="signed-gcp-evidence",
+            attestation_kind="gcp",
+        ),
+        _registration_settings(old_digest),
+    )
+    boot = STORE.get_spend_lease_boot(receipt_kid(jwk))
+    assert boot is not None
+    assert boot.verified is True
+    assert boot.approved is False
+
+    monkeypatch.setattr(
+        gateway,
+        "_spend_lease_signer",
+        lambda _settings: SpendLeaseSigner(lambda: bytes(range(32))),
+    )
+    body_dict, raw_body, header = _signed_authorize_body(key, private, boot)
+    current_settings = Settings(
+        environment="test",
+        spend_lease_issuance_enabled=True,
+        operational_analytics_outbox_enabled=True,
+        spend_lease_pilot_workspace_ids=workspace.id,
+        spend_lease_signing_secret_name="test-secret-name",  # noqa: S106
+        trust_gcp_image_digest=boot_digest,
+    )
+
+    authorized = gateway._authorize_gateway_sync(  # noqa: SLF001
+        _request(boot_auth_header=header),
+        GatewayAuthorizeRequest(**body_dict),
+        current_settings,
+        raw_body,
+    )
+
+    assert "spend_lease" in authorized["data"]
+    assert STORE.get_spend_lease_boot(boot.kid) is boot
+    assert boot.approved is False
+
+
 def test_authorize_mints_shadow_grant_and_replay_returns_byte_identical_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -241,6 +303,7 @@ def test_authorize_mints_shadow_grant_and_replay_returns_byte_identical_token(
         operational_analytics_outbox_enabled=True,
         spend_lease_pilot_workspace_ids=workspace.id,
         spend_lease_signing_secret_name="test-secret-name",  # noqa: S106
+        spend_lease_accepted_gcp_image_digests=boot.image_digest,
     )
     first = gateway._authorize_gateway_sync(  # noqa: SLF001
         _request(boot_auth_header=header), body, settings, raw_body
@@ -275,6 +338,7 @@ def test_authorize_retains_one_active_grant_until_exhaustion_then_increases_gen(
         operational_analytics_outbox_enabled=True,
         spend_lease_pilot_workspace_ids=workspace.id,
         spend_lease_signing_secret_name="test-secret-name",  # noqa: S106
+        spend_lease_accepted_gcp_image_digests=boot.image_digest,
     )
 
     first_dict, first_raw, first_header = _signed_authorize_body(
@@ -344,6 +408,7 @@ def test_authorize_shadow_records_reason_without_lease_and_null_when_minted(
         operational_analytics_outbox_enabled=True,
         spend_lease_pilot_workspace_ids=workspace.id,
         spend_lease_signing_secret_name="test-secret-name",  # noqa: S106
+        spend_lease_accepted_gcp_image_digests=boot.image_digest,
     )
     rejected_dict, rejected_raw, rejected_header = _signed_authorize_body(
         key,
@@ -377,6 +442,36 @@ def test_authorize_shadow_records_reason_without_lease_and_null_when_minted(
     minted_event = STORE.spend_lease_shadow_events[minted["data"]["authorization_id"]]
     assert rejected_event["no_lease_reason"] == "route_type"
     assert minted_event["no_lease_reason"] is None
+
+
+def test_authorize_shadow_names_current_boot_digest_approval_failure() -> None:
+    workspace, key, private, boot = _seed_authorize()
+    body_dict, raw_body, header = _signed_authorize_body(
+        key,
+        private,
+        boot,
+        idempotency_key="shadow-boot-digest-not-accepted",
+    )
+    settings = Settings(
+        environment="test",
+        spend_lease_issuance_enabled=True,
+        operational_analytics_outbox_enabled=True,
+        spend_lease_pilot_workspace_ids=workspace.id,
+        spend_lease_signing_secret_name="test-secret-name",  # noqa: S106
+        spend_lease_accepted_gcp_image_digests="sha256:" + "22" * 32,
+    )
+
+    response = gateway._authorize_gateway_sync(  # noqa: SLF001
+        _request(boot_auth_header=header),
+        GatewayAuthorizeRequest(**body_dict),
+        settings,
+        raw_body,
+    )
+
+    assert "spend_lease" not in response["data"]
+    event = STORE.spend_lease_shadow_events[response["data"]["authorization_id"]]
+    assert event["boot_verified"] is False
+    assert event["no_lease_reason"] == "boot_digest_not_accepted"
 
 
 def test_authorize_shadow_events_include_accept_and_decline_and_keep_echo_invalid() -> None:
