@@ -268,7 +268,7 @@ def test_production_deploy_provisions_and_schedules_regional_quota_reconciliatio
     assert reconciler.index("gc run jobs execute") < reconciler.index("gc scheduler jobs update")
     assert reconciler.index("gc run jobs execute") < reconciler.index("gc scheduler jobs create")
     assert "--max-retries 0" in reconciler
-    assert "--task-timeout 50s" in reconciler
+    assert "--task-timeout 180s" in reconciler
     assert "--max-retry-attempts=3" in reconciler
     assert "--max-retry-duration=45s" in reconciler
     assert "--max-doublings=1" in reconciler
