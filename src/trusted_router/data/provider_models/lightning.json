@@ -889,7 +889,7 @@
     }
   ],
   "source": "https://lightning.ai/api/v1/models",
-  "generated_at": "2026-08-30T10:10:39Z",
+  "generated_at": "2026-08-31T04:23:01Z",
   "price_scale": "microdollars_per_million",
   "model_count": 44
 }

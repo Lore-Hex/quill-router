@@ -3121,7 +3121,8 @@
       ],
       "input_token_price_per_m": 1200000,
       "output_token_price_per_m": 4000000,
-      "cached_input_token_price_per_m": 240000
+      "cached_input_token_price_per_m": 240000,
+      "missing_since": "2026-08-31"
     },
     {
       "display_name": "GLM 5.1",
@@ -3843,6 +3844,6 @@
       "cached_input_token_price_per_m": 200000
     }
   ],
-  "generated_at": "2026-08-30T10:10:38Z",
+  "generated_at": "2026-08-31T04:23:01Z",
   "model_count": 141
 }
