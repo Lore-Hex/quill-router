@@ -14,7 +14,10 @@
         <span class="card-label">Product support</span>
         <h2>Contact support</h2>
       </div>
-      <a href="mailto:{{ support_email }}">{{ support_email }}</a>
+      <div class="support-head-actions">
+        <a href="mailto:{{ support_email }}">{{ support_email }}</a>
+        <a class="btn" href="/support?category=feature#support-inquiry">Feature request</a>
+      </div>
     </div>
     <div class="panel-body">
       <form class="support-form" id="support-inquiry" novalidate>
@@ -34,6 +37,7 @@
               <option value="account">Account access</option>
               <option value="billing">Billing and credits</option>
               <option value="provider">Provider or model</option>
+              <option value="feature">Feature request</option>
               <option value="other">Other</option>
             </select>
           </label>
@@ -106,6 +110,13 @@
   }
   .support-panel { margin: 0; }
   .support-panel .panel-head { align-items: end; }
+  .support-head-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
   .support-panel .panel-head h2,
   .support-aside h2 { margin: 4px 0 0; }
   .support-grid {
@@ -182,6 +193,13 @@
     if (!form) return;
     var status = form.querySelector('[data-role="status"]');
     var button = form.querySelector('[data-role="submit"]');
+
+    if (new URLSearchParams(window.location.search).get("category") === "feature") {
+      form.category.value = "feature";
+      button.textContent = "Send feature request";
+      form.subject.placeholder = "What would you like TrustedRouter to add?";
+      form.message.placeholder = "Describe the feature, who it helps, and how you handle it today.";
+    }
     var defaultButtonText = button.textContent;
 
     function show(message, tone) {

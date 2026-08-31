@@ -191,9 +191,12 @@ def test_budget_inputs_have_no_number_spinners(console: dict) -> None:
 
 
 def test_existing_keys_are_primary_when_workspace_has_keys(console: dict) -> None:
-    """Once a workspace has keys, monitoring them should be above creation."""
+    """Existing keys stay primary while creation remains permanently visible."""
     page = console["client"].get("/console/api-keys").text
 
     assert page.index("Existing keys") < page.index("Create a new API key")
     assert 'data-action="open-new-key"' in page
-    assert '<details class="panel key-create-panel" id="new-api-key">' in page
+    assert '<section class="panel key-create-panel" id="new-api-key">' in page
+    assert '<details class="panel key-create-panel"' not in page
+    assert 'href="/support">Help</a>' in page
+    assert 'href="/support?category=feature#support-inquiry">Feature request</a>' in page
