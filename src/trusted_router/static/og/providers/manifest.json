@@ -451,10 +451,10 @@
   },
   "nebius": {
     "card_version": 2,
-    "model_count": 32,
+    "model_count": 20,
     "name": "Nebius Token Factory",
     "privacy": "Zero retention",
-    "route_count": 62,
+    "route_count": 38,
     "route_mode": "Prepaid + BYOK",
     "slug": "nebius"
   },
