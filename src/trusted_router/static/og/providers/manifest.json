@@ -730,10 +730,10 @@
   },
   "together": {
     "card_version": 2,
-    "model_count": 15,
+    "model_count": 13,
     "name": "Together",
     "privacy": "Zero retention",
-    "route_count": 30,
+    "route_count": 26,
     "route_mode": "Prepaid + BYOK",
     "slug": "together"
   },

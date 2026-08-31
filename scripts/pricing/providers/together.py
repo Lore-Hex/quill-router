@@ -50,13 +50,11 @@ MANIFEST_PATH = (
     / "together.json"
 )
 
-# Model IDs we expect Together to expose, in OR-canonical form. Parser
-# below translates Together's native IDs to these. These are the
-# canaries for hourly pricing drift: if Together renames or drops one,
-# the refresh job should keep the previous committed price instead of
-# silently deleting the endpoint from the catalog.
+# Curated models that Together has occasionally omitted from its serverless
+# endpoint feed while they remain callable. Probe only these known feed gaps;
+# every other route follows the authenticated feed and the normal two-miss
+# tombstone policy so provider retirements cannot leave stale routes behind.
 EXPECTED_MODELS = [
-    "deepseek/deepseek-v4-pro",
     "minimax/minimax-m3",
     "z-ai/glm-5.2",
 ]
@@ -266,10 +264,9 @@ def fetch() -> ProviderPricingResult:
             "no started Together serverless models matched the TrustedRouter "
             "catalog — check both provider API responses"
         )
-    # Validate strictly: Together is a direct JSON API, not a brittle
-    # HTML scraper. If a canary model disappears, treat this provider
-    # as failed so refresh.py reuses the previous committed prices
-    # instead of dropping live endpoints from the catalog.
+    # Together is a direct JSON API, not a brittle HTML scraper. Validation
+    # still rejects malformed prices and newly required routes, while expected
+    # model misses are retirement signals handled by manifest reconciliation.
     errors = validate(prices, EXPECTED_MODELS)
     if errors:
         notes.append(f"validation notes: {errors}")
