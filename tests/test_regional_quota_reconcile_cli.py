@@ -122,8 +122,14 @@ def test_worker_reconciles_with_bounded_limit(
     assert len(store.released) == 1
     assert store.released[0][1] == 7
     assert heartbeats == ["job:regional-quota-reconcile"]
+    assert "regional_quota.reconciler_start" in caplog.text
+    assert "regional_quota.reconciler_settings_loaded" in caplog.text
+    assert "regional_quota.reconciler_store_open_start" in caplog.text
+    assert "regional_quota.reconciler_store_open_complete" in caplog.text
+    assert "regional_quota.reconciler_lock_acquire_start" in caplog.text
     assert "regional_quota.reconciler_lock_acquired" in caplog.text
     assert "regional_quota.reconciler_lock_released" in caplog.text
+    assert "regional_quota.reconciler_complete" in caplog.text
 
 
 def test_worker_logs_expired_lock_takeover(

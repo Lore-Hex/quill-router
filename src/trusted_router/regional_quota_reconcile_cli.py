@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Callable
 from typing import Any, cast
@@ -18,7 +19,13 @@ _LOCK_TTL_SECONDS = 90
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO)
+    started_at = time.monotonic()
+    logger.info("regional_quota.reconciler_start")
     settings = get_settings()
+    logger.info(
+        "regional_quota.reconciler_settings_loaded elapsed_ms=%.1f",
+        _elapsed_ms(started_at),
+    )
     init_sentry(settings)
     if not settings.regional_quota_reconciler_worker:
         logger.info("regional_quota.reconciler_disabled")
@@ -27,8 +34,16 @@ def main() -> int:
         logger.error("regional_quota.reconciler_ledger_disabled")
         return 1
 
+    logger.info(
+        "regional_quota.reconciler_store_open_start elapsed_ms=%.1f",
+        _elapsed_ms(started_at),
+    )
     store = create_store(settings)
     configure_store(store)
+    logger.info(
+        "regional_quota.reconciler_store_open_complete elapsed_ms=%.1f",
+        _elapsed_ms(started_at),
+    )
     acquire = cast(
         Callable[..., Any] | None,
         getattr(store, "acquire_regional_quota_reconciler_lock", None),
@@ -41,6 +56,10 @@ def main() -> int:
         logger.error("regional_quota.reconciler_lock_unsupported")
         return 1
     owner = f"rqrec-{uuid.uuid4().hex}"
+    logger.info(
+        "regional_quota.reconciler_lock_acquire_start elapsed_ms=%.1f",
+        _elapsed_ms(started_at),
+    )
     lock = acquire(owner=owner, ttl_seconds=_LOCK_TTL_SECONDS)
     if lock is None:
         logger.info("regional_quota.reconciler_lock_busy")
@@ -90,7 +109,15 @@ def main() -> int:
                 exit_code = 1
     if exit_code == 0:
         record_heartbeat("job:regional-quota-reconcile", settings=settings)
+        logger.info(
+            "regional_quota.reconciler_complete elapsed_ms=%.1f",
+            _elapsed_ms(started_at),
+        )
     return exit_code
+
+
+def _elapsed_ms(started_at: float) -> float:
+    return (time.monotonic() - started_at) * 1_000.0
 
 
 def _run_reconcile(settings: Any, store: Any) -> int:
