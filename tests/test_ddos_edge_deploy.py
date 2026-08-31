@@ -729,11 +729,11 @@ def test_every_synthetic_job_uses_the_ingress_appropriate_ingest_base() -> None:
     ) in deploy
     assert 'SYNTHETIC_INGEST_SERVICE="$SERVICE"' in deploy
     assert "TR_SYNTHETIC_INGEST_SERVICE" not in deploy
-    assert deploy.count("$(synthetic_ingest_base_for_region") == 4
+    assert deploy.count("$(synthetic_ingest_base_for_region") == 5
     assert 'printf \'%s\\n\' "https://trustedrouter.com"' in deploy
     assert "printf 'https://%s-%s.%s.run.app\\n'" in deploy
-    assert deploy.count("gc run jobs deploy") == 4
-    assert deploy.count('"$JOB_SECRET_FLAG" "$JOB_SECRETS"') == 4
+    assert deploy.count("gc run jobs deploy") == 5
+    assert deploy.count('"$JOB_SECRET_FLAG" "$JOB_SECRETS"') == 5
     assert 'JOB_SECRET_FLAG="--set-secrets"' in deploy
     assert 'JOB_SECRET_FLAG="--update-secrets"' in deploy
     assert deploy.count("ensure_private_run_app_access") == 1
@@ -742,7 +742,7 @@ def test_every_synthetic_job_uses_the_ingress_appropriate_ingest_base() -> None:
         '"${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]+'
         '"${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}"}"'
     )
-    assert deploy.count(guarded_network_args) == 4
+    assert deploy.count(guarded_network_args) == 5
 
 
 def test_secret_bootstrap_provisions_a_distinct_observer_credential() -> None:

@@ -859,6 +859,13 @@ class Settings(BaseSettings):
     spend_lease_skew_seconds: int = 10
     spend_lease_max_microdollars: int = 1_000_000
     spend_lease_max_available_basis_points: int = 1_000
+    # Dedicated Stage A traffic. The key belongs to a Credits-only pilot
+    # workspace and is loaded lazily from Secret Manager by the isolated
+    # once-a-minute synthetic job; it is never placed in an environment
+    # variable. Default-off keeps deploying this code behavior-neutral until
+    # an operator deliberately starts the soak.
+    spend_lease_soak_probe_enabled: bool = False
+    spend_lease_probe_key_secret: str = "trustedrouter-spend-lease-probe-key"  # noqa: S105
     # Operational read-only flag. When set, write paths (credit
     # reservations, gateway authorize, signup, etc.) return 503 with
     # `Retry-After`; reads keep working. Used for the Spanner →
@@ -1345,6 +1352,11 @@ class Settings(BaseSettings):
                     "TR_SPEND_LEASE_ISSUANCE_ENABLED requires the operational "
                     "analytics outbox or direct sink"
                 )
+        if self.spend_lease_soak_probe_enabled and not self.spend_lease_probe_key_secret.strip():
+            raise ValueError(
+                "TR_SPEND_LEASE_SOAK_PROBE_ENABLED requires "
+                "TR_SPEND_LEASE_PROBE_KEY_SECRET"
+            )
         if self.regional_quota_leases_enabled:
             if environment not in {"local", "test"}:
                 if self.storage_backend not in {
