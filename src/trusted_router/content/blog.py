@@ -48,6 +48,29 @@ FEATURED_SLUGS: tuple[str, ...] = (
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="axios-tried-trustedrouter",
+        title="Axios tried TrustedRouter in under 30 seconds",
+        description=(
+            "Axios reporter Madison Mills used DeepSeek through TrustedRouter in "
+            "under 30 seconds. Her article explains why routing is becoming the "
+            "default way businesses buy AI."
+        ),
+        published_date="2026-08-30",
+        source_label="Read the Axios article",
+        source_url=(
+            "https://www.axios.com/2026/08/25/"
+            "routing-is-coming-for-the-frontier-ai-labs"
+        ),
+        og_image="/static/og/blog/axios-tried-trustedrouter.png",
+        body_html="""
+<figure class="blog-hero-image"><img src="/static/og/blog/axios-tried-trustedrouter.svg" alt="Axios tried DeepSeek through TrustedRouter in under 30 seconds" width="1200" height="630"></figure>
+<p>Axios tried TrustedRouter. Reporter Madison Mills opened the product, chose DeepSeek, and had it working in under 30 seconds.</p>
+
+<p>Her <a href="https://www.axios.com/2026/08/25/routing-is-coming-for-the-frontier-ai-labs">article about the rise of AI routing</a> explains the larger change. Businesses want lower costs, better security, and the freedom to choose a model for each job. A simple request can go to a cheap fast model. A hard request can go somewhere stronger. Teams can route around price, speed, performance, uptime, and which providers they trust with their data. The model becomes a replaceable part instead of the company you have to build around.</p>
+
+<p>That is what we built: one OpenAI-compatible API for more than 550 models, automatic fallback across providers, and <a href="/trust">privacy with proof</a>. Axios got to a useful result before most API guides finish explaining authentication. <a href="https://www.axios.com/2026/08/25/routing-is-coming-for-the-frontier-ai-labs">Read the full Axios article</a>, then <a href="/?reason=signin">create a key and try the same route</a>.</p>""",
+    ),
+    BlogPost(
         slug="you-are-a-model-provider",
         title="You are a model provider now",
         description=(

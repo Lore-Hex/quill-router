@@ -1777,6 +1777,30 @@ def test_recent_blog_posts_use_real_product_images(
     assert client.get(image_path).status_code == 200
 
 
+def test_axios_blog_post_links_source_and_conversion_path(client: TestClient) -> None:
+    slug = "axios-tried-trustedrouter"
+    image_path = f"/static/og/blog/{slug}.png"
+    response = client.get(f"/blog/{slug}")
+
+    assert response.status_code == 200
+    assert "Axios tried TrustedRouter in under 30 seconds" in response.text
+    assert (
+        "https://www.axios.com/2026/08/25/"
+        "routing-is-coming-for-the-frontier-ai-labs"
+    ) in response.text
+    assert 'href="/?reason=signin"' in response.text
+    assert f'property="og:image" content="https://trustedrouter.com{image_path}"' in response.text
+    assert f'name="twitter:image" content="https://trustedrouter.com{image_path}"' in response.text
+    assert f'<img src="/static/og/blog/{slug}.svg"' in response.text
+    assert client.get(image_path).status_code == 200
+    assert client.get(f"/static/og/blog/{slug}.svg").status_code == 200
+
+    index = client.get("/blog")
+    assert index.status_code == 200
+    assert f'href="/blog/{slug}"' in index.text
+    assert f'src="https://trustedrouter.com{image_path}"' in index.text
+
+
 def test_blog_index_uses_recent_product_images(client: TestClient) -> None:
     response = client.get("/blog")
 
