@@ -57,7 +57,7 @@ def _body(key_hash: str, *, idempotency_key: str = "rpc-idem") -> GatewayAuthori
 def test_typed_authorize_route_does_not_call_legacy_idempotency_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _store, _database, key = _seed_typed_gateway_store()
+    _store, database, key = _seed_typed_gateway_store()
 
     def forbidden(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("typed authorize must never probe the legacy entity index")
@@ -74,6 +74,7 @@ def test_typed_authorize_route_does_not_call_legacy_idempotency_probe(
 
     assert response["data"]["authorization_id"]
     assert response["data"]["idempotent_replay"] is False
+    assert database.transaction_tags[-1] == "tr_authorize"
 
 
 def test_typed_authorize_route_does_not_call_typed_pretransaction_probe(

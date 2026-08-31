@@ -189,6 +189,7 @@ class FakeSpannerDatabase:
         self.aborts = 0
         self.commits = 0
         self.last_timeout_secs: float | None = None
+        self.transaction_tags: list[str | None] = []
         # Preserve the exact consistency options passed by production code so
         # tests can distinguish a deliberate stale display read from a strong
         # money / authorization read.  The fake does not model historical row
@@ -202,12 +203,19 @@ class FakeSpannerDatabase:
         self.transaction_execute_sql_calls = 0
         self.transaction_execute_update_calls = 0
 
-    def run_in_transaction(self, fn: Any, *, timeout_secs: float | None = None) -> Any:
+    def run_in_transaction(
+        self,
+        fn: Any,
+        *,
+        timeout_secs: float | None = None,
+        transaction_tag: str | None = None,
+    ) -> Any:
         # timeout_secs mirrors google-cloud-spanner's Database.run_in_transaction
         # kwarg (passed by run_in_transaction_with_retry to bound the inner retry
         # to the caller's remaining wall-clock budget). The fake commits
         # synchronously, so it records the value for assertions but does not sleep.
         self.last_timeout_secs = timeout_secs
+        self.transaction_tags.append(transaction_tag)
         for attempt in range(50):
             txn = _FakeTransaction(self)
             try:

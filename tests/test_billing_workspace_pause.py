@@ -6,10 +6,12 @@ already-authorized requests is unaffected (it routes by reservation origin).
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.routes.internal import gateway as gateway_routes
 from trusted_router.storage import STORE, Workspace
 
 
@@ -35,16 +37,26 @@ def _authorize(client: TestClient, key_hash: str):
     )
 
 
-def test_paused_workspace_rejects_authorize_and_validate() -> None:
+def test_paused_workspace_rejects_authorize_and_validate(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     client, key = _client_and_key("pause-authz@example.com")
     ws_id = STORE.get_key_by_hash(key["hash"]).workspace_id
 
     assert _authorize(client, key["hash"]).status_code == 200  # baseline: not paused
 
     STORE.update_workspace(ws_id, billing_paused=True, billing_pause_reason="flip")
-    paused = _authorize(client, key["hash"])
+    with caplog.at_level("WARNING", logger=gateway_routes.__name__):
+        paused = _authorize(client, key["hash"])
     assert paused.status_code == 503
     assert paused.headers.get("retry-after") == "30"  # tell SDKs to back off, not hammer
+    pause_log = next(
+        record
+        for record in caplog.records
+        if str(record.msg).startswith("billing.authorize_workspace_paused")
+    )
+    assert f"workspace_id={ws_id}" in pause_log.getMessage()
+    assert key["hash"] not in pause_log.getMessage()
 
     validate = client.post(
         "/v1/internal/gateway/validate",

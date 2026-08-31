@@ -529,6 +529,15 @@ def _authorize_gateway_sync_impl(
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
+    if workspace.billing_paused:
+        # Keep tenant attribution in the rendered message because Cloud Run's
+        # stderr collector does not preserve arbitrary LogRecord extras. This
+        # is billing metadata only: never include the raw key, body, or content.
+        logger.warning(
+            "billing.authorize_workspace_paused workspace_id=%s request_id=%s",
+            workspace.id,
+            getattr(request.state, "request_id", None),
+        )
     assert_workspace_billing_active(workspace)
     # The synthetic monitor funds itself: a monthly idempotent grant applied
     # on its own authorize path, so a dry monitor self-heals on the next

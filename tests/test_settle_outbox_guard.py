@@ -88,13 +88,20 @@ class _ProxyDatabase:
     def snapshot(self, **kwargs: Any) -> _ProxySnapshot:
         return _ProxySnapshot(self._inner.snapshot(**kwargs), self._on_execute)
 
-    def run_in_transaction(self, fn: Any, *, timeout_secs: Any = None) -> Any:
+    def run_in_transaction(
+        self,
+        fn: Any,
+        *,
+        timeout_secs: Any = None,
+        transaction_tag: str | None = None,
+    ) -> Any:
         def proxied_fn(transaction: Any) -> Any:
             return fn(_ProxyTransaction(transaction, self._on_execute))
 
         return self._inner.run_in_transaction(
             proxied_fn,
             timeout_secs=timeout_secs,
+            transaction_tag=transaction_tag,
         )
 
 
