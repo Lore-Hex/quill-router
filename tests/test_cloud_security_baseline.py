@@ -164,6 +164,17 @@ def test_gcp_checks_the_iap_path_before_asserting_ssh_is_closed() -> None:
     assert body.index("tr-allow-iap-ssh-all") < body.index("for r in default-allow-ssh")
 
 
+def test_gcp_expected_firewall_absence_does_not_emit_not_found_audits() -> None:
+    """An expected 404 is still an ERROR audit record. Negative controls read
+    the collection once and compare names locally instead of issuing GETs for
+    resources that should not exist."""
+    body = _executable_lines(GCP)
+    assert body.count("compute firewall-rules list --format='value(name)'") == 1
+    assert 'firewall-rules describe "$r"' not in body
+    assert "firewall-rules describe allow-iap-ssh-tmp" not in body
+    assert 'grep -Fxq "$r" <<<"$FIREWALL_NAMES"' in body
+
+
 def test_gcp_resolves_essential_contacts_by_inheritance() -> None:
     """`essential-contacts list --project=` returns [] here and that does not
     mean absent -- contacts inherit from the org. A check written the obvious

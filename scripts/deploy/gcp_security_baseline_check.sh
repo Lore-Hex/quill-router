@@ -200,14 +200,18 @@ if [ "$IAP_ALL" = "35.235.240.0/20" ]; then
 else
   drift "tr-allow-iap-ssh-all missing or wrong source range (got: '${IAP_ALL:-none}') — IAP SSH may be broken"
 fi
+# Expected absence must not be probed with `firewall-rules describe`: the API
+# returns NOT_FOUND and records that successful security assertion as an ERROR
+# audit event. Read the collection once and test exact names locally instead.
+FIREWALL_NAMES="$(g compute firewall-rules list --format='value(name)')"
 for r in default-allow-ssh default-allow-rdp; do
-  if g compute firewall-rules describe "$r" --format='value(name)' | grep -q .; then
+  if grep -Fxq "$r" <<<"$FIREWALL_NAMES"; then
     drift "$r EXISTS again — 0.0.0.0/0 to every instance in the network"
   else
     ok "$r absent"
   fi
 done
-if g compute firewall-rules describe allow-iap-ssh-tmp --format='value(name)' | grep -q .; then
+if grep -Fxq allow-iap-ssh-tmp <<<"$FIREWALL_NAMES"; then
   # Created 2026-06-18, still live. Functionally identical to
   # tr-allow-iap-ssh-all, so it grants nothing extra — the textbook shape of a
   # temporary widening that became permanent. Reported, not failed.
