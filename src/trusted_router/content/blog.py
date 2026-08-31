@@ -42,11 +42,114 @@ class BlogPost:
 #: or a rename would otherwise empty this section in silence, and an empty
 #: featured section looks exactly like a design choice.
 FEATURED_SLUGS: tuple[str, ...] = (
+    "we-raised-1-25m-seed",
     "synth-iris-prometheus-zeus",
     "they-are-still-training-on-your-data",
 )
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
+    BlogPost(
+        slug="we-raised-1-25m-seed",
+        title=(
+            "We Raised a $1.25M Seed to Continue Building the Open Source, "
+            "Verifiable AI Router"
+        ),
+        description=(
+            "TrustedRouter raised $1.25 million from builders and investors "
+            "across AI, infrastructure, privacy, and startups. We crossed one "
+            "billion routed tokens in a day while building the open source, "
+            "verifiable layer for private AI."
+        ),
+        published_date="2026-08-31",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<figure class="blog-hero-image"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="TrustedRouter raised a 1.25 million dollar seed round to build the open source verifiable AI router">
+  <rect width="1200" height="630" fill="#07100c"/>
+  <rect x="0" y="0" width="1200" height="8" fill="#a7f3d0"/>
+  <text x="72" y="92" font-size="24" font-weight="700" fill="#a7f3d0" letter-spacing="2">TRUSTEDROUTER · SEED ROUND</text>
+  <text x="72" y="246" font-size="126" font-weight="750" fill="#f4f1e8">$1.25M</text>
+  <text x="72" y="326" font-size="43" font-weight="600" fill="#f4f1e8">For the open source, verifiable AI router.</text>
+  <line x1="72" y1="382" x2="1128" y2="382" stroke="#294238" stroke-width="2"/>
+  <g font-size="24" font-weight="650">
+    <rect x="72" y="426" width="250" height="66" rx="8" fill="#10251c" stroke="#376b56"/>
+    <text x="197" y="468" text-anchor="middle" fill="#d1fae5">OPEN SOURCE</text>
+    <rect x="342" y="426" width="328" height="66" rx="8" fill="#10251c" stroke="#376b56"/>
+    <text x="506" y="468" text-anchor="middle" fill="#d1fae5">1B TOKENS IN A DAY</text>
+    <rect x="690" y="426" width="218" height="66" rx="8" fill="#10251c" stroke="#376b56"/>
+    <text x="799" y="468" text-anchor="middle" fill="#d1fae5">3 CLOUDS</text>
+  </g>
+  <text x="72" y="570" font-size="25" font-weight="500" fill="#8ca397">Every model. Privacy with proof.</text>
+  <text x="1128" y="570" text-anchor="end" font-size="25" font-weight="750" fill="#f4f1e8">TrustedRouter.com</text>
+</svg></figure>
+<p>I'm excited to unveil our $1.25 million seed round to continue to build and grow this open source, encrypted, end-to-end verifiable router — a secure, safe way for everyone to send all of their prompts, low stakes and high stakes, through a router to save money and have better uptime for all of their AI needs.</p>
+
+<p>I'm lucky to have really forward-thinking people join this round — people who have backed, at the earliest stages, some of the leading companies of Silicon Valley. <a href="https://www.wlessin.com/">Sam Lessin</a>, of <a href="https://slow.co/">Slow Ventures</a>, former VP of Product at Facebook, is a very thoughtful guy who can see things happening in the future well before other people can, and is excited to be backing the next secure, open-source generation of AI. <a href="https://about.me/billtai">Bill Tai</a> wrote the first checks into <a href="https://www.zoom.com/">Zoom</a> and <a href="https://www.canva.com/">Canva</a> — he's obviously a legend, with a great eye for seeing the next important company way before anyone else does — and he was also the first check to wire for TrustedRouter. And <a href="https://www.linkedin.com/in/lindaavey/">Linda Avey</a>, who co-founded <a href="https://www.23andme.com/">23andMe</a>, is a generational entrepreneur who cares deeply about privacy and about every person being able to use AI in a safe way. Also pleased to have <a href="https://www.linkedin.com/in/georgexing">George Xing</a>, formerly leading data at <a href="https://stripe.com/">Stripe</a>, in the round.</p>
+
+<p>And a group of builders I'm also lucky to have: <a href="https://unpopular.vc/">Peter Livingston of Unpopular Ventures</a>, <a href="https://www.avalanche.vc/people/katelyn">Katelyn Donnelly of Avalanche VC</a>, <a href="https://jacobsschool.ucsd.edu/people/profile/gert-lanckriet">Gert Lanckriet</a>, who runs machine learning for <a href="https://www.amazon.com/music/">Amazon Music</a>, <a href="https://www.fightforthefuture.org/">Holmes Wilson</a>, who co-founded Fight for the Future, <a href="https://www.equi.com/our-company">Tory Reiss</a>, co-founder and CEO of Equi, <a href="https://airflow.apache.org/docs/apache-airflow/stable/project.html">Daniel Imberman</a>, an Apache Airflow committer at <a href="https://www.astronomer.io/">Astronomer</a>, <a href="https://www.edsurge.com/writers/michael-staton">Michael Staton</a> of CoLearn, <a href="https://sora.vc/team/">Jason Fang</a> of Sora Ventures, <a href="https://capitoria.com/">Capitoria Ventures</a>, and others.</p>
+
+<p>We also have people on board who are deeply technical — who know about engineering and know about these AI models because they've worked at some of the biggest labs. <a href="https://alexeymk.com/">Alexey Komissarouk</a> works on growth engineering at <a href="https://www.anthropic.com/">Anthropic</a>. <a href="https://openai.com/contributions/gpt-4/">Henri Roussez worked on compute cluster scaling for GPT-4</a> when he was at OpenAI. These are investors who bring their own time and money into this because they believe in this idea of many, many models and many providers helping people save money and get more of what they want.</p>
+
+<p>We've been publicly in beta since May, growing entirely from word of mouth, and just a few days ago we crossed our first billion-tokens-in-one-day milestone. We are bringing on hundreds and hundreds of customers — developers and startups, many in legal, finance, and healthcare — who want to keep their customers' data private. These companies are joining because they see the risks in how the big labs and closed-source routers are possibly using and misusing their internal corporate secrets and customer data, and they want an alternative they know they can trust.</p>
+
+<blockquote><p>Just a few days ago, we crossed our first billion-tokens-in-one-day milestone.</p></blockquote>
+
+<p>One example of the many startups that have joined is a company in the legal space. Legal has very strict requirements around data, and there have been a lot of court cases where the question of whether courts have access to a company's data through a third-party processor is very important. This company was not entirely satisfied with the guarantees they were getting from competitors, and was more excited about having end-to-end encryption where they could verify — and they did verify — that we don't store any of the data at any point. They were able to move their document handling over to TrustedRouter in a matter of days and weeks, and have run hundreds of thousands of very long legal documents through the system, with complete confidence that our confidential compute was keeping it secure.</p>
+
+<blockquote><p>Hundreds of thousands of very long legal documents — moved over in a matter of days and weeks.</p></blockquote>
+
+<h2>Your router sees everything</h2>
+<p>The deepest core need companies have right now is confidence that they can use AI in a way that is safe — that is not leaking any data to any non-intended third party — and safe from the one big thing the big labs are doing now, which is using free subscriptions and even company data to make synthetic data and train the models and share their secrets with their competition. We see TrustedRouter as a way to safely use the smartest models while not giving away your alpha, not giving away your data, not giving away your customer data.</p>
+
+<p>The prompts are so valuable because AI is the most intimate technology humans have ever invented. People put into these machines their hopes and dreams, conflicts, medical issues, financial concerns — the most private thoughts people have, in long form. And from a company perspective: secret data, experiments, learnings, customer data, HIPAA data from medical companies — private information that has never been seen anywhere except on some hard disk inside the company. It's very important that this is never accidentally exposed — even a derivative of that data should never be exposed to anybody. And right now, the labs do not guarantee that. In fact, their whole business model is predicated on learning from all this information. That’s why they’ve grown so fast!</p>
+
+<blockquote><p>AI is the most intimate technology humans have ever invented.</p></blockquote>
+
+<p>Many providers say they don't train on your data, but it's very careful wording. What does that mean? Maybe they don't train directly on your data — but can they train on an anonymized version of your data, a pseudonymized version? They take the data, make a version of it called synthetic data, and then train on that. And this is not idle speculation: Google DeepMind published a paper last year where they talked about something they've been doing for years — taking data, generating synthetic data from it, and training on that. Maybe all they did was take out a Social Security number, but they kept everything else. And that matters a lot for a business whose valuable workflows are their competitive edge. <a href="/blog/they-are-still-training-on-your-data">I wrote about this in more depth here</a>.</p>
+
+<p>There's a synthetic data loophole. Say a legal company has a contract with some innovation in it — some legal wording they think really protects their clients. The labs say they can't train on that exact document. But if the lab rephrases that document into a different set of words, meaning the same thing, then they can train on that synthetic copy. That's the loophole. There's nothing preventing it, and there's no auditable way to know what they're doing or how they're doing it. As long as the exact original sequence of words, in its entirety, is not copied and trained on — then technically, they're following what they say.</p>
+
+<h2>You don't have to trust us at all</h2>
+<p>So I built something where you can verify it yourself. We've got <a href="https://github.com/Lore-Hex/quill-router">the control plane</a>, <a href="https://github.com/Lore-Hex/quill-cloud-proxy">the attested gateway</a>, and <a href="/blog/open-source-open-source-open-source">the rest of the stack</a> on GitHub. You can ask your own Claude to read it and verify that we aren't keeping a copy to make synthetic data. We're not keeping that at all. The only thing we keep is billing information: which model and provider you decided to send to, and how many tokens were sent and returned, in order to know how much to bill you. Our control plane can never see the prompts — the input or the output response from the LLM.</p>
+
+<p>And this is all remotely attested, so you know that the source code we say is running is actually running. Remote attestation lets you verify the machine image running on our servers and trace it back to the source code — exactly the source code that is ever touching your data, end to end. If it ever stops being the case, you can have a system that automatically shuts it down. And if the code changes, you can verify when and where it changed and what it's doing differently, and decide for yourself. You don't have to take my word for any of this — <a href="https://trust.trustedrouter.com/">trust.trustedrouter.com is live right now</a>.</p>
+
+<p>The funny thing about the name: I picked TrustedRouter partly because the technology is called a <a href="/blog/how-confidential-computing-protects-ai-prompts">Trusted Execution Environment</a>. It's partly an ironic name, because you actually don't have to trust us at all. People using the other labs are needing to trust them more. With TrustedRouter, you can verify yourself exactly what machine image — and therefore what source code — is actually running, and then you can check the source code itself for security bugs. You don't have to trust that we did it right. I'd rather you not trust us at all, and I'd rather you check it yourself.</p>
+
+<blockquote><p>The point isn't trust us more. The point is you don't have to trust us at all, because you can verify yourself.</p></blockquote>
+
+<p>You route through us, and then you decide which <a href="/providers">providers</a> — the ones physically hosting the GPUs — you trust. If you're in the EU, you can say: I only want <a href="/eu">providers hosted in the EU</a>. If you're okay with a particular provider's ZDR promises — maybe you already have a relationship with them and you know them — you can send traffic to them. And if you're more paranoid, you can decide you only want providers that are also using confidential compute: call <a href="/models/trustedrouter/confidential"><code>trustedrouter/confidential</code></a>, and you'll only get the subset of providers that are end-to-end encrypted not just through TrustedRouter, but all the way down to the GPU and the model. You pick the privacy floor your data actually requires.</p>
+
+<h2>One API. Every model. No new lock-in.</h2>
+<p>We believe strongly in a polytheistic future. Some big labs think there's going to be a monotheistic world where there's one true model — the only model you need — and it's going to eat the whole world. We don't think that's true. We believe in neurodiversity: every mind has different strengths, and it's true with LLMs as well. We know from our own experiments and <a href="/leaderboard">evals</a> that different models have different strengths. Claude is not the best at everything. We have small language models on our platform that outperform it and are 100 times cheaper. And this is changing every week — new models come out every single week, and the Pareto frontier moves every single week. Our team is on top of this, doing evals all the time, so we can help you decide — or decide automatically for you — which models to send which tasks to.</p>
+
+<blockquote><p>More than 600 models. More than 81 providers. One OpenAI-compatible API.</p></blockquote>
+
+<p>In practice, the thing we're providing most is a <a href="/models">marketplace</a> — with hundreds more models coming. Bringing on each individual provider is a big process for an enterprise — for an individual, it's a big process to even do two. Some of them are in China: do you want to give your credit card to some random Chinese company you've never heard of? It's much easier to sign up once, with one credit system split between all the providers and models you're trying. That's why people love TrustedRouter.</p>
+
+<p>The simplest way to get started is <a href="/models/trustedrouter/auto"><code>trustedrouter/auto</code></a>. Every single day we look at the whole space of models and pick a good one on the Pareto frontier — smart enough, good enough, cheap enough, from solid providers — and we pick that for you, so you don't have to worry about it. We also have a skill called <a href="https://github.com/Lore-Hex/LLM-advisor">LLM Advisor</a>: you tell it what you want to do, and it works with you, running experiments to figure out exactly the best model for exactly your problem.</p>
+
+<p>We have engineered TrustedRouter to have no single point of failure. Usually there are three things that would all need to go down, at every single level of the stack. We're on three different clouds — <a href="https://aws.amazon.com/">AWS</a>, <a href="https://azure.microsoft.com/">Azure</a>, and <a href="https://cloud.google.com/">Google Cloud</a> — so even if one whole cloud goes down, which is rare, it fails over to the next cloud, and there are still two more. We even have three domain names, hosted on different registrars with different DNS providers. And we do regular chaos testing — shutting down parts of these systems, doing network partitions — to ensure everything still works even when a particular component is going down.</p>
+
+<p>As a developer, you should always be calling with <a href="/docs/routing">backups specified</a>. You set a privacy level with every request, and if a provider goes down, we only ever fall back to another provider that has the same privacy level you requested — so you're always sure to be going to a safe one. If we exhaust all the backups and they're all down, only then will it return a failure.</p>
+
+<h2>How we make money</h2>
+<p>We charge 5.5% on the cost of the tokens from the providers, with a $0.01 per million token floor. No subscription. If you have your own provider agreements, bring your own keys. All the features, the guarantees, and an even greater breadth of models — plus we're throwing in the security guarantees at no extra cost. <a href="/pricing">See the pricing details</a>.</p>
+
+<h2>I built this company differently</h2>
+<p>I started at <a href="https://www.cs.princeton.edu/">Princeton</a> in computer science and machine learning, and worked on a number of startups there. After college I founded <a href="https://turntable.fm/">Turntable.fm</a>, a popular music site, and from that got recruited into Facebook to lead product and engineering for News Feed on iOS during the company's big shift to mobile — launching a lot of great things with that feature, including mobile videos. Then I started a PhD in AI. That was really fun — it's where I learned to build neural networks from scratch, by hand, before TensorFlow and PyTorch came on. My advisor left to be Director of AI at Amazon, so I decided to leave as well. I dropped out to co-found Terminal.com, a container cloud before Docker and before AWS had containers — and a GPU cloud before all these other GPU clouds started — which was eventually acquired by <a href="https://www.udacity.com/">Udacity</a>. Then I joined <a href="https://www.lyft.com/">Lyft</a> as one of the first fifty engineers, ran passenger growth and driver growth through the IPO, and helped start the behavioral planning team for the self-driving car at Lyft Level 5.</p>
+
+<p>TrustedRouter is different from my previous companies because the AI tools of today — mostly of this year — are so powerful and so leveraged that I'm able to build things alone. Not just demos, but fully working products at production quality, at massive scale, across clouds — again, alone. I built the initial product with Claude, Codex, our model Prometheus, and other AI systems working alongside me.</p>
+
+<blockquote><p>Fully working products at production quality, at massive scale, across clouds — again, alone.</p></blockquote>
+
+<p>After 20 years of building in Silicon Valley, I am shocked by how much a single person can do now. I was able to go from an idea to not just a working demo but a full production version very quickly — deployed to three clouds. In the previous era, deploying to a second cloud was normally a multi-year project; deploying to three is basically unheard of. And doing that as a single person, while also managing every single other task — from marketing down to backend, down to frontend, down to documentation, down to SDKs — the amount of open-source code I've been generating that is fully working end to end, and fully tested, is more than I could have imagined I'd be able to do three years ago.</p>
+
+<p>I think there's a very stark difference now between a company that's AI-native and one that isn't. More on that another time.</p>
+
+<p>The routing layer is not something people thought they needed before. But everyone is starting to realize that, with the multitude of AI clouds, the routing layer is now critical infrastructure — to route between unreliable AI clouds and maximize your speed, price, performance, and uptime. And anything that's critical infrastructure is going to perform a lot better for you when you can see the source code and verify it for security. It should be secure. It should be private. It should not be closed-source. It should be inspectable and observable. And it should get you better prices, better uptime, better security.</p>
+""",
+    ),
     BlogPost(
         slug="axios-tried-trustedrouter",
         title="Axios tried TrustedRouter in under 30 seconds",
