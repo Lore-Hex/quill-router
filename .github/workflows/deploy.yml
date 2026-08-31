@@ -751,7 +751,7 @@ jobs:
 
   rollout-secondaries:
     needs: [deploy]
-    if: ${{ github.repository == 'Lore-Hex/quill-router' && success() }}
+    if: ${{ github.repository == 'Lore-Hex/quill-router' && success() && needs.deploy.result == 'success' }}
     runs-on: ubuntu-latest
     # The mutex TTL is 90 minutes. The two lock-owning job bounds total
     # 25 + 55 = 80 minutes, leaving 10 minutes for the job handoff queue gap.

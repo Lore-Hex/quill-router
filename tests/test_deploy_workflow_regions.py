@@ -1,13 +1,28 @@
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
+
+ROLLOUT_SECONDARIES_DEPLOY_GATE = (
+    "if: ${{ github.repository == 'Lore-Hex/quill-router' && success()"
+    " && needs.deploy.result == 'success' }}"
+)
+
+
+def _assert_rollout_secondaries_requires_successful_deploy(workflow: str) -> None:
+    rollout = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
+        "\n  public-surface-companion:\n", 1
+    )[0]
+    assert ROLLOUT_SECONDARIES_DEPLOY_GATE in rollout, (
+        "rollout-secondaries must require needs.deploy.result == 'success' "
+        "before importing deploy outputs"
+    )
 
 
 def test_every_load_balanced_control_plane_region_is_staged() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
-    deploy = workflow.split("\n  deploy:\n", 1)[1].split(
-        "\n  rollout-secondaries:\n", 1
-    )[0]
+    deploy = workflow.split("\n  deploy:\n", 1)[1].split("\n  rollout-secondaries:\n", 1)[0]
     rollout = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
         "\n  public-surface-companion:\n", 1
     )[0]
@@ -23,10 +38,7 @@ def test_every_load_balanced_control_plane_region_is_staged() -> None:
 def test_prod_smoke_checks_public_origins_and_converges_private_regions() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
 
-    assert (
-        "for region in us-central1 us-east4 europe-west4 southamerica-east1; do"
-        in workflow
-    )
+    assert "for region in us-central1 us-east4 europe-west4 southamerica-east1; do" in workflow
     smoke = workflow.split("- name: Smoke test prod", 1)[1]
     assert "source scripts/deploy/_cloud_run_revision_probe.sh" in smoke
     check_url = smoke.split("check_url() {", 1)[1].split("\n          }", 1)[0]
@@ -38,19 +50,14 @@ def test_prod_smoke_checks_public_origins_and_converges_private_regions() -> Non
     assert "return 1" in check_url
     assert "service_ingress=$(cloud_run_service_ingress" in smoke
     assert 'if [ "${service_ingress}" = "all" ]; then' in smoke
-    direct = smoke.split('if [ "${service_ingress}" = "all" ]; then', 1)[1].split(
-        "else", 1
-    )[0]
+    direct = smoke.split('if [ "${service_ingress}" = "all" ]; then', 1)[1].split("else", 1)[0]
     assert 'check_url "ready_${region}" "${service_url}/ready"' in direct
     assert 'check_url "status_${region}" "${service_url}/status.json"' in direct
     assert 'check_url "status_page_${region}" "${service_url}/status"' in direct
     assert 'check_url "leaderboard_${region}" "${service_url}/leaderboard"' in direct
-    assert (
-        'check_url "video_leaderboard_${region}" "${service_url}/leaderboard/video"'
-        in direct
-    )
+    assert 'check_url "video_leaderboard_${region}" "${service_url}/leaderboard/video"' in direct
     assert "private Cloud Run ingress" in smoke
-    assert 'active_revision=$(jq -r' in smoke
+    assert "active_revision=$(jq -r" in smoke
     assert '[ "${active_count}" != "1" ]' in smoke
     assert '[ "${active_revision}" != "${latest_ready}" ]' in smoke
     assert '[ "${latest_ready}" != "${latest_created}" ]' in smoke
@@ -67,23 +74,21 @@ def test_deploy_syncs_the_shared_public_snapshot_worker() -> None:
 
 
 def test_public_snapshot_worker_swap_is_verified_and_rollbackable() -> None:
-    script = (
-        ROOT / "scripts/deploy/sync_public_analytics_snapshots.sh"
-    ).read_text(encoding="utf-8")
+    script = (ROOT / "scripts/deploy/sync_public_analytics_snapshots.sh").read_text(
+        encoding="utf-8"
+    )
 
     assert "systemctl stop tr-clickhouse-public-snapshots.timer" in script
     assert "tr-clickhouse-public-snapshots.service" in script
     assert "previous_builder=" in script
     assert "rollback()" in script
-    assert r'if [ \"\$count\" != 4 ]; then' in script
-    assert r'mv \"\$previous_builder\" \"\$builder\"' in script
+    assert r"if [ \"\$count\" != 4 ]; then" in script
+    assert r"mv \"\$previous_builder\" \"\$builder\"" in script
 
 
 def test_all_regions_launch_together_but_only_primary_warm_gates_traffic() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
-    deploy = workflow.split("\n  deploy:\n", 1)[1].split(
-        "\n  rollout-secondaries:\n", 1
-    )[0]
+    deploy = workflow.split("\n  deploy:\n", 1)[1].split("\n  rollout-secondaries:\n", 1)[0]
     start = deploy.index("- name: Warm all four regions in parallel (no traffic)")
     end = deploy.index("- name: Stage traffic 10/50/100 (us-central1)", start)
     warm = deploy[start:end]
@@ -107,7 +112,7 @@ def test_all_regions_launch_together_but_only_primary_warm_gates_traffic() -> No
     assert warm.count('pids+=("$!")') == 4
     assert "secondary-warms.tsv" in warm
     assert '>>"${secondary_state}"' in warm
-    assert 'printf \'\\n=== warmup: %s ===\\n\' "${regions[0]}"' in warm
+    assert "printf '\\n=== warmup: %s ===\\n' \"${regions[0]}\"" in warm
     assert 'cat "${logs[0]}"' in warm
     assert "us-central1 no-traffic warmup failed; no traffic moved" in warm
     assert "TR_DEPLOY_RECONCILE_LB" in warm
@@ -131,14 +136,12 @@ def test_all_regions_launch_together_but_only_primary_warm_gates_traffic() -> No
         key = region.replace("-", "_") + "_revision"
         assert f"steps.wait_secondary_warms.outputs.{key}" in deploy
     assert "no secondary traffic moved" in collector
-    assert 'staged_traffic.sh europe-west4' not in deploy
-    assert 'staged_traffic.sh us-east4' not in deploy
-    assert 'staged_traffic.sh southamerica-east1' not in deploy
+    assert "staged_traffic.sh europe-west4" not in deploy
+    assert "staged_traffic.sh us-east4" not in deploy
+    assert "staged_traffic.sh southamerica-east1" not in deploy
     assert "ramp_secondary" not in deploy
     assert "timeout-minutes: 25" in deploy
-    release = deploy.index(
-        "- name: Release production deployment mutex after primary-live failure"
-    )
+    release = deploy.index("- name: Release production deployment mutex after primary-live failure")
     assert "if: ${{ failure() || cancelled() }}" in deploy[release : release + 220]
     assert "GitHub never schedules rollout-secondaries" in deploy
     assert "the 90-minute TTL recovers" in deploy
@@ -152,7 +155,7 @@ def test_secondaries_ramp_serially_while_reconciler_deploys() -> None:
     )[0]
 
     assert "needs: [deploy]" in rollout
-    assert "if: ${{ success() }}" in rollout
+    _assert_rollout_secondaries_requires_successful_deploy(workflow)
     assert "timeout-minutes: 55" in rollout
     first_step = rollout.index("- name: Import production deployment mutex fence")
     checkout = rollout.index("- uses: actions/checkout@v4")
@@ -162,9 +165,7 @@ def test_secondaries_ramp_serially_while_reconciler_deploys() -> None:
     assert 'echo "TR_DEPLOY_MUTEX_OPERATION=${DEPLOY_MUTEX_OPERATION}"' in rollout
     assert 'echo "TR_DEPLOY_MUTEX_GENERATION=${DEPLOY_MUTEX_GENERATION}"' in rollout
 
-    ramp_step = rollout.index(
-        "- name: Ramp secondaries serially while reconciler deploys"
-    )
+    ramp_step = rollout.index("- name: Ramp secondaries serially while reconciler deploys")
     ramp = rollout[ramp_step : rollout.index("- name: Deploy synthetic monitor", ramp_step)]
     staged_call = ramp.index("bash scripts/deploy/staged_traffic.sh")
     staged_line = ramp[staged_call : ramp.index("\n", staged_call)]
@@ -180,7 +181,7 @@ def test_secondaries_ramp_serially_while_reconciler_deploys() -> None:
     wait = ramp.index('wait "${reconciler_pid}"')
     assert reconciler < ramp_eu < ramp_us < ramp_sa < wait
     assert 'regional_quota_reconciler.sh >"${reconciler_log}" 2>&1 &' in ramp
-    assert 'printf \'\\n=== regional quota reconciler deploy ===\\n\'' in ramp
+    assert "printf '\\n=== regional quota reconciler deploy ===\\n'" in ramp
     assert '[ "${ramp_status}" -eq 0 ]' in ramp
     assert "Later regions remain warm at zero traffic and never received traffic" in ramp
     assert "#695 (billing 5xx, 2026-08-20)" in ramp
@@ -190,6 +191,19 @@ def test_secondaries_ramp_serially_while_reconciler_deploys() -> None:
     release = rollout.index("- name: Release production deployment mutex")
     assert "if: always()" in rollout[release : release + 180]
     assert "deploy_mutex.sh release" in rollout[release : release + 180]
+
+
+def test_rollout_secondaries_deploy_result_gate_rejects_bare_success_mutation() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    mutated = workflow.replace(
+        ROLLOUT_SECONDARIES_DEPLOY_GATE,
+        "if: ${{ github.repository == 'Lore-Hex/quill-router' && success() }}",
+        1,
+    )
+    assert mutated != workflow, "mutation target must exist in deploy.yml"
+
+    with pytest.raises(AssertionError, match="must require needs.deploy.result"):
+        _assert_rollout_secondaries_requires_successful_deploy(mutated)
 
 
 def test_full_convergence_jobs_need_rollout_secondaries() -> None:
@@ -220,9 +234,7 @@ def test_primary_rollout_gates_on_router_core_and_billing_path_errors() -> None:
 
 def test_billing_path_gate_only_attributes_errors_to_candidate_revision() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
-    script = (ROOT / "scripts/deploy/assert_no_billing_5xx.sh").read_text(
-        encoding="utf-8"
-    )
+    script = (ROOT / "scripts/deploy/assert_no_billing_5xx.sh").read_text(encoding="utf-8")
 
     assert 'REVISION="${3:?usage:' in script
     assert 'resource.labels.revision_name=\\"${REVISION}\\"' in script
@@ -240,8 +252,7 @@ def test_superseded_push_stops_before_production_mutation() -> None:
     assert 'echo "proceed=false" >> "$GITHUB_OUTPUT"' in workflow[confirm:deploy]
     assert (
         "if: ${{ github.repository == 'Lore-Hex/quill-router' && "
-        "needs.confirm-current-main.outputs.proceed == 'true' }}"
-        in workflow
+        "needs.confirm-current-main.outputs.proceed == 'true' }}" in workflow
     )
 
 
@@ -307,10 +318,7 @@ def test_probe_tag_is_hoisted_and_watchdog_baseline_overlaps_traffic_shift() -> 
 
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     assert "final-watchdog-baseline-us-central1.json" in workflow
-    assert (
-        '--baseline-input "${RUNNER_TEMP}/final-watchdog-baseline-us-central1.json"'
-        in workflow
-    )
+    assert '--baseline-input "${RUNNER_TEMP}/final-watchdog-baseline-us-central1.json"' in workflow
     assert '--baseline-input "${watchdog_baseline}"' in workflow
 
 
@@ -340,13 +348,10 @@ def test_mutex_acquire_step_cannot_swallow_a_blocked_exit() -> None:
     would deploy WITHOUT holding it. The acquire invocation must therefore
     never sit on the left of an unguarded pipe.
     """
-    workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
     for line in workflow.splitlines():
         if "deploy_mutex.sh acquire" in line and "|" in line.split("acquire", 1)[1]:
             raise AssertionError(
                 "deploy_mutex.sh acquire is piped; a blocked acquire would "
-                "exit 0 through the pipe under bash -e without pipefail: "
-                + line.strip()
+                "exit 0 through the pipe under bash -e without pipefail: " + line.strip()
             )
