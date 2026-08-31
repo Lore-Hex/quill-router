@@ -103,13 +103,12 @@ def test_together_credits_follow_started_serverless_manifest() -> None:
         for e in MODEL_ENDPOINTS.values()
         if e.provider == "together" and e.usage_type == "Credits"
     }
-    assert together_credits <= allow
-    assert {
-        "minimax/minimax-m3",
-        "moonshotai/kimi-k2.7-code",
-        "z-ai/glm-5.2",
-        "intfloat/multilingual-e5-large-instruct",
-    } <= together_credits
+    # Together's authenticated feed changes as serverless models start and
+    # retire. The generated manifest is the availability contract; freezing a
+    # transient model ID here blocks every later catalog refresh after its
+    # provider-confirmed retirement.
+    assert together_credits
+    assert together_credits == allow
     assert "meta-llama/llama-3.1-70b-instruct" not in together_credits
 
 

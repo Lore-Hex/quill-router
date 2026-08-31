@@ -392,7 +392,10 @@ def test_together_pricing_is_on_hourly_refresh_path() -> None:
     assert "0 * * * *" in workflow
     assert "trustedrouter-together-api-key" in workflow
     assert "TOGETHER_API_KEY" in workflow
-    assert "deepseek/deepseek-v4-pro" in together.EXPECTED_MODELS
+    assert "minimax/minimax-m3" in together.EXPECTED_MODELS
+    assert "z-ai/glm-5.2" in together.EXPECTED_MODELS
+    assert "deepseek/deepseek-v4-pro" not in together.EXPECTED_MODELS
+    assert "moonshotai/kimi-k2.7-code" not in together.EXPECTED_MODELS
     assert "SERVERLESS_ENDPOINTS_URL" in vars(together)
 
 
