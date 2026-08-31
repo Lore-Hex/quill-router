@@ -49,6 +49,9 @@ VIDEO_GENERATION_MODEL = "x-ai/grok-imagine-video"
 VIDEO_GENERATION_PROVIDER = "grok"
 VIDEO_GENERATION_DURATION_SECONDS = 1
 VIDEO_GENERATION_RESOLUTION = "480p"
+SPEND_LEASE_SOAK_MODEL = "anthropic/claude-haiku-4.5"
+SPEND_LEASE_SOAK_ROUTE_TYPE = "chat.completions"
+SPEND_LEASE_SOAK_PROMPT = "Reply OK."
 # Reverted from "Respond with only the word PONG." back to
 # "reply exactly PONG" — the original phrasing worked at
 # 99.97% uptime for ~24h on the same monitor pool, then the
@@ -1189,6 +1192,67 @@ async def openai_chat_pong_probe(
         model=model,
         output_match=ok,
     )
+
+
+async def spend_lease_soak_probe(
+    client: httpx.AsyncClient,
+    target: SyntheticTarget,
+    *,
+    monitor_region: str,
+    api_key: str,
+) -> SyntheticProbeSample:
+    """Exercise exactly the Credits-only Stage A spend-lease cohort."""
+    url = _api_url(
+        target.api_base_url,
+        f"/{SPEND_LEASE_SOAK_ROUTE_TYPE.replace('.', '/')}",
+    )
+    body = {
+        # A plain catalog model: no custom/user/partner model and no provider
+        # override that could introduce a non-Credits fallback.
+        "model": SPEND_LEASE_SOAK_MODEL,
+        "messages": [{"role": "user", "content": SPEND_LEASE_SOAK_PROMPT}],
+        "max_tokens": 8,
+        # This marks analytics synthetic; it is not OAuth app attribution and
+        # does not create app markup.
+        "metadata": {
+            "trustedrouter_synthetic": "true",
+            "probe": "spend_lease_soak",
+        },
+    }
+    started = time.perf_counter()
+    try:
+        response = await client.post(url, json=body, headers=_auth_headers(api_key))
+        latency_ms = _elapsed_ms(started)
+        payload = _json_object(response)
+        metadata = _completion_metadata(payload)
+        ok = response.status_code == 200
+        return _sample(
+            "spend_lease_soak",
+            target,
+            monitor_region,
+            url,
+            status="up" if ok else "down",
+            latency_milliseconds=latency_ms,
+            ttfb_milliseconds=latency_ms,
+            http_status=response.status_code,
+            error_type=None if ok else "spend_lease_soak_http_error",
+            model=SPEND_LEASE_SOAK_MODEL,
+            selected_provider=metadata["selected_provider"],
+            selected_model=metadata["selected_model"],
+            generation_id=metadata["generation_id"],
+            cost_microdollars=metadata["cost_microdollars"],
+        )
+    except httpx.HTTPError as exc:
+        return _sample(
+            "spend_lease_soak",
+            target,
+            monitor_region,
+            url,
+            status="down",
+            latency_milliseconds=_elapsed_ms(started),
+            error_type=exc.__class__.__name__,
+            model=SPEND_LEASE_SOAK_MODEL,
+        )
 
 
 async def responses_pong_probe(

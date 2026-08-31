@@ -39,6 +39,7 @@ jobs=(
   "us-central1:trusted-router-synthetic-us-central1:health"
   "europe-west4:trusted-router-synthetic-europe-west4:health"
   "us-central1:trusted-router-throughput-us-central1:worker"
+  "us-central1:trusted-router-spend-lease-soak-us-central1:worker"
   "us-central1:trusted-router-image-generation-us-central1:worker"
   "us-central1:trusted-router-video-generation-us-central1:worker"
 )

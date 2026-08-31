@@ -416,6 +416,54 @@ for legacy_throughput_scheduler_name in "${legacy_throughput_scheduler_names[@]}
   fi
 done
 
+# Stage A spend-lease soak: one tiny Credits chat completion every minute.
+# This is isolated from the regional health jobs so its cadence does not
+# multiply their paid model checks. The worker exits before secret access while
+# disabled; its API key is fetched by NAME from Secret Manager at run time.
+spend_lease_region="us-central1"
+spend_lease_ingest_base="$(synthetic_ingest_base_for_region "$spend_lease_region")"
+spend_lease_job_name="trusted-router-spend-lease-soak-${spend_lease_region}"
+spend_lease_scheduler_name="${spend_lease_job_name}-every-minute"
+spend_lease_probe_enabled="${TR_SPEND_LEASE_SOAK_PROBE_ENABLED:-false}"
+spend_lease_probe_key_secret="${TR_SPEND_LEASE_PROBE_KEY_SECRET:-trustedrouter-spend-lease-probe-key}"
+if [ "$spend_lease_probe_enabled" = "true" ]; then
+  if ! gc secrets describe "$spend_lease_probe_key_secret" >/dev/null 2>&1; then
+    echo "ERROR: spend-lease soak key secret ${spend_lease_probe_key_secret} is required" >&2
+    exit 1
+  fi
+fi
+spend_lease_env_vars=(
+  "${BASE_ENV_VARS[@]}"
+  "TR_SYNTHETIC_MONITOR_REGION=${spend_lease_region}"
+  "TR_SYNTHETIC_INGEST_URL=${spend_lease_ingest_base}/v1/internal/synthetic/samples"
+  "TR_SPEND_LEASE_SOAK_PROBE_ENABLED=${spend_lease_probe_enabled}"
+  "TR_SPEND_LEASE_PROBE_KEY_SECRET=${spend_lease_probe_key_secret}"
+)
+spend_lease_set_env_vars="$(IFS='|'; echo "^|^${spend_lease_env_vars[*]}")"
+
+prepare_synthetic_ingest_target "$spend_lease_region"
+log "deploying isolated spend-lease soak Cloud Run job ${spend_lease_job_name}"
+gc run jobs deploy "$spend_lease_job_name" \
+  --region "$spend_lease_region" \
+  --image "$IMAGE" \
+  --command="/app/.venv/bin/python" \
+  --args="-m,trusted_router.synthetic.spend_lease_soak" \
+  --service-account "$RUN_SERVICE_ACCOUNT" \
+  "${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]+"${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}"}" \
+  --set-env-vars "$spend_lease_set_env_vars" \
+  "$JOB_SECRET_FLAG" "$JOB_SECRETS" \
+  --max-retries 0 \
+  --task-timeout 60s \
+  --cpu 1 \
+  --memory 512Mi \
+  --quiet >/dev/null
+
+upsert_scheduler \
+  "$spend_lease_scheduler_name" \
+  "$spend_lease_job_name" \
+  "$spend_lease_region" \
+  "* * * * *"
+
 # Image generation is materially more expensive than text PONG probes. Keep it
 # isolated and run one canonical end-to-end request every six hours.
 image_region="us-central1"

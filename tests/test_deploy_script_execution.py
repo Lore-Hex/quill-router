@@ -1801,7 +1801,7 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
         if call[:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
         and call[4:6] == ["jobs", "deploy"]
     ]
-    assert len(deploys) == 5
+    assert len(deploys) == 6
     subnet_updates = [
         (index, call)
         for index, call in enumerate(run.calls)
@@ -1816,7 +1816,7 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
             "update",
         ]
     ]
-    assert len(subnet_updates) == 5
+    assert len(subnet_updates) == 6
     service_contract_reads = [
         (index, call)
         for index, call in enumerate(run.calls)
@@ -1831,7 +1831,7 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
         ]
         and call[6] == "trusted-router-billing"
     ]
-    assert len(service_contract_reads) == 5
+    assert len(service_contract_reads) == 6
     previous_deploy_index = -1
     for deploy_index, deploy in deploys:
         region = deploy[deploy.index("--region") + 1]
@@ -1934,6 +1934,7 @@ def test_combined_synthetic_refresh_preserves_security_boundaries(tmp_path: Path
         ("trusted-router-synthetic-us-central1", "us-central1"),
         ("trusted-router-synthetic-europe-west4", "europe-west4"),
         ("trusted-router-throughput-us-central1", "us-central1"),
+        ("trusted-router-spend-lease-soak-us-central1", "us-central1"),
         ("trusted-router-image-generation-us-central1", "us-central1"),
         ("trusted-router-video-generation-us-central1", "us-central1"),
     ]
@@ -2002,6 +2003,7 @@ def test_synthetic_combined_bridge_restores_legacy_job_deploys(
         ("trusted-router-synthetic-us-central1", "us-central1"),
         ("trusted-router-synthetic-europe-west4", "europe-west4"),
         ("trusted-router-throughput-us-central1", "us-central1"),
+        ("trusted-router-spend-lease-soak-us-central1", "us-central1"),
         ("trusted-router-image-generation-us-central1", "us-central1"),
         ("trusted-router-video-generation-us-central1", "us-central1"),
     ]
@@ -2083,7 +2085,7 @@ def test_synthetic_combined_bridge_job_environment_constructs_settings(
         if call[:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
         and call[4:6] == ["jobs", "deploy"]
     ]
-    assert len(deploys) == 5
+    assert len(deploys) == 6
     for deploy in deploys:
         settings_kwargs = _settings_kwargs_from_cloud_run_job(deploy)
         settings = Settings(**settings_kwargs)
