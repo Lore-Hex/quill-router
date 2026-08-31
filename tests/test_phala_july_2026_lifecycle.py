@@ -17,6 +17,15 @@ from trusted_router.catalog import (
     endpoints_for_model,
     model_to_openrouter_shape,
 )
+from trusted_router.catalog_data import PRIVACY_TIER_STANDARD, ModelEndpoint
+from trusted_router.catalog_privacy import (
+    endpoint_confidential_compute,
+    endpoint_e2ee,
+    endpoint_privacy_tier,
+    endpoint_provider_policy,
+    endpoint_stores_content,
+    endpoint_zero_data_retention,
+)
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 
@@ -178,6 +187,28 @@ def test_phala_parser_publishes_confidential_and_standard_pass_through_routes(
                 },
             },
             {
+                # An unseen future release in a reviewed family must flow
+                # without adding another per-version mapping.
+                "id": "z-ai/glm-5.3",
+                "name": "Z.ai: GLM 5.3",
+                "context_length": 1_048_576,
+                "max_output_length": 131_072,
+                "input_modalities": ["text", "image"],
+                "output_modalities": ["text"],
+                "supported_features": ["reasoning", "tools"],
+                "pricing": {
+                    "prompt": "0.00000150",
+                    "completion": "0.00000600",
+                    "input_cache_read": "0.00000030",
+                },
+            },
+            {
+                # Availability without exact embedded pricing is never enough
+                # to create a billable route.
+                "id": "z-ai/glm-5.4",
+                "name": "Z.ai: GLM 5.4",
+            },
+            {
                 "id": "unmapped/ordinary-pass-through",
                 "pricing": {"prompt": "0.000001", "completion": "0.000002"},
             },
@@ -211,11 +242,13 @@ def test_phala_parser_publishes_confidential_and_standard_pass_through_routes(
     assert set(result.prices) == {
         "moonshotai/kimi-k3",
         "z-ai/glm-5.2",
+        "z-ai/glm-5.3",
         "z-ai/glm-5.3-flash",
     }
     assert phala.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "z-ai/glm-5.2"
     assert phala.UPSTREAM_ID_MAP["moonshotai/kimi-k3"] == "moonshotai/kimi-k3"
     assert phala.UPSTREAM_ID_MAP["z-ai/glm-5.3-flash"] == "z-ai/glm-5.3-flash"
+    assert phala.UPSTREAM_ID_MAP["z-ai/glm-5.3"] == "z-ai/glm-5.3"
     assert result.prices["moonshotai/kimi-k3"] == ModelPrice(
         3_000_000,
         15_000_000,
@@ -237,7 +270,13 @@ def test_phala_parser_publishes_confidential_and_standard_pass_through_routes(
         phala._DISCOVERED_MANIFEST_ROWS["z-ai/glm-5.3-flash"]["upstream_id"]
         == "z-ai/glm-5.3-flash"
     )
+    assert phala._DISCOVERED_MANIFEST_ROWS["z-ai/glm-5.3"]["upstream_id"] == "z-ai/glm-5.3"
+    assert (
+        phala._DISCOVERED_MANIFEST_ROWS["z-ai/glm-5.3"]["provider_route_class"]
+        == "standard_pass_through"
+    )
     assert "openai/gpt-5.5" not in phala._DISCOVERED_MANIFEST_ROWS
+    assert "z-ai/glm-5.4" not in phala._DISCOVERED_MANIFEST_ROWS
 
     manifest_path = tmp_path / "phala.json"
     manifest_path.write_text(
@@ -275,8 +314,75 @@ def test_phala_parser_publishes_confidential_and_standard_pass_through_routes(
     assert rows_by_id["z-ai/glm-5.3-flash"]["input_token_price_per_m"] == 150_000
     assert rows_by_id["z-ai/glm-5.3-flash"]["cached_input_token_price_per_m"] == 30_000
     assert rows_by_id["z-ai/glm-5.3-flash"]["output_token_price_per_m"] == 500_000
+    assert rows_by_id["z-ai/glm-5.3"]["upstream_id"] == "z-ai/glm-5.3"
+    assert rows_by_id["z-ai/glm-5.3"]["input_token_price_per_m"] == 1_500_000
+    assert rows_by_id["z-ai/glm-5.3"]["cached_input_token_price_per_m"] == 300_000
+    assert rows_by_id["z-ai/glm-5.3"]["output_token_price_per_m"] == 6_000_000
+    assert rows_by_id["z-ai/glm-5.3"]["provider_route_class"] == "standard_pass_through"
     assert "openai/gpt-5.5" not in rows_by_id
     assert "unmapped/ordinary-pass-through" not in rows_by_id
+
+
+def test_phala_auto_discovery_prefers_confidential_route_for_same_model() -> None:
+    rows = [
+        {
+            "id": "z-ai/glm-5.4",
+            "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+        },
+        {
+            "id": "phala/glm-5.4",
+            "pricing": {"prompt": "0.000003", "completion": "0.000004"},
+        },
+    ]
+
+    selected, explicit_map = phala._discoverable_rows(rows)
+
+    assert [row["id"] for row in selected] == ["phala/glm-5.4"]
+    assert explicit_map == {"phala/glm-5.4": "z-ai/glm-5.4"}
+
+
+def test_future_phala_pass_through_fails_closed_to_standard_privacy() -> None:
+    pass_through = ModelEndpoint(
+        id="z-ai/glm-5.4@phala/prepaid",
+        model_id="z-ai/glm-5.4",
+        provider="phala",
+        usage_type="Credits",
+        upstream_id="z-ai/glm-5.4",
+    )
+    confidential = ModelEndpoint(
+        id="z-ai/glm-5.4@phala/prepaid",
+        model_id="z-ai/glm-5.4",
+        provider="phala",
+        usage_type="Credits",
+        upstream_id="phala/glm-5.4",
+    )
+
+    assert endpoint_privacy_tier(pass_through) == PRIVACY_TIER_STANDARD
+    assert endpoint_stores_content(pass_through) is True
+    assert endpoint_zero_data_retention(pass_through) is False
+    assert endpoint_confidential_compute(pass_through) is False
+    assert endpoint_e2ee(pass_through) is False
+    assert "pass-through" in endpoint_provider_policy(pass_through).casefold()
+
+    assert endpoint_stores_content(confidential) is False
+    assert endpoint_zero_data_retention(confidential) is True
+    assert endpoint_confidential_compute(confidential) is True
+    assert endpoint_e2ee(confidential) is False
+
+
+def test_exact_phala_route_supersedes_historical_pass_through_override() -> None:
+    endpoint = ModelEndpoint(
+        id="z-ai/glm-5.2@phala/prepaid",
+        model_id="z-ai/glm-5.2",
+        provider="phala",
+        usage_type="Credits",
+        upstream_id="phala/glm-5.2",
+    )
+
+    assert endpoint_stores_content(endpoint) is False
+    assert endpoint_zero_data_retention(endpoint) is True
+    assert endpoint_confidential_compute(endpoint) is True
+    assert endpoint_e2ee(endpoint) is False
 
 
 def test_non_confidential_phala_route_is_rejected_before_authorization(

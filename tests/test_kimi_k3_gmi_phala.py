@@ -329,6 +329,19 @@ def test_phala_glm_53_pass_through_is_standard_not_confidential() -> None:
     assert endpoint_e2ee(endpoint) is False
 
 
+def test_new_phala_glm_release_is_dynamically_standard_not_confidential() -> None:
+    # GLM 5.3 is intentionally absent from the static privacy-override table.
+    # The exact upstream route must carry the boundary for future releases.
+    endpoint = MODEL_ENDPOINTS["z-ai/glm-5.3@phala/prepaid"]
+
+    assert endpoint.upstream_id == "z-ai/glm-5.3"
+    assert endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD
+    assert endpoint_stores_content(endpoint) is True
+    assert endpoint_zero_data_retention(endpoint) is False
+    assert endpoint_confidential_compute(endpoint) is False
+    assert endpoint_e2ee(endpoint) is False
+
+
 def test_kimi_k3_public_catalog_reports_route_specific_phala_posture(
     client: TestClient,
 ) -> None:

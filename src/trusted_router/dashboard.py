@@ -42,12 +42,12 @@ from trusted_router.catalog import (
     canonical_orchestration_model_id,
     endpoint_confidential_compute,
     endpoint_e2ee,
+    endpoint_provider_policy,
     endpoint_zero_data_retention,
     endpoints_for_model,
     meta_candidate_models,
     model_eu_focused_provider_available,
     model_open_weights,
-    model_provider_policy,
     model_us_provider_available,
     orchestration_primitive,
     orchestration_role,
@@ -5149,11 +5149,7 @@ def _model_detail_view(
                     endpoint_confidential_compute(endpoint) if ep_provider else None
                 ),
                 "provider_e2ee": endpoint_e2ee(endpoint) if ep_provider else None,
-                "provider_policy": (
-                    model_provider_policy(endpoint.model_id, endpoint.provider)
-                    if ep_provider
-                    else ""
-                ),
+                "provider_policy": endpoint_provider_policy(endpoint) if ep_provider else "",
                 "endpoint_id": endpoint.id,
             }
         )

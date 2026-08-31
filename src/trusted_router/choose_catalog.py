@@ -34,11 +34,11 @@ from trusted_router.catalog import (
     endpoint_confidential_compute,
     endpoint_e2ee,
     endpoint_privacy_tier,
+    endpoint_provider_policy_url,
     endpoint_stores_content,
     endpoint_zero_data_retention,
     endpoints_for_model,
     model_open_weights,
-    model_provider_policy_url,
     model_to_openrouter_shape,
 )
 from trusted_router.measured import measured_snapshot
@@ -230,7 +230,7 @@ def _endpoint_row(
         "zero_data_retention": endpoint_zero_data_retention(endpoint),
         "confidential_compute": endpoint_confidential_compute(endpoint),
         "e2ee": endpoint_e2ee(endpoint),
-        "provider_policy_url": model_provider_policy_url(model_id, endpoint.provider),
+        "provider_policy_url": endpoint_provider_policy_url(endpoint),
         "prompt_price_microdollars_per_million_tokens": (
             endpoint.prompt_price_microdollars_per_million_tokens
         ),
