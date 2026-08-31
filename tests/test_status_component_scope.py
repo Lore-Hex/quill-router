@@ -236,6 +236,60 @@ def test_legacy_regional_control_plane_probes_do_not_burn_global_slo() -> None:
     assert set(control_plane["current_by_region"]) == {"global"}
 
 
+def test_control_plane_slo_backfills_each_monitor_dimension_from_rollups() -> None:
+    """One live monitor row must not hide its peer monitor's hourly rollup."""
+    now = dt.datetime(2026, 8, 31, 2, 30, tzinfo=dt.UTC)
+    period_start = _iso(now.replace(minute=0, second=0, microsecond=0))
+    live = SyntheticProbeSample(
+        id="syn-control-plane-eu-live",
+        probe_type="control_plane_health",
+        target="control-plane",
+        target_url="https://trustedrouter.com/health",
+        monitor_region="europe-west4",
+        status="up",
+        created_at=_iso(now - dt.timedelta(seconds=30)),
+    )
+    eu_rollup = SyntheticRollup(
+        id="rollup-control-plane-eu",
+        period="hour",
+        period_start=period_start,
+        component="uncategorized",
+        target="control-plane",
+        probe_type="control_plane_health",
+        monitor_region="europe-west4",
+        sample_count=20,
+        up_count=20,
+        last_checked_at=live.created_at,
+    )
+    us_rollup = SyntheticRollup(
+        id="rollup-control-plane-us",
+        period="hour",
+        period_start=period_start,
+        component="uncategorized",
+        target="control-plane",
+        probe_type="control_plane_health",
+        monitor_region="us-central1",
+        sample_count=20,
+        up_count=20,
+        last_checked_at=_iso(now - dt.timedelta(minutes=1)),
+    )
+
+    snapshot = status_snapshot(
+        [live],
+        rollups=[eu_rollup, us_rollup],
+        now=now,
+        settings=_gcp_settings(),
+    )
+
+    control_plane = snapshot["slo_classes"]["control_plane"]
+    one_hour = control_plane["windows"]["1h"]
+    # The live EU row supersedes its same-hour aggregate. The independent US
+    # aggregate remains valid evidence and must not be discarded with it.
+    assert one_hour["sample_count"] == 21
+    assert one_hour["up_count"] == 21
+    assert one_hour["uptime_percent"] == 100.0
+
+
 def test_gcp_current_checks_keep_complete_regional_deploy_canaries() -> None:
     """A bounded public sample tail cannot crowd deploy-gate PONGs out."""
     now = utcnow()

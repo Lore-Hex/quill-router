@@ -121,8 +121,17 @@ def status_snapshot(
             for component_id in sample_component_ids(sample)
         )
     ]
+    # Control-plane health is an SLO-only signal, so its rollups intentionally
+    # use the non-display `uncategorized` component. Preserve those records
+    # when they classify into a published SLO without exposing a fake component.
     scoped_slo_rollups = [
-        rollup for rollup in precomputed_rollups if rollup.component in published_component_ids
+        rollup
+        for rollup in precomputed_rollups
+        if rollup.component in published_component_ids
+        or (
+            rollup.component == UNCATEGORIZED_COMPONENT
+            and bool(rollup_slo_class_ids(rollup))
+        )
     ]
     router_core_samples = [
         sample
@@ -602,11 +611,11 @@ def _window_rollup_with_rollup_backfill(
 ) -> dict[str, Any]:
     cutoff = now - dt.timedelta(seconds=seconds)
     raw_rows = [sample for sample in samples if _parse_time(sample.created_at) >= cutoff]
-    raw_hour_keys = {sample.created_at[:13] for sample in raw_rows}
+    raw_hour_keys = {_sample_hour_dimension(sample) for sample in raw_rows}
     backfill_rollups = [
         rollup
         for rollup in _hour_rollups_in_window(rollups, now=now, seconds=seconds)
-        if rollup.period_start[:13] not in raw_hour_keys
+        if _rollup_hour_dimension(rollup) not in raw_hour_keys
     ]
     combined_rollups = [
         new_rollup_for_sample(sample, period="hour", component="status_window")
@@ -808,11 +817,11 @@ def _slo_window(
 ) -> dict[str, Any]:
     cutoff = now - dt.timedelta(seconds=seconds)
     raw_rows = [sample for sample in samples if _parse_time(sample.created_at) >= cutoff]
-    raw_hour_keys = {sample.created_at[:13] for sample in raw_rows}
+    raw_hour_keys = {_sample_hour_dimension(sample) for sample in raw_rows}
     backfill_rollups = [
         rollup
         for rollup in _hour_rollups_in_window(rollups, now=now, seconds=seconds)
-        if rollup.period_start[:13] not in raw_hour_keys
+        if _rollup_hour_dimension(rollup) not in raw_hour_keys
     ]
     counts: dict[str, int] = defaultdict(int)
     for sample in raw_rows:
@@ -839,6 +848,26 @@ def _slo_window(
         "burn_rate": burn_rate,
         "status_counts": status_counts,
     }
+
+
+def _sample_hour_dimension(sample: SyntheticProbeSample) -> tuple[str, str, str, str, str]:
+    return (
+        sample.created_at[:13],
+        sample.target,
+        sample.probe_type,
+        sample.monitor_region,
+        sample.target_region or "",
+    )
+
+
+def _rollup_hour_dimension(rollup: SyntheticRollup) -> tuple[str, str, str, str, str]:
+    return (
+        rollup.period_start[:13],
+        rollup.target,
+        rollup.probe_type,
+        rollup.monitor_region,
+        rollup.target_region or "",
+    )
 
 
 def _rollup_status_counts(rollup: SyntheticRollup) -> dict[str, int]:

@@ -144,6 +144,29 @@ def test_snapshot_builder_precomputes_video_and_status_inputs() -> None:
     assert snapshots["client_reliability"]["published"] is False
 
 
+def test_status_input_query_bounds_each_probe_dimension_independently(monkeypatch) -> None:
+    queries: list[str] = []
+
+    def fake_query(_password: str, sql: str, **_kwargs: object) -> str:
+        queries.append(sql)
+        return ""
+
+    monkeypatch.setattr(snapshot_builder, "_query", fake_query)
+
+    samples, rollups = snapshot_builder._status_inputs("test-password")
+
+    assert samples == []
+    assert rollups == []
+    sample_query, _rollup_query = queries
+    assert "row_number() OVER" in sample_query
+    assert "PARTITION BY monitor_region, target, probe_type, target_region" in sample_query
+    assert (
+        f"WHERE probe_rank <= {snapshot_builder.STATUS_SAMPLES_PER_DIMENSION}"
+        in sample_query
+    )
+    assert f"LIMIT {snapshot_builder.STATUS_LIVE_SAMPLE_LIMIT}" in sample_query
+
+
 def test_snapshot_builder_encodes_clickhouse_array_parameters() -> None:
     assert _clickhouse_string_array(["model/a", "model/o'clock", r"model\b"]) == (
         r"['model/a','model/o\'clock','model\\b']"
