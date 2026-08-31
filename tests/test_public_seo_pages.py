@@ -1794,6 +1794,12 @@ def test_axios_blog_post_links_source_and_conversion_path(client: TestClient) ->
     assert 'href="/?reason=signin"' in response.text
     assert f'property="og:image" content="https://trustedrouter.com{image_path}"' in response.text
     assert f'name="twitter:image" content="https://trustedrouter.com{image_path}"' in response.text
+    assert 'data-video-id="vfOj_im2A1o"' in response.text
+    assert 'data-video-title="Joseph Perla demonstrates TrustedRouter onboarding"' in response.text
+    assert "youtube.com/embed/vfOj_im2A1o" not in response.text
+    assert response.text.index('data-video-id="vfOj_im2A1o"') < response.text.index(
+        f'<img src="/static/og/blog/{slug}.svg"'
+    )
     assert f'<img src="/static/og/blog/{slug}.svg"' in response.text
     assert client.get(image_path).status_code == 200
     assert client.get(f"/static/og/blog/{slug}.svg").status_code == 200

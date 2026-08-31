@@ -63,6 +63,12 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
         ),
         og_image="/static/og/blog/axios-tried-trustedrouter.png",
         body_html="""
+<div class="video-embed blog-video-embed" data-action="load-video" data-video-id="vfOj_im2A1o" data-video-title="Joseph Perla demonstrates TrustedRouter onboarding" role="button" tabindex="0" aria-label="Play: Joseph Perla demonstrates TrustedRouter onboarding (loads YouTube)">
+  <img class="video-embed-poster" src="/static/og/blog/axios-tried-trustedrouter.png" alt="Axios tried TrustedRouter in under 30 seconds" width="1200" height="630" decoding="async">
+  <span class="video-embed-shade" aria-hidden="true"></span>
+  <span class="video-embed-play" aria-hidden="true"></span>
+  <span class="video-embed-label"><strong>Watch the onboarding</strong><span>YouTube loads after you press play</span></span>
+</div>
 <figure class="blog-hero-image"><img src="/static/og/blog/axios-tried-trustedrouter.svg" alt="Axios tried DeepSeek through TrustedRouter in under 30 seconds" width="1200" height="630"></figure>
 <p>Axios tried TrustedRouter. Reporter Madison Mills opened the product, chose DeepSeek, and had it working in under 30 seconds.</p>
 
