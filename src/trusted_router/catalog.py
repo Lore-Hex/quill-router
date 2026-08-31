@@ -162,6 +162,8 @@ from trusted_router.catalog_privacy import (  # noqa: F401 - re-exported for bac
     endpoint_e2ee,
     endpoint_meets_privacy_requirement,
     endpoint_privacy_tier,
+    endpoint_provider_policy,
+    endpoint_provider_policy_url,
     endpoint_stores_content,
     endpoint_zero_data_retention,
     endpoint_zero_data_retention_scope,
@@ -690,10 +692,8 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                 "privacy_tier_label": PRIVACY_TIER_LABELS[endpoint_privacy_tier(endpoint)],
                 "provider_confidential_compute": endpoint_confidential_compute(endpoint),
                 "provider_e2ee": endpoint_e2ee(endpoint),
-                "provider_policy": model_provider_policy(endpoint.model_id, endpoint.provider),
-                "provider_policy_url": model_provider_policy_url(
-                    endpoint.model_id, endpoint.provider
-                ),
+                "provider_policy": endpoint_provider_policy(endpoint),
+                "provider_policy_url": endpoint_provider_policy_url(endpoint),
                 "provider_headquarters_country": PROVIDERS[
                     endpoint.provider
                 ].provider_headquarters_country,
