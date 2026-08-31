@@ -62,6 +62,7 @@ permissions:
 
 jobs:
   gcp:
+    if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

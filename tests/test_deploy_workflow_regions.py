@@ -29,6 +29,13 @@ def test_prod_smoke_checks_public_origins_and_converges_private_regions() -> Non
     )
     smoke = workflow.split("- name: Smoke test prod", 1)[1]
     assert "source scripts/deploy/_cloud_run_revision_probe.sh" in smoke
+    check_url = smoke.split("check_url() {", 1)[1].split("\n          }", 1)[0]
+    assert "for attempt in 1 2 3; do" in check_url
+    assert "--connect-timeout 5 --max-time 15" in check_url
+    assert 'if [[ "$code" == "200" ]]; then' in check_url
+    assert 'if [ "$attempt" -lt 3 ]; then' in check_url
+    assert 'echo "${name} failed after 3 attempts: ${url}" >&2' in check_url
+    assert "return 1" in check_url
     assert "service_ingress=$(cloud_run_service_ingress" in smoke
     assert 'if [ "${service_ingress}" = "all" ]; then' in smoke
     direct = smoke.split('if [ "${service_ingress}" = "all" ]; then', 1)[1].split(
@@ -231,7 +238,11 @@ def test_superseded_push_stops_before_production_mutation() -> None:
     assert confirm < deploy < mutation
     assert 'git/ref/heads/main" --jq' in workflow[confirm:deploy]
     assert 'echo "proceed=false" >> "$GITHUB_OUTPUT"' in workflow[confirm:deploy]
-    assert "if: ${{ needs.confirm-current-main.outputs.proceed == 'true' }}" in workflow
+    assert (
+        "if: ${{ github.repository == 'Lore-Hex/quill-router' && "
+        "needs.confirm-current-main.outputs.proceed == 'true' }}"
+        in workflow
+    )
 
 
 def test_rollback_capture_uses_the_sole_serving_revision() -> None:

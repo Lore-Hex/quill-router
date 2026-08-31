@@ -47,6 +47,7 @@ concurrency:
 
 jobs:
   operate:
+    if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
