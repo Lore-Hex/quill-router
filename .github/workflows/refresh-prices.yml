@@ -43,6 +43,7 @@ permissions:
 
 jobs:
   refresh:
+    if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     env:
       # The smartest model available via TR's own API, used by the

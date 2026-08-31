@@ -21,6 +21,7 @@ permissions:
 
 jobs:
   probe:
+    if: github.repository == 'Lore-Hex/quill-router'
     name: probe /v1/embeddings
     runs-on: ubuntu-latest
     steps:
