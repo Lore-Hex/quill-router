@@ -70,6 +70,7 @@ def _eligible(**overrides: object) -> bool:
         "additional_cost_reservation_microdollars": 0,
         "native_batch_eligible": False,
         "app_markup_basis_points": 0,
+        "receipt_fee_basis_points": 0,
         "regional_lease_authorization": False,
     }
     values.update(overrides)
@@ -89,6 +90,7 @@ def _ineligibility_reason(**overrides: object) -> str | None:
         "additional_cost_reservation_microdollars": 0,
         "native_batch_eligible": False,
         "app_markup_basis_points": 0,
+        "receipt_fee_basis_points": 0,
         "regional_lease_authorization": False,
     }
     values.update(overrides)
@@ -142,6 +144,10 @@ def test_spend_lease_eligibility_rejects_app_markup() -> None:
     assert not _eligible(app_markup_basis_points=1)
 
 
+def test_spend_lease_eligibility_rejects_signed_receipt_fee() -> None:
+    assert not _eligible(receipt_fee_basis_points=1)
+
+
 def test_spend_lease_eligibility_rejects_regional_lease_authorizations() -> None:
     assert not _eligible(regional_lease_authorization=True)
 
@@ -175,6 +181,7 @@ def test_spend_lease_eligibility_rejects_each_window_limited_key(field: str) -> 
         ),
         ("native_batch", {"native_batch_eligible": True}),
         ("app_markup", {"app_markup_basis_points": 1}),
+        ("receipt_fee", {"receipt_fee_basis_points": 1}),
         ("regional_lease", {"regional_lease_authorization": True}),
         ("key_window_limit", {"api_key": _key(limit_daily_microdollars=1)}),
     ],
@@ -241,9 +248,7 @@ def test_frozen_catalog_has_complete_applicability_key_and_integer_prices_in_tie
         "cache_read_micro_per_mtok",
         "cache_write_micro_per_mtok",
     }
-    assert all(
-        isinstance(candidate["input_price_micro_per_mtok"], int) for candidate in candidates
-    )
+    assert all(isinstance(candidate["input_price_micro_per_mtok"], int) for candidate in candidates)
 
 
 def test_estimator_uses_first_matching_tier_and_exact_applicability_dimensions() -> None:
@@ -305,9 +310,7 @@ def _boot_auth_fixture() -> tuple[Ed25519PrivateKey, SpendLeaseBoot, bytes, Boot
         },
     }
     raw_body = json.dumps(body, separators=(",", ":")).encode()
-    signature = private.sign(
-        boot_auth_digest("POST", "/v1/internal/gateway/authorize", raw_body)
-    )
+    signature = private.sign(boot_auth_digest("POST", "/v1/internal/gateway/authorize", raw_body))
     auth = BootAuthHeader(kid=boot.kid, signature=b64url_encode(signature))
     return private, boot, raw_body, auth
 
@@ -340,10 +343,7 @@ def test_boot_auth_digest_matches_v1_wire_formula_and_uppercases_method() -> Non
     raw_body = b'{ "model": "vendor/model" }'
     path = "/v1/internal/gateway/authorize"
     expected = hashlib.sha256(
-        b"tr-authorize-v1"
-        + b"POST"
-        + path.encode()
-        + hashlib.sha256(raw_body).digest()
+        b"tr-authorize-v1" + b"POST" + path.encode() + hashlib.sha256(raw_body).digest()
     ).digest()
     assert boot_auth_digest("post", path, raw_body) == expected
 

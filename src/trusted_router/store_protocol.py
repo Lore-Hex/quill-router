@@ -773,6 +773,7 @@ class Store(Protocol):
         idempotency_fingerprint: str | None = ...,
         app_id: str = ...,
         app_markup_basis_points: int = ...,
+        receipt_fee_basis_points: int = ...,
         app_owner_user_id: str = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,
@@ -914,9 +915,7 @@ class Store(Protocol):
     def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot: ...
     def get_spend_lease_boot(self, kid: str) -> SpendLeaseBoot | None: ...
     def next_spend_lease_generation(self, key_hash: str, boot_kid: str) -> int: ...
-    def get_active_spend_lease(
-        self, key_hash: str, boot_kid: str
-    ) -> SpendLeaseArtifact | None: ...
+    def get_active_spend_lease(self, key_hash: str, boot_kid: str) -> SpendLeaseArtifact | None: ...
     def retain_spend_lease(
         self,
         key_hash: str,
@@ -973,6 +972,7 @@ class TypedBillingStore(Protocol):
         idempotency_fingerprint: str | None,
         app_id: str = ...,
         app_markup_basis_points: int = ...,
+        receipt_fee_basis_points: int = ...,
         app_owner_user_id: str = ...,
         key_usage_shards: int = ...,
         tags: dict[str, str] | None = ...,

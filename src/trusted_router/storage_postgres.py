@@ -664,9 +664,7 @@ class PostgresStore:
             if candidate is None or outcome in {"conflict", "invalid"}:
                 return outcome
             if existing is None:
-                if self._insert_entity_once_tx(
-                    conn, RECEIPT_KEY_KIND, record.kid, candidate
-                ):
+                if self._insert_entity_once_tx(conn, RECEIPT_KEY_KIND, record.kid, candidate):
                     return "appended"
                 # A concurrent transaction inserted this kid after our absent
                 # read. Lock its now-committed verdict before comparing.
@@ -750,9 +748,7 @@ class PostgresStore:
     def _spend_lease_pair_id(key_hash: str, boot_kid: str) -> str:
         return hashlib.sha256(f"{key_hash}\0{boot_kid}".encode()).hexdigest()
 
-    def get_active_spend_lease(
-        self, key_hash: str, boot_kid: str
-    ) -> SpendLeaseArtifact | None:
+    def get_active_spend_lease(self, key_hash: str, boot_kid: str) -> SpendLeaseArtifact | None:
         return self._read_entity(
             SPEND_LEASE_ACTIVE_GRANT_KIND,
             self._spend_lease_pair_id(key_hash, boot_kid),
@@ -778,9 +774,7 @@ class PostgresStore:
                 for_update=True,
             )
             if existing is None or (replace and candidate.gen > existing.gen):
-                self._write_entity_tx(
-                    conn, SPEND_LEASE_ACTIVE_GRANT_KIND, entity_id, candidate
-                )
+                self._write_entity_tx(conn, SPEND_LEASE_ACTIVE_GRANT_KIND, entity_id, candidate)
                 return candidate
             return existing
 
@@ -1506,11 +1500,7 @@ class PostgresStore:
             if not verify_api_key(raw_token, session.salt, session.secret_hash):
                 return None
 
-            user = (
-                _dataclass_from_json(rows[0][1], User)
-                if rows[0][1] is not None
-                else None
-            )
+            user = _dataclass_from_json(rows[0][1], User) if rows[0][1] is not None else None
             memberships: list[tuple[Member, Workspace]] = []
             for _session_body, _user_body, workspace_body, member_body in rows:
                 if workspace_body is None or member_body is None:
@@ -1807,7 +1797,9 @@ class PostgresStore:
         )
 
     def create_consent_request(self, consent: ConsentRequest) -> ConsentRequest:
-        self._run_transaction(lambda conn: self._write_entity_tx(conn, "consent_request", consent.id, consent))
+        self._run_transaction(
+            lambda conn: self._write_entity_tx(conn, "consent_request", consent.id, consent)
+        )
         return consent
 
     def get_consent_request(self, consent_id: str) -> ConsentRequest | None:
@@ -1817,7 +1809,9 @@ class PostgresStore:
         self, consent_id: str, *, user_id: str, workspace_id: str, csrf_token: str
     ) -> ConsentRequest | None:
         def consume(conn: Any) -> ConsentRequest | None:
-            consent = self._read_entity_tx(conn, "consent_request", consent_id, ConsentRequest, for_update=True)
+            consent = self._read_entity_tx(
+                conn, "consent_request", consent_id, ConsentRequest, for_update=True
+            )
             if (
                 consent is None
                 or consent.consumed_at is not None
@@ -1830,6 +1824,7 @@ class PostgresStore:
             consent.consumed_at = iso_now()
             self._write_entity_tx(conn, "consent_request", consent.id, consent)
             return consent
+
         return self._run_transaction(consume)
 
     def create_oauth_app(self, app: OAuthApp) -> OAuthApp:
@@ -2126,11 +2121,7 @@ class PostgresStore:
             api_key = _dataclass_from_json(row[0], ApiKey)
             if not verify_api_key(raw_key, api_key.salt, api_key.secret_hash):
                 return None
-            workspace = (
-                _dataclass_from_json(row[1], Workspace)
-                if row[1] is not None
-                else None
-            )
+            workspace = _dataclass_from_json(row[1], Workspace) if row[1] is not None else None
             if workspace is not None and workspace.deleted:
                 workspace = None
             return ApiKeyAuthContext(api_key=api_key, workspace=workspace)
@@ -2821,8 +2812,7 @@ class PostgresStore:
 
         def operation(conn: Any) -> dict[str, UserProvidedModel]:
             rows = conn.execute(
-                "SELECT id, body FROM tr_entities "
-                "WHERE kind = %s AND id = ANY(%s)",
+                "SELECT id, body FROM tr_entities WHERE kind = %s AND id = ANY(%s)",
                 ("user_provided_model", unique_ids),
             ).fetchall()
             result: dict[str, UserProvidedModel] = {}
@@ -4153,6 +4143,7 @@ class PostgresStore:
         idempotency_fingerprint: str | None = None,
         app_id: str = "",
         app_markup_basis_points: int = 0,
+        receipt_fee_basis_points: int = 0,
         app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
@@ -4207,14 +4198,13 @@ class PostgresStore:
             idempotency_fingerprint=idempotency_fingerprint,
             app_id=app_id,
             app_markup_basis_points=app_markup_basis_points,
+            receipt_fee_basis_points=receipt_fee_basis_points,
             app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
             user_provided_model_id=user_provided_model_id,
             user_provided_model_revision=user_provided_model_revision,
-            user_model_prompt_price_microdollars_per_m=(
-                user_model_prompt_price_microdollars_per_m
-            ),
+            user_model_prompt_price_microdollars_per_m=(user_model_prompt_price_microdollars_per_m),
             user_model_completion_price_microdollars_per_m=(
                 user_model_completion_price_microdollars_per_m
             ),

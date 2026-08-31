@@ -299,6 +299,9 @@ class GatewayAuthorizeRequest(_Lenient):
     route_fallbacks: int | None = Field(default=None, ge=0)
     route_failures: list[str] | None = None
     route_type: str | None = None
+    # Set only by the attested gateway after validating x-inference-receipt.
+    # The control plane freezes the resulting total fee on the authorization.
+    inference_receipt: bool = False
     # Attested hosted tools may reserve a bounded non-token cost on the same
     # atomic hold as their planner model call. This is internal-only and is
     # accepted only for enclave-owned hosted tools and asynchronous media.

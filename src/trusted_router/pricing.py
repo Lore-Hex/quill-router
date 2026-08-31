@@ -122,7 +122,10 @@ class ModelPricingKwargs(TypedDict):
     published_completion_price_microdollars_per_million_tokens: int
 
 
-_PRICE_MARKUP_RATIO = Decimal("1.055")
+STANDARD_PRICE_MARKUP_BASIS_POINTS = 550
+SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS = 1_200
+
+_PRICE_MARKUP_RATIO = Decimal(10_000 + STANDARD_PRICE_MARKUP_BASIS_POINTS) / Decimal(10_000)
 
 _PRICE_FLOOR_MICRODOLLARS_PER_M = 10_000  # $0.01 per million tokens.
 
@@ -163,6 +166,36 @@ def customer_fixed_price_microdollars(cost_microdollars: int) -> int:
     return int(
         (Decimal(cost_microdollars) * _PRICE_MARKUP_RATIO).to_integral_value(rounding=ROUND_CEILING)
     )
+
+
+def signed_receipt_price_microdollars(
+    standard_price_microdollars: int,
+    total_fee_basis_points: int = SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS,
+) -> int:
+    """Upgrade a standard retail charge to the signed-receipt total fee.
+
+    Catalog prices already include TrustedRouter's standard 5.5% fee. Receipt
+    billing therefore scales the frozen retail charge from 105.5% to 112%,
+    rather than adding another 12%. Integer ceiling keeps every positive
+    premium representable in the microdollar ledger.
+    """
+
+    if isinstance(standard_price_microdollars, bool) or not isinstance(
+        standard_price_microdollars, int
+    ):
+        raise ValueError("standard price must be a non-negative integer")
+    if standard_price_microdollars < 0:
+        raise ValueError("standard price must be a non-negative integer")
+    if isinstance(total_fee_basis_points, bool) or not isinstance(total_fee_basis_points, int):
+        raise ValueError("total fee basis points must be an integer")
+    if total_fee_basis_points < STANDARD_PRICE_MARKUP_BASIS_POINTS:
+        raise ValueError("total fee cannot be below the standard fee")
+    if standard_price_microdollars == 0:
+        return 0
+    numerator = 10_000 + total_fee_basis_points
+    denominator = 10_000 + STANDARD_PRICE_MARKUP_BASIS_POINTS
+    return (standard_price_microdollars * numerator + denominator - 1) // denominator
+
 
 _CACHE_READ_PRICE_MULTIPLIER: dict[str, Decimal] = {
     "anthropic": Decimal("0.1"),

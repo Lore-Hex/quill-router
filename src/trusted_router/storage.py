@@ -262,9 +262,7 @@ class InMemoryStore:
             self.spend_lease_generations[key] = generation
             return generation
 
-    def get_active_spend_lease(
-        self, key_hash: str, boot_kid: str
-    ) -> SpendLeaseArtifact | None:
+    def get_active_spend_lease(self, key_hash: str, boot_kid: str) -> SpendLeaseArtifact | None:
         with self._lock:
             return self.active_spend_leases.get((key_hash, boot_kid))
 
@@ -1927,6 +1925,7 @@ class InMemoryStore:
         idempotency_fingerprint: str | None = None,
         app_id: str = "",
         app_markup_basis_points: int = 0,
+        receipt_fee_basis_points: int = 0,
         app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
@@ -1961,6 +1960,7 @@ class InMemoryStore:
             idempotency_fingerprint=idempotency_fingerprint,
             app_id=app_id,
             app_markup_basis_points=app_markup_basis_points,
+            receipt_fee_basis_points=receipt_fee_basis_points,
             app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,

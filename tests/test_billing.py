@@ -8,6 +8,10 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.pricing import (
+    SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS,
+    signed_receipt_price_microdollars,
+)
 from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage import STORE
 from trusted_router.typed_balance import live_credit_summary
@@ -50,7 +54,9 @@ def test_stripe_webhook_route_is_idempotent(user_headers: dict[str, str], client
     assert STORE.credit_money[workspace_id].total_credits_microdollars == before + 12_000_000
 
 
-def test_billing_checkout_and_portal_mock_without_stripe_secret(user_headers: dict[str, str], client) -> None:
+def test_billing_checkout_and_portal_mock_without_stripe_secret(
+    user_headers: dict[str, str], client
+) -> None:
     checkout = client.post(
         "/v1/billing/checkout",
         headers=user_headers,
@@ -77,7 +83,9 @@ def test_billing_checkout_and_portal_mock_without_stripe_secret(user_headers: di
     assert account.stripe_payment_method_id
 
 
-def test_payment_method_setup_uses_stripe_setup_mode(monkeypatch, user_headers: dict[str, str]) -> None:
+def test_payment_method_setup_uses_stripe_setup_mode(
+    monkeypatch, user_headers: dict[str, str]
+) -> None:
     app = create_app(Settings(environment="test", stripe_secret_key="sk_test_setup"))  # noqa: S106
     captured: dict[str, Any] = {}
     created_customer: dict[str, Any] = {}
@@ -90,8 +98,12 @@ def test_payment_method_setup_uses_stripe_setup_mode(monkeypatch, user_headers: 
         captured.update(kwargs)
         return {"id": "cs_setup", "url": "https://checkout.stripe.test/setup"}
 
-    monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.Customer.create", create_customer)
-    monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.checkout.Session.create", create_session)
+    monkeypatch.setattr(
+        "trusted_router.services.stripe_billing.stripe.Customer.create", create_customer
+    )
+    monkeypatch.setattr(
+        "trusted_router.services.stripe_billing.stripe.checkout.Session.create", create_session
+    )
 
     with TestClient(app) as local_client:
         setup = local_client.post("/v1/billing/payment-methods/setup", headers=user_headers)
@@ -105,11 +117,16 @@ def test_payment_method_setup_uses_stripe_setup_mode(monkeypatch, user_headers: 
     assert "customer_email" not in captured
     assert created_customer["metadata"]["workspace_id"] == setup.json()["data"]["workspace_id"]
     assert created_customer["metadata"]["purpose"] == "payment_method_setup"
-    assert captured["setup_intent_data"]["metadata"]["workspace_id"] == setup.json()["data"]["workspace_id"]
+    assert (
+        captured["setup_intent_data"]["metadata"]["workspace_id"]
+        == setup.json()["data"]["workspace_id"]
+    )
     assert captured["metadata"]["purpose"] == "payment_method_setup"
 
 
-def test_setup_intent_succeeded_webhook_saves_payment_method(user_headers: dict[str, str], client) -> None:
+def test_setup_intent_succeeded_webhook_saves_payment_method(
+    user_headers: dict[str, str], client
+) -> None:
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
     event = {
         "id": "evt_setup_intent_1",
@@ -199,9 +216,7 @@ def test_setup_intent_without_customer_does_not_grant_trial_or_save_method(
     assert account.stripe_payment_method_id is None
 
 
-def test_setup_intent_never_grants_starter_credit(
-    user_headers: dict[str, str], client
-) -> None:
+def test_setup_intent_never_grants_starter_credit(user_headers: dict[str, str], client) -> None:
     """Attaching a card saves it but cannot repeat account starter credit."""
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
     STORE.credit_money[workspace_id].total_credits_microdollars = 0
@@ -233,9 +248,7 @@ def test_setup_intent_does_not_reapply_configured_signup_credit(
     user_headers: dict[str, str], client, monkeypatch
 ) -> None:
     """The signup amount is irrelevant after account creation."""
-    monkeypatch.setattr(
-        client.app.state.settings, "signup_trial_credit_microdollars", 5_000_000
-    )
+    monkeypatch.setattr(client.app.state.settings, "signup_trial_credit_microdollars", 5_000_000)
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
     STORE.credit_money[workspace_id].total_credits_microdollars = 0
     event = {
@@ -300,10 +313,15 @@ def test_billing_portal_uses_saved_customer_without_client_echo(
         captured.update(kwargs)
         return {"url": "https://billing.stripe.test/portal"}
 
-    monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.billing_portal.Session.create", create_session)
+    monkeypatch.setattr(
+        "trusted_router.services.stripe_billing.stripe.billing_portal.Session.create",
+        create_session,
+    )
 
     with TestClient(app) as local_client:
-        workspace_id = local_client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
+        workspace_id = local_client.get("/v1/workspaces", headers=user_headers).json()["data"][0][
+            "id"
+        ]
         STORE.set_stripe_customer(
             workspace_id,
             customer_id="cus_saved_portal",
@@ -337,7 +355,9 @@ def test_billing_portal_rejects_client_supplied_customer_without_saved_customer(
     assert portal.json()["error"]["type"] == "bad_request"
 
 
-def test_billing_checkout_validates_amount_and_workspace(user_headers: dict[str, str], client) -> None:
+def test_billing_checkout_validates_amount_and_workspace(
+    user_headers: dict[str, str], client
+) -> None:
     too_small = client.post("/v1/billing/checkout", headers=user_headers, json={"amount": 0})
     assert too_small.status_code == 400
     assert too_small.json()["error"]["type"] == "bad_request"
@@ -418,7 +438,10 @@ def test_internal_gateway_authorize_and_settle_records_metadata(
     assert generation.request_id == "gw-req-1"
     assert generation.app == "attested-gateway-test"
     assert STORE.credit_money[workspace_id].reserved_microdollars == 0
-    assert STORE.credit_money[workspace_id].total_usage_microdollars == generation.total_cost_microdollars
+    assert (
+        STORE.credit_money[workspace_id].total_usage_microdollars
+        == generation.total_cost_microdollars
+    )
 
     repeat = client.post(
         "/v1/internal/gateway/settle",
@@ -427,6 +450,90 @@ def test_internal_gateway_authorize_and_settle_records_metadata(
     assert repeat.status_code == 200
     assert repeat.json()["data"]["already_settled"] is True
     assert repeat.json()["data"]["generation_id"] == generation_id
+
+
+def test_signed_receipt_uses_twelve_percent_total_fee_and_settles_once(
+    user_headers: dict[str, str],
+    client,
+) -> None:
+    created = client.post("/v1/keys", headers=user_headers, json={"name": "receipt fee"}).json()
+    key_hash = created["data"]["hash"]
+    workspace_id = created["data"]["workspace_id"]
+    common = {
+        "api_key_hash": key_hash,
+        "model": "anthropic/claude-opus-4.7",
+        "estimated_input_tokens": 20,
+        "max_output_tokens": 4,
+        "provider": {"only": ["anthropic"], "allow_fallbacks": False},
+    }
+
+    standard = client.post(
+        "/v1/internal/gateway/authorize",
+        json={**common, "idempotency_key": "receipt-fee-standard"},
+    )
+    receipt = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            **common,
+            "idempotency_key": "receipt-fee-signed",
+            "inference_receipt": True,
+        },
+    )
+    assert standard.status_code == 200, standard.text
+    assert receipt.status_code == 200, receipt.text
+    standard_auth = standard.json()["data"]
+    receipt_auth = receipt.json()["data"]
+    assert standard_auth["receipt_fee_basis_points"] == 0
+    assert receipt_auth["receipt_fee_basis_points"] == SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS
+    assert receipt_auth["estimated_cost_microdollars"] == signed_receipt_price_microdollars(
+        standard_auth["estimated_cost_microdollars"]
+    )
+
+    def settle(authorization_id: str, request_id: str) -> Any:
+        return client.post(
+            "/v1/internal/gateway/settle",
+            json={
+                "authorization_id": authorization_id,
+                "actual_input_tokens": 20,
+                "actual_output_tokens": 2,
+                "request_id": request_id,
+                "elapsed_seconds": 0.5,
+            },
+        )
+
+    standard_settle = settle(standard_auth["authorization_id"], "receipt-fee-standard")
+    receipt_settle = settle(receipt_auth["authorization_id"], "receipt-fee-signed")
+    assert standard_settle.status_code == 200, standard_settle.text
+    assert receipt_settle.status_code == 200, receipt_settle.text
+    standard_cost = standard_settle.json()["data"]["cost_microdollars"]
+    receipt_cost = receipt_settle.json()["data"]["cost_microdollars"]
+    assert receipt_cost == signed_receipt_price_microdollars(standard_cost)
+
+    usage_after_first_settle = STORE.credit_money[workspace_id].total_usage_microdollars
+    replay = settle(receipt_auth["authorization_id"], "receipt-fee-signed")
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["data"]["already_settled"] is True
+    assert STORE.credit_money[workspace_id].total_usage_microdollars == usage_after_first_settle
+
+
+def test_receipt_opt_in_is_part_of_authorization_idempotency_fingerprint(
+    user_headers: dict[str, str],
+    client,
+) -> None:
+    created = client.post("/v1/keys", headers=user_headers, json={"name": "receipt idem"}).json()
+    body = {
+        "api_key_hash": created["data"]["hash"],
+        "model": "anthropic/claude-haiku-4.5",
+        "estimated_input_tokens": 1,
+        "max_output_tokens": 1,
+        "idempotency_key": "receipt-fee-idempotency",
+    }
+    first = client.post("/v1/internal/gateway/authorize", json=body)
+    changed = client.post(
+        "/v1/internal/gateway/authorize", json={**body, "inference_receipt": True}
+    )
+    assert first.status_code == 200, first.text
+    assert changed.status_code == 409, changed.text
 
 
 def test_settlement_over_reservation_emits_bounded_billing_warning(
@@ -514,7 +621,10 @@ def test_web_search_additional_cost_is_reserved_and_settled_exactly_once(
     assert authorization.additional_cost_reservation_microdollars == reserve_microdollars
     assert auth_data["additional_cost_reservation_microdollars"] == reserve_microdollars
     assert auth_data["estimated_cost_microdollars"] == authorization.estimated_microdollars
-    assert STORE.credit_money[workspace_id].reserved_microdollars == authorization.estimated_microdollars
+    assert (
+        STORE.credit_money[workspace_id].reserved_microdollars
+        == authorization.estimated_microdollars
+    )
     assert all(route["usage_type"] == "Credits" for route in auth_data["route_candidates"])
 
     settle = client.post(
@@ -782,12 +892,15 @@ def test_internal_gateway_byok_returns_envelope_for_uploaded_raw_key(
     assert data["byok_encrypted_secret"]["ciphertext"]
     assert data["route_candidates"][0]["byok_cache_key"] == data["byok_cache_key"]
     assert raw_key not in str(data)
-    assert decrypt_byok_secret(
-        EncryptedSecretEnvelope(**data["byok_encrypted_secret"]),
-        test_settings,
-        workspace_id=data["workspace_id"],
-        provider="cerebras",
-    ) == raw_key
+    assert (
+        decrypt_byok_secret(
+            EncryptedSecretEnvelope(**data["byok_encrypted_secret"]),
+            test_settings,
+            workspace_id=data["workspace_id"],
+            provider="cerebras",
+        )
+        == raw_key
+    )
 
 
 def test_internal_gateway_byok_cache_key_changes_on_rotation(
@@ -796,11 +909,14 @@ def test_internal_gateway_byok_cache_key_changes_on_rotation(
 ) -> None:
     first_key = "csk-live-user-owned-key-1111"
     rotated_key = "csk-live-user-owned-key-2222"
-    assert client.put(
-        "/v1/byok/providers/cerebras",
-        headers=user_headers,
-        json={"api_key": first_key},
-    ).status_code == 201
+    assert (
+        client.put(
+            "/v1/byok/providers/cerebras",
+            headers=user_headers,
+            json={"api_key": first_key},
+        ).status_code
+        == 201
+    )
     created = client.post(
         "/v1/keys",
         headers=user_headers,
@@ -826,11 +942,14 @@ def test_internal_gateway_byok_cache_key_changes_on_rotation(
         return data["byok_cache_key"]
 
     first_cache_key = authorize_cache_key()
-    assert client.put(
-        "/v1/byok/providers/cerebras",
-        headers=user_headers,
-        json={"api_key": rotated_key},
-    ).status_code == 200
+    assert (
+        client.put(
+            "/v1/byok/providers/cerebras",
+            headers=user_headers,
+            json={"api_key": rotated_key},
+        ).status_code
+        == 200
+    )
 
     assert authorize_cache_key() != first_cache_key
     assert client.delete("/v1/byok/providers/cerebras", headers=user_headers).status_code == 200
@@ -876,9 +995,16 @@ def test_internal_gateway_authorizes_by_lookup_hash_without_raw_key(
 
 
 def test_internal_gateway_rejects_disabled_key(user_headers: dict[str, str], client) -> None:
-    created = client.post("/v1/keys", headers=user_headers, json={"name": "disabled gateway"}).json()
+    created = client.post(
+        "/v1/keys", headers=user_headers, json={"name": "disabled gateway"}
+    ).json()
     key_hash = created["data"]["hash"]
-    assert client.patch(f"/v1/keys/{key_hash}", headers=user_headers, json={"disabled": True}).status_code == 200
+    assert (
+        client.patch(
+            f"/v1/keys/{key_hash}", headers=user_headers, json={"disabled": True}
+        ).status_code
+        == 200
+    )
 
     resp = client.post(
         "/v1/internal/gateway/authorize",
@@ -890,7 +1016,9 @@ def test_internal_gateway_rejects_disabled_key(user_headers: dict[str, str], cli
         },
     )
     assert resp.status_code == 401
-    assert resp.json()["error"]["type"] == "invalid_api_key"  # the enclave negative-cache wire contract
+    assert (
+        resp.json()["error"]["type"] == "invalid_api_key"
+    )  # the enclave negative-cache wire contract
 
 
 def test_stripe_webhook_handles_stripe_object_from_construct_event(
@@ -953,9 +1081,7 @@ def test_stripe_webhook_handles_stripe_object_from_construct_event(
     def fake_construct_event(raw, sig, secret):  # type: ignore[no-untyped-def]
         return real_stripe_object
 
-    monkeypatch.setattr(
-        webhook_module.stripe.Webhook, "construct_event", fake_construct_event
-    )
+    monkeypatch.setattr(webhook_module.stripe.Webhook, "construct_event", fake_construct_event)
 
     # Force the signature-verify branch by setting a webhook secret on the
     # already-running test app's settings. The handler reads
@@ -982,7 +1108,7 @@ def test_stripe_webhook_handles_stripe_object_from_construct_event(
     # Verify the credit actually landed — the whole point of fixing this is
     # that real Stripe payments grant credit again.
     after = STORE.credit_money[workspace_id].total_credits_microdollars
-    assert after - before == 100 * 10000, f"expected +$1.00 in microdollars, got {after-before}"
+    assert after - before == 100 * 10000, f"expected +$1.00 in microdollars, got {after - before}"
 
 
 def test_list_workspace_payments_returns_empty_without_stripe_key() -> None:

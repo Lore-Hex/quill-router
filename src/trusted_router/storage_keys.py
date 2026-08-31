@@ -442,6 +442,7 @@ class InMemoryApiKeys:
         idempotency_fingerprint: str | None = None,
         app_id: str = "",
         app_markup_basis_points: int = 0,
+        receipt_fee_basis_points: int = 0,
         app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
@@ -496,6 +497,7 @@ class InMemoryApiKeys:
                 idempotency_fingerprint=idempotency_fingerprint,
                 app_id=app_id,
                 app_markup_basis_points=app_markup_basis_points,
+                receipt_fee_basis_points=receipt_fee_basis_points,
                 app_owner_user_id=app_owner_user_id,
                 custom_model_id=custom_model_id,
                 custom_model_revision=custom_model_revision,
@@ -520,9 +522,7 @@ class InMemoryApiKeys:
                 spend_lease_exp=spend_lease.exp if spend_lease else None,
                 spend_lease_issuer_kid=spend_lease.issuer_kid if spend_lease else None,
                 spend_lease_boot_kid=spend_lease.boot_kid if spend_lease else None,
-                spend_lease_catalog_version=(
-                    spend_lease.catalog_version if spend_lease else None
-                ),
+                spend_lease_catalog_version=(spend_lease.catalog_version if spend_lease else None),
                 spend_lease_status=spend_lease.lease_status if spend_lease else None,
             )
             self.gateway_authorizations[authorization.id] = authorization
