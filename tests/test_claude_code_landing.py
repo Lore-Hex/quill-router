@@ -71,7 +71,7 @@ def test_api_key_reveal_leads_with_a_complete_agent_chat_message(
         in response.text
     )
     assert (
-        'Use TrustedRouter.com with the key below to ask DeepSeek: "What is the capital '
+        'Use TrustedRouter.com with the key below to ask DeepSeek Flash: "What is the capital '
         'of France?"'
         in response.text
     )
