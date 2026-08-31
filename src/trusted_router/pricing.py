@@ -204,6 +204,21 @@ _CACHE_READ_PRICE_MULTIPLIER: dict[str, Decimal] = {
     "google-ai-studio": Decimal("0.25"),
     "google-vertex": Decimal("0.25"),
     "vertex": Decimal("0.25"),
+    # The entries below are fallbacks for providers with a CONFIRMED uniform
+    # published cache-read policy, used only when the endpoint carries no
+    # per-model cached price (which always wins — see the settle path).
+    # Do NOT add a provider here from a single model's ratio: providers
+    # without a uniform policy (deepseek, moonshotai, z-ai, deepinfra) price
+    # cache hits per model and are covered by manifest/parser prices instead.
+    # mistral.ai/pricing: "cached input tokens reduce input cost by up to
+    # 90% for repeated prompts" — flat 90% discount (verified 2026-08-31).
+    "mistral": Decimal("0.1"),
+    # Fireworks documents an automatic 50% cached-prompt discount across
+    # serverless models (verified 2026-08-31).
+    "fireworks": Decimal("0.5"),
+    # Alibaba Model Studio implicit context cache bills hits at 20% of the
+    # standard input price (verified 2026-08-31).
+    "alibaba": Decimal("0.2"),
 }
 
 _CACHE_WRITE_PRICE_MULTIPLIER: dict[str, Decimal] = {

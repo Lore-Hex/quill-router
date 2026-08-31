@@ -15,8 +15,8 @@
 # 4: id, unit, input, output.
 #
 # We use the cache-MISS input price as the headline (matches what a
-# fresh request pays). Cache hit is irrelevant for our billing —
-# we don't track cache state per-request.
+# fresh request pays). The cache-HIT price is emitted as the cached
+# input rate — settle bills reported cache_read tokens at it.
 """Kimi/Moonshot pricing parser (multi-subpage markdown)."""
 
 from __future__ import annotations
