@@ -3,9 +3,9 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-08-31T08:16:15Z",
+  "generated_at": "2026-08-31T23:01:21Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 13,
+  "model_count": 14,
   "models": [
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -413,7 +413,8 @@
         "json_mode",
         "logprobs"
       ],
-      "routable": true
+      "routable": true,
+      "missing_since": "2026-08-31"
     },
     {
       "id": "openai/gpt-oss-120b",
@@ -514,6 +515,46 @@
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 470000,
       "cached_input_token_price_per_m": 24000
+    },
+    {
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "zai-org/GLM-5.3",
+      "display_name": "zai-org/GLM-5.3",
+      "title": "zai-org/GLM-5.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "context_length": 1048576,
+      "max_output_tokens": 128000,
+      "features": [
+        "tools",
+        "logprobs",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "temperature",
+        "presence_penalty",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "stop",
+        "repetition_penalty",
+        "max_tokens",
+        "seed"
+      ],
+      "input_token_price_per_m": 1350000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 230000
     }
   ]
 }
