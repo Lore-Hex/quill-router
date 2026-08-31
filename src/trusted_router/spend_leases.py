@@ -60,6 +60,7 @@ SpendLeaseEligibilityFailure = Literal[
     "additional_cost",
     "native_batch",
     "app_markup",
+    "receipt_fee",
     "regional_lease",
     "key_window_limit",
 ]
@@ -169,6 +170,7 @@ def spend_lease_ineligibility_reason(
     additional_cost_reservation_microdollars: int,
     native_batch_eligible: bool,
     app_markup_basis_points: int,
+    receipt_fee_basis_points: int,
     regional_lease_authorization: bool,
 ) -> SpendLeaseEligibilityFailure | None:
     """Return the first failing Stage A cohort clause, or ``None`` if eligible.
@@ -199,6 +201,8 @@ def spend_lease_ineligibility_reason(
         return "native_batch"
     if app_markup_basis_points != 0:
         return "app_markup"
+    if receipt_fee_basis_points != 0:
+        return "receipt_fee"
     if regional_lease_authorization:
         return "regional_lease"
     if _has_window_limit(api_key):
@@ -219,6 +223,7 @@ def spend_lease_eligible(
     additional_cost_reservation_microdollars: int,
     native_batch_eligible: bool,
     app_markup_basis_points: int,
+    receipt_fee_basis_points: int,
     regional_lease_authorization: bool,
 ) -> bool:
     """Boolean compatibility wrapper for the Stage A cohort boundary."""
@@ -232,11 +237,10 @@ def spend_lease_eligible(
             custom_model=custom_model,
             user_model=user_model,
             partner_mode=partner_mode,
-            additional_cost_reservation_microdollars=(
-                additional_cost_reservation_microdollars
-            ),
+            additional_cost_reservation_microdollars=(additional_cost_reservation_microdollars),
             native_batch_eligible=native_batch_eligible,
             app_markup_basis_points=app_markup_basis_points,
+            receipt_fee_basis_points=receipt_fee_basis_points,
             regional_lease_authorization=regional_lease_authorization,
         )
         is None
@@ -285,9 +289,7 @@ def freeze_spend_lease_catalog(
                     route_type=route_type,
                     service_tier=service_tier,
                     price_tier_max_input_tokens=OPENAI_PRIORITY_MAX_PROMPT_TOKENS,
-                    input_price_micro_per_mtok=(
-                        priority.prompt_microdollars_per_million_tokens
-                    ),
+                    input_price_micro_per_mtok=(priority.prompt_microdollars_per_million_tokens),
                     output_price_micro_per_mtok=(
                         priority.completion_microdollars_per_million_tokens
                     ),
@@ -317,9 +319,7 @@ def freeze_spend_lease_catalog(
                     route_type=route_type,
                     service_tier=service_tier,
                     price_tier_max_input_tokens=tier.max_prompt_tokens,
-                    input_price_micro_per_mtok=(
-                        tier.prompt_price_microdollars_per_million_tokens
-                    ),
+                    input_price_micro_per_mtok=(tier.prompt_price_microdollars_per_million_tokens),
                     output_price_micro_per_mtok=(
                         tier.completion_price_microdollars_per_million_tokens
                     ),
@@ -380,9 +380,11 @@ def spend_lease_catalog_estimate(
             + token_cost_microdollars(estimated_input_tokens, input_price)
             + token_cost_microdollars(output_tokens, output_price)
         )
-        positive = request_price > 0 or (
-            estimated_input_tokens > 0 and input_price > 0
-        ) or (output_tokens > 0 and output_price > 0)
+        positive = (
+            request_price > 0
+            or (estimated_input_tokens > 0 and input_price > 0)
+            or (output_tokens > 0 and output_price > 0)
+        )
         applicable.append(max(cost, 1) if positive else 0)
     return max(applicable) if applicable else None
 
@@ -409,10 +411,7 @@ def parse_boot_auth_header(value: str | None) -> BootAuthHeader | None:
 def boot_auth_digest(method: str, path: str, exact_body_bytes: bytes) -> bytes:
     body_digest = hashlib.sha256(exact_body_bytes).digest()
     material = (
-        BOOT_AUTH_DOMAIN
-        + method.upper().encode("utf-8")
-        + path.encode("utf-8")
-        + body_digest
+        BOOT_AUTH_DOMAIN + method.upper().encode("utf-8") + path.encode("utf-8") + body_digest
     )
     return hashlib.sha256(material).digest()
 

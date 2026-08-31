@@ -194,6 +194,7 @@ class _AuthorizationReplay(Exception):
         super().__init__(authorization_id)
         self.authorization_id = authorization_id
 
+
 #: Whole-call budget for the /status.json outbox-lag read. Same 3s as
 #: `readiness_check`, and the same rule: a public page degrades rather than
 #: waits. See `SpannerBigtableStore.operational_analytics_outbox_freshness`.
@@ -1351,7 +1352,9 @@ class SpannerBigtableStore:
         self, consent_id: str, *, user_id: str, workspace_id: str, csrf_token: str
     ) -> ConsentRequest | None:
         def txn(transaction: Any) -> ConsentRequest | None:
-            consent = self._read_entity_tx(transaction, "consent_request", consent_id, ConsentRequest)
+            consent = self._read_entity_tx(
+                transaction, "consent_request", consent_id, ConsentRequest
+            )
             if (
                 consent is None
                 or consent.consumed_at is not None
@@ -1364,6 +1367,7 @@ class SpannerBigtableStore:
             consent.consumed_at = iso_now()
             self._write_entity_tx(transaction, "consent_request", consent.id, consent)
             return consent
+
         return self._run_in_transaction(txn)
 
     def create_oauth_app(self, app: OAuthApp) -> OAuthApp:
@@ -2619,6 +2623,7 @@ class SpannerBigtableStore:
         idempotency_fingerprint: str | None = None,
         app_id: str = "",
         app_markup_basis_points: int = 0,
+        receipt_fee_basis_points: int = 0,
         app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
@@ -2653,6 +2658,7 @@ class SpannerBigtableStore:
             idempotency_fingerprint=idempotency_fingerprint,
             app_id=app_id,
             app_markup_basis_points=app_markup_basis_points,
+            receipt_fee_basis_points=receipt_fee_basis_points,
             app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
@@ -2931,6 +2937,7 @@ class SpannerBigtableStore:
         lease_shard_count: int,
         app_id: str = "",
         app_markup_basis_points: int = 0,
+        receipt_fee_basis_points: int = 0,
         app_owner_user_id: str = "",
     ) -> tuple[str, GatewayAuthorization | None]:
         """Authorize from bounded regional escrow without touching hot counters."""
@@ -3377,6 +3384,7 @@ class SpannerBigtableStore:
         idempotency_fingerprint: str | None,
         app_id: str = "",
         app_markup_basis_points: int = 0,
+        receipt_fee_basis_points: int = 0,
         app_owner_user_id: str = "",
         key_usage_shards: int = 1,
         tags: dict[str, str] | None = None,
@@ -3453,6 +3461,7 @@ class SpannerBigtableStore:
                 idempotency_fingerprint=idempotency_fingerprint,
                 app_id=app_id,
                 app_markup_basis_points=app_markup_basis_points,
+                receipt_fee_basis_points=receipt_fee_basis_points,
                 app_owner_user_id=app_owner_user_id,
                 custom_model_id=custom_model_id,
                 custom_model_revision=custom_model_revision,
@@ -3475,9 +3484,7 @@ class SpannerBigtableStore:
                 spend_lease_exp=spend_lease.exp if spend_lease else None,
                 spend_lease_issuer_kid=spend_lease.issuer_kid if spend_lease else None,
                 spend_lease_boot_kid=spend_lease.boot_kid if spend_lease else None,
-                spend_lease_catalog_version=(
-                    spend_lease.catalog_version if spend_lease else None
-                ),
+                spend_lease_catalog_version=(spend_lease.catalog_version if spend_lease else None),
                 spend_lease_status=spend_lease.lease_status if spend_lease else None,
             )
             built_authorizations[authorization_id] = built
@@ -4667,9 +4674,7 @@ class SpannerBigtableStore:
 
     def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
         def txn(transaction: Any) -> ReceiptKeyWriteOutcome:
-            existing = self._read_entity_tx(
-                transaction, RECEIPT_KEY_KIND, record.kid, ReceiptKey
-            )
+            existing = self._read_entity_tx(transaction, RECEIPT_KEY_KIND, record.kid, ReceiptKey)
             merged, outcome = merge_receipt_key_observation(existing, record)
             if merged is not None and outcome in {"appended", "refreshed"}:
                 self._write_entity_tx(transaction, RECEIPT_KEY_KIND, record.kid, merged)
@@ -4733,9 +4738,7 @@ class SpannerBigtableStore:
     def _spend_lease_pair_id(key_hash: str, boot_kid: str) -> str:
         return hashlib.sha256(f"{key_hash}\0{boot_kid}".encode()).hexdigest()
 
-    def get_active_spend_lease(
-        self, key_hash: str, boot_kid: str
-    ) -> SpendLeaseArtifact | None:
+    def get_active_spend_lease(self, key_hash: str, boot_kid: str) -> SpendLeaseArtifact | None:
         return self._read_entity(
             SPEND_LEASE_ACTIVE_GRANT_KIND,
             self._spend_lease_pair_id(key_hash, boot_kid),

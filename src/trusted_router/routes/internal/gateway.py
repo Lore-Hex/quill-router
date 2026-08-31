@@ -79,7 +79,11 @@ from trusted_router.partner_billing import (
     partner_billing_mode,
     partner_cost_microdollars,
 )
-from trusted_router.pricing import resolve_request_rates
+from trusted_router.pricing import (
+    SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS,
+    resolve_request_rates,
+    signed_receipt_price_microdollars,
+)
 from trusted_router.provider_compat import byok_storage_provider_candidates
 from trusted_router.provider_contracts import (
     SAKANA_FUGU_MODEL_ID,
@@ -341,9 +345,7 @@ def _register_spend_lease_boot_sync(
             verify_gcp_attestation_chain(body.attestation_evidence)
             image_digest = gcp_attestation_image_digest(body.attestation_evidence)
             verified = True
-            approved_at_registration = (
-                image_digest in settings.spend_lease_accepted_gcp_digests
-            )
+            approved_at_registration = image_digest in settings.spend_lease_accepted_gcp_digests
         record = SpendLeaseBoot(
             kid=kid,
             jwk=jwk,
@@ -384,9 +386,7 @@ async def authorize_gateway(
             "billing.authorize_admission_limited",
             extra={
                 "request_id": getattr(request.state, "request_id", None),
-                "key_subject_fingerprint": hashlib.sha256(
-                    subject.encode("utf-8")
-                ).hexdigest()[:16],
+                "key_subject_fingerprint": hashlib.sha256(subject.encode("utf-8")).hexdigest()[:16],
                 "limit": settings.gateway_authorize_max_in_flight_per_key,
             },
         )
@@ -439,9 +439,7 @@ def _authorize_gateway_sync(
 ) -> dict[str, Any]:
     boot_auth_headers = request.headers.getlist("X-TR-Boot-Auth")
     boot_auth = (
-        parse_boot_auth_header(boot_auth_headers[0])
-        if len(boot_auth_headers) == 1
-        else None
+        parse_boot_auth_header(boot_auth_headers[0]) if len(boot_auth_headers) == 1 else None
     )
     echo = (
         SpendLeaseEchoValue(**body.spend_lease_echo.model_dump())
@@ -569,6 +567,9 @@ def _authorize_gateway_sync_impl(
     # ordinary request. A nonzero hosted-tool reservation remains fingerprinted.
     if not body.additional_cost_reservation_microdollars:
         body_dict.pop("additional_cost_reservation_microdollars", None)
+    if not body.inference_receipt:
+        # Keep pre-receipt idempotency fingerprints stable for ordinary calls.
+        body_dict.pop("inference_receipt", None)
     try:
         request_tags = validate_tags(body.tags)
         effective_tags = merge_tags(api_key.tags, body.tags)
@@ -787,13 +788,18 @@ def _authorize_gateway_sync_impl(
             for _candidate_model, candidate_endpoint in endpoint_candidates
         )
     )
-    estimate = model_estimate + additional_cost_reservation
     model_usage_type = UsageType.for_endpoint(endpoint)
     has_credit_candidate = any(
         UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
         for _candidate_model, candidate_endpoint in endpoint_candidates
     )
     reservation_usage_type = UsageType.CREDITS if has_credit_candidate else UsageType.BYOK
+    receipt_fee_basis_points = (
+        SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS if body.inference_receipt else 0
+    )
+    if receipt_fee_basis_points and user_model is None and partner_mode is None:
+        model_estimate = signed_receipt_price_microdollars(model_estimate, receipt_fee_basis_points)
+    estimate = model_estimate + additional_cost_reservation
     broadcast_destinations = [
         payload
         for destination in _broadcast_destinations_for_authorize(workspace.id)
@@ -924,6 +930,7 @@ def _authorize_gateway_sync_impl(
         and additional_cost_reservation == 0
         and not native_batch_eligible
         and app_markup_basis_points == 0
+        and receipt_fee_basis_points == 0
     )
     spend_lease: SpendLeaseArtifact | None = None
     no_lease_reason = spend_lease_ineligibility_reason(
@@ -938,11 +945,10 @@ def _authorize_gateway_sync_impl(
         additional_cost_reservation_microdollars=additional_cost_reservation,
         native_batch_eligible=native_batch_eligible,
         app_markup_basis_points=app_markup_basis_points,
+        receipt_fee_basis_points=receipt_fee_basis_points,
         regional_lease_authorization=bool(regional_eligible),
     )
-    spend_context["no_lease_reason"] = no_lease_reason or spend_context.get(
-        "boot_failure_reason"
-    )
+    spend_context["no_lease_reason"] = no_lease_reason or spend_context.get("boot_failure_reason")
     if (
         settings.spend_lease_issuance_enabled
         and bool(spend_context["boot_verified"])
@@ -965,20 +971,12 @@ def _authorize_gateway_sync_impl(
                 spend_lease = active
             else:
                 snapshot_reader = getattr(STORE, "typed_credit_snapshot", None)
-                snapshot = (
-                    snapshot_reader(workspace.id) if callable(snapshot_reader) else None
-                )
+                snapshot = snapshot_reader(workspace.id) if callable(snapshot_reader) else None
                 if snapshot is None:
                     memory_snapshot = getattr(STORE, "credit_money_snapshot", None)
-                    snapshot = (
-                        memory_snapshot(workspace.id)
-                        if callable(memory_snapshot)
-                        else None
-                    )
+                    snapshot = memory_snapshot(workspace.id) if callable(memory_snapshot) else None
                 if snapshot is not None:
-                    available = max(
-                        0, int(snapshot[0]) - int(snapshot[1]) - int(snapshot[2])
-                    )
+                    available = max(0, int(snapshot[0]) - int(snapshot[1]) - int(snapshot[2]))
                     post_request_headroom = max(0, available - estimate)
                     cap_micro = min(
                         settings.spend_lease_max_microdollars,
@@ -1119,6 +1117,7 @@ def _authorize_gateway_sync_impl(
                     idempotency_fingerprint=request_fingerprint,
                     app_id=api_key.app_id,
                     app_markup_basis_points=app_markup_basis_points,
+                    receipt_fee_basis_points=receipt_fee_basis_points,
                     app_owner_user_id=app_owner_user_id,
                     key_usage_shards=key_usage_shards,
                     custom_model_id=custom_model.id if custom_model else None,
@@ -1301,6 +1300,7 @@ def _authorize_gateway_sync_impl(
             idempotency_fingerprint=request_fingerprint,
             app_id=api_key.app_id,
             app_markup_basis_points=app_markup_basis_points,
+            receipt_fee_basis_points=receipt_fee_basis_points,
             app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model.id if custom_model else None,
             custom_model_revision=custom_model.revision if custom_model else None,
@@ -1867,6 +1867,7 @@ def _gateway_authorize_response(
             "additional_cost_reservation_microdollars": (
                 authorization.additional_cost_reservation_microdollars
             ),
+            "receipt_fee_basis_points": authorization.receipt_fee_basis_points,
             "request_metadata_version": REQUEST_METADATA_VERSION,
             "native_batch_eligible": authorization.native_batch_eligible,
             **_gateway_spend_lease_payload(authorization),
@@ -2048,9 +2049,7 @@ def _oauth_app_provenance(api_key: Any) -> tuple[bool, int, str]:
         # Case 1: all federated app terms come from home. A peer-local app with
         # the same slug is unrelated for both restrictions and billing.
         suspended = bool(getattr(api_key, "federated_app_suspended", False))
-        markup_basis_points = int(
-            getattr(api_key, "federated_app_markup_basis_points", 0)
-        )
+        markup_basis_points = int(getattr(api_key, "federated_app_markup_basis_points", 0))
         owner_user_id = str(getattr(api_key, "federated_app_owner_user_id", ""))
     else:
         app = STORE.get_oauth_app(api_key.app_id)
@@ -2299,9 +2298,7 @@ def _settle_gateway_with_admission_sync(
         logger.warning(
             "billing.settle_admission_limited",
             extra={
-                "key_subject_fingerprint": hashlib.sha256(subject.encode("utf-8")).hexdigest()[
-                    :16
-                ],
+                "key_subject_fingerprint": hashlib.sha256(subject.encode("utf-8")).hexdigest()[:16],
                 "limit": settings.settle_per_key_inflight_limit,
             },
         )
@@ -2510,6 +2507,16 @@ def _settle_gateway_authorization(
             native_batch_eligible=authorization.native_batch_eligible,
             selected_usage_type=UsageType.for_endpoint(selected_endpoint),
         )
+    if (
+        success
+        and authorization.receipt_fee_basis_points > 0
+        and UsageType.for_endpoint(selected_endpoint) == UsageType.CREDITS
+        and user_model_pair is None
+        and partner_mode is None
+    ):
+        actual_cost = signed_receipt_price_microdollars(
+            actual_cost, authorization.receipt_fee_basis_points
+        )
     additional_cost = body.additional_cost_microdollars
     if user_model_pair is not None and additional_cost:
         raise api_error(
@@ -2638,9 +2645,7 @@ def _settle_gateway_authorization(
             owner_user_id=owner_user_id,
             model_id=user_model_id,
             amount_microdollars=(
-                owner_share_microdollars(max(0, actual_cost - app_markup_micro))
-                if success
-                else 0
+                owner_share_microdollars(max(0, actual_cost - app_markup_micro)) if success else 0
             ),
             payer_workspace_id=authorization.workspace_id,
         )
@@ -2698,9 +2703,7 @@ def _settle_gateway_authorization(
                 frozen_settle_body[APP_MARKUP_PAYOUT_SETTLE_FIELD] = (
                     app_markup_payout.amount_microdollars
                 )
-                frozen_settle_body[APP_MARKUP_OWNER_SETTLE_FIELD] = (
-                    app_markup_payout.owner_user_id
-                )
+                frozen_settle_body[APP_MARKUP_OWNER_SETTLE_FIELD] = app_markup_payout.owner_user_id
                 frozen_settle_body[APP_MARKUP_APP_ID_SETTLE_FIELD] = app_markup_payout.app_id
             # §5.4 honest scope: durability starts only when this INSERT commits;
             # crashes before it still rely on enclave redelivery. MF4/MF5 freeze

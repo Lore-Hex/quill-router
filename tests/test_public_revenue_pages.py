@@ -18,14 +18,13 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/compare/litellm": "LiteLLM and TrustedRouter fit in the same stack.",
         "/docs/migrate-from-openrouter": "Change base_url",
         "/docs/synth": "Run a panel of models inside the attested gateway.",
+        "/docs/receipts": "12% total TrustedRouter service fee",
         "/synth": "Synthesize many models into one perfect frontier answer.",
         "/resources": "Guides, comparisons, privacy references",
         "/customers/robot-robot-human": "From first call to production-scale legal AI in three weeks.",
         "/careers": "Work on attested AI routing",
         "/blog": "TrustedRouter blog",
-        "/blog/they-are-still-training-on-your-data": (
-            "They Are Still Training on Your Data"
-        ),
+        "/blog/they-are-still-training-on-your-data": ("They Are Still Training on Your Data"),
         "/blog/no-log-is-a-promise-attestation-is-proof": (
             "ZDR is a vague promise. Attestation is precise proof"
         ),
@@ -101,7 +100,9 @@ def test_rrh_customer_story_scopes_privacy_claims_and_uses_tailored_og(
     response = client.get("/customers/robot-robot-human")
 
     assert response.status_code == 200
-    assert "Gateway attestation and provider guarantees answer different questions." in response.text
+    assert (
+        "Gateway attestation and provider guarantees answer different questions." in response.text
+    )
     assert "TrustedRouter did not inspect prompt or output content." in response.text
     assert "independently verified E2E routes" in response.text
     assert "not a single page ever leaving" not in response.text.lower()
@@ -513,8 +514,8 @@ def test_public_models_page_is_a_ranked_searchable_price_explorer(
     assert response.status_code == 200
     body = response.text
     assert 'type="search"' in body
-    assert 'data-model-search' in body
-    assert 'data-model-sort' in body
+    assert "data-model-search" in body
+    assert "data-model-sort" in body
     assert "Cached input" in body
     assert "/static/models.js" in body
     assert 'href="/for-developers"' in body
@@ -537,7 +538,7 @@ def test_public_providers_page_has_search_and_collapsed_policy_notes(
 
     assert response.status_code == 200
     assert 'type="search"' in response.text
-    assert 'data-provider-search' in response.text
+    assert "data-provider-search" in response.text
     assert 'data-provider-row data-provider-id="tinfoil"' in response.text
     assert '<details class="provider-policy-details">' in response.text
     assert "Show policy" in response.text
@@ -759,8 +760,8 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     assert "One Unified Interface." in response.text
     assert "Privacy with proof." in response.text
     assert "Better privacy, better prices, better uptime, no subscriptions." in response.text
-    assert '<strong>90+</strong><span>providers</span>' in response.text
-    assert '<strong>3 clouds</strong><span>GCP · AWS · Azure</span>' in response.text
+    assert "<strong>90+</strong><span>providers</span>" in response.text
+    assert "<strong>3 clouds</strong><span>GCP · AWS · Azure</span>" in response.text
     assert 'class="region-map-card"' not in response.text
     assert "Provable privacy." not in response.text
     assert "ATTESTED GATEWAY" not in response.text

@@ -6,7 +6,7 @@
     <span class="eyebrow">Offline-verifiable proof of inference</span>
     <h2>Every response can carry a signed receipt.</h2>
     <p>Add one header to any chat or responses call and TrustedRouter returns a signed receipt: a compact proof that this exact request produced this exact response, which model and provider served it, and how the upstream was verified. The signing key is minted inside the attested enclave and committed into its hardware attestation, so a receipt chains to the same Confidential Space evidence as the live gateway.</p>
-    <p>Receipts are opt-in per request and never stored server-side. Verification is offline: signature, hashes, and the attestation chain all check without calling TrustedRouter again.</p>
+    <p>Receipts are opt-in per request and never stored server-side. Managed prepaid inference with a signed receipt uses a 12% total TrustedRouter service fee instead of the standard 5.5%. BYOK token pricing is unchanged. Verification is offline: signature, hashes, and the attestation chain all check without calling TrustedRouter again.</p>
     <p><strong>A receipt is not a confidentiality proof.</strong> It proves integrity and origin of the bytes; session privacy remains the job of the attested TLS channel documented on the <a href="/trust">trust page</a>.</p>
   </div>
   <div class="marketing-grid two">
@@ -36,7 +36,7 @@
   -H "x-inference-receipt: $(openssl rand -hex 16)" \
   -d '{"model":"trustedrouter/auto","messages":[{"role":"user","content":"Hello"}]}' \
   -D - -o response.json</code></pre>
-  <p>The <code>x-inference-receipt</code> response header holds the compact receipt. Requests without the header are byte-identical to today — the feature is invisible unless you ask for it. Malformed opt-in values are rejected with <code>400</code>.</p>
+  <p>The <code>x-inference-receipt</code> response header holds the compact receipt. Requests without the header keep standard 5.5% pricing and are byte-identical to today. Receipt-enabled managed prepaid requests use the 12% total service fee. Malformed opt-in values are rejected with <code>400</code>.</p>
 </section>
 
 <section class="status-section" style="margin-top:48px" id="verify">

@@ -401,9 +401,7 @@ class UserProvidedModel:
                 **self.encrypted_endpoint_api_key
             )
         if isinstance(self.encrypted_signing_secret, dict):
-            self.encrypted_signing_secret = EncryptedSecretEnvelope(
-                **self.encrypted_signing_secret
-            )
+            self.encrypted_signing_secret = EncryptedSecretEnvelope(**self.encrypted_signing_secret)
 
 
 @dataclass
@@ -634,6 +632,9 @@ class GatewayAuthorization:
     app_id: str = ""
     app_markup_basis_points: int = 0
     app_owner_user_id: str = ""
+    # Total TrustedRouter fee, not an additive surcharge. Zero means standard
+    # catalog pricing. Signed receipts currently freeze 1,200 (12%).
+    receipt_fee_basis_points: int = 0
     custom_model_id: str | None = None
     custom_model_revision: int | None = None
     user_provided_model_id: str | None = None
@@ -1511,9 +1512,7 @@ class GoogleAdsConversion:
 
     def __post_init__(self) -> None:
         if isinstance(self.encrypted_click_id, dict):
-            self.encrypted_click_id = EncryptedGoogleClickEnvelope(
-                **self.encrypted_click_id
-            )
+            self.encrypted_click_id = EncryptedGoogleClickEnvelope(**self.encrypted_click_id)
 
 
 ACTIVATION_REMINDER_DELAYS_SECONDS: tuple[tuple[str, int], ...] = (
