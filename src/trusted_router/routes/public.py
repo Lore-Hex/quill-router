@@ -288,6 +288,7 @@ _SUPPORT_CATEGORIES = {
     "account": "Account access",
     "billing": "Billing and credits",
     "provider": "Provider or model",
+    "feature": "Feature request",
     "other": "Other",
 }
 

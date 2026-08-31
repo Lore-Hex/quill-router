@@ -100,6 +100,41 @@ def test_support_submission_sends_to_help_with_reply_to(
     )
 
 
+def test_feature_request_uses_the_support_delivery_path(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent_messages: list[EmailMessage] = []
+
+    class FakeEmailService:
+        def send(self, message: EmailMessage) -> bool:
+            sent_messages.append(message)
+            return True
+
+    monkeypatch.setattr(
+        public_routes,
+        "get_email_service",
+        lambda _settings: FakeEmailService(),
+    )
+
+    response = client.post(
+        "/support/inquiry",
+        json=_payload(
+            category="feature",
+            subject="Add a route comparison export",
+            message="Please add a machine-readable comparison export.",
+        ),
+    )
+
+    assert response.status_code == 200
+    assert len(sent_messages) == 1
+    message = sent_messages[0]
+    assert message.to == "help@trustedrouter.com"
+    assert message.subject == (
+        "TrustedRouter support: Feature request: Add a route comparison export"
+    )
+
+
 @pytest.mark.parametrize(
     "overrides",
     (
