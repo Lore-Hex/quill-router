@@ -63,8 +63,7 @@ env_vars=(
   "TR_SPANNER_INSTANCE_ID=${SPANNER_INSTANCE_ID}"
   "TR_SPANNER_DATABASE_ID=${SPANNER_DATABASE_ID}"
   # This one-shot worker is strictly serial. Giving it the serving process's
-  # eight-session pool makes a cold run create seven unused Spanner sessions
-  # and can consume the entire 50-second fail-closed task budget.
+  # eight-session pool makes a cold run create seven unused Spanner sessions.
   "TR_SPANNER_POOL_SIZE=1"
   "TR_BIGTABLE_INSTANCE_ID=${BIGTABLE_INSTANCE_ID}"
   "TR_BIGTABLE_GENERATION_TABLE=${BIGTABLE_GENERATION_TABLE}"
@@ -103,6 +102,10 @@ if [ "$versioned_job_exists" = true ]; then
 else
   job_mutation=create
 fi
+# Cloud Run can occasionally spend more than 50 seconds provisioning a cold
+# task before Python starts. Keep the application's work bounded by its
+# single-session pool, distributed lock, and reconcile limit, while giving
+# the platform enough startup envelope to avoid killing untouched work.
 gc run jobs "$job_mutation" "$JOB_NAME" \
   --region "$JOB_REGION" \
   --image "$IMAGE" \
@@ -112,7 +115,7 @@ gc run jobs "$job_mutation" "$JOB_NAME" \
   --set-env-vars "$set_env_vars" \
   --update-secrets "TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest" \
   --max-retries 0 \
-  --task-timeout 50s \
+  --task-timeout 180s \
   --cpu 1 \
   --memory 512Mi \
   --quiet >/dev/null
