@@ -231,7 +231,11 @@ def test_superseded_push_stops_before_production_mutation() -> None:
     assert confirm < deploy < mutation
     assert 'git/ref/heads/main" --jq' in workflow[confirm:deploy]
     assert 'echo "proceed=false" >> "$GITHUB_OUTPUT"' in workflow[confirm:deploy]
-    assert "if: ${{ needs.confirm-current-main.outputs.proceed == 'true' }}" in workflow
+    assert (
+        "if: ${{ github.repository == 'Lore-Hex/quill-router' && "
+        "needs.confirm-current-main.outputs.proceed == 'true' }}"
+        in workflow
+    )
 
 
 def test_rollback_capture_uses_the_sole_serving_revision() -> None:

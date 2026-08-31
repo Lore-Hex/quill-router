@@ -30,6 +30,7 @@ concurrency:
 jobs:
   mirror:
     name: bundle and upload
+    if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     steps:
       # A shallow checkout is fine here: the script does not bundle this

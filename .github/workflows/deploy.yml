@@ -62,6 +62,7 @@ permissions:
 
 jobs:
   gate-on-ci:
+    if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -113,6 +114,7 @@ jobs:
           done
 
   build-image:
+    if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.set-vars.outputs.sha }}
@@ -206,6 +208,7 @@ jobs:
     # read-only INFORMATION_SCHEMA verification. A newly added column therefore
     # always exists before code that writes it can receive traffic.
     needs: [gate-on-ci]
+    if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -272,6 +275,7 @@ jobs:
     # Secret Manager; deploys must never copy a stale long-lived key back from
     # GitHub Actions and silently undo an incident-response rotation.
     needs: [gate-on-ci]
+    if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -339,7 +343,7 @@ jobs:
 
   deploy:
     needs: [build-image, migrate-schema, sync-runtime-secrets, confirm-current-main]
-    if: ${{ needs.confirm-current-main.outputs.proceed == 'true' }}
+    if: ${{ github.repository == 'Lore-Hex/quill-router' && needs.confirm-current-main.outputs.proceed == 'true' }}
     runs-on: ubuntu-latest
     outputs:
       TR_DEPLOY_MUTEX_OPERATION: ${{ steps.acquire_mutex.outputs.TR_DEPLOY_MUTEX_OPERATION }}
@@ -725,7 +729,7 @@ jobs:
 
   rollout-secondaries:
     needs: [deploy]
-    if: ${{ success() }}
+    if: ${{ github.repository == 'Lore-Hex/quill-router' && success() }}
     runs-on: ubuntu-latest
     # The mutex TTL is 90 minutes. The two lock-owning job bounds total
     # 25 + 55 = 80 minutes, leaving 10 minutes for the job handoff queue gap.
@@ -1234,6 +1238,7 @@ jobs:
     # it detects the public backend in the live map and preserves routed-mode
     # ingress/header trust on every later automatic deploy.
     needs: [rollout-secondaries]
+    if: github.repository == 'Lore-Hex/quill-router'
     continue-on-error: false
     runs-on: ubuntu-latest
     # Four sequential regional Cloud Run deploys normally finish in 12-20

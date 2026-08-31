@@ -41,7 +41,7 @@ jobs:
         run: terraform -chdir=infra validate
 
   apply:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: ${{ github.repository == 'Lore-Hex/quill-router' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
