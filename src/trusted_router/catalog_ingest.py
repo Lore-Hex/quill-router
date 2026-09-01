@@ -303,6 +303,21 @@ _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
 }
 
 _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
+    # Cloudflare's OpenAI-compatible endpoint serves Llama Guard 3 only for
+    # non-streaming chat. The exact request used by provider rotation succeeds
+    # with stream=false and returns HTTP 400 "Invalid input" with stream=true.
+    # TrustedRouter's public chat surface currently has no endpoint-level
+    # streaming capability flag, so advertising this route would knowingly
+    # expose a broken streaming path. Quarantine only this provider/model pair
+    # until that capability is represented and enforced end to end. Direct
+    # verification on 2026-09-01 matched 72 synthetic failures and two organic
+    # failures, with no successful routed samples.
+    "cloudflare-workers-ai": frozenset(
+        {
+            "meta-llama/llama-guard-3-8b",
+            "@cf/meta/llama-guard-3-8b",
+        }
+    ),
     # atlas-cloud (onboarded #244) advertises these openai/* models but its
     # router returns HTTP 400 "router not found" — 100% synthetic failure / 0
     # success as of 2026-07-20. Provider-scoped: the same model ids on
