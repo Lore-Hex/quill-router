@@ -50,7 +50,9 @@ def test_delivery_retries_then_recovers() -> None:
     dispatcher.close()
 
 
-def test_full_queue_drops_oldest_pending_event() -> None:
+def test_full_queue_drops_oldest_pending_event(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     first_started = threading.Event()
     release_first = threading.Event()
     delivered: list[str] = []
@@ -62,16 +64,21 @@ def test_full_queue_drops_oldest_pending_event() -> None:
         delivered.append(event_id)
 
     dispatcher = SpendLeaseShadowDispatcher(deliver, max_pending=2)
-    dispatcher.submit("event-1", {})
-    assert first_started.wait(1)
-    dispatcher.submit("event-2", {})
-    dispatcher.submit("event-3", {})
-    dispatcher.submit("event-4", {})
+    with caplog.at_level(
+        logging.ERROR,
+        logger="trusted_router.services.spend_lease_shadow_dispatch",
+    ):
+        dispatcher.submit("event-1", {})
+        assert first_started.wait(1)
+        dispatcher.submit("event-2", {})
+        dispatcher.submit("event-3", {})
+        dispatcher.submit("event-4", {})
     release_first.set()
 
     assert dispatcher.wait_for_idle(1)
     assert delivered == ["event-1", "event-3", "event-4"]
     assert dispatcher.stats().dropped == 1
+    assert "spend_lease_shadow_queue_overflow" in caplog.text
     dispatcher.close()
 
 
