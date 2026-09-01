@@ -97,6 +97,7 @@ class _Call:
     command: list[str]
     payload: bytes
     timeout: float | None
+    cwd: str | None
 
     @property
     def host(self) -> str:
@@ -130,6 +131,7 @@ class _Fleet:
                 command=list(command),
                 payload=kwargs.get("input", b"") or b"",
                 timeout=kwargs.get("timeout"),
+                cwd=kwargs.get("cwd"),
             )
             self.calls.append(call)
             if call.host in self.down:
@@ -282,6 +284,8 @@ def test_single_endpoint_emits_the_byte_identical_historical_command(
     # And no timeout, which is also how it always behaved: a bound belongs on
     # a REMOTE endpoint, and adding one here would be a behaviour change.
     assert fleet.calls[0].timeout is None
+    # A deleted service cwd must not stop clickhouse-client before it connects.
+    assert fleet.calls[0].cwd == "/"
 
 
 def test_single_endpoint_keeps_todays_exception_rather_than_a_fan_out_error(

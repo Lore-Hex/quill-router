@@ -444,6 +444,11 @@ class ClickHouseOperationalWriter:
                     command,
                     input=payload,
                     env=env,
+                    # Do not inherit the daemon's working directory. Deploys
+                    # replace /opt/tr-clickhouse atomically; if an old process
+                    # survives a bad rollout, that directory can be deleted and
+                    # clickhouse-client otherwise fails before opening a socket.
+                    cwd="/",
                     capture_output=True,
                     check=False,
                     timeout=self._timeout_seconds,
