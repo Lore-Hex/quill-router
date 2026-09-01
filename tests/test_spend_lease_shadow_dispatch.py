@@ -127,7 +127,7 @@ def test_sustained_delivery_failure_escalates_once_threshold_is_reached(
     def deliver(_event_id: str, _payload: dict[str, object]) -> None:
         nonlocal attempts
         attempts += 1
-        if attempts >= 8:
+        if attempts >= 4:
             threshold_reached.set()
         raise TimeoutError("persistent telemetry outage")
 
@@ -145,7 +145,7 @@ def test_sustained_delivery_failure_escalates_once_threshold_is_reached(
     assert records["spend_lease_shadow_delivery_still_failing"].levelno == logging.WARNING
     persistent = records["spend_lease_shadow_delivery_persistently_failing"]
     assert persistent.levelno == logging.ERROR
-    assert persistent.consecutive_failures == 8
+    assert persistent.consecutive_failures == 4
     assert persistent.exc_info is not None
 
 

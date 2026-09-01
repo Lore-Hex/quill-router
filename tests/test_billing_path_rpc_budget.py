@@ -84,8 +84,8 @@ def test_billing_budget_finishes_before_enclave_header_timeout() -> None:
     assert _BILLING_PATH_SPANNER_BUDGET_SECONDS == 20.0
 
 
-def test_non_authoritative_spend_shadow_has_its_own_subsecond_budget() -> None:
-    """Each background shadow attempt has a short independent RPC budget."""
+def test_non_authoritative_spend_shadow_has_its_own_background_budget() -> None:
+    """Background evidence tolerates cross-region retries without client latency."""
 
     tree = ast.parse(GATEWAY.read_text(encoding="utf-8"))
     shadow_functions = {
@@ -97,7 +97,7 @@ def test_non_authoritative_spend_shadow_has_its_own_subsecond_budget() -> None:
     }
 
     assert shadow_functions == {"_persist_spend_lease_shadow"}
-    assert _SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS == 0.5
+    assert _SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS == 5.0
 
 
 def test_spend_shadow_recording_is_not_decorated_as_a_spanner_call() -> None:
