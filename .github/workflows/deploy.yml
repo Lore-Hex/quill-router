@@ -180,6 +180,10 @@ jobs:
                   docker push "${_CACHE_IMAGE}"
           options:
             machineType: E2_HIGHCPU_8
+            # Keep builder output in Cloud Logging so the read-only ops
+            # identity can diagnose a failed build without broad project
+            # Viewer permissions or access to the source staging bucket.
+            logging: CLOUD_LOGGING_ONLY
           EOF
           BUILD_ID=$(gcloud builds submit \
             --config=/tmp/cloudbuild-control-plane.yaml \
@@ -197,7 +201,13 @@ jobs:
             echo "  status: ${STATUS}"
             case "${STATUS}" in
               SUCCESS) break ;;
-              FAILURE|TIMEOUT|CANCELLED|EXPIRED) echo "build ${STATUS}"; exit 1 ;;
+              FAILURE|TIMEOUT|CANCELLED|EXPIRED)
+                echo "build ${STATUS}"
+                gcloud builds describe "${BUILD_ID}" \
+                  --project="${PROJECT_ID}" --region="${REGION}" \
+                  --format='yaml(id,status,statusDetail,failureInfo,steps)'
+                exit 1
+                ;;
             esac
             sleep 5
           done
