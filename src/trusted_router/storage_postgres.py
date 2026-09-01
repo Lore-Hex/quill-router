@@ -4755,6 +4755,42 @@ class PostgresStore:
 
         return self._run_transaction(list_samples)
 
+    def provider_route_benchmark_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        def list_samples(conn: Any) -> list[ProviderBenchmarkSample]:
+            rows = conn.execute(
+                "WITH ranked AS ("
+                "SELECT body, id, ROW_NUMBER() OVER ("
+                "PARTITION BY body ->> 'provider', body ->> 'model' "
+                "ORDER BY (body ->> 'created_at')::timestamptz DESC, id DESC"
+                ") AS route_rank FROM tr_entities "
+                "WHERE kind = 'provider_benchmark' "
+                "AND body ->> 'source' = 'synthetic' "
+                "AND (body ->> 'created_at')::timestamptz >= %s::timestamptz"
+                ") SELECT body FROM ranked WHERE route_rank <= %s "
+                "ORDER BY (body ->> 'created_at')::timestamptz DESC, id DESC "
+                "LIMIT %s",
+                (cutoff, max(1, per_route_limit), max(1, limit)),
+            ).fetchall()
+            samples: list[ProviderBenchmarkSample] = []
+            known = {field.name for field in dataclasses.fields(ProviderBenchmarkSample)}
+            for row in rows:
+                raw = row[0]
+                data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                samples.append(
+                    ProviderBenchmarkSample(
+                        **{key: value for key, value in data.items() if key in known}
+                    )
+                )
+            return samples
+
+        return self._run_transaction(list_samples)
+
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
         def record(conn: Any) -> None:
             self._write_indexed_entity_tx(

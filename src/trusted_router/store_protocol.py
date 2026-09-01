@@ -824,6 +824,13 @@ class Store(Protocol):
         model: str | None = ...,
         limit: int = ...,
     ) -> list[ProviderBenchmarkSample]: ...
+    def provider_route_benchmark_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]: ...
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None: ...
     def synthetic_probe_samples(
         self,

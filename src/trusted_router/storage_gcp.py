@@ -4010,6 +4010,23 @@ class SpannerBigtableStore:
             limit=limit,
         )
 
+    def provider_route_benchmark_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        # This is one derived monitoring sweep, not a customer read. Exact
+        # parity is owned by the background verifier; synchronously shadowing
+        # every route to Bigtable recreated the N x 2 fanout this method exists
+        # to remove.
+        return self._require_operational_analytics().route_benchmark_samples(
+            cutoff=cutoff,
+            per_route_limit=per_route_limit,
+            limit=limit,
+        )
+
     def public_analytics_snapshot(self, name: str) -> dict[str, Any] | None:
         return self._require_operational_analytics().public_snapshot(name)
 

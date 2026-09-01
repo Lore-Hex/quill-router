@@ -49,6 +49,7 @@ from trusted_router.storage_operational_analytics import (
     OPERATIONAL_ANALYTICS_OUTBOX_SHARDS,
     build_client_events_payload,
 )
+from trusted_router.storage_postgres import PostgresStore
 from trusted_router.storage_postgres_operational_analytics_outbox import (
     PostgresOperationalAnalyticsOutbox,
 )
@@ -397,6 +398,158 @@ def test_clickhouse_balanced_benchmark_reader_uses_one_window_query() -> None:
             created_at="2026-07-31T12:34:56.789Z",
         )
     ]
+
+
+def test_clickhouse_route_benchmark_reader_uses_one_partitioned_query() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        assert request.url.params["param_per_route_limit"] == "48"
+        assert request.url.params["param_limit"] == "47088"
+        assert request.url.params["param_cutoff"] == "2026-08-29T00:00:00Z"
+        sql = request.content.decode()
+        assert "source = 'synthetic'" in sql
+        assert "PARTITION BY provider, model" in sql
+        assert "route_rank <= {per_route_limit:UInt32}" in sql
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "bench-route-1",
+                        "model": "openai/gpt-5.5",
+                        "provider": "openai",
+                        "provider_name": "OpenAI",
+                        "status": "success",
+                        "usage_type": "Credits",
+                        "streamed": 1,
+                        "input_tokens": 4,
+                        "output_tokens": 1,
+                        "total_cost_microdollars": 3,
+                        "speed_tokens_per_second": 9.0,
+                        "elapsed_milliseconds": 180,
+                        "first_token_milliseconds": 90,
+                        "ttfb_milliseconds": 15,
+                        "finish_reason": "stop",
+                        "error_type": None,
+                        "error_status": None,
+                        "error_message": None,
+                        "region": "us-central1",
+                        "source": "synthetic",
+                        "app": "TrustedRouter Synthetic",
+                        "created_at": "2026-08-30 12:34:56.789",
+                    }
+                ]
+            },
+        )
+
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse",
+        user="reader",
+        password="sec" + "ret",
+        transport=httpx.MockTransport(handler),
+    )
+    rows = client.route_benchmark_samples(
+        cutoff="2026-08-29T00:00:00Z",
+        per_route_limit=48,
+        limit=47_088,
+    )
+
+    assert calls == 1
+    assert [(row.provider, row.model, row.id) for row in rows] == [
+        ("openai", "openai/gpt-5.5", "bench-route-1")
+    ]
+
+
+def test_gcp_route_health_batch_read_does_not_shadow_to_bigtable() -> None:
+    class FakeAnalytics:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def route_benchmark_samples(
+            self,
+            *,
+            cutoff: str,
+            per_route_limit: int,
+            limit: int,
+        ) -> list[ProviderBenchmarkSample]:
+            self.calls.append(
+                {
+                    "cutoff": cutoff,
+                    "per_route_limit": per_route_limit,
+                    "limit": limit,
+                }
+            )
+            return []
+
+    store = object.__new__(SpannerBigtableStore)
+    analytics = FakeAnalytics()
+    store._operational_analytics = analytics  # type: ignore[assignment]
+
+    rows = store.provider_route_benchmark_samples(
+        cutoff="2026-08-29T00:00:00Z",
+        per_route_limit=48,
+        limit=47_088,
+    )
+
+    assert rows == []
+    assert analytics.calls == [
+        {
+            "cutoff": "2026-08-29T00:00:00Z",
+            "per_route_limit": 48,
+            "limit": 47_088,
+        }
+    ]
+
+
+def test_postgres_route_health_batch_read_uses_one_partitioned_query() -> None:
+    statements: list[tuple[str, tuple[object, ...]]] = []
+    body = dataclasses.asdict(
+        ProviderBenchmarkSample(
+            id="bench-postgres-route-1",
+            model="openai/gpt-5.5",
+            provider="openai",
+            provider_name="OpenAI",
+            status="success",
+            usage_type="Credits",
+            streamed=True,
+            input_tokens=4,
+            output_tokens=1,
+            total_cost_microdollars=3,
+            created_at="2026-08-30T12:34:56.789Z",
+            source="synthetic",
+        )
+    )
+
+    class Cursor:
+        def fetchall(self) -> list[tuple[dict[str, object]]]:
+            return [(body,)]
+
+    class Connection:
+        def execute(self, sql: str, params: tuple[object, ...]) -> Cursor:
+            statements.append((sql, params))
+            return Cursor()
+
+    connection = Connection()
+    store = PostgresStore.__new__(PostgresStore)
+    store._run_transaction = lambda operation: operation(connection)  # type: ignore[method-assign]
+
+    rows = store.provider_route_benchmark_samples(
+        cutoff="2026-08-29T00:00:00Z",
+        per_route_limit=48,
+        limit=47_088,
+    )
+
+    assert [(row.provider, row.model, row.id) for row in rows] == [
+        ("openai", "openai/gpt-5.5", "bench-postgres-route-1")
+    ]
+    [(sql, params)] = statements
+    assert "PARTITION BY body ->> 'provider', body ->> 'model'" in sql
+    assert "body ->> 'source' = 'synthetic'" in sql
+    assert "route_rank <= %s" in sql
+    assert params == ("2026-08-29T00:00:00Z", 48, 47_088)
 
 
 @pytest.mark.parametrize(
