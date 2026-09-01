@@ -138,6 +138,72 @@ def test_bigtable_health_check_fails_when_transactional_writes_fail() -> None:
         ledger.health_check()
 
 
+def test_bigtable_reads_use_a_bounded_hot_path_retry_deadline() -> None:
+    table = _FakeBigtableTable()
+    ledger = BigtableRegionalQuotaLedger(
+        {"us-central1": table},
+        operation_timeout_seconds=2.0,
+    )
+    ledger.initialize(_lease())
+
+    assert ledger.get("rql-test", region="us-central1") == _lease()
+    assert table.read_retry_deadlines
+    assert max(table.read_retry_deadlines) <= 1.0
+
+
+def test_bigtable_cas_commit_uses_remaining_operation_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    table = _FakeBigtableTable()
+    ledger = BigtableRegionalQuotaLedger(
+        {"us-central1": table},
+        operation_timeout_seconds=2.0,
+    )
+    ledger.initialize(_lease())
+    observed_timeouts: list[float] = []
+    original = ledger._commit_conditional_row
+
+    def recording_commit(row: Any, *, timeout_seconds: float) -> bool:
+        observed_timeouts.append(timeout_seconds)
+        return original(row, timeout_seconds=timeout_seconds)
+
+    monkeypatch.setattr(ledger, "_commit_conditional_row", recording_commit)
+
+    ledger.reserve(
+        "rql-test",
+        region="us-central1",
+        hold_id="bounded-hold",
+        fingerprint="bounded-fingerprint",
+        amount_microdollars=100,
+        fencing_token=9,
+        key_hash="key-1",
+        key_shard=1,
+        now=NOW,
+    )
+
+    assert observed_timeouts
+    assert all(0 < timeout <= 2.0 for timeout in observed_timeouts)
+
+
+def test_bigtable_conditional_commit_forwards_explicit_rpc_timeout() -> None:
+    row = _FakeLegacyConditionalRow()
+
+    assert BigtableRegionalQuotaLedger._commit_conditional_row(
+        row,
+        timeout_seconds=0.75,
+    )
+    assert row._table._instance._client.table_data_client.calls == [0.75]
+    assert row.cleared is True
+
+
+def test_bigtable_operation_timeout_rejects_unsafe_values() -> None:
+    with pytest.raises(ValueError, match="between 1.1 and 10"):
+        BigtableRegionalQuotaLedger(
+            {"us-central1": _FakeBigtableTable()},
+            operation_timeout_seconds=1.0,
+        )
+
+
 def test_bigtable_cas_matches_only_the_latest_version_cell() -> None:
     ledger = BigtableRegionalQuotaLedger({"us-central1": _FakeBigtableTable()})
 
@@ -219,11 +285,47 @@ class _FakeBigtableTable:
         self.rows: dict[bytes, dict[bytes, bytes]] = {}
         self.raise_after_next_applied_commit = False
         self.reject_conditional_commits = False
+        self.read_retry_deadlines: list[float] = []
 
     def row(self, row_key: bytes, *, filter_: Any) -> _FakeConditionalRow:
         return _FakeConditionalRow(self, row_key, filter_)
 
-    def read_row(self, row_key: bytes, *, filter_: Any) -> _ReadRow | None:
+    def read_row(self, row_key: bytes, *, filter_: Any, retry: Any) -> _ReadRow | None:
         del filter_
+        self.read_retry_deadlines.append(float(retry._deadline))
         values = self.rows.get(row_key)
         return None if values is None else _ReadRow(values)
+
+
+class _FakeGeneratedDataClient:
+    def __init__(self) -> None:
+        self.calls: list[float] = []
+
+    def check_and_mutate_row(self, **kwargs: Any) -> Any:
+        self.calls.append(float(kwargs["timeout"]))
+        return type("Response", (), {"predicate_matched": True})()
+
+
+class _FakeLegacyConditionalRow:
+    def __init__(self) -> None:
+        data_client = _FakeGeneratedDataClient()
+        client = type("Client", (), {"table_data_client": data_client})()
+        instance = type("Instance", (), {"_client": client})()
+        self._table = type(
+            "Table",
+            (),
+            {
+                "_instance": instance,
+                "_app_profile_id": "tr-rql-us-central1",
+                "name": "projects/test/instances/test/tables/quota",
+            },
+        )()
+        self._row_key = b"row-key"
+        self._filter = type("Filter", (), {"to_pb": lambda _self: object()})()
+        self.cleared = False
+
+    def _get_mutations(self, *, state: bool) -> list[object]:
+        return [object()] if state else []
+
+    def clear(self) -> None:
+        self.cleared = True
