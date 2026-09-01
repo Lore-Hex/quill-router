@@ -398,7 +398,8 @@ def test_gateway_latency_anatomy_distinguishes_global_and_direct_targets() -> No
     }
 
 
-def test_public_status_response_cache_reuses_rendered_body() -> None:
+@pytest.mark.anyio
+async def test_public_status_response_cache_reuses_rendered_body() -> None:
     import trusted_router.routes.public as public_routes
 
     with public_routes._STATUS_RESPONSE_CACHE_LOCK:
@@ -412,7 +413,7 @@ def test_public_status_response_cache_reuses_rendered_body() -> None:
         return f"payload-{calls}".encode()
 
     try:
-        first = public_routes._cached_public_response(
+        first = await public_routes._cached_public_response(
             Settings(environment="local"),
             key="test:status-cache",
             media_type="application/json",
@@ -421,7 +422,7 @@ def test_public_status_response_cache_reuses_rendered_body() -> None:
             background_tasks=BackgroundTasks(),
             build=build,
         )
-        second = public_routes._cached_public_response(
+        second = await public_routes._cached_public_response(
             Settings(environment="local"),
             key="test:status-cache",
             media_type="application/json",
@@ -442,7 +443,8 @@ def test_public_status_response_cache_reuses_rendered_body() -> None:
     assert calls == 1
 
 
-def test_public_response_cache_is_bounded() -> None:
+@pytest.mark.anyio
+async def test_public_response_cache_is_bounded() -> None:
     import trusted_router.routes.public as public_routes
 
     with public_routes._STATUS_RESPONSE_CACHE_LOCK:
@@ -450,7 +452,7 @@ def test_public_response_cache_is_bounded() -> None:
         public_routes._STATUS_RESPONSE_REFRESHING.clear()
     try:
         for index in range(public_routes.PUBLIC_RESPONSE_CACHE_MAX_ENTRIES + 5):
-            public_routes._cached_public_response(
+            await public_routes._cached_public_response(
                 Settings(environment="local"),
                 key=f"bounded-cache-{index}",
                 media_type="application/json",
