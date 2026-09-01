@@ -34,6 +34,8 @@ PUBLIC_RUNTIME_SA="${TR_PUBLIC_RUNTIME_SA:-tr-public@${PROJECT_ID}.iam.gservicea
 PUBLIC_REGIONS="${TR_PUBLIC_REGIONS:-$TR_CONTROL_PLANE_REGIONS}"
 PUBLIC_PROBE_ATTEMPTS="${TR_PUBLIC_PROBE_ATTEMPTS:-3}"
 PUBLIC_PROBE_RETRY_SECONDS="${TR_PUBLIC_PROBE_RETRY_SECONDS:-2}"
+PUBLIC_CONCURRENCY="${TR_PUBLIC_CONCURRENCY:-16}"
+PUBLIC_MIN_INSTANCES="${TR_PUBLIC_MIN_INSTANCES:-2}"
 PUBLIC_PROBE_TAG="public-revision-probe"
 PUBLIC_PROBE_REGION=""
 PUBLIC_PROBE_TAG_CLEANUP_REQUIRED=0
@@ -52,6 +54,14 @@ HISTORY_REGIONS=()
 HISTORY_OLD_REVISIONS=()
 HISTORY_NEW_REVISIONS=()
 HISTORY_OLD_INGRESSES=()
+
+for numeric_setting in PUBLIC_CONCURRENCY PUBLIC_MIN_INSTANCES; do
+  numeric_value="${!numeric_setting}"
+  if ! [[ "$numeric_value" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: ${numeric_setting} must be a positive integer" >&2
+    exit 1
+  fi
+done
 
 cleanup_public_probe_tag() {
   [ "$PUBLIC_PROBE_TAG_CLEANUP_REQUIRED" -eq 1 ] || return 0
@@ -765,12 +775,12 @@ for index in "${!TARGET_REGIONS[@]}"; do
     --port 8080
     --ingress "$INGRESS"
     --service-account "$PUBLIC_RUNTIME_SA"
-    --concurrency 8
+    --concurrency "$PUBLIC_CONCURRENCY"
     --cpu 1
     --memory 2Gi
     --timeout 60
     --max-instances 20
-    --min-instances 1
+    --min-instances "$PUBLIC_MIN_INSTANCES"
     "${NETWORK_ARGS[@]}"
     --set-env-vars "$SET_ENV_VARS"
     --set-secrets "$SET_SECRETS"

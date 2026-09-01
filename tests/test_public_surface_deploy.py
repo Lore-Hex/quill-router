@@ -173,12 +173,12 @@ def test_public_deploy_pins_every_region_and_stage_contract(
         else:
             assert "--no-traffic" not in call
         for flag, value in (
-            ("--concurrency", "8"),
+            ("--concurrency", "16"),
             ("--cpu", "1"),
             ("--memory", "2Gi"),
             ("--timeout", "60"),
             ("--max-instances", "20"),
-            ("--min-instances", "1"),
+            ("--min-instances", "2"),
             ("--network", "default"),
             ("--subnet", "default"),
             ("--vpc-egress", "private-ranges-only"),
@@ -233,6 +233,31 @@ def test_missing_runtime_service_account_fails_before_cloud_mutation(
     assert "roles/serviceusage.serviceUsageConsumer" in run.stderr
     mutating = ("create", "update", "deploy", "add-backend", "import")
     assert not any(any(part in mutating for part in call[1:]) for call in run.calls)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("TR_PUBLIC_CONCURRENCY", "0"),
+        ("TR_PUBLIC_CONCURRENCY", "many"),
+        ("TR_PUBLIC_MIN_INSTANCES", "-1"),
+        ("TR_PUBLIC_MIN_INSTANCES", "1.5"),
+    ],
+)
+def test_invalid_public_capacity_fails_before_cloud_mutation(
+    tmp_path: Path,
+    name: str,
+    value: str,
+) -> None:
+    run = DeployScriptHarness(tmp_path / f"invalid-{name}-{value}").run(
+        SCRIPT,
+        args=("routed",),
+        extra_env={name: value},
+    )
+
+    assert run.returncode != 0
+    assert "must be a positive integer" in run.stderr
+    assert not _deploy_calls(run)
 
 
 def test_bigtable_mode_omits_clickhouse_secret_env_and_vpc_flags(

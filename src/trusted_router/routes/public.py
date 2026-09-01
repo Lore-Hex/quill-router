@@ -12,6 +12,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -227,6 +228,8 @@ _STATUS_RESPONSE_CACHE: OrderedDict[str, _CachedPublicBody] = OrderedDict()
 _STATUS_RESPONSE_REFRESHING: set[str] = set()
 _STATUS_RESPONSE_CACHE_LOCK = threading.RLock()
 _STATUS_RESPONSE_REFRESH_SLOTS = threading.BoundedSemaphore(PUBLIC_RESPONSE_REFRESH_MAX_THREADS)
+_STATIC_ASSET_CACHE_LOCK = threading.Lock()
+_STATIC_ASSET_BYTES_BY_ROOT: dict[str, dict[str, bytes]] = {}
 
 
 @dataclass(frozen=True)
@@ -238,17 +241,51 @@ class _CachedPublicBody:
 
 
 class _CachedStaticFiles(StaticFiles):
-    """StaticFiles + a public 1-day Cache-Control header.
+    """Serve immutable image assets without runtime container-file reads.
 
-    The default StaticFiles ships no cache directive, which means every
-    visit to the marketing page re-fetches every CSS/JS/SVG asset on
-    cold-load. We hash-bust nothing today, so the conservative play is
-    a 24-hour public cache — long enough to take the edge off Cloud Run
-    bandwidth, short enough that a deploy reaches users within a day."""
+    Cloud Run's container filesystem is normally reliable, but a regional
+    storage incident must not turn a cache miss for a logo into a website
+    outage. Public images are small enough to load once before the instance is
+    ready. Range requests retain Starlette's disk-backed behavior; ordinary
+    GET and HEAD requests use the in-memory copy.
+
+    Browser caches keep unversioned paths for one day while Cloud CDN keeps a
+    shared copy for seven. Explicit ``?v=`` URLs are immutable for one year.
+    """
+
+    _SHARED_MAX_AGE = 7 * 86_400
+    _VERSIONED_MAX_AGE = 365 * 86_400
 
     def __init__(self, *args: Any, max_age: int = 86_400, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._max_age = max_age
+        self._asset_bytes: dict[str, bytes] = {}
+        for directory in self.all_directories:
+            root = Path(directory).resolve()
+            root_key = str(root)
+            with _STATIC_ASSET_CACHE_LOCK:
+                cached = _STATIC_ASSET_BYTES_BY_ROOT.get(root_key)
+                if cached is None:
+                    cached = {
+                        str(asset.resolve()): asset.read_bytes()
+                        for asset in root.rglob("*")
+                        if asset.is_file()
+                    }
+                    _STATIC_ASSET_BYTES_BY_ROOT[root_key] = cached
+            self._asset_bytes.update(cached)
+
+    def _cache_control(self, scope: Scope) -> str:
+        query = scope.get("query_string", b"")
+        versioned = any(
+            field.partition(b"=")[0] == b"v" for field in query.split(b"&") if field
+        )
+        if versioned:
+            return f"public, max-age={self._VERSIONED_MAX_AGE}, immutable"
+        return (
+            f"public, max-age={self._max_age}, s-maxage={self._SHARED_MAX_AGE}, "
+            f"stale-while-revalidate={self._max_age}, "
+            f"stale-if-error={self._SHARED_MAX_AGE}"
+        )
 
     def file_response(
         self,
@@ -260,8 +297,21 @@ class _CachedStaticFiles(StaticFiles):
         response = super().file_response(full_path, stat_result, scope, status_code=status_code)
         if str(full_path).casefold().endswith(".woff2"):
             response.headers["content-type"] = "font/woff2"
-        response.headers.setdefault("cache-control", f"public, max-age={self._max_age}")
-        return response
+        response.headers.setdefault("cache-control", self._cache_control(scope))
+        if response.status_code == 304 or any(
+            name.lower() == b"range" for name, _value in scope.get("headers", [])
+        ):
+            return response
+
+        content = self._asset_bytes.get(str(Path(full_path).resolve()))
+        if content is None:
+            return response
+        body = b"" if scope.get("method") == "HEAD" else content
+        return Response(
+            content=body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+        )
 
 
 log = logging.getLogger(__name__)
