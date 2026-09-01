@@ -142,6 +142,9 @@ from trusted_router.services.settle_outbox_drain import (
     drain_settle_outbox,
     spanner_settle_outbox,
 )
+from trusted_router.services.spend_lease_shadow_dispatch import (
+    SpendLeaseShadowDispatcher,
+)
 from trusted_router.services.user_model_gateway_health import (
     record_user_model_gateway_result,
 )
@@ -209,9 +212,9 @@ REQUEST_METADATA_VERSION = 1
 # transaction layer's 20-second retry budget while leaving five seconds for this
 # process to serialize a structured retryable 503 and for network transit.
 _BILLING_PATH_SPANNER_BUDGET_SECONDS = 20.0
-# Spend-lease shadow rows are non-authoritative rollout evidence. They must
-# never consume the paid authorize path's full Spanner budget when their
-# separate outbox transaction stalls.
+# Spend-lease shadow rows are non-authoritative rollout evidence. The dispatcher
+# keeps their outbox transaction off the paid authorize thread; this budget
+# limits each background delivery attempt during a storage incident.
 _SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS = 0.5
 _AUTHORIZE_ADMISSION = KeyedConcurrencyAdmission()
 # Process-local harm limitation: this keeps one key from exhausting this
@@ -479,6 +482,15 @@ def _authorize_gateway_sync(
 
 
 @spanner_rpc_budget(_SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS)
+def _persist_spend_lease_shadow(event_id: str, payload: dict[str, Any]) -> None:
+    STORE.record_spend_lease_shadow(event_id, payload)
+
+
+_SPEND_LEASE_SHADOW_DISPATCHER = SpendLeaseShadowDispatcher(
+    _persist_spend_lease_shadow
+)
+
+
 def _record_spend_lease_shadow(
     context: dict[str, Any],
     *,
@@ -500,9 +512,9 @@ def _record_spend_lease_shadow(
             server_estimate_micro=cast(int | None, context.get("server_estimate_micro")),
             server_verdict=cast(Any, verdict),
         )
-        STORE.record_spend_lease_shadow(event.event_id, event.payload())
+        _SPEND_LEASE_SHADOW_DISPATCHER.submit(event.event_id, event.payload())
     except Exception:
-        logger.exception("spend_lease_shadow_enqueue_failed")
+        logger.exception("spend_lease_shadow_dispatch_failed")
 
 
 def _authorize_gateway_sync_impl(
