@@ -300,13 +300,12 @@
         "seed",
         "max_tokens"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed",
+      "routable": true,
       "input_token_price_per_m": 135000,
       "output_token_price_per_m": 450000,
       "cached_input_token_price_per_m": 27000
     }
   ],
-  "generated_at": "2026-08-31T23:01:21Z",
+  "generated_at": "2026-09-01T07:26:42Z",
   "model_count": 7
 }

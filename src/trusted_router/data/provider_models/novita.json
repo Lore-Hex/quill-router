@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-08-31T23:01:21Z",
+  "generated_at": "2026-09-01T07:26:42Z",
   "model_count": 150,
   "models": [
     {
@@ -3872,9 +3872,9 @@
       "created": 1784605406,
       "context_length": 1048576,
       "max_output_tokens": 131072,
-      "input_token_price_per_m": 15000,
-      "output_token_price_per_m": 45000,
-      "cached_input_token_price_per_m": 3000
+      "input_token_price_per_m": 8250,
+      "output_token_price_per_m": 24475,
+      "cached_input_token_price_per_m": 1650
     },
     {
       "id": "mindai/macaron-v1-tall",
@@ -3901,9 +3901,9 @@
       "created": 1784113196,
       "context_length": 262144,
       "max_output_tokens": 32768,
-      "input_token_price_per_m": 4500,
-      "output_token_price_per_m": 26000,
-      "cached_input_token_price_per_m": 800
+      "input_token_price_per_m": 2475,
+      "output_token_price_per_m": 14300,
+      "cached_input_token_price_per_m": 440
     },
     {
       "id": "deepseek/deepseek-v4-flash-0731",

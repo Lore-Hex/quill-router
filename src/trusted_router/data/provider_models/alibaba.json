@@ -3,9 +3,9 @@
   "provider": "alibaba",
   "source": "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/compatible-mode/v1/models",
   "price_source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
-  "generated_at": "2026-08-31T23:01:21Z",
+  "generated_at": "2026-09-01T07:26:42Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 80,
+  "model_count": 82,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -2305,6 +2305,34 @@
       "routable": false,
       "routable_reason": "awaiting-price",
       "unresolved_since": "2026-08-21"
+    },
+    {
+      "id": "alibaba/tongyi-llm-faceguard-v1",
+      "upstream_id": "tongyi-llm-FaceGuard-v1",
+      "display_name": "Tongyi Llm Faceguard V1",
+      "title": "tongyi-llm-FaceGuard-v1",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "created": 1788247316,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-09-01"
+    },
+    {
+      "id": "alibaba/tongyi-skynet-llm-cm-2511",
+      "upstream_id": "tongyi-skynet-llm-cm-2511",
+      "display_name": "Tongyi Skynet Llm Cm 2511",
+      "title": "tongyi-skynet-llm-cm-2511",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "created": 1788247222,
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-09-01"
     }
   ]
 }
