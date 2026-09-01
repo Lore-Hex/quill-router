@@ -118,10 +118,10 @@
   },
   "cloudflare-workers-ai": {
     "card_version": 2,
-    "model_count": 27,
+    "model_count": 26,
     "name": "Cloudflare Workers AI",
     "privacy": "Policy documented",
-    "route_count": 27,
+    "route_count": 26,
     "route_mode": "Prepaid",
     "slug": "cloudflare-workers-ai"
   },

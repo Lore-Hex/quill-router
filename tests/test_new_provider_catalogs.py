@@ -147,6 +147,10 @@ def test_new_provider_manifests_create_only_eligible_routes() -> None:
         and endpoint.upstream_id == "moonshotai/kimi-k3"
         for endpoint in cloudflare
     )
+    assert not any(
+        endpoint.model_id == "meta-llama/llama-guard-3-8b"
+        for endpoint in cloudflare
+    )
     assert all(
         endpoint.prompt_price_microdollars_per_million_tokens > 0
         and endpoint.completion_price_microdollars_per_million_tokens > 0
