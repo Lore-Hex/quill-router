@@ -820,7 +820,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 headers=trust_response_headers(release.status),
             )
         if is_status_hostname(settings, hostname):
-            return _cached_status_page_response(
+            return await _cached_status_page_response(
                 settings,
                 host=hostname,
                 background_tasks=background_tasks,
@@ -994,15 +994,15 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     # catalog-derived pages rather than recomputed per request.
     @public_html_route("/us-ai-models")
     async def seo_us_ai_models(background_tasks: BackgroundTasks) -> Response:
-        return _model_region_response(settings, "us-ai-models", background_tasks)
+        return await _model_region_response(settings, "us-ai-models", background_tasks)
 
     @public_html_route("/eu-ai-models")
     async def seo_eu_ai_models(background_tasks: BackgroundTasks) -> Response:
-        return _model_region_response(settings, "eu-ai-models", background_tasks)
+        return await _model_region_response(settings, "eu-ai-models", background_tasks)
 
     @public_html_route("/china-ai-models")
     async def seo_china_ai_models(background_tasks: BackgroundTasks) -> Response:
-        return _model_region_response(settings, "china-ai-models", background_tasks)
+        return await _model_region_response(settings, "china-ai-models", background_tasks)
 
     @public_html_route("/minimax-m3-api")
     async def seo_minimax_m3_api() -> str:
@@ -1200,7 +1200,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @public_html_route("/choose")
     async def choose(background_tasks: BackgroundTasks) -> Response:
-        return _cached_public_response(
+        return await _cached_public_response(
             settings,
             key=f"choose:page:{settings.release}",
             media_type="text/html",
@@ -1212,7 +1212,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/choose/catalog.json")
     async def choose_catalog(background_tasks: BackgroundTasks) -> Response:
-        return _cached_public_response(
+        return await _cached_public_response(
             settings,
             key=f"choose:catalog:{settings.release}",
             media_type="application/json",
@@ -1640,7 +1640,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @public_html_route("/status")
     async def status_page(request: Request, background_tasks: BackgroundTasks) -> Response:
-        return _cached_status_page_response(
+        return await _cached_status_page_response(
             settings,
             host=request.headers.get("host", ""),
             background_tasks=background_tasks,
@@ -1649,7 +1649,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/leaderboard")
     async def leaderboard_page(request: Request, background_tasks: BackgroundTasks) -> Response:
         _ = request
-        return _cached_public_response(
+        return await _cached_public_response(
             settings,
             key="leaderboard:page",
             media_type="text/html",
@@ -1666,7 +1666,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         request: Request, background_tasks: BackgroundTasks
     ) -> Response:
         _ = request
-        return _cached_public_response(
+        return await _cached_public_response(
             settings,
             key="leaderboard:video:page",
             media_type="text/html",
@@ -1680,7 +1680,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/leaderboard/video.json")
     async def video_leaderboard_json(background_tasks: BackgroundTasks) -> Response:
-        return _cached_public_response(
+        return await _cached_public_response(
             settings,
             key="leaderboard:video:json",
             media_type="application/json",
@@ -1706,7 +1706,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/status.json")
     async def status_json(background_tasks: BackgroundTasks) -> Response:
-        return _cached_public_response(
+        return await _cached_public_response(
             settings,
             key=f"status:json:{int(settings.public_client_observed_enabled)}",
             media_type="application/json",
@@ -1737,7 +1737,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 status_code=400,
             )
         if not _wants_history_html(request, explicit_format=response_format):
-            return _cached_public_response(
+            return await _cached_public_response(
                 settings,
                 key=f"status:history:{window}:json",
                 media_type="application/json",
@@ -1747,7 +1747,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 build=lambda: _json_body({"data": _status_history_payload(window)}),
             )
         render_host = _status_render_host(settings, request.headers.get("host", ""))
-        return _cached_public_response(
+        return await _cached_public_response(
             settings,
             key=f"status:history:{window}:html:{render_host}",
             media_type="text/html",
@@ -2093,14 +2093,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
 
-def _cached_status_page_response(
+async def _cached_status_page_response(
     settings: Settings,
     *,
     host: str,
     background_tasks: BackgroundTasks,
 ) -> Response:
     render_host = _status_render_host(settings, host)
-    return _cached_public_response(
+    return await _cached_public_response(
         settings,
         key=f"status:page:{render_host}:{int(settings.public_client_observed_enabled)}",
         media_type="text/html",
@@ -2120,12 +2120,12 @@ def _status_render_host(settings: Settings, host: str) -> str:
     return settings.trusted_domain
 
 
-def _model_region_response(
+async def _model_region_response(
     settings: Settings,
     slug: str,
     background_tasks: BackgroundTasks,
 ) -> Response:
-    return _cached_public_response(
+    return await _cached_public_response(
         settings,
         key=f"model-region:{slug}:{settings.release}",
         media_type="text/html",
@@ -2136,7 +2136,7 @@ def _model_region_response(
     )
 
 
-def _cached_public_response(
+async def _cached_public_response(
     settings: Settings,
     *,
     key: str,
@@ -2147,12 +2147,23 @@ def _cached_public_response(
     build: Callable[[], bytes],
     cache_control_override: str | None = None,
 ) -> Response:
+    """Serve a cached public body, building it OFF the event loop on a miss.
+
+    `build` reaches ClickHouse through a synchronous httpx client with a
+    20-second timeout (`OperationalAnalytics._query`). Calling it inline from
+    an async route blocked the worker's whole event loop for as long as that
+    query took, so every other request on the instance -- including
+    /internal/gateway/authorize and /settle on the paid inference path --
+    queued behind a status-page render. The stale-refresh path already ran on
+    a daemon thread for exactly this reason; only the cold/expired path was
+    left on the loop.
+    """
     cache_control = cache_control_override or _public_cache_control(
         ttl_seconds=ttl_seconds, stale_seconds=stale_seconds
     )
     if settings.environment == "test":
         return Response(
-            content=build(),
+            content=await run_in_threadpool(build),
             media_type=media_type,
             headers={"cache-control": cache_control, "x-tr-cache": "bypass"},
         )
@@ -2176,7 +2187,7 @@ def _cached_public_response(
                 )
                 return _cached_body_response(cached, cache_state="stale")
 
-    body = build()
+    body = await run_in_threadpool(build)
     cached = _CachedPublicBody(
         cached_at=time.monotonic(),
         body=body,
