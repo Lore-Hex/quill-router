@@ -1366,6 +1366,31 @@ class TestClickHouseIdentityIsConfigurable:
         assert command[command.index("--user") + 1] == "default"
         assert command[command.index("--database") + 1] == "default"
 
+    def test_clickhouse_client_subprocess_uses_a_stable_explicit_cwd(
+        self, monkeypatch: Any
+    ) -> None:
+        """A rotated parent cwd must not prevent clickhouse-client from starting.
+
+        The systemd unit deliberately uses ``/opt/tr-clickhouse`` so ``python
+        -m`` can import the flat installed package.  If an installer ever moves
+        that directory out from under a running process, each child must still
+        start somewhere valid.  Removing ``cwd=`` from the subprocess call is
+        the mutation this test guards.
+        """
+        from clickhouse import ingest_operational_outbox as mod
+        from clickhouse.ingest_operational_outbox import ClickHouseOperationalWriter
+
+        calls: list[dict[str, Any]] = []
+
+        def fake_run(_command: list[str], **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+        monkeypatch.setattr(mod.subprocess, "run", fake_run)
+        ClickHouseOperationalWriter(password="x").insert([self._event()])  # noqa: S106
+
+        assert calls[0]["cwd"] == "/"
+
 
 # --------------------------------------------------------------------------
 # The published lag read
