@@ -179,7 +179,7 @@ prepare_edge() {
     --cache-key-include-query-string \
     --cache-key-query-string-blacklist= \
     --compression-mode=AUTOMATIC \
-    --serve-while-stale=600 \
+    --serve-while-stale=86400 \
     --no-negative-caching \
     --custom-request-header='X-TrustedRouter-Client-IP:{client_ip_address}' \
     --enable-logging \

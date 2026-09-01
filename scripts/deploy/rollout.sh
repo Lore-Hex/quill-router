@@ -1128,7 +1128,7 @@ elif gc compute backend-services describe "$LB_BACKEND_SERVICE" --global >/dev/n
     --cache-key-include-query-string \
     --cache-key-query-string-blacklist= \
     --compression-mode=AUTOMATIC \
-    --serve-while-stale=600 \
+    --serve-while-stale=86400 \
     --no-negative-caching \
     --quiet >/dev/null
 else
