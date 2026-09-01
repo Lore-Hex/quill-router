@@ -27,9 +27,9 @@
         "prompt_caching"
       ],
       "routable": true,
-      "input_token_price_per_m": 140000,
-      "output_token_price_per_m": 280000,
-      "cached_input_token_price_per_m": 28000
+      "input_token_price_per_m": 65000,
+      "output_token_price_per_m": 180000,
+      "cached_input_token_price_per_m": 16000
     },
     {
       "display_name": "Kimi K3",
@@ -64,7 +64,7 @@
   ],
   "source": "https://docs.relace.ai/docs/open-models/quickstart.md",
   "pricing_source": "https://docs.relace.ai/docs/open-models/quickstart.md",
-  "generated_at": "2026-09-01T07:26:42Z",
+  "generated_at": "2026-09-01T13:13:41Z",
   "price_scale": "microdollars_per_million",
   "model_count": 2
 }

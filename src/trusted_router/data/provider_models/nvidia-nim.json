@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-09-01T07:26:42Z",
+  "generated_at": "2026-09-01T13:13:41Z",
   "model_count": 119,
   "models": [
     {
@@ -1157,7 +1157,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-09-01"
     },
     {
       "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
