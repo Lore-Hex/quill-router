@@ -151,6 +151,28 @@ fi
 [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ] || die "no running instance named $NODE_NAME in $REGION"
 log "node $INSTANCE_ID ($NODE_NAME, $REGION)"
 
+# Capture both values on the node, whose clock systemd uses for
+# ExecMainStartTimestamp.  The pre-install PID is the identity proof that the
+# install did not leave the old in-memory code running.  A missing unit reports
+# PID 0 so the same path also covers a first install.
+INSTALL_STATE="$(ssm "drain: capture running process" "
+set -eu
+printf 'install_started_at=%s\n' \"\$(date --utc +%s)\"
+if pid=\$(systemctl show $SERVICE --property=ExecMainPID --value 2>/dev/null); then
+  case \"\$pid\" in ''|*[!0-9]*) pid=0 ;; esac
+else
+  pid=0
+fi
+printf 'pre_install_pid=%s\n' \"\$pid\"
+")"
+INSTALL_STARTED_AT="$(printf '%s\n' "$INSTALL_STATE" | sed -n 's/^install_started_at=//p' | tail -1)"
+PRE_INSTALL_PID="$(printf '%s\n' "$INSTALL_STATE" | sed -n 's/^pre_install_pid=//p' | tail -1)"
+case "$INSTALL_STARTED_AT:$PRE_INSTALL_PID" in
+  *[!0-9:]*) die "invalid install identity from node: $INSTALL_STATE" ;;
+  :*|*:) die "incomplete install identity from node: $INSTALL_STATE" ;;
+esac
+log "install epoch $INSTALL_STARTED_AT; pre-install PID $PRE_INSTALL_PID"
+
 # ---------------------------------------------------------------------------
 # 2. PREFLIGHT: can the node authenticate to DSQL at all?
 #
@@ -332,6 +354,12 @@ cd '$STAGE_DIR'
 # ---------------------------------------------------------------------------
 ssm "drain: activate $REMOTE_ROOT" "
 set -eux
+# Stop before touching the process's WorkingDirectory.  Moving a live cwd and
+# then deleting it on the next install leaves every child unable to start with
+# Poco 'cannot get current directory', while the Python loop remains active.
+if systemctl show $SERVICE >/dev/null 2>&1; then
+  systemctl stop $SERVICE
+fi
 rm -rf '${REMOTE_ROOT}.previous'
 if [ -d '$REMOTE_ROOT' ]; then mv '$REMOTE_ROOT' '${REMOTE_ROOT}.previous'; fi
 mv '$STAGE_DIR' '$REMOTE_ROOT'
@@ -393,22 +421,43 @@ printf '%s' '$UNIT_B64' | base64 -d > /etc/systemd/system/$SERVICE
 chmod 644 /etc/systemd/system/$SERVICE
 chown -R '$SERVICE_USER':'$SERVICE_USER' '$REMOTE_ROOT'
 systemctl daemon-reload
-systemctl enable --now $SERVICE
+systemctl enable $SERVICE
+# Explicit start, not enable --now: --now is a no-op for an already-active
+# service and was the mechanism that kept the old PID running old bytecode.
+systemctl start $SERVICE
 "
 
 # ---------------------------------------------------------------------------
-# 9. Verify. A unit that is 'active' proves only that execve succeeded.
-#
-# The proof is the metrics line the sweep loop emits every poll, and a
-# ClickHouse count that is no longer zero.
+# 9. Verify. A unit that is 'active' proves only that execve succeeded.  Require
+# a different PID started during this install and a complete, error-free sweep
+# from that PID.  The ClickHouse counts remain useful operator context, but an
+# idle healthy drain may legitimately have rows=0 for a sweep.
 # ---------------------------------------------------------------------------
 log "waiting 45s for the first sweeps"
 sleep 45
 ssm "drain: verify" "
 set -eu
-systemctl is-active $SERVICE || true
-echo '--- metrics (operational_analytics_outbox.metrics) ---'
-journalctl -u $SERVICE --no-pager -n 200 | grep -E 'outbox\.(metrics|targets|config_invalid|backlog_alarm)' | tail -20
+systemctl is-active $SERVICE
+NEW_PID=\$(systemctl show $SERVICE --property=ExecMainPID --value)
+test -n \"\$NEW_PID\"
+test \"\$NEW_PID\" -gt 0
+test \"\$NEW_PID\" != '$PRE_INSTALL_PID'
+EXEC_MAIN_STARTED_AT=\$(systemctl show $SERVICE --property=ExecMainStartTimestamp --value)
+EXEC_MAIN_STARTED_EPOCH=\$(date --date=\"\$EXEC_MAIN_STARTED_AT\" +%s)
+test \"\$EXEC_MAIN_STARTED_EPOCH\" -ge '$INSTALL_STARTED_AT'
+
+# A metrics line is emitted after a complete sweep.  Filter by the new PID so
+# healthy-looking rows=0 output from the replaced process cannot satisfy the
+# install, then reject the exact failure signatures from the incident.
+NEW_JOURNAL=\$(journalctl _PID=\"\$NEW_PID\" --since '@$INSTALL_STARTED_AT' --no-pager -o cat)
+printf '%s\n' \"\$NEW_JOURNAL\" | grep -q 'operational_analytics_outbox.metrics'
+if printf '%s\n' \"\$NEW_JOURNAL\" | grep -Eq 'shard_failed|Traceback'; then
+  echo 'new drain PID logged a failed shard or traceback' >&2
+  exit 1
+fi
+echo \"new PID \$NEW_PID started at \$EXEC_MAIN_STARTED_AT and completed a clean sweep\"
+echo '--- metrics (new PID only) ---'
+printf '%s\n' \"\$NEW_JOURNAL\" | grep -E 'outbox\.(metrics|targets|config_invalid|backlog_alarm)' | tail -20
 echo '--- clickhouse ---'
 export CLICKHOUSE_PASSWORD=\"\$('$REMOTE_ROOT/venv/bin/python' -c \"import boto3;print(boto3.client('secretsmanager',region_name='${REGION}').get_secret_value(SecretId='${SECRET_ID}')['SecretString'],end='')\")\"
 clickhouse-client --user '$CH_USER' --database '$CH_DATABASE' --query \\
@@ -444,13 +493,11 @@ EOF
 # ---------------------------------------------------------------------------
 # 10. The outside view.
 #
-# Step 9 ran systemctl, the journal and a ClickHouse count on the node and
-# PRINTED them. Be exact about what that is: this script does not assert on any
-# of those three outputs, so what step 9 establishes is that the commands ran —
-# a human still has to read `copies=`, `rows=` and the two counts and decide.
-# An earlier version of the paragraph below said the run had established that
-# the unit "swept, and moved rows out of the outbox", which is the same
-# printing-is-doing mistake one level down, inside the file written to end it.
+# Step 9 proves that systemd is active, replaced the pre-install PID with one
+# started during this run, and that the new PID completed a sweep without a
+# shard failure or traceback.  It also prints ClickHouse counts as operator
+# context; those counts are not a movement proof because an idle healthy drain
+# may have nothing new to insert.
 #
 # What the gate below adds is the question a rollout has to answer and no
 # in-VPC command can: whether anyone WITHOUT a session on that node can tell.
@@ -481,9 +528,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # absence caused the outage could not be run by the person most likely to run
 # it. tests/test_deploy_script_execution.py now parses every deploy script with
 # the local shell, so a repeat is caught wherever the old shell is.
-NEXT_STEPS='The drain install itself did not fail. Read step 9 output above before
-touching anything: copies=, drain_lag_seconds, and the two ClickHouse
-counts are printed there and asserted nowhere.'
+NEXT_STEPS='The drain install itself did not fail. Step 9 proved the new PID
+completed a clean sweep. Read copies=, drain_lag_seconds, and the ClickHouse
+counts there for current state; the counts are context, not a movement proof.'
 
 VERIFY_RC=0
 require_cloud_complete aws "$NEXT_STEPS" || VERIFY_RC=$?
@@ -494,8 +541,8 @@ if [ "$VERIFY_RC" -eq 5 ]; then
 DRAIN INSTALLED; NOT YET OBSERVABLE FROM OUTSIDE.
 
 What this run did: shipped the code, installed and enabled the unit, and then
-printed the drain's journal and a ClickHouse row count from the node (step 9).
-Read those. Nothing in this script asserts on them.
+proved the new PID completed a clean sweep, and printed a ClickHouse row count
+from the node (step 9). Read the count as context, not as a movement proof.
 
 What it could not do at all: tell whether anyone WITHOUT a session on this node
 can see the drain. The tr-eu App Runner control plane -- the deployment holding
