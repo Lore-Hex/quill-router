@@ -9,8 +9,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_lib.sh"
 
 SCHEDULER_NAME="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULER:-trusted-router-regional-quota-reconcile}"
-JOB_REGION="${TR_REGIONAL_QUOTA_RECONCILER_JOB_REGION:-${TR_PRIMARY_REGION}}"
-SCHEDULER_REGION="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULER_REGION:-${JOB_REGION}}"
+# Reconciliation is region-independent: Spanner is authoritative and the
+# Bigtable profile names the ledger being repaired. Keep execution outside the
+# primary serving region so a regional Cloud Run Jobs provisioning incident
+# cannot amplify control-plane pressure there. The stable Scheduler resource
+# remains in the primary region; only its verified target runs in us-east4.
+JOB_REGION="${TR_REGIONAL_QUOTA_RECONCILER_JOB_REGION:-us-east4}"
+SCHEDULER_REGION="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULER_REGION:-${TR_PRIMARY_REGION}}"
 SCHEDULE="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULE:-* * * * *}"
 RELEASE="$(git rev-parse --short HEAD 2>/dev/null || echo local)"
 JOB_PREFIX="${TR_REGIONAL_QUOTA_RECONCILER_JOB_PREFIX:-trusted-router-regional-quota-reconciler}"

@@ -256,6 +256,11 @@ def test_production_deploy_provisions_and_schedules_regional_quota_reconciliatio
     assert "us-central1=tr-quota-us-central1" in library
     assert "europe-west4=tr-quota-europe-west4" not in library
     assert 'SCHEDULE="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULE:-* * * * *}"' in reconciler
+    assert 'JOB_REGION="${TR_REGIONAL_QUOTA_RECONCILER_JOB_REGION:-us-east4}"' in reconciler
+    assert (
+        'SCHEDULER_REGION="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULER_REGION:-${TR_PRIMARY_REGION}}"'
+        in reconciler
+    )
     assert "trusted_router.regional_quota_reconcile_gate" in reconciler
     assert "trusted_router.regional_quota_reconcile_cli" not in reconciler
     assert '"TR_ENVIRONMENT=worker"' in reconciler
