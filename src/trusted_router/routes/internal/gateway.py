@@ -213,9 +213,10 @@ REQUEST_METADATA_VERSION = 1
 # process to serialize a structured retryable 503 and for network transit.
 _BILLING_PATH_SPANNER_BUDGET_SECONDS = 20.0
 # Spend-lease shadow rows are non-authoritative rollout evidence. The dispatcher
-# keeps their outbox transaction off the paid authorize thread; this budget
-# limits each background delivery attempt during a storage incident.
-_SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS = 0.5
+# keeps their outbox transaction off the paid authorize thread, so cross-region
+# Spanner retries can use a realistic budget without adding customer latency.
+# Its bounded queue still caps memory and sheds oldest evidence during an outage.
+_SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS = 5.0
 _AUTHORIZE_ADMISSION = KeyedConcurrencyAdmission()
 # Process-local harm limitation: this keeps one key from exhausting this
 # instance's Spanner session pool. It cannot stop a fleet-wide settle convoy;

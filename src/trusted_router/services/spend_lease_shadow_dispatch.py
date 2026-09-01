@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 DEFAULT_MAX_PENDING = 4_096
 DEFAULT_RETRY_SECONDS = 0.25
 MAX_RETRY_SECONDS = 30.0
+ERROR_AFTER_CONSECUTIVE_FAILURES = 4
 
 
 @dataclass(frozen=True)
@@ -141,15 +142,29 @@ class SpendLeaseShadowDispatcher:
                     queued = len(self._pending)
                     failures = self._failures
                 if consecutive_failures == 1:
-                    log.error(
+                    log.warning(
                         "spend_lease_shadow_delivery_failed",
-                        exc_info=True,
                         extra={"error_class": type(exc).__name__, "queued": queued},
                     )
-                elif _should_log_count(failures):
+                elif (
+                    consecutive_failures >= ERROR_AFTER_CONSECUTIVE_FAILURES
+                    and _should_log_count(consecutive_failures)
+                ):
+                    log.error(
+                        "spend_lease_shadow_delivery_persistently_failing",
+                        exc_info=True,
+                        extra={
+                            "consecutive_failures": consecutive_failures,
+                            "error_class": type(exc).__name__,
+                            "failure_total": failures,
+                            "queued": queued,
+                        },
+                    )
+                elif _should_log_count(consecutive_failures):
                     log.warning(
                         "spend_lease_shadow_delivery_still_failing",
                         extra={
+                            "consecutive_failures": consecutive_failures,
                             "error_class": type(exc).__name__,
                             "failure_total": failures,
                             "queued": queued,
