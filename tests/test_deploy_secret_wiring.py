@@ -256,10 +256,15 @@ def test_production_deploy_provisions_and_schedules_regional_quota_reconciliatio
     assert "us-central1=tr-quota-us-central1" in library
     assert "europe-west4=tr-quota-europe-west4" not in library
     assert 'SCHEDULE="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULE:-* * * * *}"' in reconciler
-    assert "trusted_router.regional_quota_reconcile_cli" in reconciler
+    assert "trusted_router.regional_quota_reconcile_gate" in reconciler
+    assert "trusted_router.regional_quota_reconcile_cli" not in reconciler
     assert '"TR_ENVIRONMENT=worker"' in reconciler
     assert '"TR_SERVICE_SURFACE=control"' in reconciler
     assert '"TR_SPANNER_POOL_SIZE=1"' in reconciler
+    assert '"TR_REGIONAL_QUOTA_RECONCILER_LOCK_BUCKET=${LOCK_BUCKET}"' in reconciler
+    assert '"TR_REGIONAL_QUOTA_RECONCILER_LOCK_LEASE_SECONDS=240"' in reconciler
+    assert "roles/storage.objectUser" in reconciler
+    assert "if ! gc storage buckets describe" in reconciler
     assert "--oauth-service-account-email=\"$RUN_SERVICE_ACCOUNT\"" in reconciler
     assert "--clear-headers" in reconciler
     assert "gc secrets" not in reconciler

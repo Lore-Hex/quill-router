@@ -16,6 +16,8 @@ RELEASE="$(git rev-parse --short HEAD 2>/dev/null || echo local)"
 JOB_PREFIX="${TR_REGIONAL_QUOTA_RECONCILER_JOB_PREFIX:-trusted-router-regional-quota-reconciler}"
 JOB_NAME="${TR_REGIONAL_QUOTA_RECONCILER_JOB:-${JOB_PREFIX}-${RELEASE}}"
 RECONCILE_LIMIT="${TR_REGIONAL_QUOTA_RECONCILE_LIMIT:-25}"
+LOCK_BUCKET="${TR_REGIONAL_QUOTA_RECONCILER_LOCK_BUCKET:-${PROJECT_ID}-regional-quota-reconciler-state}"
+LOCK_OBJECT="${TR_REGIONAL_QUOTA_RECONCILER_LOCK_OBJECT:-regional-quota-reconciler/singleflight.json}"
 scheduler_state=""
 scheduler_exists=false
 scheduler_describe_stderr="$(mktemp "${TMPDIR:-/tmp}/regional-quota-scheduler-describe.XXXXXX")"
@@ -50,6 +52,33 @@ if ! gc artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
   exit 1
 fi
 
+# Cloud Scheduler considers jobs:run complete once Cloud Run accepts an
+# execution, not when that execution exits. A slow minute can therefore overlap
+# the next minute. The Spanner fencing lock is intentionally authoritative for
+# reconciliation, but it is acquired after expensive client initialization and
+# cannot prevent an initializer herd. This private GCS object admits one worker
+# before application imports; generation preconditions make acquisition atomic.
+if ! gc storage buckets describe "gs://${LOCK_BUCKET}" >/dev/null 2>&1; then
+  gc storage buckets create "gs://${LOCK_BUCKET}" \
+    --location="${JOB_REGION}" \
+    --default-storage-class=STANDARD \
+    --uniform-bucket-level-access \
+    --public-access-prevention \
+    --soft-delete-duration=0 \
+    --quiet >/dev/null
+fi
+gc storage buckets update "gs://${LOCK_BUCKET}" \
+  --uniform-bucket-level-access \
+  --public-access-prevention \
+  --no-versioning \
+  --clear-soft-delete \
+  --quiet >/dev/null
+gc storage buckets add-iam-policy-binding "gs://${LOCK_BUCKET}" \
+  --member="serviceAccount:${RUN_SERVICE_ACCOUNT}" \
+  --role=roles/storage.objectUser \
+  --condition=None \
+  --quiet >/dev/null
+
 env_vars=(
   "TR_ENVIRONMENT=worker"
   # The one-shot CLI initializes Sentry and reconciles account-ledger storage,
@@ -74,6 +103,11 @@ env_vars=(
   "TR_REGIONAL_QUOTA_BIGTABLE_TABLE=${TR_REGIONAL_QUOTA_BIGTABLE_TABLE:-trustedrouter-regional-quota}"
   "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=${TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES}"
   "TR_REGIONAL_QUOTA_RECONCILE_LIMIT=${RECONCILE_LIMIT}"
+  "TR_REGIONAL_QUOTA_RECONCILER_LOCK_BUCKET=${LOCK_BUCKET}"
+  "TR_REGIONAL_QUOTA_RECONCILER_LOCK_OBJECT=${LOCK_OBJECT}"
+  "TR_REGIONAL_QUOTA_RECONCILER_LOCK_LEASE_SECONDS=240"
+  "TR_REGIONAL_QUOTA_RECONCILER_MIN_INTERVAL_SECONDS=50"
+  "TR_REGIONAL_QUOTA_RECONCILER_FAILURE_COOLDOWN_SECONDS=30"
   "TR_PRIMARY_REGION=${TR_PRIMARY_REGION}"
   "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true"
 )
@@ -110,7 +144,7 @@ gc run jobs "$job_mutation" "$JOB_NAME" \
   --region "$JOB_REGION" \
   --image "$IMAGE" \
   --command="/app/.venv/bin/python" \
-  --args="-m,trusted_router.regional_quota_reconcile_cli" \
+  --args="-m,trusted_router.regional_quota_reconcile_gate" \
   --service-account "$RUN_SERVICE_ACCOUNT" \
   --set-env-vars "$set_env_vars" \
   --update-secrets "TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest" \
