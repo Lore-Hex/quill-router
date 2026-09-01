@@ -21,6 +21,7 @@ from pathlib import Path
 
 from trusted_router.routes.internal.gateway import (
     _BILLING_PATH_SPANNER_BUDGET_SECONDS,
+    _SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +38,7 @@ BILLING_PATH_FUNCTIONS = frozenset(
 )
 
 _BUDGET = "spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)"
+_SHADOW_BUDGET = "spanner_rpc_budget(_SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS)"
 
 
 def _functions_carrying_the_budget() -> frozenset[str]:
@@ -80,3 +82,19 @@ def test_billing_budget_finishes_before_enclave_header_timeout() -> None:
     """The enclave's direct control-plane client has a 25-second header cap."""
 
     assert _BILLING_PATH_SPANNER_BUDGET_SECONDS == 20.0
+
+
+def test_non_authoritative_spend_shadow_has_its_own_subsecond_budget() -> None:
+    """A stalled shadow outbox must not spend the paid request's 20s budget."""
+
+    tree = ast.parse(GATEWAY.read_text(encoding="utf-8"))
+    shadow_functions = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        for decorator in node.decorator_list
+        if ast.unparse(decorator) == _SHADOW_BUDGET
+    }
+
+    assert shadow_functions == {"_record_spend_lease_shadow"}
+    assert _SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS == 0.5
