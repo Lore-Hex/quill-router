@@ -209,6 +209,10 @@ REQUEST_METADATA_VERSION = 1
 # transaction layer's 20-second retry budget while leaving five seconds for this
 # process to serialize a structured retryable 503 and for network transit.
 _BILLING_PATH_SPANNER_BUDGET_SECONDS = 20.0
+# Spend-lease shadow rows are non-authoritative rollout evidence. They must
+# never consume the paid authorize path's full Spanner budget when their
+# separate outbox transaction stalls.
+_SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS = 0.5
 _AUTHORIZE_ADMISSION = KeyedConcurrencyAdmission()
 # Process-local harm limitation: this keeps one key from exhausting this
 # instance's Spanner session pool. It cannot stop a fleet-wide settle convoy;
@@ -474,6 +478,7 @@ def _authorize_gateway_sync(
     return response
 
 
+@spanner_rpc_budget(_SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS)
 def _record_spend_lease_shadow(
     context: dict[str, Any],
     *,

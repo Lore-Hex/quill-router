@@ -1088,6 +1088,11 @@ class Settings(BaseSettings):
     # waves; adding the normal 10-17s probe work gives ~97s. 240s is ~2.47x
     # that budget while ensuring a wedged read cannot own the run slot forever.
     synthetic_run_deadline_seconds: float = 240.0
+    # Remediation is an observe-only monitor read running through an internal
+    # HTTP surface during the service split. Keep its request budget far below
+    # the general synthetic pass budget so an unavailable analytics replica
+    # cannot occupy control-plane request capacity for minutes.
+    synthetic_remediator_deadline_seconds: float = 15.0
     # Monthly self-funding for the monitor workspace, applied lazily on its
     # own gateway-authorize path (synthetic/funding.py). Each deployment has
     # its own database, so each cloud's monitor funds itself from config —
@@ -1226,6 +1231,8 @@ class Settings(BaseSettings):
             raise ValueError("TR_MAX_REQUEST_BODY_BYTES must be positive")
         if self.synthetic_run_deadline_seconds <= 0:
             raise ValueError("TR_SYNTHETIC_RUN_DEADLINE_SECONDS must be positive")
+        if self.synthetic_remediator_deadline_seconds <= 0:
+            raise ValueError("TR_SYNTHETIC_REMEDIATOR_DEADLINE_SECONDS must be positive")
         if self.max_in_flight_request_body_bytes < self.max_request_body_bytes:
             raise ValueError(
                 "TR_MAX_IN_FLIGHT_REQUEST_BODY_BYTES must be at least TR_MAX_REQUEST_BODY_BYTES"

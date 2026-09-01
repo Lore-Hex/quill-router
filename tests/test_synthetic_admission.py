@@ -207,17 +207,19 @@ def test_synchronous_run_deadline_releases_slot(
         assert recovered.status_code == 200
 
 
-def test_remediator_deadline_releases_slot_before_worker_exits(
+def test_remediator_deadline_keeps_slot_until_abandoned_worker_exits(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     started = threading.Event()
     release = threading.Event()
     calls = 0
+    worker_names: list[str] = []
 
     def first_call_blocks(_settings: Settings) -> list[object]:
         nonlocal calls
         calls += 1
+        worker_names.append(threading.current_thread().name)
         if calls == 1:
             started.set()
             release.wait()
@@ -226,16 +228,19 @@ def test_remediator_deadline_releases_slot_before_worker_exits(
     monkeypatch.setattr(synthetic_routes, "run_remediator_pass", first_call_blocks)
     settings = Settings(
         environment="test",
-        synthetic_run_deadline_seconds=0.2,
+        synthetic_remediator_deadline_seconds=0.2,
     )
     try:
         with caplog.at_level("ERROR"):
             assert asyncio.run(synthetic_routes._run_scheduled_remediator_pass(settings)) is None  # noqa: SLF001
         assert started.is_set()
+        assert worker_names == ["synthetic-remediator_0"]
 
-        # The timed-out worker is still alive, but its lease no longer blocks
-        # a fresh remediation pass.
-        assert asyncio.run(synthetic_routes._run_scheduled_remediator_pass(settings)) == 0  # noqa: SLF001
+        # The request has returned, but the timed-out worker retains the slot
+        # until it exits. A scheduler retry therefore cannot pile up another
+        # blocked analytics reader on this process.
+        assert asyncio.run(synthetic_routes._run_scheduled_remediator_pass(settings)) is None  # noqa: SLF001
+        assert calls == 1
     finally:
         release.set()
 
@@ -243,7 +248,14 @@ def test_remediator_deadline_releases_slot_before_worker_exits(
         record.getMessage().startswith("synthetic.remediator_deadline_exceeded")
         for record in caplog.records
     )
-    time.sleep(0.05)
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if asyncio.run(synthetic_routes._run_scheduled_remediator_pass(settings)) == 0:  # noqa: SLF001
+            break
+        time.sleep(0.02)
+    else:
+        pytest.fail("remediator admission was not released after the worker exited")
+    assert calls == 2
     semaphore = synthetic_routes._OPERATION_SLOTS["remediate"]  # noqa: SLF001
     assert semaphore.acquire(blocking=False)
     assert not semaphore.acquire(blocking=False)

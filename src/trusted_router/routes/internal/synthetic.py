@@ -6,6 +6,7 @@ import logging
 import random
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Any
 
@@ -64,17 +65,20 @@ _OPERATION_SLOTS = {
     "run": threading.BoundedSemaphore(1),
 }
 _BACKGROUND_RUNS: set[asyncio.Task[dict[str, Any]]] = set()
+_REMEDIATOR_EXECUTOR = ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="synthetic-remediator",
+)
 
 
 class _HeldOperationSlot:
     """A semaphore admission that can cross an unkillable worker thread.
 
     Async run tasks release their raw BoundedSemaphore in ``finally``. A
-    remediator pass is different: cancelling the threadpool await cannot stop
-    the worker. This lease lets the deadline owner free capacity immediately
-    while making the worker's eventual ``finally`` a no-op instead of an
-    over-release. The underlying semaphore remains bounded as the guard on
-    every real release.
+    remediator pass is different: cancelling the executor await cannot stop
+    the worker. This lease lets the HTTP request return at its deadline while
+    the worker retains admission until its eventual ``finally``. The
+    underlying semaphore remains bounded as the guard on every real release.
     """
 
     def __init__(self, semaphore: threading.BoundedSemaphore) -> None:
@@ -356,21 +360,43 @@ def _run_remediator_with_held_slot(
         slot.release()
 
 
+def _run_remediator_worker(
+    settings: Settings,
+    slot: _HeldOperationSlot,
+    started: threading.Event,
+) -> int:
+    started.set()
+    return _run_remediator_with_held_slot(settings, slot)
+
+
 async def _run_remediator_with_deadline(
     settings: Settings,
     slot: _HeldOperationSlot,
 ) -> int:
     started = time.monotonic()
+    worker_started = threading.Event()
+    loop = asyncio.get_running_loop()
+    worker = loop.run_in_executor(
+        _REMEDIATOR_EXECUTOR,
+        _run_remediator_worker,
+        settings,
+        slot,
+        worker_started,
+    )
     try:
         return await asyncio.wait_for(
-            run_in_threadpool(_run_remediator_with_held_slot, settings, slot),
-            timeout=settings.synthetic_run_deadline_seconds,
+            asyncio.shield(worker),
+            timeout=settings.synthetic_remediator_deadline_seconds,
         )
     except TimeoutError:
-        # The worker thread cannot be killed. Relinquish its admission now;
-        # its own finally calls release() too, but the lease makes that late
-        # call a no-op rather than a BoundedSemaphore over-release.
-        slot.release()
+        # The worker thread cannot be killed. Abandon the await so this HTTP
+        # request releases Cloud Run concurrency immediately, but leave the
+        # process-local admission with the live worker until it actually exits.
+        # This prevents each scheduler tick from piling another blocked reader
+        # onto the same process. If cancellation won before the worker started,
+        # nobody else can own the admission, so release it here.
+        if not worker_started.is_set():
+            slot.release()
         log.error(
             "synthetic.remediator_deadline_exceeded elapsed_seconds=%.3f",
             time.monotonic() - started,
