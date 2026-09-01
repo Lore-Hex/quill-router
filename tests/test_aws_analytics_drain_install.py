@@ -133,6 +133,27 @@ def test_install_stages_and_verifies_before_swapping_anything_in() -> None:
     assert "${REMOTE_ROOT}.previous" in script
 
 
+def test_install_stops_before_swap_and_restarts_on_the_new_working_directory() -> None:
+    """An active unit must not retain a working directory removed by a later deploy.
+
+    `systemctl enable --now` does not restart an active service. Two consecutive
+    refreshes therefore left the drain running from `.previous`, deleted that
+    directory, and made every clickhouse-client invocation fail while systemd
+    continued to report the unit active.
+    """
+    script = INSTALL.read_text()
+
+    stop = script.index("systemctl stop $SERVICE")
+    remove_previous = script.index("rm -rf '${REMOTE_ROOT}.previous'")
+    restart = script.index("systemctl restart $SERVICE")
+
+    assert stop < remove_previous < restart
+    assert "systemctl enable --now $SERVICE" not in script
+    assert "systemctl is-active --quiet $SERVICE" in script
+    assert "readlink -f /proc/\\$main_pid/cwd" in script
+    assert "= '$REMOTE_ROOT'" in script
+
+
 def test_install_writes_the_secret_by_running_a_command_not_by_pasting() -> None:
     """EnvironmentFile does no substitution: a pasted $(...) BECOMES the password.
 

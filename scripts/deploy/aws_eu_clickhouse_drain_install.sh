@@ -332,6 +332,12 @@ cd '$STAGE_DIR'
 # ---------------------------------------------------------------------------
 ssm "drain: activate $REMOTE_ROOT" "
 set -eux
+# A running drain holds WorkingDirectory=/opt/tr-clickhouse. Moving that tree
+# leaves the process on the old inode, and a later refresh deletes that inode
+# when it removes .previous. clickhouse-client then fails every insert with
+# 'cannot get current directory' while systemd still reports the unit active.
+# Stop before the swap; the durable outbox safely absorbs this short deploy gap.
+systemctl stop $SERVICE 2>/dev/null || true
 rm -rf '${REMOTE_ROOT}.previous'
 if [ -d '$REMOTE_ROOT' ]; then mv '$REMOTE_ROOT' '${REMOTE_ROOT}.previous'; fi
 mv '$STAGE_DIR' '$REMOTE_ROOT'
@@ -393,7 +399,14 @@ printf '%s' '$UNIT_B64' | base64 -d > /etc/systemd/system/$SERVICE
 chmod 644 /etc/systemd/system/$SERVICE
 chown -R '$SERVICE_USER':'$SERVICE_USER' '$REMOTE_ROOT'
 systemctl daemon-reload
-systemctl enable --now $SERVICE
+systemctl enable $SERVICE
+# enable --now is a no-op for an already-active unit and caused the old
+# process to survive code refreshes. restart also starts an inactive unit.
+systemctl restart $SERVICE
+systemctl is-active --quiet $SERVICE
+main_pid=\"\$(systemctl show --property MainPID --value $SERVICE)\"
+test \"\$main_pid\" -gt 1
+test \"\$(readlink -f /proc/\$main_pid/cwd)\" = '$REMOTE_ROOT'
 "
 
 # ---------------------------------------------------------------------------
