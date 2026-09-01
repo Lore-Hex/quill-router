@@ -36,6 +36,7 @@ DEEPINFRA_TERMINUS_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 DEEPINFRA_QWEN3_235B_THINKING_RETIREMENT_AT = datetime(
     2026, 8, 24, 0, 0, tzinfo=UTC
 )
+DEEPINFRA_KIMI_K25_RETIREMENT_AT = datetime(2026, 9, 7, 0, 0, tzinfo=UTC)
 NEBIUS_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 31, 0, 0, tzinfo=UTC)
 CEREBRAS_GEMMA4_SHARED_RETIREMENT_AT = datetime(2026, 9, 3, 0, 0, tzinfo=UTC)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
@@ -347,6 +348,19 @@ _RETIREMENTS = (
         model_ids=frozenset({"qwen/qwen3-235b-a22b-thinking-2507"}),
         upstream_ids=frozenset({"Qwen/Qwen3-235B-A22B-Thinking-2507"}),
         effective_at=DEEPINFRA_QWEN3_235B_THINKING_RETIREMENT_AT,
+    ),
+    # DeepInfra announced that Kimi K2.5 retires on 2026-09-07 and that its
+    # API will redirect subsequent requests to Kimi K3. Those are different
+    # checkpoints, so TrustedRouter must not accept the provider's silent
+    # substitution. Retire only DeepInfra's K2.5 route at 00:00 UTC, the
+    # conservative boundary for a notice without a time zone. K2.5 remains
+    # eligible through providers that still serve it, and K3 remains an
+    # independently selectable model.
+    _Retirement(
+        provider="deepinfra",
+        model_ids=frozenset({"moonshotai/kimi-k2.5"}),
+        upstream_ids=frozenset({"moonshotai/Kimi-K2.5"}),
+        effective_at=DEEPINFRA_KIMI_K25_RETIREMENT_AT,
     ),
     # Wafer announced that GLM 5.1, GLM 5.2 Fast, and Kimi K3 Fast retire on
     # 2026-08-17. Standard GLM 5.2 replaces both GLM routes, while Kimi K3

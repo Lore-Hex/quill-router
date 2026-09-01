@@ -1107,7 +1107,9 @@
       "input_token_price_per_m": 450000,
       "output_token_price_per_m": 2250000,
       "cached_input_token_price_per_m": 70000,
-      "missing_since": "2026-08-31"
+      "missing_since": "2026-08-31",
+      "retirement_at": "2026-09-07T00:00:00Z",
+      "replacement_model_id": "moonshotai/kimi-k3"
     },
     {
       "display_name": "moonshotai/Kimi-K2.6",
