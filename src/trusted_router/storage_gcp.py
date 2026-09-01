@@ -3249,6 +3249,15 @@ class SpannerBigtableStore:
                     continue
                 local = ledger.get(record.lease_id, region=record.region)
                 if local is None:
+                    # Granting is intentionally two-phase: Spanner first
+                    # reserves the bounded escrow and publishes a pending
+                    # lease, then the regional ledger row is initialized and
+                    # the global lease becomes active. The reconciler can
+                    # observe that short, valid gap. Leave live pending leases
+                    # alone so the initializer can finish; only expired or
+                    # quarantined missing rows belong to recovery.
+                    if record.state == "pending" and record.expires_datetime > now:
+                        continue
                     closed = close_expired_uninitialized_regional_quota_lease(
                         self,
                         record,
