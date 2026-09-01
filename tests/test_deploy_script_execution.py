@@ -1795,6 +1795,9 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
     run = isolated.run("scripts/deploy/synthetic.sh", verifier_rc=0)
 
     assert run.returncode == 0, summarise(run)
+    scheduler_pauses = _gcloud_calls(run, "scheduler", "jobs", "pause")
+    assert len(scheduler_pauses) == 1
+    assert "trusted-router-spend-lease-soak-us-central1-every-minute" in scheduler_pauses[0]
     deploys = [
         (index, call)
         for index, call in enumerate(run.calls)
@@ -1955,6 +1958,49 @@ def test_combined_synthetic_refresh_preserves_security_boundaries(tmp_path: Path
             "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL=https://trustedrouter.com"
             in " ".join(update)
         )
+    scheduler_pauses = _gcloud_calls(run, "scheduler", "jobs", "pause")
+    assert len(scheduler_pauses) == 1
+    assert "trusted-router-spend-lease-soak-us-central1-every-minute" in scheduler_pauses[0]
+    assert not _gcloud_calls(run, "scheduler", "jobs", "resume")
+
+
+def test_combined_synthetic_refresh_resumes_enabled_spend_lease_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = "scripts/deploy/synthetic_image_refresh.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    job_json = json.loads(fixture.responses[0][1])
+    env = job_json["spec"]["template"]["spec"]["template"]["spec"]["containers"][0][
+        "env"
+    ]
+    next(
+        item for item in env if item["name"] == "TR_SPEND_LEASE_SOAK_PROBE_ENABLED"
+    )["value"] = "true"
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        replace(
+            fixture,
+            responses=(
+                (fixture.responses[0][0], json.dumps(job_json)),
+                (fixture.responses[1][0], "PAUSED"),
+            ),
+        ),
+    )
+    isolated = DeployScriptHarness(tmp_path / "synthetic-image-refresh-enabled-soak")
+
+    run = isolated.run(
+        script,
+        verifier_rc=0,
+        omit_env=("TR_BILLING_SERVICE", "TR_ALLOW_DEPLOYED_COMBINED_SURFACE"),
+    )
+
+    assert run.returncode == 0, summarise(run)
+    scheduler_resumes = _gcloud_calls(run, "scheduler", "jobs", "resume")
+    assert len(scheduler_resumes) == 1
+    assert "trusted-router-spend-lease-soak-us-central1-every-minute" in scheduler_resumes[0]
+    assert not _gcloud_calls(run, "scheduler", "jobs", "pause")
 
 
 def test_combined_synthetic_refresh_is_a_visible_release_gate() -> None:

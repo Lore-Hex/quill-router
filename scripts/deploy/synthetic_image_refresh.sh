@@ -44,6 +44,8 @@ jobs=(
   "us-central1:trusted-router-video-generation-us-central1:worker"
 )
 
+spend_lease_probe_enabled=""
+
 for entry in "${jobs[@]}"; do
   IFS=: read -r job_region job_name job_kind <<<"$entry"
   before="$(gc run jobs describe "$job_name" --region "$job_region" --format=json)" || {
@@ -63,6 +65,18 @@ for entry in "${jobs[@]}"; do
   if [ "$surface" != "combined" ] || [ "$observer_secret_count" != "0" ]; then
     echo "ERROR: ${job_name} is not an approved pre-split combined job" >&2
     exit 1
+  fi
+
+  if [ "$job_name" = "trusted-router-spend-lease-soak-us-central1" ]; then
+    spend_lease_probe_enabled="$(jq -r '
+      [.spec.template.spec.template.spec.containers[0].env[]?
+        | select(.name == "TR_SPEND_LEASE_SOAK_PROBE_ENABLED") | .value][0] // "false"
+    ' <<<"$before")"
+    if [ "$spend_lease_probe_enabled" != "true" ] && \
+       [ "$spend_lease_probe_enabled" != "false" ]; then
+      echo "ERROR: ${job_name} has invalid TR_SPEND_LEASE_SOAK_PROBE_ENABLED=${spend_lease_probe_enabled}" >&2
+      exit 1
+    fi
   fi
 
   sensitive_before="$(jq -cS '{
@@ -101,4 +115,38 @@ for entry in "${jobs[@]}"; do
   fi
 done
 
-log "synthetic image refresh complete; no identities, networks, schedulers, or secrets changed"
+[ -n "$spend_lease_probe_enabled" ] || {
+  echo "ERROR: spend-lease soak job was not inspected" >&2
+  exit 1
+}
+
+# Keep scheduler state aligned with the inherited job configuration. A
+# disabled worker that exits immediately still consumes a Cloud Run execution
+# every minute and can emit platform startup failures during overlapping cold
+# starts. This is the only scheduler mutation allowed by the legacy image-only
+# refresh path.
+spend_lease_scheduler_name="trusted-router-spend-lease-soak-us-central1-every-minute"
+spend_lease_scheduler_state="$(
+  gc scheduler jobs describe "$spend_lease_scheduler_name" \
+    --location us-central1 \
+    --format='value(state)'
+)"
+if [ "$spend_lease_probe_enabled" = "true" ]; then
+  if [ "$spend_lease_scheduler_state" = "PAUSED" ]; then
+    gc scheduler jobs resume "$spend_lease_scheduler_name" \
+      --location us-central1 \
+      --quiet >/dev/null
+  elif [ "$spend_lease_scheduler_state" != "ENABLED" ]; then
+    echo "ERROR: unexpected spend-lease scheduler state: ${spend_lease_scheduler_state:-empty}" >&2
+    exit 1
+  fi
+elif [ "$spend_lease_scheduler_state" = "ENABLED" ]; then
+  gc scheduler jobs pause "$spend_lease_scheduler_name" \
+    --location us-central1 \
+    --quiet >/dev/null
+elif [ "$spend_lease_scheduler_state" != "PAUSED" ]; then
+  echo "ERROR: unexpected spend-lease scheduler state: ${spend_lease_scheduler_state:-empty}" >&2
+  exit 1
+fi
+
+log "synthetic image refresh complete; identities, networks, and secrets unchanged"

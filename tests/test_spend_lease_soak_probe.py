@@ -161,7 +161,7 @@ async def test_spend_lease_soak_job_loads_named_key_and_ingests_sample(
     assert ingested[0]["samples"][0]["probe_type"] == "spend_lease_soak"
 
 
-def test_spend_lease_soak_probe_is_registered_on_one_minute_schedule() -> None:
+def test_spend_lease_soak_probe_schedule_tracks_feature_flag() -> None:
     script = Path(__file__).resolve().parents[1] / "scripts/deploy/synthetic.sh"
     body = script.read_text()
     section = body.split("Stage A spend-lease soak", maxsplit=1)[1].split(
@@ -175,4 +175,7 @@ def test_spend_lease_soak_probe_is_registered_on_one_minute_schedule() -> None:
     assert '"TR_SPEND_LEASE_SOAK_PROBE_ENABLED=${spend_lease_probe_enabled}"' in section
     assert '"TR_SPEND_LEASE_PROBE_KEY_SECRET=${spend_lease_probe_key_secret}"' in section
     assert '"* * * * *"' in section
+    assert 'if [ "$spend_lease_probe_enabled" = "true" ]' in section
+    assert 'scheduler jobs pause "$spend_lease_scheduler_name"' in section
+    assert 'scheduler jobs resume "$spend_lease_scheduler_name"' in section
     assert "--max-retries 0" in section

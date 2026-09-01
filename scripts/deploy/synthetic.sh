@@ -458,11 +458,54 @@ gc run jobs deploy "$spend_lease_job_name" \
   --memory 512Mi \
   --quiet >/dev/null
 
-upsert_scheduler \
-  "$spend_lease_scheduler_name" \
-  "$spend_lease_job_name" \
-  "$spend_lease_region" \
-  "* * * * *"
+if [ "$spend_lease_probe_enabled" = "true" ]; then
+  upsert_scheduler \
+    "$spend_lease_scheduler_name" \
+    "$spend_lease_job_name" \
+    "$spend_lease_region" \
+    "* * * * *"
+
+  # Updating a paused scheduler preserves its paused state. Enabling the
+  # probe must therefore explicitly resume a previously disabled schedule.
+  spend_lease_scheduler_state="$(
+    gc scheduler jobs describe "$spend_lease_scheduler_name" \
+      --location "$spend_lease_region" \
+      --format='value(state)'
+  )"
+  if [ "$spend_lease_scheduler_state" = "PAUSED" ]; then
+    gc scheduler jobs resume "$spend_lease_scheduler_name" \
+      --location "$spend_lease_region" \
+      --quiet >/dev/null
+  elif [ "$spend_lease_scheduler_state" != "ENABLED" ]; then
+    echo "ERROR: unexpected spend-lease scheduler state: ${spend_lease_scheduler_state:-empty}" >&2
+    exit 1
+  fi
+else
+  # A disabled probe must not keep launching a no-op container every minute.
+  # Besides wasting control-plane capacity, overlapping cold starts can emit
+  # Cloud Run startup failures even though the application never runs.
+  scheduler_error="$(mktemp "${TMPDIR:-/tmp}/spend-lease-scheduler.XXXXXX")"
+  if spend_lease_scheduler_state="$(
+    gc scheduler jobs describe "$spend_lease_scheduler_name" \
+      --location "$spend_lease_region" \
+      --format='value(state)' 2>"$scheduler_error"
+  )"; then
+    if [ "$spend_lease_scheduler_state" = "ENABLED" ]; then
+      gc scheduler jobs pause "$spend_lease_scheduler_name" \
+        --location "$spend_lease_region" \
+        --quiet >/dev/null
+    elif [ "$spend_lease_scheduler_state" != "PAUSED" ]; then
+      echo "ERROR: unexpected spend-lease scheduler state: ${spend_lease_scheduler_state:-empty}" >&2
+      rm -f "$scheduler_error"
+      exit 1
+    fi
+  elif ! grep -qE '(^|[[:space:]])NOT_FOUND([[:space:]:]|$)' "$scheduler_error"; then
+    cat "$scheduler_error" >&2
+    rm -f "$scheduler_error"
+    exit 1
+  fi
+  rm -f "$scheduler_error"
+fi
 
 # Image generation is materially more expensive than text PONG probes. Keep it
 # isolated and run one canonical end-to-end request every six hours.
