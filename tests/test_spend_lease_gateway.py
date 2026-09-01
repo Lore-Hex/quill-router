@@ -22,6 +22,17 @@ from trusted_router.spend_leases import (
 from trusted_router.storage import STORE
 
 
+def _wait_for_shadow_delivery() -> None:
+    assert gateway._SPEND_LEASE_SHADOW_DISPATCHER.wait_for_idle(1)  # noqa: SLF001
+
+
+@pytest.fixture(autouse=True)
+def _isolate_shadow_delivery() -> Any:
+    _wait_for_shadow_delivery()
+    yield
+    _wait_for_shadow_delivery()
+
+
 def _request(
     path: str = "/v1/internal/gateway/authorize",
     boot_auth_header: str | None = None,
@@ -435,6 +446,7 @@ def test_authorize_shadow_records_reason_without_lease_and_null_when_minted(
         settings,
         minted_raw,
     )
+    _wait_for_shadow_delivery()
 
     assert "spend_lease" not in rejected["data"]
     assert "spend_lease" in minted["data"]
@@ -467,6 +479,7 @@ def test_authorize_shadow_names_current_boot_digest_approval_failure() -> None:
         settings,
         raw_body,
     )
+    _wait_for_shadow_delivery()
 
     assert "spend_lease" not in response["data"]
     event = STORE.spend_lease_shadow_events[response["data"]["authorization_id"]]
@@ -506,6 +519,7 @@ def test_authorize_shadow_events_include_accept_and_decline_and_keep_echo_invali
             settings,
             json.dumps(declined_raw).encode(),
         )
+    _wait_for_shadow_delivery()
     events = list(STORE.spend_lease_shadow_events.values())
     assert {event["server_verdict"] for event in events} == {"accepted", "declined_other"}
     assert all(event["divergence"] == "echo_invalid" for event in events)

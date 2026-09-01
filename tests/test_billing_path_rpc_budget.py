@@ -85,7 +85,7 @@ def test_billing_budget_finishes_before_enclave_header_timeout() -> None:
 
 
 def test_non_authoritative_spend_shadow_has_its_own_subsecond_budget() -> None:
-    """A stalled shadow outbox must not spend the paid request's 20s budget."""
+    """Each background shadow attempt has a short independent RPC budget."""
 
     tree = ast.parse(GATEWAY.read_text(encoding="utf-8"))
     shadow_functions = {
@@ -96,5 +96,21 @@ def test_non_authoritative_spend_shadow_has_its_own_subsecond_budget() -> None:
         if ast.unparse(decorator) == _SHADOW_BUDGET
     }
 
-    assert shadow_functions == {"_record_spend_lease_shadow"}
+    assert shadow_functions == {"_persist_spend_lease_shadow"}
     assert _SPEND_LEASE_SHADOW_SPANNER_BUDGET_SECONDS == 0.5
+
+
+def test_spend_shadow_recording_is_not_decorated_as_a_spanner_call() -> None:
+    """The request-thread helper may enqueue only; it cannot call Spanner."""
+
+    tree = ast.parse(GATEWAY.read_text(encoding="utf-8"))
+    record = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "_record_spend_lease_shadow"
+    )
+    assert not record.decorator_list
+    calls = {ast.unparse(node.func) for node in ast.walk(record) if isinstance(node, ast.Call)}
+    assert "STORE.record_spend_lease_shadow" not in calls
+    assert "_SPEND_LEASE_SHADOW_DISPATCHER.submit" in calls
