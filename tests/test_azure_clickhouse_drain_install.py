@@ -93,7 +93,9 @@ def test_installed_unit_is_notify_watchdog_managed() -> None:
     assert "Type=notify" in unit
     assert "NotifyAccess=main" in unit
     assert "WatchdogSec=600" in unit
-    assert "Restart=always" in unit
+    assert "Restart=on-failure" in unit
+    assert "RestartSec=5" in unit
+    assert "RestartPreventExitStatus=78" in unit
 
 
 def test_final_verification_requires_a_clickhouse_row_count_to_advance(

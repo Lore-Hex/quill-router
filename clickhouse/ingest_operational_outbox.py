@@ -362,6 +362,10 @@ class SpannerOperationalOutboxSource:
         return oldest
 
 
+class ClickHouseInsertError(RuntimeError):
+    """A ClickHouse target did not accept a complete logical batch."""
+
+
 class ClickHouseOperationalWriter:
     """Inserts a batch into one ClickHouse endpoint via clickhouse-client.
 
@@ -444,6 +448,12 @@ class ClickHouseOperationalWriter:
                     command,
                     input=payload,
                     env=env,
+                    # Do not inherit the daemon's cwd.  The systemd unit must
+                    # keep /opt/tr-clickhouse as WorkingDirectory so `python
+                    # -m` can import the installed package, but an installer
+                    # rotating that tree must not make every future child die
+                    # before clickhouse-client can process its arguments.
+                    cwd="/",
                     capture_output=True,
                     check=False,
                     timeout=self._timeout_seconds,
@@ -451,14 +461,24 @@ class ClickHouseOperationalWriter:
             except subprocess.TimeoutExpired as exc:
                 # Raising is the point: the caller must not reach its DELETE,
                 # so the rows stay queued and the next sweep retries them.
-                raise RuntimeError(
+                raise ClickHouseInsertError(
                     f"ClickHouse {event_kind} insert to "
                     f"{self._host or 'localhost'} timed out after "
                     f"{self._timeout_seconds}s"
                 ) from exc
+            except OSError as exc:
+                # Includes exec failures such as a missing binary.  Keep these
+                # distinguishable from source, normalisation and DELETE errors
+                # so the Postgres daemon's liveness bound only counts a writer
+                # that is actually unable to deliver.
+                raise ClickHouseInsertError(
+                    f"ClickHouse {event_kind} insert could not start: {exc}"
+                ) from exc
             if result.returncode != 0:
                 detail = result.stderr.decode("utf-8", errors="replace")[:1000]
-                raise RuntimeError(f"ClickHouse {event_kind} insert failed: {detail}")
+                raise ClickHouseInsertError(
+                    f"ClickHouse {event_kind} insert failed: {detail}"
+                )
 
 
 def _event_id(tenant_id: str, batch_id: str, kind: str, index: int) -> str:

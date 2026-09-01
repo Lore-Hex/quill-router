@@ -734,6 +734,8 @@ def test_a_hard_down_target_is_skipped_after_a_few_failures_in_one_sweep(
     )
     # Every shard still failed -- a skipped target is an undelivered target.
     assert result.failed_shards == 12
+    assert result.all_targets_failed_shards == 0
+    assert result.successful_target_writes == 12
     assert source.delete_calls == []
     assert len(source.rows) == 12
     # And the healthy node still got every shard: the breaker is per-target.
@@ -793,6 +795,21 @@ def test_both_nodes_failing_is_reported_as_both(monkeypatch: pytest.MonkeyPatch)
     assert failure.value.failed_targets == ["primary", "stockholm"]
     assert failure.value.succeeded_targets == []
     assert sorted(degraded_target_names(writer)) == ["primary", "stockholm"]
+
+
+def test_a_sweep_classifies_zero_success_only_when_every_target_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The liveness counter consumes real fan-out outcomes, not metrics guesses."""
+    fleet = _Fleet(down={"local", STOCKHOLM})
+    fleet.install(monkeypatch)
+    rows = [_row(f"gen-total-outage-{index}", shard=index) for index in range(4)]
+
+    result = drain_once(_Source(rows), _dual_writer(), batch_size=10, shard_count=4)
+
+    assert result.failed_shards == 4
+    assert result.all_targets_failed_shards == 4
+    assert result.successful_target_writes == 0
 
 
 def test_a_persistently_failing_node_keeps_the_backlog_rather_than_dropping_it(
@@ -1133,6 +1150,85 @@ def test_the_drain_reuses_one_read_cursor_across_sweeps(
 
     assert len(seen) == 3
     assert len(set(seen)) == 1, "each sweep must resume the previous sweep's cursor"
+
+
+def test_n_consecutive_all_target_failure_sweeps_exit_nonzero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fully wedged writer must let systemd replace the process.
+
+    Disabling the liveness exit makes the sentinel fourth call exit zero, so
+    this is a mutation guard on the exit itself rather than only its counter.
+    """
+    bound = 3
+    sweeps = 0
+
+    def all_targets_failed(*_args: Any, **_kwargs: Any) -> Any:
+        nonlocal sweeps
+        sweeps += 1
+        if sweeps > bound:
+            raise SystemExit(0)
+        return drain_module.SweepResult(
+            fetched=0,
+            inserted=0,
+            rows_per_second=0.0,
+            failed_shards=32,
+            all_targets_failed_shards=32,
+            successful_target_writes=0,
+        )
+
+    monkeypatch.setattr(drain_module, "drain_once", all_targets_failed)
+    monkeypatch.setattr(drain_module.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(SystemExit) as exit_info:
+        _run_main(
+            monkeypatch,
+            DUAL_ENV,
+            oldest=None,
+            once=False,
+            argv=["--all-target-failure-sweeps", str(bound)],
+        )
+
+    assert exit_info.value.code != 0
+    assert sweeps == bound
+
+
+def test_one_failed_target_with_copies_two_does_not_trigger_liveness_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Partial degradation stays alive to feed and alarm from the good copy."""
+    bound = 3
+    sweeps = 0
+
+    def one_target_failed(*_args: Any, **_kwargs: Any) -> Any:
+        nonlocal sweeps
+        sweeps += 1
+        if sweeps > bound:
+            raise SystemExit(0)
+        return drain_module.SweepResult(
+            fetched=0,
+            inserted=0,
+            rows_per_second=0.0,
+            failed_shards=32,
+            all_targets_failed_shards=0,
+            successful_target_writes=32,
+            degraded_targets=("stockholm",),
+        )
+
+    monkeypatch.setattr(drain_module, "drain_once", one_target_failed)
+    monkeypatch.setattr(drain_module.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(SystemExit) as exit_info:
+        _run_main(
+            monkeypatch,
+            DUAL_ENV,
+            oldest=None,
+            once=False,
+            argv=["--all-target-failure-sweeps", str(bound)],
+        )
+
+    assert exit_info.value.code == 0
+    assert sweeps == bound + 1
 
 
 def test_a_healthy_drain_raises_no_alarm(
