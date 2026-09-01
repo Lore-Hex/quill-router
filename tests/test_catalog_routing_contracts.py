@@ -2207,7 +2207,6 @@ def test_wafer_kimi_k26_is_available_but_standard_tier_only() -> None:
 @pytest.mark.parametrize(
     "endpoint_id",
     [
-        "z-ai/glm-5.2@wafer/prepaid",
         "moonshotai/kimi-k3@wafer/prepaid",
         # moonshotai/kimi-k3-fast@wafer/prepaid retired 2026-08-17 00:00 UTC
         # (provider_lifecycle WAFER_AUGUST_2026_RETIREMENT_AT); the catalog is
@@ -2247,7 +2246,6 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     parasail = MODEL_ENDPOINTS["z-ai/glm-5.2@parasail/prepaid"]
     friendli = MODEL_ENDPOINTS["z-ai/glm-5.2@friendli/prepaid"]
     baseten = MODEL_ENDPOINTS["z-ai/glm-5.2@baseten/prepaid"]
-    wafer = MODEL_ENDPOINTS["z-ai/glm-5.2@wafer/prepaid"]
 
     assert model.provider == "zai"
     assert model.context_length == 1_048_576
@@ -2267,14 +2265,12 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert parasail.upstream_id == "parasail-glm-52"
     assert friendli.upstream_id == "zai-org/GLM-5.2"
     assert baseten.upstream_id == "zai-org/GLM-5.2"
-    assert wafer.upstream_id == "GLM-5.2"
     for endpoint in (
         deepinfra,
         fireworks,
         novita,
         friendli,
         baseten,
-        wafer,
     ):
         assert endpoint.prompt_price_microdollars_per_million_tokens > 0
         assert endpoint.completion_price_microdollars_per_million_tokens > 0

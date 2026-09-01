@@ -32,6 +32,7 @@ FRIENDLI_QWEN3_235B_RETIREMENT_AT = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
 FRIENDLI_K_EXAONE_236B_RETIREMENT_AT = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
 CRUSOE_NEMOTRON_3_ULTRA_RETIREMENT_AT = datetime(2026, 7, 28, 18, 0, tzinfo=UTC)
 WAFER_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
+WAFER_GLM52_RETIREMENT_AT = datetime(2026, 9, 5, 6, 59, tzinfo=UTC)
 DEEPINFRA_TERMINUS_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 DEEPINFRA_QWEN3_235B_THINKING_RETIREMENT_AT = datetime(
     2026, 8, 24, 0, 0, tzinfo=UTC
@@ -386,6 +387,16 @@ _RETIREMENTS = (
             }
         ),
         effective_at=WAFER_AUGUST_2026_RETIREMENT_AT,
+    ),
+    # Wafer announced that standard GLM 5.2 retires from Serverless on Friday,
+    # 2026-09-04 at 23:59 Pacific. Pacific daylight time is UTC-7 on that date,
+    # so the exact announced cutoff is 2026-09-05 06:59 UTC. Retire only the
+    # Wafer route; equivalent GLM 5.2 routes on other providers are unaffected.
+    _Retirement(
+        provider="wafer",
+        model_ids=frozenset({"z-ai/glm-5.2"}),
+        upstream_ids=frozenset({"GLM-5.2"}),
+        effective_at=WAFER_GLM52_RETIREMENT_AT,
     ),
     # Crusoe announced that Nemotron 3 Ultra retires from its Serverless
     # offering at 2026-07-28 11:00 PT, which is 2026-07-28 18:00 UTC.

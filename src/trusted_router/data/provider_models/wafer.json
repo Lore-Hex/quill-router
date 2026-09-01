@@ -80,7 +80,8 @@
       "output_token_price_per_m": 3960000,
       "zdr_supported": true,
       "context_length": 1048576,
-      "cached_input_token_price_per_m": 230000
+      "cached_input_token_price_per_m": 230000,
+      "retirement_at": "2026-09-05T06:59:00Z"
     },
     {
       "id": "z-ai/glm-5.2-fast",
