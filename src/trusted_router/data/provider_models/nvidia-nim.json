@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-09-01T13:13:41Z",
+  "generated_at": "2026-09-01T22:30:30Z",
   "model_count": 119,
   "models": [
     {
@@ -1145,7 +1145,7 @@
       "upstream_id": "nvidia/nemotron-3-nano-30b-a3b",
       "display_name": "nvidia/nemotron-3-nano-30b-a3b",
       "model_type": "chat",
-      "routable": true,
+      "routable": false,
       "status": 1,
       "input_modalities": [
         "text"
@@ -1158,7 +1158,8 @@
       ],
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "missing_since": "2026-09-01"
+      "missing_since": "2026-09-01",
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",

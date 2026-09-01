@@ -28,10 +28,10 @@
   },
   "anthropic": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 11,
     "name": "Anthropic",
     "privacy": "Policy documented",
-    "route_count": 20,
+    "route_count": 22,
     "route_mode": "Prepaid + BYOK",
     "slug": "anthropic"
   },
@@ -298,10 +298,10 @@
   },
   "inceptron": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 6,
     "name": "Inceptron",
     "privacy": "Zero retention",
-    "route_count": 5,
+    "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "inceptron"
   },
@@ -496,10 +496,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 13,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 14,
+    "route_count": 13,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
