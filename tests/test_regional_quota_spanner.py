@@ -823,6 +823,52 @@ def test_reconciler_closes_expired_quarantine_when_local_initialization_is_absen
     assert store._list_entities("regional_quota_lease_open", cls=OpenRegionalQuotaLease) == []
 
 
+def test_reconciler_defers_live_pending_lease_before_local_initialization() -> None:
+    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    ledger = InMemoryRegionalQuotaLedger()
+    store._regional_quota_ledger = ledger
+    workspace = store.create_workspace(
+        "owner",
+        "regional-pending-initialization",
+        trial_credit_microdollars=10_000_000,
+    )
+    lease = grant_regional_quota_lease(
+        store,
+        workspace_id=workspace.id,
+        region="us-central1",
+        requested_microdollars=1_000_000,
+        per_lease_cap_microdollars=1_000_000,
+        max_available_basis_points=1_000,
+        ttl_seconds=60,
+        minimum_grant_microdollars=1_000,
+        now=NOW,
+    )
+    assert lease is not None
+
+    result = store.reconcile_regional_quota_leases(now=NOW + timedelta(seconds=1))
+
+    assert result == {
+        "inspected": 1,
+        "reconciled": 0,
+        "closed": 0,
+        "errors": 0,
+    }
+    assert _credit_totals(database, workspace.id)[2] == lease.granted_microdollars
+    pending = store._read_entity(
+        "regional_quota_lease",
+        lease.entity_id,
+        GlobalRegionalQuotaLease,
+    )
+    assert pending is not None and pending.state == "pending"
+    assert ledger.get(lease.lease_id, region=lease.region) is None
+
+    ledger.initialize(regional_lease_from_global(lease))
+    activate_regional_quota_lease(store, lease, now=NOW + timedelta(seconds=2))
+    recovered = store.reconcile_regional_quota_leases(now=NOW + timedelta(seconds=3))
+    assert recovered["errors"] == 0
+    assert recovered["reconciled"] == 1
+
+
 def test_reconciler_cleans_stale_open_index_for_already_closed_lease() -> None:
     store, database, _ = make_fake_store(request_record_write_mode="typed")
     ledger = InMemoryRegionalQuotaLedger()
