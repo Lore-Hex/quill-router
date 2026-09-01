@@ -33,10 +33,22 @@ def test_anthropic_parser_discovers_future_claude_names_and_cache_price() -> Non
     html = """
     <div class="card">
       <div><h3 class="card_pricing_title_text">Opus 6</h3></div>
-      <span class="tokens_main_val_number" data-value="5"></span>
-      <span class="tokens_main_val_number" data-value="25"></span>
-      <span class="tokens_main_val_number" data-value="6.25"></span>
-      <span class="tokens_main_val_number" data-value="0.50"></span>
+      <div class="tokens_main_wrap">
+        <span class="tokens_main_label">Input</span>
+        <span class="tokens_main_val_number" data-value="5"></span>
+      </div>
+      <div class="tokens_main_wrap">
+        <span class="tokens_main_label">Output</span>
+        <span class="tokens_main_val_number" data-value="25"></span>
+      </div>
+      <div class="tokens_main_wrap">
+        <span class="tokens_main_label">Read</span>
+        <span class="tokens_main_val_number" data-value="0.50"></span>
+      </div>
+      <div class="tokens_main_wrap">
+        <span class="tokens_main_label">Write</span>
+        <span class="tokens_main_val_number" data-value="6.25"></span>
+      </div>
     </div>
     """
 
@@ -51,10 +63,22 @@ def test_anthropic_parser_derives_documented_fast_mode_multiplier() -> None:
     html = """
     <div class="card">
       <div><h3 class="card_pricing_title_text">Opus 5</h3></div>
-      <span class="tokens_main_val_number" data-value="5"></span>
-      <span class="tokens_main_val_number" data-value="25"></span>
-      <span class="tokens_main_val_number" data-value="6.25"></span>
-      <span class="tokens_main_val_number" data-value="0.50"></span>
+      <div class="tokens_main_wrap">
+        <span class="tokens_main_label">Input</span>
+        <span class="tokens_main_val_number" data-value="5"></span>
+      </div>
+      <div class="tokens_main_wrap">
+        <span class="tokens_main_label">Output</span>
+        <span class="tokens_main_val_number" data-value="25"></span>
+      </div>
+      <div class="tokens_main_wrap">
+        <span class="tokens_main_label">Write</span>
+        <span class="tokens_main_val_number" data-value="6.25"></span>
+      </div>
+      <div class="tokens_main_wrap">
+        <span class="tokens_main_label">Read</span>
+        <span class="tokens_main_val_number" data-value="0.50"></span>
+      </div>
     </div>
     <p>Get faster speeds with fast mode for Opus 5 at 2x standard pricing.</p>
     """
@@ -66,6 +90,50 @@ def test_anthropic_parser_derives_documented_fast_mode_multiplier() -> None:
         "completion_micro_per_m": 50_000_000,
         "prompt_cached_micro_per_m": 1_000_000,
     }
+
+
+def test_anthropic_parser_uses_cache_labels_when_read_precedes_write() -> None:
+    html = """
+    <div class="card">
+      <div><h3 class="card_pricing_title_text">Sonnet 5</h3></div>
+      <div class="tokens_main_wrap">
+        <span class="tokens_main_label">Input</span>
+        <span class="tokens_main_val_number" data-value="2"></span>
+      </div>
+      <div class="tokens_main_wrap">
+        <span class="tokens_main_label">Output</span>
+        <span class="tokens_main_val_number" data-value="10"></span>
+      </div>
+      <div class="tokens_main_wrap">
+        <span class="tokens_main_label">Read</span>
+        <span class="tokens_main_val_number" data-value="0.20"></span>
+      </div>
+      <div class="tokens_main_wrap">
+        <span class="tokens_main_label">Write</span>
+        <span class="tokens_main_val_number" data-value="2.50"></span>
+      </div>
+    </div>
+    """
+
+    assert anthropic_parser.parse(html)["anthropic/claude-sonnet-5"] == {
+        "prompt_micro_per_m": 2_000_000,
+        "completion_micro_per_m": 10_000_000,
+        "prompt_cached_micro_per_m": 200_000,
+    }
+
+
+def test_anthropic_parser_does_not_guess_unlabeled_cache_price() -> None:
+    html = """
+    <div class="card">
+      <div><h3 class="card_pricing_title_text">Opus 6</h3></div>
+      <span class="tokens_main_val_number" data-value="5"></span>
+      <span class="tokens_main_val_number" data-value="25"></span>
+      <span class="tokens_main_val_number" data-value="0.50"></span>
+      <span class="tokens_main_val_number" data-value="6.25"></span>
+    </div>
+    """
+
+    assert anthropic_parser.parse(html) == {}
 
 
 def test_anthropic_models_api_row_preserves_native_id_and_capabilities(
