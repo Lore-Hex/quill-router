@@ -15,7 +15,10 @@ from trusted_router.partner_billing import (
     PARTNER_OPERATOR_COST_SETTLE_FIELD,
 )
 from trusted_router.provider_lifecycle import provider_model_retired
-from trusted_router.regional_quota_ledger import InMemoryRegionalQuotaLedger
+from trusted_router.regional_quota_ledger import (
+    InMemoryRegionalQuotaLedger,
+    RegionalLeaseLedgerError,
+)
 from trusted_router.routes.helpers import cost_microdollars
 from trusted_router.routes.internal import gateway as gateway_routes
 from trusted_router.storage import STORE, CreditAccount, Workspace, configure_store
@@ -169,6 +172,58 @@ def test_allowlisted_uncapped_key_authorizes_from_bounded_regional_escrow() -> N
     assert reservation["hold_usage_type"] == "RegionalCredits"
     assert reservation["credit_reserved_micro"] == 0
     assert sum(row["reserved"] for row in db.typed[CREDIT_BALANCE_TABLE].values()) > 0
+
+
+def test_regional_ledger_failure_falls_back_to_exact_global_authorization() -> None:
+    class UnavailableRegionalLedger(InMemoryRegionalQuotaLedger):
+        def initialize(self, lease: object) -> object:
+            del lease
+            raise RegionalLeaseLedgerError("regional ledger unavailable")
+
+    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    store._regional_quota_ledger = UnavailableRegionalLedger()
+    workspace = store.create_workspace(
+        "owner",
+        "regional-fallback",
+        trial_credit_microdollars=100_000_000,
+    )
+    _raw, api_key = store.create_api_key(
+        workspace_id=workspace.id,
+        name="regional-fallback",
+        creator_user_id="owner",
+    )
+    configure_store(store)
+    client = TestClient(
+        create_app(
+            Settings(
+                environment="test",
+                regional_quota_leases_enabled=True,
+                regional_quota_lease_issuance_enabled=True,
+                regional_quota_lease_pilot_workspace_ids=workspace.id,
+            ),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    response = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": api_key.hash,
+            "model": "anthropic/claude-opus-4.7",
+            "estimated_input_tokens": 1_000,
+            "max_output_tokens": 100,
+            "route_type": "chat.completions",
+            "idempotency_key": "regional-ledger-global-fallback",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    authorization = store.get_gateway_authorization(response.json()["data"]["authorization_id"])
+    assert authorization is not None
+    assert authorization.settlement == "local"
+    reservation = db.reservations[str(authorization.credit_reservation_id)]
+    assert reservation["credit_reserved_micro"] > 0
 
 
 def test_sakana_fugu_uses_exact_global_settlement_not_regional_escrow() -> None:

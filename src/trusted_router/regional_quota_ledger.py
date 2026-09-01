@@ -15,6 +15,7 @@ import threading
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
+from time import monotonic
 from typing import Any, Protocol
 
 from trusted_router.services.regional_quota_leases import (
@@ -28,6 +29,9 @@ _FAMILY = "lease"
 _STATE_COLUMN = b"state"
 _VERSION_COLUMN = b"version"
 _MAX_CAS_ATTEMPTS = 16
+_DEFAULT_OPERATION_TIMEOUT_SECONDS = 2.0
+_BIGTABLE_READ_TIMEOUT_PADDING_SECONDS = 1.0
+_MIN_BIGTABLE_READ_BUDGET_SECONDS = _BIGTABLE_READ_TIMEOUT_PADDING_SECONDS + 0.05
 
 
 class RegionalLeaseLedgerError(RuntimeError):
@@ -243,11 +247,20 @@ class InMemoryRegionalQuotaLedger:
 class BigtableRegionalQuotaLedger:
     """Single-row CAS ledger routed through fixed regional app profiles."""
 
-    def __init__(self, tables_by_region: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        tables_by_region: dict[str, Any],
+        *,
+        operation_timeout_seconds: float = _DEFAULT_OPERATION_TIMEOUT_SECONDS,
+    ) -> None:
         if not tables_by_region:
             raise ValueError("at least one regional Bigtable table is required")
+        if not 1.1 <= operation_timeout_seconds <= 10.0:
+            raise ValueError("operation_timeout_seconds must be between 1.1 and 10")
         self._tables = dict(tables_by_region)
+        self._operation_timeout_seconds = operation_timeout_seconds
         try:
+            from google.cloud.bigtable.row_data import DEFAULT_RETRY_READ_ROWS
             from google.cloud.bigtable.row_filters import (
                 CellsColumnLimitFilter,
                 ColumnQualifierRegexFilter,
@@ -262,6 +275,7 @@ class BigtableRegionalQuotaLedger:
         self._family_filter = FamilyNameRegexFilter
         self._chain_filter = RowFilterChain
         self._value_filter = ValueRegexFilter
+        self._default_read_retry = DEFAULT_RETRY_READ_ROWS
 
     def supports_region(self, region: str) -> bool:
         return region in self._tables
@@ -276,7 +290,10 @@ class BigtableRegionalQuotaLedger:
         row.set_cell(_FAMILY, _STATE_COLUMN, state, state=False)
         row.set_cell(_FAMILY, _VERSION_COLUMN, version, state=False)
         try:
-            matched = bool(row.commit())
+            matched = self._commit_conditional_row(
+                row,
+                timeout_seconds=self._operation_timeout_seconds,
+            )
         except Exception as exc:  # pragma: no cover - remote transport
             raise RegionalLeaseLedgerError("regional lease initialization failed") from exc
         if not matched:
@@ -291,7 +308,8 @@ class BigtableRegionalQuotaLedger:
     def get(self, lease_id: str, *, region: str) -> RegionalQuotaLease | None:
         table = self._table(region)
         try:
-            row = table.read_row(
+            row = self._read_row(
+                table,
                 _row_key_for(region, lease_id),
                 filter_=self._state_filter(),
             )
@@ -314,8 +332,15 @@ class BigtableRegionalQuotaLedger:
                 row.set_cell(_FAMILY, _STATE_COLUMN, b'{"status":"ok"}', state=state)
                 row.set_cell(_FAMILY, _VERSION_COLUMN, version, state=state)
             try:
-                row.commit()
-                durable = table.read_row(row_key, filter_=self._state_filter())
+                self._commit_conditional_row(
+                    row,
+                    timeout_seconds=self._operation_timeout_seconds,
+                )
+                durable = self._read_row(
+                    table,
+                    row_key,
+                    filter_=self._state_filter(),
+                )
             except Exception as exc:  # pragma: no cover - remote transport
                 raise RegionalLeaseLedgerError(
                     "regional ledger transactional health check failed"
@@ -433,9 +458,19 @@ class BigtableRegionalQuotaLedger:
         table = self._table(region)
         row_key = _row_key_for(region, lease_id)
         last_error: Exception | None = None
+        deadline = monotonic() + self._operation_timeout_seconds
         for _attempt in range(_MAX_CAS_ATTEMPTS):
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                last_error = TimeoutError("regional ledger operation budget exhausted")
+                break
             try:
-                row_data = table.read_row(row_key, filter_=self._state_filter())
+                row_data = self._read_row(
+                    table,
+                    row_key,
+                    filter_=self._state_filter(),
+                    timeout_seconds=remaining,
+                )
             except Exception as exc:  # pragma: no cover - remote transport
                 raise RegionalLeaseLedgerError("regional lease read failed") from exc
             if row_data is None:
@@ -449,7 +484,14 @@ class BigtableRegionalQuotaLedger:
             row.set_cell(_FAMILY, _STATE_COLUMN, updated_state, state=True)
             row.set_cell(_FAMILY, _VERSION_COLUMN, next_version, state=True)
             try:
-                if row.commit():
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    last_error = TimeoutError("regional ledger operation budget exhausted")
+                    break
+                if self._commit_conditional_row(
+                    row,
+                    timeout_seconds=remaining,
+                ):
                     return updated
             except Exception as exc:  # pragma: no cover - remote transport
                 # The commit may have reached Bigtable. Re-read on the next
@@ -459,6 +501,62 @@ class BigtableRegionalQuotaLedger:
         raise RegionalLeaseCasExhausted(
             "regional lease compare-and-swap retries were exhausted"
         ) from last_error
+
+    def _read_row(
+        self,
+        table: Any,
+        row_key: bytes,
+        *,
+        filter_: Any,
+        timeout_seconds: float | None = None,
+    ) -> Any:
+        # PartialRowsData adds one second to the Retry deadline when creating
+        # the streaming RPC. Subtract that padding so a transient Bigtable
+        # failure cannot consume the gateway's 25-second request budget.
+        operation_budget = min(
+            self._operation_timeout_seconds,
+            timeout_seconds if timeout_seconds is not None else self._operation_timeout_seconds,
+        )
+        if operation_budget < _MIN_BIGTABLE_READ_BUDGET_SECONDS:
+            raise TimeoutError("regional ledger read budget exhausted")
+        retry_deadline = max(
+            0.05,
+            operation_budget - _BIGTABLE_READ_TIMEOUT_PADDING_SECONDS,
+        )
+        return table.read_row(
+            row_key,
+            filter_=filter_,
+            retry=self._default_read_retry.with_deadline(retry_deadline),
+        )
+
+    @staticmethod
+    def _commit_conditional_row(row: Any, *, timeout_seconds: float) -> bool:
+        """Commit a legacy ConditionalRow with an explicit RPC deadline.
+
+        google-cloud-bigtable's ConditionalRow.commit() does not expose the
+        generated client's timeout argument. Use the same request fields as
+        that method so the billing hot path cannot inherit its 20-second
+        default. Test doubles without the legacy client's private attributes
+        keep using their ordinary commit implementation.
+        """
+
+        table = getattr(row, "_table", None)
+        if table is None:
+            return bool(row.commit())
+        data_client = table._instance._client.table_data_client
+        true_mutations = row._get_mutations(state=True)
+        false_mutations = row._get_mutations(state=False)
+        response = data_client.check_and_mutate_row(
+            table_name=table.name,
+            row_key=row._row_key,
+            predicate_filter=row._filter.to_pb(),
+            app_profile_id=table._app_profile_id,
+            true_mutations=true_mutations,
+            false_mutations=false_mutations,
+            timeout=max(0.05, timeout_seconds),
+        )
+        row.clear()
+        return bool(response.predicate_matched)
 
     def _table(self, region: str) -> Any:
         table = self._tables.get(region)
