@@ -4083,6 +4083,7 @@ class _RouteHealthStore:
     def __init__(self, samples: list[ProviderBenchmarkSample]) -> None:
         self.samples = samples
         self.calls: list[dict[str, Any]] = []
+        self.batch_calls: list[dict[str, Any]] = []
 
     def provider_benchmark_samples(
         self,
@@ -4103,6 +4104,39 @@ class _RouteHealthStore:
         ]
         samples.sort(key=lambda sample: sample.created_at, reverse=True)
         return samples[:limit]
+
+    def provider_route_benchmark_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        self.batch_calls.append(
+            {
+                "cutoff": cutoff,
+                "per_route_limit": per_route_limit,
+                "limit": limit,
+            }
+        )
+        rows = [
+            sample
+            for sample in self.samples
+            if sample.source == "synthetic" and sample.created_at >= cutoff
+        ]
+        rows.sort(key=lambda sample: (sample.created_at, sample.id), reverse=True)
+        route_counts: dict[tuple[str, str], int] = {}
+        selected: list[ProviderBenchmarkSample] = []
+        for sample in rows:
+            route = (sample.provider, sample.model)
+            count = route_counts.get(route, 0)
+            if count >= per_route_limit:
+                continue
+            route_counts[route] = count + 1
+            selected.append(sample)
+            if len(selected) >= limit:
+                break
+        return selected
 
 
 def _route_health_sample(
@@ -4230,10 +4264,10 @@ def test_evaluate_route_health_flags_dead_route_but_not_healthy_or_thin_routes()
             newest_error_message="latest failure",
         )
     ]
-    assert store.calls == [
-        {"date": None, "provider": provider, "model": model, "limit": 48}
-        for provider, model in routes
-    ]
+    assert store.calls == []
+    assert len(store.batch_calls) == 1
+    assert store.batch_calls[0]["per_route_limit"] == 48
+    assert store.batch_calls[0]["limit"] >= len(routes) * 48
 
 
 def test_evaluate_route_health_excludes_unsupported_samples_from_rate() -> None:
@@ -4325,11 +4359,10 @@ def test_evaluate_route_health_derives_routes_from_rotation_candidates(
     flags = evaluate_route_health(store)  # type: ignore[arg-type]
 
     assert [(flag.provider, flag.model) for flag in flags] == [("provider-a", "model-3")]
-    assert store.calls == [
-        {"date": None, "provider": provider, "model": model, "limit": 48}
-        for provider, models in candidates.items()
-        for model in models
-    ]
+    assert store.calls == []
+    assert len(store.batch_calls) == 1
+    assert store.batch_calls[0]["per_route_limit"] == 48
+    assert store.batch_calls[0]["limit"] >= sum(map(len, candidates.values())) * 48
 
 
 def test_report_route_health_uses_one_sentry_fingerprint_per_route(

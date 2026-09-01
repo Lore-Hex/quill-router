@@ -84,6 +84,33 @@ class InMemoryGenerations:
         rows.sort(key=lambda sample: sample.created_at, reverse=True)
         return rows[:limit]
 
+    def route_benchmark_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        with self._lock:
+            rows = [
+                sample
+                for sample in self.provider_benchmarks
+                if sample.source == "synthetic" and sample.created_at >= cutoff
+            ]
+        rows.sort(key=lambda sample: (sample.created_at, sample.id), reverse=True)
+        route_counts: dict[tuple[str, str], int] = {}
+        selected: list[ProviderBenchmarkSample] = []
+        for sample in rows:
+            route = (sample.provider, sample.model)
+            count = route_counts.get(route, 0)
+            if count >= max(1, per_route_limit):
+                continue
+            route_counts[route] = count + 1
+            selected.append(sample)
+            if len(selected) >= max(1, limit):
+                break
+        return selected
+
     def get(self, generation_id: str) -> Generation | None:
         with self._lock:
             return self.generations.get(generation_id)

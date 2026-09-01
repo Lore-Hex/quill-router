@@ -173,6 +173,44 @@ FORMAT JSON
         )
         return [_benchmark_sample(row) for row in rows]
 
+    def route_benchmark_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        """Read a bounded recent window for every synthetic provider/model route."""
+        rows = self._query(
+            """
+SELECT
+  id, model, provider, provider_name, status, usage_type, streamed,
+  input_tokens, output_tokens, total_cost_microdollars,
+  speed_tokens_per_second, elapsed_milliseconds,
+  first_token_milliseconds, ttfb_milliseconds, finish_reason,
+  error_type, error_status, error_message, region, source, app, created_at
+FROM
+(
+  SELECT *, row_number() OVER (
+    PARTITION BY provider, model ORDER BY created_at DESC, id DESC
+  ) AS route_rank
+  FROM provider_benchmark_samples FINAL
+  WHERE source = 'synthetic'
+    AND created_at >= parseDateTime64BestEffort({cutoff:String}, 3)
+)
+WHERE route_rank <= {per_route_limit:UInt32}
+ORDER BY created_at DESC, id DESC
+LIMIT {limit:UInt32}
+FORMAT JSON
+""",
+            params={
+                "cutoff": cutoff,
+                "per_route_limit": max(1, per_route_limit),
+                "limit": max(1, limit),
+            },
+        )
+        return [_benchmark_sample(row) for row in rows]
+
     def activity_generations(
         self,
         *,
