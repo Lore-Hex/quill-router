@@ -891,6 +891,10 @@ _SYNTHETIC_COMBINED_JOB_JSON = json.dumps(
                                             "value": "combined",
                                         },
                                         {
+                                            "name": "TR_SPEND_LEASE_SOAK_PROBE_ENABLED",
+                                            "value": "false",
+                                        },
+                                        {
                                             "name": "TR_INTERNAL_GATEWAY_TOKEN",
                                             "valueFrom": {
                                                 "secretKeyRef": {
@@ -1575,6 +1579,7 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
     "scripts/deploy/synthetic.sh": ScriptFixture(
         env={"TR_BILLING_SERVICE": "trusted-router-billing"},
         responses=(
+            (r"scheduler jobs describe .*spend-lease-soak", "ENABLED"),
             (
                 r"run services describe trusted-router-billing.*--format=json",
                 _SYNTHETIC_INGEST_SERVICE_JSON,
@@ -1597,6 +1602,7 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
         },
         responses=(
             (r"run jobs describe .*--format=json", _SYNTHETIC_COMBINED_JOB_JSON),
+            (r"scheduler jobs describe .*spend-lease-soak", "ENABLED"),
         ),
     ),
 }
