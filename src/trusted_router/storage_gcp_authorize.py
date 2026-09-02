@@ -56,7 +56,11 @@ from trusted_router.storage_gcp_request_records import (
     insert_gateway_authorization,
     mark_gateway_authorization_settled,
 )
-from trusted_router.storage_gcp_settle_outbox import _GUARD_STATUS_SQL, GUARD_COUNT_SQL
+from trusted_router.storage_gcp_settle_outbox import (
+    _GUARD_STATUS_SQL,
+    GUARD_COUNT_SQL,
+    mark_done_unleased_tx,
+)
 from trusted_router.storage_models import (
     AppMarkupPayout,
     GatewayAuthorization,
@@ -176,19 +180,13 @@ def key_window_limit_decision(
     # over (or never started) = zero spend this window.
     current = {
         "daily": sum(
-            int(row[1] or 0)
-            for row in rows
-            if row[2] is not None and row[2] >= floors["daily"]
+            int(row[1] or 0) for row in rows if row[2] is not None and row[2] >= floors["daily"]
         ),
         "weekly": sum(
-            int(row[3] or 0)
-            for row in rows
-            if row[4] is not None and row[4] >= floors["weekly"]
+            int(row[3] or 0) for row in rows if row[4] is not None and row[4] >= floors["weekly"]
         ),
         "monthly": sum(
-            int(row[5] or 0)
-            for row in rows
-            if row[6] is not None and row[6] >= floors["monthly"]
+            int(row[5] or 0) for row in rows if row[6] is not None and row[6] >= floors["monthly"]
         ),
     }
     return decide_key_window_limits(
@@ -286,13 +284,8 @@ def authorize_atomic(
         raise ValueError("credit shards must be non-negative")
     if len(set(shard_candidates)) != len(shard_candidates):
         raise ValueError("credit_shard_candidates must be unique")
-    if (
-        has_credit_candidate
-        and len(shard_candidates) > MAX_CREDIT_SHARD_ATTEMPTS_PER_TRANSACTION
-    ):
-        raise ValueError(
-            "credit_shard_candidates exceeds the hot-path transaction limit"
-        )
+    if has_credit_candidate and len(shard_candidates) > MAX_CREDIT_SHARD_ATTEMPTS_PER_TRANSACTION:
+        raise ValueError("credit_shard_candidates exceeds the hot-path transaction limit")
     if not has_credit_candidate and shard_candidates != (UNSHARDED,):
         raise ValueError("BYOK-only authorization must use credit shard zero")
     key_candidates = tuple(key_shard_candidates)
@@ -315,9 +308,7 @@ def authorize_atomic(
     if authorization is not None:
         authorization.created_at = created_at.isoformat().replace("+00:00", "Z")
     legacy_auth_body = (
-        build_auth_body(authorization_id, reservation_id)
-        if build_auth_body is not None
-        else None
+        build_auth_body(authorization_id, reservation_id) if build_auth_body is not None else None
     )
 
     def _replay(existing: dict) -> dict:
@@ -359,9 +350,7 @@ def authorize_atomic(
             break
         if key_result == KEY_MISSING:
             raise _Reject(
-                AuthorizeOutcome.KEY_LIMIT_EXCEEDED
-                if saw_key_row
-                else AuthorizeOutcome.KEY_MISSING
+                AuthorizeOutcome.KEY_LIMIT_EXCEEDED if saw_key_row else AuthorizeOutcome.KEY_MISSING
             )
         key_hold = estimate if key_result == KEY_ACCEPTED else 0
 
@@ -377,13 +366,20 @@ def authorize_atomic(
             credit_hold = estimate
 
         insert_reservation(
-            transaction, pt,
-            reservation_id=reservation_id, workspace_id=workspace_id, key_hash=key_hash,
-            ws_shard=selected_credit_shard, credit_shard=selected_credit_shard,
+            transaction,
+            pt,
+            reservation_id=reservation_id,
+            workspace_id=workspace_id,
+            key_hash=key_hash,
+            ws_shard=selected_credit_shard,
+            credit_shard=selected_credit_shard,
             key_shard=selected_key_shard,
-            credit_reserved_micro=credit_hold, key_reserved_micro=key_hold,
-            hold_usage_type=reservation_usage_type, authorization_id=authorization_id,
-            idempotency_scope=idempotency_scope, idempotency_fingerprint=idempotency_fingerprint,
+            credit_reserved_micro=credit_hold,
+            key_reserved_micro=key_hold,
+            hold_usage_type=reservation_usage_type,
+            authorization_id=authorization_id,
+            idempotency_scope=idempotency_scope,
+            idempotency_fingerprint=idempotency_fingerprint,
             expires_at=expires_at,
             created_at=created_at,
         )
@@ -540,9 +536,7 @@ def settle_atomic(
     book_to_byok = settled_usage_type == "BYOK"
     terminal_at = utcnow()
     resolved_outbox_available = (
-        _outbox_table_available(database, pt)
-        if outbox_available is None
-        else outbox_available
+        _outbox_table_available(database, pt) if outbox_available is None else outbox_available
     )
 
     def txn(transaction: Any) -> dict:
@@ -556,15 +550,19 @@ def settle_atomic(
                 # real interlock; Spanner serializes it against a concurrent
                 # enqueue commit. Snapshot scans are advisory latency filters
                 # only and can miss that commit.
-                rows = list(transaction.execute_sql(
-                    GUARD_COUNT_SQL,
-                    params={"aid": aid},
-                    param_types={"aid": pt.STRING},
-                ))
+                rows = list(
+                    transaction.execute_sql(
+                        GUARD_COUNT_SQL,
+                        params={"aid": aid},
+                        param_types={"aid": pt.STRING},
+                    )
+                )
                 if rows and int(rows[0][0]) > 0:
                     return {"outcome": SettleOutcome.OUTBOX_GUARDED}
         won = claim_reservation(
-            transaction, pt, reservation_id,
+            transaction,
+            pt,
+            reservation_id,
             actual_micro=book_actual,
             settled_usage_type=settled_usage_type,
             terminal_at=terminal_at,
@@ -606,7 +604,10 @@ def settle_atomic(
         if res["credit_reserved_micro"] > 0:
             credit_actual = book_actual if settled_usage_type == "Credits" else 0
             credit_count = release_credit(
-                transaction, pt, res["workspace_id"], res["credit_reserved_micro"],
+                transaction,
+                pt,
+                res["workspace_id"],
+                res["credit_reserved_micro"],
                 credit_actual,
                 shard=res["credit_shard"],
             )
@@ -738,11 +739,13 @@ def _outbox_table_available(database: Any, param_types: Any) -> bool:
             return cached
         try:
             with database.snapshot() as snapshot:
-                list(snapshot.execute_sql(
-                    GUARD_COUNT_SQL,
-                    params={"aid": ""},
-                    param_types={"aid": param_types.STRING},
-                ))
+                list(
+                    snapshot.execute_sql(
+                        GUARD_COUNT_SQL,
+                        params={"aid": ""},
+                        param_types={"aid": param_types.STRING},
+                    )
+                )
         except Exception as exc:
             if not _is_table_missing(exc):
                 log.warning(
@@ -797,11 +800,13 @@ def reap_expired_reservations(
     guard_active = True
     try:
         with database.snapshot() as snapshot:
-            list(snapshot.execute_sql(
-                GUARD_COUNT_SQL,
-                params={"aid": ""},
-                param_types={"aid": pt.STRING},
-            ))
+            list(
+                snapshot.execute_sql(
+                    GUARD_COUNT_SQL,
+                    params={"aid": ""},
+                    param_types={"aid": pt.STRING},
+                )
+            )
     except Exception as exc:
         if not _is_table_missing(exc):
             raise
@@ -827,8 +832,13 @@ def reap_expired_reservations(
     reaped = 0
     for reservation_id, _authorization_id in rows:
         result = settle_atomic(
-            database, pt, reservation_id=reservation_id, actual_micro=0,
-            settled_usage_type="Credits", success=False, guard_outbox=guard_active,
+            database,
+            pt,
+            reservation_id=reservation_id,
+            actual_micro=0,
+            settled_usage_type="Credits",
+            success=False,
+            guard_outbox=guard_active,
             mark_authorization_terminal=True,
             outbox_available=guard_active,
         )
@@ -857,8 +867,15 @@ def typed_finalize_atomic(
     user_model_payout: UserModelPayout | None = None,
     app_markup_payout: AppMarkupPayout | None = None,
     regional_hold_unknown: bool = False,
+    settle_outbox_done: tuple[str, str] | None = None,
 ) -> dict:
     """Full DML-only finalize for the typed path (codex 3e, Option B).
+
+    ``settle_outbox_done=(authorization_id, intent_kind)`` also resolves that
+    durable settle-outbox intent to ``done`` in the SAME transaction, when the
+    activity row is durable in this commit and the outbox table exists. The
+    result carries ``outbox_marked``: True (marked), False (row leased or
+    already resolved -- the drain re-derives), or None (not attempted).
 
     ONE transaction reproduces legacy finalize_gateway_authorization's whole
     behavior so a crash can't leave counters charged but the authorization
@@ -884,9 +901,7 @@ def typed_finalize_atomic(
     book_to_byok = settled_usage_type == "BYOK"
     writes = generation_writes or []
     resolved_outbox_available = (
-        _outbox_table_available(database, pt)
-        if outbox_available is None
-        else outbox_available
+        _outbox_table_available(database, pt) if outbox_available is None else outbox_available
     )
 
     def txn(transaction: Any) -> dict:
@@ -894,7 +909,9 @@ def typed_finalize_atomic(
         if res is None:
             return {"outcome": SettleOutcome.NOT_FOUND}
         won = claim_reservation(
-            transaction, pt, reservation_id,
+            transaction,
+            pt,
+            reservation_id,
             actual_micro=book_actual,
             settled_usage_type=settled_usage_type,
             terminal_at=now,
@@ -916,7 +933,10 @@ def typed_finalize_atomic(
         if res["credit_reserved_micro"] > 0:
             credit_actual = book_actual if settled_usage_type == "Credits" else 0
             credit_count = release_credit(
-                transaction, pt, res["workspace_id"], res["credit_reserved_micro"],
+                transaction,
+                pt,
+                res["workspace_id"],
+                res["credit_reserved_micro"],
                 credit_actual,
                 shard=res["credit_shard"],
             )
@@ -1002,6 +1022,19 @@ def typed_finalize_atomic(
                 terminal_at=now,
                 outbox_available=resolved_outbox_available,
             )
+        activity_durable = generation is None or operational_analytics_outbox is not None
+        outbox_marked: bool | None = None
+        if settle_outbox_done is not None and resolved_outbox_available and activity_durable:
+            # Same commit as the charge: no post-finalize window in which a
+            # crash leaves an already-charged authorization pending, and one
+            # fewer multi-region round trip per settle. A leased row is left
+            # to its drain worker (False), exactly as the standalone mark did.
+            outbox_marked = mark_done_unleased_tx(
+                transaction,
+                pt,
+                authorization_id=settle_outbox_done[0],
+                intent_kind=settle_outbox_done[1],
+            )
         if success and generation is not None:
             if persist_generation_record:
                 insert_generation_record(
@@ -1021,8 +1054,8 @@ def typed_finalize_atomic(
             "outcome": SettleOutcome.SETTLED,
             "missing_key_releases": missing_key_releases,
             "request_record_typed": request_record_typed,
-            "activity_durable": generation is None
-            or operational_analytics_outbox is not None,
+            "activity_durable": activity_durable,
+            "outbox_marked": outbox_marked,
         }
 
     try:

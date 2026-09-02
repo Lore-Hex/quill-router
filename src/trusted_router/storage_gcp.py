@@ -2768,6 +2768,7 @@ class SpannerBigtableStore:
         generation: Generation | None = None,
         user_model_payout: UserModelPayout | None = None,
         app_markup_payout: AppMarkupPayout | None = None,
+        settle_outbox_done: tuple[str, str] | None = None,
     ) -> TypedFinalizeResult:
         """Route-facing typed settle: same contract as
         finalize_gateway_authorization, with explicit activity-index status.
@@ -2877,6 +2878,7 @@ class SpannerBigtableStore:
             user_model_payout=user_model_payout,
             app_markup_payout=app_markup_payout,
             regional_hold_unknown=regional_hold_unknown,
+            settle_outbox_done=settle_outbox_done,
         )
         spanner_ms = (time.perf_counter() - spanner_start) * 1000
         if result["outcome"] == SettleOutcome.ERROR:
@@ -2911,6 +2913,7 @@ class SpannerBigtableStore:
                 finalized=True,
                 activity_indexed=activity_indexed,
                 request_record_typed=bool(result.get("request_record_typed")),
+                outbox_marked=result.get("outbox_marked"),
             )
         return TypedFinalizeResult(
             finalized=False,

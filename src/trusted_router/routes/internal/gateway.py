@@ -487,9 +487,7 @@ def _persist_spend_lease_shadow(event_id: str, payload: dict[str, Any]) -> None:
     STORE.record_spend_lease_shadow(event_id, payload)
 
 
-_SPEND_LEASE_SHADOW_DISPATCHER = SpendLeaseShadowDispatcher(
-    _persist_spend_lease_shadow
-)
+_SPEND_LEASE_SHADOW_DISPATCHER = SpendLeaseShadowDispatcher(_persist_spend_lease_shadow)
 
 
 def _record_spend_lease_shadow(
@@ -2812,6 +2810,13 @@ def _settle_gateway_authorization(
                         generation=generation,
                         user_model_payout=user_model_payout,
                         app_markup_payout=app_markup_payout,
+                        # Resolve the durable intent in the finalize commit
+                        # itself (docs/design/durable-settle-outbox.md §7).
+                        settle_outbox_done=(
+                            (authorization.id, intent_kind)
+                            if settings.settle_outbox_enabled and outbox_enqueued
+                            else None
+                        ),
                     ),
                 )
             except (RegionalLeaseLedgerError, LeaseSettlementError):
@@ -2889,26 +2894,40 @@ def _settle_gateway_authorization(
     )
     mark_ms = 0.0
     if settings.settle_outbox_enabled and outbox_enqueued and finalize_result.activity_indexed:
-        mark_start = perf_counter()
-        try:
-            marked = spanner_settle_outbox().mark(authorization.id, intent_kind, done=True)
-            if marked is None:
+        if finalize_result.outbox_marked is not None:
+            # Resolved inside the finalize commit; mark_ms stays 0.0 so the
+            # timing line keeps its shape (finalize_ms now includes the mark).
+            if not finalize_result.outbox_marked:
                 logger.info(
                     "settle outbox done mark skipped authorization_id=%s intent_kind=%s; "
                     "row leased or already resolved; drain will re-derive done",
                     authorization.id,
                     intent_kind,
                 )
-        except Exception:
-            # Safe to swallow: §7 says a crash/failure after inline finalize
-            # leaves a pending replay, and the drain will re-derive done via
-            # ALREADY_SETTLED_WITH_CHARGE / ALREADY_SETTLED_LEGACY.
-            logger.error(
-                "settle outbox done mark failed authorization_id=%s",
-                authorization.id,
-                exc_info=True,
-            )
-        mark_ms = (perf_counter() - mark_start) * 1000
+        else:
+            # Legacy finalize contract: the intent was not resolved in the
+            # finalize commit, so resolve it here as before.
+            mark_start = perf_counter()
+            try:
+                marked = spanner_settle_outbox().mark(authorization.id, intent_kind, done=True)
+                if marked is None:
+                    logger.info(
+                        "settle outbox done mark skipped authorization_id=%s "
+                        "intent_kind=%s; row leased or already resolved; drain will "
+                        "re-derive done",
+                        authorization.id,
+                        intent_kind,
+                    )
+            except Exception:
+                # Safe to swallow: §7 says a crash/failure after inline finalize
+                # leaves a pending replay, and the drain will re-derive done via
+                # ALREADY_SETTLED_WITH_CHARGE / ALREADY_SETTLED_LEGACY.
+                logger.error(
+                    "settle outbox done mark failed authorization_id=%s",
+                    authorization.id,
+                    exc_info=True,
+                )
+            mark_ms = (perf_counter() - mark_start) * 1000
     elif finalized and settings.settle_outbox_enabled and outbox_enqueued:
         logger.warning(
             "settle activity index pending repair authorization_id=%s",

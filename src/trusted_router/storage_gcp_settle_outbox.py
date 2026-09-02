@@ -98,6 +98,163 @@ ENQ_EXISTS_TERMINAL = "terminal"  # existing done/dead/release_approved row — 
 ENQ_LEASED = "leased"  # existing pending row is actively leased by a drain — deferred
 
 
+def _defer_retention_tx(
+    transaction: Any, param_types: Any, authorization_id: str, reservation_id: Any
+) -> None:
+    """Keep both referenced records TTL-ineligible (see _defer_retention)."""
+    clear_gateway_authorization_retention(transaction, param_types, authorization_id)
+    if reservation_id:
+        clear_reservation_retention(transaction, param_types, str(reservation_id))
+
+
+def _resolve_done_retention_tx(
+    transaction: Any,
+    param_types: Any,
+    *,
+    authorization_id: str,
+    intent_kind: str,
+    reservation_id: Any,
+    now: str,
+) -> None:
+    """After an intent row goes ``done``: arm or defer retention on the shared
+    authorization and reservation records, in the SAME transaction.
+
+    The PK is (authorization_id, intent_kind): settle and refund coexist by
+    design, so shared records must outlive the last pending/dead intent, not
+    merely the first one to finish. Skipping the arm is not enough when a
+    sibling is outstanding: a winning claim (or a rolling legacy finalize) may
+    have ALREADY armed terminal_at after this row was enqueued, so the shared
+    records would stay TTL-eligible while the sibling intent is outstanding.
+
+    Shared by ``SpannerSettleOutbox.mark`` (the standalone commit) and
+    ``mark_done_unleased_tx`` (inside the finalize commit) so the two cannot
+    drift: the fold moved the mark, it must not move the retention contract.
+    """
+    sibling_rows = list(
+        transaction.execute_sql(
+            _SIBLING_GUARD_COUNT_SQL,
+            params={"aid": authorization_id, "kind": intent_kind},
+            param_types={"aid": param_types.STRING, "kind": param_types.STRING},
+        )
+    )
+    outstanding_siblings = int(sibling_rows[0][0]) if sibling_rows else 0
+    if outstanding_siblings == 0:
+        complete_gateway_authorization_retention(
+            transaction,
+            param_types,
+            authorization_id,
+            terminal_at=now,
+            outbox_available=True,
+        )
+        if reservation_id:
+            complete_reservation_retention(
+                transaction,
+                param_types,
+                str(reservation_id),
+                terminal_at=now,
+                outbox_available=True,
+            )
+    else:
+        _defer_retention_tx(transaction, param_types, authorization_id, reservation_id)
+
+
+# The two statements mark() issues, spelled once more here for the inline
+# finalize transaction. They are deliberately byte-identical to mark()'s: the
+# test fake is SQL-sensitive by design (it asserts each predicate), so a drift
+# between the two would fail one of them against the single modeled shape.
+_PENDING_ROW_SQL = (
+    "SELECT attempts, lease_owner, reservation_id FROM tr_settle_outbox "
+    "WHERE authorization_id=@aid AND intent_kind=@kind AND status='pending'"
+)
+_RESOLVE_ROW_SQL = (
+    "UPDATE tr_settle_outbox SET status=@status, attempts=@attempts, "
+    "last_error=@err, next_attempt_at=@next_at, lease_owner=NULL, "
+    "leased_until=NULL, updated_at=@now, terminal_at=@terminal_at, "
+    "settle_body=IF(@done, CAST(NULL AS STRING), settle_body) "
+    "WHERE authorization_id=@aid "
+    "AND intent_kind=@kind AND status='pending' "
+    "AND ((@lease_owner IS NULL AND lease_owner IS NULL) OR "
+    "(@lease_owner IS NOT NULL AND lease_owner=@lease_owner))"
+)
+
+
+def mark_done_unleased_tx(
+    transaction: Any,
+    param_types: Any,
+    *,
+    authorization_id: str,
+    intent_kind: str,
+) -> bool:
+    """Resolve the pending intent row to ``done`` INSIDE a caller's transaction.
+
+    Same lease fence as the inline path's ``mark(done=True)``: only an UNLEASED
+    ``pending`` row is touched. A row a drain worker currently owns is left
+    alone (returns False) and the drain re-derives ``done`` from the finalize
+    outcome, exactly as when the standalone mark was skipped.
+
+    Called from ``typed_finalize_atomic`` so the charge and the done-mark
+    commit together. Before this the mark was a separate commit after
+    finalize: one more multi-region round trip per settle, and a window in
+    which a crash left an already-charged authorization ``pending`` -- the
+    residual that docs/design/durable-settle-outbox.md §7 accepted and said
+    to close this way once the outbox shared the Spanner instance.
+    """
+    rows = list(
+        transaction.execute_sql(
+            _PENDING_ROW_SQL,
+            params={"aid": authorization_id, "kind": intent_kind},
+            param_types={"aid": param_types.STRING, "kind": param_types.STRING},
+        )
+    )
+    if not rows:
+        return False
+    attempts, cur_owner, reservation_id = int(rows[0][0] or 0), rows[0][1], rows[0][2]
+    if cur_owner is not None:
+        return False
+    now = _iso_now()
+    updated = transaction.execute_update(
+        _RESOLVE_ROW_SQL,
+        params={
+            "status": "done",
+            "attempts": attempts + 1,
+            "err": None,
+            "next_at": None,
+            "now": now,
+            "terminal_at": now,
+            "done": True,
+            "aid": authorization_id,
+            "kind": intent_kind,
+            "lease_owner": None,
+        },
+        param_types={
+            "status": param_types.STRING,
+            "attempts": param_types.INT64,
+            "err": param_types.STRING,
+            "next_at": param_types.TIMESTAMP,
+            "now": param_types.TIMESTAMP,
+            "aid": param_types.STRING,
+            "kind": param_types.STRING,
+            "lease_owner": param_types.STRING,
+            "terminal_at": param_types.TIMESTAMP,
+            "done": param_types.BOOL,
+        },
+    )
+    if int(updated) != 1:
+        return False
+    # The mark moved into the finalize commit; the retention contract that
+    # rode along with it (arm terminal_at on the shared records, or defer it
+    # while a sibling intent is outstanding) moves with it.
+    _resolve_done_retention_tx(
+        transaction,
+        param_types,
+        authorization_id=authorization_id,
+        intent_kind=intent_kind,
+        reservation_id=reservation_id,
+        now=now,
+    )
+    return True
+
+
 def _iso_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -214,9 +371,7 @@ class SpannerSettleOutbox:
                 "auto_refill_status": "pending" if auto_refill_requested else None,
                 "auto_refill_attempts": 0,
                 "auto_refill_last_error": None,
-                "auto_refill_next_attempt_at": (
-                    next_attempt_at if auto_refill_requested else None
-                ),
+                "auto_refill_next_attempt_at": (next_attempt_at if auto_refill_requested else None),
                 "auto_refill_lease_owner": None,
                 "auto_refill_leased_until": None,
                 "auto_refill_enqueued_at": now if auto_refill_requested else None,
@@ -504,42 +659,14 @@ class SpannerSettleOutbox:
             if updated != 1:
                 return None
             if done:
-                sibling_rows = list(
-                    transaction.execute_sql(
-                        _SIBLING_GUARD_COUNT_SQL,
-                        params={"aid": authorization_id, "kind": intent_kind},
-                        param_types={
-                            "aid": self._pt.STRING,
-                            "kind": self._pt.STRING,
-                        },
-                    )
+                _resolve_done_retention_tx(
+                    transaction,
+                    self._pt,
+                    authorization_id=authorization_id,
+                    intent_kind=intent_kind,
+                    reservation_id=reservation_id,
+                    now=now,
                 )
-                outstanding_siblings = int(sibling_rows[0][0]) if sibling_rows else 0
-                # The PK is (authorization_id, intent_kind): settle and refund
-                # coexist by design, so shared records must outlive the last
-                # pending/dead intent, not merely the first one to finish.
-                if outstanding_siblings == 0:
-                    complete_gateway_authorization_retention(
-                        transaction,
-                        self._pt,
-                        authorization_id,
-                        terminal_at=now,
-                        outbox_available=True,
-                    )
-                    if reservation_id:
-                        complete_reservation_retention(
-                            transaction,
-                            self._pt,
-                            str(reservation_id),
-                            terminal_at=now,
-                            outbox_available=True,
-                        )
-                else:
-                    # Skipping the arm is not enough: a winning claim (or a
-                    # rolling legacy finalize) may have ALREADY armed terminal_at
-                    # after this row was enqueued, so the shared records would
-                    # stay TTL-eligible while the sibling intent is outstanding.
-                    self._defer_retention(transaction, authorization_id, reservation_id)
             else:
                 # Non-terminal outcome (backoff to pending, or dead awaiting a
                 # human): repair work is still outstanding, so the referenced
@@ -569,9 +696,7 @@ class SpannerSettleOutbox:
         defense-in-depth for already-armed state and every path that leaves or
         keeps an intent outstanding.
         """
-        clear_gateway_authorization_retention(transaction, self._pt, authorization_id)
-        if reservation_id:
-            clear_reservation_retention(transaction, self._pt, str(reservation_id))
+        _defer_retention_tx(transaction, self._pt, authorization_id, reservation_id)
 
     def park(
         self,
