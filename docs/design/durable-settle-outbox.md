@@ -233,11 +233,17 @@ lease-claims due `pending` rows and for each:
 - **Lost-charge safety rests ENTIRELY on the reaper guard** (§4): the reaper never
   frees a hold with a `pending`/`dead` outbox row, re-checked in-transaction. It is
   NOT provided by "drain wins the race" (v1's false claim).
-- Residual, explicitly accepted: a crash between the inline finalize commit and the
-  `status='done'` UPDATE leaves a `pending` row for an already-charged auth — safe
-  (drain replay → `already_settled_with_charge` → done), just a redundant replay
-  (SF4). If the outbox shares the Spanner instance, prefer writing `status='done'`
-  in the same txn as the finalize to close even that.
+- Residual, explicitly accepted in v1: a crash between the inline finalize commit
+  and the `status='done'` UPDATE leaves a `pending` row for an already-charged auth
+  — safe (drain replay → `already_settled_with_charge` → done), just a redundant
+  replay (SF4). **Closed 2026-09-02:** the outbox does share the instance, and the
+  typed finalize now writes `status='done'` in the same transaction as the charge
+  (`typed_finalize_atomic(settle_outbox_done=...)` →
+  `mark_done_unleased_tx`). The lease fence is unchanged: a row a drain worker
+  owns at that moment is left `pending` and the drain re-derives `done`. The
+  legacy finalize contract still marks in a separate commit. Measured motivation:
+  `mark_ms` was a full multi-region commit on every settle (p50 224–709 ms, p90
+  ~775 ms), one of three serial commits behind the ~3 s settle p90.
 
 ## 8. Rollout (default-off, Joseph-gated)
 

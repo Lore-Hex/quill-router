@@ -63,6 +63,24 @@ def fake_store() -> Iterator[tuple[Any, Any, Any]]:
         configure_store(InMemoryStore())
 
 
+@pytest.fixture
+def prod_shaped_store() -> Iterator[tuple[Any, Any, Any]]:
+    """The store as production runs it: the ClickHouse delivery intent is
+    written INSIDE the finalize transaction (operational analytics outbox on,
+    typed request records). That in-commit durability is what allows the
+    settle-outbox done-mark to be folded into the same commit."""
+    store, db, bt = make_fake_store(
+        operational_analytics_outbox_enabled=True,
+        request_record_write_mode="typed",
+        generation_records_enabled=True,
+    )
+    configure_store(store)
+    try:
+        yield store, db, bt
+    finally:
+        configure_store(InMemoryStore())
+
+
 def _client(settings: Settings, *, raise_server_exceptions: bool = True) -> TestClient:
     return TestClient(
         create_app(settings, configure_store_arg=False, init_observability=False),
@@ -280,9 +298,7 @@ def _row(
         selected_endpoint_id=ENDPOINT_ID,
         model_id=MODEL_ID,
         selected_usage_type=selected_usage_type,
-        settle_body=settle_body
-        if settle_body is not None
-        else json.dumps(_settle_json(auth.id)),
+        settle_body=settle_body if settle_body is not None else json.dumps(_settle_json(auth.id)),
     )
 
 
@@ -297,7 +313,9 @@ def _settle_timing_records(caplog: pytest.LogCaptureFixture) -> list[logging.Log
 # Unit (storage)
 
 
-def test_park_leaves_attempts_unchanged_and_respects_lease(fake_store: tuple[Any, Any, Any]) -> None:
+def test_park_leaves_attempts_unchanged_and_respects_lease(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
     store, _db, _bt = fake_store
     ob = _outbox(store)
     row = _row(
@@ -746,16 +764,13 @@ def test_auto_refill_pass_debounces_transient_store_errors_until_sustained(
         assert "consecutive_failures=3" in alerts[0].getMessage()
 
         assert drain_pass.run(settings, limit=10) is None
-        assert len(
-            [record for record in caplog.records if record.levelno >= logging.ERROR]
-        ) == 1
+        assert len([record for record in caplog.records if record.levelno >= logging.ERROR]) == 1
 
         assert drain_pass.run(settings, limit=10) == {"claimed": 0}
 
     assert drain_pass.consecutive_transient_failures == 0
     assert any(
-        "recovered after 4 transient failures" in record.getMessage()
-        for record in caplog.records
+        "recovered after 4 transient failures" in record.getMessage() for record in caplog.records
     )
 
 
@@ -1003,21 +1018,15 @@ def test_activity_pending_second_cycle_preserves_original_since(
     first_row = ob.get(auth.id, "settle")
     assert first["claimed"] == 1
     assert first_row is not None and first_row.last_error is not None
-    first_since = first_row.last_error.removeprefix(
-        f"{drain_mod._ACTIVITY_PARK_NOTE} since="
-    )
-    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = (
-        "2000-01-01T00:00:00Z"
-    )
+    first_since = first_row.last_error.removeprefix(f"{drain_mod._ACTIVITY_PARK_NOTE} since=")
+    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = "2000-01-01T00:00:00Z"
 
     second = drain_mod.drain_settle_outbox(10)
 
     second_row = ob.get(auth.id, "settle")
     assert second["claimed"] == 1
     assert second_row is not None and second_row.last_error is not None
-    second_since = second_row.last_error.removeprefix(
-        f"{drain_mod._ACTIVITY_PARK_NOTE} since="
-    )
+    second_since = second_row.last_error.removeprefix(f"{drain_mod._ACTIVITY_PARK_NOTE} since=")
     assert second_since == first_since
     assert second_row.attempts == 0
 
@@ -1034,8 +1043,7 @@ def test_typed_park_preserves_expired_activity_window(
         seconds=drain_mod._ACTIVITY_REPAIR_MAX_AGE_SECONDS + 1
     )
     activity_note = (
-        f"{drain_mod._ACTIVITY_PARK_NOTE} since="
-        f"{since.isoformat().replace('+00:00', 'Z')}"
+        f"{drain_mod._ACTIVITY_PARK_NOTE} since={since.isoformat().replace('+00:00', 'Z')}"
     )
     db.settle_outbox[(auth.id, "settle")]["last_error"] = activity_note
     outcomes = iter(
@@ -1057,9 +1065,7 @@ def test_typed_park_preserves_expired_activity_window(
     assert pending is not None and pending.status == "pending"
     assert pending.attempts == 0
     assert pending.last_error == activity_note
-    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = (
-        "2000-01-01T00:00:00Z"
-    )
+    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = "2000-01-01T00:00:00Z"
 
     second = drain_mod.drain_settle_outbox(10)
 
@@ -1122,9 +1128,7 @@ def test_inline_zero_cost_activity_failure_keeps_payload_without_park_note(
     assert pending is not None and pending.status == "pending"
     assert pending.last_error is None
     assert pending.settle_body is not None
-    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = (
-        "2000-01-01T00:00:00Z"
-    )
+    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = "2000-01-01T00:00:00Z"
 
     result = drain_mod.drain_settle_outbox(10)
 
@@ -1171,15 +1175,11 @@ def test_inline_zero_cost_without_park_note_resolves_after_index_succeeds(
     assert pending is not None and pending.status == "pending"
     assert pending.last_error is None
     assert bt.committed == []
-    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = (
-        "2000-01-01T00:00:00Z"
-    )
+    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = "2000-01-01T00:00:00Z"
 
     result = drain_mod.drain_settle_outbox(10)
 
-    assert result["outcomes"] == {
-        ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE: 1
-    }
+    assert result["outcomes"] == {ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE: 1}
     completed = ob.get(auth.id, "settle")
     assert completed is not None and completed.status == "done"
     assert len(index_attempts) == 2
@@ -1208,9 +1208,7 @@ def test_zero_cost_activity_pending_keeps_retrying_and_preserves_payload(
     assert first["outcomes"] == {ApplyOutcome.ACTIVITY_PENDING: 1}
     assert first_row is not None and first_row.status == "pending"
     assert first_row.settle_body is not None
-    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = (
-        "2000-01-01T00:00:00Z"
-    )
+    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = "2000-01-01T00:00:00Z"
 
     second = drain_mod.drain_settle_outbox(10)
 
@@ -1245,16 +1243,12 @@ def test_zero_cost_activity_pending_resolves_after_index_succeeds(
     first = drain_mod.drain_settle_outbox(10)
     assert first["outcomes"] == {ApplyOutcome.ACTIVITY_PENDING: 1}
     assert bt.committed == []
-    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = (
-        "2000-01-01T00:00:00Z"
-    )
+    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = "2000-01-01T00:00:00Z"
 
     second = drain_mod.drain_settle_outbox(10)
 
     completed = ob.get(auth.id, "settle")
-    assert second["outcomes"] == {
-        ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE: 1
-    }
+    assert second["outcomes"] == {ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE: 1}
     assert completed is not None and completed.status == "done"
     assert len(index_attempts) == 2
     assert bt.committed
@@ -1271,8 +1265,8 @@ def test_activity_pending_old_row_with_new_window_still_parks(
     created_at = dt.datetime.now(dt.UTC) - dt.timedelta(
         seconds=drain_mod._ACTIVITY_REPAIR_MAX_AGE_SECONDS * 2
     )
-    db.settle_outbox[(auth.id, "settle")]["created_at"] = (
-        created_at.isoformat().replace("+00:00", "Z")
+    db.settle_outbox[(auth.id, "settle")]["created_at"] = created_at.isoformat().replace(
+        "+00:00", "Z"
     )
     db.settle_outbox[(auth.id, "settle")]["last_error"] = "unrelated failure"
     monkeypatch.setattr(
@@ -1302,17 +1296,14 @@ def test_activity_pending_over_window_marks_dead_preserves_payload_and_alerts(
     ob.enqueue(
         _row(
             auth,
-            settle_body=json.dumps(
-                _settle_json(auth.id, request_id="req-activity-expired")
-            ),
+            settle_body=json.dumps(_settle_json(auth.id, request_id="req-activity-expired")),
         )
     )
     since = dt.datetime.now(dt.UTC) - dt.timedelta(
         seconds=drain_mod._ACTIVITY_REPAIR_MAX_AGE_SECONDS + 1
     )
     db.settle_outbox[(auth.id, "settle")]["last_error"] = (
-        f"{drain_mod._ACTIVITY_PARK_NOTE} since="
-        f"{since.isoformat().replace('+00:00', 'Z')}"
+        f"{drain_mod._ACTIVITY_PARK_NOTE} since={since.isoformat().replace('+00:00', 'Z')}"
     )
     monkeypatch.setattr(
         drain_mod,
@@ -1336,10 +1327,7 @@ def test_activity_pending_over_window_marks_dead_preserves_payload_and_alerts(
     ]
     assert len(alerts) == 1
     assert f"authorization_id={auth.id}" in alerts[0]
-    assert (
-        f"generation_id={drain_mod.generation_id_for_authorization(auth.id)}"
-        in alerts[0]
-    )
+    assert f"generation_id={drain_mod.generation_id_for_authorization(auth.id)}" in alerts[0]
     assert "request_id=req-activity-expired" in alerts[0]
     assert f"reservation_id={auth.credit_reservation_id}" in alerts[0]
     assert "CHARGE IS ALREADY APPLIED" in alerts[0]
@@ -1364,8 +1352,7 @@ def test_activity_pending_lost_lease_skips_false_alert(
         seconds=drain_mod._ACTIVITY_REPAIR_MAX_AGE_SECONDS + 1
     )
     db.settle_outbox[(auth.id, "settle")]["last_error"] = (
-        f"{drain_mod._ACTIVITY_PARK_NOTE} since="
-        f"{since.isoformat().replace('+00:00', 'Z')}"
+        f"{drain_mod._ACTIVITY_PARK_NOTE} since={since.isoformat().replace('+00:00', 'Z')}"
     )
     monkeypatch.setattr(
         drain_mod,
@@ -1402,10 +1389,7 @@ def test_lost_lease_dead_letter_alerts_only_when_fence_wins(
     winner_auth = _bare_authorization("gwa-missing-winning-owner")
     ob.enqueue(_row(stale_auth))
     ob.enqueue(_row(winner_auth))
-    claimed = {
-        row.authorization_id: row
-        for row in ob.claim(limit=2, lease_seconds=300)
-    }
+    claimed = {row.authorization_id: row for row in ob.claim(limit=2, lease_seconds=300)}
     stale = claimed[stale_auth.id]
     winner = claimed[winner_auth.id]
     stale_record = db.settle_outbox[(stale_auth.id, "settle")]
@@ -1479,8 +1463,7 @@ def test_activity_pending_escalation_keeps_retention_pinned(
         seconds=drain_mod._ACTIVITY_REPAIR_MAX_AGE_SECONDS + 1
     )
     db.settle_outbox[(auth.id, "settle")]["last_error"] = (
-        f"{drain_mod._ACTIVITY_PARK_NOTE} since="
-        f"{since.isoformat().replace('+00:00', 'Z')}"
+        f"{drain_mod._ACTIVITY_PARK_NOTE} since={since.isoformat().replace('+00:00', 'Z')}"
     )
 
     result = drain_mod.drain_settle_outbox(10)
@@ -1508,9 +1491,7 @@ def test_activity_pending_dead_row_reset_to_pending_is_reclaimed(
         force_dead=True,
     )
     db.settle_outbox[(auth.id, "settle")]["status"] = "pending"
-    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = (
-        "2000-01-01T00:00:00Z"
-    )
+    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = "2000-01-01T00:00:00Z"
     applied: list[str] = []
 
     def apply_repaired(row: SettleOutboxRow) -> str:
@@ -1533,9 +1514,7 @@ def test_activity_pending_dead_row_reset_to_pending_is_reclaimed(
         "not-an-iso-timestamp",
         (
             dt.datetime.now(dt.UTC)
-            - dt.timedelta(
-                seconds=drain_mod._ACTIVITY_REPAIR_MAX_AGE_SECONDS + 1
-            )
+            - dt.timedelta(seconds=drain_mod._ACTIVITY_REPAIR_MAX_AGE_SECONDS + 1)
         )
         .replace(tzinfo=None)
         .isoformat(),
@@ -1571,9 +1550,9 @@ def test_activity_pending_malformed_or_naive_since_still_parks(
     assert pending.attempts == 0
     assert pending.last_error is not None
     stamped_since = dt.datetime.fromisoformat(
-        pending.last_error.removeprefix(
-            f"{drain_mod._ACTIVITY_PARK_NOTE} since="
-        ).replace("Z", "+00:00")
+        pending.last_error.removeprefix(f"{drain_mod._ACTIVITY_PARK_NOTE} since=").replace(
+            "Z", "+00:00"
+        )
     )
     assert stamped_since.tzinfo is not None
     assert any(
@@ -1597,12 +1576,11 @@ def test_activity_pending_future_since_is_clamped(
         seconds=drain_mod._ACTIVITY_REPAIR_MAX_AGE_SECONDS + 1
     )
     future_since = dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)
-    db.settle_outbox[(auth.id, "settle")]["created_at"] = (
-        created_at.isoformat().replace("+00:00", "Z")
+    db.settle_outbox[(auth.id, "settle")]["created_at"] = created_at.isoformat().replace(
+        "+00:00", "Z"
     )
     db.settle_outbox[(auth.id, "settle")]["last_error"] = (
-        f"{drain_mod._ACTIVITY_PARK_NOTE} since="
-        f"{future_since.isoformat().replace('+00:00', 'Z')}"
+        f"{drain_mod._ACTIVITY_PARK_NOTE} since={future_since.isoformat().replace('+00:00', 'Z')}"
     )
     monkeypatch.setattr(
         drain_mod,
@@ -1618,9 +1596,9 @@ def test_activity_pending_future_since_is_clamped(
     assert pending is not None and pending.status == "pending"
     assert pending.last_error is not None
     stamped_since = dt.datetime.fromisoformat(
-        pending.last_error.removeprefix(
-            f"{drain_mod._ACTIVITY_PARK_NOTE} since="
-        ).replace("Z", "+00:00")
+        pending.last_error.removeprefix(f"{drain_mod._ACTIVITY_PARK_NOTE} since=").replace(
+            "Z", "+00:00"
+        )
     )
     assert stamped_since < future_since
     assert any(
@@ -1700,10 +1678,7 @@ def test_drain_reap_limit_respected(fake_store: tuple[Any, Any, Any]) -> None:
     ws = "ws-drain-reap-limit"
     _seed_credit(store, ws)
     key = _make_key(store, ws)
-    auths = [
-        _expired_authorization(store, workspace_id=ws, key_hash=key.hash)
-        for _ in range(3)
-    ]
+    auths = [_expired_authorization(store, workspace_id=ws, key_hash=key.hash) for _ in range(3)]
     assert _typed_credit(db, ws)["reserved"] == ESTIMATE * 3
 
     result = drain_mod.drain_settle_outbox(10)
@@ -1970,10 +1945,7 @@ def test_user_model_inline_finalize_loss_repairs_one_payout_from_frozen_outbox(
 
     store.typed_finalize_gateway_authorization_result = original
     assert apply_mod.apply_frozen_settle(row) == ApplyOutcome.SETTLED_NOW
-    assert (
-        apply_mod.apply_frozen_settle(row)
-        == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
-    )
+    assert apply_mod.apply_frozen_settle(row) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
     payout = 5_600
     assert store.earnings_summary("owner-outbox-repair")["total_earned"] == payout
     movements = store.list_credit_movements("user:owner-outbox-repair")
@@ -2007,16 +1979,12 @@ def test_charged_settle_then_sibling_refund_resolves_and_arms_retention(
     assert ob.get(auth.id, "refund").status == "pending"
     assert db.reservations[auth.credit_reservation_id]["terminal_at"] is None
     assert db.gateway_authorizations[auth.id]["terminal_at"] is None
-    db.settle_outbox[(auth.id, "refund")]["next_attempt_at"] = (
-        "2000-01-01T00:00:00Z"
-    )
+    db.settle_outbox[(auth.id, "refund")]["next_attempt_at"] = "2000-01-01T00:00:00Z"
 
     with caplog.at_level(logging.WARNING, logger=drain_mod.__name__):
         refunded = drain_mod.drain_settle_outbox(10)
 
-    assert refunded["outcomes"] == {
-        ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE: 1
-    }
+    assert refunded["outcomes"] == {ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE: 1}
     completed_refund = ob.get(auth.id, "refund")
     assert completed_refund is not None and completed_refund.status == "done"
     assert any(
@@ -2045,10 +2013,7 @@ def test_charged_settle_with_no_generation_dead_letters_as_invalid_row(
     _seed_credit(store, ws)
     key = _make_key(store, ws)
     auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
-    assert (
-        apply_mod.apply_frozen_settle(_row(auth, cost=777_777))
-        == ApplyOutcome.SETTLED_NOW
-    )
+    assert apply_mod.apply_frozen_settle(_row(auth, cost=777_777)) == ApplyOutcome.SETTLED_NOW
     ob = _outbox(store)
     ob.enqueue(_row(auth, cost=777_777))
 
@@ -2194,7 +2159,9 @@ def test_drain_resolves_recovery_outcomes_and_warning_gates(
         _row(_bare_authorization("gwa-legacy-settle"), intent="refund", origin="legacy"),
         initial_delay_seconds=60,
     )
-    ob.enqueue(_row(_bare_authorization("gwa-legacy-refund-self"), intent="refund", origin="legacy"))
+    ob.enqueue(
+        _row(_bare_authorization("gwa-legacy-refund-self"), intent="refund", origin="legacy")
+    )
     ob.enqueue(_row(_bare_authorization("gwa-refund-already-free"), intent="refund"))
     ob.enqueue(_row(_bare_authorization("gwa-missing")))
     ob.enqueue(_row(_bare_authorization("gwa-unknown")))
@@ -2229,11 +2196,20 @@ def test_drain_resolves_recovery_outcomes_and_warning_gates(
     assert unknown.attempts == 1
     assert unknown.last_error == "unknown outcome: mystery_outcome"
     messages = [rec.message for rec in caplog.records]
-    assert any("kept charge beat refund intent authorization_id=gwa-refund-kept-charge" in msg for msg in messages)
+    assert any(
+        "kept charge beat refund intent authorization_id=gwa-refund-kept-charge" in msg
+        for msg in messages
+    )
     assert not any("gwa-refund-zero" in msg for msg in messages)
-    assert any("legacy settled with sibling refund intent authorization_id=gwa-legacy-settle" in msg for msg in messages)
+    assert any(
+        "legacy settled with sibling refund intent authorization_id=gwa-legacy-settle" in msg
+        for msg in messages
+    )
     assert not any("gwa-legacy-refund-self" in msg for msg in messages)
-    assert any("ALERT settle outbox reservation missing authorization_id=gwa-missing" in msg for msg in messages)
+    assert any(
+        "ALERT settle outbox reservation missing authorization_id=gwa-missing" in msg
+        for msg in messages
+    )
 
 
 def test_drain_resolve_errors_do_not_abort_later_rows(
@@ -2319,7 +2295,13 @@ def test_drain_endpoint_requires_internal_token(fake_store: tuple[Any, Any, Any]
     assert missing.status_code == 401
     assert wrong.status_code == 401
     assert ok.status_code == 200
-    assert ok.json() == {"claimed": 0, "outcomes": {}, "recovered_micro": 0, "purged": 0, "reaped": 0}
+    assert ok.json() == {
+        "claimed": 0,
+        "outcomes": {},
+        "recovered_micro": 0,
+        "purged": 0,
+        "reaped": 0,
+    }
 
 
 # --- Review-round regressions: the primary prod payout path -----------------
@@ -2492,3 +2474,153 @@ def test_user_model_settle_refuses_a_different_model_id(
         json=_typed_settle_body(auth, selected_model="trustedrouter/user-someone-else"),
     )
     assert other.status_code == 400, other.text
+
+
+# ── Done-mark folded into the finalize commit ─────────────────────────────────
+#
+# Settle p90 was ~3.1s: three SERIAL multi-region Spanner commits (enqueue,
+# finalize, mark) at 500-1000ms p90 each, attempts=1 always. The design doc's
+# own §7 said to write status='done' in the finalize transaction once the
+# outbox shared the instance. These pin that: one commit fewer, same lease
+# fence, and the leased-row case still defers to the drain.
+
+
+def _settle_with_sql_spy(
+    store: Any, monkeypatch: pytest.MonkeyPatch, *, ws: str
+) -> tuple[Any, list[tuple[int, str]], Any]:
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    calls: list[tuple[int, str]] = []
+    original_update = _FakeTransaction.execute_update
+    # A monotonic per-transaction number, NOT id(): CPython reuses the id of a
+    # freed transaction object, so a later standalone-mark transaction could
+    # alias the finalize one and pass a same-transaction check vacuously.
+    sequence: dict[int, int] = {}
+
+    def spy(self: Any, sql: str, **kwargs: Any) -> int:
+        txn = sequence.setdefault(id(self), len(sequence))
+        self.__dict__.setdefault("_spy_txn", txn)
+        calls.append((self.__dict__["_spy_txn"], sql))
+        return original_update(self, sql, **kwargs)
+
+    monkeypatch.setattr(_FakeTransaction, "execute_update", spy)
+    return auth, calls, _client(Settings(environment="test", settle_outbox_enabled=True))
+
+
+def test_inline_settle_resolves_the_outbox_row_inside_the_finalize_commit(
+    prod_shaped_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, _bt = prod_shaped_store
+    auth, calls, client = _settle_with_sql_spy(store, monkeypatch, ws="ws-fold-done")
+
+    with caplog.at_level(logging.INFO, logger=GATEWAY_LOGGER):
+        resp = client.post("/v1/internal/gateway/settle", json=_settle_json(auth.id))
+
+    assert resp.status_code == 200, resp.text
+    row = db.settle_outbox[(auth.id, "settle")]
+    assert row["status"] == "done"
+    assert row["lease_owner"] is None
+    assert row["terminal_at"] is not None
+    # The retention contract rode along: no outstanding sibling intent, so the
+    # shared records are armed for the 30-day policy in the SAME commit.
+    assert db.gateway_authorizations[auth.id]["terminal_at"] is not None
+    assert db.reservations[auth.credit_reservation_id]["terminal_at"] is not None
+
+    marks = [
+        txn for txn, sql in calls if sql.startswith("UPDATE tr_settle_outbox SET status=@status")
+    ]
+    assert len(marks) == 1, "the done-mark must run exactly once"
+    [mark_txn] = marks
+    finalize_tables = {
+        txn for txn, sql in calls if "tr_reservation" in sql or "tr_credit_balance" in sql
+    }
+    assert mark_txn in finalize_tables, (
+        "the done-mark ran in its own transaction, not the finalize's"
+    )
+
+    [record] = _settle_timing_records(caplog)
+    assert isinstance(record.args, tuple)
+    assert record.args[7] == 0.0  # mark_ms: no standalone mark commit
+
+
+def test_inline_settle_leaves_a_leased_outbox_row_to_its_drain_worker(
+    prod_shaped_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A drain worker that claimed the row between enqueue and finalize keeps it."""
+    store, db, _bt = prod_shaped_store
+    auth, calls, client = _settle_with_sql_spy(store, monkeypatch, ws="ws-fold-leased")
+    original_enqueue = SpannerSettleOutbox.enqueue
+
+    def enqueue_then_lease(self: Any, row: Any, **kwargs: Any) -> Any:
+        result = original_enqueue(self, row, **kwargs)
+        db.settle_outbox[(row.authorization_id, row.intent_kind)]["lease_owner"] = "drain-w1"
+        return result
+
+    monkeypatch.setattr(SpannerSettleOutbox, "enqueue", enqueue_then_lease)
+
+    with caplog.at_level(logging.INFO, logger=GATEWAY_LOGGER):
+        resp = client.post("/v1/internal/gateway/settle", json=_settle_json(auth.id))
+
+    assert resp.status_code == 200, resp.text
+    row = db.settle_outbox[(auth.id, "settle")]
+    assert row["status"] == "pending"
+    assert row["lease_owner"] == "drain-w1"
+    assert not any(
+        sql.startswith("UPDATE tr_settle_outbox SET status=@status") for _txn, sql in calls
+    ), "a leased row must not be rewritten by the inline path"
+    assert "settle outbox done mark skipped" in caplog.text
+
+
+def test_without_in_commit_activity_durability_the_standalone_mark_still_runs(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No operational-analytics outbox in the commit: durability is only
+    established by the post-commit index write, so the finalize transaction
+    must NOT mark the intent done; the standalone mark after the index does."""
+    store, db, _bt = fake_store
+    auth, calls, client = _settle_with_sql_spy(store, monkeypatch, ws="ws-fold-fallback")
+
+    with caplog.at_level(logging.INFO, logger=GATEWAY_LOGGER):
+        resp = client.post("/v1/internal/gateway/settle", json=_settle_json(auth.id))
+
+    assert resp.status_code == 200, resp.text
+    assert db.settle_outbox[(auth.id, "settle")]["status"] == "done"
+    marks = [
+        txn for txn, sql in calls if sql.startswith("UPDATE tr_settle_outbox SET status=@status")
+    ]
+    # The finalize commit is the one that releases the hold. In this
+    # configuration a later retention commit also touches the reservation,
+    # so "any transaction touching tr_reservation" is NOT the finalize.
+    release_txn = min(txn for txn, sql in calls if "tr_credit_balance" in sql)
+    assert len(marks) == 1
+    assert marks[0] != release_txn, "mark must stay post-commit when durability is post-commit"
+    [record] = _settle_timing_records(caplog)
+    assert isinstance(record.args, tuple)
+    assert record.args[7] > 0.0  # a real standalone mark commit was timed
+
+
+def test_folded_mark_defers_retention_while_a_sibling_intent_is_outstanding(
+    prod_shaped_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Settle and refund intents share the authorization; while the refund is
+    still pending, the folded settle mark must leave the shared records
+    TTL-ineligible exactly as the standalone mark did."""
+    store, db, _bt = prod_shaped_store
+    auth, _calls, client = _settle_with_sql_spy(store, monkeypatch, ws="ws-fold-sibling")
+    _outbox(store).enqueue(_row(auth, intent="refund"), initial_delay_seconds=60)
+
+    resp = client.post("/v1/internal/gateway/settle", json=_settle_json(auth.id))
+
+    assert resp.status_code == 200, resp.text
+    assert db.settle_outbox[(auth.id, "settle")]["status"] == "done"
+    assert db.settle_outbox[(auth.id, "refund")]["status"] == "pending"
+    assert db.gateway_authorizations[auth.id]["terminal_at"] is None
+    assert db.reservations[auth.credit_reservation_id].get("terminal_at") is None

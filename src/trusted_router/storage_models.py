@@ -742,6 +742,10 @@ class TypedFinalizeResult:
     finalized: bool
     activity_indexed: bool
     request_record_typed: bool = False
+    # Settle-outbox intent resolved in the finalize commit: True marked, False
+    # left to a drain worker holding the lease, None not attempted (caller
+    # keeps the standalone mark).
+    outbox_marked: bool | None = None
 
 
 @dataclass(frozen=True)
