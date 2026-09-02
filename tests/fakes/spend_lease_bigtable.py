@@ -38,6 +38,8 @@ class FakeConditionalRow:
 
     def commit(self) -> bool:
         self.table.commit_attempts += 1
+        if self.table.commit_error is not None:
+            raise self.table.commit_error
         current = self.table.rows.get(self.row_key)
         regex_filter = next(
             (
@@ -83,9 +85,17 @@ class FakeDirectRow:
 
 
 class FakeBigtableTable:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        table_id: str = "trustedrouter-spend-lease",
+        app_profile_id: str = "tr-spend-us-central1",
+    ) -> None:
+        self.table_id = table_id
+        self._app_profile_id = app_profile_id
         self.rows: dict[bytes, dict[bytes, bytes]] = {}
         self.commit_attempts = 0
+        self.commit_error: Exception | None = None
         self.force_cas_misses = False
         self.raise_after_next_applied_commit = False
 
