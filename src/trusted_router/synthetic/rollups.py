@@ -73,6 +73,11 @@ def new_rollup_for_sample(
 
 
 def apply_sample_to_rollup(rollup: SyntheticRollup, sample: SyntheticProbeSample) -> None:
+    # A rollup written before bucketing carries one key per distinct
+    # millisecond. Fold it here, so the body shrinks on the very next
+    # read-modify-write rather than growing until the period rolls over.
+    for histogram in _rollup_histograms(rollup):
+        _compact_histogram_in_place(histogram)
     rollup.sample_count += 1
     if sample.status == "up":
         rollup.up_count += 1
@@ -242,13 +247,72 @@ def raw_sample_is_within_retention(
     return created >= now - dt.timedelta(days=days)
 
 
+#: Millisecond values below this are stored exactly; above it they are
+#: rounded to HISTOGRAM_SIGNIFICANT_DIGITS significant digits. Keys stay
+#: integer milliseconds (as strings), so every reader that sorts keys with
+#: int() and walks counts keeps working, and pre-bucketing rows — whose keys
+#: are just finer-grained integers — need no migration: `compact_histogram`
+#: folds them into buckets lazily, on the next write or merge.
+HISTOGRAM_EXACT_BELOW = 100
+HISTOGRAM_SIGNIFICANT_DIGITS = 2
+
+
+def histogram_bucket(value: int) -> int:
+    """Map a millisecond value to its bucket representative.
+
+    Exact below HISTOGRAM_EXACT_BELOW, then log-linear: 2 significant
+    digits, rounded to nearest (ties up). Each decade contributes at most
+    90 keys, so a histogram over 0..10^7 ms holds fewer than 600 keys
+    instead of one per distinct millisecond — which on the Postgres/DSQL
+    and Bigtable backends is the size of the body re-read and re-written
+    on EVERY sample for the rest of the period. The map is monotone
+    (a <= b implies bucket(a) <= bucket(b)) and idempotent, so a percentile
+    taken from bucketed counts is exactly bucket(exact percentile):
+    error is at most half a bucket, i.e. <= 5% above 100 ms and 0 below.
+    """
+    value = max(int(value), 0)
+    if value < HISTOGRAM_EXACT_BELOW:
+        return value
+    step = 10 ** (len(str(value)) - HISTOGRAM_SIGNIFICANT_DIGITS)
+    return (value + step // 2) // step * step
+
+
+def compact_histogram(histogram: dict[str, int]) -> dict[str, int]:
+    """Fold every key into its bucket, preserving total count."""
+    compacted: dict[str, int] = {}
+    for raw_key, count in histogram.items():
+        key = str(histogram_bucket(int(raw_key)))
+        compacted[key] = compacted.get(key, 0) + int(count)
+    return compacted
+
+
+def _compact_histogram_in_place(histogram: dict[str, int]) -> None:
+    if all(str(histogram_bucket(int(key))) == key for key in histogram):
+        return
+    compacted = compact_histogram(histogram)
+    histogram.clear()
+    histogram.update(compacted)
+
+
+def _rollup_histograms(rollup: SyntheticRollup) -> tuple[dict[str, int], ...]:
+    return (
+        rollup.latency_histogram,
+        rollup.ttfb_histogram,
+        rollup.dns_histogram,
+        rollup.tcp_connect_histogram,
+        rollup.tls_handshake_histogram,
+        rollup.gateway_processing_histogram,
+    )
+
+
 def _increment_histogram(histogram: dict[str, int], value: int) -> None:
-    key = str(max(int(value), 0))
+    key = str(histogram_bucket(value))
     histogram[key] = histogram.get(key, 0) + 1
 
 
 def _merge_histograms(target: dict[str, int], source: dict[str, int]) -> None:
-    for key, count in source.items():
+    for raw_key, count in source.items():
+        key = str(histogram_bucket(int(raw_key)))
         target[key] = target.get(key, 0) + count
 
 

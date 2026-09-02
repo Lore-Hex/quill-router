@@ -1519,7 +1519,8 @@ def test_synthetic_rollups_are_idempotent_and_monthly_queryable() -> None:
 
     assert canonical.sample_count == 1
     assert canonical.up_count == 1
-    assert canonical.latency_histogram == {"123": 1}
+    # 123 ms lands in its 2-significant-digit bucket; see histogram_bucket.
+    assert canonical.latency_histogram == {"120": 1}
 
 
 def test_synthetic_rollup_retains_latency_phase_histograms() -> None:
