@@ -13,6 +13,7 @@ from clickhouse.ingest_operational_outbox import (
     ACTIVITY_BOOLEAN_COLUMNS,
     ACTIVITY_OPTIONAL_DEFAULTS,
 )
+from trusted_router.synthetic.rollups import ROLLUP_HISTOGRAM_FIELDS, compact_histogram
 
 SAFE_ID = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 
@@ -46,11 +47,21 @@ def canonical_fingerprint(payload: dict[str, Any], *, surface: str) -> str:
             if canonical.get(field) is not None:
                 canonical[field] = bool(canonical[field])
         if canonical.get("speed_tokens_per_second") is not None:
-            canonical["speed_tokens_per_second"] = float(
-                canonical["speed_tokens_per_second"]
-            )
-    if surface == "rollup" and canonical.get("target_region") is None:
-        canonical["target_region"] = ""
+            canonical["speed_tokens_per_second"] = float(canonical["speed_tokens_per_second"])
+    if surface == "rollup":
+        if canonical.get("target_region") is None:
+            canonical["target_region"] = ""
+        # A source row for a closed period keeps its pre-bucketing exact keys
+        # (never rewritten) while the rebuilt row is bucketed; fold both so
+        # the parity timer compares shape, not key granularity.
+        for field in ROLLUP_HISTOGRAM_FIELDS:
+            histogram = canonical.get(field)
+            if not isinstance(histogram, dict):
+                continue
+            try:
+                canonical[field] = compact_histogram(histogram)
+            except (TypeError, ValueError):
+                continue
     if surface == "benchmark" and canonical.get("speed_tokens_per_second") is not None:
         canonical["speed_tokens_per_second"] = struct.unpack(
             "!f",
@@ -109,8 +120,4 @@ def _iso(value: Any) -> str:
         return text if text.endswith("Z") else text + "Z"
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=dt.UTC)
-    return (
-        parsed.astimezone(dt.UTC)
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "Z")
-    )
+    return parsed.astimezone(dt.UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")

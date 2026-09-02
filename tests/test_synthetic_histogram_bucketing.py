@@ -11,15 +11,19 @@ and prove the readers stay correct rather than assuming it.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import json
 import math
 import random
+from contextlib import contextmanager
 from typing import Any
 
 from clickhouse.backfill_operational_analytics import insert_rollups as backfill_insert_rollups
+from clickhouse.operational_fingerprint import canonical_fingerprint
 from clickhouse.rollup_synthetic import monthly_from_daily
 from trusted_router.operational_analytics import stable_rows_fingerprint
+from trusted_router.storage_errors import StoreConflict
 from trusted_router.storage_gcp_synthetic_rollups import (
     _rollup_key,
     _write_json_row,
@@ -27,6 +31,7 @@ from trusted_router.storage_gcp_synthetic_rollups import (
     write_synthetic_rollups,
 )
 from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, iso_now
+from trusted_router.storage_postgres import PostgresStore
 from trusted_router.synthetic import status as synthetic_status
 from trusted_router.synthetic.rollups import (
     HISTOGRAM_EXACT_BELOW,
@@ -237,7 +242,13 @@ def test_compact_rollup_folds_a_legacy_rollup_preserves_counts_and_is_idempotent
     assert len(legacy.ttfb_histogram) <= MAX_KEYS_TO_TEN_MILLION_MS
     assert sum(legacy.latency_histogram.values()) == len(values) + 1
     assert sum(legacy.ttfb_histogram.values()) == len(values) + 1
-    assert legacy.latency_histogram[str(histogram_bucket(777))] >= 1
+    # The applied sample landed in its bucket on top of what the seed held.
+    expected_latency = sum(1 for v in values if histogram_bucket(v) == histogram_bucket(777)) + 1
+    assert legacy.latency_histogram[str(histogram_bucket(777))] == expected_latency
+    expected_ttfb = (
+        sum(1 for v in values if histogram_bucket(v // 2) == histogram_bucket(777 // 2)) + 1
+    )
+    assert legacy.ttfb_histogram[str(histogram_bucket(777 // 2))] == expected_ttfb
     before = dict(legacy.latency_histogram)
     compact_rollup(legacy)
     assert legacy.latency_histogram == before
@@ -516,3 +527,125 @@ def test_dual_read_fingerprint_treats_legacy_and_bucketed_rows_as_the_same_row()
     assert stable_rows_fingerprint([legacy], grace_seconds=0) != stable_rows_fingerprint(
         [other], grace_seconds=0
     )
+
+
+def test_parity_timer_fingerprint_folds_rollup_histograms_too() -> None:
+    values = list(range(100, 2_100))
+    base = {
+        "id": "closed-day",
+        "period": "day",
+        "period_start": "2026-05-01T00:00:00Z",
+        "component": "canonical_api",
+        "target": "api",
+        "probe_type": "tls_health",
+        "monitor_region": "us-central1",
+        "target_region": None,
+        "sample_count": len(values),
+        "up_count": len(values),
+    }
+    legacy = {**base, "latency_histogram": _legacy_histogram_of(values)}
+    bucketed = {**base, "latency_histogram": _histogram_of(values)}
+    other = {**base, "latency_histogram": _histogram_of([v + 500 for v in values])}
+    assert canonical_fingerprint(legacy, surface="rollup") == canonical_fingerprint(
+        bucketed, surface="rollup"
+    )
+    assert canonical_fingerprint(legacy, surface="rollup") != canonical_fingerprint(
+        other, surface="rollup"
+    )
+    # Other surfaces are untouched by the fold.
+    sample = {"id": "s1", "created_at": "2026-05-01T00:00:00Z", "latency_milliseconds": 123}
+    assert canonical_fingerprint(sample, surface="synthetic") == canonical_fingerprint(
+        dict(sample), surface="synthetic"
+    )
+
+
+class _FakeTransaction:
+    def __init__(self, log: list[str]) -> None:
+        self.log = log
+
+    def __enter__(self) -> _FakeTransaction:
+        self.log.append("begin")
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        self.log.append("commit")
+        return False
+
+
+class _FakeConnection:
+    def __init__(self, log: list[str]) -> None:
+        self.log = log
+
+    def transaction(self) -> _FakeTransaction:
+        return _FakeTransaction(self.log)
+
+
+class _FakePool:
+    def __init__(self, log: list[str]) -> None:
+        self.log = log
+
+    @contextmanager
+    def connection(self) -> Any:
+        yield _FakeConnection(self.log)
+
+
+def test_postgres_record_sample_compacts_the_legacy_body_it_reads_for_update() -> None:
+    """Drives the real PostgresStore.record_synthetic_probe_sample body with the
+    SQL helpers stubbed at the row level: the FOR UPDATE read returns a legacy
+    exact-key rollup and the upsert that follows must carry a bucketed body,
+    inside the same transaction."""
+    created_at = iso_now()
+    seed = _sample("seed", 150, created_at=created_at)
+    (period, component) = next(
+        (period, component) for period, component in sample_rollup_ids(seed) if period == "month"
+    )
+    legacy_values = list(range(100, 2_100))
+    legacy = new_rollup_for_sample(seed, period=period, component=component, bucket=False)
+    legacy.latency_histogram = _legacy_histogram_of(legacy_values)
+    legacy.sample_count = len(legacy_values)
+    legacy.up_count = len(legacy_values)
+
+    log: list[str] = []
+    writes: list[tuple[str, str, Any]] = []
+    store = object.__new__(PostgresStore)
+    store._transaction_attempts = 1
+    store._pool = _FakePool(log)  # type: ignore[assignment]
+    store._operational_analytics_outbox = None  # type: ignore[assignment]
+
+    def write_indexed(_conn: Any, kind: str, entity_id: str, value: Any, **_: Any) -> None:
+        log.append(f"write:{kind}")
+        writes.append((kind, entity_id, dataclasses.replace(value)))
+
+    def insert_once(_conn: Any, kind: str, *_a: Any, **_k: Any) -> bool:
+        log.append(f"insert:{kind}")
+        return kind == "synthetic_rollup_seen"  # marker is new; rollup row already exists
+
+    def read_entity(_conn: Any, kind: str, entity_id: str, _cls: Any, **_: Any) -> Any:
+        log.append(f"read:{kind}")
+        if kind == "synthetic_rollup" and entity_id == legacy.id:
+            return dataclasses.replace(legacy)
+        raise StoreConflict(f"unexpected read {kind}/{entity_id}")
+
+    store._write_indexed_entity_tx = write_indexed  # type: ignore[method-assign]
+    store._insert_entity_once_tx = insert_once  # type: ignore[method-assign]
+    store._insert_indexed_entity_once_tx = insert_once  # type: ignore[method-assign]
+    store._read_entity_tx = read_entity  # type: ignore[method-assign]
+
+    # Only the month rollup pre-exists in this fixture; hour/day reads would
+    # raise, so steer sample_rollup_ids to the one period under test.
+    import trusted_router.storage_postgres as storage_postgres_module
+
+    original = storage_postgres_module.sample_rollup_ids
+    storage_postgres_module.sample_rollup_ids = lambda s: [(period, component)]  # type: ignore[assignment]
+    try:
+        store.record_synthetic_probe_sample(_sample("next", 777, created_at=created_at))
+    finally:
+        storage_postgres_module.sample_rollup_ids = original  # type: ignore[assignment]
+
+    assert log[0] == "begin" and log[-1] == "commit"
+    assert log.index("read:synthetic_rollup") < log.index("write:synthetic_rollup") < len(log) - 1
+    (written,) = [value for kind, _, value in writes if kind == "synthetic_rollup"]
+    assert written.sample_count == len(legacy_values) + 1
+    assert len(written.latency_histogram) <= MAX_KEYS_TO_TEN_MILLION_MS
+    assert sum(written.latency_histogram.values()) == len(legacy_values) + 1
+    assert all(str(histogram_bucket(int(key))) == key for key in written.latency_histogram)

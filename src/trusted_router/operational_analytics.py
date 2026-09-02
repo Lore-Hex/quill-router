@@ -526,8 +526,14 @@ def stable_rows_fingerprint(rows: list[Any], *, grace_seconds: int = 30) -> tupl
         # period is bucketed. Fold both to the same shape before comparing.
         for field in ROLLUP_HISTOGRAM_FIELDS:
             histogram = payload.get(field)
-            if isinstance(histogram, dict):
+            if not isinstance(histogram, dict):
+                continue
+            try:
                 payload[field] = compact_histogram(histogram)
+            except (TypeError, ValueError):
+                # A count that is not an integer cannot be folded; compare the
+                # row as stored rather than turning a shadow read into a raise.
+                continue
         speed = payload.get("speed_tokens_per_second")
         if speed is not None and "input_tokens" in payload:
             # The long-lived provider benchmark table intentionally stores

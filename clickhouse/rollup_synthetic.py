@@ -265,15 +265,7 @@ def _merge_rollup(target: SyntheticRollup, source: SyntheticRollup) -> None:
         "cost_microdollars",
     ):
         setattr(target, field, getattr(target, field) + getattr(source, field))
-    for field in (
-        "latency_histogram",
-        "ttfb_histogram",
-        "dns_histogram",
-        "tcp_connect_histogram",
-        "tls_handshake_histogram",
-        "gateway_processing_histogram",
-        "error_counts",
-    ):
+    for field in (*ROLLUP_HISTOGRAM_FIELDS, "error_counts"):
         destination = getattr(target, field)
         for key, count in getattr(source, field).items():
             destination[key] = destination.get(key, 0) + count
