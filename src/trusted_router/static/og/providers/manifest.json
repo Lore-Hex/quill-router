@@ -208,10 +208,10 @@
   },
   "fal": {
     "card_version": 2,
-    "model_count": 1,
+    "model_count": 2,
     "name": "fal.ai",
     "privacy": "Policy documented",
-    "route_count": 1,
+    "route_count": 2,
     "route_mode": "Prepaid",
     "slug": "fal"
   },

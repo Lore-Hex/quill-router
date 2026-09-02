@@ -15,6 +15,7 @@ provider. TrustedRouter does not send video requests through OpenRouter.
 | `lightricks/ltx-2.3` | LTX 2.3 | 6 seconds, 1080p |
 | `google/gemini-omni-flash` | Gemini Omni Flash | 4 seconds, 720p |
 | `minimax/hailuo-3` | MiniMax Hailuo 3, also called H3 | 5 seconds, 2K |
+| `minimax/h3-max` | MiniMax H3 Max on fal | 5 seconds, 768p |
 
 `GET /v1/videos/models` is the source of truth for currently enabled models and
 their supported parameters.

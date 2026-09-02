@@ -1828,11 +1828,13 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
-            "TrustedRouter supports a bounded FAL image-generation route with "
-            "first-party per-megapixel pricing and a paid generation canary. "
+            "TrustedRouter supports bounded fal image generation and MiniMax H3 "
+            "Max video generation with first-party pricing and paid generation "
+            "canaries. H3 Max video is returned inline through fal's fixed queue "
+            "host rather than a provider-selected download host. "
             "No contractual ZDR, confidential-compute, or E2EE claim is tracked."
         ),
-        provider_policy_url="https://fal.ai/models/fal-ai/flux/schnell/api",
+        provider_policy_url="https://fal.ai/models/minimax/h3-max/text-to-video/api",
     ),
     "tencent": Provider(
         slug="tencent",

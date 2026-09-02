@@ -31,9 +31,9 @@ def _mp4() -> bytes:
 
 
 def test_daily_video_profiles_rotate_all_direct_providers_at_minimum_cost() -> None:
-    assert len(DAILY_VIDEO_PROFILES) == 7
-    assert len({profile.provider for profile in DAILY_VIDEO_PROFILES}) == 7
-    assert [daily_video_profile(date(2026, 8, day)).provider for day in range(3, 10)] == [
+    assert len(DAILY_VIDEO_PROFILES) == 8
+    assert len({profile.provider for profile in DAILY_VIDEO_PROFILES}) == 8
+    assert [daily_video_profile(date(2026, 8, day)).provider for day in range(3, 11)] == [
         "grok",
         "runway",
         "alibaba",
@@ -41,18 +41,20 @@ def test_daily_video_profiles_rotate_all_direct_providers_at_minimum_cost() -> N
         "ltx",
         "google-ai-studio",
         "atlas-cloud",
+        "fal",
     ]
     assert sum(profile.expected_cost_microdollars for profile in DAILY_VIDEO_PROFILES) == (
-        2_527_276
+        2_827_276
     )
     assert max(profile.expected_cost_microdollars for profile in DAILY_VIDEO_PROFILES) <= 700_000
     profiles = {profile.provider: profile for profile in DAILY_VIDEO_PROFILES}
     assert profiles["atlas-cloud"].generate_audio is True
     assert profiles["google-ai-studio"].generate_audio is True
+    assert profiles["fal"].generate_audio is True
     assert all(
         not profile.generate_audio
         for provider, profile in profiles.items()
-        if provider not in {"atlas-cloud", "google-ai-studio"}
+        if provider not in {"atlas-cloud", "google-ai-studio", "fal"}
     )
 
 
@@ -316,7 +318,7 @@ def test_video_synthetic_deploy_is_one_rotating_generation_per_day() -> None:
     section = body.split("daily video-generation Cloud Run job", maxsplit=1)[1]
 
     assert 'video_scheduler_name="${video_job_name}-daily"' in body
-    assert "rotate through seven providers weekly" in body
+    assert "rotate through direct video providers" in body
     assert "TR_SYNTHETIC_VIDEO_MODEL=" not in section
     assert "TR_SYNTHETIC_VIDEO_PROVIDER=" not in section
     assert "TR_SYNTHETIC_VIDEO_DURATION_SECONDS=" not in section

@@ -34,6 +34,7 @@ VIDEO_MODELS = {
     "lightricks/ltx-2.3",
     "lightricks/ltx-2.3-fast",
     "minimax/hailuo-3",
+    "minimax/h3-max",
     "x-ai/grok-imagine-video",
     "decart/lucy-2.5",
     "decart/lucy-vton-3.5",
@@ -44,6 +45,7 @@ NATIVE_VIDEO_PROVIDERS = {
     "lightricks/ltx-2.3": ("ltx",),
     "lightricks/ltx-2.3-fast": ("ltx",),
     "minimax/hailuo-3": ("atlas-cloud",),
+    "minimax/h3-max": ("fal",),
     "google/veo-3.1": ("google-ai-studio",),
     "google/veo-3.1-fast": ("google-ai-studio",),
     "alibaba/wan-2.7": ("alibaba",),
@@ -59,6 +61,7 @@ NATIVE_VIDEO_PROVIDERS = {
 }
 
 NATIVE_ONLY_VIDEO_MODELS = {
+    "minimax/h3-max",
     "x-ai/grok-imagine-video",
     "decart/lucy-2.5",
     "decart/lucy-vton-3.5",
@@ -114,6 +117,8 @@ def test_launch_video_catalog_is_explicit_and_credits_only() -> None:
         "audio",
         "video",
     )
+    assert MODELS["minimax/h3-max"].name == "MiniMax H3 Max"
+    assert MODELS["minimax/h3-max"].input_modalities == ("text", "image")
 
 
 def test_sora_video_authorizes_direct_openai_before_standard_fallback() -> None:

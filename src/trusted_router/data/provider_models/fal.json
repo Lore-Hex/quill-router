@@ -26,11 +26,43 @@
       "routable": true,
       "input_token_price_per_m": 0,
       "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "MiniMax H3 Max on fal",
+      "title": "minimax/h3-max/text-to-video",
+      "model_type": "video",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "video"
+      ],
+      "endpoints": [
+        "videos"
+      ],
+      "status": 1,
+      "id": "minimax/h3-max",
+      "upstream_id": "minimax/h3-max/text-to-video",
+      "supported_features": [
+        "video-generation",
+        "image-to-video",
+        "native-audio"
+      ],
+      "fixed_output_price_per_second_microdollars": 80000,
+      "fixed_output_price_per_second_microdollars_by_resolution": {
+        "480p": 50000,
+        "768p": 80000
+      },
+      "pricing_source": "https://fal.ai/models/minimax/h3-max/text-to-video",
+      "routable": true,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
     }
   ],
-  "source": "https://api.fal.ai/v1/models?endpoint_id=fal-ai%2Fflux%2Fschnell",
+  "source": "https://api.fal.ai/v1/models",
   "pricing_source": "https://api.fal.ai/v1/models/pricing?endpoint_id=fal-ai%2Fflux%2Fschnell",
-  "generated_at": "2026-09-02T17:42:35Z",
+  "generated_at": "2026-09-02T18:26:11Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 1
+  "model_count": 2
 }
