@@ -66,6 +66,12 @@ SpendLeaseEligibilityFailure = Literal[
 ]
 
 
+def spend_lease_scope_salt(idempotency_scope: str) -> str:
+    """Return the stable four-hex-character Spanner arbitration key prefix."""
+
+    return hashlib.sha256(idempotency_scope.encode("utf-8")).hexdigest()[:4]
+
+
 @dataclass(frozen=True)
 class SpendLeaseBoot:
     kid: str
