@@ -30,6 +30,28 @@ def test_deepinfra_fetch_discovers_current_glm_models(monkeypatch) -> None:  # n
                 },
             },
             {
+                "id": "example/Cache-Price-Unknown",
+                "metadata": {
+                    "pricing": {
+                        "input_tokens": "0.1234567",
+                        "output_tokens": "0.7654321",
+                        "cache_read_tokens": "not-published",
+                    }
+                },
+            },
+            {
+                "id": "zai-org/GLM-5.3",
+                "metadata": {
+                    "context_length": 1_048_576,
+                    "max_tokens": 1_048_576,
+                    "pricing": {
+                        "input_tokens": 1.4,
+                        "output_tokens": 4.4,
+                        "cache_read_tokens": 0.26,
+                    },
+                },
+            },
+            {
                 "id": "zai-org/GLM-5.3-Flash",
                 "metadata": {
                     "context_length": 1_048_576,
@@ -37,6 +59,7 @@ def test_deepinfra_fetch_discovers_current_glm_models(monkeypatch) -> None:  # n
                     "pricing": {
                         "input_tokens": 0.15,
                         "output_tokens": 0.50,
+                        "cache_read_tokens": 0.03,
                     },
                 },
             },
@@ -71,9 +94,23 @@ def test_deepinfra_fetch_discovers_current_glm_models(monkeypatch) -> None:  # n
     assert price.prompt_micro_per_m == 1_200_000
     assert price.completion_micro_per_m == 4_200_000
     assert deepinfra.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "zai-org/GLM-5.2"
+    unknown_cache = result.prices["example/cache-price-unknown"]
+    assert unknown_cache.prompt_micro_per_m == 123_457
+    assert unknown_cache.completion_micro_per_m == 765_432
+    assert unknown_cache.tiers[0].prompt_cached_micro_per_m is None
+    full = result.prices["z-ai/glm-5.3"]
+    assert full.prompt_micro_per_m == 1_400_000
+    assert full.completion_micro_per_m == 4_400_000
+    assert full.tiers[0].prompt_cached_micro_per_m == 260_000
+    assert (
+        deepinfra._DISCOVERED_MANIFEST_ROWS["z-ai/glm-5.3"]["max_output_tokens"]
+        == 131_072
+    )
+    assert deepinfra.UPSTREAM_ID_MAP["z-ai/glm-5.3"] == "zai-org/GLM-5.3"
     flash = result.prices["z-ai/glm-5.3-flash"]
     assert flash.prompt_micro_per_m == 150_000
     assert flash.completion_micro_per_m == 500_000
+    assert flash.tiers[0].prompt_cached_micro_per_m == 30_000
     assert (
         deepinfra._DISCOVERED_MANIFEST_ROWS["z-ai/glm-5.3-flash"][
             "max_output_tokens"

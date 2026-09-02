@@ -36,6 +36,7 @@ from trusted_router.security import (
     new_key_id,
     verify_api_key,
 )
+from trusted_router.spend_leases import SpendLeaseArtifact
 from trusted_router.spend_windows import (
     KeyLimitExceeded,
     KeyWindowLimitDecision,
@@ -120,6 +121,7 @@ class InMemoryApiKeys:
         budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
         scopes: list[str] | None = None,
+        app_id: str = "",
     ) -> tuple[str, ApiKey]:
         with self._lock:
             validated_scopes = validate_api_key_scopes(scopes, management=management)
@@ -138,6 +140,7 @@ class InMemoryApiKeys:
                 workspace_id=workspace_id,
                 creator_user_id=creator_user_id,
                 scopes=validated_scopes,
+                app_id=app_id,
                 management=management,
                 limit_microdollars=limit_microdollars,
                 limit_reset=limit_reset,
@@ -437,6 +440,10 @@ class InMemoryApiKeys:
         idempotency_key: str | None = None,
         tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
+        app_id: str = "",
+        app_markup_basis_points: int = 0,
+        receipt_fee_basis_points: int = 0,
+        app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         user_provided_model_id: str | None = None,
@@ -449,6 +456,7 @@ class InMemoryApiKeys:
         settlement: str = "local",
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
+        spend_lease: SpendLeaseArtifact | None = None,
     ) -> GatewayAuthorization:
         with self._lock:
             if idempotency_key is not None:
@@ -487,6 +495,10 @@ class InMemoryApiKeys:
                 idempotency_key=idempotency_key,
                 tags=dict(tags or {}),
                 idempotency_fingerprint=idempotency_fingerprint,
+                app_id=app_id,
+                app_markup_basis_points=app_markup_basis_points,
+                receipt_fee_basis_points=receipt_fee_basis_points,
+                app_owner_user_id=app_owner_user_id,
                 custom_model_id=custom_model_id,
                 custom_model_revision=custom_model_revision,
                 user_provided_model_id=user_provided_model_id,
@@ -502,6 +514,16 @@ class InMemoryApiKeys:
                 native_batch_eligible=native_batch_eligible,
                 settlement=settlement,
                 expires_at=expires_at,
+                spend_lease_token=spend_lease.token if spend_lease else None,
+                spend_lease_id=spend_lease.lease_id if spend_lease else None,
+                spend_lease_cap_micro=spend_lease.cap_micro if spend_lease else None,
+                spend_lease_gen=spend_lease.gen if spend_lease else None,
+                spend_lease_iat=spend_lease.iat if spend_lease else None,
+                spend_lease_exp=spend_lease.exp if spend_lease else None,
+                spend_lease_issuer_kid=spend_lease.issuer_kid if spend_lease else None,
+                spend_lease_boot_kid=spend_lease.boot_kid if spend_lease else None,
+                spend_lease_catalog_version=(spend_lease.catalog_version if spend_lease else None),
+                spend_lease_status=spend_lease.lease_status if spend_lease else None,
             )
             self.gateway_authorizations[authorization.id] = authorization
             if idempotency_key is not None:

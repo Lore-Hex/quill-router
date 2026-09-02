@@ -1,0 +1,105 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Provider routing and pinning">
+  <div class="marketing-copy">
+    <span class="eyebrow">OpenRouter-compatible routing controls</span>
+    <h2>Pin, prefer, or exclude providers per request.</h2>
+    <p>Every Chat Completions and Responses request accepts a <code>provider</code> object that narrows which providers may serve it and in what order. Hard filters fail with <code>400</code> before inference when nothing matches. Unknown options also return <code>400</code>. OpenRouter options recognized but not implemented by this release return <code>501 not_supported_in_alpha</code>. Accepted router options never disappear silently.</p>
+    <p>Lists accept either a JSON array or one comma-separated string. Provider slugs are the ones on the <a href="/providers">providers page</a> and in <a href="https://api.trustedrouter.com/v1/models"><code>GET /v1/models</code></a>.</p>
+  </div>
+  <div class="marketing-grid two">
+    <div class="marketing-card">
+      <span class="card-label">Pin one provider</span>
+      <h3><code>only</code> + no fallbacks</h3>
+      <pre><code>{
+  "model": "deepseek/deepseek-v4-pro",
+  "provider": {
+    "only": ["deepseek"],
+    "allow_fallbacks": false
+  }
+}</code></pre>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Prefer, then fail over</span>
+      <h3><code>order</code></h3>
+      <pre><code>{
+  "model": "trustedrouter/auto",
+  "provider": {
+    "order": ["tinfoil", "chutes"],
+    "ignore": ["examplecorp"]
+  }
+}</code></pre>
+    </div>
+  </div>
+  <p style="margin-top:12px">Rejected field names and status codes are emitted as bounded operational metadata so compatibility demand can be measured. Field values, request bodies, prompts, and outputs are excluded, and Sentry remains outside the enclave.</p>
+</section>
+
+<section class="status-section" style="margin-top:48px" id="fields">
+  <div class="status-section-head">
+    <div>
+      <h2>The <code>provider</code> object</h2>
+      <p>Every field is optional. Filters compose: <code>only</code> and <code>ignore</code> narrow the candidate set, <code>order</code> and <code>sort</code> arrange it, and <code>allow_fallbacks</code> decides whether anything past the first candidate may serve.</p>
+    </div>
+  </div>
+  <div class="leaderboard-table-wrap">
+    <table class="activity-table status-table">
+      <thead><tr><th>Field</th><th>Values</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><code>only</code></td><td>Provider slugs (array or comma string)</td><td>Allowlist. Candidates outside it are removed; an empty result is a <code>400</code>.</td></tr>
+        <tr><td><code>ignore</code></td><td>Provider slugs</td><td>Blocklist, applied after <code>only</code>.</td></tr>
+        <tr><td><code>order</code></td><td>Provider slugs</td><td>Soft preferred order while fallbacks are enabled; unlisted providers remain eligible afterward. Combine with <code>allow_fallbacks: false</code> or use <code>only</code> for a hard restriction.</td></tr>
+        <tr><td><code>allow_fallbacks</code></td><td><code>true</code> (default) / <code>false</code></td><td><code>false</code> serves only the single first candidate; a top-level <code>allow_fallbacks</code> is also accepted, and disagreeing values are a <code>400</code>.</td></tr>
+        <tr><td><code>sort</code></td><td><code>price</code>, <code>latency</code>, <code>throughput</code>, or <code>{"by":"price","partition":"model|none"}</code></td><td>Orders endpoints by tracked metrics. The default <code>model</code> partition preserves the primary and fallback model order; <code>none</code> sorts every endpoint together.</td></tr>
+        <tr><td><code>require_parameters</code></td><td><code>true</code> / <code>false</code> (default)</td><td><code>true</code> removes endpoints that do not publish support for every model parameter present in the request.</td></tr>
+        <tr><td><code>max_price</code></td><td><code>{"prompt":"0.15","completion":"0.40"}</code></td><td>Hard maximum USD price per million prompt or completion tokens. Compared as integer microdollars.</td></tr>
+        <tr><td><code>zdr</code></td><td><code>true</code> / <code>false</code></td><td><code>true</code> restricts routing to endpoints with a tracked zero-data-retention guarantee.</td></tr>
+        <tr><td><code>min_privacy</code></td><td><code>any</code>, <code>no_store</code>, <code>zdr</code>, <code>confidential</code> (aliases <code>e2e</code>, <code>e2ee</code>)</td><td>A hard privacy floor: no endpoint with the required tracked guarantee means a <code>400</code>, never a downgrade.</td></tr>
+        <tr><td><code>data_collection</code></td><td><code>allow</code>, <code>deny</code></td><td>OpenRouter-compatible preference against providers that retain data; use <code>min_privacy</code> when the floor must be unrelaxable.</td></tr>
+        <tr><td><code>usage</code></td><td><code>credits</code>, <code>byok</code> (aliases <code>prepaid</code>, <code>bring-your-own-key</code>; also accepted as <code>usage_type</code> or <code>billing</code>)</td><td>Restricts billing path — platform credits or your own upstream key.</td></tr>
+        <tr><td><code>jurisdiction</code></td><td><code>us</code> (also accepted as <code>country</code>, <code>headquarters_country</code>, <code>provider_country</code>)</td><td>Restricts to providers headquartered in that jurisdiction.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top:12px"><code>quantizations</code>, <code>preferred_max_latency</code>, <code>preferred_min_throughput</code>, <code>enforce_distillable_text</code>, non-token <code>max_price</code> units, and <code>sort: "exacto"</code> are recognized OpenRouter controls but are not implemented yet. They return <code>501 not_supported_in_alpha</code> rather than routing as if unset.</p>
+</section>
+
+<section class="status-section" style="margin-top:48px" id="parameter-contract">
+  <div class="status-section-head"><div>
+    <h2>Parameter contract</h2>
+    <p>TrustedRouter validates the current OpenRouter request field, provider field, and plugin names at the attested boundary. This catches spelling mistakes and API drift before authorization or billing.</p>
+  </div></div>
+  <div class="marketing-grid two">
+    <div class="marketing-card">
+      <span class="card-label">Unknown option</span>
+      <h3><code>400 invalid_request_error</code></h3>
+      <p>The error names the exact field in <code>error.param</code>, such as <code>provider.future_option</code>.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Known but unavailable</span>
+      <h3><code>501 not_supported_in_alpha</code></h3>
+      <p>The field is part of OpenRouter's API, but this TrustedRouter release cannot honor it. The request stops before inference.</p>
+    </div>
+  </div>
+</section>
+
+<section class="status-section" style="margin-top:48px" id="suffixes">
+  <div class="status-section-head">
+    <div>
+      <h2>Model-id suffixes</h2>
+      <p>Two OpenRouter-style shortcuts set <code>provider.sort</code> from the model id itself.</p>
+    </div>
+  </div>
+  <div class="leaderboard-table-wrap">
+    <table class="activity-table status-table">
+      <thead><tr><th>Suffix</th><th>Equivalent</th></tr></thead>
+      <tbody>
+        <tr><td><code>deepseek/deepseek-v4-pro:nitro</code></td><td><code>provider.sort = "throughput"</code></td></tr>
+        <tr><td><code>deepseek/deepseek-v4-pro:floor</code></td><td><code>provider.sort = "price"</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top:12px">A suffix takes precedence over an explicit <code>provider.sort</code> in the same request. Discover which providers serve a model &mdash; with privacy badges, prices, and live performance &mdash; on that model's page under <a href="/models">models</a>, or programmatically via <a href="https://api.trustedrouter.com/v1/models"><code>GET /v1/models</code></a>. Pinned requests still produce <a href="/docs/receipts">signed receipts</a> naming the provider that actually served.</p>
+</section>
+
+{% endblock %}

@@ -8,6 +8,14 @@ from typing import Any, cast
 
 from pydantic import ValidationError
 
+from trusted_router.app_markup_billing import (
+    APP_MARKUP_APP_ID_SETTLE_FIELD,
+    APP_MARKUP_OWNER_SETTLE_FIELD,
+    APP_MARKUP_PAYOUT_SETTLE_FIELD,
+    app_markup_microdollars_from_charge,
+    app_markup_owner_share_microdollars,
+    app_markup_payout_event_id,
+)
 from trusted_router.catalog import PROVIDERS, endpoint_for_id
 from trusted_router.catalog_data import PARASAIL_LIBERTY_2_0_MODEL_ID
 from trusted_router.custom_model_billing import (
@@ -28,6 +36,7 @@ from trusted_router.storage_gcp_codec import (
 )
 from trusted_router.storage_gcp_codec import json_body as _json_body
 from trusted_router.storage_models import (
+    AppMarkupPayout,
     GatewayAuthorization,
     SettleOutboxRow,
     UserModelPayout,
@@ -146,6 +155,9 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
     payout_raw = body_dict.pop(USER_MODEL_PAYOUT_SETTLE_FIELD, None)
     owner_raw = body_dict.pop(USER_MODEL_OWNER_SETTLE_FIELD, None)
     model_raw = body_dict.pop(USER_MODEL_ID_SETTLE_FIELD, None)
+    app_payout_raw = body_dict.pop(APP_MARKUP_PAYOUT_SETTLE_FIELD, None)
+    app_owner_raw = body_dict.pop(APP_MARKUP_OWNER_SETTLE_FIELD, None)
+    app_id_raw = body_dict.pop(APP_MARKUP_APP_ID_SETTLE_FIELD, None)
     try:
         operator_cost = (
             _operator_cost_microdollars(operator_cost_raw)
@@ -157,6 +169,13 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
             amount=payout_raw,
             owner_user_id=owner_raw,
             model_id=model_raw,
+        )
+        app_markup_payout = _frozen_app_markup_payout(
+            auth,
+            charge_microdollars=row.actual_cost_micro,
+            amount=app_payout_raw,
+            owner_user_id=app_owner_raw,
+            app_id=app_id_raw,
         )
         generation = (
             _frozen_generation(
@@ -183,6 +202,7 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
             usage_type,
             generation,
             user_model_payout,
+            app_markup_payout,
         )
     elif row.settle_origin == "legacy":
         outcome = _apply_legacy(
@@ -191,6 +211,7 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
             usage_type,
             generation,
             user_model_payout,
+            app_markup_payout,
         )
     else:
         return ApplyOutcome.INVALID_ROW
@@ -294,6 +315,47 @@ def _frozen_user_model_payout(
     )
 
 
+def _frozen_app_markup_payout(
+    auth: GatewayAuthorization,
+    *,
+    charge_microdollars: int,
+    amount: Any,
+    owner_user_id: Any,
+    app_id: Any,
+) -> AppMarkupPayout | None:
+    fields = (amount, owner_user_id, app_id)
+    # The authorization is the source of truth for whether a payout exists and how much; the frozen body is a cross-check that can only reject, never create or suppress.
+    if auth.app_markup_basis_points <= 0:
+        if fields != (None, None, None):
+            raise ValueError("authorization has no app markup")
+        return None
+    if not auth.workspace_id:
+        raise ValueError("invalid payout workspace")
+    if amount is not None and (
+        isinstance(amount, bool) or not isinstance(amount, int) or amount < 0
+    ):
+        raise ValueError("invalid frozen app-markup payout")
+    if owner_user_id is not None and (
+        not isinstance(owner_user_id, str) or not owner_user_id.strip()
+    ):
+        raise ValueError("invalid frozen app-markup owner")
+    if app_id is not None and (not isinstance(app_id, str) or not app_id.strip()):
+        raise ValueError("invalid frozen app id")
+    if owner_user_id is not None and owner_user_id != auth.app_owner_user_id:
+        raise ValueError("frozen app-markup owner does not match authorization")
+    if app_id is not None and app_id != auth.app_id:
+        raise ValueError("frozen app id does not match authorization")
+    markup = app_markup_microdollars_from_charge(
+        charge_microdollars, auth.app_markup_basis_points
+    )
+    derived_amount = app_markup_owner_share_microdollars(markup)
+    if amount is not None and amount != derived_amount:
+        raise ValueError("frozen app-markup payout does not match derived amount")
+    return AppMarkupPayout(
+        auth.app_owner_user_id, auth.app_id, derived_amount, auth.workspace_id
+    )
+
+
 def _provider_slug(endpoint_id: str | None) -> str:
     endpoint = endpoint_for_id(endpoint_id)
     if endpoint is not None:
@@ -316,6 +378,7 @@ def _apply_typed(
     usage_type: UsageType,
     generation: Generation | None,
     user_model_payout: UserModelPayout | None,
+    app_markup_payout: AppMarkupPayout | None,
 ) -> str:
     typed_store = typed_billing_store()
     if typed_store is None:
@@ -350,6 +413,7 @@ def _apply_typed(
                     selected_usage_type=usage_type,
                     generation=generation,
                     user_model_payout=user_model_payout,
+                    app_markup_payout=app_markup_payout,
                 )
         except _REGIONAL_SETTLE_RETRY_EXCS:
             # An opposing settle/refund can win the local row just before its
@@ -399,6 +463,7 @@ def _apply_typed(
                 generation_writes=generation_writes,
                 generation=generation,
                 user_model_payout=user_model_payout,
+                app_markup_payout=app_markup_payout,
             )
         except _TRANSIENT_STORE_EXCS:
             return ApplyOutcome.PARK_TYPED_UNAVAILABLE
@@ -469,6 +534,7 @@ def _apply_legacy(
     usage_type: UsageType,
     generation: Generation | None,
     user_model_payout: UserModelPayout | None,
+    app_markup_payout: AppMarkupPayout | None,
 ) -> str:
     try:
         finalized = STORE.finalize_gateway_authorization(
@@ -499,7 +565,43 @@ def _apply_legacy(
                     user_model_payout.owner_user_id,
                     exc_info=True,
                 )
+        if success and app_markup_payout is not None and app_markup_payout.amount_microdollars > 0:
+            try:
+                STORE.credit_user_earnings(
+                    app_markup_payout.owner_user_id,
+                    app_markup_payout.amount_microdollars,
+                    app_markup_payout_event_id(row.authorization_id),
+                    custom_model_id=app_markup_payout.app_id,
+                    payer_workspace_id=app_markup_payout.payer_workspace_id,
+                )
+            except Exception:
+                logger.error(
+                    "app_markup_payout_failed authorization_id=%s owner=%s",
+                    row.authorization_id,
+                    app_markup_payout.owner_user_id,
+                    exc_info=True,
+                )
         return ApplyOutcome.SETTLED_NOW
+    if success and app_markup_payout is not None and app_markup_payout.amount_microdollars > 0:
+        # Legacy settlement committed the customer charge separately from the
+        # payout. Repair the latter on replay; the movement id makes this
+        # exactly-once even if inline credit actually succeeded before dying.
+        try:
+            STORE.credit_user_earnings(
+                app_markup_payout.owner_user_id,
+                app_markup_payout.amount_microdollars,
+                app_markup_payout_event_id(row.authorization_id),
+                custom_model_id=app_markup_payout.app_id,
+                payer_workspace_id=app_markup_payout.payer_workspace_id,
+            )
+        except Exception:
+            logger.error(
+                "app_markup_payout_repair_failed authorization_id=%s owner=%s",
+                row.authorization_id,
+                app_markup_payout.owner_user_id,
+                exc_info=True,
+            )
+            return ApplyOutcome.ERROR
     # Legacy free releases do exist (inline refund/failure-settle). Only the
     # typed origin can disambiguate via the reservation's actual_micro.
     return ApplyOutcome.ALREADY_SETTLED_LEGACY

@@ -174,6 +174,7 @@ def _run_staged_probe(
     remove_leaves_tag: bool = False,
     traffic_shift_failure_pct: int | None = None,
     watchdog_exit: int = 0,
+    service_ingress: str = "all",
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     stub_bin = tmp_path / "bin"
     stub_bin.mkdir()
@@ -212,9 +213,9 @@ case " $* " in
   *" --format=json"*)
     tagged_revision="$(cat "$STAGED_TAG_STATE")"
     if [ -n "$tagged_revision" ]; then
-      printf '{"status":{"traffic":[{"percent":100,"revisionName":"old-rev"},{"percent":0,"revisionName":"%s","tag":"staged-probe"}]}}\\n' "$tagged_revision"
+      printf '{"metadata":{"annotations":{"run.googleapis.com/ingress":"%s"}},"status":{"traffic":[{"percent":100,"revisionName":"old-rev"},{"percent":0,"revisionName":"%s","tag":"staged-probe"}]}}\\n' "$STAGED_SERVICE_INGRESS" "$tagged_revision"
     else
-      printf '%s\\n' '{"status":{"traffic":[{"percent":100,"revisionName":"old-rev"}]}}'
+      printf '{"metadata":{"annotations":{"run.googleapis.com/ingress":"%s"}},"status":{"traffic":[{"percent":100,"revisionName":"old-rev"}]}}\\n' "$STAGED_SERVICE_INGRESS"
     fi
     ;;
   *"status.url"*) printf '%s\\n' 'https://trusted-router-hash-uc.a.run.app' ;;
@@ -310,6 +311,7 @@ exit 0
         ),
         "STAGED_REAL_PYTHON": sys.executable,
         "STAGED_STUB_WATCHDOG_EXIT": str(watchdog_exit),
+        "STAGED_SERVICE_INGRESS": service_ingress,
         "TR_LEGACY_PROBE_RETRY_SECONDS": "0",
         "TR_PROBE_TAG_REMOVE_RETRY_SECONDS": "0",
         "TR_STAGED_WATCHDOG_BASELINE_FILE": str(tmp_path / "final-baseline.json"),
@@ -327,6 +329,30 @@ exit 0
         timeout=20,
     )
     return run, call_log.read_text().splitlines()
+
+
+def test_private_ingress_skips_runapp_probe_and_keeps_watchdog_gate(
+    tmp_path: Path,
+) -> None:
+    run, calls = _run_staged_probe(
+        tmp_path,
+        console_code="404",
+        session_code="404",
+        service_ingress="internal-and-cloud-load-balancing",
+    )
+
+    assert run.returncode == 0, run.stderr
+    assert not any(call.startswith("curl ") for call in calls)
+    assert "load-balancer watchdog owns HTTP validation" in run.stdout
+    traffic_calls = [
+        call
+        for call in calls
+        if call.startswith("gcloud run services update-traffic")
+        and "--to-revisions=" in call
+    ]
+    assert any("--to-revisions=new-rev=10,old-rev=90" in call for call in traffic_calls)
+    assert any("--to-revisions=new-rev=50,old-rev=50" in call for call in traffic_calls)
+    assert any("--to-revisions=new-rev=100" in call for call in traffic_calls)
 
 
 def test_probe_tag_resolution_uses_json_and_unset_tag_resolves_to_empty(

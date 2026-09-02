@@ -5,6 +5,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any
 
+import pytest
 from pytest import MonkeyPatch
 
 from scripts.pricing import refresh
@@ -110,6 +111,56 @@ class _FakeTogetherClient:
         return _FakeTogetherEndpointsResponse()
 
 
+class _FakeProbeResponse:
+    def __init__(self, status_code: int, payload: dict[str, Any]) -> None:
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self) -> dict[str, Any]:
+        return self._payload
+
+
+class _MissingM3TogetherClient(_FakeTogetherClient):
+    probe_status = 200
+    probe_payload: dict[str, Any] = {"choices": []}
+
+    def get(
+        self, url: str, *, headers: dict[str, str]
+    ) -> _FakeTogetherModelsResponse | _FakeTogetherEndpointsResponse:
+        response = super().get(url, headers=headers)
+        if url != together.SERVERLESS_ENDPOINTS_URL:
+            return response
+
+        class MissingM3Endpoints(_FakeTogetherEndpointsResponse):
+            def json(self) -> dict[str, list[dict[str, Any]]]:
+                payload = super().json()
+                payload["data"] = [
+                    row
+                    for row in payload["data"]
+                    if row["model"] != "MiniMaxAI/MiniMax-M3"
+                ]
+                return payload
+
+        return MissingM3Endpoints()
+
+    def post(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, Any],
+    ) -> _FakeProbeResponse:
+        assert url == together.CHAT_COMPLETIONS_URL
+        assert headers["Authorization"].startswith("Bearer ")
+        assert json == {
+            "model": "MiniMaxAI/MiniMax-M3",
+            "messages": [{"role": "user", "content": "Reply PONG"}],
+            "max_tokens": 1,
+            "temperature": 0,
+        }
+        return _FakeProbeResponse(self.probe_status, self.probe_payload)
+
+
 def test_together_llama_33_turbo_price_change_is_mapped(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setenv("TOGETHER_API_KEY", "fake-together-key")
     monkeypatch.setattr(together.httpx, "Client", _FakeTogetherClient)
@@ -167,6 +218,77 @@ def test_together_excludes_deployable_but_non_serverless_models(
 
     assert "deepseek/deepseek-v4-pro" in result.prices
     assert "deepseek/deepseek-r1-0528" not in result.prices
+
+
+def test_together_probe_retains_callable_expected_model_omitted_from_feed(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("TOGETHER_API_KEY", "fake-together-key")
+    monkeypatch.setattr(together.httpx, "Client", _MissingM3TogetherClient)
+    manifest_path = tmp_path / "together.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "provider": "together",
+                "models": [
+                    {
+                        "id": "minimax/minimax-m3",
+                        "upstream_id": "MiniMaxAI/MiniMax-M3",
+                        "status": 1,
+                        "missing_since": "2026-08-28",
+                        "input_token_price_per_m": 300_000,
+                        "output_token_price_per_m": 1_200_000,
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(together, "MANIFEST_PATH", manifest_path)
+
+    result = together.fetch()
+    together.write_provider_manifest(result)
+    rows = {
+        row["id"]: row
+        for row in json.loads(manifest_path.read_text(encoding="utf-8"))["models"]
+    }
+
+    assert "minimax/minimax-m3" in result.prices
+    assert any("probe retained MiniMaxAI/MiniMax-M3" in note for note in result.notes)
+    assert rows["minimax/minimax-m3"].get("routable", True) is True
+    assert "missing_since" not in rows["minimax/minimax-m3"]
+
+
+def test_together_probe_allows_definitively_unavailable_model_to_retire(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class UnavailableClient(_MissingM3TogetherClient):
+        probe_status = 400
+        probe_payload = {"error": {"code": "model_not_available"}}
+
+    monkeypatch.setenv("TOGETHER_API_KEY", "fake-together-key")
+    monkeypatch.setattr(together.httpx, "Client", UnavailableClient)
+
+    result = together.fetch()
+
+    assert "minimax/minimax-m3" not in result.prices
+    assert any("confirmed MiniMaxAI/MiniMax-M3 is unavailable" in note for note in result.notes)
+
+
+def test_together_probe_ambiguous_failure_preserves_last_known_good(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class ThrottledClient(_MissingM3TogetherClient):
+        probe_status = 503
+        probe_payload = {"error": {"code": "upstream_unavailable"}}
+
+    monkeypatch.setenv("TOGETHER_API_KEY", "fake-together-key")
+    monkeypatch.setattr(together.httpx, "Client", ThrottledClient)
+
+    with pytest.raises(RuntimeError, match="ambiguous availability probe failure"):
+        together.fetch()
 
 
 def test_together_refresh_adds_new_started_serverless_chat_models(
@@ -270,7 +392,10 @@ def test_together_pricing_is_on_hourly_refresh_path() -> None:
     assert "0 * * * *" in workflow
     assert "trustedrouter-together-api-key" in workflow
     assert "TOGETHER_API_KEY" in workflow
-    assert "deepseek/deepseek-v4-pro" in together.EXPECTED_MODELS
+    assert "minimax/minimax-m3" in together.EXPECTED_MODELS
+    assert "z-ai/glm-5.2" in together.EXPECTED_MODELS
+    assert "deepseek/deepseek-v4-pro" not in together.EXPECTED_MODELS
+    assert "moonshotai/kimi-k2.7-code" not in together.EXPECTED_MODELS
     assert "SERVERLESS_ENDPOINTS_URL" in vars(together)
 
 

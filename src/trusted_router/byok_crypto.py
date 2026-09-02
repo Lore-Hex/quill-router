@@ -11,16 +11,9 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from trusted_router.key_management import KeyWrapperSettings, key_wrapper_for
 from trusted_router.storage_models import EncryptedSecretEnvelope
 
-# v1 associated data is colon-joined with no escaping or length prefix, so
-# component boundaries are ambiguous: _aad("a:b", "c") == _aad("a", "b:c").
-# Kept because envelopes written before the migration are still v1 and must
-# keep decrypting. See docs/design/byok-aad-v2-migration.md.
-ALGORITHM = "TR-BYOK-ENVELOPE-AES-256-GCM-V1"
-
 # v2 length-prefixes every AAD component and adds a namespace, making the
-# encoding injective. Written only because every enclave region can already
-# read it (quill-cloud-proxy#162 shipped first) — writing v2 before that would
-# break BYOK for every customer using it.
+# encoding injective. V1 read support was removed only after every standalone
+# cloud attested that no V1 envelope remained.
 ALGORITHM_V2 = "TR-BYOK-ENVELOPE-AES-256-GCM-V2"
 
 # The two secret families. A purpose can no longer collide with a provider slug
@@ -147,15 +140,8 @@ def decrypt_control_secret(
     workspace_id: str,
     purpose: str,
 ) -> str:
-    """Decrypt a control-plane secret.
-
-    A v1 envelope predates the namespace split, so it is opened with the v1 AAD
-    that sealed it — which is the same shape a BYOK key used. That collision is
-    exactly what the backfill (step 3) removes; until then v1 rows keep working
-    as they always did.
-    """
-    namespace = NAMESPACE_CONTROL if envelope.algorithm == ALGORITHM_V2 else NAMESPACE_PROVIDER
-    aad = _envelope_aad(envelope.algorithm, namespace, workspace_id, purpose)
+    """Decrypt a namespace-bound control-plane secret."""
+    aad = _envelope_aad(envelope.algorithm, NAMESPACE_CONTROL, workspace_id, purpose)
     dek = _unwrap_dek(envelope, aad, settings)
     plaintext = AESGCM(dek).decrypt(_unb64(envelope.nonce), _unb64(envelope.ciphertext), aad)
     return plaintext.decode("utf-8")
@@ -214,6 +200,8 @@ def decrypt_user_model_secret(
 def encrypted_secret_payload(envelope: EncryptedSecretEnvelope | None) -> dict[str, str] | None:
     if envelope is None:
         return None
+    if envelope.algorithm != ALGORITHM_V2:
+        raise ValueError("unsupported encrypted secret envelope algorithm")
     return {
         "algorithm": envelope.algorithm,
         "key_ref": envelope.key_ref,
@@ -235,6 +223,11 @@ def byok_cache_key(
     Gateways use this to cache decrypted BYOK material briefly in enclave
     memory. A raw-key rotation creates a new ciphertext/DEK, therefore a new
     cache key; deleting BYOK stops returning an envelope at authorization time.
+
+    The ``v1`` marker below versions this cache-key serialization, not the
+    encrypted-envelope format. It remains stable across the V1 envelope
+    retirement so rolling enclave updates preserve cache identity for a V2
+    envelope.
     """
     if envelope is None:
         return None
@@ -289,11 +282,6 @@ def _key_ref(settings: KeyWrapperSettings) -> str:
     return key_wrapper_for(settings).key_ref
 
 
-def _aad(workspace_id: str, provider: str) -> bytes:
-    """v1 associated data. Not injective — see the module header."""
-    return f"trustedrouter:byok:{workspace_id}:{provider}".encode()
-
-
 def _aad_v2(namespace: str, workspace_id: str, context: str) -> bytes:
     """v2 associated data: length-prefixed, so it is injective.
 
@@ -318,17 +306,10 @@ def _aad_v2(namespace: str, workspace_id: str, context: str) -> bytes:
 def _envelope_aad(
     algorithm: str, namespace: str, workspace_id: str, context: str
 ) -> bytes:
-    """Select the associated data for an envelope's declared format.
-
-    Dispatching on the stored algorithm rather than trying v2 and falling back
-    to v1: a permanent fallback would keep the substitution weakness alive and
-    make the migration impossible to declare finished.
-    """
-    if algorithm == ALGORITHM:
-        return _aad(workspace_id, context)
-    if algorithm == ALGORITHM_V2:
-        return _aad_v2(namespace, workspace_id, context)
-    raise ValueError("unsupported BYOK envelope algorithm")
+    """Reject every retired or unknown format before any unwrap operation."""
+    if algorithm != ALGORITHM_V2:
+        raise ValueError("unsupported BYOK envelope algorithm")
+    return _aad_v2(namespace, workspace_id, context)
 
 
 def _b64(value: bytes) -> str:

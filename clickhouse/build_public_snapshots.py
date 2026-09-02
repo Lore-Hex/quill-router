@@ -26,7 +26,8 @@ from trusted_router.synthetic.video_leaderboard import aggregate_video_leaderboa
 
 SAMPLE_LIMIT = 10_000
 PER_PROVIDER_LIMIT = 500
-STATUS_LIVE_SAMPLE_LIMIT = 500
+STATUS_SAMPLES_PER_DIMENSION = 30
+STATUS_LIVE_SAMPLE_LIMIT = 5_000
 STATUS_HOUR_ROLLUP_LIMIT = 5_000
 VIDEO_SAMPLE_LIMIT = 5_000
 CLIENT_ROLLUP_LIMIT = 100_000
@@ -145,12 +146,20 @@ def _status_inputs(
         SyntheticProbeSample,
         _query(
             password,
-            """
-SELECT * EXCEPT ingest_version
-FROM synthetic_probe_samples FINAL
-WHERE created_at >= now64(3) - INTERVAL 1 HOUR
+            f"""
+SELECT * EXCEPT (ingest_version, probe_rank)
+FROM
+(
+  SELECT *, row_number() OVER (
+    PARTITION BY monitor_region, target, probe_type, target_region
+    ORDER BY created_at DESC, id DESC
+  ) AS probe_rank
+  FROM synthetic_probe_samples FINAL
+  WHERE created_at >= now64(3) - INTERVAL 1 HOUR
+)
+WHERE probe_rank <= {STATUS_SAMPLES_PER_DIMENSION}
 ORDER BY created_at DESC, id DESC
-LIMIT 500
+LIMIT {STATUS_LIVE_SAMPLE_LIMIT}
 FORMAT JSONEachRow
 """,
         ),

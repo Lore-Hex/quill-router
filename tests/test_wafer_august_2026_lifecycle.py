@@ -62,10 +62,6 @@ def test_wafer_retirements_are_provider_scoped(
             at=_CUTOFF,
         )
 
-    for model_id in _REPLACEMENTS:
-        providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
-        assert "wafer" in providers
-
 
 def test_hourly_refresh_cannot_restore_retired_wafer_routes(
     monkeypatch: pytest.MonkeyPatch,

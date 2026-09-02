@@ -35,6 +35,8 @@
       <a href="/models">Models</a>
       <a href="https://trust.trustedrouter.com">Trust</a>
       <a href="https://github.com/Lore-Hex/trusted-router-py">SDK</a>
+      <a href="/support">Help</a>
+      <a href="/support?category=feature#support-inquiry">Feature request</a>
     </nav>
     {% if workspaces %}
     <form class="workspace-selector" method="post" action="/console/workspaces/select">
@@ -75,6 +77,7 @@
       <div class="sidebar-group">
         <div class="sidebar-label">Workspace</div>
         <a href="/console/api-keys" class="sidebar-link {{ 'active' if active == 'api-keys' else '' }}">API Keys</a>
+        <a href="/console/authorized-apps" class="sidebar-link {{ 'active' if active == 'authorized-apps' else '' }}">Authorized Apps</a>
         <a href="/console/byok" class="sidebar-link {{ 'active' if active == 'byok' else '' }}">BYOK</a>
         <a href="/console/custom-models" class="sidebar-link {{ 'active' if active == 'custom-models' else '' }}">Custom Models</a>
         <a href="/console/user-models" class="sidebar-link {{ 'active' if active == 'user-models' else '' }}">User-provided Models</a>

@@ -22,6 +22,11 @@ from trusted_router.config import Settings
 from trusted_router.dashboard import docs_llms_full_txt
 from trusted_router.errors import error_response
 from trusted_router.mcp_metadata import MCP_SERVER_NAME, MCP_SERVER_TITLE
+from trusted_router.mcp_skills import (
+    SKILLS_EXTENSION_KEY,
+    SkillNotFound,
+    SkillsRegistry,
+)
 from trusted_router.request_limits import enforce_authenticated_rate_limit
 from trusted_router.scopes import SCOPE_BALANCE_READ, SCOPE_INFERENCE
 from trusted_router.storage import STORE, ApiKey
@@ -93,6 +98,10 @@ class TrustedRouterMCP:
         self._model_shapes_by_id: dict[str, dict[str, object]] | None = None
         self._provider_shapes: tuple[dict[str, object], ...] | None = None
         self._docs_chunks: tuple[str, ...] | None = None
+        # Skills Extension (SEP-2640). Holds the last known-good copy of the
+        # canonical advisor skill for the process lifetime, so a GitHub
+        # hiccup degrades to staleness rather than an error.
+        self._skills = SkillsRegistry()
         self._handlers: dict[str, Callable[[dict[str, Any], Request], Awaitable[Any]]] = {
             "ping": self._tool_ping,
             "models-list": self._tool_models_list,
@@ -169,7 +178,16 @@ class TrustedRouterMCP:
                 request_id,
                 {
                     "protocolVersion": MCP_PROTOCOL_VERSION,
-                    "capabilities": {"tools": {}},
+                    # `resources` is advertised because the Skills Extension is
+                    # Resources-based: skill:// URIs are read through
+                    # resources/read. `extensions` is how SEP-2640 says a
+                    # server opts in; a client that does not know the key
+                    # simply never calls skills/*.
+                    "capabilities": {
+                        "tools": {},
+                        "resources": {},
+                        "extensions": {SKILLS_EXTENSION_KEY: {}},
+                    },
                     "serverInfo": {
                         "name": MCP_SERVER_NAME,
                         "title": MCP_SERVER_TITLE,
@@ -177,6 +195,38 @@ class TrustedRouterMCP:
                     },
                 },
             )
+        if method == "skills/list":
+            try:
+                result = await run_in_threadpool(self._skills.list_result)
+                return _mcp_result(request_id, result)
+            except Exception:
+                return _mcp_error(request_id, -32603, "Skill listing failed")
+        if method == "skills/get":
+            try:
+                result = await run_in_threadpool(
+                    self._skills.get_result,
+                    name=(str(params["name"]) if params.get("name") else None),
+                    uri=(str(params["uri"]) if params.get("uri") else None),
+                )
+                return _mcp_result(request_id, result)
+            except SkillNotFound as exc:
+                return _mcp_error(request_id, -32602, str(exc))
+            except Exception:
+                return _mcp_error(request_id, -32603, "Skill fetch failed")
+        if method == "resources/read":
+            uri = str(params.get("uri") or "")
+            if uri.startswith("skill://"):
+                try:
+                    read = await run_in_threadpool(self._skills.read_resource, uri)
+                    return _mcp_result(request_id, read)
+                except SkillNotFound as exc:
+                    return _mcp_error(request_id, -32602, str(exc))
+                except Exception:
+                    return _mcp_error(request_id, -32603, "Skill read failed")
+            return _mcp_error(request_id, -32602, f"Unknown resource uri: {uri}")
+        if method == "resources/list":
+            listing = await run_in_threadpool(self._skills.list_resources)
+            return _mcp_result(request_id, {"resources": listing})
         if method == "tools/list":
             return _mcp_result(request_id, {"tools": _mcp_tools()})
         if method == "tools/call":

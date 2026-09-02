@@ -7,9 +7,9 @@
 #   * Each model is an <h3 class="card_pricing_title_text"> with text like
 #     "Opus 4.7", "Sonnet 4.6", "Haiku 4.5".
 #   * Walking up two ancestors from the h3 lands on the model card.
-#   * Inside each card, four <span class="tokens_main_val_number" data-value="N">
-#     elements appear in order: Input, Output, Cache Write, Cache Read.
-#   * We use the first two (Input, Output) for prompt/completion pricing.
+#   * Each price row has a .tokens_main_label and .tokens_main_val_number.
+#   * Labels, rather than row position, identify Input, Output, cache Read,
+#     and cache Write. Anthropic changed the Read/Write order in September 2026.
 """Anthropic pricing-page parser."""
 from __future__ import annotations
 
@@ -44,27 +44,34 @@ def parse(html: str) -> dict:
         card = heading.parent.parent if heading.parent else None
         if card is None:
             continue
-        # First two .tokens_main_val_number values are Input / Output in $/MTok.
-        spans = card.select(".tokens_main_val_number")
-        if len(spans) < 2:
+        prices: dict[str, Decimal] = {}
+        for price_node in card.select(".tokens_main_wrap"):
+            label = price_node.select_one(".tokens_main_label")
+            value = price_node.select_one(".tokens_main_val_number")
+            if label is None or value is None:
+                continue
+            name = label.get_text(" ", strip=True).lower()
+            if name not in {"input", "output", "read", "write"} or name in prices:
+                continue
+            try:
+                raw_value = value.get("data-value")
+                if not isinstance(raw_value, str):
+                    raw_value = value.get_text(strip=True)
+                prices[name] = Decimal(raw_value)
+            except (InvalidOperation, TypeError, ValueError):
+                continue
+        if "input" not in prices or "output" not in prices:
             continue
-        try:
-            prompt_usd = Decimal(spans[0].get("data-value") or spans[0].text)
-            completion_usd = Decimal(spans[1].get("data-value") or spans[1].text)
-            cache_read_usd = (
-                Decimal(spans[3].get("data-value") or spans[3].text)
-                if len(spans) >= 4
-                else None
-            )
-        except (InvalidOperation, TypeError, ValueError):
-            continue
-        row = {
+        prompt_usd = prices["input"]
+        completion_usd = prices["output"]
+        cache_read_usd = prices.get("read")
+        price_row = {
             "prompt_micro_per_m": int(prompt_usd * 1_000_000),
             "completion_micro_per_m": int(completion_usd * 1_000_000),
         }
         if cache_read_usd is not None:
-            row["prompt_cached_micro_per_m"] = int(cache_read_usd * 1_000_000)
-        out[or_id] = row
+            price_row["prompt_cached_micro_per_m"] = int(cache_read_usd * 1_000_000)
+        out[or_id] = price_row
 
     # Anthropic documents Fast mode as a multiplier below the standard model
     # cards rather than rendering a second pricing card. Publish the distinct

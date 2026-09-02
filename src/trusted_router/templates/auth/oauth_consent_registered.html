@@ -1,0 +1,86 @@
+{% extends "auth/_base.html" %}
+{% block body %}
+<div class="oauth-app-identity">
+  {% if app_logo_url %}
+  <img class="oauth-app-logo" src="{{ app_logo_url }}" alt="{{ key_label }} logo" referrerpolicy="no-referrer">
+  {% endif %}
+  <div>
+    <h1>Authorize {{ key_label }}</h1>
+    <p class="verified-developer">{{ app_owner_line }}</p>
+  </div>
+</div>
+<p><strong>{{ key_label }}</strong> will receive a delegated API key for
+<strong>{{ workspace_name }}</strong>.</p>
+{% if markup_percent %}<p>This app adds {{ markup_percent }}% on top of TrustedRouter token costs.</p>{% endif %}
+
+{% if checkout_status == "success" %}
+<div class="notice success" role="status">
+  Payment submitted. Stripe is confirming your credits and saved card now.
+</div>
+{% elif checkout_status == "cancel" %}
+<div class="notice" role="status">Checkout was canceled. Nothing was charged.</div>
+{% elif checkout_status == "mock" %}
+<div class="notice" role="status">Test checkout completed.</div>
+{% endif %}
+
+<section class="auth-section{% if needs_funding %} emphasized{% endif %}" aria-labelledby="fund-heading">
+  <div class="section-title-row">
+    <div>
+      <p class="step-label">Step 1</p>
+      <h2 id="fund-heading">Add credits</h2>
+    </div>
+    <strong class="balance">{{ available_display }} available</strong>
+  </div>
+  {% if needs_funding %}
+  <p>This account starts at $0 because it was created for an app. Add credits before {{ key_label }} makes its first model call.</p>
+  {% else %}
+  <p>Your existing balance can fund this app. Add more now if you want a separate cushion.</p>
+  {% endif %}
+  <form method="post" action="/auth/fund" class="funding-form">
+    {% for name, value in funding_hidden_fields %}
+    <input type="hidden" name="{{ name }}" value="{{ value }}">
+    {% endfor %}
+    <div class="amount-options" role="radiogroup" aria-label="Credit amount">
+      {% for amount in funding_amounts %}
+      <label class="amount-option">
+        <input type="radio" name="fund_amount" value="{{ amount }}"{% if amount == default_funding_amount %} checked{% endif %}>
+        <span>${{ amount }}</span>
+      </label>
+      {% endfor %}
+    </div>
+    <button class="btn{% if not needs_funding %} secondary{% endif %}" type="submit">Continue to secure card checkout</button>
+  </form>
+  <p class="fine-print">Stripe processes the payment. Your card is saved to your TrustedRouter account for faster top ups and optional auto refill. You can remove it from the console.</p>
+</section>
+
+<section class="auth-section" aria-labelledby="approve-heading">
+  <p class="step-label">Step 2</p>
+  <h2 id="approve-heading">Choose this app's maximum</h2>
+  <p>The limit belongs only to the key issued to {{ key_label }}. You can change or revoke it later.</p>
+  <form method="post" action="/auth/approve" class="approval-form">
+  {% for name, value in hidden_fields %}
+  <input type="hidden" name="{{ name }}" value="{{ value }}">
+  {% endfor %}
+    {% if suggested_monthly_budget %}<p>The app suggests a ${{ suggested_monthly_budget }}/month budget. You choose the limit below.</p>{% endif %}
+    <div class="limit-fields" role="radiogroup" aria-label="Monthly budget">
+      {% for value, label in [("5", "$5/month"), ("20", "$20/month"), ("100", "$100/month"), ("none", "No limit")] %}
+      <label><input type="radio" name="monthly_budget" value="{{ value }}"{% if value == "20" %} checked{% endif %}> {{ label }}</label>
+      {% endfor %}
+    </div>
+    <ul class="consent-facts">
+      <li>Run model inference and read the requests this key made.</li>
+      <li>Read your profile and verification level.</li>
+      <li>Read your remaining credit balance, but not account management details.</li>
+      <li>TrustedRouter keeps no prompt or output logs, always.</li>
+      <li>You can revoke the key from the console at any time.</li>
+    </ul>
+    <div class="actions">
+      <button class="btn{% if needs_funding %} secondary{% endif %}" type="submit">Authorize {{ key_label }}</button>
+      <a class="btn secondary" href="{{ cancel_url }}">Cancel</a>
+    </div>
+    {% if needs_funding %}
+    <p class="fine-print">You can authorize with a $0 balance, but model calls will require credits or a configured BYOK provider key.</p>
+    {% endif %}
+  </form>
+</section>
+{% endblock %}

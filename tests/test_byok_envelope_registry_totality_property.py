@@ -1,10 +1,12 @@
-"""Proof that the BYOK AAD v2 backfill's envelope registry is total.
+"""Proof that the retired-V1 census registry covers every envelope surface.
 
-`byok_aad_backfill` decides what to migrate from two hand-written tables:
-`MIGRATED_KINDS` and `_fields_for_kind`. Between them they name three
+`byok_aad_backfill` decides what to scan from one source-of-truth registry,
+`MIGRATED_SURFACES`, exposed through `MIGRATED_KINDS` and `_fields_for_kind`.
+It currently names five
 locations — byok.encrypted_secret, broadcast_destination.encrypted_api_key and
-broadcast_destination.encrypted_headers — and tag each with the AAD namespace
-("provider" or "control") its envelope was sealed under. The law:
+broadcast_destination.encrypted_headers, plus the user-provided model endpoint
+and signing secrets — and tags each with the AAD namespace it is sealed under.
+The law:
 
     for every dataclass D the package defines, and every field f of D whose
     RESOLVED annotation admits an EncryptedSecretEnvelope,
@@ -58,7 +60,7 @@ disclose was itself a review finding:
     other name would not. On the read side that fails closed, because a model
     with no recognised read gets no kind and the law reports it as uncovered.
     On the write side it does not: see the scope limit below.
-  - `NON_ENVELOPE_KINDS`, one entry today, and `LOOSELY_TYPED_FIELDS`, two.
+  - `NON_ENVELOPE_KINDS`, five entries today, and `LOOSELY_TYPED_FIELDS`, two.
     Both are declarations with reasons and both are asserted in both
     directions, so an entry that stops being true fails the build.
   - `_OPAQUE_CONTAINERS`, the five builtin container types `_admits_any` calls
@@ -106,8 +108,8 @@ in the package now qualifies — and narrower within the two original files. Two
 real kinds left coverage that way: `broadcast_delivery` and
 `broadcast_delivery_due`, both written by `_write_delivery` in
 storage_gcp_broadcast.py, a method that names no envelope model, field, sealer
-or id helper. That is why `NON_ENVELOPE_KINDS` shrank from three entries to one
-— the two that went are out of scope, not proven safe — and why a new
+or id helper. Two former entries left `NON_ENVELOPE_KINDS` as out of scope,
+not proven safe, and a new
 `write_entity("broadcast_delivery_archive", ...)` beside them passes this file
 today where the old list would have caught it. Measured both ways against both
 versions, not reasoned about. The cost is bounded by what those functions
@@ -116,9 +118,9 @@ is the loosely typed field `LOOSELY_TYPED_FIELDS` documents, so this is the same
 hole as the settle_body refutation approached from the other side.
 
 Why this is a proof and not a test. The registry is exactly right today — every
-caller of the two encrypt functions was walked by hand and maps to precisely
-those three fields. The failure mode is not "the registry is wrong", it is
-"someone adds a fourth place an envelope lives". `_process_row` only ever looks
+caller of the encrypt functions maps to precisely those five fields. The
+failure mode is not "the registry is wrong", it is "someone adds a sixth place
+an envelope lives". `_process_row` only ever looks
 at the fields `_fields_for_kind` names, so an unregistered field is never
 counted, never migrated, and never reported: the audit run comes back clean and
 all-v2 while v1 envelopes sit in the rows it just walked past. That clean audit
@@ -126,22 +128,11 @@ result is what signed off step 3 on AWS and Azure. A migration declaring itself
 finished with v1 envelopes still in storage is the entire reason this module
 exists.
 
-The family half is the same defect class in a sharper form. A wrong family does
-not skip the field, it re-seals it under the wrong namespace: the v1 unwrap
-still succeeds, because v1 AAD has no namespace component at all (see
-`_envelope_aad`), so nothing inside the backfill objects and the application
-later reads the row back through the other namespace and gets InvalidTag for a
-secret that is now unrecoverable.
-
-Measured rather than assumed, because the first draft of this paragraph
-asserted that outcome as inevitable and it is not. Both family flips were run
-against this module: with today's two body shapes each one fails CLOSED inside
-`_migrate_envelope` — the provider branch demands a `provider` field the
-broadcast body has not got, and the control branch demands a purpose suffix
-`_broadcast_context` has no entry for. So today the `envelopes_migrated`
-assertion is what catches a wrong family, and the decrypt beside it is the
-guard for a future body carrying both context fields, where the silent
-corruption above becomes reachable.
+The family half remains useful after the mutating backfill was retired: it
+proves that the registry's namespace metadata agrees with each active writer.
+The read-only census does not use that family to decrypt or rewrite anything,
+but keeping the derivation accurate prevents a future operator or migration
+from treating hand-written namespace claims as evidence.
 
 Near-miss recorded against this module's own first draft, because it is the
 same mistake in miniature. `_derived_pairs` originally built its set by
@@ -154,22 +145,11 @@ green. A proof whose central assertion is silent on its motivating case is not
 a proof, so unresolvable halves now surface as the `UNPLACED_KIND` /
 `UNSEALED_FAMILY` sentinels and read as locations the registry does not cover.
 
-Finding recorded here because it refutes the assumption this module started
-from — that `MIGRATED_KINDS` is the one place a kind is listed. It is not, and
-neither entity store reads it as a set. `SpannerEntityStore.scan` hardcodes
-`kind IN ('broadcast_destination', 'byok')` into its SQL text and never
-references the registry; `PostgresEntityStore.scan` binds `MIGRATED_KINDS[0],
-MIGRATED_KINDS[1]` positionally against a two-placeholder IN list. Adding a
-third kind to the registry today updates neither scan, so the backfill would
-never fetch the rows it had just been taught to migrate, and would once again
-report clean. The two store tests below capture the statement each scan
-actually issues and check the registry kinds against it. Calling that
-"behavioural" would be an overclaim, and the first draft did: the fakes return
-no rows, so nothing about retrieval, decoding or pagination is exercised. What
-they establish is narrower and still worth having — adding a kind to the
-registry without editing the SQL text and the placeholder count stops the
-build. The source is deliberately left as it is: this module records the
-coupling rather than burying it in a refactor.
+An earlier review found that both entity scans duplicated the registry's kind
+list in SQL. That defect is now closed: Spanner binds `UNNEST(@kinds)` and
+Postgres binds `kind = ANY(%s)`, both from `MIGRATED_KINDS`. The store tests
+capture the actual statement and parameters, and a retrieval test proves a
+newly registered kind is returned rather than merely appearing in SQL text.
 
 Refutation, from an adversarial review of this module, of its own central
 claim. Reflection follows types, and `dict[str, Any]` is the absence of one.
@@ -276,33 +256,19 @@ from typing import Any
 import pytest
 
 import trusted_router
-from tests.test_byok_aad_backfill import MemoryEntityStore, _v1_envelope
+from tests.test_byok_aad_backfill import MemoryEntityStore
 from trusted_router import byok_aad_backfill as backfill
 from trusted_router import byok_crypto, storage_models
 from trusted_router.byok_aad_backfill import (
     BackfillRunner,
     PostgresEntityStore,
     SpannerEntityStore,
-    _broadcast_context,
     _fields_for_kind,
 )
-from trusted_router.byok_crypto import (
-    ALGORITHM_V2,
-    NAMESPACE_CONTROL,
-    NAMESPACE_PROVIDER,
-    NAMESPACE_USER_MODEL,
-    decrypt_byok_secret,
-    decrypt_control_secret,
-    decrypt_user_model_secret,
-)
+from trusted_router.byok_crypto import NAMESPACE_CONTROL, NAMESPACE_PROVIDER, NAMESPACE_USER_MODEL
 from trusted_router.byok_v1_attestations import MIGRATED_KINDS
-from trusted_router.config import Settings
 from trusted_router.services.broadcast import broadcast_secret_context
 from trusted_router.services.broadcast_adapters import _secret_context as adapter_secret_context
-from trusted_router.services.user_model_secrets import (
-    USER_MODEL_ENDPOINT_KEY_PURPOSE,
-    USER_MODEL_SIGNING_PURPOSE,
-)
 from trusted_router.storage_models import EncryptedSecretEnvelope
 
 SRC = pathlib.Path(trusted_router.__file__).parent
@@ -1185,9 +1151,9 @@ def test_every_envelope_typed_attribute_lives_in_storage_models() -> None:
 # any more because they are OUT OF SCOPE, not because they were shown to be
 # safe: the method that writes them, `_write_delivery` in
 # storage_gcp_broadcast.py, mentions no envelope model, field, sealer or id
-# helper, so the scope-based derivation never reaches it. Read the shrink from
-# three to one as a coverage trade, recorded in the module docstring, rather
-# than as two fewer risks.
+# helper, so the scope-based derivation never reaches it. Later non-envelope
+# entity kinds expanded this declaration; the two omitted delivery kinds remain
+# a coverage trade rather than two fewer risks.
 NON_ENVELOPE_KINDS = {
     # Index row written as a dict literal: {"destination_id": ...}. See
     # SpannerBroadcastDestinations.create in storage_gcp_broadcast.py.
@@ -1207,7 +1173,7 @@ NON_ENVELOPE_KINDS = {
 # storage_codec.json_body's recursive asdict into the persisted row.
 LOOSELY_TYPED_FIELDS = {
     ("BroadcastDeliveryJob", "settle_body"): (
-        "persisted under kind 'broadcast_delivery', which the backfill does not "
+        "persisted under kind 'broadcast_delivery', which the retired-V1 census does not "
         "scan. A serialised envelope echoed into a settle body would keep its v1 "
         "algorithm with nothing to report it."
     ),
@@ -1421,20 +1387,19 @@ def test_the_registry_covers_every_envelope_location_exactly() -> None:
     """The law. No missing entries, no stale ones.
 
     This is the assertion that prevents the defect class. The rest of the
-    module checks that today's three locations behave; this one checks
-    tomorrow's fourth.
+    module checks that today's five locations behave; this one checks
+    tomorrow's sixth.
     """
     derived = _derived_pairs()
     registry = _registry_pairs()
 
     missing = sorted(derived - registry)
     assert not missing, (
-        f"the backfill registry does not cover {len(missing)} envelope location(s): "
+        f"the retired-V1 census registry does not cover {len(missing)} envelope location(s): "
         + ", ".join(f"{kind}.{field} (family {family})" for kind, field, family in missing)
         + ". `_process_row` only walks the fields `_fields_for_kind` names, so these "
         "would keep their v1 envelopes while the audit reported clean. Add them to "
-        "`_fields_for_kind` with the namespace their encrypt_* call site uses — and "
-        "check `_broadcast_context` can build a purpose for any new control field."
+        "`MIGRATED_SURFACES` with the namespace their encrypt_* call site uses."
     )
 
     stale = sorted(registry - derived)
@@ -1486,42 +1451,24 @@ def _entity_id_for(family: str) -> str:
     return f"{WORKSPACE}#{PROVIDER}" if family == NAMESPACE_PROVIDER else "bdst_totality"
 
 
-def _context_for(family: str, entity_id: str, field: str) -> str:
-    if family == NAMESPACE_PROVIDER:
-        return PROVIDER
-    if field == "encrypted_endpoint_api_key":
-        return USER_MODEL_ENDPOINT_KEY_PURPOSE
-    if field == "encrypted_signing_secret":
-        return USER_MODEL_SIGNING_PURPOSE
-    # The purpose the application uses is the field name minus its prefix; the
-    # identity between that and the backfill's private copy is pinned below.
-    return broadcast_secret_context(entity_id, field.removeprefix("encrypted_"))
+def _retired_v1_envelope() -> dict[str, str]:
+    """Opaque fixture for proving the read-only census still finds retired data."""
+    return {
+        "algorithm": backfill.V1_ALGORITHM_LITERAL,
+        "key_ref": "fixture-key",
+        "encrypted_dek": "ZGVr",
+        "dek_nonce": "bm9uY2U=",
+        "ciphertext": "Y2lwaGVydGV4dA==",
+        "nonce": "bm9uY2U=",
+    }
 
 
 @pytest.mark.parametrize(("kind", "field", "family"), sorted(_resolved_pairs()))
-def test_each_derived_location_round_trips_through_the_backfill(
+def test_each_derived_location_is_counted_by_the_retired_v1_census(
     kind: str, field: str, family: str
 ) -> None:
-    """Seal v1 as the application would, migrate, reopen as the application would.
-
-    The reopen uses the family derived from the *call sites*, not the family in
-    the registry, which is what makes this a check on the registry rather than
-    a restatement of it.
-
-    Both family flips were run against this test. Each surfaced as a hard
-    failure inside `_migrate_envelope` rather than as a silently unreadable
-    envelope: the provider branch demands a `provider` field the broadcast body
-    has not got, and the control branch demands a purpose suffix
-    `_broadcast_context` has no entry for. So with today's two body shapes a
-    wrong family fails closed, and the `envelopes_migrated` assertion is what
-    actually catches it. The decrypt below is the guard for the shape that does
-    not fail closed — a body carrying both a provider slug and a broadcast
-    purpose, where a wrong family would migrate cleanly and report success.
-    """
-    settings = Settings(environment="test")
-    secret = "registry-totality-probe-secret"  # noqa: S105 - synthetic crypto fixture
+    """The retired migration's read-only census still covers every envelope field."""
     entity_id = _entity_id_for(family)
-    context = _context_for(family, entity_id, field)
 
     body: dict[str, Any] = {
         (
@@ -1529,7 +1476,7 @@ def test_each_derived_location_round_trips_through_the_backfill(
             if kind == "user_provided_model"
             else "workspace_id"
         ): WORKSPACE,
-        field: _v1_envelope(secret, settings, workspace_id=WORKSPACE, context=context),
+        field: _retired_v1_envelope(),
     }
     if family == NAMESPACE_PROVIDER:
         body["provider"] = PROVIDER
@@ -1537,34 +1484,15 @@ def test_each_derived_location_round_trips_through_the_backfill(
 
     stats = BackfillRunner(
         store,
-        settings=settings,
-        apply=True,
-        kms_operations_per_second=1000,
         reporter=lambda _message: None,
-        sleep=lambda _seconds: None,
     ).run()
 
-    assert stats.envelopes_migrated == 1, (
-        f"{kind}.{field} was not migrated (failures={stats.failures}, "
-        f"unsupported={stats.unsupported_algorithms}); the registry's family for it "
-        f"disagrees with the {family} namespace its call sites seal under"
+    assert stats.v1_envelopes == 1, (
+        f"{kind}.{field} was not counted (failures={stats.failures}, "
+        f"unsupported={stats.unsupported_algorithms}); the retired audit must remain "
+        "able to fail closed if a V1 envelope reappears"
     )
-    raw = store.rows[(kind, entity_id)][field]
-    assert raw["algorithm"] == ALGORITHM_V2
-
-    envelope = EncryptedSecretEnvelope(**raw)
-    if family == NAMESPACE_PROVIDER:
-        opened = decrypt_byok_secret(envelope, settings, workspace_id=WORKSPACE, provider=context)
-    elif family == NAMESPACE_USER_MODEL:
-        opened = decrypt_user_model_secret(
-            envelope, settings, workspace_id=WORKSPACE, purpose=context
-        )
-    else:
-        opened = decrypt_control_secret(envelope, settings, workspace_id=WORKSPACE, purpose=context)
-    assert opened == secret, (
-        f"{kind}.{field} re-sealed under a namespace the application does not read "
-        f"it with; that secret is now unrecoverable"
-    )
+    assert store.rows[(kind, entity_id)] == body
 
 
 @pytest.mark.parametrize(
@@ -1577,38 +1505,12 @@ def test_each_derived_location_round_trips_through_the_backfill(
     ),
 )
 def test_the_broadcast_context_helper_matches_the_service(field: str) -> None:
-    """There are THREE copies of this format string, not two.
-
-    `_broadcast_context` in the backfill, `broadcast_secret_context` on the
-    write side, and `_secret_context` in broadcast_adapters on the READ side.
-    The backfill's source comment claims byte-identity with the write-side copy
-    only; adversarial review pointed out the read-side copy is the one that has
-    to reconstruct the AAD after migration, and it was never compared. All
-    three are pinned here — a divergence re-seals a control secret against a
-    purpose the reader cannot rebuild.
-    """
+    """The writer and reader must reconstruct identical V2 AAD context."""
     destination_id = "bdst_context_identity"
     suffix = field.removeprefix("encrypted_")
-    assert _broadcast_context(destination_id, field) == broadcast_secret_context(
+    assert broadcast_secret_context(destination_id, suffix) == adapter_secret_context(
         destination_id, suffix
     )
-    assert _broadcast_context(destination_id, field) == adapter_secret_context(
-        destination_id, suffix
-    )
-
-
-@pytest.mark.parametrize(
-    ("field", "purpose"),
-    (
-        ("encrypted_endpoint_api_key", USER_MODEL_ENDPOINT_KEY_PURPOSE),
-        ("encrypted_signing_secret", USER_MODEL_SIGNING_PURPOSE),
-    ),
-)
-def test_the_user_model_context_helper_matches_the_service(
-    field: str,
-    purpose: str,
-) -> None:
-    assert _broadcast_context("ignored", field) == purpose
 
 
 # ---------------------------------------------------------------------------
@@ -1719,14 +1621,13 @@ def test_a_newly_registered_kind_is_actually_fetched(scan: Any, monkeypatch: Any
     """The finding this file was written for, as a live property.
 
     Both adapters once derived their filter from something other than the
-    registry: Spanner embedded the two kinds as SQL text, Postgres bound
-    `MIGRATED_KINDS[0], MIGRATED_KINDS[1]` positionally against a
-    two-placeholder list. Registering a third kind would have left both
-    fetching the old two, and the backfill would have reported clean over rows
+    registry: Spanner embedded fixed kinds as SQL text, while Postgres bound a
+    fixed number of positional entries. Registering another kind would have
+    left both fetching the old set, and the census would have reported clean over rows
     it never scanned — correct only by arity coincidence.
 
-    Asserting today's two kinds cannot see that, because today there are
-    exactly two. Adding a third and requiring it to be fetched can.
+    Asserting today's set cannot see that. Adding one more and requiring it to
+    be fetched can.
     """
     widened = (*MIGRATED_KINDS, "totality_probe_kind")
     monkeypatch.setattr(backfill, "MIGRATED_KINDS", widened, raising=True)

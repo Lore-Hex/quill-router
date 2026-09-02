@@ -29,6 +29,7 @@ from typing import Any
 
 from google.api_core.exceptions import AlreadyExists
 
+from trusted_router.app_markup_billing import app_markup_payout_event_id
 from trusted_router.custom_model_billing import user_model_payout_event_id
 from trusted_router.spend_windows import (
     KeyWindowLimitDecision,
@@ -56,9 +57,29 @@ from trusted_router.storage_gcp_request_records import (
     mark_gateway_authorization_settled,
 )
 from trusted_router.storage_gcp_settle_outbox import _GUARD_STATUS_SQL, GUARD_COUNT_SQL
-from trusted_router.storage_models import GatewayAuthorization, Generation, UserModelPayout
+from trusted_router.storage_models import (
+    AppMarkupPayout,
+    GatewayAuthorization,
+    Generation,
+    UserModelPayout,
+)
 
 log = logging.getLogger(__name__)
+
+# A rejected conditional UPDATE keeps its row lock until the transaction rolls
+# back. Scanning every configured shard therefore lets one depleted tenant turn
+# N concurrent authorizations into N * shard_count contended row locks. Keep the
+# hot transaction small; the caller retains the full shard set for its lock-free
+# aggregate precheck and cold-path escrow rebalance.
+MAX_CREDIT_SHARD_ATTEMPTS_PER_TRANSACTION = 4
+
+
+def bounded_credit_shard_candidates(candidates: tuple[int, ...]) -> tuple[int, ...]:
+    """Return the fixed, pre-randomized hot-path subset for one transaction."""
+
+    if not candidates:
+        raise ValueError("credit_shard_candidates must not be empty")
+    return candidates[:MAX_CREDIT_SHARD_ATTEMPTS_PER_TRANSACTION]
 
 
 class AuthorizeOutcome:
@@ -75,15 +96,24 @@ class AuthorizeVerdict(str):
     """String-compatible typed-authorize outcome with its window decision."""
 
     rate_limit: KeyWindowLimitDecision | None
+    spend_lease_bound: bool
+    no_lease_reason: str | None
+    spend_lease_outcome: str | None
 
     def __new__(
         cls,
         outcome: str,
         *,
         rate_limit: KeyWindowLimitDecision | None = None,
+        spend_lease_bound: bool = False,
+        no_lease_reason: str | None = None,
+        spend_lease_outcome: str | None = None,
     ) -> AuthorizeVerdict:
         verdict = super().__new__(cls, outcome)
         verdict.rate_limit = rate_limit
+        verdict.spend_lease_bound = spend_lease_bound
+        verdict.no_lease_reason = no_lease_reason
+        verdict.spend_lease_outcome = spend_lease_outcome
         return verdict
 
 
@@ -224,6 +254,11 @@ def authorize_atomic(
     credit_shard_candidates: tuple[int, ...] | None = None,
     key_shard_candidates: tuple[int, ...] = (UNSHARDED,),
     authorization_id: str | None = None,
+    spend_lease_hook: Callable[[Any, int], dict[str, Any]] | None = None,
+    build_authorization_for_lease: (
+        Callable[[str, str, bool], GatewayAuthorization] | None
+    ) = None,
+    also_retry: tuple[type[BaseException], ...] = (),
 ) -> dict:
     """Run the atomic authorize. Returns {outcome, reservation_id?, authorization_id?}.
 
@@ -235,7 +270,9 @@ def authorize_atomic(
     candidate, else BYOK). `has_credit_candidate` gates the credit hold.
     `credit_shard_candidates` is a bounded, pre-randomized order built outside
     the transaction so Spanner retries use the same order. The first shard with
-    enough independent sub-budget is recorded durably on the reservation.
+    enough independent sub-budget is recorded durably on the reservation. The
+    store wrapper applies `bounded_credit_shard_candidates`; direct callers must
+    likewise pass no more than the hot-path limit.
 
     Per-window key caps are checked by the CALLER via check_key_window_limits on
     a lock-free snapshot BEFORE this transaction — deliberately NOT in here: a
@@ -263,6 +300,13 @@ def authorize_atomic(
         raise ValueError("credit shards must be non-negative")
     if len(set(shard_candidates)) != len(shard_candidates):
         raise ValueError("credit_shard_candidates must be unique")
+    if (
+        has_credit_candidate
+        and len(shard_candidates) > MAX_CREDIT_SHARD_ATTEMPTS_PER_TRANSACTION
+    ):
+        raise ValueError(
+            "credit_shard_candidates exceeds the hot-path transaction limit"
+        )
     if not has_credit_candidate and shard_candidates != (UNSHARDED,):
         raise ValueError("BYOK-only authorization must use credit shard zero")
     key_candidates = tuple(key_shard_candidates)
@@ -346,6 +390,14 @@ def authorize_atomic(
                 raise _Reject(AuthorizeOutcome.INSUFFICIENT_CREDITS)
             credit_hold = estimate
 
+        lease_result: dict[str, Any] = {
+            "bound": False,
+            "no_lease_reason": None,
+            "spend_lease_outcome": None,
+        }
+        if spend_lease_hook is not None:
+            lease_result = spend_lease_hook(transaction, selected_credit_shard)
+
         insert_reservation(
             transaction, pt,
             reservation_id=reservation_id, workspace_id=workspace_id, key_hash=key_hash,
@@ -358,11 +410,21 @@ def authorize_atomic(
             created_at=created_at,
         )
         if request_record_write_mode == "typed":
-            assert authorization is not None
+            selected_authorization = authorization
+            if build_authorization_for_lease is not None:
+                selected_authorization = build_authorization_for_lease(
+                    authorization_id,
+                    reservation_id,
+                    bool(lease_result.get("bound")),
+                )
+                selected_authorization.created_at = created_at.isoformat().replace(
+                    "+00:00", "Z"
+                )
+            assert selected_authorization is not None
             insert_gateway_authorization(
                 transaction,
                 pt,
-                authorization,
+                selected_authorization,
                 created_at=created_at,
             )
         else:
@@ -380,10 +442,16 @@ def authorize_atomic(
             "authorization_id": authorization_id,
             "credit_shard": selected_credit_shard,
             "key_shard": selected_key_shard,
+            **lease_result,
         }
 
     try:
-        return run_in_transaction_with_retry(database, txn)
+        return run_in_transaction_with_retry(
+            database,
+            txn,
+            transaction_tag="tr_authorize",
+            also_retry=also_retry,
+        )
     except _Reject as reject:
         return {"outcome": reject.outcome}
     except AlreadyExists:
@@ -405,7 +473,11 @@ def authorize_atomic(
             return _replay(existing)
 
         try:
-            return run_in_transaction_with_retry(database, replay_txn)
+            return run_in_transaction_with_retry(
+                database,
+                replay_txn,
+                transaction_tag="tr_authorize_replay",
+            )
         except _Reject as reject:
             return {"outcome": reject.outcome}
 
@@ -587,7 +659,11 @@ def settle_atomic(
         }
 
     try:
-        result = run_in_transaction_with_retry(database, txn)
+        result = run_in_transaction_with_retry(
+            database,
+            txn,
+            transaction_tag="tr_settle" if success else "tr_refund",
+        )
         _log_missing_key_releases(result)
         return result
     except _SettleError:
@@ -813,6 +889,8 @@ def typed_finalize_atomic(
     persist_generation_record: bool = False,
     operational_analytics_outbox: Any | None = None,
     user_model_payout: UserModelPayout | None = None,
+    app_markup_payout: AppMarkupPayout | None = None,
+    regional_hold_unknown: bool = False,
 ) -> dict:
     """Full DML-only finalize for the typed path (codex 3e, Option B).
 
@@ -878,6 +956,24 @@ def typed_finalize_atomic(
             )
             if credit_count != 1:
                 raise _SettleError("credit release row-count != 1")
+        elif regional_hold_unknown and res.get("hold_usage_type") == "RegionalCredits":
+            # The regional grant already reserved this money, but a historical
+            # stale-CAS overwrite can leave no per-request Bigtable hold for the
+            # reconciler to import. Charge against the reservation's atomic
+            # claim without releasing the still-bounded lease grant. Closing
+            # reconciliation later releases that grant as unused, leaving this
+            # direct charge as the single durable booking.
+            credit_actual = book_actual if settled_usage_type == "Credits" else 0
+            credit_count = release_credit(
+                transaction,
+                pt,
+                res["workspace_id"],
+                0,
+                credit_actual,
+                shard=res["credit_shard"],
+            )
+            if credit_count != 1:
+                raise _SettleError("regional fallback credit booking row-count != 1")
 
         if success and user_model_payout is not None and user_model_payout.amount_microdollars > 0:
             # Deliberately NOT wrapped in a swallow. The payout is two DML
@@ -894,6 +990,14 @@ def typed_finalize_atomic(
                 pt,
                 authorization_id=authorization_id,
                 payout=user_model_payout,
+                now=now,
+            )
+        if success and app_markup_payout is not None and app_markup_payout.amount_microdollars > 0:
+            _apply_app_markup_payout_tx(
+                transaction,
+                pt,
+                authorization_id=authorization_id,
+                payout=app_markup_payout,
                 now=now,
             )
 
@@ -957,7 +1061,12 @@ def typed_finalize_atomic(
 
     try:
         attempts_box: list[int] = []
-        result = run_in_transaction_with_retry(database, txn, attempts_out=attempts_box)
+        result = run_in_transaction_with_retry(
+            database,
+            txn,
+            attempts_out=attempts_box,
+            transaction_tag="tr_finalize" if success else "tr_refund_finalize",
+        )
         result["attempts"] = attempts_box[0] if attempts_box else 1
         _log_missing_key_releases(result)
         return result
@@ -1012,6 +1121,63 @@ def _apply_user_model_payout_tx(
             "amount": pt.INT64,
             "counterparty": pt.STRING,
             "custom_model_id": pt.STRING,
+            "authorization_id": pt.STRING,
+            "created_at": pt.TIMESTAMP,
+        },
+    )
+    if inserted == 0:
+        return
+    updated = transaction.execute_update(
+        "UPDATE tr_earnings_balance "
+        "SET total_earned = total_earned + @amount, "
+        "updated_at = PENDING_COMMIT_TIMESTAMP() "
+        "WHERE user_id=@user_id AND shard=0",
+        params={"amount": payout.amount_microdollars, "user_id": payout.owner_user_id},
+        param_types={"amount": pt.INT64, "user_id": pt.STRING},
+    )
+    if updated == 0:
+        transaction.execute_update(
+            "INSERT INTO tr_earnings_balance "
+            "(user_id, shard, total_earned, total_transferred, updated_at) "
+            "VALUES (@user_id, 0, @amount, 0, PENDING_COMMIT_TIMESTAMP())",
+            params={"user_id": payout.owner_user_id, "amount": payout.amount_microdollars},
+            param_types={"user_id": pt.STRING, "amount": pt.INT64},
+        )
+
+
+def _apply_app_markup_payout_tx(
+    transaction: Any,
+    param_types: Any,
+    *,
+    authorization_id: str,
+    payout: AppMarkupPayout,
+    now: Any,
+) -> None:
+    """Mirror the proven custom-model payout transaction for app markup."""
+    pt = param_types
+    inserted = transaction.execute_update(
+        "INSERT OR IGNORE INTO tr_credit_movement "
+        "(account_id, movement_id, kind, amount_microdollars, "
+        "counterparty_account_id, custom_model_id, authorization_id, created_at) "
+        "VALUES (@account_id, @movement_id, @kind, @amount, "
+        "@counterparty, @app_id, @authorization_id, @created_at)",
+        params={
+            "account_id": f"user:{payout.owner_user_id}",
+            "movement_id": app_markup_payout_event_id(authorization_id),
+            "kind": "app_markup_payout",
+            "amount": payout.amount_microdollars,
+            "counterparty": payout.payer_workspace_id,
+            "app_id": payout.app_id,
+            "authorization_id": authorization_id,
+            "created_at": now,
+        },
+        param_types={
+            "account_id": pt.STRING,
+            "movement_id": pt.STRING,
+            "kind": pt.STRING,
+            "amount": pt.INT64,
+            "counterparty": pt.STRING,
+            "app_id": pt.STRING,
             "authorization_id": pt.STRING,
             "created_at": pt.TIMESTAMP,
         },

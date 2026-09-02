@@ -16,7 +16,10 @@
       "supports_reasoning": true,
       "input_token_price_per_m": 600000,
       "output_token_price_per_m": 3000000,
-      "cached_input_token_price_per_m": 100000
+      "cached_input_token_price_per_m": 100000,
+      "missing_since": "2026-09-02",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "moonshotai/kimi-k2.6",
@@ -100,7 +103,10 @@
       "supports_video_in": false,
       "supports_reasoning": false,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 5000000
+      "output_token_price_per_m": 5000000,
+      "missing_since": "2026-09-02",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "moonshotai/moonshot-v1-128k-vision-preview",
@@ -116,7 +122,10 @@
       "supports_video_in": false,
       "supports_reasoning": false,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 5000000
+      "output_token_price_per_m": 5000000,
+      "missing_since": "2026-09-02",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "moonshotai/moonshot-v1-32k",
@@ -132,7 +141,10 @@
       "supports_video_in": false,
       "supports_reasoning": false,
       "input_token_price_per_m": 1000000,
-      "output_token_price_per_m": 3000000
+      "output_token_price_per_m": 3000000,
+      "missing_since": "2026-09-02",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "moonshotai/moonshot-v1-32k-vision-preview",
@@ -148,7 +160,10 @@
       "supports_video_in": false,
       "supports_reasoning": false,
       "input_token_price_per_m": 1000000,
-      "output_token_price_per_m": 3000000
+      "output_token_price_per_m": 3000000,
+      "missing_since": "2026-09-02",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "moonshotai/moonshot-v1-8k",
@@ -164,7 +179,10 @@
       "supports_video_in": false,
       "supports_reasoning": false,
       "input_token_price_per_m": 200000,
-      "output_token_price_per_m": 2000000
+      "output_token_price_per_m": 2000000,
+      "missing_since": "2026-09-02",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "moonshotai/moonshot-v1-8k-vision-preview",
@@ -180,12 +198,15 @@
       "supports_video_in": false,
       "supports_reasoning": false,
       "input_token_price_per_m": 200000,
-      "output_token_price_per_m": 2000000
+      "output_token_price_per_m": 2000000,
+      "missing_since": "2026-09-02",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     }
   ],
   "_about": "Provider-native Moonshot/Kimi routes. Refreshed hourly only for models present in both the official pricing docs and authenticated /v1/models feed.",
   "source": "https://api.moonshot.ai/v1/models",
   "pricing_source": "https://platform.kimi.ai/docs/llms.txt",
-  "generated_at": "2026-08-25T18:42:44Z",
-  "model_count": 11
+  "generated_at": "2026-09-02T16:05:23Z",
+  "model_count": 4
 }

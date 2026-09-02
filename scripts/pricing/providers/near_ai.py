@@ -37,6 +37,8 @@ MANIFEST_PATH = (
     / "provider_models"
     / "near-ai.json"
 )
+MANIFEST_STALE_FALLBACK = True
+INCLUDE_IN_PRICE_INDEX = True
 
 # Native ID -> (TR canonical ID, pinned direct TLS domain). This table mirrors
 # the enclave's release policy intentionally: catalog discovery cannot make a
@@ -219,6 +221,17 @@ def fetch() -> ProviderPricingResult:
         if context_length is not None:
             row["context_length"] = context_length
         discovered[model_id] = row
+
+    live_endpoints_without_prices = sorted(
+        native_id
+        for native_id, (model_id, pinned_domain) in _VERIFIED_DIRECT_MODELS.items()
+        if domains.get(native_id) == pinned_domain and model_id not in prices
+    )
+    if live_endpoints_without_prices:
+        raise RuntimeError(
+            "near-ai: pinned direct endpoint remains published without a pricing row: "
+            + ", ".join(live_endpoints_without_prices)
+        )
 
     _DISCOVERED_MANIFEST_ROWS = discovered
     errors = validate(prices, EXPECTED_MODELS)

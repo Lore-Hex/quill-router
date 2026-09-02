@@ -26,7 +26,7 @@ from trusted_router.mcp_metadata import (
     MCP_SERVER_NAME,
     MCP_SERVER_TITLE,
 )
-from trusted_router.routes.oauth_keys import PKCE_METHODS
+from trusted_router.routes.oauth_keys import OAUTH_CONFORMANT_PKCE_METHODS
 
 PAGES_WITH_STRUCTURED_DATA = ["/", "/trust", "/docs", "/models", "/legal", "/support"]
 MCP_DISCOVERY_PATHS = (
@@ -195,7 +195,7 @@ def test_oauth_authorization_server_metadata_resolves_to_mounted_routes(
 def test_oauth_metadata_pkce_methods_match_the_exchange_exactly(client: TestClient) -> None:
     document = client.get("/.well-known/oauth-authorization-server").json()
 
-    assert document["code_challenge_methods_supported"] == sorted(PKCE_METHODS)
+    assert document["code_challenge_methods_supported"] == sorted(OAUTH_CONFORMANT_PKCE_METHODS)
 
 
 def test_oauth_metadata_lists_supported_scopes(client: TestClient) -> None:

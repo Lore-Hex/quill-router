@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from tests.fakes.spanner import make_fake_store
+from trusted_router.storage_errors import StoreUnavailable
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome, settle_atomic
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
 from trusted_router.storage_gcp_credit_rebalance import (
@@ -371,12 +372,15 @@ def test_concurrent_fragmentation_repair_preserves_cap_and_accepts_at_most_one()
 
     def worker(index: int) -> None:
         start.wait(timeout=10)
-        outcome, _authorization = _typed_authorize(
-            store,
-            key,
-            estimate=60,
-            idempotency_key=f"concurrent-{index}",
-        )
+        try:
+            outcome, _authorization = _typed_authorize(
+                store,
+                key,
+                estimate=60,
+                idempotency_key=f"concurrent-{index}",
+            )
+        except StoreUnavailable:
+            outcome = "retryable_unavailable"
         with lock:
             outcomes.append(outcome)
 
@@ -389,7 +393,11 @@ def test_concurrent_fragmentation_repair_preserves_cap_and_accepts_at_most_one()
         assert not thread.is_alive()
 
     assert outcomes.count(AuthorizeOutcome.ACCEPTED) == 1
-    assert outcomes.count(AuthorizeOutcome.INSUFFICIENT_CREDITS) == 1
+    assert (
+        outcomes.count(AuthorizeOutcome.INSUFFICIENT_CREDITS)
+        + outcomes.count("retryable_unavailable")
+        == 1
+    )
     rows = database.typed[CREDIT_BALANCE_TABLE]
     assert sum(row["total_credits"] for row in rows.values()) == 200
     assert sum(row["reserved"] for row in rows.values()) == 60

@@ -35,14 +35,20 @@ MONITOR_CONFIGURATION_ERROR_TYPES = frozenset(
         "monitor_workspace_paused",
     }
 )
-# Liveness/ops probe types (synthetic/fleet.py): scheduler heartbeats and
-# cross-cloud peer policing. They ride the synthetic-sample pipeline for
-# storage and streak alerts but are NOT evidence about this deployment's
-# service, so they must stay out of every component, every SLO, and — most
-# importantly — the monitor-freshness clock: a heartbeat from a loop that is
-# not the probe fleet must never make a dead probe fleet look fresh.
+# Liveness/ops and internal-soak probe types. They ride the synthetic-sample
+# pipeline for storage and streak alerts but are NOT evidence for a published
+# service component, so they must stay out of every component, every SLO, and
+# — most importantly — the monitor-freshness clock. The spend-lease soak has
+# its own scheduler; letting it refresh that clock would mask a dead main probe
+# fleet for the full 14-day soak.
 OPS_PROBE_TYPES = frozenset(
-    {"client_telemetry_ingest", "heartbeat", "peer_monitor", "remediation"}
+    {
+        "client_telemetry_ingest",
+        "heartbeat",
+        "peer_monitor",
+        "remediation",
+        "spend_lease_soak",
+    }
 )
 # Deep end-to-end model calls: a real OpenAI-SDK chat completion and a real
 # Responses round-trip, output-verified. These probes previously fed NO
@@ -51,6 +57,13 @@ OPS_PROBE_TYPES = frozenset(
 # probe that is recorded but surfaced nowhere is a signal that reports
 # success without measuring — this set is what makes the model path render.
 MODEL_INFERENCE_PROBES = {"openai_sdk_pong", "responses_pong"}
+# Deploy automation needs the end-to-end PONGs for every regional API target,
+# even though provider-effective failures remain outside router-core SLO math.
+# Keep this union named here so the status payload exports one complete
+# regional canary surface for deployment consumers.
+REGIONAL_DEPLOY_GATE_PROBES = frozenset(
+    REGIONAL_GATEWAY_PROBES | MODEL_INFERENCE_PROBES
+)
 
 COMPONENT_PROBES: dict[str, set[str]] = {
     "canonical_api": REGIONAL_GATEWAY_PROBES,
@@ -291,6 +304,11 @@ COMPONENT_REQUIRED_CAPABILITIES: dict[str, Callable[[Settings], bool]] = {
     # deployment without one never samples the model path, so publishing the
     # row there would be a permanent "unknown".
     "model_inference": lambda settings: bool(settings.synthetic_monitor_api_key),
+    # These probes call the private authorize/settle surface. Standalone
+    # observer planes deliberately carry only their observer credential, not
+    # the billing gateway credential, so they cannot emit these samples.
+    "billing_settlement": lambda settings: bool(settings.internal_gateway_token),
+    "provider_fallback": lambda settings: bool(settings.internal_gateway_token),
 }
 
 
@@ -456,7 +474,12 @@ def _slo_class_ids(*, probe_type: str, target: str) -> list[str]:
         target == "control-plane" and probe_type in BILLING_PROBES | {"provider_fallback"}
     ):
         ids.append("router_core")
-    if probe_type in CONTROL_PLANE_PROBES:
+    # Control-plane availability is a global load-balanced service signal.
+    # Older monitor images emitted region-targeted control_plane_health rows
+    # against private run.app origins; those requests were rejected by Cloud
+    # Run before reaching the application and must remain forensic telemetry,
+    # not SLO downtime. New probes use the explicit "control-plane" target.
+    if target == "control-plane" and probe_type in CONTROL_PLANE_PROBES:
         ids.append("control_plane")
     return ids
 

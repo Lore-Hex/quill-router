@@ -75,6 +75,55 @@ computed (not stored) as the highest of: `email_verified`,
 `profile` scope in the userinfo response and in the token-exchange
 response. The ladder is ordered; apps can gate on `>=`.
 
+### Registry decisions from B review round 1 (2026-08-26)
+
+- **Interactive session only.** App create/edit require a browser
+  session cookie; a management API KEY cannot register or edit apps
+  (`require_console`-style, not `ManagementPrincipal`). The identity
+  gate binds to the live logged-in human, never a key's historical
+  `creator_user_id`. Rationale: registration is a high-trust,
+  low-frequency human action; a leaked management key must not be able
+  to stand up a phishing app.
+- **No business verification / KYB (Joseph, 2026-08-26).** Decided
+  against: TrustedRouter verifies PEOPLE, not companies. Every app is
+  accountable to a Veriff-verified natural person, full stop. Do not
+  re-propose a company-name verification tier — the accountability
+  model is deliberately one layer, and a verified individual is both
+  the stronger signal and the simpler system.
+
+- **Reserved SLUGS and protected NAMES are deliberately different sets
+  (settled 2026-08-26, after a review round proposed merging them).**
+  Slugs are identifiers users see in URLs and consent, so the short
+  generic ones (`tr`, `api`, `console`, `admin`, `www`) are reserved
+  exactly and as `term-` prefixes — nobody can hold `api` or
+  `tr-tools`. Display NAMES match only long distinctive brand strings
+  (`trustedrouter`, `veriff`, `lorehex`, `quill`). Adding the short
+  slugs to NAME matching was proposed and REJECTED: it rejects ordinary
+  legitimate apps ("API Toolkit", "Admin Console", "Metro Labs" — whose
+  normalized form contains `tr`), which is the exact over-inclusive bug
+  an earlier round flagged. Generic English words are not a brand, and
+  the real impersonation defense is the disclosure line: every consent
+  screen names the app id and the owner's Veriff-verified legal name,
+  so "TR Cloud, by Jane Q. Smith (identity-verified)" cannot read as
+  first-party. Term matching is a cheap heuristic layered on top, not
+  the boundary.
+
+- **Impersonation: block protected terms AND show the owner.** App
+  `name` is rejected if, after casefold + Unicode NFKC + whitespace and
+  separator stripping, it contains any protected term
+  (`trustedrouter`, `trusted router`, `veriff`, and the reserved-slug
+  set) — so `TrustedRouter`, `Trusted-Router`, `ТrustedRouter`
+  (Cyrillic) all fail. AND the consent page always shows the app's
+  Veriff-verified legal owner name and the app id, so even a novel
+  lookalike reads as "FooBar by Jane Q. Smith (identity-verified)",
+  never anonymous "Verified developer". Both belt and suspenders,
+  because either alone is defeatable.
+- **Suspension is enforced on the money path**, not just at
+  consent/exchange: the gateway authorize path and the federation serve
+  path both load the owning app (when `api_key.app_id` is set) and deny
+  a suspended app's key a NEW authorization. In-flight/settled requests
+  are unaffected (frozen terms), matching the design's stated bound.
+
 ### App registry: first-class, minimal
 
 `OAuthApp` entity: `id` (slug), `owner_user_id`, `name`, `redirect_uris`

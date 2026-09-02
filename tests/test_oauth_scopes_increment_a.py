@@ -17,7 +17,7 @@ from trusted_router.scopes import (
     SCOPE_INFERENCE,
     SCOPE_PROFILE,
 )
-from trusted_router.storage import STORE, ApiKey, Generation
+from trusted_router.storage import STORE, ApiKey, Generation, OAuthApp
 from trusted_router.types import UsageType
 from trusted_router.verification import verification_level
 
@@ -616,11 +616,20 @@ def test_federation_resolve_key_serves_scopes_end_to_end() -> None:
     with TestClient(app) as fed_client:
         user = STORE.ensure_user("fed-scopes@example.com")
         workspace = STORE.list_workspaces_for_user(user.id)[0]
+        STORE.create_oauth_app(
+            OAuthApp(
+                id="federated-app",
+                owner_user_id=user.id,
+                name="Federated App",
+                redirect_uris=["https://federated.example/callback"],
+            )
+        )
         raw, key = STORE.create_api_key(
             workspace_id=workspace.id,
             name="fed scoped",
             creator_user_id=user.id,
             scopes=list(DEFAULT_DELEGATED_SCOPES),
+            app_id="federated-app",
         )
         del raw
         served = fed_client.post(
@@ -634,8 +643,82 @@ def test_federation_resolve_key_serves_scopes_end_to_end() -> None:
         assert served.status_code == 200, served.text
         record = served.json()["data"]
         assert record["scopes"] == list(DEFAULT_DELEGATED_SCOPES)
+        assert record["app_id"] == "federated-app"
+        assert record["app_suspended"] is False
         imported = federated_api_key_from_record(record)
         assert list(imported.scopes) == list(DEFAULT_DELEGATED_SCOPES)
+        assert imported.app_id == "federated-app"
+        assert imported.federated_app_suspended is False
+
+
+def test_federation_resolve_key_serves_app_markup_terms_end_to_end() -> None:
+    """The home plane must export app terms that survive peer import."""
+    from trusted_router.config import Settings
+    from trusted_router.main import create_app
+    from trusted_router.storage import STORE
+    from trusted_router.storage_models import federated_api_key_from_record
+
+    app = create_app(
+        Settings(
+            environment="test",
+            federation_peer_token="peer-secret",  # noqa: S106 - test fixture.
+        ),
+        init_observability=False,
+    )
+    with TestClient(app) as fed_client:
+        owner = STORE.ensure_user("fed-markup-owner@example.com")
+        workspace = STORE.list_workspaces_for_user(owner.id)[0]
+        STORE.create_oauth_app(
+            OAuthApp(
+                id="federated-markup-app",
+                owner_user_id=owner.id,
+                name="Federated Markup App",
+                redirect_uris=["https://federated-markup.example/callback"],
+                markup_basis_points=1_250,
+            )
+        )
+        _raw_app_key, app_key = STORE.create_api_key(
+            workspace_id=workspace.id,
+            name="federated markup",
+            creator_user_id=owner.id,
+            scopes=list(DEFAULT_DELEGATED_SCOPES),
+            app_id="federated-markup-app",
+        )
+        served = fed_client.post(
+            "/internal/federation/resolve-key",
+            headers={
+                "x-trustedrouter-federation-token": "peer-secret",
+                "x-trustedrouter-federation-features": "scopes",
+            },
+            json={"api_key_lookup_hash": app_key.lookup_hash},
+        )
+
+        assert served.status_code == 200, served.text
+        record = served.json()["data"]
+        assert record["app_markup_basis_points"] == 1_250
+        assert record["app_owner_user_id"] == owner.id
+        imported = federated_api_key_from_record(record)
+        assert imported.federated_app_markup_basis_points == 1_250
+        assert imported.federated_app_owner_user_id == owner.id
+
+        _raw_legacy_key, legacy_key = STORE.create_api_key(
+            workspace_id=workspace.id,
+            name="legacy without app",
+            creator_user_id=owner.id,
+        )
+        legacy_served = fed_client.post(
+            "/internal/federation/resolve-key",
+            headers={
+                "x-trustedrouter-federation-token": "peer-secret",
+                "x-trustedrouter-federation-features": "scopes",
+            },
+            json={"api_key_lookup_hash": legacy_key.lookup_hash},
+        )
+
+        assert legacy_served.status_code == 200, legacy_served.text
+        legacy_record = legacy_served.json()["data"]
+        assert "app_markup_basis_points" not in legacy_record
+        assert "app_owner_user_id" not in legacy_record
 
 
 def test_federation_feature_declaration_fails_closed_only_for_scoped_keys() -> None:
@@ -683,3 +766,5 @@ def test_federation_feature_declaration_fails_closed_only_for_scoped_keys() -> N
         assert undeclared_scoped.json() == unknown.json()
         assert served_legacy.status_code == 200, served_legacy.text
         assert served_legacy.json()["data"]["scopes"] == []
+        assert "app_id" not in served_legacy.json()["data"]
+        assert "app_suspended" not in served_legacy.json()["data"]

@@ -12,6 +12,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -136,11 +137,6 @@ from trusted_router.provider_contract import (
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
 from trusted_router.request_limits import normalized_client_identity
 from trusted_router.routes.mcp import MCP_PROTOCOL_VERSION
-from trusted_router.routes.oauth_keys import (
-    OAUTH_AUTHORIZATION_ENDPOINT_PATH,
-    OAUTH_KEY_EXCHANGE_ENDPOINT_PATH,
-    PKCE_METHODS,
-)
 from trusted_router.scopes import KNOWN_SCOPES
 from trusted_router.serialization import user_model_public_shape
 from trusted_router.services.email import EmailMessage, get_email_service
@@ -157,7 +153,13 @@ from trusted_router.services.trust_release import (
 )
 from trusted_router.storage import STORE
 from trusted_router.storage_custom_models import normalize_custom_model_id
-from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, utcnow
+from trusted_router.storage_models import (
+    ReceiptKey,
+    SyntheticProbeSample,
+    SyntheticRollup,
+    iso_now,
+    utcnow,
+)
 from trusted_router.synthetic.fleet import fleet_snapshot
 from trusted_router.synthetic.leaderboard import aggregate_leaderboard
 from trusted_router.synthetic.status import history_payload, status_snapshot
@@ -226,6 +228,8 @@ _STATUS_RESPONSE_CACHE: OrderedDict[str, _CachedPublicBody] = OrderedDict()
 _STATUS_RESPONSE_REFRESHING: set[str] = set()
 _STATUS_RESPONSE_CACHE_LOCK = threading.RLock()
 _STATUS_RESPONSE_REFRESH_SLOTS = threading.BoundedSemaphore(PUBLIC_RESPONSE_REFRESH_MAX_THREADS)
+_STATIC_ASSET_CACHE_LOCK = threading.Lock()
+_STATIC_ASSET_BYTES_BY_ROOT: dict[str, dict[str, bytes]] = {}
 
 
 @dataclass(frozen=True)
@@ -237,17 +241,51 @@ class _CachedPublicBody:
 
 
 class _CachedStaticFiles(StaticFiles):
-    """StaticFiles + a public 1-day Cache-Control header.
+    """Serve immutable image assets without runtime container-file reads.
 
-    The default StaticFiles ships no cache directive, which means every
-    visit to the marketing page re-fetches every CSS/JS/SVG asset on
-    cold-load. We hash-bust nothing today, so the conservative play is
-    a 24-hour public cache — long enough to take the edge off Cloud Run
-    bandwidth, short enough that a deploy reaches users within a day."""
+    Cloud Run's container filesystem is normally reliable, but a regional
+    storage incident must not turn a cache miss for a logo into a website
+    outage. Public images are small enough to load once before the instance is
+    ready. Range requests retain Starlette's disk-backed behavior; ordinary
+    GET and HEAD requests use the in-memory copy.
+
+    Browser caches keep unversioned paths for one day while Cloud CDN keeps a
+    shared copy for seven. Explicit ``?v=`` URLs are immutable for one year.
+    """
+
+    _SHARED_MAX_AGE = 7 * 86_400
+    _VERSIONED_MAX_AGE = 365 * 86_400
 
     def __init__(self, *args: Any, max_age: int = 86_400, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._max_age = max_age
+        self._asset_bytes: dict[str, bytes] = {}
+        for directory in self.all_directories:
+            root = Path(directory).resolve()
+            root_key = str(root)
+            with _STATIC_ASSET_CACHE_LOCK:
+                cached = _STATIC_ASSET_BYTES_BY_ROOT.get(root_key)
+                if cached is None:
+                    cached = {
+                        str(asset.resolve()): asset.read_bytes()
+                        for asset in root.rglob("*")
+                        if asset.is_file()
+                    }
+                    _STATIC_ASSET_BYTES_BY_ROOT[root_key] = cached
+            self._asset_bytes.update(cached)
+
+    def _cache_control(self, scope: Scope) -> str:
+        query = scope.get("query_string", b"")
+        versioned = any(
+            field.partition(b"=")[0] == b"v" for field in query.split(b"&") if field
+        )
+        if versioned:
+            return f"public, max-age={self._VERSIONED_MAX_AGE}, immutable"
+        return (
+            f"public, max-age={self._max_age}, s-maxage={self._SHARED_MAX_AGE}, "
+            f"stale-while-revalidate={self._max_age}, "
+            f"stale-if-error={self._SHARED_MAX_AGE}"
+        )
 
     def file_response(
         self,
@@ -259,8 +297,21 @@ class _CachedStaticFiles(StaticFiles):
         response = super().file_response(full_path, stat_result, scope, status_code=status_code)
         if str(full_path).casefold().endswith(".woff2"):
             response.headers["content-type"] = "font/woff2"
-        response.headers.setdefault("cache-control", f"public, max-age={self._max_age}")
-        return response
+        response.headers.setdefault("cache-control", self._cache_control(scope))
+        if response.status_code == 304 or any(
+            name.lower() == b"range" for name, _value in scope.get("headers", [])
+        ):
+            return response
+
+        content = self._asset_bytes.get(str(Path(full_path).resolve()))
+        if content is None:
+            return response
+        body = b"" if scope.get("method") == "HEAD" else content
+        return Response(
+            content=body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+        )
 
 
 log = logging.getLogger(__name__)
@@ -287,6 +338,7 @@ _SUPPORT_CATEGORIES = {
     "account": "Account access",
     "billing": "Billing and credits",
     "provider": "Provider or model",
+    "feature": "Feature request",
     "other": "Other",
 }
 
@@ -599,6 +651,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         validator=validated_azure_metadata,
         embedded=embedded_azure_metadata,
     )
+    receipt_key_cache: list[ReceiptKey] | None = None
 
     async def _mirrored(
         resolver: TrustReleaseResolver, embedded: Callable[[Settings], Mapping[str, Any]]
@@ -767,7 +820,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 headers=trust_response_headers(release.status),
             )
         if is_status_hostname(settings, hostname):
-            return _cached_status_page_response(
+            return await _cached_status_page_response(
                 settings,
                 host=hostname,
                 background_tasks=background_tasks,
@@ -838,6 +891,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/docs/tagging")
     async def tagging_docs() -> str:
         return public_page_html(settings, "docs/tagging")
+
+    @public_html_route("/docs/provider-routing")
+    async def provider_routing_docs() -> str:
+        return public_page_html(settings, "docs/provider-routing")
+
+    @public_html_route("/docs/receipts")
+    async def receipts_docs() -> str:
+        return public_page_html(settings, "docs/receipts")
 
     @public_html_route("/docs/telemetry")
     async def telemetry_docs() -> str:
@@ -933,15 +994,15 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     # catalog-derived pages rather than recomputed per request.
     @public_html_route("/us-ai-models")
     async def seo_us_ai_models(background_tasks: BackgroundTasks) -> Response:
-        return _model_region_response(settings, "us-ai-models", background_tasks)
+        return await _model_region_response(settings, "us-ai-models", background_tasks)
 
     @public_html_route("/eu-ai-models")
     async def seo_eu_ai_models(background_tasks: BackgroundTasks) -> Response:
-        return _model_region_response(settings, "eu-ai-models", background_tasks)
+        return await _model_region_response(settings, "eu-ai-models", background_tasks)
 
     @public_html_route("/china-ai-models")
     async def seo_china_ai_models(background_tasks: BackgroundTasks) -> Response:
-        return _model_region_response(settings, "china-ai-models", background_tasks)
+        return await _model_region_response(settings, "china-ai-models", background_tasks)
 
     @public_html_route("/minimax-m3-api")
     async def seo_minimax_m3_api() -> str:
@@ -1139,7 +1200,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @public_html_route("/choose")
     async def choose(background_tasks: BackgroundTasks) -> Response:
-        return _cached_public_response(
+        return await _cached_public_response(
             settings,
             key=f"choose:page:{settings.release}",
             media_type="text/html",
@@ -1151,7 +1212,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/choose/catalog.json")
     async def choose_catalog(background_tasks: BackgroundTasks) -> Response:
-        return _cached_public_response(
+        return await _cached_public_response(
             settings,
             key=f"choose:catalog:{settings.release}",
             media_type="application/json",
@@ -1514,11 +1575,11 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return JSONResponse(
             {
                 "issuer": origin,
-                "authorization_endpoint": f"{origin}{OAUTH_AUTHORIZATION_ENDPOINT_PATH}",
-                "token_endpoint": f"{origin}{OAUTH_KEY_EXCHANGE_ENDPOINT_PATH}",
+                "authorization_endpoint": f"{origin}/oauth/authorize",
+                "token_endpoint": f"{origin}/oauth/token",
                 "response_types_supported": ["code"],
                 "grant_types_supported": ["authorization_code"],
-                "code_challenge_methods_supported": sorted(PKCE_METHODS),
+                "code_challenge_methods_supported": ["S256"],
                 "token_endpoint_auth_methods_supported": ["none"],
                 "service_documentation": f"{origin}/sign-in-with-trustedrouter",
                 "scopes_supported": sorted(KNOWN_SCOPES),
@@ -1579,7 +1640,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @public_html_route("/status")
     async def status_page(request: Request, background_tasks: BackgroundTasks) -> Response:
-        return _cached_status_page_response(
+        return await _cached_status_page_response(
             settings,
             host=request.headers.get("host", ""),
             background_tasks=background_tasks,
@@ -1588,7 +1649,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/leaderboard")
     async def leaderboard_page(request: Request, background_tasks: BackgroundTasks) -> Response:
         _ = request
-        return _cached_public_response(
+        return await _cached_public_response(
             settings,
             key="leaderboard:page",
             media_type="text/html",
@@ -1605,7 +1666,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         request: Request, background_tasks: BackgroundTasks
     ) -> Response:
         _ = request
-        return _cached_public_response(
+        return await _cached_public_response(
             settings,
             key="leaderboard:video:page",
             media_type="text/html",
@@ -1619,7 +1680,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/leaderboard/video.json")
     async def video_leaderboard_json(background_tasks: BackgroundTasks) -> Response:
-        return _cached_public_response(
+        return await _cached_public_response(
             settings,
             key="leaderboard:video:json",
             media_type="application/json",
@@ -1645,7 +1706,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/status.json")
     async def status_json(background_tasks: BackgroundTasks) -> Response:
-        return _cached_public_response(
+        return await _cached_public_response(
             settings,
             key=f"status:json:{int(settings.public_client_observed_enabled)}",
             media_type="application/json",
@@ -1676,7 +1737,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 status_code=400,
             )
         if not _wants_history_html(request, explicit_format=response_format):
-            return _cached_public_response(
+            return await _cached_public_response(
                 settings,
                 key=f"status:history:{window}:json",
                 media_type="application/json",
@@ -1686,7 +1747,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 build=lambda: _json_body({"data": _status_history_payload(window)}),
             )
         render_host = _status_render_host(settings, request.headers.get("host", ""))
-        return _cached_public_response(
+        return await _cached_public_response(
             settings,
             key=f"status:history:{window}:html:{render_host}",
             media_type="text/html",
@@ -1907,6 +1968,54 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             headers=public_document_headers("/trust/control-plane.json"),
         )
 
+    @app.get("/.well-known/inference-receipt-keys", include_in_schema=False)
+    @app.get("/trust/receipt-keys.json", include_in_schema=False)
+    async def inference_receipt_keys() -> JSONResponse:
+        """Bounded public projection of the durable, append-only key log."""
+
+        nonlocal receipt_key_cache
+        degraded = False
+        try:
+            records = await asyncio.wait_for(
+                run_in_threadpool(STORE.list_receipt_keys, limit=5_000),
+                timeout=3.0,
+            )
+            receipt_key_cache = records
+        except Exception:
+            degraded = True
+            records = receipt_key_cache or []
+            log.exception("receipt_key_log_read_degraded_serving_cached")
+        keys = [
+            {
+                "kid": record.kid,
+                "jwk": {
+                    "kty": record.jwk.get("kty"),
+                    "crv": record.jwk.get("crv"),
+                    "x": record.jwk.get("x"),
+                },
+                "att": record.att,
+                "att_kind": record.att_kind,
+                "plane": record.plane,
+                "first_seen": record.first_seen,
+                "last_seen": record.last_seen,
+                "revoked": record.revoked,
+                "verified": record.verified,
+            }
+            for record in records
+        ]
+        return JSONResponse(
+            {
+                "spec": "inference-receipt/1",
+                "generated_at": iso_now(),
+                "degraded": degraded,
+                "keys": keys,
+            },
+            headers={
+                **public_document_headers("/.well-known/inference-receipt-keys"),
+                "x-trustedrouter-key-log-status": "degraded" if degraded else "live",
+            },
+        )
+
     @app.get("/trust/gcp-release.json")
     async def trust_release() -> JSONResponse:
         release = await resolved_trust_release()
@@ -1984,14 +2093,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
 
-def _cached_status_page_response(
+async def _cached_status_page_response(
     settings: Settings,
     *,
     host: str,
     background_tasks: BackgroundTasks,
 ) -> Response:
     render_host = _status_render_host(settings, host)
-    return _cached_public_response(
+    return await _cached_public_response(
         settings,
         key=f"status:page:{render_host}:{int(settings.public_client_observed_enabled)}",
         media_type="text/html",
@@ -2011,12 +2120,12 @@ def _status_render_host(settings: Settings, host: str) -> str:
     return settings.trusted_domain
 
 
-def _model_region_response(
+async def _model_region_response(
     settings: Settings,
     slug: str,
     background_tasks: BackgroundTasks,
 ) -> Response:
-    return _cached_public_response(
+    return await _cached_public_response(
         settings,
         key=f"model-region:{slug}:{settings.release}",
         media_type="text/html",
@@ -2027,7 +2136,7 @@ def _model_region_response(
     )
 
 
-def _cached_public_response(
+async def _cached_public_response(
     settings: Settings,
     *,
     key: str,
@@ -2038,12 +2147,23 @@ def _cached_public_response(
     build: Callable[[], bytes],
     cache_control_override: str | None = None,
 ) -> Response:
+    """Serve a cached public body, building it OFF the event loop on a miss.
+
+    `build` reaches ClickHouse through a synchronous httpx client with a
+    20-second timeout (`OperationalAnalytics._query`). Calling it inline from
+    an async route blocked the worker's whole event loop for as long as that
+    query took, so every other request on the instance -- including
+    /internal/gateway/authorize and /settle on the paid inference path --
+    queued behind a status-page render. The stale-refresh path already ran on
+    a daemon thread for exactly this reason; only the cold/expired path was
+    left on the loop.
+    """
     cache_control = cache_control_override or _public_cache_control(
         ttl_seconds=ttl_seconds, stale_seconds=stale_seconds
     )
     if settings.environment == "test":
         return Response(
-            content=build(),
+            content=await run_in_threadpool(build),
             media_type=media_type,
             headers={"cache-control": cache_control, "x-tr-cache": "bypass"},
         )
@@ -2067,7 +2187,7 @@ def _cached_public_response(
                 )
                 return _cached_body_response(cached, cache_state="stale")
 
-    body = build()
+    body = await run_in_threadpool(build)
     cached = _CachedPublicBody(
         cached_at=time.monotonic(),
         body=body,

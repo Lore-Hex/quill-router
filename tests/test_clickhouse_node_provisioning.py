@@ -369,7 +369,7 @@ def test_stockholm_states_which_tables_the_second_copy_covers() -> None:
 def test_the_drain_unit_refuses_to_restart_a_misconfigured_drain() -> None:
     """A config error cannot be fixed by running again.
 
-    With a bare Restart=always, a typo in the replica block crash-loops every
+    With a bare restart policy, a typo in the replica block crash-loops every
     RestartSec while the outbox grows at full rate -- and the backlog alarm that
     is supposed to bound that growth is emitted BY the process that is not
     running. The exit status the drain uses for configuration errors must be
@@ -380,7 +380,8 @@ def test_the_drain_unit_refuses_to_restart_a_misconfigured_drain() -> None:
     unit = (ROOT / "clickhouse/tr-clickhouse-operational-ingest-postgres.service").read_text()
 
     assert f"RestartPreventExitStatus={CONFIG_EXIT_CODE}" in unit
-    assert "Restart=always" in unit
+    assert "Restart=on-failure" in unit
+    assert "RestartSec=5" in unit
 
 
 def test_stockholm_documents_that_it_starts_empty_and_is_not_backfilled() -> None:

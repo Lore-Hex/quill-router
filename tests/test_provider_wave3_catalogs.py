@@ -297,6 +297,38 @@ def test_price_joined_catalog_excludes_non_text_output_models() -> None:
     assert upstream_ids == {"vendor/text": "vendor/text"}
 
 
+def test_price_joined_catalog_can_preserve_unpriced_models_as_metadata() -> None:
+    upstream_ids: dict[str, str] = {}
+    discovered = discover_available_priced_chat_catalog(
+        [
+            {"id": "vendor/priced", "context_length": 128_000},
+            {"id": "vendor/new", "context_length": 256_000},
+            {"id": "vendor/ignored", "context_length": 512_000},
+        ],
+        prices={"vendor/priced": ModelPrice(1, 2)},
+        explicit_map={
+            "vendor/priced": "vendor/priced",
+            "vendor/new": "vendor/new",
+            "vendor/ignored": "vendor/ignored",
+        },
+        upstream_id_map=upstream_ids,
+        preserve_unpriced_model_ids={"vendor/new"},
+    )
+
+    assert set(discovered) == {"vendor/new", "vendor/priced"}
+    assert discovered["vendor/new"] == {
+        "id": "vendor/new",
+        "upstream_id": "vendor/new",
+        "display_name": "vendor/new",
+        "endpoints": ["chat/completions"],
+        "context_length": 256_000,
+    }
+    assert upstream_ids == {
+        "vendor/new": "vendor/new",
+        "vendor/priced": "vendor/priced",
+    }
+
+
 def test_direct_provider_catalog_fetch_uses_shared_retry_helper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1171,7 +1203,7 @@ def test_price_coverage_failure_blocks_commit_and_deploy() -> None:
 
     audit = workflow.index("- name: Price-source coverage audit")
     blocker = workflow.index("- name: Block unsafe coverage before publication")
-    commit = workflow.index("- name: Commit and push if changed")
+    commit = workflow.index("- name: Commit, verify, and push if changed")
     assert audit < blocker < commit
     blocker_step = workflow[blocker:commit]
     assert "steps.coverage_audit.outcome == 'failure'" in blocker_step

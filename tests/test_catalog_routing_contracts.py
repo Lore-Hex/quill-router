@@ -1355,7 +1355,6 @@ def test_liberty_nemotron_resolves_only_to_working_canonical_prepaid_routes() ->
         assert "nebius" not in prepaid
     else:
         assert prepaid["nebius"] == "nvidia/Nemotron-3-Ultra-550b-a55b"
-    assert prepaid["together"] == "nvidia/nemotron-3-ultra-550b-a55b"
     assert "gmi" not in prepaid
 
 
@@ -1505,7 +1504,6 @@ def test_prometheus_1m_uses_only_long_context_open_weight_components() -> None:
     assert model.name == "TrustedRouter Prometheus 1.0 1M"
     assert model.context_length == 1_048_576
     assert candidate_ids == [
-        "minimax/minimax-m3",
         "xiaomi/mimo-v2.5-pro",
         "z-ai/glm-5.2",
         DEEPSEEK_V4_PRO_0423_MODEL_ID,
@@ -2209,7 +2207,6 @@ def test_wafer_kimi_k26_is_available_but_standard_tier_only() -> None:
 @pytest.mark.parametrize(
     "endpoint_id",
     [
-        "z-ai/glm-5.2@wafer/prepaid",
         "moonshotai/kimi-k3@wafer/prepaid",
         # moonshotai/kimi-k3-fast@wafer/prepaid retired 2026-08-17 00:00 UTC
         # (provider_lifecycle WAFER_AUGUST_2026_RETIREMENT_AT); the catalog is
@@ -2249,7 +2246,6 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     parasail = MODEL_ENDPOINTS["z-ai/glm-5.2@parasail/prepaid"]
     friendli = MODEL_ENDPOINTS["z-ai/glm-5.2@friendli/prepaid"]
     baseten = MODEL_ENDPOINTS["z-ai/glm-5.2@baseten/prepaid"]
-    wafer = MODEL_ENDPOINTS["z-ai/glm-5.2@wafer/prepaid"]
 
     assert model.provider == "zai"
     assert model.context_length == 1_048_576
@@ -2261,7 +2257,7 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert deepinfra.upstream_id == "zai-org/GLM-5.2"
     assert fireworks.upstream_id == "accounts/fireworks/models/glm-5p2"
     assert novita.upstream_id == "zai-org/glm-5.2"
-    assert phala.upstream_id == "phala/glm-5.2"
+    assert phala.upstream_id == "z-ai/glm-5.2"
     assert siliconflow.upstream_id == "zai-org/GLM-5.2"
     assert tinfoil.upstream_id == "glm-5-2"
     assert together.upstream_id == "zai-org/GLM-5.2"
@@ -2269,14 +2265,12 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert parasail.upstream_id == "parasail-glm-52"
     assert friendli.upstream_id == "zai-org/GLM-5.2"
     assert baseten.upstream_id == "zai-org/GLM-5.2"
-    assert wafer.upstream_id == "GLM-5.2"
     for endpoint in (
         deepinfra,
         fireworks,
         novita,
         friendli,
         baseten,
-        wafer,
     ):
         assert endpoint.prompt_price_microdollars_per_million_tokens > 0
         assert endpoint.completion_price_microdollars_per_million_tokens > 0
@@ -2294,3 +2288,60 @@ def test_parasail_qwen_397b_uses_working_native_upstream_id() -> None:
     assert byok.upstream_id == "parasail-qwen35-397b-a17b"
     assert prepaid.prompt_price_microdollars_per_million_tokens == 527_500
     assert prepaid.completion_price_microdollars_per_million_tokens == 3_798_000
+
+
+def test_parasail_glm_53_routes_publish_verified_prices() -> None:
+    flash_prepaid = MODEL_ENDPOINTS["z-ai/glm-5.3-flash@parasail/prepaid"]
+    flash_byok = MODEL_ENDPOINTS["z-ai/glm-5.3-flash@parasail/byok"]
+    full_prepaid = MODEL_ENDPOINTS["z-ai/glm-5.3@parasail/prepaid"]
+    full_byok = MODEL_ENDPOINTS["z-ai/glm-5.3@parasail/byok"]
+
+    assert flash_prepaid.upstream_id == "zai-org/GLM-5.3-Flash"
+    assert flash_byok.upstream_id == "zai-org/GLM-5.3-Flash"
+    assert flash_prepaid.prompt_price_microdollars_per_million_tokens == 158_250
+    assert flash_prepaid.completion_price_microdollars_per_million_tokens == 527_500
+
+    assert full_prepaid.upstream_id == "parasail-glm-53"
+    assert full_byok.upstream_id == "parasail-glm-53"
+    assert full_prepaid.prompt_price_microdollars_per_million_tokens == 1_477_000
+    assert full_prepaid.completion_price_microdollars_per_million_tokens == 4_642_000
+
+
+def test_model_shape_publishes_cache_read_price_when_tiers_carry_one() -> None:
+    """/v1/models hid the cache-read discount even where billing applied it.
+
+    More than a thousand endpoints billed cache reads at a discounted
+    per-model price while the public model payload showed only prompt and
+    completion — a customer comparing us against a provider's own pricing
+    page could not see the discount at all. Same OR-convention field the
+    per-endpoint payloads have always used.
+    """
+    from trusted_router.catalog import MODELS, model_to_openrouter_shape
+
+    model = MODELS["deepseek/deepseek-v4-flash"]
+    tiers = model.price_tiers or ()
+    assert tiers and tiers[0].prompt_cached_price_microdollars_per_million_tokens, (
+        "fixture drift: deepseek-v4-flash no longer carries a cached tier price; "
+        "pick another model with one for this test"
+    )
+
+    shape = model_to_openrouter_shape(model)
+
+    cached = shape["pricing"]["input_cache_read"]
+    prompt = shape["pricing"]["prompt"]
+    assert float(cached) > 0
+    assert float(cached) < float(prompt)
+
+
+def test_model_shape_omits_cache_read_price_when_absent() -> None:
+    from trusted_router.catalog import MODELS, model_to_openrouter_shape
+
+    for model in MODELS.values():
+        tiers = model.price_tiers or ()
+        if tiers and all(
+            t.prompt_cached_price_microdollars_per_million_tokens is None for t in tiers
+        ):
+            shape = model_to_openrouter_shape(model)
+            assert "input_cache_read" not in shape["pricing"]
+            return
+    raise AssertionError("no model without a cached tier price found — test needs a new subject")

@@ -1,0 +1,16 @@
+displayName: "TR Spend Lease: reconciliation lag exceeded"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    Spend-lease close eligibility or expired-open age exceeds 24 hours. This is
+    a client-invisible escrow-retention outage. Runbook: docs/runbook.md#spend-lease-reconciler.
+conditions:
+  - displayName: "Spend-lease reconciliation lag above 24 hours"
+    conditionMatchedLog:
+      filter: 'resource.type = "cloud_run_job" AND textPayload:"spend_lease.reconcile_lag_exceeded"'
+alertStrategy:
+  notificationRateLimit:
+    period: 1800s
+  autoClose: 86400s

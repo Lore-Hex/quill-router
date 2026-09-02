@@ -15,6 +15,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from trusted_router.catalog_capabilities import (
+    manifest_supported_parameters,
+    union_supported_parameters,
+)
 from trusted_router.catalog_data import (
     _EMBEDDING_SPECS,
     _PROVIDER_SERVED_MODEL_ALLOWLIST,
@@ -102,6 +106,14 @@ def _endpoint(
         provider=provider_slug,
         usage_type="BYOK" if usage_type.lower() == "byok" else "Credits",
         upstream_id=upstream_id or model.upstream_id,
+        supported_parameters=union_supported_parameters(
+            model.supported_parameters,
+            manifest_supported_parameters(
+                {},
+                supports_chat=model.supports_chat,
+                supports_embeddings=model.supports_embeddings,
+            ),
+        ),
         prompt_price_microdollars_per_million_tokens=model.prompt_price_microdollars_per_million_tokens,
         completion_price_microdollars_per_million_tokens=model.completion_price_microdollars_per_million_tokens,
         published_prompt_price_microdollars_per_million_tokens=model.published_prompt_price_microdollars_per_million_tokens,
@@ -202,6 +214,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "recraft",
         "bfl",
         "decart",
+        "fal",
         "nvidia-nim",
         "wandb",
         "nscale",
@@ -290,6 +303,21 @@ _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
 }
 
 _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
+    # Cloudflare's OpenAI-compatible endpoint serves Llama Guard 3 only for
+    # non-streaming chat. The exact request used by provider rotation succeeds
+    # with stream=false and returns HTTP 400 "Invalid input" with stream=true.
+    # TrustedRouter's public chat surface currently has no endpoint-level
+    # streaming capability flag, so advertising this route would knowingly
+    # expose a broken streaming path. Quarantine only this provider/model pair
+    # until that capability is represented and enforced end to end. Direct
+    # verification on 2026-09-01 matched 72 synthetic failures and two organic
+    # failures, with no successful routed samples.
+    "cloudflare-workers-ai": frozenset(
+        {
+            "meta-llama/llama-guard-3-8b",
+            "@cf/meta/llama-guard-3-8b",
+        }
+    ),
     # atlas-cloud (onboarded #244) advertises these openai/* models but its
     # router returns HTTP 400 "router not found" — 100% synthetic failure / 0
     # success as of 2026-07-20. Provider-scoped: the same model ids on
@@ -696,11 +724,27 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
         # headline rate above).
         cheapest_tiers = next(t for p, _c, t, _s, _e in per_endpoint_prices if p == cheapest_prompt)
 
-        ctx_candidates = [
-            int(raw_model.get("context_length") or 0),
-            *(int(ep.get("context_length") or 0) for _p, _c, _t, _s, ep in per_endpoint_prices),
-        ]
-        context_length = max(ctx_candidates) or 0
+        # Model-level context is advertised, so like the price above it must
+        # not lie. `max()` over every endpoint takes the most optimistic
+        # number any reseller published, and resellers get this wrong:
+        # z-ai/glm-5.3-flash carries 1310720 on six third-party endpoints
+        # while Z.AI's own endpoint -- and upstream's `top_provider` -- say
+        # 1048576. Prefer `top_provider`, which is upstream's canonical
+        # capability summary for the model, and fall back to the endpoints
+        # only when it is absent.
+        top_provider = raw_model.get("top_provider")
+        if not isinstance(top_provider, dict):
+            top_provider = {}
+        context_length = int(top_provider.get("context_length") or 0)
+        if not context_length:
+            ctx_candidates = [
+                int(raw_model.get("context_length") or 0),
+                *(
+                    int(ep.get("context_length") or 0)
+                    for _p, _c, _t, _s, ep in per_endpoint_prices
+                ),
+            ]
+            context_length = max(ctx_candidates) or 0
 
         # Anthropic-native `/v1/messages` is only available for models
         # Anthropic actually serves; for everything else, /v1/messages is
@@ -710,6 +754,12 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
         architecture = raw_model.get("architecture")
         if not isinstance(architecture, dict):
             architecture = {}
+        supported_parameters = union_supported_parameters(
+            *(
+                manifest_supported_parameters(raw_ep)
+                for _p, _c, _t, _slug, raw_ep in per_endpoint_prices
+            )
+        )
         prepaid_available = any(
             slug in GATEWAY_PREPAID_PROVIDER_SLUGS for _p, _c, _t, slug, _ep in per_endpoint_prices
         )
@@ -720,6 +770,7 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
             context_length=context_length,
             supports_chat=True,
             supports_messages=supports_messages,
+            supported_parameters=supported_parameters,
             input_modalities=_modalities(
                 architecture.get("input_modalities"),
                 default=("text",),
@@ -750,6 +801,7 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
                     provider=slug,
                     usage_type="Credits",
                     upstream_id=upstream_id,
+                    supported_parameters=manifest_supported_parameters(raw_ep),
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -765,6 +817,7 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
                     provider=slug,
                     usage_type="BYOK",
                     upstream_id=upstream_id,
+                    supported_parameters=manifest_supported_parameters(raw_ep),
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -867,6 +920,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "sakana",
         "perplexity",
         "krea",
+        "fal",
         "meta",
         "openrouter",
     ):
@@ -970,6 +1024,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
             )
             context_length = _as_positive_int(raw_model.get("context_length"))
             name = str(raw_model.get("display_name") or raw_model.get("title") or model_id)
+            supported_parameters = manifest_supported_parameters(raw_model)
             reliability = raw_model.get("reliability")
             if not isinstance(reliability, dict):
                 reliability = {}
@@ -982,6 +1037,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 upstream_id=upstream_id,
                 supports_chat="chat/completions" in endpoint_types,
                 supports_messages=publisher == "anthropic",
+                supported_parameters=supported_parameters,
                 input_modalities=_modalities(
                     raw_model.get("input_modalities"),
                     default=("text",),
@@ -1026,6 +1082,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                     provider=provider_slug,
                     usage_type="Credits",
                     upstream_id=upstream_id,
+                    supported_parameters=supported_parameters,
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -1052,6 +1109,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                     provider=provider_slug,
                     usage_type="BYOK",
                     upstream_id=upstream_id,
+                    supported_parameters=supported_parameters,
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -1100,6 +1158,9 @@ def _embedding_models() -> dict[str, Model]:
             supports_chat=False,
             supports_messages=False,
             supports_embeddings=True,
+            supported_parameters=manifest_supported_parameters(
+                {}, supports_chat=False, supports_embeddings=True
+            ),
             prepaid_available=True,
             byok_available=True,
             prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -1158,6 +1219,9 @@ def _embedding_models() -> dict[str, Model]:
                 supports_chat=False,
                 supports_messages=False,
                 supports_embeddings=True,
+                supported_parameters=manifest_supported_parameters(
+                    {}, supports_chat=False, supports_embeddings=True
+                ),
                 input_modalities=input_modalities,
                 output_modalities=("embeddings",),
                 prepaid_available=provider.supports_prepaid,

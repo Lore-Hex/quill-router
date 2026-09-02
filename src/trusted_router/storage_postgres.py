@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import hashlib
+import hmac
 import json
 import logging
 import secrets
@@ -44,6 +45,11 @@ from trusted_router.postgres_dsn import (
     aws_dsql_connection_details,
     dsql_token_is_admin,
 )
+from trusted_router.receipt_keys import (
+    RECEIPT_KEY_KIND,
+    ReceiptKeyWriteOutcome,
+    merge_receipt_key_observation,
+)
 from trusted_router.scopes import validate_api_key_scopes
 from trusted_router.security import (
     hash_api_key,
@@ -53,6 +59,13 @@ from trusted_router.security import (
     new_hash_salt,
     new_key_id,
     verify_api_key,
+)
+from trusted_router.spend_leases import (
+    SPEND_LEASE_ACTIVE_GRANT_KIND,
+    SPEND_LEASE_BOOT_KIND,
+    SPEND_LEASE_GENERATION_KIND,
+    SpendLeaseArtifact,
+    SpendLeaseBoot,
 )
 from trusted_router.spend_windows import (
     KeyLimitExceeded,
@@ -92,6 +105,7 @@ from trusted_router.storage_models import (
     BroadcastDeliveryJob,
     BroadcastDestination,
     ByokProviderConfig,
+    ConsentRequest,
     CreditAccount,
     CreditMovement,
     CreditTransfer,
@@ -102,10 +116,12 @@ from trusted_router.storage_models import (
     Generation,
     GoogleAdsConversion,
     Member,
+    OAuthApp,
     OAuthAuthorizationCode,
     ProviderAccessGrant,
     ProviderBenchmarkSample,
     RateLimitHit,
+    ReceiptKey,
     Reservation,
     SessionAuthContext,
     SignupResult,
@@ -126,6 +142,7 @@ from trusted_router.storage_models import (
     normalize_provider_access_slug,
     utcnow,
 )
+from trusted_router.storage_oauth_apps import apply_oauth_app_patch
 from trusted_router.storage_postgres_group_buy import PostgresBedrockGroupBuy
 from trusted_router.storage_postgres_operational_analytics_outbox import (
     PostgresOperationalAnalyticsOutbox,
@@ -634,6 +651,135 @@ class PostgresStore:
     def _read_entity(self, kind: str, entity_id: str, cls: type[T]) -> T | None:
         return self._run_transaction(lambda conn: self._read_entity_tx(conn, kind, entity_id, cls))
 
+    def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
+        def operation(conn: Any) -> ReceiptKeyWriteOutcome:
+            existing = self._read_entity_tx(
+                conn,
+                RECEIPT_KEY_KIND,
+                record.kid,
+                ReceiptKey,
+                for_update=True,
+            )
+            candidate, outcome = merge_receipt_key_observation(existing, record)
+            if candidate is None or outcome in {"conflict", "invalid"}:
+                return outcome
+            if existing is None:
+                if self._insert_entity_once_tx(conn, RECEIPT_KEY_KIND, record.kid, candidate):
+                    return "appended"
+                # A concurrent transaction inserted this kid after our absent
+                # read. Lock its now-committed verdict before comparing.
+                existing = self._read_entity_tx(
+                    conn,
+                    RECEIPT_KEY_KIND,
+                    record.kid,
+                    ReceiptKey,
+                    for_update=True,
+                )
+                if existing is None:  # pragma: no cover - database invariant
+                    raise StoreConflict("receipt key insert conflict lost its row")
+                candidate, outcome = merge_receipt_key_observation(existing, record)
+            if candidate is not None and outcome == "refreshed":
+                self._write_entity_tx(conn, RECEIPT_KEY_KIND, record.kid, candidate)
+            return outcome
+
+        return self._run_transaction(operation)
+
+    def list_receipt_keys(self, *, limit: int = 5_000) -> list[ReceiptKey]:
+        return self._list_entities(
+            RECEIPT_KEY_KIND,
+            ReceiptKey,
+            limit=max(0, min(limit, 10_000)),
+        )
+
+    def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot:
+        def operation(conn: Any) -> SpendLeaseBoot:
+            existing = self._read_entity_tx(
+                conn,
+                SPEND_LEASE_BOOT_KIND,
+                record.kid,
+                SpendLeaseBoot,
+                for_update=True,
+            )
+            if existing is not None and (
+                existing.jwk != record.jwk
+                or existing.image_digest != record.image_digest
+                or existing.attestation_kind != record.attestation_kind
+            ):
+                raise ValueError("spend-lease boot kid collision")
+            merged = record
+            if existing is not None:
+                merged = dataclasses.replace(
+                    existing,
+                    approved=existing.approved or record.approved,
+                    verified=existing.verified or record.verified,
+                    image_digest=record.image_digest or existing.image_digest,
+                )
+            self._write_entity_tx(conn, SPEND_LEASE_BOOT_KIND, record.kid, merged)
+            return merged
+
+        return self._run_transaction(operation)
+
+    def get_spend_lease_boot(self, kid: str) -> SpendLeaseBoot | None:
+        return self._read_entity(SPEND_LEASE_BOOT_KIND, kid, SpendLeaseBoot)
+
+    def next_spend_lease_generation(self, key_hash: str, boot_kid: str) -> int:
+        entity_id = hashlib.sha256(f"{key_hash}\0{boot_kid}".encode()).hexdigest()
+
+        def operation(conn: Any) -> int:
+            existing = self._read_entity_tx(
+                conn,
+                SPEND_LEASE_GENERATION_KIND,
+                entity_id,
+                dict,
+                for_update=True,
+            )
+            generation = int((existing or {}).get("generation", 0)) + 1
+            self._write_entity_tx(
+                conn,
+                SPEND_LEASE_GENERATION_KIND,
+                entity_id,
+                {"key_hash": key_hash, "boot_kid": boot_kid, "generation": generation},
+            )
+            return generation
+
+        return self._run_transaction(operation)
+
+    @staticmethod
+    def _spend_lease_pair_id(key_hash: str, boot_kid: str) -> str:
+        return hashlib.sha256(f"{key_hash}\0{boot_kid}".encode()).hexdigest()
+
+    def get_active_spend_lease(self, key_hash: str, boot_kid: str) -> SpendLeaseArtifact | None:
+        return self._read_entity(
+            SPEND_LEASE_ACTIVE_GRANT_KIND,
+            self._spend_lease_pair_id(key_hash, boot_kid),
+            SpendLeaseArtifact,
+        )
+
+    def retain_spend_lease(
+        self,
+        key_hash: str,
+        boot_kid: str,
+        candidate: SpendLeaseArtifact,
+        *,
+        replace: bool,
+    ) -> SpendLeaseArtifact:
+        entity_id = self._spend_lease_pair_id(key_hash, boot_kid)
+
+        def operation(conn: Any) -> SpendLeaseArtifact:
+            existing = self._read_entity_tx(
+                conn,
+                SPEND_LEASE_ACTIVE_GRANT_KIND,
+                entity_id,
+                SpendLeaseArtifact,
+                for_update=True,
+            )
+            if existing is None or (replace and candidate.gen > existing.gen):
+                self._write_entity_tx(conn, SPEND_LEASE_ACTIVE_GRANT_KIND, entity_id, candidate)
+                return candidate
+            return existing
+
+        return self._run_transaction(operation)
+
     def _list_entities(
         self,
         kind: str,
@@ -893,6 +1039,7 @@ class PostgresStore:
         email: str | None = None,
         *,
         trial_credit_microdollars: int | None = None,
+        email_verified: bool = False,
     ) -> User:
         normalized_email = normalize_email(email or user_id)
 
@@ -914,7 +1061,9 @@ class PostgresStore:
                 if user is not None:
                     return user
 
-            user = User(id=str(uuid.uuid4()), email=normalized_email)
+            user = User(
+                id=str(uuid.uuid4()), email=normalized_email, email_verified=email_verified
+            )
             self._write_entity_tx(conn, "user", user.id, user)
             self._write_entity_tx(
                 conn,
@@ -994,6 +1143,7 @@ class PostgresStore:
         email: str,
         workspace_name: str | None = None,
         trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
+        email_verified: bool = False,
     ) -> SignupResult | None:
         self._not_implemented("signup")
 
@@ -1354,11 +1504,7 @@ class PostgresStore:
             if not verify_api_key(raw_token, session.salt, session.secret_hash):
                 return None
 
-            user = (
-                _dataclass_from_json(rows[0][1], User)
-                if rows[0][1] is not None
-                else None
-            )
+            user = _dataclass_from_json(rows[0][1], User) if rows[0][1] is not None else None
             memberships: list[tuple[Member, Workspace]] = []
             for _session_body, _user_body, workspace_body, member_body in rows:
                 if workspace_body is None or member_body is None:
@@ -1605,6 +1751,8 @@ class PostgresStore:
         code_challenge_method: str | None = None,
         spawn_agent: str | None = None,
         spawn_cloud: str | None = None,
+        client_app_id: str = "",
+        scopes: list[str] | None = None,
     ) -> tuple[str, OAuthAuthorizationCode]:
         raw = new_api_key(prefix="auth_code")
         code = OAuthAuthorizationCode(
@@ -1625,6 +1773,8 @@ class PostgresStore:
             code_expires_at=self._expires_at(ttl_seconds),
             spawn_agent=spawn_agent,
             spawn_cloud=spawn_cloud,
+            client_app_id=client_app_id,
+            scopes=list(scopes or []),
         )
         code.secret_hash = hash_api_key(raw, code.salt)
 
@@ -1649,6 +1799,72 @@ class PostgresStore:
             cls=OAuthAuthorizationCode,
             expiry_field="code_expires_at",
         )
+
+    def create_consent_request(self, consent: ConsentRequest) -> ConsentRequest:
+        self._run_transaction(
+            lambda conn: self._write_entity_tx(conn, "consent_request", consent.id, consent)
+        )
+        return consent
+
+    def get_consent_request(self, consent_id: str) -> ConsentRequest | None:
+        return self._read_entity("consent_request", consent_id, ConsentRequest)
+
+    def consume_consent_request(
+        self, consent_id: str, *, user_id: str, workspace_id: str, csrf_token: str
+    ) -> ConsentRequest | None:
+        def consume(conn: Any) -> ConsentRequest | None:
+            consent = self._read_entity_tx(
+                conn, "consent_request", consent_id, ConsentRequest, for_update=True
+            )
+            if (
+                consent is None
+                or consent.consumed_at is not None
+                or _is_expired(consent.consent_expires_at)
+                or consent.user_id != user_id
+                or consent.workspace_id != workspace_id
+                or not hmac.compare_digest(consent.csrf_token, csrf_token)
+            ):
+                return None
+            consent.consumed_at = iso_now()
+            self._write_entity_tx(conn, "consent_request", consent.id, consent)
+            return consent
+
+        return self._run_transaction(consume)
+
+    def create_oauth_app(self, app: OAuthApp) -> OAuthApp:
+        def create(conn: Any) -> OAuthApp:
+            if not self._insert_entity_once_tx(conn, "oauth_app", app.id, app):
+                raise ValueError("oauth_app_id_taken")
+            return app
+
+        return self._run_transaction(create)
+
+    def get_oauth_app(self, app_id: str) -> OAuthApp | None:
+        return self._read_entity("oauth_app", app_id, OAuthApp)
+
+    def list_oauth_apps_for_user(self, owner_user_id: str) -> list[OAuthApp]:
+        apps = [
+            app
+            for app in self._list_entities("oauth_app", OAuthApp)
+            if app.owner_user_id == owner_user_id
+        ]
+        return sorted(apps, key=lambda app: (app.created_at, app.id))
+
+    def update_oauth_app(
+        self,
+        app_id: str,
+        *,
+        patch: dict[str, Any],
+    ) -> OAuthApp | None:
+        def update(conn: Any) -> OAuthApp | None:
+            app = self._read_entity_tx(conn, "oauth_app", app_id, OAuthApp, for_update=True)
+            if app is None:
+                return None
+            apply_oauth_app_patch(app, patch)
+            self._write_entity_tx(conn, "oauth_app", app.id, app)
+            return app
+
+        return self._run_transaction(update)
 
     # Email send blocks ------------------------------------------------------
 
@@ -1713,6 +1929,7 @@ class PostgresStore:
         budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
         scopes: list[str] | None = None,
+        app_id: str = "",
     ) -> tuple[str, ApiKey]:
         validated_scopes = validate_api_key_scopes(scopes, management=management)
         raw = raw_key or new_api_key()
@@ -1726,6 +1943,7 @@ class PostgresStore:
             workspace_id=workspace_id,
             creator_user_id=creator_user_id,
             scopes=validated_scopes,
+            app_id=app_id,
             management=management,
             limit_microdollars=limit_microdollars,
             limit_reset=limit_reset,
@@ -1907,11 +2125,7 @@ class PostgresStore:
             api_key = _dataclass_from_json(row[0], ApiKey)
             if not verify_api_key(raw_key, api_key.salt, api_key.secret_hash):
                 return None
-            workspace = (
-                _dataclass_from_json(row[1], Workspace)
-                if row[1] is not None
-                else None
-            )
+            workspace = _dataclass_from_json(row[1], Workspace) if row[1] is not None else None
             if workspace is not None and workspace.deleted:
                 workspace = None
             return ApiKeyAuthContext(api_key=api_key, workspace=workspace)
@@ -2460,6 +2674,9 @@ class PostgresStore:
         )
         _ = limit_micro  # read for the BYOK/uncapped guard above only.
 
+    def supports_key_writes(self) -> bool:
+        return False
+
     def update_key(
         self,
         key_hash: str,
@@ -2599,8 +2816,7 @@ class PostgresStore:
 
         def operation(conn: Any) -> dict[str, UserProvidedModel]:
             rows = conn.execute(
-                "SELECT id, body FROM tr_entities "
-                "WHERE kind = %s AND id = ANY(%s)",
+                "SELECT id, body FROM tr_entities WHERE kind = %s AND id = ANY(%s)",
                 ("user_provided_model", unique_ids),
             ).fetchall()
             result: dict[str, UserProvidedModel] = {}
@@ -3178,6 +3394,7 @@ class PostgresStore:
         payer_workspace_id: str | None = None,
     ) -> bool:
         amount = self._positive_money_amount(amount_microdollars)
+        is_app_markup = event_id.startswith("app_markup_payout:")
 
         def credit(conn: Any) -> bool:
             won = self._insert_entity_once_tx(
@@ -3202,12 +3419,14 @@ class PostgresStore:
                 CreditMovement(
                     account_id=f"user:{user_id}",
                     movement_id=event_id,
-                    kind="custom_model_payout",
+                    kind="app_markup_payout" if is_app_markup else "custom_model_payout",
                     amount_microdollars=amount,
                     counterparty_account_id=payer_workspace_id,
                     custom_model_id=custom_model_id,
                     authorization_id=(
-                        user_model_authorization_id_from_payout_event_id(event_id)
+                        event_id.split(":", 1)[1]
+                        if is_app_markup
+                        else user_model_authorization_id_from_payout_event_id(event_id)
                     ),
                 ),
             )
@@ -3926,6 +4145,10 @@ class PostgresStore:
         idempotency_key: str | None = None,
         tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
+        app_id: str = "",
+        app_markup_basis_points: int = 0,
+        receipt_fee_basis_points: int = 0,
+        app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         user_provided_model_id: str | None = None,
@@ -3938,6 +4161,7 @@ class PostgresStore:
         settlement: str = "local",
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
+        spend_lease: SpendLeaseArtifact | None = None,
     ) -> GatewayAuthorization:
         """Record an authorization, deduplicating on the idempotency key.
 
@@ -3976,13 +4200,15 @@ class PostgresStore:
             idempotency_key=idempotency_key,
             tags=dict(tags or {}),
             idempotency_fingerprint=idempotency_fingerprint,
+            app_id=app_id,
+            app_markup_basis_points=app_markup_basis_points,
+            receipt_fee_basis_points=receipt_fee_basis_points,
+            app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
             user_provided_model_id=user_provided_model_id,
             user_provided_model_revision=user_provided_model_revision,
-            user_model_prompt_price_microdollars_per_m=(
-                user_model_prompt_price_microdollars_per_m
-            ),
+            user_model_prompt_price_microdollars_per_m=(user_model_prompt_price_microdollars_per_m),
             user_model_completion_price_microdollars_per_m=(
                 user_model_completion_price_microdollars_per_m
             ),
@@ -3991,6 +4217,16 @@ class PostgresStore:
             native_batch_eligible=native_batch_eligible,
             settlement=settlement,
             expires_at=expires_at,
+            spend_lease_token=spend_lease.token if spend_lease else None,
+            spend_lease_id=spend_lease.lease_id if spend_lease else None,
+            spend_lease_cap_micro=spend_lease.cap_micro if spend_lease else None,
+            spend_lease_gen=spend_lease.gen if spend_lease else None,
+            spend_lease_iat=spend_lease.iat if spend_lease else None,
+            spend_lease_exp=spend_lease.exp if spend_lease else None,
+            spend_lease_issuer_kid=spend_lease.issuer_kid if spend_lease else None,
+            spend_lease_boot_kid=spend_lease.boot_kid if spend_lease else None,
+            spend_lease_catalog_version=(spend_lease.catalog_version if spend_lease else None),
+            spend_lease_status=spend_lease.lease_status if spend_lease else None,
         )
 
         def create(conn: Any) -> GatewayAuthorization:
@@ -4463,6 +4699,13 @@ class PostgresStore:
             )
             raise
 
+    def record_spend_lease_shadow(self, event_id: str, payload: dict[str, Any]) -> None:
+        outbox = self._operational_analytics_outbox
+        if outbox is None:
+            log.warning("postgres.spend_lease_shadow_outbox_disabled_drop")
+            return
+        outbox.enqueue_spend_lease_shadow(event_id, payload)
+
     def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None:
         self._run_transaction(
             lambda conn: self._write_entity_tx(
@@ -4507,6 +4750,42 @@ class PostgresStore:
                 raw = row[0]
                 data = json.loads(raw) if isinstance(raw, str) else dict(raw)
                 known = {field.name for field in dataclasses.fields(ProviderBenchmarkSample)}
+                samples.append(
+                    ProviderBenchmarkSample(
+                        **{key: value for key, value in data.items() if key in known}
+                    )
+                )
+            return samples
+
+        return self._run_transaction(list_samples)
+
+    def provider_route_benchmark_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        def list_samples(conn: Any) -> list[ProviderBenchmarkSample]:
+            rows = conn.execute(
+                "WITH ranked AS ("
+                "SELECT body, id, ROW_NUMBER() OVER ("
+                "PARTITION BY body ->> 'provider', body ->> 'model' "
+                "ORDER BY (body ->> 'created_at')::timestamptz DESC, id DESC"
+                ") AS route_rank FROM tr_entities "
+                "WHERE kind = 'provider_benchmark' "
+                "AND body ->> 'source' = 'synthetic' "
+                "AND (body ->> 'created_at')::timestamptz >= %s::timestamptz"
+                ") SELECT body FROM ranked WHERE route_rank <= %s "
+                "ORDER BY (body ->> 'created_at')::timestamptz DESC, id DESC "
+                "LIMIT %s",
+                (cutoff, max(1, per_route_limit), max(1, limit)),
+            ).fetchall()
+            samples: list[ProviderBenchmarkSample] = []
+            known = {field.name for field in dataclasses.fields(ProviderBenchmarkSample)}
+            for row in rows:
+                raw = row[0]
+                data = json.loads(raw) if isinstance(raw, str) else dict(raw)
                 samples.append(
                     ProviderBenchmarkSample(
                         **{key: value for key, value in data.items() if key in known}

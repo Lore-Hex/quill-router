@@ -595,6 +595,13 @@ class Settings(BaseSettings):
     rate_limit_ip_per_window: int = 240
     rate_limit_key_per_window: int = 1200
     rate_limit_internal_per_window: int = 6000
+    # A contended Spanner authorize can occupy a worker for the full RPC
+    # budget. Keep one API key from filling every worker in a service instance
+    # while still allowing ordinary low-latency traffic to scale horizontally.
+    gateway_authorize_max_in_flight_per_key: int = 4
+    # Settlement has a wider gate because it closes already-issued holds, but
+    # one hot key must not consume every Spanner session in an instance.
+    settle_per_key_inflight_limit: int = 16
     # Only front doors that overwrite X-TrustedRouter-Client-IP may opt into
     # edge_header. Public origins that cannot perform that overwrite must stay
     # on the safe default and aggregate into the untrusted_lb bucket.
@@ -831,6 +838,7 @@ class Settings(BaseSettings):
     regional_quota_lease_max_available_basis_points: int = 1_000
     regional_quota_lease_shard_count: int = 16
     regional_quota_bigtable_table: str = "trustedrouter-regional-quota"
+    spend_lease_bigtable_table: str = "trustedrouter-spend-lease"
     # True only in the one-shot reconciliation Cloud Run Job. Serving
     # processes must never set this: it exempts the worker from duplicating the
     # traffic-issuance allowlist because the worker can only drain leases that
@@ -840,6 +848,34 @@ class Settings(BaseSettings):
     # Comma-separated region=single-cluster-app-profile pairs. A fixed profile
     # is required because one lease has exactly one regional writer authority.
     regional_quota_bigtable_app_profiles: str = ""
+    spend_lease_bigtable_app_profiles: str = ""
+    # Reconciliation is deployed before binding and remains active when the
+    # traffic flag is off. Only the one-shot Cloud Run Job sets worker=True.
+    spend_lease_reconciler_worker: bool = False
+    spend_lease_reconcile_limit: int = 25
+    spend_lease_reconcile_max_attempts: int = 12
+    # Stage A spend leases are signed advisory artifacts only. This one flag
+    # gates both minting and shadow evidence; default-off deploys never touch
+    # Secret Manager. The accepted digest CSV preserves both sides of a GCP
+    # rolling deploy; when empty, the embedded trust digest is the singleton.
+    spend_lease_issuance_enabled: bool = False
+    # Stage B traffic mutation.  Keep independent from Stage A issuance so a
+    # deployed revision can continue shadowing while binding remains inert.
+    spend_lease_binding_enabled: bool = False
+    spend_lease_pilot_workspace_ids: str = ""
+    spend_lease_signing_secret_name: str = ""
+    spend_lease_accepted_gcp_image_digests: str = ""
+    spend_lease_ttl_seconds: int = 60
+    spend_lease_skew_seconds: int = 10
+    spend_lease_max_microdollars: int = 1_000_000
+    spend_lease_max_available_basis_points: int = 1_000
+    # Dedicated Stage A traffic. The key belongs to a Credits-only pilot
+    # workspace and is loaded lazily from Secret Manager by the isolated
+    # once-a-minute synthetic job; it is never placed in an environment
+    # variable. Default-off keeps deploying this code behavior-neutral until
+    # an operator deliberately starts the soak.
+    spend_lease_soak_probe_enabled: bool = False
+    spend_lease_probe_key_secret: str = "trustedrouter-spend-lease-probe-key"  # noqa: S105
     # Operational read-only flag. When set, write paths (credit
     # reservations, gateway authorize, signup, etc.) return 503 with
     # `Retry-After`; reads keep working. Used for the Spanner →
@@ -1057,6 +1093,16 @@ class Settings(BaseSettings):
     # /responses probe in europe-west4 can legitimately take >10s on slow
     # cheap monitor routes, so 10s creates false downtime.
     synthetic_monitor_timeout_seconds: float = 20.0
+    # Hard wall-clock ceiling for one admitted synthetic run. Eight provider
+    # calls under the billing-concurrency limit of two take four ~20s p99
+    # waves; adding the normal 10-17s probe work gives ~97s. 240s is ~2.47x
+    # that budget while ensuring a wedged read cannot own the run slot forever.
+    synthetic_run_deadline_seconds: float = 240.0
+    # Remediation is an observe-only monitor read running through an internal
+    # HTTP surface during the service split. Keep its request budget far below
+    # the general synthetic pass budget so an unavailable analytics replica
+    # cannot occupy control-plane request capacity for minutes.
+    synthetic_remediator_deadline_seconds: float = 15.0
     # Monthly self-funding for the monitor workspace, applied lazily on its
     # own gateway-authorize path (synthetic/funding.py). Each deployment has
     # its own database, so each cloud's monitor funds itself from config —
@@ -1193,6 +1239,10 @@ class Settings(BaseSettings):
                 )
         if self.max_request_body_bytes <= 0:
             raise ValueError("TR_MAX_REQUEST_BODY_BYTES must be positive")
+        if self.synthetic_run_deadline_seconds <= 0:
+            raise ValueError("TR_SYNTHETIC_RUN_DEADLINE_SECONDS must be positive")
+        if self.synthetic_remediator_deadline_seconds <= 0:
+            raise ValueError("TR_SYNTHETIC_REMEDIATOR_DEADLINE_SECONDS must be positive")
         if self.max_in_flight_request_body_bytes < self.max_request_body_bytes:
             raise ValueError(
                 "TR_MAX_IN_FLIGHT_REQUEST_BODY_BYTES must be at least TR_MAX_REQUEST_BODY_BYTES"
@@ -1207,6 +1257,11 @@ class Settings(BaseSettings):
             ("TR_RATE_LIMIT_IP_PER_WINDOW", self.rate_limit_ip_per_window),
             ("TR_RATE_LIMIT_KEY_PER_WINDOW", self.rate_limit_key_per_window),
             ("TR_RATE_LIMIT_INTERNAL_PER_WINDOW", self.rate_limit_internal_per_window),
+            (
+                "TR_GATEWAY_AUTHORIZE_MAX_IN_FLIGHT_PER_KEY",
+                self.gateway_authorize_max_in_flight_per_key,
+            ),
+            ("TR_SETTLE_PER_KEY_INFLIGHT_LIMIT", self.settle_per_key_inflight_limit),
         ):
             if value <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -1278,6 +1333,51 @@ class Settings(BaseSettings):
                     "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED requires "
                     "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"
                 )
+        if not 5 <= self.spend_lease_ttl_seconds <= 300:
+            raise ValueError("TR_SPEND_LEASE_TTL_SECONDS must be between 5 and 300")
+        if not 0 <= self.spend_lease_skew_seconds <= 30:
+            raise ValueError("TR_SPEND_LEASE_SKEW_SECONDS must be between 0 and 30")
+        if self.spend_lease_max_microdollars <= 0:
+            raise ValueError("TR_SPEND_LEASE_MAX_MICRODOLLARS must be positive")
+        if not 1 <= self.spend_lease_max_available_basis_points <= 5_000:
+            raise ValueError(
+                "TR_SPEND_LEASE_MAX_AVAILABLE_BASIS_POINTS must be between 1 and 5000"
+            )
+        configured_spend_digests = self.spend_lease_accepted_gcp_image_digests.split(",")
+        for digest in configured_spend_digests:
+            digest = digest.strip()
+            if digest and not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                raise ValueError(
+                    "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS entries must be sha256 digests"
+                )
+        if self.spend_lease_issuance_enabled:
+            if not self.spend_lease_pilot_workspace_ids.strip():
+                raise ValueError(
+                    "TR_SPEND_LEASE_ISSUANCE_ENABLED requires "
+                    "TR_SPEND_LEASE_PILOT_WORKSPACE_IDS"
+                )
+            if not self.spend_lease_signing_secret_name.strip():
+                raise ValueError(
+                    "TR_SPEND_LEASE_ISSUANCE_ENABLED requires "
+                    "TR_SPEND_LEASE_SIGNING_SECRET_NAME"
+                )
+            if not (
+                self.operational_analytics_outbox_enabled
+                or self.operational_analytics_sink == "direct"
+            ):
+                raise ValueError(
+                    "TR_SPEND_LEASE_ISSUANCE_ENABLED requires the operational "
+                    "analytics outbox or direct sink"
+                )
+        if self.spend_lease_binding_enabled and not self.spend_lease_issuance_enabled:
+            raise ValueError(
+                "TR_SPEND_LEASE_BINDING_ENABLED requires TR_SPEND_LEASE_ISSUANCE_ENABLED"
+            )
+        if self.spend_lease_soak_probe_enabled and not self.spend_lease_probe_key_secret.strip():
+            raise ValueError(
+                "TR_SPEND_LEASE_SOAK_PROBE_ENABLED requires "
+                "TR_SPEND_LEASE_PROBE_KEY_SECRET"
+            )
         if self.regional_quota_leases_enabled:
             if environment not in {"local", "test"}:
                 if self.storage_backend not in {
@@ -1826,6 +1926,25 @@ class Settings(BaseSettings):
         )
 
     @property
+    def spend_lease_pilot_workspaces(self) -> frozenset[str]:
+        return frozenset(
+            workspace_id.strip()
+            for workspace_id in self.spend_lease_pilot_workspace_ids.split(",")
+            if workspace_id.strip()
+        )
+
+    @property
+    def spend_lease_accepted_gcp_digests(self) -> frozenset[str]:
+        configured = frozenset(
+            digest.strip()
+            for digest in self.spend_lease_accepted_gcp_image_digests.split(",")
+            if digest.strip()
+        )
+        if configured:
+            return configured
+        return frozenset({self.trust_gcp_image_digest}) if self.trust_gcp_image_digest else frozenset()
+
+    @property
     def regional_quota_bigtable_app_profile_map(self) -> dict[str, str]:
         profiles: dict[str, str] = {}
         for raw_entry in self.regional_quota_bigtable_app_profiles.split(","):
@@ -1842,6 +1961,27 @@ class Settings(BaseSettings):
             if region in profiles:
                 raise ValueError(
                     "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES contains a duplicate region"
+                )
+            profiles[region] = profile
+        return profiles
+
+    @property
+    def spend_lease_bigtable_app_profile_map(self) -> dict[str, str]:
+        profiles: dict[str, str] = {}
+        for raw_entry in self.spend_lease_bigtable_app_profiles.split(","):
+            entry = raw_entry.strip()
+            if not entry:
+                continue
+            region, separator, profile = entry.partition("=")
+            region = region.strip()
+            profile = profile.strip()
+            if not separator or not region or not profile:
+                raise ValueError(
+                    "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES entries must be region=app-profile"
+                )
+            if region in profiles:
+                raise ValueError(
+                    "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES contains a duplicate region"
                 )
             profiles[region] = profile
         return profiles

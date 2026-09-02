@@ -1,38 +1,20 @@
-"""Resumable BYOK envelope AAD v1-to-v2 backfill primitives.
+"""Read-only scanner for the completed BYOK AAD v1-to-v2 migration.
 
-The migration touches secret-bearing rows, so the storage adapters expose only
-the generic entity body and an optimistic compare-and-swap. KMS work happens
-outside database transactions; the final write succeeds only when the row is
-still byte-for-byte (Spanner) or JSON-equivalent (Postgres) to the version that
-was decrypted. A concurrent key rotation therefore wins and is never
-overwritten by the backfill.
-
-The non-apply audit mode of `BackfillRunner` is also the measurement half of
-the step-4 precondition: `check_no_v1_envelopes` below wraps it with the one
-thing an audit cannot tell you about itself — whether it looked at anything.
-See `trusted_router.byok_v1_attestations` for the law and the ledger.
+The mutating backfill retired with Step 4. This module intentionally retains
+only the database census and envelope classifier used to prove that no V1 row
+survived. It has no decrypt path, KMS dependency, or database write method.
+See `trusted_router.byok_v1_attestations` for the law and the audit ledger.
 """
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
-import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol
 
-from trusted_router.byok_crypto import (
-    ALGORITHM,
-    ALGORITHM_V2,
-    decrypt_byok_secret,
-    decrypt_control_secret,
-    decrypt_user_model_secret,
-    encrypt_byok_secret,
-    encrypt_control_secret,
-    encrypt_user_model_secret,
-)
+from trusted_router.byok_crypto import ALGORITHM_V2
 from trusted_router.byok_v1_attestations import (
     MIGRATED_KINDS,
     MIGRATED_SURFACES,
@@ -48,12 +30,8 @@ from trusted_router.byok_v1_attestations import (
     surface_fingerprint,
     utc_now,
 )
-from trusted_router.key_management import KeyWrapperSettings
-from trusted_router.services.user_model_secrets import (
-    USER_MODEL_ENDPOINT_KEY_PURPOSE,
-    USER_MODEL_SIGNING_PURPOSE,
-)
-from trusted_router.storage_models import EncryptedSecretEnvelope
+
+CENSUS_POSITIVE_LITERAL = "{"
 
 
 @dataclass(frozen=True)
@@ -61,7 +39,6 @@ class EntityRow:
     kind: str
     entity_id: str
     body: dict[str, Any]
-    original_body: Any
 
 
 @dataclass(frozen=True)
@@ -76,10 +53,10 @@ class EntityCensus:
     from "the audit could not have found anything".
 
     `v1_literal_rows` is the one that does not share the scan's assumptions.
-    The count and the walk restrict to the same two kinds — both from
+    The count and the walk restrict to the same registered kinds — all from
     `MIGRATED_KINDS`, on both adapters, since `SpannerEntityStore.scan` now
     binds `@kinds` the way its own census already did rather than writing the
-    two names out as SQL text — and the walk reads
+    names out as SQL text — and the walk reads
     envelopes only out of the field names in `MIGRATED_SURFACES`. So a renamed
     entity kind or a renamed body field hides the same rows from the walk AND
     from the count, and the disagreement they exist to expose never happens.
@@ -99,9 +76,11 @@ class EntityCensus:
     happens to store, and a pattern that stops matching fails OPEN.
 
     `source` names the database the census was taken from, and the two adapters
-    know it to different depths. Postgres asks the server — `current_database()`,
-    `current_user`, `inet_server_addr()` — so its value is the server's own
-    answer. Spanner composes `projects/…/instances/…/databases/…` client-side
+    know it to different depths. Postgres asks the server for
+    `current_database()` and `current_user`, then reads the negotiated host and
+    port from the connection object (Aurora DSQL does not implement
+    `inet_server_addr()`). Spanner composes
+    `projects/…/instances/…/databases/…` client-side
     from the arguments the CLI was given: `Database.name` is string
     concatenation in `google.cloud.spanner` and issues no RPC, so that value
     records what was ASKED FOR, not what answered, and reads identically against
@@ -114,6 +93,7 @@ class EntityCensus:
     migrated_kind_counts: dict[str, int]
     sampled_kinds: tuple[str, ...]
     v1_literal_rows: int
+    positive_control_rows: int
     source: str
 
     @property
@@ -134,9 +114,6 @@ class EntityStore(Protocol):
         limit: int,
     ) -> list[EntityRow]: ...
 
-    def compare_and_swap(self, row: EntityRow, new_body: dict[str, Any]) -> bool: ...
-
-
 class CensusStore(Protocol):
     def census(self, *, sample_limit: int = 1000) -> EntityCensus: ...
 
@@ -152,9 +129,6 @@ class BackfillStats:
     v1_envelopes: int = 0
     v2_envelopes: int = 0
     missing_envelopes: int = 0
-    rows_updated: int = 0
-    envelopes_migrated: int = 0
-    conflicts: int = 0
     failures: int = 0
     unsupported_algorithms: int = 0
     # Per-kind scan counts. A single total cannot be cross-checked against a
@@ -171,58 +145,21 @@ class BackfillStats:
         return asdict(self)
 
 
-class KmsOperationRateLimiter:
-    """Bound the average KMS operation rate without introducing concurrency."""
-
-    def __init__(
-        self,
-        operations_per_second: float,
-        *,
-        monotonic: Callable[[], float] = time.monotonic,
-        sleep: Callable[[float], None] = time.sleep,
-    ) -> None:
-        if operations_per_second <= 0:
-            raise ValueError("KMS operations per second must be positive")
-        self._operations_per_second = operations_per_second
-        self._monotonic = monotonic
-        self._sleep = sleep
-        self._next_operation_at = 0.0
-
-    def acquire(self, operations: int) -> None:
-        if operations <= 0:
-            return
-        now = self._monotonic()
-        start = max(now, self._next_operation_at)
-        if start > now:
-            self._sleep(start - now)
-        self._next_operation_at = start + operations / self._operations_per_second
-
-
 class BackfillRunner:
-    """Audit or migrate every known encrypted field in stable key order."""
+    """Read every registered encrypted field in stable key order.
+
+    The historical name is retained for operator-script compatibility. Step 4
+    removed every V1 decryptor, so this class can only classify stored formats.
+    """
 
     def __init__(
         self,
         store: EntityStore,
         *,
-        settings: KeyWrapperSettings | None = None,
-        apply: bool = False,
-        kms_operations_per_second: float = 5.0,
         reporter: Callable[[str], None] = print,
-        monotonic: Callable[[], float] = time.monotonic,
-        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        if apply and settings is None:
-            raise ValueError("settings are required when applying the backfill")
         self._store = store
-        self._settings = settings
-        self._apply = apply
         self._report = reporter
-        self._limiter = KmsOperationRateLimiter(
-            kms_operations_per_second,
-            monotonic=monotonic,
-            sleep=sleep,
-        )
 
     def run(
         self,
@@ -251,11 +188,8 @@ class BackfillRunner:
     def _process_row(self, row: EntityRow, stats: BackfillStats) -> None:
         stats.rows_scanned += 1
         stats.rows_scanned_by_kind[row.kind] = stats.rows_scanned_by_kind.get(row.kind, 0) + 1
-        new_body = copy.deepcopy(row.body)
-        migrations = 0
-        row_failed = False
         row_v1 = 0
-        for field_name, envelope_family in _fields_for_kind(row.kind):
+        for field_name, _envelope_family in _fields_for_kind(row.kind):
             raw_envelope = row.body.get(field_name)
             if raw_envelope is None:
                 stats.missing_envelopes += 1
@@ -263,130 +197,21 @@ class BackfillRunner:
             stats.envelopes_seen += 1
             if not isinstance(raw_envelope, dict):
                 stats.failures += 1
-                row_failed = True
                 self._error(row, field_name, "invalid_envelope_shape")
                 continue
             algorithm = raw_envelope.get("algorithm")
             if algorithm == ALGORITHM_V2:
                 stats.v2_envelopes += 1
                 continue
-            if algorithm != ALGORITHM:
+            if algorithm != V1_ALGORITHM_LITERAL:
                 stats.unsupported_algorithms += 1
-                row_failed = True
                 self._error(row, field_name, "unsupported_algorithm")
                 continue
             stats.v1_envelopes += 1
             row_v1 += 1
-            if not self._apply:
-                continue
-            try:
-                # One v1 unwrap, one v2 wrap, and one v2 verification unwrap.
-                self._limiter.acquire(3)
-                new_body[field_name] = self._migrate_envelope(
-                    row,
-                    field=field_name,
-                    envelope_family=envelope_family,
-                    raw_envelope=raw_envelope,
-                )
-                migrations += 1
-            except Exception as exc:  # fail closed; never expose secret material
-                stats.failures += 1
-                row_failed = True
-                self._error(row, field_name, type(exc).__name__)
 
         if row_v1:
             stats.rows_with_v1 += 1
-
-        if not self._apply or row_failed or migrations == 0:
-            return
-        if self._store.compare_and_swap(row, new_body):
-            stats.rows_updated += 1
-            stats.envelopes_migrated += migrations
-            return
-        stats.conflicts += 1
-        self._error(row, "*", "concurrent_change")
-
-    def _migrate_envelope(
-        self,
-        row: EntityRow,
-        *,
-        field: str,
-        envelope_family: str,
-        raw_envelope: dict[str, Any],
-    ) -> dict[str, str]:
-        assert self._settings is not None
-        workspace_id = _required_string(
-            row.body,
-            "owner_workspace_id" if row.kind == "user_provided_model" else "workspace_id",
-        )
-        envelope = EncryptedSecretEnvelope(**raw_envelope)
-        if envelope_family == "provider":
-            provider = _required_string(row.body, "provider")
-            plaintext = decrypt_byok_secret(
-                envelope,
-                self._settings,
-                workspace_id=workspace_id,
-                provider=provider,
-            )
-            migrated = encrypt_byok_secret(
-                plaintext,
-                self._settings,
-                workspace_id=workspace_id,
-                provider=provider,
-            )
-            verified = decrypt_byok_secret(
-                migrated,
-                self._settings,
-                workspace_id=workspace_id,
-                provider=provider,
-            )
-        elif envelope_family == "user_model":
-            purpose = _broadcast_context(row.entity_id, field)
-            # A v1 envelope has no namespace: its AAD is the same bytes for
-            # every family, so the control opener reads it. Re-seal under the
-            # user_model namespace and verify with the strict (v2-only) opener
-            # the application uses.
-            plaintext = decrypt_control_secret(
-                envelope,
-                self._settings,
-                workspace_id=workspace_id,
-                purpose=purpose,
-            )
-            migrated = encrypt_user_model_secret(
-                plaintext,
-                self._settings,
-                workspace_id=workspace_id,
-                purpose=purpose,
-            )
-            verified = decrypt_user_model_secret(
-                migrated,
-                self._settings,
-                workspace_id=workspace_id,
-                purpose=purpose,
-            )
-        else:
-            purpose = _broadcast_context(row.entity_id, field)
-            plaintext = decrypt_control_secret(
-                envelope,
-                self._settings,
-                workspace_id=workspace_id,
-                purpose=purpose,
-            )
-            migrated = encrypt_control_secret(
-                plaintext,
-                self._settings,
-                workspace_id=workspace_id,
-                purpose=purpose,
-            )
-            verified = decrypt_control_secret(
-                migrated,
-                self._settings,
-                workspace_id=workspace_id,
-                purpose=purpose,
-            )
-        if verified != plaintext or migrated.algorithm != ALGORITHM_V2:
-            raise ValueError("v2 verification failed")
-        return asdict(migrated)
 
     def _error(self, row: EntityRow, field: str, reason: str) -> None:
         self._report(
@@ -435,7 +260,6 @@ class SpannerEntityStore:
                     kind=kind,
                     entity_id=entity_id,
                     body=json.loads(body),
-                    original_body=body,
                 )
                 for kind, entity_id, body in rows
             ]
@@ -464,7 +288,10 @@ class SpannerEntityStore:
         """
         counts: dict[str, int] = {}
         sampled: set[str] = set()
-        with self._database.snapshot() as snapshot:
+        # This method deliberately executes three queries against one
+        # consistent read-only view. Spanner snapshots are single-use unless
+        # requested otherwise, so the default fails on the second query.
+        with self._database.snapshot(multi_use=True) as snapshot:
             rows = snapshot.execute_sql(
                 "SELECT kind, COUNT(*) FROM tr_entities WHERE kind IN UNNEST(@kinds) GROUP BY kind",
                 params={"kinds": list(MIGRATED_KINDS)},
@@ -494,42 +321,26 @@ class SpannerEntityStore:
                 literal_rows = int(count)
             if literal_rows is None:
                 raise ValueError("the v1 literal count returned no row")
+            positive_rows: int | None = None
+            for (count,) in snapshot.execute_sql(
+                "SELECT COUNT(*) FROM tr_entities WHERE STRPOS(body, @literal) > 0",
+                params={"literal": CENSUS_POSITIVE_LITERAL},
+                param_types={"literal": self._param_types.STRING},
+            ):
+                positive_rows = int(count)
+            if positive_rows is None:
+                raise ValueError("the literal-search positive control returned no row")
         return EntityCensus(
             migrated_kind_counts=counts,
             sampled_kinds=tuple(sorted(sampled)),
             v1_literal_rows=literal_rows,
+            positive_control_rows=positive_rows,
             # Spelled out because it is not what it looks like: `Database.name`
             # is built by concatenating the project, instance and database the
             # CLI was told to use, with no RPC. This says which database was
             # addressed, not which one answered.
             source=f"spanner:{self._database.name} (from CLI arguments, not asked of the server)",
         )
-
-    def compare_and_swap(self, row: EntityRow, new_body: dict[str, Any]) -> bool:
-        new_body_json = _json_body(new_body)
-
-        def update(transaction: Any) -> bool:
-            changed = transaction.execute_update(
-                "UPDATE tr_entities SET body=@new_body, "
-                "updated_at=PENDING_COMMIT_TIMESTAMP() "
-                "WHERE kind=@kind AND id=@id AND body=@old_body",
-                params={
-                    "new_body": new_body_json,
-                    "kind": row.kind,
-                    "id": row.entity_id,
-                    "old_body": row.original_body,
-                },
-                param_types={
-                    "new_body": self._param_types.STRING,
-                    "kind": self._param_types.STRING,
-                    "id": self._param_types.STRING,
-                    "old_body": self._param_types.STRING,
-                },
-            )
-            return changed == 1
-
-        return bool(self._database.run_in_transaction(update))
-
 
 class PostgresEntityStore:
     def __init__(self, dsn: str) -> None:
@@ -568,7 +379,6 @@ class PostgresEntityStore:
                     kind=kind,
                     entity_id=entity_id,
                     body=body,
-                    original_body=copy.deepcopy(body),
                 )
             )
         return result
@@ -584,56 +394,78 @@ class PostgresEntityStore:
         import psycopg
 
         with psycopg.connect(self._dsn) as conn:
-            counted = conn.execute(
-                "SELECT kind, COUNT(*) FROM tr_entities WHERE kind = ANY(%s) GROUP BY kind",
-                (list(MIGRATED_KINDS),),
+            # All census facts come from one SQL statement and therefore one
+            # database snapshot. Aurora DSQL rejects SET TRANSACTION outright,
+            # so relying on a repeatable-read GUC makes the very cloud this
+            # precondition protects unauditable. Keeping the three questions in
+            # one UNION is both stronger than separate READ COMMITTED queries
+            # and portable across PostgreSQL, Azure Flexible Server, and DSQL.
+            facts = conn.execute(
+                "WITH sampled AS ("
+                "  SELECT DISTINCT kind FROM ("
+                "    SELECT kind FROM tr_entities LIMIT %s"
+                "  ) AS peek"
+                ") "
+                "SELECT 'count' AS metric, kind, COUNT(*) AS value "
+                "FROM tr_entities WHERE kind = ANY(%s) GROUP BY kind "
+                "UNION ALL "
+                "SELECT 'sample' AS metric, kind, 0 AS value FROM sampled "
+                "UNION ALL "
+                "SELECT 'v1_literal' AS metric, '' AS kind, COUNT(*) AS value "
+                "FROM tr_entities WHERE body::text LIKE %s "
+                "UNION ALL "
+                "SELECT 'positive_control' AS metric, '' AS kind, COUNT(*) AS value "
+                "FROM tr_entities WHERE body::text LIKE %s",
+                (
+                    sample_limit,
+                    list(MIGRATED_KINDS),
+                    f"%{V1_ALGORITHM_LITERAL}%",
+                    f"%{CENSUS_POSITIVE_LITERAL}%",
+                ),
             ).fetchall()
-            sampled = conn.execute(
-                "SELECT DISTINCT kind FROM (SELECT kind FROM tr_entities LIMIT %s) AS peek",
-                (sample_limit,),
-            ).fetchall()
-            # A missing row from either aggregate raises rather than defaulting
-            # to zero: "the server told me nothing" must never become "there is
-            # nothing", which is the confusion this whole module exists for.
-            literal_row = conn.execute(
-                "SELECT COUNT(*) FROM tr_entities WHERE body::text LIKE %s",
-                (f"%{V1_ALGORITHM_LITERAL}%",),
-            ).fetchone()
-            if literal_row is None:
+            counts: dict[str, int] = {}
+            sampled: set[str] = set()
+            literal_rows: int | None = None
+            positive_rows: int | None = None
+            for metric, kind, value in facts:
+                if metric == "count":
+                    counts[str(kind)] = int(value)
+                elif metric == "sample":
+                    sampled.add(str(kind))
+                elif metric == "v1_literal":
+                    if literal_rows is not None:
+                        raise ValueError("the v1 literal count returned more than one row")
+                    literal_rows = int(value)
+                elif metric == "positive_control":
+                    if positive_rows is not None:
+                        raise ValueError("the literal-search positive control returned more than one row")
+                    positive_rows = int(value)
+                else:
+                    raise ValueError(f"the census returned an unknown metric: {metric!r}")
+            # A missing aggregate raises rather than defaulting to zero: "the
+            # server told me nothing" must never become "there is nothing".
+            if literal_rows is None:
                 raise ValueError("the v1 literal count returned no row")
-            source_row = conn.execute(
-                "SELECT current_database(), current_user, "
-                "coalesce(host(inet_server_addr()), 'local'), inet_server_port()"
-            ).fetchone()
+            if positive_rows is None:
+                raise ValueError("the literal-search positive control returned no row")
+            source_row = conn.execute("SELECT current_database(), current_user").fetchone()
             if source_row is None:
                 raise ValueError("the database could not identify itself")
-        (literal_rows,) = literal_row
-        database, user, host, port = source_row
+            host = str(conn.info.host or "unknown")
+            port = int(conn.info.port or 0)
+        database, user = source_row
         return EntityCensus(
-            migrated_kind_counts={kind: int(count) for kind, count in counted},
-            sampled_kinds=tuple(sorted(kind for (kind,) in sampled)),
-            v1_literal_rows=int(literal_rows),
+            migrated_kind_counts=counts,
+            sampled_kinds=tuple(sorted(sampled)),
+            v1_literal_rows=literal_rows,
+            positive_control_rows=positive_rows,
             # Asked of the server rather than parsed out of the DSN, and the
             # DSN never appears here: it carries the password.
-            source=f"postgres:{database}@{host}:{port} as {user}",
+            source=(
+                f"postgres:{database}@{host}:{port} as {user} "
+                "(database/user from server; host/port from negotiated connection)"
+            ),
         )
-
-    def compare_and_swap(self, row: EntityRow, new_body: dict[str, Any]) -> bool:
-        import psycopg
-
-        with psycopg.connect(self._dsn) as conn:
-            changed = conn.execute(
-                "UPDATE tr_entities SET body=%s::jsonb, updated_at=CURRENT_TIMESTAMP "
-                "WHERE kind=%s AND id=%s AND body=%s::jsonb",
-                (
-                    _json_body(new_body),
-                    row.kind,
-                    row.entity_id,
-                    _json_body(row.original_body),
-                ),
-            ).rowcount
-        return changed == 1
-
 
 def _fields_for_kind(kind: str) -> tuple[tuple[str, str], ...]:
     """Derived from MIGRATED_SURFACES so the surface list has exactly one home.
@@ -653,31 +485,8 @@ def _fields_for_kind(kind: str) -> tuple[tuple[str, str], ...]:
     return fields
 
 
-def _broadcast_context(destination_id: str, field: str) -> str:
-    if field == "encrypted_endpoint_api_key":
-        return USER_MODEL_ENDPOINT_KEY_PURPOSE
-    if field == "encrypted_signing_secret":
-        return USER_MODEL_SIGNING_PURPOSE
-    suffix = {"encrypted_api_key": "api_key", "encrypted_headers": "headers"}[field]
-    # Byte-identical to services.broadcast.broadcast_secret_context. Keeping
-    # this tiny helper here avoids importing the application-global STORE into
-    # an offline secret migration process.
-    return f"broadcast:{destination_id}:{suffix}"
-
-
-def _required_string(body: dict[str, Any], field: str) -> str:
-    value = body.get(field)
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"missing {field}")
-    return value
-
-
 def _row_ref(kind: str, entity_id: str) -> str:
     return hashlib.sha256(f"{kind}\x00{entity_id}".encode()).hexdigest()[:12]
-
-
-def _json_body(value: Any) -> str:
-    return json.dumps(value, separators=(",", ":"), sort_keys=True)
 
 
 # ------------------------------------------------- the step-4 precondition ---
@@ -707,6 +516,7 @@ class PreconditionResult:
                 "migrated_kind_counts": dict(sorted(self.census.migrated_kind_counts.items())),
                 "sampled_kinds": list(self.census.sampled_kinds),
                 "v1_literal_rows": self.census.v1_literal_rows,
+                "positive_control_rows": self.census.positive_control_rows,
                 "source": self.census.source,
             },
         }
@@ -722,7 +532,7 @@ def check_no_v1_envelopes(
 ) -> PreconditionResult:
     """Audit one cloud's database and say whether it attests zero v1 envelopes.
 
-    The audit alone cannot do this. `BackfillRunner(apply=False)` reports
+    The audit alone cannot do this. `BackfillRunner` reports
     `v1_envelopes == 0` just as happily for a migrated database as for a run
     that scanned nothing at all. Both render as a green check, and on AWS and
     Azure a green check is exactly what a zero-row audit produced. So this
@@ -737,10 +547,9 @@ def check_no_v1_envelopes(
           here. The per-kind counts cannot catch either: the count and the walk
           restrict to the same two kind names, so a renamed kind is hidden from
           both, and neither reads a field name the surface map does not list.
-          (The count takes those names from `MIGRATED_KINDS` on both adapters;
-          the walk takes them from `MIGRATED_KINDS` on Postgres and from
-          hardcoded SQL text on Spanner. Identical today, and a divergence
-          would show up as an undercount, which is a refusal.) An earlier
+          (The count and walk both take those names from `MIGRATED_KINDS` on
+          both adapters; a divergence would show up as an undercount, which is
+          a refusal.) An earlier
           revision of this docstring claimed the per-kind census covered a
           renamed kind. It did not, and a live v1 envelope under a renamed
           field passed as `empty_witnessed`.
@@ -772,7 +581,35 @@ def check_no_v1_envelopes(
     have covered the beginning. This walks the whole table or reports nothing.
     """
     census = store.census(sample_limit=sample_limit)
-    stats = BackfillRunner(store, apply=False, reporter=reporter).run(batch_size=batch_size)
+    stats = BackfillRunner(store, reporter=reporter).run(batch_size=batch_size)
+
+    if not census.reachable:
+        return PreconditionResult(
+            cloud=cloud,
+            outcome=OUTCOME_ZERO_SCAN,
+            detail=(
+                "the independent whole-table census found no rows of any kind. Even if the "
+                "paged migrated-kind walk returned envelopes, there is no independent witness "
+                "that the census could have found a retired format. This is zero evidence, not "
+                "an attestation."
+            ),
+            stats=stats,
+            census=census,
+        )
+
+    if census.positive_control_rows <= 0:
+        return PreconditionResult(
+            cloud=cloud,
+            outcome=OUTCOME_SCAN_DISAGREES,
+            detail=(
+                "the census reached populated rows, but its whole-body literal-search positive "
+                "control matched none. A zero V1-literal count is not evidence until the same "
+                "column, cast, operator, and parameter path demonstrates that it can match a "
+                "known JSON-object marker."
+            ),
+            stats=stats,
+            census=census,
+        )
 
     undercounted = {
         kind: (counted, stats.rows_scanned_by_kind.get(kind, 0))
@@ -831,21 +668,9 @@ def check_no_v1_envelopes(
             cloud=cloud,
             outcome=OUTCOME_V1_REMAINS,
             detail=(
-                f"{stats.v1_envelopes} v1 envelopes are still stored. Run the backfill "
-                "(scripts/backfill_byok_aad_v2.py --apply) before attempting step 4."
-            ),
-            stats=stats,
-            census=census,
-        )
-    if stats.envelopes_seen == 0 and not census.reachable:
-        return PreconditionResult(
-            cloud=cloud,
-            outcome=OUTCOME_ZERO_SCAN,
-            detail=(
-                "the audit saw no envelopes AND the census found no rows of any kind, so "
-                "nothing distinguishes a migrated deployment from a broken query, a wrong "
-                "database, or a credential that can read nothing. This is not zero v1 "
-                "envelopes; it is zero evidence."
+                f"{stats.v1_envelopes} v1 envelopes are still stored. V1 decrypt support "
+                "has been retired; stop the rollout and use reviewed pre-Step-4 recovery code "
+                "rather than attempting to overwrite these rows."
             ),
             stats=stats,
             census=census,
@@ -923,6 +748,7 @@ def attestation_for(
         census_migrated_kind_counts=dict(result.census.migrated_kind_counts),
         census_sampled_kinds=list(result.census.sampled_kinds),
         census_v1_literal_rows=result.census.v1_literal_rows,
+        census_positive_control_rows=result.census.positive_control_rows,
         census_source=result.census.source,
         operator=operator,
         note=note,

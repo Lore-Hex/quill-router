@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import ast
 import dataclasses
 import datetime as dt
+import inspect
 import json
 import re
+import textwrap
 import threading
 from typing import Any
 
@@ -11,8 +14,11 @@ import httpx
 import pytest
 
 from clickhouse.ingest_operational_outbox import (
+    _WATERMARK_EPOCH,
     CanonicalOperationalEvent,
     OperationalOutboxRow,
+    OutboxSource,
+    SpannerOperationalOutboxSource,
     drain_once,
     expand_client_events_payload,
     normalise_operational_event,
@@ -44,6 +50,7 @@ from trusted_router.storage_operational_analytics import (
     OPERATIONAL_ANALYTICS_OUTBOX_SHARDS,
     build_client_events_payload,
 )
+from trusted_router.storage_postgres import PostgresStore
 from trusted_router.storage_postgres_operational_analytics_outbox import (
     PostgresOperationalAnalyticsOutbox,
 )
@@ -81,6 +88,11 @@ def _generation() -> Generation:
 class _ParamTypes:
     INT64 = "INT64"
     STRING = "STRING"
+    TIMESTAMP = "TIMESTAMP"
+
+    @staticmethod
+    def Array(element: str) -> str:  # noqa: N802 - mirrors google.cloud.spanner_v1.param_types
+        return f"ARRAY<{element}>"
 
 
 class _Transaction:
@@ -115,9 +127,7 @@ def test_activity_payload_names_its_workspace_but_never_keys_or_content() -> Non
     payload = activity_payload(generation)
     encoded = json.dumps(payload, sort_keys=True)
 
-    assert payload["tenant_id"] == analytics_surrogate(
-        "workspace", generation.workspace_id
-    )
+    assert payload["tenant_id"] == analytics_surrogate("workspace", generation.workspace_id)
     assert payload["workspace_id"] == generation.workspace_id
     assert payload["key_id"] == analytics_surrogate("api-key", generation.key_hash)
     assert generation.key_hash not in encoded
@@ -131,17 +141,13 @@ def test_activity_payload_names_its_workspace_but_never_keys_or_content() -> Non
 def test_operational_outbox_enqueue_is_sharded_and_commit_timestamped() -> None:
     database = _Database()
     generation = _generation()
-    SpannerOperationalAnalyticsOutbox(database, _ParamTypes()).enqueue_activity(
-        generation
-    )
+    SpannerOperationalAnalyticsOutbox(database, _ParamTypes()).enqueue_activity(generation)
 
     [(sql, params, param_types)] = database.transaction.calls
     assert "PENDING_COMMIT_TIMESTAMP()" in sql
     assert params["event_kind"] == "activity"
     assert params["event_id"] == generation.id
-    assert params["shard"] == operational_analytics_shard(
-        f"activity:{generation.id}"
-    )
+    assert params["shard"] == operational_analytics_shard(f"activity:{generation.id}")
     assert json.loads(params["payload"])["tenant_id"] != generation.workspace_id
     assert param_types == {
         "shard": "INT64",
@@ -271,18 +277,14 @@ def test_spanner_client_events_enqueue_uses_one_batch_outbox_row() -> None:
     database = _Database()
     payload = _client_events_payload()
 
-    SpannerOperationalAnalyticsOutbox(database, _ParamTypes()).enqueue_client_events(
-        payload
-    )
+    SpannerOperationalAnalyticsOutbox(database, _ParamTypes()).enqueue_client_events(payload)
 
     [(sql, params, _)] = database.transaction.calls
     event_id = f"{payload['tenant_id']}:{payload['batch_id']}"
     assert "PENDING_COMMIT_TIMESTAMP()" in sql
     assert params["event_kind"] == CLIENT_EVENTS_EVENT_KIND
     assert params["event_id"] == event_id
-    assert params["shard"] == operational_analytics_shard(
-        f"{CLIENT_EVENTS_EVENT_KIND}:{event_id}"
-    )
+    assert params["shard"] == operational_analytics_shard(f"{CLIENT_EVENTS_EVENT_KIND}:{event_id}")
     assert json.loads(params["payload"]) == payload
 
 
@@ -294,9 +296,7 @@ def test_postgres_client_events_enqueue_uses_one_idempotent_batch_row() -> None:
             statements.append((sql, params))
 
     connection = Connection()
-    outbox = PostgresOperationalAnalyticsOutbox(
-        lambda operation: operation(connection)
-    )
+    outbox = PostgresOperationalAnalyticsOutbox(lambda operation: operation(connection))
     payload = _client_events_payload()
 
     outbox.enqueue_client_events(payload)
@@ -394,6 +394,158 @@ def test_clickhouse_balanced_benchmark_reader_uses_one_window_query() -> None:
     ]
 
 
+def test_clickhouse_route_benchmark_reader_uses_one_partitioned_query() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        assert request.url.params["param_per_route_limit"] == "48"
+        assert request.url.params["param_limit"] == "47088"
+        assert request.url.params["param_cutoff"] == "2026-08-29T00:00:00Z"
+        sql = request.content.decode()
+        assert "source = 'synthetic'" in sql
+        assert "PARTITION BY provider, model" in sql
+        assert "route_rank <= {per_route_limit:UInt32}" in sql
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "bench-route-1",
+                        "model": "openai/gpt-5.5",
+                        "provider": "openai",
+                        "provider_name": "OpenAI",
+                        "status": "success",
+                        "usage_type": "Credits",
+                        "streamed": 1,
+                        "input_tokens": 4,
+                        "output_tokens": 1,
+                        "total_cost_microdollars": 3,
+                        "speed_tokens_per_second": 9.0,
+                        "elapsed_milliseconds": 180,
+                        "first_token_milliseconds": 90,
+                        "ttfb_milliseconds": 15,
+                        "finish_reason": "stop",
+                        "error_type": None,
+                        "error_status": None,
+                        "error_message": None,
+                        "region": "us-central1",
+                        "source": "synthetic",
+                        "app": "TrustedRouter Synthetic",
+                        "created_at": "2026-08-30 12:34:56.789",
+                    }
+                ]
+            },
+        )
+
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse",
+        user="reader",
+        password="sec" + "ret",
+        transport=httpx.MockTransport(handler),
+    )
+    rows = client.route_benchmark_samples(
+        cutoff="2026-08-29T00:00:00Z",
+        per_route_limit=48,
+        limit=47_088,
+    )
+
+    assert calls == 1
+    assert [(row.provider, row.model, row.id) for row in rows] == [
+        ("openai", "openai/gpt-5.5", "bench-route-1")
+    ]
+
+
+def test_gcp_route_health_batch_read_does_not_shadow_to_bigtable() -> None:
+    class FakeAnalytics:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def route_benchmark_samples(
+            self,
+            *,
+            cutoff: str,
+            per_route_limit: int,
+            limit: int,
+        ) -> list[ProviderBenchmarkSample]:
+            self.calls.append(
+                {
+                    "cutoff": cutoff,
+                    "per_route_limit": per_route_limit,
+                    "limit": limit,
+                }
+            )
+            return []
+
+    store = object.__new__(SpannerBigtableStore)
+    analytics = FakeAnalytics()
+    store._operational_analytics = analytics  # type: ignore[assignment]
+
+    rows = store.provider_route_benchmark_samples(
+        cutoff="2026-08-29T00:00:00Z",
+        per_route_limit=48,
+        limit=47_088,
+    )
+
+    assert rows == []
+    assert analytics.calls == [
+        {
+            "cutoff": "2026-08-29T00:00:00Z",
+            "per_route_limit": 48,
+            "limit": 47_088,
+        }
+    ]
+
+
+def test_postgres_route_health_batch_read_uses_one_partitioned_query() -> None:
+    statements: list[tuple[str, tuple[object, ...]]] = []
+    body = dataclasses.asdict(
+        ProviderBenchmarkSample(
+            id="bench-postgres-route-1",
+            model="openai/gpt-5.5",
+            provider="openai",
+            provider_name="OpenAI",
+            status="success",
+            usage_type="Credits",
+            streamed=True,
+            input_tokens=4,
+            output_tokens=1,
+            total_cost_microdollars=3,
+            created_at="2026-08-30T12:34:56.789Z",
+            source="synthetic",
+        )
+    )
+
+    class Cursor:
+        def fetchall(self) -> list[tuple[dict[str, object]]]:
+            return [(body,)]
+
+    class Connection:
+        def execute(self, sql: str, params: tuple[object, ...]) -> Cursor:
+            statements.append((sql, params))
+            return Cursor()
+
+    connection = Connection()
+    store = PostgresStore.__new__(PostgresStore)
+    store._run_transaction = lambda operation: operation(connection)  # type: ignore[method-assign]
+
+    rows = store.provider_route_benchmark_samples(
+        cutoff="2026-08-29T00:00:00Z",
+        per_route_limit=48,
+        limit=47_088,
+    )
+
+    assert [(row.provider, row.model, row.id) for row in rows] == [
+        ("openai", "openai/gpt-5.5", "bench-postgres-route-1")
+    ]
+    [(sql, params)] = statements
+    assert "PARTITION BY body ->> 'provider', body ->> 'model'" in sql
+    assert "body ->> 'source' = 'synthetic'" in sql
+    assert "route_rank <= %s" in sql
+    assert params == ("2026-08-29T00:00:00Z", 48, 47_088)
+
+
 @pytest.mark.parametrize(
     "snapshot_name",
     [
@@ -424,9 +576,7 @@ def test_public_snapshot_reads_newest_revision_across_month_partitions(
         transport=httpx.MockTransport(handler),
     )
 
-    assert client.public_snapshot(snapshot_name) == {
-        "generated_at": "2026-08-01T00:00:00Z"
-    }
+    assert client.public_snapshot(snapshot_name) == {"generated_at": "2026-08-01T00:00:00Z"}
 
 
 def test_public_snapshot_rejects_unknown_products_without_querying() -> None:
@@ -505,6 +655,142 @@ class _Writer:
         if self.failures:
             self.failures -= 1
             raise RuntimeError("ClickHouse unavailable")
+
+
+def test_outbox_source_protocol_is_behavior_free() -> None:
+    """Protocols define the drain contract; implementations own all behavior."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(OutboxSource)))
+    methods = [node for node in tree.body[0].body if isinstance(node, ast.FunctionDef)]
+
+    assert methods
+    for method in methods:
+        assert len(method.body) == 1, f"OutboxSource.{method.name} carries behavior"
+        [statement] = method.body
+        assert (
+            isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and statement.value.value is Ellipsis
+        ), f"OutboxSource.{method.name} carries behavior"
+
+
+class _QueryCountingSnapshot:
+    def __init__(self, database: _QueryCountingDatabase) -> None:
+        self.database = database
+
+    def __enter__(self) -> _QueryCountingSnapshot:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        pass
+
+    def execute_sql(
+        self,
+        sql: str,
+        *,
+        params: dict[str, Any],
+        param_types: dict[str, Any],
+    ) -> list[tuple[object, ...]]:
+        self.database.select_statements.append(sql)
+        self.database.select_params.append((params, param_types))
+        if not self.database.pending_rows:
+            return []
+        batch = self.database.pending_rows.pop(0)
+        return [
+            (row.shard, row.commit_ts, row.event_kind, row.event_id, row.payload) for row in batch
+        ]
+
+
+class _QueryCountingBatch:
+    def __init__(self, database: _QueryCountingDatabase) -> None:
+        self.database = database
+
+    def __enter__(self) -> _QueryCountingBatch:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        pass
+
+    def delete(self, table: str, key_set: object) -> None:
+        self.database.delete_calls.append((table, key_set))
+
+
+class _QueryCountingDatabase:
+    def __init__(self, rows: list[list[OperationalOutboxRow]] | None = None) -> None:
+        self.select_statements: list[str] = []
+        self.select_params: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        self.delete_calls: list[tuple[str, object]] = []
+        # Each fetch pops one batch; an exhausted queue means an empty outbox.
+        self.pending_rows: list[list[OperationalOutboxRow]] = (
+            [[_outbox_row()]] if rows is None else rows
+        )
+
+    def snapshot(self, **_kwargs: object) -> _QueryCountingSnapshot:
+        return _QueryCountingSnapshot(self)
+
+    def batch(self) -> _QueryCountingBatch:
+        return _QueryCountingBatch(self)
+
+
+def _spanner_source(database: _QueryCountingDatabase) -> SpannerOperationalOutboxSource:
+    source = object.__new__(SpannerOperationalOutboxSource)
+    source._database = database
+    source._pt = _ParamTypes()
+    source._shard_count = 32
+    source._after = None
+    return source
+
+
+def test_spanner_drain_fetch_is_one_seek_statement_with_a_watermark() -> None:
+    """One statement per poll, seeking every shard from the watermark.
+
+    The unfiltered ``LIMIT @limit`` this replaces walked the table's deleted-row
+    garbage on every poll: 0.207s CPU per execution for ~2 rows, 3,300/hour --
+    the largest load on the billing-plane instance (SPANNER_SYS, 2026-09-01).
+    The per-shard predicate is what makes the read a set of key-range seeks;
+    a bare ``commit_ts >= @after`` is not a key prefix and would still scan.
+    """
+    database = _QueryCountingDatabase()
+    source = _spanner_source(database)
+
+    result = drain_once(source, _Writer(), batch_size=100)
+
+    assert result.fetched == 1
+    assert len(database.select_statements) == 1
+    statement = database.select_statements[0]
+    assert "WHERE shard IN UNNEST(@shards)" in statement
+    assert "commit_ts >= @after" in statement
+    assert "ORDER BY commit_ts LIMIT @limit" in statement
+    params, types = database.select_params[0]
+    assert params == {"shards": list(range(32)), "after": _WATERMARK_EPOCH, "limit": 100}
+    assert types == {"shards": "ARRAY<INT64>", "after": "TIMESTAMP", "limit": "INT64"}
+    assert len(database.delete_calls) == 1
+
+
+def test_spanner_drain_watermark_advances_only_after_clickhouse_ack() -> None:
+    """The watermark moves to the newest DELETED commit_ts, never to a fetched one.
+
+    A batch whose insert failed is never deleted, so the next poll must seek
+    from the old watermark and see it again; after an acknowledged batch the
+    next poll seeks from that batch's newest commit timestamp (``>=`` keeps
+    tie-sharing rows that LIMIT may have cut).
+    """
+    row = _outbox_row()
+    database = _QueryCountingDatabase(rows=[[row], [row], []])
+    source = _spanner_source(database)
+
+    with pytest.raises(RuntimeError, match="ClickHouse unavailable"):
+        drain_once(source, _Writer(failures=1), batch_size=100)
+    assert database.delete_calls == []
+    assert source._after is None
+
+    acked = drain_once(source, _Writer(), batch_size=100)
+    assert acked.fetched == 1
+    assert len(database.delete_calls) == 1
+    assert source._after == row.commit_ts
+
+    drain_once(source, _Writer(), batch_size=100)
+    assert database.select_params[-1][0]["after"] == row.commit_ts
+    assert database.select_params[0][0]["after"] == _WATERMARK_EPOCH
 
 
 def test_operational_cursor_advances_only_after_clickhouse_ack() -> None:
@@ -669,9 +955,7 @@ def test_client_reliability_reader_binds_tenant_and_uses_final_rollups() -> None
         "p50_total_ms": 100,
         "p95_total_ms": 200,
         "p50_ttft_ms": 100,
-        "by_host": {
-            "apex": {"attempts": 110, "attempt_tr_fault": 2, "rate": 0.018182}
-        },
+        "by_host": {"apex": {"attempts": 110, "attempt_tr_fault": 2, "rate": 0.018182}},
     }
 
 
@@ -1004,9 +1288,7 @@ class _SnapshotDatabase:
                 outer.queries.append((sql, kwargs.get("params") or {}))
                 shards = [int(value) for value in re.findall(r"WHERE shard=(\d+)", sql)]
                 stamps = sorted(
-                    stamp
-                    for shard in shards
-                    for stamp in outer._rows_by_shard.get(shard, [])
+                    stamp for shard in shards for stamp in outer._rows_by_shard.get(shard, [])
                 )
                 return [[stamps[0]]] if stamps else [[None]]
 

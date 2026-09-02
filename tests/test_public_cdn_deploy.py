@@ -11,7 +11,7 @@ def test_rollout_enables_origin_controlled_public_cdn() -> None:
     assert "--cache-key-include-host" in rollout
     assert "--cache-key-include-protocol" in rollout
     assert "--cache-key-include-query-string" in rollout
-    assert "--serve-while-stale=600" in rollout
+    assert "--serve-while-stale=86400" in rollout
     assert "--no-negative-caching" in rollout
 
 

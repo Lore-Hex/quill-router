@@ -85,8 +85,10 @@ def test_deploy_removes_only_explicitly_missing_optional_secrets() -> None:
         'REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")' in rollout
     )
     assert "trustedrouter-google-ads-conversion-feed-password" not in rollout
-    assert '[[ "$describe_error" == *"NOT_FOUND"* ]]' in rollout
-    assert "cannot determine whether optional secret" in rollout
+    assert "gc secrets list --format='value(name)'" in rollout
+    assert 'grep -Fxq -- "$secret_name" <<<"$OPTIONAL_SECRET_NAMES"' in rollout
+    assert "cannot list optional secret inventory" in rollout
+    assert 'gc secrets describe "$secret_name"' not in rollout
     assert 'REMOVE_SECRET_ENVS+=("${env_name}")' in rollout
     assert 'REMOVE_SECRETS_ARGS=(--remove-secrets ' in rollout
     assert '"${REMOVE_SECRETS_ARGS[@]}"' in rollout
@@ -175,7 +177,17 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
     # the no-traffic deploy wait for that many Ready instances (us-east4 pins
     # 8; the warm step ran 7m37). The primer caps at min(2, service minimum).
     assert 'prewarm_floor="${TR_CLOUD_RUN_PREWARM_MIN_INSTANCES:-2}"' in rollout
-    assert 'revision_min_instances="$prewarm_floor"' in rollout
+    assert "cloud_run_candidate_min_instances()" in rollout
+    assert (
+        'revision_min_instances="$(cloud_run_candidate_min_instances '
+        '"$min_instances")"'
+        in rollout
+    )
+    assert (
+        'warm_min_instances="$(cloud_run_candidate_min_instances '
+        '"$warm_service_min_instances")"'
+        in rollout
+    )
     assert '--min-instances "$revision_min_instances"' in rollout
     assert '"TR_SPANNER_POOL_SIZE=${TR_SPANNER_POOL_SIZE}"' in rollout
 
@@ -244,9 +256,20 @@ def test_production_deploy_provisions_and_schedules_regional_quota_reconciliatio
     assert "us-central1=tr-quota-us-central1" in library
     assert "europe-west4=tr-quota-europe-west4" not in library
     assert 'SCHEDULE="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULE:-* * * * *}"' in reconciler
-    assert "trusted_router.regional_quota_reconcile_cli" in reconciler
+    assert 'JOB_REGION="${TR_REGIONAL_QUOTA_RECONCILER_JOB_REGION:-us-east4}"' in reconciler
+    assert (
+        'SCHEDULER_REGION="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULER_REGION:-${TR_PRIMARY_REGION}}"'
+        in reconciler
+    )
+    assert "trusted_router.regional_quota_reconcile_gate" in reconciler
+    assert "trusted_router.regional_quota_reconcile_cli" not in reconciler
     assert '"TR_ENVIRONMENT=worker"' in reconciler
     assert '"TR_SERVICE_SURFACE=control"' in reconciler
+    assert '"TR_SPANNER_POOL_SIZE=1"' in reconciler
+    assert '"TR_REGIONAL_QUOTA_RECONCILER_LOCK_BUCKET=${LOCK_BUCKET}"' in reconciler
+    assert '"TR_REGIONAL_QUOTA_RECONCILER_LOCK_LEASE_SECONDS=240"' in reconciler
+    assert "roles/storage.objectUser" in reconciler
+    assert "if ! gc storage buckets describe" in reconciler
     assert "--oauth-service-account-email=\"$RUN_SERVICE_ACCOUNT\"" in reconciler
     assert "--clear-headers" in reconciler
     assert "gc secrets" not in reconciler
@@ -255,7 +278,7 @@ def test_production_deploy_provisions_and_schedules_regional_quota_reconciliatio
     assert reconciler.index("gc run jobs execute") < reconciler.index("gc scheduler jobs update")
     assert reconciler.index("gc run jobs execute") < reconciler.index("gc scheduler jobs create")
     assert "--max-retries 0" in reconciler
-    assert "--task-timeout 50s" in reconciler
+    assert "--task-timeout 180s" in reconciler
     assert "--max-retry-attempts=3" in reconciler
     assert "--max-retry-duration=45s" in reconciler
     assert "--max-doublings=1" in reconciler

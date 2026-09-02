@@ -171,6 +171,8 @@ def test_internal_surface_route_inventory_matches_capability_audit() -> None:
         ("POST", "/internal/gateway/settle"),
         ("POST", "/internal/gateway/refund"),
         ("POST", "/internal/gateway/settle-outbox/drain"),
+        ("POST", "/internal/gateway/receipt-keys/collect"),
+        ("POST", "/internal/gateway/spend-lease/register-boot"),
         ("POST", "/internal/gateway/regional-quota/reconcile"),
         ("POST", "/internal/gateway/home-settlement/drain"),
         ("POST", "/internal/gateway/deferred/reap"),
@@ -242,6 +244,7 @@ def test_t1_marketing_static_status_and_catalog_paths_are_public(path: str) -> N
     [
         "/console",
         "/auth/session",
+        "/oauth/apps",
         "/signup",
         "/billing/checkout",
         "/internal/stripe/webhook",
@@ -251,6 +254,40 @@ def test_t1_marketing_static_status_and_catalog_paths_are_public(path: str) -> N
 )
 def test_t2_through_t4_and_legacy_alias_paths_are_not_public(path: str) -> None:
     assert URL_MAP.route_surface(path) != "public"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/oauth/apps",
+        "/oauth/apps/verified-app",
+        "/v1/oauth/apps",
+        "/v1/oauth/apps/verified-app",
+        "/oauth/authorized-apps",
+        "/oauth/authorized-apps/verified-app",
+        "/v1/oauth/authorized-apps",
+        "/v1/oauth/authorized-apps/verified-app",
+    ],
+)
+def test_oauth_app_registry_paths_route_to_control(path: str) -> None:
+    assert URL_MAP.route_surface(path) == "control"
+
+
+@pytest.mark.parametrize("prefix", ["", "/v1"])
+@pytest.mark.parametrize("path", ["/oauth/authorize", "/oauth/token"])
+def test_conformant_oauth_protocol_paths_route_to_control(prefix: str, path: str) -> None:
+    """Consent and token exchange belong beside their legacy twins.
+
+    /oauth/authorize renders the consent page from the user's session cookie
+    and /oauth/token mints an API key and can touch Stripe -- control-plane
+    capabilities. Serving them from public would hand the anonymous-read
+    surface store writes and key minting. The unversioned aliases matter
+    most: unmatched paths default to public, so without an explicit control
+    rule they would silently land on a surface that does not mount them.
+    """
+    full_path = f"{prefix}{path}"
+    assert URL_MAP.route_surface(full_path) == "control"
+    assert _emitted_backend(_emitted_map(), full_path) == LEGACY_BACKEND
 
 
 @pytest.mark.parametrize("prefix", ["", "/v1"])
@@ -331,6 +368,7 @@ def test_every_emitted_nonpublic_wildcard_has_an_exact_bare_twin() -> None:
         ("/v1/bedrock-group-buy", LEGACY_BACKEND),
         ("/console", LEGACY_BACKEND),
         ("/auth/session", LEGACY_BACKEND),
+        ("/oauth/apps/verified-app", LEGACY_BACKEND),
         ("/signup", LEGACY_BACKEND),
         ("/internal/gateway/settle", LEGACY_BACKEND),
         ("/v1/chat/completions", LEGACY_BACKEND),
@@ -361,6 +399,7 @@ def test_emitted_map_routes_representative_paths(path: str, backend: str) -> Non
         ("/static/a.css", "public"),
         ("/.well-known/mcp/server-card.json", "public"),
         ("/console", "control"),
+        ("/oauth/apps/verified-app", "control"),
         ("/signup", "control"),
         ("/internal/gateway/settle", "internal"),
         ("/v1/chat/completions", "control"),

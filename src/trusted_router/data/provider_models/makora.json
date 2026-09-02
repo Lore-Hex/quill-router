@@ -3,9 +3,9 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-08-25T18:42:44Z",
+  "generated_at": "2026-09-02T03:25:34Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 12,
+  "model_count": 14,
   "models": [
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -43,7 +43,8 @@
         "tools",
         "reasoning",
         "json_mode",
-        "structured_outputs"
+        "structured_outputs",
+        "logprobs"
       ]
     },
     {
@@ -173,7 +174,10 @@
         "json_mode",
         "structured_outputs",
         "logprobs"
-      ]
+      ],
+      "missing_since": "2026-08-29",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "moonshotai/kimi-k2.7-code",
@@ -410,7 +414,9 @@
         "json_mode",
         "logprobs"
       ],
-      "routable": true
+      "routable": false,
+      "missing_since": "2026-08-31",
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "openai/gpt-oss-120b",
@@ -476,6 +482,81 @@
       "input_token_price_per_m": 2550000,
       "output_token_price_per_m": 12750000,
       "cached_input_token_price_per_m": 256000
+    },
+    {
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "zai-org/GLM-5.3-Flash",
+      "display_name": "zai-org/GLM-5.3-Flash",
+      "title": "zai-org/GLM-5.3-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "context_length": 1048576,
+      "features": [
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "seed",
+        "stop",
+        "max_tokens"
+      ],
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 470000,
+      "cached_input_token_price_per_m": 24000
+    },
+    {
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "zai-org/GLM-5.3",
+      "display_name": "zai-org/GLM-5.3",
+      "title": "zai-org/GLM-5.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "context_length": 1048576,
+      "max_output_tokens": 128000,
+      "features": [
+        "tools",
+        "logprobs",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_parameters": [
+        "temperature",
+        "presence_penalty",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "stop",
+        "repetition_penalty",
+        "max_tokens",
+        "seed"
+      ],
+      "input_token_price_per_m": 1350000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 230000
     }
   ]
 }

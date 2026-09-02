@@ -1024,6 +1024,7 @@ def test_typed_finalize_full_success() -> None:
 
     res = _typed_finalize(store, rid=rid, aid=aid, actual=900_000)
     assert res["outcome"] == SettleOutcome.SETTLED
+    assert db.transaction_tags[-1] == "tr_finalize"
     # counters
     assert _typed(db, ws)["reserved"] == 0
     assert _typed(db, ws)["total_usage"] == 900_000
@@ -1045,6 +1046,7 @@ def test_typed_finalize_refund_no_generation_no_booking() -> None:
 
     res = _typed_finalize(store, rid=rid, aid=aid, actual=0, success=False)
     assert res["outcome"] == SettleOutcome.SETTLED
+    assert db.transaction_tags[-1] == "tr_refund_finalize"
     assert _typed(db, ws)["reserved"] == 0
     assert _typed(db, ws)["total_usage"] == 0  # refund books nothing
     assert ("generation", f"gen-{rid}") not in db.rows  # no generation on failure

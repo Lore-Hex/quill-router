@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -249,9 +250,26 @@ _aws_waf_rules_json tr-eu.example.awsapprunner.com
         "AggregateKeyType": "IP",
     }
     assert preview_rules["AllowedHosts"]["Action"] == {"Count": {}}
-    allowed_host_json = json.dumps(preview_rules["AllowedHosts"])
-    assert "aws.trustedrouter.com" in allowed_host_json
-    assert "aws.trustedrouter.com:443" in allowed_host_json
+    search_strings: list[str] = []
+
+    def collect_search_strings(value: object) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == "SearchString":
+                    assert isinstance(child, str)
+                    search_strings.append(child)
+                else:
+                    collect_search_strings(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect_search_strings(child)
+
+    collect_search_strings(preview_rules["AllowedHosts"])
+    decoded_search_strings = {
+        base64.b64decode(value, validate=True).decode("utf-8") for value in search_strings
+    }
+    assert "aws.trustedrouter.com" in decoded_search_strings
+    assert "aws.trustedrouter.com:443" in decoded_search_strings
     assert preview_rules["StateChangingRate"]["Action"] == {"Count": {}}
     assert preview_rules["AwsManagedCommon"]["OverrideAction"] == {"Count": {}}
 
@@ -693,7 +711,7 @@ def test_azure_canary_is_public_with_only_a_dedicated_attribution_signer() -> No
     assert "public canary OAuth capability verification failed" in deploy
 
 
-def test_every_synthetic_job_uses_private_run_app_ingress() -> None:
+def test_every_synthetic_job_uses_the_ingress_appropriate_ingest_base() -> None:
     deploy = (ROOT / "scripts/deploy/synthetic.sh").read_text(encoding="utf-8")
 
     assert 'source "${SCRIPT_DIR}/_private_run_ingress.sh"' in deploy
@@ -711,9 +729,11 @@ def test_every_synthetic_job_uses_private_run_app_ingress() -> None:
     ) in deploy
     assert 'SYNTHETIC_INGEST_SERVICE="$SERVICE"' in deploy
     assert "TR_SYNTHETIC_INGEST_SERVICE" not in deploy
-    assert deploy.count("${SYNTHETIC_INGEST_SERVICE}-${PROJECT_NUMBER}") == 4
-    assert deploy.count("gc run jobs deploy") == 4
-    assert deploy.count('"$JOB_SECRET_FLAG" "$JOB_SECRETS"') == 4
+    assert deploy.count("$(synthetic_ingest_base_for_region") == 5
+    assert 'printf \'%s\\n\' "https://trustedrouter.com"' in deploy
+    assert "printf 'https://%s-%s.%s.run.app\\n'" in deploy
+    assert deploy.count("gc run jobs deploy") == 5
+    assert deploy.count('"$JOB_SECRET_FLAG" "$JOB_SECRETS"') == 5
     assert 'JOB_SECRET_FLAG="--set-secrets"' in deploy
     assert 'JOB_SECRET_FLAG="--update-secrets"' in deploy
     assert deploy.count("ensure_private_run_app_access") == 1
@@ -722,7 +742,7 @@ def test_every_synthetic_job_uses_private_run_app_ingress() -> None:
         '"${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]+'
         '"${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}"}"'
     )
-    assert deploy.count(guarded_network_args) == 4
+    assert deploy.count(guarded_network_args) == 5
 
 
 def test_secret_bootstrap_provisions_a_distinct_observer_credential() -> None:

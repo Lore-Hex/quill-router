@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from trusted_router.catalog import endpoints_for_model
+from trusted_router.catalog import PROVIDERS, endpoints_for_model
 from trusted_router.dashboard import PUBLIC_PAGES
 from trusted_router.storage import STORE
 
@@ -18,14 +18,13 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/compare/litellm": "LiteLLM and TrustedRouter fit in the same stack.",
         "/docs/migrate-from-openrouter": "Change base_url",
         "/docs/synth": "Run a panel of models inside the attested gateway.",
+        "/docs/receipts": "12% total TrustedRouter service fee",
         "/synth": "Synthesize many models into one perfect frontier answer.",
         "/resources": "Guides, comparisons, privacy references",
         "/customers/robot-robot-human": "From first call to production-scale legal AI in three weeks.",
         "/careers": "Work on attested AI routing",
         "/blog": "TrustedRouter blog",
-        "/blog/they-are-still-training-on-your-data": (
-            "They Are Still Training on Your Data"
-        ),
+        "/blog/they-are-still-training-on-your-data": ("They Are Still Training on Your Data"),
         "/blog/no-log-is-a-promise-attestation-is-proof": (
             "ZDR is a vague promise. Attestation is precise proof"
         ),
@@ -101,7 +100,9 @@ def test_rrh_customer_story_scopes_privacy_claims_and_uses_tailored_og(
     response = client.get("/customers/robot-robot-human")
 
     assert response.status_code == 200
-    assert "Gateway attestation and provider guarantees answer different questions." in response.text
+    assert (
+        "Gateway attestation and provider guarantees answer different questions." in response.text
+    )
     assert "TrustedRouter did not inspect prompt or output content." in response.text
     assert "independently verified E2E routes" in response.text
     assert "not a single page ever leaving" not in response.text.lower()
@@ -282,6 +283,8 @@ def test_public_pricing_matches_five_point_five_percent_billing_policy(
     assert "Cheaper. Smarter. More reliable. More secure." in pricing.text
     assert "5.5% pay as you go fee on credit purchases" in pricing.text
     assert 'href="https://openrouter.ai/pricing"' in pricing.text
+    assert "provider-specific prices are listed on the Models page" in pricing.text
+    assert '<a class="btn secondary" href="/models">Browse model prices</a>' in pricing.text
     assert "10% markup" not in pricing.text
 
     comparison = client.get("/compare/openrouter")
@@ -503,19 +506,79 @@ def test_public_models_page_does_not_require_api_key(client: TestClient) -> None
     assert "IQ 116" in response.text
 
 
+def test_public_models_page_is_a_ranked_searchable_price_explorer(
+    client: TestClient,
+) -> None:
+    response = client.get("/models")
+
+    assert response.status_code == 200
+    body = response.text
+    assert 'type="search"' in body
+    assert "data-model-search" in body
+    assert "data-model-sort" in body
+    assert "Cached input" in body
+    assert "/static/models.js" in body
+    assert 'href="/for-developers"' in body
+    assert 'href="/docs/quickstart"' not in body
+    assert 'data-endpoints-url="/v1/models/z-ai/glm-5.3-flash/endpoints"' in body
+    public_provider_count = sum(slug != "trustedrouter" for slug in PROVIDERS)
+    assert f"{public_provider_count} providers" in body
+
+    glm = body.index('data-model-id="z-ai/glm-5.3-flash"')
+    kimi = body.index('data-model-id="moonshotai/kimi-k3"')
+    deepseek = body.index('data-model-id="deepseek/deepseek-v4-pro-0813"')
+    router_alias = body.index('data-model-id="trustedrouter/auto"')
+    assert glm < kimi < deepseek < router_alias
+
+
+def test_public_providers_page_has_search_and_collapsed_policy_notes(
+    client: TestClient,
+) -> None:
+    response = client.get("/providers")
+
+    assert response.status_code == 200
+    assert 'type="search"' in response.text
+    assert "data-provider-search" in response.text
+    assert 'data-provider-row data-provider-id="tinfoil"' in response.text
+    assert '<details class="provider-policy-details">' in response.text
+    assert "Show policy" in response.text
+    assert "Hide policy" in response.text
+    assert "/static/providers.js" in response.text
+
+
 def test_public_model_detail_lists_distinct_serving_providers(client: TestClient) -> None:
     model_id = "moonshotai/kimi-k2.6"
     response = client.get(f"/models/{model_id}")
 
     assert response.status_code == 200
     assert "Providers serving this model" in response.text
-    assert "Endpoints</th>" in response.text
+    assert "Credits routes</th>" in response.text
+    assert "Cached input</th>" in response.text
+    assert "Usage</th>" not in response.text
+    assert ">BYOK<" not in response.text
     assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
     assert "IQ 116" in response.text
-    expected_providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
+    expected_providers = {
+        endpoint.provider
+        for endpoint in endpoints_for_model(model_id)
+        if endpoint.usage_type == "Credits"
+    }
     assert "kimi" in expected_providers
     for provider in expected_providers:
         assert f'title="{provider}"' in response.text
+
+
+def test_byok_only_model_page_reports_no_credits_route(client: TestClient) -> None:
+    response = client.get("/models/tencent/hy3-preview")
+
+    assert response.status_code == 200
+    assert "No Credits provider route is currently published" in response.text
+    assert "no Credits provider route for Tencent: Hy3 preview" in response.text
+    assert "<th>Billing</th>" not in response.text
+    assert ">BYOK<" not in response.text
+    assert "BYOK only" not in response.text
+    assert "lowest prepaid" not in response.text
+    assert "No Credits provider route" in response.text
 
 
 def test_public_partner_model_discloses_fixed_price_and_minimum(
@@ -697,8 +760,8 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     assert "One Unified Interface." in response.text
     assert "Privacy with proof." in response.text
     assert "Better privacy, better prices, better uptime, no subscriptions." in response.text
-    assert '<strong>81+</strong><span>providers</span>' in response.text
-    assert '<strong>3 clouds</strong><span>GCP · AWS · Azure</span>' in response.text
+    assert "<strong>90+</strong><span>providers</span>" in response.text
+    assert "<strong>3 clouds</strong><span>GCP · AWS · Azure</span>" in response.text
     assert 'class="region-map-card"' not in response.text
     assert "Provable privacy." not in response.text
     assert "ATTESTED GATEWAY" not in response.text

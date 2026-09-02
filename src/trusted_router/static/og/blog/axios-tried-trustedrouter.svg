@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">Axios tried TrustedRouter in under 30 seconds</title>
+  <desc id="desc">TrustedRouter social card featuring Axios coverage and a thirty second DeepSeek setup.</desc>
+  <rect width="1200" height="630" fill="#07110c"/>
+  <rect x="48" y="48" width="1104" height="534" rx="12" fill="#0b1711" stroke="#355247" stroke-width="2"/>
+  <rect x="82" y="82" width="218" height="42" rx="21" fill="#d6f5e7"/>
+  <text x="191" y="110" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="700" fill="#0b1711" letter-spacing="1.4">FEATURED IN AXIOS</text>
+  <text x="82" y="205" font-family="Georgia,serif" font-size="56" font-weight="700" fill="#f4efe3">DeepSeek on</text>
+  <text x="82" y="272" font-family="Georgia,serif" font-size="56" font-weight="700" fill="#f4efe3">TrustedRouter in</text>
+  <text x="82" y="339" font-family="Georgia,serif" font-size="56" font-weight="700" fill="#9ee7c4">under 30 seconds.</text>
+  <text x="84" y="402" font-family="Inter,Arial,sans-serif" font-size="24" fill="#bac8c0">Routing is coming for the frontier AI labs.</text>
+  <line x1="82" y1="456" x2="1118" y2="456" stroke="#355247" stroke-width="2"/>
+  <text x="82" y="526" font-family="Inter,Arial,sans-serif" font-size="28" font-weight="700" fill="#f4efe3">TrustedRouter</text>
+  <text x="1118" y="526" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="23" fill="#9ee7c4">550+ models · one API · privacy with proof</text>
+</svg>

@@ -16,6 +16,14 @@ from google.api_core.exceptions import (
 )
 
 from tests.fakes.spanner import make_fake_store
+from trusted_router.app_markup_billing import (
+    APP_MARKUP_APP_ID_SETTLE_FIELD,
+    APP_MARKUP_OWNER_SETTLE_FIELD,
+    APP_MARKUP_PAYOUT_SETTLE_FIELD,
+    app_markup_microdollars_from_charge,
+    app_markup_owner_share_microdollars,
+    app_markup_payout_event_id,
+)
 from trusted_router.catalog_data import PARASAIL_LIBERTY_2_0_MODEL_ID
 from trusted_router.custom_model_billing import (
     USER_MODEL_ID_SETTLE_FIELD,
@@ -114,12 +122,43 @@ def _typed_authorization(
     return auth
 
 
+def _typed_app_authorization(
+    store: Any, *, workspace_id: str, key_hash: str, markup_basis_points: int = 500
+) -> GatewayAuthorization:
+    outcome, auth = store.authorize_gateway_typed(
+        workspace_id=workspace_id,
+        key_hash=key_hash,
+        estimate=ESTIMATE,
+        has_credit_candidate=True,
+        reservation_usage_type="Credits",
+        model_id=MODEL_ID,
+        provider=PROVIDER,
+        requested_model_id=MODEL_ID,
+        candidate_model_ids=[MODEL_ID],
+        region="us",
+        endpoint_id=ENDPOINT_ID,
+        candidate_endpoint_ids=[ENDPOINT_ID],
+        idempotency_key=None,
+        idempotency_fingerprint=None,
+        app_id="app-markup",
+        app_markup_basis_points=markup_basis_points,
+        app_owner_user_id="owner-app-markup",
+        expires_at="2026-01-01T00:00:00Z",
+    )
+    assert outcome == AuthorizeOutcome.ACCEPTED
+    assert auth is not None
+    return auth
+
+
 def _legacy_authorization(
     store: Any,
     *,
     workspace_id: str,
     key_hash: str,
     estimate: int = ESTIMATE,
+    app_id: str = "",
+    app_markup_basis_points: int = 0,
+    app_owner_user_id: str = "",
 ) -> GatewayAuthorization:
     reservation_id = f"legacy-res-{workspace_id}"
     credit = store._read_entity("credit", workspace_id, dict)
@@ -140,6 +179,9 @@ def _legacy_authorization(
         region="us",
         endpoint_id=ENDPOINT_ID,
         candidate_endpoint_ids=[ENDPOINT_ID],
+        app_id=app_id,
+        app_markup_basis_points=app_markup_basis_points,
+        app_owner_user_id=app_owner_user_id,
     )
 
 
@@ -384,6 +426,225 @@ def test_user_model_outbox_repair_pays_owner_exactly_once(
     assert generations[0]["operator_cost_microdollars"] == payout
 
 
+def test_typed_app_markup_settle_and_outbox_replay_book_exact_money_once(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, db, _bt = fake_store
+    ws = "ws_apply_app_markup"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_app_authorization(store, workspace_id=ws, key_hash=key.hash)
+    markup = app_markup_microdollars_from_charge(800_000, 500)
+    payout = app_markup_owner_share_microdollars(markup)
+    body = json.loads(_settle_body(auth.id))
+    body.update(
+        {
+            APP_MARKUP_PAYOUT_SETTLE_FIELD: payout,
+            APP_MARKUP_OWNER_SETTLE_FIELD: "owner-app-markup",
+            APP_MARKUP_APP_ID_SETTLE_FIELD: "app-markup",
+        }
+    )
+    row = _row(auth, cost=800_000, settle_body=json.dumps(body))
+
+    assert apply_frozen_settle(row) == ApplyOutcome.SETTLED_NOW
+    assert apply_frozen_settle(row) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+    assert _typed_credit(db, ws)["total_usage"] == 800_000
+    assert store.earnings_summary("owner-app-markup")["total_earned"] == payout
+    movements = store.list_credit_movements("user:owner-app-markup")
+    assert len(movements) == 1
+    assert movements[0].movement_id == app_markup_payout_event_id(auth.id)
+    assert movements[0].kind == "app_markup_payout"
+    assert movements[0].amount_microdollars == payout
+    assert markup - payout == 11_429
+
+
+def test_regional_clamp_frozen_payout_replays_without_dead_letter(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, db, _bt = fake_store
+    ws = "ws_apply_regional_clamp_markup"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_app_authorization(
+        store, workspace_id=ws, key_hash=key.hash, markup_basis_points=30_000
+    )
+    charge = 400
+    markup = app_markup_microdollars_from_charge(charge, auth.app_markup_basis_points)
+    payout = app_markup_owner_share_microdollars(markup)
+    body = json.loads(_settle_body(auth.id))
+    body.update(
+        {
+            APP_MARKUP_PAYOUT_SETTLE_FIELD: payout,
+            APP_MARKUP_OWNER_SETTLE_FIELD: auth.app_owner_user_id,
+            APP_MARKUP_APP_ID_SETTLE_FIELD: auth.app_id,
+        }
+    )
+    row = _row(auth, cost=charge, settle_body=json.dumps(body))
+
+    assert body[APP_MARKUP_PAYOUT_SETTLE_FIELD] == 210
+    assert apply_frozen_settle(row) == ApplyOutcome.SETTLED_NOW
+    assert apply_frozen_settle(row) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+    assert _typed_credit(db, ws)["total_usage"] == charge
+    movements = store.list_credit_movements(f"user:{auth.app_owner_user_id}")
+    assert len(movements) == 1
+    assert movements[0].amount_microdollars == payout
+
+
+def test_missing_frozen_app_markup_fields_derive_payout_from_authorization(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, db, _bt = fake_store
+    ws = "ws_apply_app_markup_missing_fields"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_app_authorization(store, workspace_id=ws, key_hash=key.hash)
+    charge = 800_000
+    payout = app_markup_owner_share_microdollars(
+        app_markup_microdollars_from_charge(charge, auth.app_markup_basis_points)
+    )
+
+    assert apply_frozen_settle(_row(auth, cost=charge)) == ApplyOutcome.SETTLED_NOW
+    assert _typed_credit(db, ws)["total_usage"] == charge
+    assert store.earnings_summary(auth.app_owner_user_id)["total_earned"] == payout
+
+
+@pytest.mark.parametrize(
+    ("owner", "expected"),
+    [
+        ("owner-app-markup", ApplyOutcome.SETTLED_NOW),
+        ("forged-owner", ApplyOutcome.INVALID_ROW),
+    ],
+)
+def test_partial_frozen_app_markup_owner_is_only_a_cross_check(
+    fake_store: tuple[Any, Any, Any], owner: str, expected: str
+) -> None:
+    store, db, _bt = fake_store
+    ws = f"ws_apply_app_markup_partial_{owner}"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_app_authorization(store, workspace_id=ws, key_hash=key.hash)
+    charge = 800_000
+    payout = app_markup_owner_share_microdollars(
+        app_markup_microdollars_from_charge(charge, auth.app_markup_basis_points)
+    )
+    body = json.loads(_settle_body(auth.id))
+    body[APP_MARKUP_OWNER_SETTLE_FIELD] = owner
+
+    assert (
+        apply_frozen_settle(_row(auth, cost=charge, settle_body=json.dumps(body)))
+        == expected
+    )
+    expected_usage = charge if expected == ApplyOutcome.SETTLED_NOW else 0
+    expected_payout = payout if expected == ApplyOutcome.SETTLED_NOW else 0
+    assert _typed_credit(db, ws)["total_usage"] == expected_usage
+    assert store.earnings_summary(auth.app_owner_user_id)["total_earned"] == expected_payout
+
+
+def test_zero_markup_authorization_rejects_frozen_payout_fields(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, db, _bt = fake_store
+    ws = "ws_apply_zero_markup_forged_fields"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    body = json.loads(_settle_body(auth.id))
+    body[APP_MARKUP_OWNER_SETTLE_FIELD] = "forged-owner"
+
+    assert (
+        apply_frozen_settle(_row(auth, cost=800_000, settle_body=json.dumps(body)))
+        == ApplyOutcome.INVALID_ROW
+    )
+    assert _typed_credit(db, ws)["total_usage"] == 0
+    assert store.earnings_summary("forged-owner")["total_earned"] == 0
+
+
+def test_zero_markup_authorization_without_payout_fields_charges_only(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, db, _bt = fake_store
+    ws = "ws_apply_zero_markup_no_fields"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+
+    assert apply_frozen_settle(_row(auth, cost=800_000)) == ApplyOutcome.SETTLED_NOW
+    assert _typed_credit(db, ws)["total_usage"] == 800_000
+    assert store.list_credit_movements("user:") == []
+
+
+def test_missing_frozen_app_markup_fields_replay_credits_once(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, _db, _bt = fake_store
+    ws = "ws_apply_app_markup_missing_fields_replay"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_app_authorization(store, workspace_id=ws, key_hash=key.hash)
+    row = _row(auth, cost=800_000)
+
+    assert apply_frozen_settle(row) == ApplyOutcome.SETTLED_NOW
+    assert apply_frozen_settle(row) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+    movements = store.list_credit_movements(f"user:{auth.app_owner_user_id}")
+    assert [movement.movement_id for movement in movements] == [
+        app_markup_payout_event_id(auth.id)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "forged"),
+    [
+        (APP_MARKUP_PAYOUT_SETTLE_FIELD, 999_999),
+        (APP_MARKUP_OWNER_SETTLE_FIELD, "forged-owner"),
+        (APP_MARKUP_APP_ID_SETTLE_FIELD, "forged-app"),
+    ],
+)
+def test_forged_frozen_app_markup_payout_is_invalid_without_credit(
+    fake_store: tuple[Any, Any, Any], field: str, forged: Any
+) -> None:
+    store, db, _bt = fake_store
+    ws = f"ws_apply_forged_{field}"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_app_authorization(store, workspace_id=ws, key_hash=key.hash)
+    charge = 800_000
+    payout = app_markup_owner_share_microdollars(
+        app_markup_microdollars_from_charge(charge, auth.app_markup_basis_points)
+    )
+    body = json.loads(_settle_body(auth.id))
+    body.update(
+        {
+            APP_MARKUP_PAYOUT_SETTLE_FIELD: payout,
+            APP_MARKUP_OWNER_SETTLE_FIELD: auth.app_owner_user_id,
+            APP_MARKUP_APP_ID_SETTLE_FIELD: auth.app_id,
+            field: forged,
+        }
+    )
+
+    assert (
+        apply_frozen_settle(_row(auth, cost=charge, settle_body=json.dumps(body)))
+        == ApplyOutcome.INVALID_ROW
+    )
+    assert store.get_gateway_authorization(auth.id).settled is False
+    assert _typed_credit(db, ws)["total_usage"] == 0
+    assert store.earnings_summary(auth.app_owner_user_id)["total_earned"] == 0
+
+
+@pytest.mark.parametrize("intent,cost", [("refund", 0), ("settle", 0)])
+def test_typed_app_markup_refund_and_zero_cost_have_no_payout(
+    fake_store: tuple[Any, Any, Any], intent: str, cost: int
+) -> None:
+    store, db, _bt = fake_store
+    ws = f"ws_apply_app_markup_{intent}"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_app_authorization(store, workspace_id=ws, key_hash=key.hash)
+    row = _row(auth, intent=intent, cost=cost)
+    assert apply_frozen_settle(row) == ApplyOutcome.SETTLED_NOW
+    assert _typed_credit(db, ws)["total_usage"] == 0
+    assert store.list_credit_movements("user:owner-app-markup") == []
+
+
 @pytest.mark.parametrize("bad_payout", [-1, "5600"], ids=("negative", "non-int"))
 def test_bad_frozen_user_model_payout_is_invalid_row(
     fake_store: tuple[Any, Any, Any],
@@ -587,6 +848,59 @@ def test_transient_outage_errors_legacy_row(
     credit = store._read_entity("credit", ws, dict)
     assert credit.get("total_usage_microdollars", 0) == 0
     assert credit.get("reserved_microdollars", 0) == ESTIMATE
+
+
+def test_legacy_replay_repairs_failed_app_markup_payout_exactly_once(
+    fake_store: tuple[Any, Any, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, _db, _bt = fake_store
+    ws = "ws_apply_legacy_app_payout_repair"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _legacy_authorization(
+        store,
+        workspace_id=ws,
+        key_hash=key.hash,
+        app_id="legacy-app",
+        app_markup_basis_points=500,
+        app_owner_user_id="legacy-owner",
+    )
+    charge = 800_000
+    payout = app_markup_owner_share_microdollars(
+        app_markup_microdollars_from_charge(charge, auth.app_markup_basis_points)
+    )
+    body = json.loads(_settle_body(auth.id))
+    body.update(
+        {
+            APP_MARKUP_PAYOUT_SETTLE_FIELD: payout,
+            APP_MARKUP_OWNER_SETTLE_FIELD: auth.app_owner_user_id,
+            APP_MARKUP_APP_ID_SETTLE_FIELD: auth.app_id,
+        }
+    )
+    row = _row(auth, origin="legacy", cost=charge, settle_body=json.dumps(body))
+    original_credit = store.credit_user_earnings
+    finalize_calls = {"count": 0}
+
+    def legacy_finalize(*_args: Any, **_kwargs: Any) -> bool:
+        finalize_calls["count"] += 1
+        return finalize_calls["count"] == 1
+
+    def payout_failure(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("payout unavailable")
+
+    monkeypatch.setattr(store, "finalize_gateway_authorization", legacy_finalize)
+    monkeypatch.setattr(store, "credit_user_earnings", payout_failure)
+    assert apply_frozen_settle(row) == ApplyOutcome.SETTLED_NOW
+    assert store.earnings_summary(auth.app_owner_user_id)["total_earned"] == 0
+
+    monkeypatch.setattr(store, "credit_user_earnings", original_credit)
+    assert apply_frozen_settle(row) == ApplyOutcome.ALREADY_SETTLED_LEGACY
+    assert apply_frozen_settle(row) == ApplyOutcome.ALREADY_SETTLED_LEGACY
+    assert store.earnings_summary(auth.app_owner_user_id)["total_earned"] == payout
+    movements = store.list_credit_movements(f"user:{auth.app_owner_user_id}")
+    assert [movement.movement_id for movement in movements].count(
+        app_markup_payout_event_id(auth.id)
+    ) == 1
 
 
 def test_transient_disambiguation_read_parks_typed_row(

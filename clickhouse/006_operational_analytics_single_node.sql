@@ -100,6 +100,34 @@ PARTITION BY toYYYYMMDD(created_at)
 ORDER BY (target, probe_type, monitor_region, created_at, id)
 TTL toDateTime(created_at) + INTERVAL 14 DAY;
 
+CREATE TABLE IF NOT EXISTS spend_lease_shadow
+(
+    event_id                    String,
+    created_at                  DateTime64(3, 'UTC'),
+    workspace_id                String,
+    key_hash                    FixedString(64),
+    boot_kid                    String,
+    boot_verified               UInt8,
+    lease_id                    Nullable(String),
+    no_lease_reason             Nullable(String) DEFAULT NULL,
+    echo_state                  LowCardinality(String),
+    would_admit                 Nullable(UInt8),
+    enclave_estimate_micro      Nullable(Int64),
+    server_estimate_micro       Nullable(Int64),
+    server_verdict              LowCardinality(String),
+    catalog_version             Nullable(String),
+    divergence                  LowCardinality(String),
+    schema_version              UInt8,
+    ingest_version              DateTime64(6, 'UTC')
+)
+ENGINE = ReplacingMergeTree(ingest_version)
+PARTITION BY toYYYYMMDD(created_at)
+ORDER BY (workspace_id, created_at, event_id)
+TTL toDateTime(created_at) + INTERVAL 30 DAY;
+
+ALTER TABLE spend_lease_shadow
+    ADD COLUMN IF NOT EXISTS no_lease_reason Nullable(String) DEFAULT NULL AFTER lease_id;
+
 CREATE TABLE IF NOT EXISTS synthetic_status_rollups
 (
     id                           String,

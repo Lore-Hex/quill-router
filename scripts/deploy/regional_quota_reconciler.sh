@@ -9,13 +9,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_lib.sh"
 
 SCHEDULER_NAME="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULER:-trusted-router-regional-quota-reconcile}"
-JOB_REGION="${TR_REGIONAL_QUOTA_RECONCILER_JOB_REGION:-${TR_PRIMARY_REGION}}"
-SCHEDULER_REGION="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULER_REGION:-${JOB_REGION}}"
+# Reconciliation is region-independent: Spanner is authoritative and the
+# Bigtable profile names the ledger being repaired. Keep execution outside the
+# primary serving region so a regional Cloud Run Jobs provisioning incident
+# cannot amplify control-plane pressure there. The stable Scheduler resource
+# remains in the primary region; only its verified target runs in us-east4.
+JOB_REGION="${TR_REGIONAL_QUOTA_RECONCILER_JOB_REGION:-us-east4}"
+SCHEDULER_REGION="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULER_REGION:-${TR_PRIMARY_REGION}}"
 SCHEDULE="${TR_REGIONAL_QUOTA_RECONCILER_SCHEDULE:-* * * * *}"
 RELEASE="$(git rev-parse --short HEAD 2>/dev/null || echo local)"
 JOB_PREFIX="${TR_REGIONAL_QUOTA_RECONCILER_JOB_PREFIX:-trusted-router-regional-quota-reconciler}"
 JOB_NAME="${TR_REGIONAL_QUOTA_RECONCILER_JOB:-${JOB_PREFIX}-${RELEASE}}"
 RECONCILE_LIMIT="${TR_REGIONAL_QUOTA_RECONCILE_LIMIT:-25}"
+LOCK_BUCKET="${TR_REGIONAL_QUOTA_RECONCILER_LOCK_BUCKET:-${PROJECT_ID}-regional-quota-reconciler-state}"
+LOCK_OBJECT="${TR_REGIONAL_QUOTA_RECONCILER_LOCK_OBJECT:-regional-quota-reconciler/singleflight.json}"
 scheduler_state=""
 scheduler_exists=false
 scheduler_describe_stderr="$(mktemp "${TMPDIR:-/tmp}/regional-quota-scheduler-describe.XXXXXX")"
@@ -50,6 +57,33 @@ if ! gc artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
   exit 1
 fi
 
+# Cloud Scheduler considers jobs:run complete once Cloud Run accepts an
+# execution, not when that execution exits. A slow minute can therefore overlap
+# the next minute. The Spanner fencing lock is intentionally authoritative for
+# reconciliation, but it is acquired after expensive client initialization and
+# cannot prevent an initializer herd. This private GCS object admits one worker
+# before application imports; generation preconditions make acquisition atomic.
+if ! gc storage buckets describe "gs://${LOCK_BUCKET}" >/dev/null 2>&1; then
+  gc storage buckets create "gs://${LOCK_BUCKET}" \
+    --location="${JOB_REGION}" \
+    --default-storage-class=STANDARD \
+    --uniform-bucket-level-access \
+    --public-access-prevention \
+    --soft-delete-duration=0 \
+    --quiet >/dev/null
+fi
+gc storage buckets update "gs://${LOCK_BUCKET}" \
+  --uniform-bucket-level-access \
+  --public-access-prevention \
+  --no-versioning \
+  --clear-soft-delete \
+  --quiet >/dev/null
+gc storage buckets add-iam-policy-binding "gs://${LOCK_BUCKET}" \
+  --member="serviceAccount:${RUN_SERVICE_ACCOUNT}" \
+  --role=roles/storage.objectUser \
+  --condition=None \
+  --quiet >/dev/null
+
 env_vars=(
   "TR_ENVIRONMENT=worker"
   # The one-shot CLI initializes Sentry and reconciles account-ledger storage,
@@ -62,6 +96,9 @@ env_vars=(
   "TR_GCP_PROJECT_ID=${PROJECT_ID}"
   "TR_SPANNER_INSTANCE_ID=${SPANNER_INSTANCE_ID}"
   "TR_SPANNER_DATABASE_ID=${SPANNER_DATABASE_ID}"
+  # This one-shot worker is strictly serial. Giving it the serving process's
+  # eight-session pool makes a cold run create seven unused Spanner sessions.
+  "TR_SPANNER_POOL_SIZE=1"
   "TR_BIGTABLE_INSTANCE_ID=${BIGTABLE_INSTANCE_ID}"
   "TR_BIGTABLE_GENERATION_TABLE=${BIGTABLE_GENERATION_TABLE}"
   "TR_REQUEST_RECORD_WRITE_MODE=typed"
@@ -71,6 +108,11 @@ env_vars=(
   "TR_REGIONAL_QUOTA_BIGTABLE_TABLE=${TR_REGIONAL_QUOTA_BIGTABLE_TABLE:-trustedrouter-regional-quota}"
   "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=${TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES}"
   "TR_REGIONAL_QUOTA_RECONCILE_LIMIT=${RECONCILE_LIMIT}"
+  "TR_REGIONAL_QUOTA_RECONCILER_LOCK_BUCKET=${LOCK_BUCKET}"
+  "TR_REGIONAL_QUOTA_RECONCILER_LOCK_OBJECT=${LOCK_OBJECT}"
+  "TR_REGIONAL_QUOTA_RECONCILER_LOCK_LEASE_SECONDS=240"
+  "TR_REGIONAL_QUOTA_RECONCILER_MIN_INTERVAL_SECONDS=50"
+  "TR_REGIONAL_QUOTA_RECONCILER_FAILURE_COOLDOWN_SECONDS=30"
   "TR_PRIMARY_REGION=${TR_PRIMARY_REGION}"
   "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true"
 )
@@ -99,16 +141,20 @@ if [ "$versioned_job_exists" = true ]; then
 else
   job_mutation=create
 fi
+# Cloud Run can occasionally spend more than 50 seconds provisioning a cold
+# task before Python starts. Keep the application's work bounded by its
+# single-session pool, distributed lock, and reconcile limit, while giving
+# the platform enough startup envelope to avoid killing untouched work.
 gc run jobs "$job_mutation" "$JOB_NAME" \
   --region "$JOB_REGION" \
   --image "$IMAGE" \
   --command="/app/.venv/bin/python" \
-  --args="-m,trusted_router.regional_quota_reconcile_cli" \
+  --args="-m,trusted_router.regional_quota_reconcile_gate" \
   --service-account "$RUN_SERVICE_ACCOUNT" \
   --set-env-vars "$set_env_vars" \
   --update-secrets "TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest" \
   --max-retries 0 \
-  --task-timeout 50s \
+  --task-timeout 180s \
   --cpu 1 \
   --memory 512Mi \
   --quiet >/dev/null
@@ -187,8 +233,12 @@ if [ "$verification_complete" = true ]; then
       previous_kept=1
       continue
     fi
+    # A synchronous gcloud delete polls GetJob until it observes NOT_FOUND.
+    # Cloud Audit Logs records that successful terminal poll as ERROR, which
+    # creates false production alerts. Cleanup is best effort, so submit the
+    # deletion and let Cloud Run complete it without the noisy poll.
     if ! gc run jobs delete "$old_job" \
-        --region "$JOB_REGION" --quiet >/dev/null; then
+        --region "$JOB_REGION" --async --quiet >/dev/null; then
       log "WARN: unable to remove stale regional quota job ${old_job}"
     fi
   done < <(

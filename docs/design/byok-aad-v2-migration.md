@@ -1,20 +1,21 @@
 # BYOK envelope AAD v2 — migration plan
 
-**Status:** deployed through step 3 on GCP, AWS, and Azure; step 4 is not started
+**Status:** Step 4 precondition passed fleet-wide on 2026-08-29; removal is prepared for deployment
 **Owner:** TrustedRouter platform/security
 **Blocks on:** nothing. The reachable exploit path is already closed (#544).
 **Spans:** `quill-router` and `quill-cloud-proxy`. Ordering between them is the
 whole difficulty — **and it repeats per cloud deployment**, see §4.0.
 
-**Progress (2026-08-15):** the per-cloud sequence is complete through step 3.
-Step 4 remains deliberately undone, so every enclave and control plane still
-reads v1 envelopes during the retention window.
+**Progress (2026-08-29):** the per-cloud sequence is complete through step 3,
+the backfill has been idle for fourteen days, and fresh fleet audits found zero
+V1 envelopes. The Step 4 code removes V1 read and mutation paths; production
+deployment and the required post-deploy re-audit remain.
 
 | Cloud | Step 1: enclave reads v1/v2 | Step 2: control plane writes v2 | Step 3: database backfill | Step-4 attestation |
 |---|---|---|---|---|
-| GCP | complete in every serving region | complete | 7 BYOK envelopes migrated; 7 v2, 0 v1 after an independent audit | **not recorded** |
-| AWS | complete in Paris and Ireland | complete on both Fargate services and both App Runner services | read-only audit returned zero rows; nothing was rewritten | **not recorded** |
-| Azure | complete in UAE North and Southeast Asia | complete | read-only audit returned zero rows; nothing was rewritten | **not recorded** |
+| GCP | complete in every serving region | complete | 7 original BYOK envelopes migrated; fresh audit now sees 11 V2 envelopes and 0 V1 | `clean`, recorded 2026-08-29 |
+| AWS | complete in Paris and Ireland | complete on both Fargate services and both App Runner services | read-only audit returned zero migrated-kind rows; independent whole-table literal census is zero | `empty_witnessed`, recorded 2026-08-29 |
+| Azure | complete in UAE North and Southeast Asia | complete | read-only audit returned zero migrated-kind rows; independent whole-table literal census is zero | `empty_witnessed`, recorded 2026-08-29 |
 
 The backfill implementation landed in quill-router#573. The standalone
 operator configuration and mandatory explicit-KMS apply gate landed in
@@ -36,8 +37,9 @@ because it is a file that a test reads: `byok-aad-v2-attestations.json`, written
 only by `scripts/check_no_v1_envelopes.py`, which pairs the audit with a census
 computed by different SQL — including one question that assumes neither the
 entity kind nor the field name the envelope is stored under — and refuses to
-call an uncorroborated empty result an attestation. It is empty today. Nobody
-has run it against a real database.
+call an uncorroborated empty result an attestation. The ledger now contains
+fresh GCP, AWS, and Azure entries; their source fields and operator notes record
+how each live database was corroborated.
 
 And the last column is read as **one row, not three**: see §4.0 point 2. The
 enclaves cross-read on control-plane failover, so a v1 envelope left in any one
@@ -49,9 +51,10 @@ database can be handed to any cloud's enclave.
 
 AES-GCM associated data binds a ciphertext to its context: an envelope sealed
 for one (workspace, provider) must fail to open in another. That guarantee holds
-only if the map from context to AAD bytes is **injective**. Ours is not.
+only if the map from context to AAD bytes is **injective**. The retired V1 map
+was not.
 
-`byok_crypto.py:189`
+The removed V1 implementation was:
 
 ```python
 def _aad(workspace_id: str, provider: str) -> bytes:
@@ -65,8 +68,8 @@ ambiguous:
 _aad("a:b", "c") == _aad("a", "b:c") == b"trustedrouter:byok:a:b:c"
 ```
 
-Worse, `encrypt_control_secret` (`byok_crypto.py:86-98`) routes its `purpose`
-into the **same namespace** through the `provider` slot:
+Worse, the old `encrypt_control_secret` routed its `purpose` into the **same
+namespace** through the `provider` slot:
 
 ```python
 def encrypt_control_secret(raw_secret, settings, *, workspace_id, purpose):
@@ -78,7 +81,7 @@ So a BYOK provider key and a control secret in one workspace can share AAD, and
 each will decrypt the other. Control-secret purposes are built by
 `broadcast_secret_context(destination_id, "api_key" | "headers")`.
 
-### What is already fixed, and what is not
+### Resolution
 
 The **reachable** path is closed. The console BYOK route used to accept any
 lowercased string up to 64 characters as a provider name, so a tenant could
@@ -86,17 +89,10 @@ register `broadcast:bdst_…:api-key` and collide deliberately. It now validates
 against the catalog exactly as the API route does (#544), and
 `tests/test_byok_aad_namespace_property.py` holds that.
 
-What remains is the **encoding**. Colon collisions need a colon inside a
-workspace id, and all three backends mint `str(uuid.uuid4())` with no
-caller-supplied id, so it is not reachable by normal issuance. It is still
-wrong, and it is the kind of wrong that becomes reachable the moment someone
-adds a customer-chosen identifier anywhere in the tuple.
-
-`test_aad_encoding_is_not_injective_in_general` asserts the collision today so
-this is not rediscovered. **That test should be deleted as part of this work** —
-in step 4, with v1 itself, and not before. `tests/test_byok_v1_removal_gate.py`
-holds those two together in both directions: while v1 envelopes are still
-readable, that test is the only standing record of why any of this exists.
+Step 4 removes the ambiguous encoder and every V1 decrypt branch. The old
+collision-preservation test was deleted with the decoder. Permanent guards now
+retain real V1-shaped fixtures only to prove that provider, control, and
+user-model decrypt entry points reject them before unwrapping a DEK.
 
 ---
 
@@ -105,8 +101,6 @@ readable, that test is the only standing record of why any of this exists.
 Three constraints, in increasing order of how much they hurt.
 
 ### 2.1 Both the ciphertext and the wrapped DEK are bound to the AAD
-
-`byok_crypto.py:59-60`
 
 ```python
 ciphertext    = AESGCM(dek).encrypt(nonce, plaintext, aad)
@@ -131,10 +125,11 @@ Both sides reject anything they do not recognise:
 
 | | file | behaviour |
 |---|---|---|
-| control plane | `byok_crypto.py:78-79` | `raise ValueError("unsupported BYOK envelope algorithm")` |
-| enclave | `byokcache/cache.go:214-215` | `return "", fmt.Errorf("unsupported envelope algorithm %q", …)` |
+| control plane | `byok_crypto._envelope_aad` | rejects every algorithm except V2 before unwrap |
+| enclave | `byokcache.envelopeAAD` and the cache entry point | reject every algorithm except V2 before lookup or unwrap |
 
-Both constants are the same literal, `TR-BYOK-ENVELOPE-AES-256-GCM-V1`.
+The stored `algorithm` field made the staged dual-read period possible without
+guessing which AAD format had sealed a row.
 
 **This is the ordering constraint.** If the control plane starts writing v2
 envelopes before the enclave can read them, every affected BYOK key stops
@@ -356,12 +351,12 @@ docstring carries the full list of what none of this establishes.
 
 ### Step 1 — enclave learns to read v2 (`quill-cloud-proxy`)
 
-Teach `byokcache` both formats, dispatching on `envelope.Algorithm`:
+This completed step taught `byokcache` both formats, dispatching on
+`envelope.Algorithm`:
 
-- add `AlgorithmV2` alongside `Algorithm` in `cache.go:21`
-- add `aadV2(namespace, workspaceID, context)` beside `aad()` at `cache.go:275`
-- in `decryptEnvelope` (`cache.go:213`), select the AAD builder from the
-  algorithm instead of rejecting anything that is not v1
+- add `AlgorithmV2` alongside the temporary V1 constant
+- add `aadV2(namespace, workspaceID, context)` beside the temporary V1 encoder
+- in `decryptEnvelope`, select the AAD builder from the stored algorithm
 - the control plane must tell the enclave which namespace a secret belongs to.
   It already sends provider identity in the authorization payload; confirm the
   field before writing the Go side, and do not infer it from the string shape.
@@ -388,13 +383,15 @@ provider key with the same context string, which is the whole point.
 
 ### Step 3 — backfill
 
-A resumable job over both surfaces:
+A resumable job over every envelope surface known at migration time:
 
 | surface | field | context |
 |---|---|---|
 | `ByokProviderConfig` | `encrypted_secret` (`storage_models.py:211`) | provider slug |
 | broadcast destination | `encrypted_api_key` (`storage_models.py:244`) | `broadcast_secret_context(destination_id, "api_key")` |
 | broadcast destination | headers secret | `broadcast_secret_context(destination_id, "headers")` |
+| user-provided model | `encrypted_endpoint_api_key` | `user_model_endpoint_key` |
+| user-provided model | `encrypted_signing_secret` | `user_model_signing` |
 
 For each v1 row: decrypt under v1 AAD, re-encrypt under v2, write back in one
 transaction, verify by decrypting the new envelope before committing.
@@ -408,16 +405,16 @@ Properties the job must have:
   something else is already wrong.
 - **rate-limited** against the KMS quota
 
-`byok_cache_key` (`byok_crypto.py:129-156`) already includes the algorithm and
-ciphertext, so re-encrypted rows get fresh cache keys automatically and stale
-enclave cache entries expire on their own. No cache flush needed.
+`byok_cache_key` includes the algorithm and ciphertext, so re-encrypted rows
+received fresh cache keys automatically and stale enclave cache entries expired
+on their own. No cache flush was needed.
 
 ### Step 4 — drop v1
 
 Only when a query proves zero v1 rows remain across every surface **and** the
-backfill has been idle for at least one full retention window. This is the one
-step with no rollback row in §5, so its precondition is executable rather than
-written down:
+backfill has been idle for at least one full retention window. The zero-V1 half
+is executable; the retention interval is operator evidence recorded in the
+ledger notes and checked during review:
 
 ```bash
 # once per standalone cloud — they are separate databases (§4.0)
@@ -440,12 +437,15 @@ recorded:
   same table with the same credentials and found rows there, and a search for
   the literal `TR-BYOK-ENVELOPE-AES-256-GCM-V1` over whole row bodies — no kind
   filter, no assumption about which field holds an envelope — found nothing.
-  That last clause is the one carrying the weight: the per-kind census and the
-  walk restrict to the same two kinds (`MIGRATED_KINDS` on both counts and on
-  the Postgres walk; the same two names hardcoded in SQL text on the Spanner
-  walk), so a renamed entity kind or a renamed body field hides rows from both
-  and they corroborate each other's silence. The literal search is a full table
-  scan and is meant to be.
+  The same whole-body search must also match a known-present JSON-object marker.
+  That positive control prevents a broken cast, operator, or parameter path
+  from making a zero V1 count look like evidence. The V1 clause carries the
+  remaining weight: the per-kind census and the
+  walk both restrict to `MIGRATED_KINDS`, so a renamed entity kind or a renamed
+  body field hides rows from both and they corroborate each other's silence.
+  The literal searches are full table scans and are meant to be. On Postgres,
+  all census facts are returned by one SQL statement because Aurora DSQL
+  rejects `SET TRANSACTION`; on Spanner they use one multi-use snapshot.
 
 An empty result with nothing behind it is `zero_scan`, a loud refusal. A scan
 that misses rows either census question can see is `scan_disagrees_with_census`.
@@ -455,8 +455,10 @@ database. A wrong-but-populated `tr_entities` is reachable, non-empty and holds
 no v1 envelope, which is what success looks like. The run records
 `census_source` — which database the census was taken from — so check it
 against the cloud the entry claims. **Read that field knowing which adapter
-produced it.** On `--backend postgres` it is the server's own answer
-(`current_database()`, `current_user`, `inet_server_addr()`). On `--backend
+produced it.** On `--backend postgres`, the database and user come from the
+server (`current_database()`, `current_user`), while host and port come from
+the negotiated connection because Aurora DSQL does not implement
+`inet_server_addr()`. On `--backend
 spanner` — i.e. the GCP invocation in the code block above — it is not: the
 client builds `projects/…/instances/…/databases/…` by concatenating the
 `--project`, `--spanner-instance` and `--spanner-database` you passed, with no
@@ -475,33 +477,25 @@ search that stops matching fails open.
 See the module docstrings in `src/trusted_router/byok_v1_attestations.py` and
 `tests/test_byok_v1_precondition.py` for the rest of the scope limits.
 
-Then, and only then:
+The 2026-08-29 fleet ledger cleared that precondition. Step 4 has now:
 
-- remove `_aad`, `ALGORITHM`, and the v1 branches from both repos
-- delete `test_aad_encoding_is_not_injective_in_general`
-- keep a v1-shaped envelope in a test fixture asserting it is now **rejected**,
+- removed `_aad`, `ALGORITHM`, and the v1 branches from both repos
+- deleted `test_aad_encoding_is_not_injective_in_general`
+- kept a v1-shaped envelope in a test fixture asserting it is now **rejected**,
   so the removal is deliberate rather than silent
 
-`tests/test_byok_v1_removal_gate.py` fails CI if a v1-shaped envelope stops
-opening while `docs/design/byok-aad-v2-attestations.json` does not attest zero
-v1 on every cloud, and prints the commands above. Note that the third bullet
-above — a fixture asserting a v1 envelope is now **rejected** — is itself an
-edit that makes every stored v1 row unopenable, so it belongs after the ledger
-is complete like the other two, not before. The gate decides by sealing a v1
-envelope the way the stored rows were sealed and asking `decrypt_byok_secret`
-and `decrypt_control_secret` to open it, rather than by reading the source for
-`_aad`/`ALGORITHM`; that catches an entry-point rejection that leaves the v1
-code physically in place, and stays quiet through refactors that keep v1
-working. It permits the removal once the ledger is complete — it sequences the
-work rather than forbidding it. It also holds that the collision record and v1
-are deleted together: removing that test earlier drops the only standing
-evidence that the v1 encoding is not injective.
-
-Two things the gate deliberately does not do. It cannot see `quill-cloud-proxy`,
-whose enclave carries its own v1 branch and its own removal decision, so
-ordering across the two repos is still a human responsibility. And it opens a
-v1 envelope wrapped by the local/test key wrapper, so a v1 regression confined
-to the KMS wrapper is out of its scope.
+`tests/test_byok_v1_removal_gate.py` now enforces the permanent post-Step-4
+state. It requires a complete, current fleet ledger; package-wide AST discovery
+refuses any unreviewed production `decrypt_*_secret` entry point; the three
+registered decryptors each receive a byte-compatible V1 fixture and require
+rejection; confines the retired V1 identifier to the read-only census;
+and verifies the ambiguous encoder and collision-preservation test did not
+survive. The control-plane gate cannot establish the enclave's behavior, so
+the Step 4 `quill-cloud-proxy` build independently generates and publishes a
+source-bound accepted-format declaration by exercising both enclave secret
+namespaces. That declaration becomes production evidence only after the enclave
+deploy below publishes it; repository state is not evidence about the live
+fleet. Deployment rolls and verifies the two repositories separately.
 
 ---
 
@@ -511,7 +505,7 @@ to the KMS wrapper is out of its scope.
 |---|---|
 | 1 | revert the enclave build. Nothing writes v2 yet, so this is free. |
 | 2 | revert the control plane. Rows written as v2 in the interim will **not** decrypt on a v1-only control plane — so keep the read side of v2 in place and revert only the write side. Plan the revert as "stop writing v2", not "remove v2". |
-| 3 | none needed; the job is non-destructive. Stop it and leave mixed v1/v2, which both planes read. |
+| 3 | stop the resumable job and leave mixed v1/v2; each successful rewrite is independently verified and both planes read both formats at this stage. |
 | 4 | do not attempt this step until you are willing not to roll it back. |
 
 Per-cloud: rolling back step 2 on one deployment does not affect what the
@@ -527,20 +521,14 @@ permanent from the moment it ships; v2 write support is the reversible part.**
 
 ---
 
-## 6. Open questions for whoever picks this up
+## 6. Decisions and remaining limits
 
-1. **Does the enclave receive the namespace, or must it infer one?** The Go side
-   needs to know whether a secret is `provider` or `control`. If the
-   authorization payload does not carry it, that field has to be added first,
-   which makes this a three-repo change rather than two. **Check this before
-   estimating.**
-2. **Are there envelopes outside the three surfaces in §3?** The list came from
-   grepping `encrypt_byok_secret` / `encrypt_control_secret` call sites in
-   `quill-router`. If another service writes envelopes, the backfill misses them
-   and they break at step 4. Still open — a grep cannot answer it. What is now
-   handled is the *second* half of the risk: the surface list lives in one place
+1. **Namespace dispatch is explicit.** Provider and user-model secrets use
+   separate enclave resolve paths; control secrets never cross the trust
+   boundary. Cross-language vectors pin the Python and Go encoders.
+2. **A registry is still not a database proof.** The surface list lives in one place
    (`byok_v1_attestations.MIGRATED_SURFACES`, from which the backfill's field map
-   is derived) and is fingerprinted into every attestation, so adding a fourth
+   is derived) and is fingerprinted into every attestation, so adding another
    surface invalidates every zero-v1 attestation taken before it existed rather
    than silently inheriting them.
 3. **Is `provider` the right context for a BYOK key**, or should it be the

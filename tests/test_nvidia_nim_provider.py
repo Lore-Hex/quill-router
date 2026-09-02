@@ -8,7 +8,11 @@ import pytest
 
 from scripts.pricing import openai_catalog
 from scripts.pricing.providers import nvidia_nim
-from trusted_router.catalog_data import GATEWAY_PREPAID_PROVIDER_SLUGS, PROVIDERS
+from trusted_router.catalog_data import (
+    DEEPSEEK_V4_PRO_0813_MODEL_ID,
+    GATEWAY_PREPAID_PROVIDER_SLUGS,
+    PROVIDERS,
+)
 
 LLM_REFERENCE_HTML = """
 <section>
@@ -274,8 +278,12 @@ def test_routable_nvidia_manifest_rows_create_prepaid_endpoints() -> None:
         for row in raw["models"]
         if row.get("model_type") == "chat" and row.get("routable") is not False
     ]
-    assert len(routable) >= 1
     for row in routable:
+        if row["id"] == DEEPSEEK_V4_PRO_0813_MODEL_ID:
+            # Versioned DeepSeek releases have an explicitly pinned provider
+            # set. Provider discovery may prove that NVIDIA serves the exact
+            # release, but it must not mutate that published route set.
+            continue
         endpoints = [
             endpoint
             for endpoint in endpoints_for_model(row["id"])
@@ -285,3 +293,18 @@ def test_routable_nvidia_manifest_rows_create_prepaid_endpoints() -> None:
         assert endpoints[0].upstream_id == row["upstream_id"]
         assert endpoints[0].prompt_price_microdollars_per_million_tokens == 2_110_000
         assert endpoints[0].completion_price_microdollars_per_million_tokens == 10_550_000
+
+    assert not any(
+        endpoint.provider == "nvidia-nim"
+        for endpoint in endpoints_for_model(DEEPSEEK_V4_PRO_0813_MODEL_ID)
+    )
+
+    unroutable_ids = {
+        row["id"]
+        for row in raw["models"]
+        if row.get("model_type") == "chat" and row.get("routable") is False
+    }
+    assert all(
+        not any(endpoint.provider == "nvidia-nim" for endpoint in endpoints_for_model(model_id))
+        for model_id in unroutable_ids
+    )

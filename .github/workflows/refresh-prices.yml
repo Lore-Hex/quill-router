@@ -33,8 +33,9 @@ concurrency:
 
 permissions:
   id-token: write   # for Workload Identity Federation
-  contents: write   # auto-commit + push the snapshot diff to main
+  contents: write   # push the generated snapshot branch
   actions: write    # dispatch ci.yml + deploy.yml for a new snapshot
+  statuses: write   # bridge exact-SHA CI checks to protected-push statuses
   issues: write     # upsert the durable model-discovery coverage alert
                     # (GITHUB_TOKEN-pushed commits don't auto-trigger
                     # downstream workflows, so we explicitly fan out
@@ -43,6 +44,7 @@ permissions:
 
 jobs:
   refresh:
+    if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     env:
       # The smartest model available via TR's own API, used by the
@@ -178,6 +180,7 @@ jobs:
                       SAKANA_API_KEY:trustedrouter-sakana-api-key \
                       PERPLEXITY_API_KEY:trustedrouter-perplexity-api-key \
                       KREA_API_KEY:trustedrouter-krea-api-key \
+                      FAL_API_KEY:trustedrouter-fal-api-key \
                       WANDB_API_KEY:trustedrouter-wandb-api-key; do
             env="${pair%%:*}"
             secret="${pair#*:}"
@@ -287,7 +290,7 @@ jobs:
         # The refresh can change parsers, provider manifests, model ownership,
         # routing, pricing, and SEO output in one pass. GitHub suppresses
         # push-triggered CI for commits created with GITHUB_TOKEN, so these
-        # checks must run before the bot is allowed to move main. This keeps
+        # checks must run before the bot is allowed to publish. This keeps
         # the last known-good snapshot live when a provider page changes in a
         # way the self-healer or catalog merger does not understand yet.
         run: |
@@ -295,7 +298,7 @@ jobs:
           uv run mypy
           uv run pytest -q
 
-      - name: Commit and push if changed
+      - name: Commit, verify, and push if changed
         run: |
           set -euo pipefail
           git config user.name "trustedrouter-pricing-bot"
@@ -329,44 +332,128 @@ jobs:
 
           git commit -F /tmp/commit-msg.txt
 
-          # Push with retry. A parallel bot run, a human commit, or the
-          # release-digest bot can land on main between our checkout and push
-          # (non-fast-forward). Rebase our freshly-computed snapshot on top and
-          # retry instead of failing the run. A genuine snapshot↔snapshot
-          # rebase conflict is a CLEAN skip — the next hourly run recomputes
-          # from live prices and recommits (self-healing). Fixes the recurring
-          # "failed to push some refs" races.
-          pushed=""
-          for attempt in 1 2 3; do
-            if git push origin HEAD:main; then pushed=1; break; fi
-            echo "push rejected (attempt ${attempt}); rebasing onto origin/main"
-            git fetch -q origin main
-            if ! git rebase origin/main; then
-              git rebase --abort || true
-              echo "::warning::price-refresh: snapshot rebase conflict — skipping; next hourly run recovers"
-              exit 0
+          # Main requires CI checks before accepting a commit, so publish a
+          # unique temporary branch and attach exact-SHA checks there first.
+          # The organization intentionally forbids Actions-created PRs.
+          BRANCH="automation/price-refresh-${GITHUB_RUN_ID}"
+          SNAPSHOT_SHA=$(git rev-parse HEAD)
+          cleanup_branch() {
+            git push origin --delete "${BRANCH}" >/dev/null 2>&1 || true
+          }
+          trap cleanup_branch EXIT
+          git push origin "HEAD:refs/heads/${BRANCH}"
+          gh workflow run ci.yml \
+            --ref "${BRANCH}" \
+            --repo "${GITHUB_REPOSITORY}"
+          echo "  dispatched ci.yml for generated snapshot branch"
+
+          ci_passed=""
+          ci_run_id=""
+          for _ in $(seq 1 180); do
+            run_json=$(gh run list \
+              --repo "${GITHUB_REPOSITORY}" \
+              --workflow ci.yml \
+              --branch "${BRANCH}" \
+              --event workflow_dispatch \
+              --json databaseId,headSha,status,conclusion \
+              --jq "map(select(.headSha == \"${SNAPSHOT_SHA}\"))[0] // empty")
+            if [ -n "${run_json}" ]; then
+              status=$(jq -r .status <<<"${run_json}")
+              conclusion=$(jq -r .conclusion <<<"${run_json}")
+              echo "  ci run $(jq -r .databaseId <<<"${run_json}"): status=${status} conclusion=${conclusion:-<pending>}"
+              if [ "${status}" = "completed" ]; then
+                if [ "${conclusion}" = "success" ]; then
+                  ci_passed=1
+                  ci_run_id=$(jq -r .databaseId <<<"${run_json}")
+                  break
+                fi
+                echo "generated snapshot CI concluded '${conclusion}'"
+                exit 1
+              fi
             fi
+            sleep 15
           done
-          if [ -z "${pushed}" ]; then
-            echo "push still failing after retries"
+          if [ -z "${ci_passed}" ]; then
+            echo "generated snapshot CI did not pass within 45 minutes"
             exit 1
           fi
 
-          # Bot-pushed commits don't auto-trigger downstream workflows
-          # (GHA loop prevention applies to the `push` event when the
-          # token is GITHUB_TOKEN). `workflow_dispatch` is the only
-          # exception. Dispatch CI first, then deploy; deploy.yml's
-          # same-SHA gate waits for that CI run to pass before rollout.
-          # Failing either dispatch is a release failure, not a warning:
-          # otherwise a generated catalog can land on main but never
-          # become deployable.
+          # Never rebase generated output after checking it: that would create
+          # an untested SHA. If main moved during refresh/CI, queue a fresh run
+          # from the new head and discard this temporary branch.
+          git fetch -q origin main
+          if [ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" ]; then
+            echo "::warning::main advanced during price refresh; queueing a fresh recomputation"
+            gh workflow run refresh-prices.yml \
+              --ref main \
+              --repo "${GITHUB_REPOSITORY}"
+            exit 0
+          fi
+
+          # GitHub's protected-branch hook does not accept check runs from a
+          # workflow_dispatch branch for a direct GITHUB_TOKEN push, even
+          # though those check runs are successful on this exact commit. Post
+          # equivalent commit statuses only after the complete exact-SHA CI
+          # run succeeds. Both the checks and these statuses are emitted by
+          # the repository's pinned GitHub Actions app.
+          ci_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}"
+          expected_status_url="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}"
+          for context in "lint" "test (1)" "test (2)" "test (3)"; do
+            status_json=$(gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}" \
+              -f state=success \
+              -f context="${context}" \
+              -f description="Exact snapshot CI passed" \
+              -f target_url="${ci_url}")
+            status_id=$(jq -r '.id // empty' <<<"${status_json}")
+            if ! [[ "${status_id}" =~ ^[0-9]+$ ]] || \
+               [ "$(jq -r .url <<<"${status_json}")" != "${expected_status_url}" ] || \
+               [ "$(jq -r .context <<<"${status_json}")" != "${context}" ] || \
+               [ "$(jq -r .state <<<"${status_json}")" != "success" ] || \
+               [ "$(jq -r .target_url <<<"${status_json}")" != "${ci_url}" ]; then
+              echo "failed to publish exact snapshot status '${context}'"
+              exit 1
+            fi
+
+            # The create-status response currently omits `creator` and `sha`.
+            # Re-read this exact status from the SHA-scoped endpoint before
+            # trusting it for protected-main promotion.
+            verified_status=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/statuses/${SNAPSHOT_SHA}" \
+              --jq "map(select(.id == ${status_id}))[0] // empty")
+            if [ -z "${verified_status}" ] || \
+               [ "$(jq -r .context <<<"${verified_status}")" != "${context}" ] || \
+               [ "$(jq -r .state <<<"${verified_status}")" != "success" ] || \
+               [ "$(jq -r .target_url <<<"${verified_status}")" != "${ci_url}" ] || \
+               [ "$(jq -r .creator.login <<<"${verified_status}")" != "github-actions[bot]" ]; then
+              echo "failed to verify exact snapshot status '${context}'"
+              exit 1
+            fi
+          done
+
+          push_log=$(mktemp)
+          if ! git push origin "HEAD:refs/heads/main" 2>"${push_log}"; then
+            cat "${push_log}" >&2
+            git fetch -q origin main
+            if [ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" ]; then
+              echo "::warning::main raced the checked snapshot push; queueing a fresh recomputation"
+              gh workflow run refresh-prices.yml \
+                --ref main \
+                --repo "${GITHUB_REPOSITORY}"
+              exit 0
+            fi
+            echo "branch protection rejected an exact SHA with successful required checks"
+            exit 1
+          fi
+
+          # GITHUB_TOKEN pushes do not start push-triggered workflows. The
+          # exact SHA already has a successful ci.yml run, so dispatch the
+          # staged deploy; deploy.yml independently verifies that same SHA.
           # Discovered live on 2026-05-13: hourly bot was committing
           # but TR's deployed catalog was stuck on a 3-phala-endpoint
           # snapshot for hours because deploy.yml never auto-fired.
-          gh workflow run ci.yml --ref main --repo "${GITHUB_REPOSITORY}"
-          echo "  dispatched ci.yml for new snapshot"
-          gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}" \
-            -f deploy_synthetic_monitor=true
+          gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}"
           echo "  dispatched deploy.yml for new snapshot"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

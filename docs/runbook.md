@@ -30,6 +30,7 @@ Index:
 - [One workspace 503s "Workspace billing is paused" (interrupted reshard)](#reshard-interrupted)
 - [DNS-vendor-split symptoms (Cloudflare vs Cloud DNS)](#dns-vendor-split)
 - [Adding a cloud (and when it is allowed to be called done)](#adding-a-cloud)
+- [Spend-lease reconciler](#spend-lease-reconciler)
 
 ---
 
@@ -563,6 +564,29 @@ https://docs.phala.com/phala-cloud/confidential-ai/confidential-model/confidenti
 
 ---
 
+## Receipt key collection
+
+The append-only inference-receipt key log is fed by a Cloud Scheduler job
+(created 2026-08-26; recreate with the same internal-token header as the
+settle-outbox drain if it is ever lost). The schedule MUST beat the fleet
+page's heartbeat staleness threshold (`HEARTBEAT_STALE_SECONDS` = 11 min in
+`synthetic/fleet.py`) or `job:receipt-key-collector` reads stale for most of
+every cycle and the remediator pages on a healthy collector — this happened
+at the original 30-minute cadence (fixed to 5 minutes 2026-08-28):
+
+```
+gcloud scheduler jobs create http trusted-router-receipt-key-collect \
+  --location us-central1 \
+  --schedule "*/5 * * * *" \
+  --uri "https://trusted-router-vsjf6qu4la-uc.a.run.app/v1/internal/gateway/receipt-keys/collect" \
+  --http-method POST \
+  --headers "x-trustedrouter-internal-token=<internal gateway token>"
+```
+
+The collector verifies every key before append (kid derivation, commitment
+set membership, GCP attestation chain); a kid observed with a different key
+logs `ALERT receipt_key_kid_collision` and never replaces the stored key.
+
 ## <a id="settle-outbox"></a>Settle outbox: flip, verify, monitor, roll back
 
 Durably recover completed charges whose settle intent was recorded but whose
@@ -837,9 +861,14 @@ fails closed if the configured typed shard set is incomplete.
   11:43 UTC; a failing run alerts). It is now purely typed-INTERNAL: `reserved`
   equals the sum of that workspace/key's open typed-origin holds (both
   directions — it also flags an orphan open-hold group with no typed row), and
-  `reserved >= 0`. It does NOT compare against JSON (that book is dead), so a
-  stale JSON total can never false-alarm it. A failure means real drift between
-  the reserved counter and live holds — investigate, do not just re-run.
+  `reserved >= 0`. Its usage arm requires the lifetime counter to cover all
+  retained bookings and flags bookings with no typed balance. Terminal request
+  rows expire after 30 days, so a positive lifetime-counter remainder is
+  reported as partial history coverage, not a violation and never a reason to
+  lower `total_usage`. It does NOT compare against JSON (that book is dead), so
+  a stale JSON total can never false-alarm it. A hard failure means real drift
+  between typed counters and retained holds/bookings — investigate, do not just
+  re-run.
 - `repair_typed_reserved` — the fix for a drifted `reserved` (e.g. holds the
   reaper freed without decrementing under some past bug). Recomputes `reserved`
   from live open holds. Run read-only/dry first, then `--apply`. It still refuses
@@ -1347,3 +1376,36 @@ for entry in \
     --format='value(versions[0].instanceTemplate,targetSize,status.isStable)'
 done
 ```
+# Spend-lease reconciler
+
+The versioned `trusted-router-spend-lease-reconciler-*` Cloud Run Job runs once
+per minute with a 50-second task deadline. It is intentionally active while
+spend-lease binding is off: an empty pass verifies the regional Bigtable
+profiles, records both lag values as zero, publishes
+`job:spend-lease-reconcile`, and exits.
+
+Until the spend-lease Bigtable table and fixed regional app profiles are
+provisioned, the job reports `spend_lease.reconciler_ledger_unprovisioned` as
+a clean idle pass and records its heartbeat; this means the job is alive while
+binding remains off, not that the ledger health proof was weakened or skipped.
+Once provisioning lands, the next scheduled execution automatically performs
+the conditional-write and strong-read proof through every configured profile.
+
+For `spend_lease.reconcile_lag_exceeded`, compare
+`eligibility_lag_seconds` with `open_age_lag_seconds`. Eligibility lag measures
+rows that have already produced the frozen/zero-open close proof. Open-age lag
+also includes expired dead rows, so a pre-eligibility failure cannot disappear
+from the signal. Inspect `spend_lease_open` by `lease_id`, including `phase`,
+`attempts`, `last_error`, and all three close timestamps. Do not manually
+release credit: close step 2 deliberately couples release, lease guards, fence
+slot accounting, and `global_closed_at` in one transaction.
+
+For a dead row, repair the reported cause, then run:
+
+```bash
+python -m trusted_router.spend_lease_reconcile_cli requeue-dead LEASE_ID
+```
+
+Omit `LEASE_ID` to requeue all dead rows. A quarantine alert requires comparing
+the local allocation proof with the strong typed authorization before any
+operator action; quarantined allocations remain open and can retain escrow.

@@ -77,6 +77,7 @@ _DISPLAY_NAMES = {
     "qwen/qwen3.8-max": "Qwen 3.8 Max",
     "z-ai/glm-5.2": "GLM 5.2",
     "z-ai/glm-5.2-fast": "GLM 5.2 Fast",
+    "z-ai/glm-5.3-flash": "GLM 5.3 Flash",
 }
 
 _NATIVE_TO_CANONICAL = {
@@ -92,6 +93,7 @@ _NATIVE_TO_CANONICAL = {
     "accounts/fireworks/models/deepseek-v4-flash-0731": "deepseek/deepseek-v4-flash-0731",
     "accounts/fireworks/models/glm-5p2": "z-ai/glm-5.2",
     "accounts/fireworks/routers/glm-5p2-fast": "z-ai/glm-5.2-fast",
+    "accounts/fireworks/models/glm-5p3-flash": "z-ai/glm-5.3-flash",
     "accounts/fireworks/models/glm-5p1": "z-ai/glm-5.1",
     "accounts/fireworks/models/gpt-oss-120b": "openai/gpt-oss-120b",
     "accounts/fireworks/models/gpt-oss-20b": "openai/gpt-oss-20b",
@@ -124,6 +126,7 @@ _VERSIONED_PRICE_FAMILIES = {
     "deepseek/deepseek-v4-flash-": "deepseek/deepseek-v4-flash",
     "deepseek/deepseek-v4-pro-": "deepseek/deepseek-v4-pro",
 }
+_PRESERVE_UNPRICED_MODEL_IDS = frozenset({"z-ai/glm-5.3-flash"})
 
 
 def _live_model_rows() -> list[dict[str, Any]]:
@@ -185,6 +188,7 @@ def fetch() -> ProviderPricingResult:
         prices=result.prices,
         explicit_map=resolved_native_map,
         upstream_id_map=UPSTREAM_ID_MAP,
+        preserve_unpriced_model_ids=_PRESERVE_UNPRICED_MODEL_IDS,
     )
     # A verified launch exception is allowed to precede the account model-list
     # feed, but only while the first-party pricing page still publishes it.

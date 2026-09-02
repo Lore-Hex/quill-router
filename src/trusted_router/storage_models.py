@@ -48,6 +48,9 @@ def _is_byok(usage_type: str | UsageType) -> bool:
     return UsageType.coerce(usage_type).is_byok()
 
 
+SYNTHETIC_APP_NAME = "TrustedRouter Synthetic"
+
+
 def _is_synthetic_metadata(metadata: Any) -> bool:
     return isinstance(metadata, dict) and str(metadata.get("trustedrouter_synthetic")).lower() in (
         "1",
@@ -55,6 +58,24 @@ def _is_synthetic_metadata(metadata: Any) -> bool:
         "yes",
         "on",
     )
+
+
+def resolve_synthetic(*, metadata: Any = None, app: Any = None) -> bool:
+    """The one rule that decides whether a generation is monitor traffic.
+
+    Every ``Generation`` constructor calls this. It exists because the rule
+    used to live in ``from_settle_body`` alone: the other two constructors
+    took the ``synthetic: bool = False`` field default, so a probe that
+    settled through the direct (non-attested) path was silently indexed as
+    real customer traffic. Two independent signals, either sufficient:
+
+    * ``metadata.trustedrouter_synthetic`` -- what the probes send, and the
+      only signal that survives a settle repair (see
+      ``_settle_repair_metadata``);
+    * the reserved app name, which the gateway stamps on synthetic
+      settlements and which survives when metadata does not.
+    """
+    return _is_synthetic_metadata(metadata) or app == SYNTHETIC_APP_NAME
 
 
 def _coerce_tool_calls(value: Any) -> list[dict[str, Any]] | None:
@@ -79,6 +100,26 @@ def _is_expired(expires_at: str | None) -> bool:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=dt.UTC)
     return parsed <= utcnow()
+
+
+@dataclass(frozen=True)
+class ReceiptKey:
+    """One durable, public receipt-signing key observation.
+
+    Receipt keys are generated per enclave boot.  The backing entity is
+    append-only by ``kid``: only ``last_seen``, a key-bound refreshed
+    attestation, and a monotonic ``verified`` upgrade may change later.
+    """
+
+    kid: str
+    jwk: dict[str, str]
+    att: str
+    att_kind: str
+    plane: str
+    first_seen: str
+    last_seen: str
+    revoked: bool = False
+    verified: bool = False
 
 
 @dataclass
@@ -195,6 +236,16 @@ class ApiKey:
     # Empty is the legacy unscoped key shape. Any non-empty list is a
     # delegated key and is denied by default at scope-aware chokepoints.
     scopes: list[str] = field(default_factory=list)
+    # Registered OAuth app attribution. Empty keeps every legacy key's shape
+    # and behavior unchanged.
+    app_id: str = ""
+    # Home-plane suspension state imported with a federated registered-app
+    # key. Local keys always consult their authoritative local OAuthApp row.
+    federated_app_suspended: bool = False
+    # Home-plane billing terms imported with a federated registered-app key.
+    # A peer must never substitute an app row from its own slug namespace.
+    federated_app_markup_basis_points: int = 0
+    federated_app_owner_user_id: str = ""
     disabled: bool = False
     management: bool = False
     limit_microdollars: int | None = None
@@ -228,6 +279,19 @@ class ApiKey:
     # key has NO usable secret_hash, so it can only ever authenticate through
     # the attested gateway (lookup-hash) path, never the direct raw-bearer one.
     federated_home: str = ""
+
+
+@dataclass
+class OAuthApp:
+    id: str
+    owner_user_id: str
+    name: str
+    redirect_uris: list[str]
+    logo_url: str | None = None
+    markup_basis_points: int = 0
+    suspended: bool = False
+    created_at: str = field(default_factory=iso_now)
+    updated_at: str = field(default_factory=iso_now)
 
 
 @dataclass(frozen=True)
@@ -337,9 +401,7 @@ class UserProvidedModel:
                 **self.encrypted_endpoint_api_key
             )
         if isinstance(self.encrypted_signing_secret, dict):
-            self.encrypted_signing_secret = EncryptedSecretEnvelope(
-                **self.encrypted_signing_secret
-            )
+            self.encrypted_signing_secret = EncryptedSecretEnvelope(**self.encrypted_signing_secret)
 
 
 @dataclass
@@ -565,6 +627,14 @@ class GatewayAuthorization:
     idempotency_key: str | None = None
     tags: dict[str, str] = field(default_factory=dict)
     idempotency_fingerprint: str | None = None
+    # Frozen from the API key at authorize. Settlement never re-reads the key,
+    # so this remains stable even if the grant changes while a request runs.
+    app_id: str = ""
+    app_markup_basis_points: int = 0
+    app_owner_user_id: str = ""
+    # Total TrustedRouter fee, not an additive surcharge. Zero means standard
+    # catalog pricing. Signed receipts currently freeze 1,200 (12%).
+    receipt_fee_basis_points: int = 0
     custom_model_id: str | None = None
     custom_model_revision: int | None = None
     user_provided_model_id: str | None = None
@@ -589,6 +659,23 @@ class GatewayAuthorization:
     regional_lease_id: str | None = None
     regional_fencing_token: int | None = None
     regional_hold_id: str | None = None
+    # Stage A spend-lease replay record. The compact token is immutable; the
+    # status beside it is authoritative and may advance independently in later
+    # stages. These fields live in the shared JSON payload used by Spanner's
+    # typed authorization table and the Postgres entity store.
+    spend_lease_token: str | None = None
+    spend_lease_id: str | None = None
+    spend_lease_cap_micro: int | None = None
+    spend_lease_gen: int | None = None
+    spend_lease_iat: int | None = None
+    spend_lease_exp: int | None = None
+    spend_lease_issuer_kid: str | None = None
+    spend_lease_boot_kid: str | None = None
+    spend_lease_catalog_version: str | None = None
+    spend_lease_status: str | None = None
+    # Per-request amount bound inside the lease.  Distinct from cap_micro,
+    # which is the lease-wide escrow ceiling.
+    spend_lease_allocated_micro: int | None = None
     # Only deferred authorizations carry an expiry: it is what lets the reaper
     # reclaim the outstanding-counter estimate when the enclave dies between
     # authorize and settle. Local authorizations keep their pre-existing
@@ -665,6 +752,14 @@ class UserModelPayout:
     payer_workspace_id: str
 
 
+@dataclass(frozen=True)
+class AppMarkupPayout:
+    owner_user_id: str
+    app_id: str
+    amount_microdollars: int
+    payer_workspace_id: str
+
+
 @dataclass
 class Generation:
     id: str
@@ -682,6 +777,10 @@ class Generation:
     finish_reason: str
     status: str
     streamed: bool
+    # Registered OAuth app attribution, distinct from the free-form `app`
+    # request metadata above.
+    app_id: str = ""
+    app_markup_microdollars: int = 0
     usage_estimated: bool = True
     cached_input_tokens: int = 0
     reasoning_tokens: int = 0
@@ -783,6 +882,7 @@ class Generation:
                 else None
             ),
             region=region,
+            synthetic=resolve_synthetic(app=app_name),
         )
 
     @classmethod
@@ -827,6 +927,7 @@ class Generation:
             provider=provider,
             elapsed_milliseconds=_seconds_to_milliseconds(elapsed_seconds),
             region=region,
+            synthetic=resolve_synthetic(app=app_name),
         )
 
     @classmethod
@@ -842,6 +943,7 @@ class Generation:
         input_tokens: int,
         output_tokens: int,
         actual_cost_microdollars: int,
+        app_markup_microdollars: int = 0,
         operator_cost_microdollars: int | None = None,
     ) -> Generation:
         elapsed = max(float(body.get("elapsed_seconds") or 0.001), 0.001)
@@ -851,12 +953,10 @@ class Generation:
         first_byte = max(float(first_byte_raw), 0.001) if first_byte_raw is not None else None
         client_context = parse_client_context(body.get("client"))
         gateway_request_id = parse_gateway_request_id(body.get("gateway_request_id"))
-        synthetic = _is_synthetic_metadata(body.get("metadata")) or (
-            body.get("app") == "TrustedRouter Synthetic"
-        )
+        synthetic = resolve_synthetic(metadata=body.get("metadata"), app=body.get("app"))
         app = str(body.get("app") or "TrustedRouter Gateway")
         if synthetic:
-            app = "TrustedRouter Synthetic"
+            app = SYNTHETIC_APP_NAME
         return cls(
             id=generation_id_for_authorization(authorization.id),
             request_id=str(
@@ -867,6 +967,8 @@ class Generation:
             model=model_id or authorization.model_id,
             provider_name=provider_name,
             app=app,
+            app_id=authorization.app_id,
+            app_markup_microdollars=app_markup_microdollars,
             tokens_prompt=input_tokens,
             tokens_completion=output_tokens,
             total_cost_microdollars=actual_cost_microdollars,
@@ -970,7 +1072,9 @@ class Generation:
             "created_at": self.created_at,
             "model": self.model,
             "provider_name": self.provider_name,
-            "app_id": None,
+            # OpenRouter's app ids are integers; TrustedRouter deliberately
+            # uses immutable registry slugs and emits None for legacy traffic.
+            "app_id": self.app_id or None,
             "http_referer": self.http_referer,
             "origin": self.app,
             "user": self.user,
@@ -981,6 +1085,7 @@ class Generation:
             "usage_microdollars": self.total_cost_microdollars,
             "total_cost": microdollars_to_float(self.total_cost_microdollars),
             "total_cost_microdollars": self.total_cost_microdollars,
+            "app_markup_microdollars": self.app_markup_microdollars,
             "tokens_prompt": self.tokens_prompt,
             "tokens_completion": self.tokens_completion,
             "native_tokens_prompt": self.tokens_prompt,
@@ -1410,9 +1515,7 @@ class GoogleAdsConversion:
 
     def __post_init__(self) -> None:
         if isinstance(self.encrypted_click_id, dict):
-            self.encrypted_click_id = EncryptedGoogleClickEnvelope(
-                **self.encrypted_click_id
-            )
+            self.encrypted_click_id = EncryptedGoogleClickEnvelope(**self.encrypted_click_id)
 
 
 ACTIVATION_REMINDER_DELAYS_SECONDS: tuple[tuple[str, int], ...] = (
@@ -1631,6 +1734,35 @@ class OAuthAuthorizationCode:
     consumed_at: str | None = None
     spawn_agent: str | None = None
     spawn_cloud: str | None = None
+    # Real registered-app slug. The integer app_id above remains untouched for
+    # OpenRouter compatibility.
+    client_app_id: str = ""
+    scopes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ConsentRequest:
+    """Short-lived, one-shot server-side OAuth consent state."""
+
+    id: str
+    csrf_token: str
+    user_id: str
+    workspace_id: str
+    client_app_id: str
+    callback_url: str
+    scopes: list[str]
+    code_challenge: str | None
+    code_challenge_method: str | None
+    key_label: str
+    limit_microdollars: int | None
+    limit_reset: str | None
+    expires_at: str | None
+    state: str
+    rfc_conformant: bool = False
+    suggested_monthly_budget: str = ""
+    created_at: str = field(default_factory=iso_now)
+    consent_expires_at: str | None = None
+    consumed_at: str | None = None
 
 
 @dataclass
@@ -1771,6 +1903,10 @@ def federated_api_key_from_record(record: dict[str, Any]) -> ApiKey:
         workspace_id=str(record.get("workspace_id") or ""),
         creator_user_id=None,
         scopes=list(record.get("scopes") or []),
+        app_id=str(record.get("app_id") or ""),
+        federated_app_suspended=bool(record.get("app_suspended", False)),
+        federated_app_markup_basis_points=int(record.get("app_markup_basis_points") or 0),
+        federated_app_owner_user_id=str(record.get("app_owner_user_id") or ""),
         disabled=bool(record.get("disabled", False)),
         management=False,  # never federated; the home plane refuses to serve them
         limit_microdollars=record.get("limit_microdollars"),

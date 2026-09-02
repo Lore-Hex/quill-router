@@ -155,6 +155,7 @@ PROVIDER_SLUGS = [
     "nscale",
     "perplexity",
     "krea",
+    "fal",
     # 0G Private Computer publishes exact per-route prices and trust metadata
     # in its public marketplace hydration data. The adapter admits only
     # healthy TeeML/private chat routes and keeps them dark until a keyed PONG.
@@ -1148,6 +1149,9 @@ def _write_provider_manifests(results: dict[str, ProviderPricingResult]) -> list
                 before_rows,
                 candidate_rows,
                 provider_slug=slug,
+                allow_confirmed_delistings=bool(
+                    getattr(module, "ALLOW_CONFIRMED_MASS_DELISTINGS", False)
+                ),
             )
             if guarded is before_rows:
                 manifest_path.write_text(before_text, encoding="utf-8")

@@ -54,6 +54,34 @@ def test_byok_only_model_stays_not_prepaid() -> None:
     # assert — not a failure.
 
 
+def test_model_detail_prices_credits_routes_once_and_shows_cached_input() -> None:
+    model_id = "z-ai/glm-5.3-flash"
+    endpoints = endpoints_for_model(model_id)
+    credits = [endpoint for endpoint in endpoints if endpoint.usage_type == "Credits"]
+
+    assert credits
+    assert any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
+    assert any(
+        tier.prompt_cached_price_microdollars_per_million_tokens is not None
+        for endpoint in credits
+        for tier in (endpoint.price_tiers or ())
+    )
+
+    view = _model_detail_view(MODELS[model_id])
+    rendered_endpoints = view["endpoints"]
+
+    assert isinstance(rendered_endpoints, list)
+    assert {endpoint["endpoint_id"] for endpoint in rendered_endpoints} == {
+        endpoint.id for endpoint in credits
+    }
+    assert all("usage_type" not in endpoint for endpoint in rendered_endpoints)
+    assert view["cached_prompt_price"] != "Not published"
+    assert any(
+        endpoint["cached_prompt_price"] != "Not published"
+        for endpoint in rendered_endpoints
+    )
+
+
 def test_cerebras_only_credits_serves_allowlisted_models() -> None:
     # Cerebras's public account-callable feed is authoritative for Credits.
     # The generated manifest replaces a stale source allowlist so new models
@@ -75,13 +103,12 @@ def test_together_credits_follow_started_serverless_manifest() -> None:
         for e in MODEL_ENDPOINTS.values()
         if e.provider == "together" and e.usage_type == "Credits"
     }
-    assert together_credits <= allow
-    assert {
-        "minimax/minimax-m3",
-        "moonshotai/kimi-k2.7-code",
-        "z-ai/glm-5.2",
-        "intfloat/multilingual-e5-large-instruct",
-    } <= together_credits
+    # Together's authenticated feed changes as serverless models start and
+    # retire. The generated manifest is the availability contract; freezing a
+    # transient model ID here blocks every later catalog refresh after its
+    # provider-confirmed retirement.
+    assert together_credits
+    assert together_credits == allow
     assert "meta-llama/llama-3.1-70b-instruct" not in together_credits
 
 
@@ -121,11 +148,9 @@ def test_dark_manifest_rows_cannot_return_as_prepaid_snapshot_routes() -> None:
 
 
 def test_gmi_only_credits_serves_allowlisted_models() -> None:
-    # GMI's /models listing is aspirational: 7d probes (2026-07-18) showed four
-    # models served on our account and ~45 listed phantoms with zero successes
-    # ever. Kimi K3 joined the verified set after a direct visible-content
-    # canary passed on 2026-07-29. Credits endpoints must stay within the
-    # verified set; BYOK uses the customer's own key and keeps GMI's full
+    # GMI's /models listing has historically included routes that were not
+    # callable on our account. Credits endpoints must stay within the paid-
+    # canary-verified set; BYOK uses the customer's own key and keeps GMI's full
     # listing visible.
     allow = _PROVIDER_SERVED_MODEL_ALLOWLIST["gmi"]
     gmi_credits = {
@@ -202,7 +227,7 @@ def test_nebius_deprecated_june_2026_models_are_not_routable() -> None:
 
 def test_nebius_deprecation_does_not_remove_other_provider_routes() -> None:
     assert "minimax/minimax-m2.5@minimax/byok" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k2.5@kimi/prepaid" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k2.6@kimi/prepaid" in MODEL_ENDPOINTS
     assert "openai/gpt-oss-120b@cerebras/prepaid" in MODEL_ENDPOINTS
     assert "z-ai/glm-5@zai/prepaid" in MODEL_ENDPOINTS
 

@@ -124,6 +124,10 @@ BASE_ENV_VARS+=(
   # downtime, while still bounding true hangs.
   "TR_SYNTHETIC_MONITOR_TIMEOUT_SECONDS=30"
   "TR_SYNTHETIC_CONTROL_PLANE_URL=https://trustedrouter.com"
+  # Control-plane availability is a global service signal. Regional run.app
+  # URLs are not valid public origins when ingress is restricted to the load
+  # balancer, so probing a computed URL manufactures persistent 404 outages.
+  "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL=https://trustedrouter.com"
   # One bounded pass per scheduler tick. Sub-minute passes made
   # provider-effective timeouts stack up behind health probes and caused
   # Cloud Run Job self-timeouts.
@@ -205,6 +209,21 @@ prepare_synthetic_ingest_target() {
   verify_synthetic_ingest_service_contract "$target_region"
 }
 
+synthetic_ingest_base_for_region() {
+  local target_region="$1"
+  if [ "$DEPLOYED_COMBINED_BRIDGE" = "true" ]; then
+    # The combined service now uses private Cloud Run ingress. Its run.app URL
+    # intentionally returns a Google platform 404, including to Cloud Run jobs
+    # without the split service's VPC path. Reach the same token-protected
+    # internal routes through the external load balancer until the dedicated
+    # internal observer service is active in every region.
+    printf '%s\n' "https://trustedrouter.com"
+  else
+    printf 'https://%s-%s.%s.run.app\n' \
+      "$SYNTHETIC_INGEST_SERVICE" "$PROJECT_NUMBER" "$target_region"
+  fi
+}
+
 if ! gc artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
   echo "ERROR: image ${IMAGE} does not exist. Run scripts/deploy/image.sh before synthetic.sh." >&2
   exit 1
@@ -252,7 +271,7 @@ IFS=',' read -ra _REGION_LIST <<<"$SYNTHETIC_MONITOR_REGIONS"
 monitor_index=0
 for monitor_region in "${_REGION_LIST[@]}"; do
   [ -n "$monitor_region" ] || continue
-  regional_ingest_base="https://${SYNTHETIC_INGEST_SERVICE}-${PROJECT_NUMBER}.${monitor_region}.run.app"
+  regional_ingest_base="$(synthetic_ingest_base_for_region "$monitor_region")"
   job_name="trusted-router-synthetic-${monitor_region//[^a-zA-Z0-9-]/-}"
   scheduler_name="${job_name}-every-three-minutes"
   legacy_scheduler_names=(
@@ -328,7 +347,7 @@ done
 # has a separate Cloud Run Job so a slow 512-token stream cannot delay or
 # overlap TLS, attestation, billing, fallback, or short provider probes.
 throughput_region="us-central1"
-throughput_ingest_base="https://${SYNTHETIC_INGEST_SERVICE}-${PROJECT_NUMBER}.${throughput_region}.run.app"
+throughput_ingest_base="$(synthetic_ingest_base_for_region "$throughput_region")"
 throughput_job_name="trusted-router-throughput-${throughput_region}"
 throughput_scheduler_name="${throughput_job_name}-every-five-minutes"
 legacy_throughput_scheduler_names=(
@@ -397,10 +416,101 @@ for legacy_throughput_scheduler_name in "${legacy_throughput_scheduler_names[@]}
   fi
 done
 
+# Stage A spend-lease soak: one tiny Credits chat completion every minute.
+# This is isolated from the regional health jobs so its cadence does not
+# multiply their paid model checks. The worker exits before secret access while
+# disabled; its API key is fetched by NAME from Secret Manager at run time.
+spend_lease_region="us-central1"
+spend_lease_ingest_base="$(synthetic_ingest_base_for_region "$spend_lease_region")"
+spend_lease_job_name="trusted-router-spend-lease-soak-${spend_lease_region}"
+spend_lease_scheduler_name="${spend_lease_job_name}-every-minute"
+spend_lease_probe_enabled="${TR_SPEND_LEASE_SOAK_PROBE_ENABLED:-false}"
+spend_lease_probe_key_secret="${TR_SPEND_LEASE_PROBE_KEY_SECRET:-trustedrouter-spend-lease-probe-key}"
+if [ "$spend_lease_probe_enabled" = "true" ]; then
+  if ! gc secrets describe "$spend_lease_probe_key_secret" >/dev/null 2>&1; then
+    echo "ERROR: spend-lease soak key secret ${spend_lease_probe_key_secret} is required" >&2
+    exit 1
+  fi
+fi
+spend_lease_env_vars=(
+  "${BASE_ENV_VARS[@]}"
+  "TR_SYNTHETIC_MONITOR_REGION=${spend_lease_region}"
+  "TR_SYNTHETIC_INGEST_URL=${spend_lease_ingest_base}/v1/internal/synthetic/samples"
+  "TR_SPEND_LEASE_SOAK_PROBE_ENABLED=${spend_lease_probe_enabled}"
+  "TR_SPEND_LEASE_PROBE_KEY_SECRET=${spend_lease_probe_key_secret}"
+)
+spend_lease_set_env_vars="$(IFS='|'; echo "^|^${spend_lease_env_vars[*]}")"
+
+prepare_synthetic_ingest_target "$spend_lease_region"
+log "deploying isolated spend-lease soak Cloud Run job ${spend_lease_job_name}"
+gc run jobs deploy "$spend_lease_job_name" \
+  --region "$spend_lease_region" \
+  --image "$IMAGE" \
+  --command="/app/.venv/bin/python" \
+  --args="-m,trusted_router.synthetic.spend_lease_soak" \
+  --service-account "$RUN_SERVICE_ACCOUNT" \
+  "${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]+"${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}"}" \
+  --set-env-vars "$spend_lease_set_env_vars" \
+  "$JOB_SECRET_FLAG" "$JOB_SECRETS" \
+  --max-retries 0 \
+  --task-timeout 60s \
+  --cpu 1 \
+  --memory 512Mi \
+  --quiet >/dev/null
+
+if [ "$spend_lease_probe_enabled" = "true" ]; then
+  upsert_scheduler \
+    "$spend_lease_scheduler_name" \
+    "$spend_lease_job_name" \
+    "$spend_lease_region" \
+    "* * * * *"
+
+  # Updating a paused scheduler preserves its paused state. Enabling the
+  # probe must therefore explicitly resume a previously disabled schedule.
+  spend_lease_scheduler_state="$(
+    gc scheduler jobs describe "$spend_lease_scheduler_name" \
+      --location "$spend_lease_region" \
+      --format='value(state)'
+  )"
+  if [ "$spend_lease_scheduler_state" = "PAUSED" ]; then
+    gc scheduler jobs resume "$spend_lease_scheduler_name" \
+      --location "$spend_lease_region" \
+      --quiet >/dev/null
+  elif [ "$spend_lease_scheduler_state" != "ENABLED" ]; then
+    echo "ERROR: unexpected spend-lease scheduler state: ${spend_lease_scheduler_state:-empty}" >&2
+    exit 1
+  fi
+else
+  # A disabled probe must not keep launching a no-op container every minute.
+  # Besides wasting control-plane capacity, overlapping cold starts can emit
+  # Cloud Run startup failures even though the application never runs.
+  scheduler_error="$(mktemp "${TMPDIR:-/tmp}/spend-lease-scheduler.XXXXXX")"
+  if spend_lease_scheduler_state="$(
+    gc scheduler jobs describe "$spend_lease_scheduler_name" \
+      --location "$spend_lease_region" \
+      --format='value(state)' 2>"$scheduler_error"
+  )"; then
+    if [ "$spend_lease_scheduler_state" = "ENABLED" ]; then
+      gc scheduler jobs pause "$spend_lease_scheduler_name" \
+        --location "$spend_lease_region" \
+        --quiet >/dev/null
+    elif [ "$spend_lease_scheduler_state" != "PAUSED" ]; then
+      echo "ERROR: unexpected spend-lease scheduler state: ${spend_lease_scheduler_state:-empty}" >&2
+      rm -f "$scheduler_error"
+      exit 1
+    fi
+  elif ! grep -qE '(^|[[:space:]])NOT_FOUND([[:space:]:]|$)' "$scheduler_error"; then
+    cat "$scheduler_error" >&2
+    rm -f "$scheduler_error"
+    exit 1
+  fi
+  rm -f "$scheduler_error"
+fi
+
 # Image generation is materially more expensive than text PONG probes. Keep it
 # isolated and run one canonical end-to-end request every six hours.
 image_region="us-central1"
-image_ingest_base="https://${SYNTHETIC_INGEST_SERVICE}-${PROJECT_NUMBER}.${image_region}.run.app"
+image_ingest_base="$(synthetic_ingest_base_for_region "$image_region")"
 image_job_name="trusted-router-image-generation-${image_region}"
 image_scheduler_name="${image_job_name}-every-six-hours"
 image_env_vars=(
@@ -443,7 +553,7 @@ upsert_scheduler \
 # or about $10.71 per 30 days. max-retries=0 plus a date-scoped idempotency key
 # prevents duplicate billing.
 video_region="us-central1"
-video_ingest_base="https://${SYNTHETIC_INGEST_SERVICE}-${PROJECT_NUMBER}.${video_region}.run.app"
+video_ingest_base="$(synthetic_ingest_base_for_region "$video_region")"
 video_job_name="trusted-router-video-generation-${video_region}"
 video_scheduler_name="${video_job_name}-daily"
 video_env_vars=(

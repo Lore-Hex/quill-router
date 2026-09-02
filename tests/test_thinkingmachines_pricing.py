@@ -5,6 +5,7 @@ import json
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.parsers.thinkingmachines import parse
 from scripts.pricing.providers import thinkingmachines
+from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
 
 
 def _pricing_html(*, active: str = "old") -> str:
@@ -28,6 +29,16 @@ def _pricing_html(*, active: str = "old") -> str:
 
 def _serverless_pricing_html() -> str:
     return """
+    <table><tbody id="model-tbody">
+      <tr>
+        <td>GLM-5.3 (256K)</td>
+        <td class="tinker-id">zai-org/GLM-5.3:peft:262144</td>
+        <td>256K</td><td>Large</td><td>MoE</td><td>Reasoning</td>
+        <td class="price">$4.86<span class="price-cached">$0.972 (cached)</span></td>
+        <td class="price">$12.15</td>
+        <td class="price">$14.58</td>
+      </tr>
+    </tbody></table>
     <table><tbody id="serverless-tbody">
       <tr>
         <td>Inkling-Small</td>
@@ -47,7 +58,7 @@ def _serverless_pricing_html() -> str:
     """
 
 
-def test_parser_reads_all_serverless_inference_models() -> None:
+def test_parser_merges_serverless_and_selected_sampler_models() -> None:
     assert parse(_serverless_pricing_html()) == {
         "thinkingmachines/inkling-small": {
             "prompt_micro_per_m": 300_000,
@@ -58,6 +69,11 @@ def test_parser_reads_all_serverless_inference_models() -> None:
             "prompt_micro_per_m": 1_000_000,
             "completion_micro_per_m": 4_050_000,
             "prompt_cached_micro_per_m": 170_000,
+        },
+        "z-ai/glm-5.3": {
+            "prompt_micro_per_m": 4_860_000,
+            "completion_micro_per_m": 12_150_000,
+            "prompt_cached_micro_per_m": 972_000,
         },
     }
 
@@ -114,7 +130,12 @@ def test_manifest_writer_updates_integer_rates(tmp_path, monkeypatch) -> None:  
                         "id": "thinkingmachines/inkling-small",
                         "input_token_price_per_m": 1,
                         "output_token_price_per_m": 1,
-                    }
+                    },
+                    {
+                        "id": "z-ai/glm-5.3",
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 1,
+                    },
                 ]
             }
         ),
@@ -133,6 +154,11 @@ def test_manifest_writer_updates_integer_rates(tmp_path, monkeypatch) -> None:  
                 prompt_micro_per_m=300_000,
                 completion_micro_per_m=1_200_000,
                 prompt_cached_micro_per_m=60_000,
+            ),
+            "z-ai/glm-5.3": ModelPrice(
+                prompt_micro_per_m=4_860_000,
+                completion_micro_per_m=12_150_000,
+                prompt_cached_micro_per_m=972_000,
             ),
         },
         source="deterministic",
@@ -153,3 +179,18 @@ def test_manifest_writer_updates_integer_rates(tmp_path, monkeypatch) -> None:  
         rows["thinkingmachines/inkling-small"]["cached_input_token_price_per_m"]
         == 60_000
     )
+    assert rows["z-ai/glm-5.3"]["input_token_price_per_m"] == 4_860_000
+    assert rows["z-ai/glm-5.3"]["output_token_price_per_m"] == 12_150_000
+    assert rows["z-ai/glm-5.3"]["cached_input_token_price_per_m"] == 972_000
+
+
+def test_tinker_glm_5_3_sampler_route_is_published_with_verified_contract() -> None:
+    model = MODELS["z-ai/glm-5.3"]
+    endpoint = MODEL_ENDPOINTS["z-ai/glm-5.3@thinkingmachines/prepaid"]
+
+    assert model.context_length >= 262_144
+    assert endpoint.provider == "thinkingmachines"
+    assert endpoint.usage_type == "Credits"
+    assert endpoint.upstream_id == "zai-org/GLM-5.3:peft:262144"
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 5_127_300
+    assert endpoint.completion_price_microdollars_per_million_tokens == 12_818_250

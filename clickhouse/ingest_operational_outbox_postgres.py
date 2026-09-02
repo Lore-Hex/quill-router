@@ -25,7 +25,7 @@ nothing can recover.
 Aurora DSQL reports every optimistic-concurrency abort as SQLSTATE 40001, which
 is routine rather than exceptional, so each statement runs under a retry.
 
-**Failures are contained, not fatal.**  This is a daemon whose silence looks
+**Recoverable failures are contained.**  This is a daemon whose silence looks
 exactly like success — nothing downstream notices undelivered rows except the
 lag metric — so it never exits on an error it could survive.  Shards are swept
 independently and a failing one is logged and counted rather than allowed to
@@ -33,6 +33,14 @@ unwind the sweep, because a single undeliverable row would otherwise stop
 delivery for all 32 shards.  Non-retryable errors drop the connection so the
 next pass reconnects; DSQL expires long-lived connections, so that path is
 ordinary rather than exceptional.
+
+There is one bounded exception: if every configured ClickHouse target rejects
+every attempted batch for three consecutive complete sweeps, the process exits
+non-zero.  ``Restart=on-failure`` then starts a fresh process after
+``RestartSec``.  This does not turn partial degradation into a restart loop: if
+one target accepts the batch in a copies>1 deployment, the drain stays alive,
+continues feeding that copy, and reports ``degraded_targets``.  The restart is
+for the zero-success case where fresh process state can heal a wedged daemon.
 
 **That silence has one bound this module cannot provide.**  ``backlog_alarm``
 below is emitted BY this process, so it says nothing when the process does not
@@ -91,11 +99,13 @@ The cost of that is a bounded re-write: during an outage each full pass re-offer
 the backlog to the nodes that are up, and `ReplacingMergeTree` collapses it.  One
 rewrite per pass, not one per poll.
 
-**Unbounded outbox growth when a node stays down.**  There is no automatic
-bound, and that is deliberate: any automatic bound would have to either delete
-undelivered rows — the exact loss this design exists to prevent — or stop the
-drain, which does not help.  So the bound is operator-enforced and the drain's
-job is to make the condition impossible to miss:
+**Unbounded outbox growth when a node stays down.**  There is no automatic data
+bound, and that is deliberate: such a bound would have to delete undelivered
+rows, the exact loss this design exists to prevent.  A zero-success drain does
+restart to heal stale process state, but a real node outage survives that
+restart and still needs the operator decision below.  So the storage bound is
+operator-enforced and the drain's job is to make the condition impossible to
+miss:
 
 * every sweep logs ``degraded_targets=`` naming each endpoint whose last write
   failed, so "which node is behind" is never a guess;
@@ -169,10 +179,12 @@ than one whose edges are known:
   so both nodes hold them empty. If such a job is ever pointed at Paris, its
   output is NOT replicated by this drain and the second copy is not complete.
 * **The alarm needs this process alive.**  ``backlog_alarm`` is emitted from the
-  sweep loop, so it says nothing while the drain is not running.  A
-  configuration error therefore exits with ``CONFIG_EXIT_CODE``, which the unit
-  file refuses to restart, so a bad environment leaves a *failed* unit rather
-  than a silent crash-loop with the outbox growing behind it.
+  sweep loop, so it says nothing while the drain is not running.  A total writer
+  failure exits non-zero only after logging complete sweeps; systemd restarts it,
+  which both keeps the alarm alive and can heal stale process state.  A
+  configuration error instead exits with ``CONFIG_EXIT_CODE``, which the unit
+  refuses to restart, so a bad environment leaves a *failed* unit rather than a
+  silent crash-loop with the outbox growing behind it.
 """
 
 from __future__ import annotations
@@ -187,7 +199,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from clickhouse._sdnotify import sd_notify
 from clickhouse.ingest_operational_outbox import (
+    ClickHouseInsertError,
     ClickHouseOperationalWriter,
     OperationalOutboxRow,
     _lag_seconds,
@@ -318,6 +332,26 @@ DEFAULT_REPLICA_TIMEOUT_SECONDS = 60.0
 #: catch-up and becomes something an operator has to decide about.
 DEFAULT_MAX_LAG_SECONDS = 3600.0
 
+#: Full zero-success sweeps tolerated before systemd gets a chance to replace
+#: potentially wedged process state.  A transient sweep remains contained, and
+#: partial fan-out success never increments this counter.
+DEFAULT_ALL_TARGET_FAILURE_SWEEPS = 3
+
+#: Aurora DSQL expires connections at roughly one hour. Reconnect while the
+#: handle is still predictably usable instead of discovering expiry mid-poll.
+CONNECTION_MAX_AGE_SECONDS = 45 * 60
+
+LIBPQ_SOCKET_BOUNDS = {
+    "connect_timeout": 10,
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "keepalives_count": 3,
+    # Milliseconds. Linux bounds unacknowledged writes and idle-read stalls;
+    # it is a client socket option and needs no support from DSQL.
+    "tcp_user_timeout": 30_000,
+}
+
 #: Failures a single target may accumulate in one sweep before the rest of that
 #: sweep skips it. Bounds a wedged node's cost from "one timeout per shard" to
 #: "a handful per sweep" without disabling a target over a single blip.
@@ -325,7 +359,7 @@ SWEEP_TARGET_FAILURE_LIMIT = 3
 
 #: Exit status for a configuration error, distinct from a crash so systemd can
 #: refuse to restart it (RestartPreventExitStatus in the unit file). A bad
-#: environment cannot be fixed by running again: with Restart=always the drain
+#: environment cannot be fixed by running again: with a restart policy the drain
 #: would crash-loop invisibly while the outbox grew at full rate, and the alarm
 #: that is supposed to bound that growth is emitted BY the process that is not
 #: running. A unit in `failed` is visible; a unit restarting every 5s is not.
@@ -429,6 +463,10 @@ class FanOutOperationalWriter:
     def begin_sweep(self) -> None:
         """Re-arm the per-sweep breaker. Called by `drain_once` per sweep."""
         self._sweep_failures = {name: 0 for name, _ in self._targets}
+
+    @property
+    def target_count(self) -> int:
+        return len(self._targets)
 
     def insert(self, events: list[Any]) -> None:
         failures: list[tuple[str, BaseException]] = []
@@ -682,6 +720,11 @@ class SweepResult:
     failed_shards: int = 0
     degraded_targets: tuple[str, ...] = ()
     quarantined: int = 0
+    # Liveness fields distinguish an actually wedged ClickHouse writer from a
+    # source, normalisation or DELETE failure.  A partial fan-out failure has
+    # successful_target_writes > 0 and therefore must keep running.
+    all_targets_failed_shards: int = 0
+    successful_target_writes: int = 0
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -738,6 +781,7 @@ class PostgresOperationalOutboxSource:
         self._iam_region = iam_region
         self._attempts = attempts
         self._connection: Any = None
+        self._connected_at: float | None = None
 
     # -- connection ---------------------------------------------------------
 
@@ -745,6 +789,11 @@ class PostgresOperationalOutboxSource:
         if self._connection is not None:
             self._connection.close()
             self._connection = None
+            self._connected_at = None
+
+    def _record_connection(self, connection: Any) -> Any:
+        self._connected_at = time.monotonic()
+        return connection
 
     def _connect(self) -> Any:
         if not self._iam_auth:
@@ -757,7 +806,14 @@ class PostgresOperationalOutboxSource:
                     "DSN must not contain a password; set PGPASSWORD instead so the "
                     "secret does not appear in argv"
                 )
-            return self._psycopg.connect(self._dsn, autocommit=False)
+            return self._record_connection(
+                self._psycopg.connect(
+                    self._dsn,
+                    autocommit=False,
+                    options="-c statement_timeout=60000",
+                    **LIBPQ_SOCKET_BOUNDS,
+                )
+            )
         if self._iam_auth != "aws-dsql":
             raise ValueError(
                 f"Unsupported --iam-auth value {self._iam_auth!r}; expected 'aws-dsql' or empty"
@@ -785,11 +841,26 @@ class PostgresOperationalOutboxSource:
             else client.generate_db_connect_auth_token
         )
         token = mint(Hostname=hostname, Region=region, ExpiresIn=900)
-        return self._psycopg.connect(self._dsn, password=token, autocommit=False)
+        # Do not send statement_timeout to DSQL: support for that GUC is not
+        # assured. The libpq/kernel socket bounds remain entirely client-side.
+        return self._record_connection(
+            self._psycopg.connect(
+                self._dsn,
+                password=token,
+                autocommit=False,
+                **LIBPQ_SOCKET_BOUNDS,
+            )
+        )
 
     def _live_connection(self) -> Any:
         # Reused across statements: a fresh connect per shard would be 64+
         # handshakes per sweep, and on DSQL each one also mints an IAM token.
+        if (
+            self._connection is not None
+            and self._connected_at is not None
+            and time.monotonic() - self._connected_at >= CONNECTION_MAX_AGE_SECONDS
+        ):
+            self._discard_connection()
         if self._connection is None or getattr(self._connection, "closed", False):
             self._connection = self._connect()
         return self._connection
@@ -813,6 +884,7 @@ class PostgresOperationalOutboxSource:
 
     def _discard_connection(self) -> None:
         connection, self._connection = self._connection, None
+        self._connected_at = None
         if connection is None:
             return
         # Already broken; closing is best-effort cleanup, not a result.
@@ -988,6 +1060,8 @@ def drain_once(
     inserted = 0
     quarantined = 0
     failed_shards = 0
+    all_targets_failed_shards = 0
+    successful_target_writes = 0
     degraded: dict[str, None] = {}
     # Lets a fan-out stop re-dialling a target that has already failed several
     # times THIS sweep; see FanOutOperationalWriter.begin_sweep. Absent on the
@@ -997,6 +1071,9 @@ def drain_once(
         begin_sweep()
     started = time.monotonic()
     for shard in range(shard_count):
+        # A busy sweep can run much longer than WatchdogSec. Ping before each
+        # independently bounded shard so healthy backlog catch-up is not killed.
+        sd_notify("WATCHDOG=1")
         try:
             result = drain_shard_once(
                 source, writer, shard=shard, batch_size=batch_size, cursors=cursors
@@ -1011,6 +1088,13 @@ def drain_once(
             # as healthy in the one field the runbook says to watch.
             for name in getattr(exc, "failed_targets", ()):
                 degraded[str(name)] = None
+            if isinstance(exc, FanOutWriteError):
+                successful_target_writes += len(exc.succeeded_targets)
+                if exc.failed_targets and not exc.succeeded_targets:
+                    all_targets_failed_shards += 1
+            elif isinstance(exc, ClickHouseInsertError):
+                # The bare writer represents exactly one configured target.
+                all_targets_failed_shards += 1
             log.exception(
                 "operational_analytics_outbox.shard_failed backend=postgres shard=%d",
                 shard,
@@ -1019,6 +1103,9 @@ def drain_once(
         fetched += result.fetched
         inserted += result.inserted
         quarantined += result.quarantined
+        if result.fetched:
+            # A normal return means every configured target accepted the batch.
+            successful_target_writes += int(getattr(writer, "target_count", 1))
     elapsed = max(time.monotonic() - started, 0.000_001)
     return SweepResult(
         fetched=fetched,
@@ -1027,6 +1114,8 @@ def drain_once(
         failed_shards=failed_shards,
         degraded_targets=tuple(degraded),
         quarantined=quarantined,
+        all_targets_failed_shards=all_targets_failed_shards,
+        successful_target_writes=successful_target_writes,
     )
 
 
@@ -1050,6 +1139,15 @@ def main() -> int:
         default=float(
             os.environ.get("TR_OPERATIONAL_ANALYTICS_MAX_LAG_SECONDS", "")
             or DEFAULT_MAX_LAG_SECONDS
+        ),
+    )
+    parser.add_argument(
+        "--all-target-failure-sweeps",
+        type=int,
+        default=DEFAULT_ALL_TARGET_FAILURE_SWEEPS,
+        help=(
+            "exit non-zero after this many consecutive complete sweeps in which "
+            "no ClickHouse target accepts a batch"
         ),
     )
     parser.add_argument("--once", action="store_true")
@@ -1100,11 +1198,22 @@ def main() -> int:
             max_lag_seconds,
         )
         raise SystemExit(CONFIG_EXIT_CODE)
+    all_target_failure_bound = int(args.all_target_failure_sweeps)
+    if all_target_failure_bound <= 0:
+        log.error(
+            "operational_analytics_outbox.config_invalid backend=postgres "
+            "error=--all-target-failure-sweeps must be positive (got %s)",
+            all_target_failure_bound,
+        )
+        raise SystemExit(CONFIG_EXIT_CODE)
     # Per-shard read position, owned here so it survives ACROSS sweeps: a batch
     # that could not be deleted is stepped over, and that only helps if the next
     # sweep remembers where it got to.
     cursors: dict[int, tuple[str, str]] = {}
+    consecutive_all_target_failure_sweeps = 0
+    sd_notify("READY=1")
     while True:
+        sd_notify("WATCHDOG=1")
         result = drain_once(
             source,
             writer,
@@ -1122,10 +1231,20 @@ def main() -> int:
         # right now". The first is what the operator is asking; the second
         # carries across a sweep in which the target was skipped by the breaker.
         degraded = sorted({*result.degraded_targets, *degraded_target_names(writer)})
+        all_targets_failed = (
+            result.failed_shards > 0
+            and result.all_targets_failed_shards == result.failed_shards
+            and result.successful_target_writes == 0
+        )
+        if all_targets_failed:
+            consecutive_all_target_failure_sweeps += 1
+        else:
+            consecutive_all_target_failure_sweeps = 0
         log.info(
             "operational_analytics_outbox.metrics backend=postgres rows=%d "
             "rows_per_second=%.3f drain_lag_seconds=%.3f failed_shards=%d "
-            "copies=%d degraded_targets=%s quarantined=%d",
+            "copies=%d degraded_targets=%s quarantined=%d "
+            "all_target_failure_sweeps=%d",
             result.inserted,
             result.rows_per_second,
             lag_seconds,
@@ -1133,12 +1252,11 @@ def main() -> int:
             len(targets),
             ",".join(degraded) or "-",
             result.quarantined,
+            consecutive_all_target_failure_sweeps,
         )
-        # The bound on outbox growth is this line plus an operator. There is no
-        # automatic one: the only automatic bounds available are "delete rows a
-        # copy never received", which is the loss this whole design exists to
-        # prevent, and "stop draining", which helps nobody. See the module
-        # docstring for the two actions this alarm asks for.
+        # The storage bound is this line plus an operator.  Restarting below can
+        # heal wedged process state but cannot make a genuinely down target
+        # accept rows, and deletion without every copy remains forbidden.
         if lag_seconds >= max_lag_seconds > 0:
             log.error(
                 "operational_analytics_outbox.backlog_alarm backend=postgres "
@@ -1148,6 +1266,14 @@ def main() -> int:
                 max_lag_seconds,
                 ",".join(degraded) or "-",
             )
+        if consecutive_all_target_failure_sweeps >= all_target_failure_bound:
+            log.critical(
+                "operational_analytics_outbox.liveness_exit backend=postgres "
+                "all_target_failure_sweeps=%d bound=%d action=systemd-restart",
+                consecutive_all_target_failure_sweeps,
+                all_target_failure_bound,
+            )
+            raise SystemExit(1)
         if args.once:
             return 1 if result.failed_shards else 0
         # Back off after a failing sweep as well as an empty one. Without this

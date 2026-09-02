@@ -102,7 +102,10 @@ if len(matches) > 1:
 if not matches:
     print(default)
 else:
-    value = matches[0].get("value")
+    item = matches[0]
+    if "valueFrom" in item:
+        raise SystemExit(f"environment variable is not a plain value: {name}")
+    value = item.get("value", "")
     if not isinstance(value, str):
         raise SystemExit(f"environment variable is not a plain value: {name}")
     print(value)

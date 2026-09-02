@@ -671,6 +671,41 @@ def test_static_fonts_force_woff2_media_type(
     assert font.headers["content-type"] == "font/woff2"
 
 
+def test_static_assets_are_memory_served_with_resilient_cdn_headers(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fail_runtime_file_open(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("static asset performed a runtime file read")
+
+    monkeypatch.setattr("anyio.open_file", fail_runtime_file_open)
+
+    plain = client.get("/static/provider-logos/openai.png")
+    assert plain.status_code == 200
+    assert plain.content.startswith(b"\x89PNG\r\n\x1a\n")
+    assert plain.headers["cache-control"] == (
+        "public, max-age=86400, s-maxage=604800, "
+        "stale-while-revalidate=86400, stale-if-error=604800"
+    )
+
+    versioned = client.get("/static/dashboard.js?v=release-123")
+    assert versioned.status_code == 200
+    assert versioned.headers["cache-control"] == (
+        "public, max-age=31536000, immutable"
+    )
+
+    head = client.head("/static/dashboard.js?v=release-123")
+    assert head.status_code == 200
+    assert head.content == b""
+    assert int(head.headers["content-length"]) == len(versioned.content)
+
+    unchanged = client.get(
+        "/static/dashboard.js?v=release-123",
+        headers={"if-none-match": versioned.headers["etag"]},
+    )
+    assert unchanged.status_code == 304
+    assert unchanged.content == b""
+
+
 def test_read_only_blocks_writes_but_lets_reads_through() -> None:
     """Operational read-only flag (Stage 1 Spanner cutover prerequisite):
     POST/PUT/PATCH/DELETE return 503 with `Retry-After`; GET/HEAD/OPTIONS
@@ -715,8 +750,17 @@ def test_read_only_default_off_lets_writes_through() -> None:
     assert resp.status_code != 503
 
 
-def test_read_only_keeps_storage_free_local_rate_limit() -> None:
+def test_read_only_keeps_storage_free_local_rate_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Read-only cutovers retain admission now that it performs no writes."""
+    from trusted_router import storage_rate_limits
+
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: dt.datetime(2026, 7, 14, 20, 48, 30, tzinfo=dt.UTC),
+    )
     locked_app = create_app(
         Settings(
             environment="test",

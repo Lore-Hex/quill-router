@@ -147,7 +147,7 @@ def test_live_model_without_first_party_price_is_not_published(
     assert "moonshotai/kimi-k3" in capsys.readouterr().err
 
 
-def test_manifest_removes_models_no_longer_live_or_priced(
+def test_manifest_tombstones_models_after_two_fresh_absences(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
@@ -177,9 +177,21 @@ def test_manifest_removes_models_no_longer_live_or_priced(
 
     result = kimi.fetch()
     kimi.write_provider_manifest(result)
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    first_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    first_retired = next(
+        row for row in first_manifest["models"] if row["id"] == "moonshotai/kimi-retired"
+    )
+    assert first_retired["missing_since"]
+    assert first_retired.get("routable") is not False
 
-    assert "moonshotai/kimi-retired" not in {row["id"] for row in manifest["models"]}
+    kimi.write_provider_manifest(result)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    retired = next(
+        row for row in manifest["models"] if row["id"] == "moonshotai/kimi-retired"
+    )
+
+    assert retired["routable"] is False
+    assert retired["routable_reason"] == "delisted-upstream"
 
 
 def test_missing_key_fails_closed_before_publishing_provider_routes(

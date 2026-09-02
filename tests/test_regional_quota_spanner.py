@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -393,6 +394,134 @@ def test_store_regional_authorize_settle_replay_and_reconcile_end_to_end() -> No
     )
 
 
+def test_regional_settle_falls_back_when_stale_cas_erased_authorized_hold() -> None:
+    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    ledger = InMemoryRegionalQuotaLedger()
+    store._regional_quota_ledger = ledger
+    workspace = store.create_workspace(
+        "owner",
+        "regional-lost-hold",
+        trial_credit_microdollars=100_000_000,
+    )
+    _raw, key = store.create_api_key(
+        workspace_id=workspace.id,
+        name="uncapped",
+        creator_user_id="owner",
+    )
+    outcome, authorization = store.authorize_gateway_regional(
+        authorization_id="gwa-lost-by-stale-cas",
+        workspace_id=workspace.id,
+        key_hash=key.hash,
+        key_usage_shards=key.usage_shard_count,
+        estimate=10_000,
+        model_id="model",
+        provider="provider",
+        requested_model_id="model",
+        candidate_model_ids=["model"],
+        region="us-central1",
+        endpoint_id="provider/model",
+        candidate_endpoint_ids=["provider/model"],
+        idempotency_key="lost-hold-request",
+        idempotency_fingerprint="b" * 64,
+        tags={"test": "regional-lost-hold"},
+        expires_at=datetime.now(UTC) + timedelta(hours=2),
+        lease_ttl_seconds=60,
+        lease_max_microdollars=10_000_000,
+        lease_max_available_basis_points=1_000,
+        lease_shard_count=16,
+    )
+
+    assert outcome == "accepted"
+    assert authorization is not None
+    lease_key = ("us-central1", str(authorization.regional_lease_id))
+    with ledger._lock:
+        current = ledger._leases[lease_key]
+        assert [hold.hold_id for hold in current.holds] == [authorization.id]
+        # Reproduce the pre-#727 Bigtable race: a writer that read the empty
+        # lease before this reservation was allowed to commit its stale snapshot
+        # afterward because a historical version cell satisfied the CAS filter.
+        ledger._leases[lease_key] = replace(current, holds=())
+    before = _credit_totals(database, workspace.id)
+
+    finalized = store.typed_finalize_gateway_authorization_result(
+        authorization.id,
+        success=True,
+        actual_microdollars=7_500,
+        selected_usage_type=UsageType.CREDITS,
+    )
+
+    assert finalized.finalized is True
+    after = _credit_totals(database, workspace.id)
+    assert after == (before[0], 7_500, before[2])
+    reservation = store.read_typed_reservation(str(authorization.credit_reservation_id))
+    assert reservation is not None
+    assert reservation["settled"] is True
+    assert reservation["actual_micro"] == 7_500
+    damaged = ledger.get(lease_key[1], region=lease_key[0])
+    assert damaged is not None
+    assert damaged.state.value == "draining"
+
+    target_shard = int.from_bytes(
+        hashlib.sha256(("b" * 64).encode()).digest()[:4],
+        "big",
+    ) % 16
+    replacement_fingerprint = next(
+        candidate
+        for index in range(10_000)
+        if (
+            candidate := hashlib.sha256(f"replacement-{index}".encode()).hexdigest()
+        )
+        != "b" * 64
+        and int.from_bytes(hashlib.sha256(candidate.encode()).digest()[:4], "big") % 16
+        == target_shard
+    )
+    next_outcome, next_authorization = store.authorize_gateway_regional(
+        authorization_id="gwa-after-lost-hold",
+        workspace_id=workspace.id,
+        key_hash=key.hash,
+        key_usage_shards=key.usage_shard_count,
+        estimate=10_000,
+        model_id="model",
+        provider="provider",
+        requested_model_id="model",
+        candidate_model_ids=["model"],
+        region="us-central1",
+        endpoint_id="provider/model",
+        candidate_endpoint_ids=["provider/model"],
+        idempotency_key="after-lost-hold",
+        idempotency_fingerprint=replacement_fingerprint,
+        tags={},
+        expires_at=datetime.now(UTC) + timedelta(hours=2),
+        lease_ttl_seconds=60,
+        lease_max_microdollars=10_000_000,
+        lease_max_available_basis_points=1_000,
+        lease_shard_count=16,
+    )
+    assert next_outcome == "unavailable"
+    assert next_authorization is None
+    assert ledger.get(lease_key[1], region=lease_key[0]) == damaged
+
+    replay = store.typed_finalize_gateway_authorization_result(
+        authorization.id,
+        success=True,
+        actual_microdollars=7_500,
+        selected_usage_type=UsageType.CREDITS,
+    )
+    assert replay.finalized is False
+    assert _credit_totals(database, workspace.id) == after
+
+    reconciled = store.reconcile_regional_quota_leases(
+        now=datetime.now(UTC) + timedelta(minutes=2),
+    )
+    assert reconciled == {
+        "inspected": 1,
+        "reconciled": 1,
+        "closed": 1,
+        "errors": 0,
+    }
+    assert _credit_totals(database, workspace.id) == (100_000_000, 7_500, 0)
+
+
 def test_missing_regional_ledger_is_a_retryable_settlement_error() -> None:
     store, _database, _ = make_fake_store(request_record_write_mode="typed")
     authorization = GatewayAuthorization(
@@ -692,6 +821,52 @@ def test_reconciler_closes_expired_quarantine_when_local_initialization_is_absen
     closed = store._read_entity("regional_quota_lease", lease.entity_id, GlobalRegionalQuotaLease)
     assert closed is not None and closed.state == "closed"
     assert store._list_entities("regional_quota_lease_open", cls=OpenRegionalQuotaLease) == []
+
+
+def test_reconciler_defers_live_pending_lease_before_local_initialization() -> None:
+    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    ledger = InMemoryRegionalQuotaLedger()
+    store._regional_quota_ledger = ledger
+    workspace = store.create_workspace(
+        "owner",
+        "regional-pending-initialization",
+        trial_credit_microdollars=10_000_000,
+    )
+    lease = grant_regional_quota_lease(
+        store,
+        workspace_id=workspace.id,
+        region="us-central1",
+        requested_microdollars=1_000_000,
+        per_lease_cap_microdollars=1_000_000,
+        max_available_basis_points=1_000,
+        ttl_seconds=60,
+        minimum_grant_microdollars=1_000,
+        now=NOW,
+    )
+    assert lease is not None
+
+    result = store.reconcile_regional_quota_leases(now=NOW + timedelta(seconds=1))
+
+    assert result == {
+        "inspected": 1,
+        "reconciled": 0,
+        "closed": 0,
+        "errors": 0,
+    }
+    assert _credit_totals(database, workspace.id)[2] == lease.granted_microdollars
+    pending = store._read_entity(
+        "regional_quota_lease",
+        lease.entity_id,
+        GlobalRegionalQuotaLease,
+    )
+    assert pending is not None and pending.state == "pending"
+    assert ledger.get(lease.lease_id, region=lease.region) is None
+
+    ledger.initialize(regional_lease_from_global(lease))
+    activate_regional_quota_lease(store, lease, now=NOW + timedelta(seconds=2))
+    recovered = store.reconcile_regional_quota_leases(now=NOW + timedelta(seconds=3))
+    assert recovered["errors"] == 0
+    assert recovered["reconciled"] == 1
 
 
 def test_reconciler_cleans_stale_open_index_for_already_closed_lease() -> None:

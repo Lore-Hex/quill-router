@@ -197,6 +197,17 @@ probe_legacy_path() {
 probe_legacy_surface_or_rollback() {
   local stage_pct="$1"
   local base_url
+  local service_ingress
+  if ! service_ingress="$(cloud_run_service_ingress \
+      "$SERVICE" "$REGION" "$PROJECT_ID")"; then
+    rollback_to_old \
+      "could not determine Cloud Run ingress after ${stage_pct}% shift"
+    exit 1
+  fi
+  if [ "$service_ingress" != "all" ]; then
+    log "direct run.app probe disabled by service ingress after ${stage_pct}% shift; load-balancer watchdog owns HTTP validation"
+    return 0
+  fi
   if ! base_url="$(legacy_surface_base_url)"; then
     log "legacy surface probe inconclusive after ${stage_pct}% shift: regional Cloud Run URL unavailable"
     return 0

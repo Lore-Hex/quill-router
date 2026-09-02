@@ -4,7 +4,11 @@ After=network-online.target clickhouse-server.service
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+# The drain pings per shard. One normal shard is bounded by 60s Postgres fetch
+# + 60s ClickHouse write + 60s Postgres delete = 180s; 3x is 540s, plus 60s.
+WatchdogSec=600
 User=tr-clickhouse-ingest
 Group=tr-clickhouse-ingest
 WorkingDirectory=/opt/tr-clickhouse
@@ -55,11 +59,13 @@ Environment=HOME=/var/lib/tr-clickhouse-ingest
 EnvironmentFile=/etc/tr-clickhouse-ingest-postgres.env
 ExecStart=/opt/tr-clickhouse/venv/bin/python -m clickhouse.ingest_operational_outbox_postgres
 # The drain sweeps shards independently and contains per-shard failures, so it
-# survives a bad row or a ClickHouse blip on its own. Restart=always covers
-# what it cannot: process-fatal faults, and Aurora DSQL expiring the long-lived
-# connection. Without this the first such event silently ends delivery and the
-# ClickHouse tables quietly return to reading zero rows.
-Restart=always
+# survives a bad row or a ClickHouse blip on its own. It now exits non-zero after
+# three complete zero-success writer sweeps so a fresh process can heal stale
+# state; partial fan-out degradation stays alive to feed the healthy copy and
+# emit the backlog alarm. Restart=on-failure covers that exit, process-fatal
+# faults, and Aurora DSQL expiring the long-lived connection. Without this the
+# first such event silently ends delivery.
+Restart=on-failure
 RestartSec=5
 # ...except for a CONFIGURATION error (EX_CONFIG), which running again cannot
 # fix. Without this, a typo in the replica block below crash-loops every 5s

@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from scripts.pricing.providers import gmi
-from trusted_router.catalog import MODEL_ENDPOINTS
+from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, model_open_weights
 from trusted_router.catalog_data import PRIVACY_TIER_STANDARD
 from trusted_router.catalog_privacy import (
     endpoint_confidential_compute,
@@ -16,8 +16,14 @@ from trusted_router.catalog_privacy import (
     endpoint_stores_content,
     endpoint_zero_data_retention,
 )
+from trusted_router.pricing import (
+    _provider_manifest_customer_price,
+    _provider_manifest_price_cost,
+    _provider_manifest_price_scale,
+)
 
 KIMI_K3 = "moonshotai/kimi-k3"
+HY4_PREVIEW = "tencent/hy4-preview"
 
 
 def test_gmi_hourly_parser_discovers_kimi_k3_exact_prices(
@@ -244,28 +250,49 @@ def test_gmi_kimi_k3_is_a_verified_prepaid_route() -> None:
     assert endpoint.completion_price_microdollars_per_million_tokens == 15_825_000
 
 
+def test_gmi_hy4_preview_is_a_verified_prepaid_route() -> None:
+    assert HY4_PREVIEW in gmi._VERIFIED_PREPAID_MODELS
+    endpoint = MODEL_ENDPOINTS[f"{HY4_PREVIEW}@gmi/prepaid"]
+
+    assert endpoint.upstream_id == HY4_PREVIEW
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 879_870
+    assert endpoint.completion_price_microdollars_per_million_tokens == 2_638_555
+    assert model_open_weights(MODELS[HY4_PREVIEW]) is True
+
+
 def test_every_gmi_prepaid_route_is_billed_from_provider_list_price() -> None:
-    list_prices = {
-        "deepseek/deepseek-v4-pro": (1_320_000, 3_960_000),
-        "moonshotai/kimi-k3": (3_000_000, 15_000_000),
-        "z-ai/glm-5": (1_000_000, 3_200_000),
-        "z-ai/glm-5.1": (1_400_000, 4_400_000),
-        "z-ai/glm-5.2": (1_400_000, 4_400_000),
-    }
+    manifest_path = (
+        Path(__file__).parents[1]
+        / "src"
+        / "trusted_router"
+        / "data"
+        / "provider_models"
+        / "gmi.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    price_scale = _provider_manifest_price_scale(manifest)
+    list_prices = {row["id"]: row for row in manifest["models"]}
     gmi_prepaid = {
         endpoint.model_id: endpoint
         for endpoint in MODEL_ENDPOINTS.values()
         if endpoint.provider == "gmi" and endpoint.usage_type == "Credits"
     }
 
-    assert set(gmi_prepaid) == set(list_prices)
-    for model_id, (prompt_cost, completion_cost) in list_prices.items():
-        endpoint = gmi_prepaid[model_id]
+    assert gmi_prepaid
+    assert set(gmi_prepaid) <= set(list_prices)
+    for model_id, endpoint in gmi_prepaid.items():
+        row = list_prices[model_id]
+        prompt_cost = _provider_manifest_price_cost(
+            row["input_token_price_per_m"], price_scale=price_scale
+        )
+        completion_cost = _provider_manifest_price_cost(
+            row["output_token_price_per_m"], price_scale=price_scale
+        )
         assert endpoint.prompt_price_microdollars_per_million_tokens == (
-            prompt_cost * 1_055 // 1_000
+            _provider_manifest_customer_price(prompt_cost, apply_markup=True)
         )
         assert endpoint.completion_price_microdollars_per_million_tokens == (
-            completion_cost * 1_055 // 1_000
+            _provider_manifest_customer_price(completion_cost, apply_markup=True)
         )
 
 
@@ -273,6 +300,41 @@ def test_phala_kimi_k3_pass_through_is_standard_not_confidential() -> None:
     endpoint = MODEL_ENDPOINTS[f"{KIMI_K3}@phala/prepaid"]
 
     assert endpoint.upstream_id == "moonshotai/kimi-k3"
+    assert endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD
+    assert endpoint_stores_content(endpoint) is True
+    assert endpoint_zero_data_retention(endpoint) is False
+    assert endpoint_confidential_compute(endpoint) is False
+    assert endpoint_e2ee(endpoint) is False
+
+
+def test_phala_glm_52_pass_through_is_standard_not_confidential() -> None:
+    endpoint = MODEL_ENDPOINTS["z-ai/glm-5.2@phala/prepaid"]
+
+    assert endpoint.upstream_id == "z-ai/glm-5.2"
+    assert endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD
+    assert endpoint_stores_content(endpoint) is True
+    assert endpoint_zero_data_retention(endpoint) is False
+    assert endpoint_confidential_compute(endpoint) is False
+    assert endpoint_e2ee(endpoint) is False
+
+
+def test_phala_glm_53_pass_through_is_standard_not_confidential() -> None:
+    endpoint = MODEL_ENDPOINTS["z-ai/glm-5.3-flash@phala/prepaid"]
+
+    assert endpoint.upstream_id == "z-ai/glm-5.3-flash"
+    assert endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD
+    assert endpoint_stores_content(endpoint) is True
+    assert endpoint_zero_data_retention(endpoint) is False
+    assert endpoint_confidential_compute(endpoint) is False
+    assert endpoint_e2ee(endpoint) is False
+
+
+def test_new_phala_glm_release_is_dynamically_standard_not_confidential() -> None:
+    # GLM 5.3 is intentionally absent from the static privacy-override table.
+    # The exact upstream route must carry the boundary for future releases.
+    endpoint = MODEL_ENDPOINTS["z-ai/glm-5.3@phala/prepaid"]
+
+    assert endpoint.upstream_id == "z-ai/glm-5.3"
     assert endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD
     assert endpoint_stores_content(endpoint) is True
     assert endpoint_zero_data_retention(endpoint) is False

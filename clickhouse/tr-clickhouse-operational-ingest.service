@@ -4,7 +4,11 @@ After=network-online.target clickhouse-server.service
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+# Spanner has no psycopg socket knobs; 600s bounds a vanished client/server
+# exchange while leaving 3x headroom over the Postgres sibling's 180s shard.
+WatchdogSec=600
 User=tr-clickhouse-ingest
 Group=tr-clickhouse-ingest
 WorkingDirectory=/opt/tr-clickhouse

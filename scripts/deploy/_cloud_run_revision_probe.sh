@@ -123,3 +123,68 @@ cloud_run_probe_tagged_base_url() {
     *) return 1 ;;
   esac
 }
+
+cloud_run_service_ingress() {
+  local service="$1"
+  local region="$2"
+  local project="$3"
+  local document
+
+  document="$(gcloud run services describe "$service" \
+    --region="$region" \
+    --project="$project" \
+    --format=json)" || return 1
+  printf '%s' "$document" | python3 -c '
+import json, sys
+try:
+    document = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+ingress = (
+    document.get("metadata", {})
+    .get("annotations", {})
+    .get("run.googleapis.com/ingress")
+)
+if ingress is None:
+    ingress = "all"
+if ingress not in {"all", "internal", "internal-and-cloud-load-balancing"}:
+    raise SystemExit(1)
+print(ingress)
+'
+}
+
+cloud_run_revision_capacity_ready() {
+  local service="$1"
+  local region="$2"
+  local project="$3"
+  local revision="$4"
+  local minimum="$5"
+  local document
+
+  document="$(gcloud run revisions describe "$revision" \
+    --region="$region" \
+    --project="$project" \
+    --format=json)" || return 1
+  printf '%s' "$document" | python3 -c '
+import json, sys
+revision, minimum_text = sys.argv[1:3]
+try:
+    document = json.load(sys.stdin)
+    minimum = int(minimum_text)
+except Exception:
+    raise SystemExit(1)
+if document.get("metadata", {}).get("name") not in {None, revision}:
+    raise SystemExit(1)
+conditions = {
+    item.get("type"): str(item.get("status", "")).casefold()
+    for item in document.get("status", {}).get("conditions", [])
+}
+if conditions.get("Ready") != "true":
+    raise SystemExit(1)
+if minimum > 0 and conditions.get("MinInstancesProvisioned") != "true":
+    raise SystemExit(1)
+desired = document.get("status", {}).get("desiredReplicas")
+if minimum > 0 and (not isinstance(desired, int) or desired < minimum):
+    raise SystemExit(1)
+' "$revision" "$minimum"
+}

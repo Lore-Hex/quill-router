@@ -247,6 +247,109 @@ def test_fireworks_fetch_keeps_verified_launch_model_while_catalog_lags(
     assert "moonshotai/kimi-k3" in fireworks._DISCOVERED_MANIFEST_ROWS
 
 
+def test_fireworks_fetch_preserves_live_unpriced_model_as_dark_metadata(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    native_id = "accounts/fireworks/models/glm-5p3-flash"
+    monkeypatch.setenv("FIREWORKS_API_KEY", "test-key")
+    monkeypatch.setattr(fireworks, "UPSTREAM_ID_MAP", dict(fireworks.UPSTREAM_ID_MAP))
+    monkeypatch.setattr(
+        fireworks,
+        "fetch_provider",
+        lambda **_kwargs: ProviderPricingResult(
+            slug="fireworks",
+            prices={model_id: _price() for model_id in fireworks.EXPECTED_MODELS},
+            source="deterministic",
+        ),
+    )
+    live_rows = [
+        {"id": fireworks.UPSTREAM_ID_MAP[model_id]}
+        for model_id in fireworks.EXPECTED_MODELS
+        if model_id not in fireworks.VERIFIED_PRICED_LAUNCH_MODELS
+    ]
+    live_rows.append(
+        {
+            "id": native_id,
+            "name": "GLM 5.3 Flash",
+            "context_length": 1_048_576,
+        }
+    )
+    live_rows.extend(
+        [
+            {
+                "id": "accounts/fireworks/models/qwen3-embedding-8b",
+                "kind": "EMBEDDING_MODEL",
+                "supports_chat": True,
+            },
+            {
+                "id": "accounts/fireworks/models/qwen3p8-2p4t-a95b",
+                "kind": "HF_BASE_MODEL",
+                "supports_chat": True,
+            },
+        ]
+    )
+    monkeypatch.setattr(
+        fireworks,
+        "fetch_json",
+        lambda *_args, **_kwargs: {"data": live_rows},
+    )
+
+    result = fireworks.fetch()
+
+    assert "z-ai/glm-5.3-flash" not in result.prices
+    assert fireworks._DISCOVERED_MANIFEST_ROWS["z-ai/glm-5.3-flash"] == {
+        "id": "z-ai/glm-5.3-flash",
+        "upstream_id": native_id,
+        "display_name": "GLM 5.3 Flash on Fireworks",
+        "endpoints": ["chat/completions"],
+        "context_length": 1_048_576,
+    }
+    assert fireworks.UPSTREAM_ID_MAP["z-ai/glm-5.3-flash"] == native_id
+    assert "qwen/qwen3-embedding-8b" not in fireworks._DISCOVERED_MANIFEST_ROWS
+    assert "qwen/qwen3p8-2p4t-a95b" not in fireworks._DISCOVERED_MANIFEST_ROWS
+
+
+def test_fireworks_manifest_keeps_unpriced_model_dark(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    manifest_path = tmp_path / "fireworks.json"
+    manifest_path.write_text(
+        json.dumps({"provider": "fireworks", "models": []}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(fireworks, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(
+        fireworks,
+        "_DISCOVERED_MANIFEST_ROWS",
+        {
+            "z-ai/glm-5.3-flash": {
+                "id": "z-ai/glm-5.3-flash",
+                "upstream_id": "accounts/fireworks/models/glm-5p3-flash",
+                "display_name": "GLM 5.3 Flash on Fireworks",
+                "endpoints": ["chat/completions"],
+                "context_length": 1_048_576,
+            }
+        },
+    )
+    result = ProviderPricingResult(
+        slug="fireworks",
+        prices={},
+        source="api",
+        fetched_url=fireworks.URL,
+    )
+
+    fireworks.write_provider_manifest(result)
+
+    row = json.loads(manifest_path.read_text(encoding="utf-8"))["models"][0]
+    assert row["id"] == "z-ai/glm-5.3-flash"
+    assert row["routable"] is False
+    assert row["routable_reason"] == "awaiting-price"
+    assert row["unresolved_since"]
+    assert "input_token_price_per_m" not in row
+    assert "output_token_price_per_m" not in row
+
+
 def test_fireworks_manifest_appends_discovered_models_and_tombstones_delisted(
     tmp_path: Path,
     monkeypatch,

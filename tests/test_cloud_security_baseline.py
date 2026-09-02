@@ -29,6 +29,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 GCP = ROOT / "scripts/deploy/gcp_security_baseline_check.sh"
 AZURE = ROOT / "scripts/deploy/azure_security_baseline_check.sh"
+WORKFLOW = ROOT / ".github/workflows/cloud-security-baseline.yml"
 CHECK_ONLY = (GCP, AZURE)
 
 
@@ -132,12 +133,46 @@ def test_gcp_detects_duplicate_notification_channels() -> None:
     assert "duplicate" in body.lower()
 
 
+def test_gcp_monitoring_reads_fail_closed_without_inventing_absence() -> None:
+    """A missing alpha component or list permission is not evidence that all
+    security alerts were deleted. The read must produce valid JSON before any
+    presence assertion runs."""
+    body = _executable_lines(GCP)
+    assert 'read_project_json CHANNELS "Monitoring notification channels"' in body
+    assert 'read_project_json POLICIES "Monitoring alert policies"' in body
+    assert 'read_project_json EC "effective SECURITY Essential Contacts"' in body
+    assert 'drift "could not read $label' in body
+
+
+def test_gcp_workflow_installs_monitoring_alpha_component() -> None:
+    body = WORKFLOW.read_text()
+    assert "install_components: alpha" in body
+
+
+def test_gcp_workflow_does_not_require_optional_security_label() -> None:
+    body = WORKFLOW.read_text()
+    assert 'LABEL_ARGS=()' in body
+    assert 'LABEL_ARGS=(--label security)' in body
+    assert 'gh issue create --title "$TITLE" "${LABEL_ARGS[@]}"' in body
+
+
 def test_gcp_checks_the_iap_path_before_asserting_ssh_is_closed() -> None:
     """default-allow-ssh's deletion is only survivable because
     tr-allow-iap-ssh-all exists. A report saying "ssh is closed" while the IAP
     rule is also gone describes a locked-out project, not a hardened one."""
     body = _executable_lines(GCP)
     assert body.index("tr-allow-iap-ssh-all") < body.index("for r in default-allow-ssh")
+
+
+def test_gcp_expected_firewall_absence_does_not_emit_not_found_audits() -> None:
+    """An expected 404 is still an ERROR audit record. Negative controls read
+    the collection once and compare names locally instead of issuing GETs for
+    resources that should not exist."""
+    body = _executable_lines(GCP)
+    assert body.count("compute firewall-rules list --format='value(name)'") == 1
+    assert 'firewall-rules describe "$r"' not in body
+    assert "firewall-rules describe allow-iap-ssh-tmp" not in body
+    assert 'grep -Fxq "$r" <<<"$FIREWALL_NAMES"' in body
 
 
 def test_gcp_resolves_essential_contacts_by_inheritance() -> None:

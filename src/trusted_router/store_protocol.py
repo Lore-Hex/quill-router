@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 from trusted_router.operational_analytics_freshness import OutboxFreshness
+from trusted_router.spend_leases import SpendLeaseArtifact, SpendLeaseBoot
 from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage_models import (
     AcquisitionAttribution,
@@ -20,6 +21,7 @@ from trusted_router.storage_models import (
     ApiKey,
     ApiKeyAuthContext,
     ApiKeyUsageSnapshot,
+    AppMarkupPayout,
     AuthSession,
     BedrockGroupBuyAggregate,
     BedrockGroupBuyPledge,
@@ -27,6 +29,7 @@ from trusted_router.storage_models import (
     BroadcastDeliveryJob,
     BroadcastDestination,
     ByokProviderConfig,
+    ConsentRequest,
     CreditAccount,
     CreditMovement,
     CreditTransfer,
@@ -37,10 +40,12 @@ from trusted_router.storage_models import (
     Generation,
     GoogleAdsConversion,
     Member,
+    OAuthApp,
     OAuthAuthorizationCode,
     ProviderAccessGrant,
     ProviderBenchmarkSample,
     RateLimitHit,
+    ReceiptKey,
     Reservation,
     SessionAuthContext,
     SignupResult,
@@ -63,6 +68,13 @@ class Store(Protocol):
 
     # Lifecycle ---------------------------------------------------------------
     def reset(self) -> None: ...
+
+    #: False on a backend whose key writes are unimplemented. Callers that
+    #: mutate keys check this BEFORE writing: discovering the gap by catching
+    #: the raise mid-sequence cannot distinguish "nothing was written" from
+    #: "a write landed then raised", and guessing wrong either skips a needed
+    #: repair or reports a capability gap as data corruption.
+    def supports_key_writes(self) -> bool: ...
     def readiness_check(self) -> None: ...
 
     # Users + workspaces ------------------------------------------------------
@@ -72,6 +84,7 @@ class Store(Protocol):
         email: str | None = ...,
         *,
         trial_credit_microdollars: int | None = ...,
+        email_verified: bool = ...,
     ) -> User: ...
     def find_user_by_email(self, email: str) -> User | None: ...
     def find_user_by_wallet(self, address: str) -> User | None: ...
@@ -107,6 +120,7 @@ class Store(Protocol):
         email: str,
         workspace_name: str | None = ...,
         trial_credit_microdollars: int = ...,
+        email_verified: bool = ...,
     ) -> SignupResult | None: ...
     def create_acquisition_attribution(self, record: AcquisitionAttribution) -> bool: ...
     def get_acquisition_attribution(self, workspace_id: str) -> AcquisitionAttribution | None: ...
@@ -268,8 +282,26 @@ class Store(Protocol):
         code_challenge_method: str | None = ...,
         spawn_agent: str | None = ...,
         spawn_cloud: str | None = ...,
+        client_app_id: str = ...,
+        scopes: list[str] | None = ...,
     ) -> tuple[str, OAuthAuthorizationCode]: ...
     def consume_oauth_authorization_code(self, raw_code: str) -> OAuthAuthorizationCode | None: ...
+    def create_consent_request(self, consent: ConsentRequest) -> ConsentRequest: ...
+    def get_consent_request(self, consent_id: str) -> ConsentRequest | None: ...
+    def consume_consent_request(
+        self, consent_id: str, *, user_id: str, workspace_id: str, csrf_token: str
+    ) -> ConsentRequest | None: ...
+
+    # Registered OAuth applications -----------------------------------------
+    def create_oauth_app(self, app: OAuthApp) -> OAuthApp: ...
+    def get_oauth_app(self, app_id: str) -> OAuthApp | None: ...
+    def list_oauth_apps_for_user(self, owner_user_id: str) -> list[OAuthApp]: ...
+    def update_oauth_app(
+        self,
+        app_id: str,
+        *,
+        patch: dict[str, Any],
+    ) -> OAuthApp | None: ...
 
     # Email send blocks (SES bounce/complaint suppression) -------------------
     def block_email_sending(
@@ -309,6 +341,7 @@ class Store(Protocol):
         budget_alert_only: bool = ...,
         tags: dict[str, str] | None = ...,
         scopes: list[str] | None = ...,
+        app_id: str = ...,
     ) -> tuple[str, ApiKey]: ...
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None: ...
     def typed_key_usage(
@@ -740,6 +773,10 @@ class Store(Protocol):
         idempotency_key: str | None = ...,
         tags: dict[str, str] | None = ...,
         idempotency_fingerprint: str | None = ...,
+        app_id: str = ...,
+        app_markup_basis_points: int = ...,
+        receipt_fee_basis_points: int = ...,
+        app_owner_user_id: str = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,
         user_provided_model_id: str | None = ...,
@@ -759,6 +796,7 @@ class Store(Protocol):
         settlement: str = ...,
         expires_at: str | None = ...,
         deferred_cap_microdollars: int | None = ...,
+        spend_lease: SpendLeaseArtifact | None = ...,
     ) -> GatewayAuthorization: ...
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None: ...
     def get_gateway_authorization_by_idempotency_key(
@@ -778,6 +816,7 @@ class Store(Protocol):
     # Generations + activity --------------------------------------------------
     def add_generation(self, generation: Generation) -> None: ...
     def record_client_events_batch(self, payload: dict[str, Any]) -> None: ...
+    def record_spend_lease_shadow(self, event_id: str, payload: dict[str, Any]) -> None: ...
     def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None: ...
     def provider_benchmark_samples(
         self,
@@ -786,6 +825,13 @@ class Store(Protocol):
         provider: str | None = ...,
         model: str | None = ...,
         limit: int = ...,
+    ) -> list[ProviderBenchmarkSample]: ...
+    def provider_route_benchmark_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
     ) -> list[ProviderBenchmarkSample]: ...
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None: ...
     def synthetic_probe_samples(
@@ -870,6 +916,24 @@ class Store(Protocol):
         by_model: bool = ...,
     ) -> dict[str, Any]: ...
 
+    # Append-only inference-receipt key log ---------------------------------
+    def observe_receipt_key(self, record: ReceiptKey) -> str: ...
+    def list_receipt_keys(self, *, limit: int = ...) -> list[ReceiptKey]: ...
+
+    # Stage A spend-lease boot identity + monotonic grant generation --------
+    def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot: ...
+    def get_spend_lease_boot(self, kid: str) -> SpendLeaseBoot | None: ...
+    def next_spend_lease_generation(self, key_hash: str, boot_kid: str) -> int: ...
+    def get_active_spend_lease(self, key_hash: str, boot_kid: str) -> SpendLeaseArtifact | None: ...
+    def retain_spend_lease(
+        self,
+        key_hash: str,
+        boot_kid: str,
+        candidate: SpendLeaseArtifact,
+        *,
+        replace: bool,
+    ) -> SpendLeaseArtifact: ...
+
     # Rate limiting -----------------------------------------------------------
     def hit_rate_limit(
         self,
@@ -915,6 +979,10 @@ class TypedBillingStore(Protocol):
         candidate_endpoint_ids: list[str],
         idempotency_key: str | None,
         idempotency_fingerprint: str | None,
+        app_id: str = ...,
+        app_markup_basis_points: int = ...,
+        receipt_fee_basis_points: int = ...,
+        app_owner_user_id: str = ...,
         key_usage_shards: int = ...,
         tags: dict[str, str] | None = ...,
         custom_model_id: str | None = ...,
@@ -928,6 +996,8 @@ class TypedBillingStore(Protocol):
         native_batch_eligible: bool = ...,
         expires_at: Any = ...,
         window_limits: dict[str, int] | None = ...,
+        spend_lease: SpendLeaseArtifact | None = ...,
+        spend_lease_binding_plan: Any = ...,
     ) -> tuple[str, GatewayAuthorization | None]: ...
 
     def typed_finalize_gateway_authorization(
@@ -939,6 +1009,7 @@ class TypedBillingStore(Protocol):
         selected_usage_type: UsageType | str,
         generation: Generation | None = ...,
         user_model_payout: UserModelPayout | None = ...,
+        app_markup_payout: AppMarkupPayout | None = ...,
     ) -> bool: ...
 
     def typed_finalize_gateway(self, **kwargs: Any) -> dict[str, Any]: ...

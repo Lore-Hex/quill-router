@@ -11,6 +11,7 @@ from trusted_router.main import create_app
 from trusted_router.services.trust_release import (
     TrustReleaseResolver,
     TrustReleaseUnavailable,
+    validated_aws_metadata,
 )
 
 SOURCE_COMMIT = "5e7c096"
@@ -348,9 +349,7 @@ def test_aws_and_azure_release_records_publish_configured_measurements() -> None
     assert aws.json()["pcr0"] == AWS_PCR0
     assert aws.json()["accepted_pcr0s"] == [AWS_PCR0]
     assert aws.json()["measurement_type"] == "nitro-pcr0-sha384"
-    # The self-signed certificate is the design; the page must say what stands
-    # in for chain validation rather than leaving it looking like a weakness.
-    assert aws.json()["tls"]["mode"] == "attested-self-signed-inside-enclave"
+    assert aws.json()["tls"]["mode"] == "acme-inside-nitro-enclave"
     assert "exporter" in aws.json()["tls"]["certificate_binding"]
 
     assert azure.status_code == 200
@@ -590,6 +589,73 @@ def test_aws_record_is_mirrored_from_the_plane_not_control_plane_config(
 
     assert record["pcr0"] == upstream, "the mirrored record must win over local config"
     assert record["accepted_pcr0s"] == [upstream]
+
+
+def test_aws_release_metadata_is_validated_and_mirrored(httpx_mock: HTTPXMock) -> None:
+    upstream = "ab" * 48
+    payload = _aws_upstream(upstream, [upstream])
+    payload.update(
+        {
+            "release_state": "current",
+            "source_commit": "445d68c",
+            "source_commit_provenance": "operator-asserted",
+            "unexpected": "must not pass through",
+        }
+    )
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/aws\.json\?tr_cache_bucket=\d+"),
+        json=payload,
+    )
+    settings = Settings(
+        environment="test", trust_aws_release_url="https://trust.example/aws.json"
+    )
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        record = client.get("/trust/aws-release.json").json()
+
+    assert record["release_state"] == "current"
+    assert record["source_commit"] == "445d68c"
+    assert record["source_commit_provenance"] == "operator-asserted"
+    assert "unexpected" not in record
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("release_state", "bogus"), ("source_commit", "zzz")],
+)
+def test_aws_release_metadata_refuses_invalid_new_fields(field: str, value: str) -> None:
+    upstream = "ab" * 48
+    payload = _aws_upstream(upstream, [upstream])
+    payload[field] = value
+
+    with pytest.raises(ValueError):
+        validated_aws_metadata(payload)
+
+
+@pytest.mark.parametrize(
+    ("configured_commit", "expected_commit"),
+    [(None, "not-configured"), ("1234567", "1234567")],
+)
+def test_aws_release_without_new_metadata_uses_source_commit_fallback(
+    httpx_mock: HTTPXMock,
+    configured_commit: str | None,
+    expected_commit: str,
+) -> None:
+    upstream = "ab" * 48
+    httpx_mock.add_response(
+        url=re.compile(r"https://trust\.example/aws\.json\?tr_cache_bucket=\d+"),
+        json=_aws_upstream(upstream, [upstream]),
+    )
+    settings = Settings(
+        environment="test",
+        trust_aws_release_url="https://trust.example/aws.json",
+        trust_aws_source_commit=configured_commit,
+    )
+    with TestClient(create_app(settings, init_observability=False)) as client:
+        record = client.get("/trust/aws-release.json").json()
+
+    assert "release_state" not in record
+    assert record["source_commit"] == expected_commit
+    assert "source_commit_provenance" not in record
 
 
 def test_unreachable_upstream_falls_back_without_claiming_it_is_live(

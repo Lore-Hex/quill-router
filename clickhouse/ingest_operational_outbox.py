@@ -7,7 +7,6 @@ import datetime as dt
 import hashlib
 import json
 import logging
-import math
 import os
 import subprocess
 import time
@@ -15,11 +14,16 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from clickhouse._sdnotify import sd_notify
+
 PROJECT = "quill-cloud-proxy"
 SPANNER_INSTANCE = "trusted-router-nam6"
 SPANNER_DATABASE = "trusted-router"
 OUTBOX_TABLE = "tr_operational_analytics_outbox"
 OUTBOX_SHARDS = 32
+# Watermark used before the first acknowledged batch of a process: seeks from
+# the start of every shard, i.e. the old full walk, exactly once.
+_WATERMARK_EPOCH = dt.datetime(1970, 1, 1, tzinfo=dt.UTC)
 
 ACTIVITY_COLUMNS = (
     "generation_id",
@@ -127,6 +131,24 @@ SYNTHETIC_COLUMNS = (
     "output_match",
     "created_at",
 )
+SPEND_LEASE_SHADOW_COLUMNS = (
+    "event_id",
+    "created_at",
+    "workspace_id",
+    "key_hash",
+    "boot_kid",
+    "boot_verified",
+    "lease_id",
+    "no_lease_reason",
+    "echo_state",
+    "would_admit",
+    "enclave_estimate_micro",
+    "server_estimate_micro",
+    "server_verdict",
+    "catalog_version",
+    "divergence",
+    "schema_version",
+)
 
 CLIENT_REQUEST_COLUMNS = (
     "event_id",
@@ -211,6 +233,7 @@ CLIENT_COUNTER_COLUMNS = (
 EVENT_TABLES = {
     "activity": "activity_generations",
     "synthetic": "synthetic_probe_samples",
+    "spend_lease_shadow": "spend_lease_shadow",
     "client_events": ("client_request_events", "client_minute_counters"),
     "client_request": "client_request_events",
     "client_counter": "client_minute_counters",
@@ -249,37 +272,7 @@ class DrainResult:
 
 
 class OutboxSource(Protocol):
-    def fetch(self, *, limit: int) -> list[OperationalOutboxRow]:
-        # ONE unordered global read, not 32 ordered per-shard reads. Spanner
-        # stores rows in primary-key order, so results arrive
-        # (shard, commit_ts)-ordered per split anyway; delivery order does not
-        # matter (delete is by key, ClickHouse dedups by event) and this same
-        # statement doubles as the emptiness probe. The per-shard ORDER BY
-        # fan-out this replaces ran 64 statements every ~1.5s around the
-        # clock -- measured at ~25% of the whole 300-PU instance on
-        # 2026-08-25 -- to mostly discover an empty table. This path is
-        # interim: the direct sink (trusted_router.operational_analytics_direct)
-        # removes the outbox entirely; this drainer then only clears residue.
-        rows: list[OperationalOutboxRow] = []
-        with self._database.snapshot() as snapshot:
-            results = snapshot.execute_sql(
-                # OUTBOX_TABLE is a module constant, not caller input.
-                "SELECT shard, commit_ts, event_kind, event_id, payload "  # noqa: S608
-                f"FROM {OUTBOX_TABLE} LIMIT @limit",
-                params={"limit": limit},
-                param_types={"limit": self._pt.INT64},
-            )
-            for row in results:
-                rows.append(
-                    OperationalOutboxRow(
-                        shard=int(row[0]),
-                        commit_ts=row[1],
-                        event_kind=str(row[2]),
-                        event_id=str(row[3]),
-                        payload=str(row[4]),
-                    )
-                )
-        return rows
+    def fetch(self, *, limit: int) -> list[OperationalOutboxRow]: ...
 
     def delete(self, rows: list[OperationalOutboxRow]) -> None: ...
 
@@ -315,41 +308,77 @@ class SpannerOperationalOutboxSource:
         )
         self._pt = param_types
         self._shard_count = shard_count
+        # Commit-timestamp watermark: every row committed at or before it has
+        # already been drained and deleted. See fetch() for why it is safe.
+        self._after: dt.datetime | None = None
 
     def fetch(self, *, limit: int) -> list[OperationalOutboxRow]:
         if limit < 1:
             return []
-        per_shard = max(1, math.ceil(limit / self._shard_count) * 2)
+        # One statement, thirty-two key-range seeks, one watermark.
+        #
+        # This table churns: every drained row is deleted, and under the
+        # database's 7-day version retention each deleted row stays behind as
+        # a dead version the storage layer must step over. The previous
+        # unfiltered ``LIMIT @limit`` therefore walked garbage from the head of
+        # the table on EVERY poll: SPANNER_SYS.QUERY_STATS_TOP_HOUR on
+        # 2026-09-01 showed it at 0.207s CPU per execution to return ~2 rows,
+        # 3,300 executions/hour -- ~690 CPU-seconds/hour, the single largest
+        # load on the shared billing-plane instance, in the same hours the
+        # authorize/settle path stalled for seconds. Measured in PROFILE mode
+        # against the live table at the same moment: unfiltered 280ms CPU;
+        # this statement with a warm watermark 24ms (19ms of it plan creation,
+        # amortised by parameterisation); with the epoch watermark 297ms, i.e.
+        # the cost is paid once per process start, not per poll.
+        #
+        # Why a single global watermark is safe: rows are consumed in global
+        # commit_ts order (ORDER BY commit_ts across all shards, then LIMIT),
+        # and each fetch is a strong snapshot read. Any row not yet visible
+        # was committed after the snapshot and carries a larger commit_ts than
+        # every row we have seen, so nothing live can sit below the largest
+        # commit_ts we have deleted. ``>=`` keeps rows that share a commit
+        # timestamp with the last deleted batch (one transaction, several
+        # events) from being skipped when LIMIT cut through the tie; the ones
+        # already deleted do not come back.
+        #
+        # The per-shard predicate is what turns the scan into seeks: the
+        # primary key is (shard, commit_ts, ...), so ``shard IN UNNEST`` gives
+        # one range per shard starting at the watermark. A plain
+        # ``commit_ts >= @after`` alone is not a key prefix and would scan.
+        #
+        # An earlier per-shard loop of 32 statements per poll was itself the
+        # largest query load (measured 2026-08-25); this keeps one statement.
         rows: list[OperationalOutboxRow] = []
-        with self._database.snapshot(multi_use=True) as snapshot:
-            for shard in range(self._shard_count):
-                values = snapshot.execute_sql(
-                    "SELECT shard, commit_ts, event_kind, event_id, payload "
-                    "FROM tr_operational_analytics_outbox "
-                    "WHERE shard=@shard ORDER BY commit_ts, event_kind, event_id "
-                    "LIMIT @limit",
-                    params={"shard": shard, "limit": per_shard},
-                    param_types={"shard": self._pt.INT64, "limit": self._pt.INT64},
-                )
-                rows.extend(
-                    OperationalOutboxRow(
-                        shard=int(row[0]),
-                        commit_ts=_utc(row[1]),
-                        event_kind=str(row[2]),
-                        event_id=str(row[3]),
-                        payload=str(row[4]),
-                    )
-                    for row in values
-                )
-        rows.sort(
-            key=lambda row: (
-                row.commit_ts,
-                row.shard,
-                row.event_kind,
-                row.event_id,
+        after = self._after or _WATERMARK_EPOCH
+        with self._database.snapshot() as snapshot:
+            values = snapshot.execute_sql(
+                # OUTBOX_TABLE is a module constant, not caller input.
+                "SELECT shard, commit_ts, event_kind, event_id, payload "  # noqa: S608
+                f"FROM {OUTBOX_TABLE} "
+                "WHERE shard IN UNNEST(@shards) AND commit_ts >= @after "
+                "ORDER BY commit_ts LIMIT @limit",
+                params={
+                    "shards": list(range(self._shard_count)),
+                    "after": after,
+                    "limit": limit,
+                },
+                param_types={
+                    "shards": self._pt.Array(self._pt.INT64),
+                    "after": self._pt.TIMESTAMP,
+                    "limit": self._pt.INT64,
+                },
             )
-        )
-        return rows[:limit]
+            rows.extend(
+                OperationalOutboxRow(
+                    shard=int(row[0]),
+                    commit_ts=_utc(row[1]),
+                    event_kind=str(row[2]),
+                    event_id=str(row[3]),
+                    payload=str(row[4]),
+                )
+                for row in values
+            )
+        return rows
 
     def delete(self, rows: list[OperationalOutboxRow]) -> None:
         if not rows:
@@ -358,6 +387,12 @@ class SpannerOperationalOutboxSource:
 
         with self._database.batch() as batch:
             batch.delete(OUTBOX_TABLE, KeySet(keys=[list(row.key) for row in rows]))
+        # Advance only after the delete committed: a failed insert never
+        # reaches here, so a row that was fetched but not acknowledged stays
+        # above the watermark and is fetched again.
+        newest = max(_utc(row.commit_ts) for row in rows)
+        if self._after is None or newest > self._after:
+            self._after = newest
 
     def oldest_commit_ts(self) -> dt.datetime | None:
         oldest: dt.datetime | None = None
@@ -375,6 +410,10 @@ class SpannerOperationalOutboxSource:
                     candidate = _utc(values[0][0])
                     oldest = candidate if oldest is None else min(oldest, candidate)
         return oldest
+
+
+class ClickHouseInsertError(RuntimeError):
+    """A ClickHouse target did not accept a complete logical batch."""
 
 
 class ClickHouseOperationalWriter:
@@ -459,6 +498,12 @@ class ClickHouseOperationalWriter:
                     command,
                     input=payload,
                     env=env,
+                    # Do not inherit the daemon's cwd.  The systemd unit must
+                    # keep /opt/tr-clickhouse as WorkingDirectory so `python
+                    # -m` can import the installed package, but an installer
+                    # rotating that tree must not make every future child die
+                    # before clickhouse-client can process its arguments.
+                    cwd="/",
                     capture_output=True,
                     check=False,
                     timeout=self._timeout_seconds,
@@ -466,14 +511,22 @@ class ClickHouseOperationalWriter:
             except subprocess.TimeoutExpired as exc:
                 # Raising is the point: the caller must not reach its DELETE,
                 # so the rows stay queued and the next sweep retries them.
-                raise RuntimeError(
+                raise ClickHouseInsertError(
                     f"ClickHouse {event_kind} insert to "
                     f"{self._host or 'localhost'} timed out after "
                     f"{self._timeout_seconds}s"
                 ) from exc
+            except OSError as exc:
+                # Includes exec failures such as a missing binary.  Keep these
+                # distinguishable from source, normalisation and DELETE errors
+                # so the Postgres daemon's liveness bound only counts a writer
+                # that is actually unable to deliver.
+                raise ClickHouseInsertError(
+                    f"ClickHouse {event_kind} insert could not start: {exc}"
+                ) from exc
             if result.returncode != 0:
                 detail = result.stderr.decode("utf-8", errors="replace")[:1000]
-                raise RuntimeError(f"ClickHouse {event_kind} insert failed: {detail}")
+                raise ClickHouseInsertError(f"ClickHouse {event_kind} insert failed: {detail}")
 
 
 def _event_id(tenant_id: str, batch_id: str, kind: str, index: int) -> str:
@@ -663,6 +716,15 @@ def normalise_operational_event(
     elif row.event_kind == "synthetic":
         allowed = SYNTHETIC_COLUMNS
         required = SYNTHETIC_COLUMNS
+    elif row.event_kind == "spend_lease_shadow":
+        allowed = SPEND_LEASE_SHADOW_COLUMNS
+        required = tuple(
+            column for column in SPEND_LEASE_SHADOW_COLUMNS if column != "no_lease_reason"
+        )
+        if raw.get("schema_version") != 1:
+            raise ValueError("spend_lease_shadow schema_version must be 1")
+        if raw.get("event_id") != row.event_id:
+            raise ValueError("spend_lease_shadow event_id does not match its outbox key")
     else:
         raise ValueError(f"unsupported operational event kind: {row.event_kind}")
     missing = [column for column in required if column not in raw]
@@ -676,6 +738,12 @@ def normalise_operational_event(
             if default is not None:
                 value = default
         if row.event_kind == "activity" and column in ACTIVITY_BOOLEAN_COLUMNS:
+            if value is not None:
+                value = int(bool(value))
+        if row.event_kind == "spend_lease_shadow" and column in {
+            "boot_verified",
+            "would_admit",
+        }:
             if value is not None:
                 value = int(bool(value))
         canonical[column] = value
@@ -778,7 +846,9 @@ def main() -> int:
     # watermark this replaces was the single largest query load on the
     # production Spanner instance (measured 2026-08-25).
     idle_delay = max(0.1, args.poll_seconds)
+    sd_notify("READY=1")
     while True:
+        sd_notify("WATCHDOG=1")
         result = drain_once(source, writer, batch_size=max(1, args.batch_size))
         if result.fetched:
             log.info(

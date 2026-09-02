@@ -19,7 +19,7 @@ from trusted_router.synthetic.components import (
     COMPONENT_PROBE_TARGETS,
     GATEWAY_REGION_TARGET_NAMES,
     OPS_PROBE_TYPES,
-    REGIONAL_GATEWAY_PROBES,
+    REGIONAL_DEPLOY_GATE_PROBES,
     SLO_DEFINITIONS,
     UNCATEGORIZED_COMPONENT,
     applicable_component_definitions,
@@ -104,8 +104,40 @@ def status_snapshot(
     precomputed_rollups = rollups or []
     ordered = sorted(samples, key=lambda sample: sample.created_at, reverse=True)
     freshness = _monitor_freshness(ordered, now=now)
+    published_component_ids = {
+        str(definition["id"]) for definition in applicable_component_definitions(settings)
+    }
+    published_probe_types = {
+        probe_type
+        for component_id in published_component_ids
+        for probe_type in component_probe_types(component_id)
+    }
+    scoped_slo_samples = [
+        sample
+        for sample in ordered
+        if not sample_component_ids(sample)
+        or any(
+            component_id in published_component_ids
+            for component_id in sample_component_ids(sample)
+        )
+    ]
+    # Control-plane health is an SLO-only signal, so its rollups intentionally
+    # use the non-display `uncategorized` component. Preserve those records
+    # when they classify into a published SLO without exposing a fake component.
+    scoped_slo_rollups = [
+        rollup
+        for rollup in precomputed_rollups
+        if rollup.component in published_component_ids
+        or (
+            rollup.component == UNCATEGORIZED_COMPONENT
+            and bool(rollup_slo_class_ids(rollup))
+        )
+    ]
     router_core_samples = [
-        sample for sample in ordered if ROUTER_CORE_SLO_ID in sample_slo_class_ids(sample)
+        sample
+        for sample in scoped_slo_samples
+        if ROUTER_CORE_SLO_ID in sample_slo_class_ids(sample)
+        and sample.probe_type in published_probe_types
     ]
     gateway_region_components = published_gateway_region_components(settings)
     # `current.checks` is the MACHINE-readable surface, not a second copy of
@@ -126,6 +158,7 @@ def status_snapshot(
         rollup
         for rollup in precomputed_rollups
         if ROUTER_CORE_SLO_ID in rollup_slo_class_ids(rollup)
+        and rollup.component in published_component_ids
     ]
     five_minute = _scoped_window(
         router_core_samples,
@@ -150,11 +183,11 @@ def status_snapshot(
     )
     monthly = _monthly_history(router_core_rollups)
     components = _components(ordered, now=now, rollups=precomputed_rollups, settings=settings)
-    slo_classes = _slo_classes(ordered, precomputed_rollups, now=now)
+    slo_classes = _slo_classes(scoped_slo_samples, scoped_slo_rollups, now=now)
     slo_history = {
         str(definition["id"]): _slo_long_term_history(
-            ordered,
-            precomputed_rollups,
+            scoped_slo_samples,
+            scoped_slo_rollups,
             slo_id=str(definition["id"]),
         )
         for definition in SLO_DEFINITIONS
@@ -316,7 +349,7 @@ def _machine_region_samples(
     *,
     settings: Settings,
 ) -> list[SyntheticProbeSample]:
-    """Regional gateway samples consumed by deploy and watchdog automation."""
+    """Complete regional canaries consumed by deploy and watchdog automation."""
     published = {
         COMPONENT_PROBE_TARGETS[component_id]
         for component_id in published_machine_region_components(settings)
@@ -326,7 +359,7 @@ def _machine_region_samples(
     return [
         sample
         for sample in samples
-        if sample.target in published and sample.probe_type in REGIONAL_GATEWAY_PROBES
+        if sample.target in published and sample.probe_type in REGIONAL_DEPLOY_GATE_PROBES
     ]
 
 
@@ -578,11 +611,11 @@ def _window_rollup_with_rollup_backfill(
 ) -> dict[str, Any]:
     cutoff = now - dt.timedelta(seconds=seconds)
     raw_rows = [sample for sample in samples if _parse_time(sample.created_at) >= cutoff]
-    raw_hour_keys = {sample.created_at[:13] for sample in raw_rows}
+    raw_hour_keys = {_sample_hour_dimension(sample) for sample in raw_rows}
     backfill_rollups = [
         rollup
         for rollup in _hour_rollups_in_window(rollups, now=now, seconds=seconds)
-        if rollup.period_start[:13] not in raw_hour_keys
+        if _rollup_hour_dimension(rollup) not in raw_hour_keys
     ]
     combined_rollups = [
         new_rollup_for_sample(sample, period="hour", component="status_window")
@@ -784,11 +817,11 @@ def _slo_window(
 ) -> dict[str, Any]:
     cutoff = now - dt.timedelta(seconds=seconds)
     raw_rows = [sample for sample in samples if _parse_time(sample.created_at) >= cutoff]
-    raw_hour_keys = {sample.created_at[:13] for sample in raw_rows}
+    raw_hour_keys = {_sample_hour_dimension(sample) for sample in raw_rows}
     backfill_rollups = [
         rollup
         for rollup in _hour_rollups_in_window(rollups, now=now, seconds=seconds)
-        if rollup.period_start[:13] not in raw_hour_keys
+        if _rollup_hour_dimension(rollup) not in raw_hour_keys
     ]
     counts: dict[str, int] = defaultdict(int)
     for sample in raw_rows:
@@ -815,6 +848,26 @@ def _slo_window(
         "burn_rate": burn_rate,
         "status_counts": status_counts,
     }
+
+
+def _sample_hour_dimension(sample: SyntheticProbeSample) -> tuple[str, str, str, str, str]:
+    return (
+        sample.created_at[:13],
+        sample.target,
+        sample.probe_type,
+        sample.monitor_region,
+        sample.target_region or "",
+    )
+
+
+def _rollup_hour_dimension(rollup: SyntheticRollup) -> tuple[str, str, str, str, str]:
+    return (
+        rollup.period_start[:13],
+        rollup.target,
+        rollup.probe_type,
+        rollup.monitor_region,
+        rollup.target_region or "",
+    )
 
 
 def _rollup_status_counts(rollup: SyntheticRollup) -> dict[str, int]:

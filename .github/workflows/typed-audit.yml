@@ -12,6 +12,7 @@ permissions:
 jobs:
   typed-billing-invariant-audit:
     name: typed-billing-invariant-audit
+    if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

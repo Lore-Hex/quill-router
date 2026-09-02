@@ -178,11 +178,33 @@
       "input_token_price_per_m": 140000,
       "output_token_price_per_m": 280000,
       "cached_input_token_price_per_m": 28000
+    },
+    {
+      "display_name": "GLM 5.3 Flash",
+      "title": "zai-org/glm-5.3-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "zai-org/glm-5.3-flash",
+      "context_length": 1310720,
+      "routable": true,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 30000
     }
   ],
   "source": "https://api.arcee.ai/api/v1/models",
   "pricing_source": "https://api.arcee.ai/api/v1/models",
-  "generated_at": "2026-08-22T22:30:44Z",
+  "generated_at": "2026-08-29T04:32:09Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 8
+  "model_count": 9
 }

@@ -6,6 +6,8 @@ import sys
 import tarfile
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parents[1]
 
 
@@ -36,19 +38,39 @@ import trusted_router.storage_operational_analytics
 
 def test_operational_schema_is_replicated_bounded_and_content_free() -> None:
     schema = (ROOT / "clickhouse/004_operational_analytics_replicated.sql").read_text()
-    assert schema.count("ENGINE = ReplicatedReplacingMergeTree") == 4
+    assert schema.count("ENGINE = ReplicatedReplacingMergeTree") == 5
     assert "INTERVAL 400 DAY" in schema
     assert "INTERVAL 14 DAY" in schema
     assert "INTERVAL 24 MONTH" in schema
     for forbidden_column in (
         "prompt_content",
         "output_content",
-        "workspace_id ",
-        "key_hash ",
         "api_key ",
         "authorization_header",
     ):
         assert forbidden_column not in schema.lower()
+    assert "CREATE TABLE IF NOT EXISTS spend_lease_shadow" in schema
+    assert "no_lease_reason             Nullable(String) DEFAULT NULL" in schema
+    assert "ADD COLUMN IF NOT EXISTS no_lease_reason" in schema
+    assert "lease_token" not in schema.lower()
+
+
+@pytest.mark.parametrize(
+    "schema_name",
+    [
+        "004_operational_analytics_replicated.sql",
+        "006_operational_analytics_single_node.sql",
+    ],
+)
+def test_spend_lease_shadow_reason_column_is_additive_and_nullable(
+    schema_name: str,
+) -> None:
+    schema = (ROOT / "clickhouse" / schema_name).read_text()
+    assert "no_lease_reason             Nullable(String) DEFAULT NULL" in schema
+    assert (
+        "ADD COLUMN IF NOT EXISTS no_lease_reason Nullable(String) DEFAULT NULL"
+        in schema
+    )
 
 
 def test_provider_rollup_schema_replicates_all_published_granularities() -> None:
@@ -89,6 +111,18 @@ def test_operational_deploy_resumes_live_ingest_before_backfills() -> None:
     assert "tr-clickhouse-synthetic-reconcile.timer" in script
     assert "systemctl enable" in script
     assert 'id_column="event_id"' in script
+
+
+def test_gcp_spanner_drain_is_notify_watchdog_managed() -> None:
+    unit = (ROOT / "clickhouse/tr-clickhouse-operational-ingest.service").read_text()
+    drain = (ROOT / "clickhouse/ingest_operational_outbox.py").read_text()
+
+    assert "Type=notify" in unit
+    assert "NotifyAccess=main" in unit
+    assert "WatchdogSec=600" in unit
+    assert "Restart=always" in unit
+    assert 'sd_notify("READY=1")' in drain
+    assert 'sd_notify("WATCHDOG=1")' in drain
 
 
 def test_clickhouse_manual_deploys_bundle_only_valid_committed_source() -> None:

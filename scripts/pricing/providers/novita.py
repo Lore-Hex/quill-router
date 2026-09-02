@@ -114,9 +114,7 @@ def _new_required_price_ids(
     return frozenset(
         model_id
         for model_id, row in discovered.items()
-        if model_id not in known
-        and row.get("status") == 1
-        and row.get("routable") is not False
+        if model_id not in known and row.get("status") == 1 and row.get("routable") is not False
     )
 
 
@@ -139,12 +137,8 @@ def _source_price(source: dict[str, Any]) -> ModelPrice | None:
 
     pricing = source.get("pricing")
     pricing = pricing if isinstance(pricing, dict) else {}
-    prompt = _api_price_per_m(
-        source.get("input_token_price_per_m", pricing.get("prompt"))
-    )
-    completion = _api_price_per_m(
-        source.get("output_token_price_per_m", pricing.get("completion"))
-    )
+    prompt = _api_price_per_m(source.get("input_token_price_per_m", pricing.get("prompt")))
+    completion = _api_price_per_m(source.get("output_token_price_per_m", pricing.get("completion")))
     if prompt is None or completion is None:
         return None
     if prompt == 0 and completion == 0:
@@ -250,9 +244,7 @@ def fetch() -> ProviderPricingResult:
 
     discovered, api_prices = _live_catalog()
     required_price_ids = _new_required_price_ids(discovered)
-    page_expected_models = [
-        model_id for model_id in EXPECTED_MODELS if model_id not in api_prices
-    ]
+    page_expected_models = [model_id for model_id in EXPECTED_MODELS if model_id not in api_prices]
     result = fetch_provider(
         slug=SLUG,
         url=URL,
@@ -261,13 +253,13 @@ def fetch() -> ProviderPricingResult:
     )
     _DISCOVERED_MANIFEST_ROWS = discovered
     page_prices = {
-        model_id: price for model_id, price in result.prices.items() if model_id in discovered
+        model_id: price
+        for model_id, price in result.prices.items()
+        if model_id in discovered and discovered[model_id].get("routable") is not False
     }
     api_fallback_ids = required_price_ids | (set(EXPECTED_MODELS) - set(page_prices))
     api_fallback_prices = {
-        model_id: price
-        for model_id, price in api_prices.items()
-        if model_id in api_fallback_ids
+        model_id: price for model_id, price in api_prices.items() if model_id in api_fallback_ids
     }
     result.prices = api_fallback_prices | page_prices
     errors = validate(result.prices, EXPECTED_MODELS)
@@ -328,6 +320,10 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
             else:
                 row.pop("cached_input_token_price_per_m", None)
             updated += 1
+        elif row.get("routable") is False:
+            row.pop("input_token_price_per_m", None)
+            row.pop("output_token_price_per_m", None)
+            row.pop("cached_input_token_price_per_m", None)
         if existing is None:
             appended += 1
         present_rows[model_id] = row

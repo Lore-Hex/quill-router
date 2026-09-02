@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime
 
+from trusted_router.catalog_capabilities import (
+    manifest_supported_parameters,
+    provider_extension_parameters,
+    union_supported_parameters,
+)
 from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-compat
     _EMBEDDING_SPECS,
     _MODEL_PROVIDER_PRIVACY_OVERRIDES,
@@ -157,6 +162,8 @@ from trusted_router.catalog_privacy import (  # noqa: F401 - re-exported for bac
     endpoint_e2ee,
     endpoint_meets_privacy_requirement,
     endpoint_privacy_tier,
+    endpoint_provider_policy,
+    endpoint_provider_policy_url,
     endpoint_stores_content,
     endpoint_zero_data_retention,
     endpoint_zero_data_retention_scope,
@@ -429,6 +436,7 @@ _OPEN_WEIGHT_PREFIXES = (
     "moonshotai/kimi",
     "nvidia/nemotron",
     "qwen/",
+    "tencent/hy4",
     "thinkingmachines/",
     "xiaomi/mimo",
     "z-ai/glm",
@@ -525,6 +533,15 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     byok_available = (
         False if is_meta else any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
     )
+    supported_parameters = union_supported_parameters(
+        manifest_supported_parameters(
+            {},
+            supports_chat=model.supports_chat,
+            supports_embeddings=model.supports_embeddings,
+        ),
+        model.supported_parameters,
+        *(endpoint.supported_parameters for endpoint in endpoints),
+    )
 
     # For meta routers, derive prompt/completion price from the candidate range
     # rather than the catalog's hard-coded 0. Most OpenRouter-compat
@@ -579,6 +596,15 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "prompt": microdollars_per_million_tokens_to_token_decimal(prompt_min),
         "completion": microdollars_per_million_tokens_to_token_decimal(completion_min),
     }
+    # The endpoint payloads have always published input_cache_read; the model
+    # headline never did, so /v1/models hid the cache-read discount on more
+    # than a thousand endpoints. OR convention, same field name.
+    model_tiers = getattr(model, "price_tiers", ()) or ()
+    model_cached = (
+        model_tiers[0].prompt_cached_price_microdollars_per_million_tokens if model_tiers else None
+    )
+    if model_cached is not None:
+        pricing["input_cache_read"] = microdollars_per_million_tokens_to_token_decimal(model_cached)
     if model.request_price_microdollars:
         pricing["request"] = microdollars_to_decimal(model.request_price_microdollars)
     fixed_image_prices = FIXED_IMAGE_PRICES_MICRODOLLARS.get(model.id)
@@ -675,16 +701,20 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                 "privacy_tier_label": PRIVACY_TIER_LABELS[endpoint_privacy_tier(endpoint)],
                 "provider_confidential_compute": endpoint_confidential_compute(endpoint),
                 "provider_e2ee": endpoint_e2ee(endpoint),
-                "provider_policy": model_provider_policy(endpoint.model_id, endpoint.provider),
-                "provider_policy_url": model_provider_policy_url(
-                    endpoint.model_id, endpoint.provider
-                ),
+                "provider_policy": endpoint_provider_policy(endpoint),
+                "provider_policy_url": endpoint_provider_policy_url(endpoint),
                 "provider_headquarters_country": PROVIDERS[
                     endpoint.provider
                 ].provider_headquarters_country,
                 "provider_us_based": PROVIDERS[endpoint.provider].provider_headquarters_country
                 == PROVIDER_JURISDICTION_US,
                 "provider_eu_focused": endpoint.provider in EU_FOCUSED_PROVIDER_ORDER,
+                "supported_parameters": list(
+                    union_supported_parameters(
+                        endpoint.supported_parameters,
+                        provider_extension_parameters(endpoint.provider),
+                    )
+                ),
                 "request_price_microdollars": endpoint.request_price_microdollars,
             }
             for endpoint in endpoints
@@ -722,6 +752,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
             "is_moderated": False,
         },
         "per_request_limits": None,
+        "supported_parameters": list(supported_parameters),
         "trustedrouter": tr_block,
     }
 

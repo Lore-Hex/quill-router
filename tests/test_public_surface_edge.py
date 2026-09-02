@@ -99,6 +99,7 @@ def test_prepare_attaches_existing_policy_without_mutating_it(tmp_path: Path) ->
     assert len(backend_updates) == 1
     update = backend_updates[0]
     assert "--enable-cdn" in update
+    assert "--serve-while-stale=86400" in update
     assert "--custom-request-header=X-TrustedRouter-Client-IP:{client_ip_address}" in update
     assert "--logging-sample-rate=0.1" in update
     assert "--security-policy=trusted-router-public-edge" in update

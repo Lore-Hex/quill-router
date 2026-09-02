@@ -49,6 +49,9 @@ VIDEO_GENERATION_MODEL = "x-ai/grok-imagine-video"
 VIDEO_GENERATION_PROVIDER = "grok"
 VIDEO_GENERATION_DURATION_SECONDS = 1
 VIDEO_GENERATION_RESOLUTION = "480p"
+SPEND_LEASE_SOAK_MODEL = "anthropic/claude-haiku-4.5"
+SPEND_LEASE_SOAK_ROUTE_TYPE = "chat.completions"
+SPEND_LEASE_SOAK_PROMPT = "Reply OK."
 # Reverted from "Respond with only the word PONG." back to
 # "reply exactly PONG" — the original phrasing worked at
 # 99.97% uptime for ~24h on the same monitor pool, then the
@@ -76,15 +79,10 @@ class SyntheticTarget:
     name: str
     api_base_url: str
     region: str | None = None
-    # Cloud Run direct URL for this region's control plane. When set,
-    # the synthetic monitor probes /health here too — separately from
-    # api_base_url's enclave probe — so we get a distinct per-region
-    # signal even when api_base_url's regional hostname CNAMEs to the
-    # global LB (cold regions, or warm regions whose ACME cert hasn't
-    # been issued yet because the MIG is at targetSize=0).
-    #
-    # None for the canonical target since that probe already hits the
-    # global enclave LB by definition.
+    # Explicit control-plane origin. GCP assigns the canonical load-balanced
+    # origin here; standalone clouds use their own public origin. Regional
+    # run.app URLs are not derived because private-ingress services reject
+    # those requests before application code.
     control_plane_url: str | None = None
     # ATTESTED-CERT-ONLY target: the gateway serves a self-signed cert it
     # minted inside the TEE (AWS Nitro standalone deployments), so CA
@@ -365,12 +363,10 @@ async def _run_target_synthetic_probes(
         attestation_nonce_probe(client, target, monitor_region=monitor_region),
         gateway_latency_phase_probes(target, monitor_region=monitor_region),
     ]
-    # Per-region control plane health via Cloud Run direct URL.
-    # tls_health above probes target.api_base_url which is the
-    # ENCLAVE (api-{region}.quillrouter.com) — that path can be
-    # broken by an enclave-side issue (MIG at size 0, ACME cert
-    # not issued, etc.) while the regional Cloud Run is fine.
-    # This separate probe pins the control-plane signal per region.
+    # Control-plane health is configured explicitly on the canonical target.
+    # Regional run.app URLs are not public origins when Cloud Run ingress is
+    # restricted to the load balancer, so deriving them creates false 404s.
+    # Enclave health remains independently pinned by tls_health above.
     if target.control_plane_url:
         probes.append(control_plane_health_probe(client, target, monitor_region=monitor_region))
     # Two independent conditions, deliberately. `paid_probes` is the cost
@@ -843,26 +839,16 @@ async def control_plane_health_probe(
     *,
     monitor_region: str,
 ) -> SyntheticProbeSample:
-    """Probe `/health` on the per-region Cloud Run direct URL.
-
-    Distinct from tls_health_probe (which hits the enclave-fronted
-    api_base_url) — this one bypasses the enclave LB entirely and
-    pins the request to the specific Cloud Run service running in
-    `target.region`. It's the only way to tell:
-
-      * "the Cloud Run instance in us-east4 is fine but its enclave
-        cert hasn't issued yet" (control_plane up, tls_health down),
-      * "the regional Cloud Run is OOM-killing" (control_plane down,
-        tls_health up because LB routes around to a different region).
-
-    The endpoint is /health (not /healthz) — that's what FastAPI
-    registered in main.py: `@router.get("/health")`. /healthz returns
-    401 because it falls through to the auth-required catch-all.
-    """
+    """Probe the explicitly configured global control-plane `/health` route."""
+    sample_target = SyntheticTarget(
+        "control-plane",
+        target.control_plane_url or target.api_base_url,
+        None,
+    )
     if not target.control_plane_url:
         return _sample(
             "control_plane_health",
-            target,
+            sample_target,
             monitor_region,
             "(no control_plane_url configured)",
             status="down",
@@ -883,7 +869,7 @@ async def control_plane_health_probe(
         ok = response.status_code == 200 and _health_ok(response)
         return _sample(
             "control_plane_health",
-            target,
+            sample_target,
             monitor_region,
             url,
             status="up" if ok else "down",
@@ -895,7 +881,7 @@ async def control_plane_health_probe(
     except httpx.HTTPError as exc:
         return _sample(
             "control_plane_health",
-            target,
+            sample_target,
             monitor_region,
             url,
             status="down",
@@ -1208,6 +1194,67 @@ async def openai_chat_pong_probe(
     )
 
 
+async def spend_lease_soak_probe(
+    client: httpx.AsyncClient,
+    target: SyntheticTarget,
+    *,
+    monitor_region: str,
+    api_key: str,
+) -> SyntheticProbeSample:
+    """Exercise exactly the Credits-only Stage A spend-lease cohort."""
+    url = _api_url(
+        target.api_base_url,
+        f"/{SPEND_LEASE_SOAK_ROUTE_TYPE.replace('.', '/')}",
+    )
+    body = {
+        # A plain catalog model: no custom/user/partner model and no provider
+        # override that could introduce a non-Credits fallback.
+        "model": SPEND_LEASE_SOAK_MODEL,
+        "messages": [{"role": "user", "content": SPEND_LEASE_SOAK_PROMPT}],
+        "max_tokens": 8,
+        # This marks analytics synthetic; it is not OAuth app attribution and
+        # does not create app markup.
+        "metadata": {
+            "trustedrouter_synthetic": "true",
+            "probe": "spend_lease_soak",
+        },
+    }
+    started = time.perf_counter()
+    try:
+        response = await client.post(url, json=body, headers=_auth_headers(api_key))
+        latency_ms = _elapsed_ms(started)
+        payload = _json_object(response)
+        metadata = _completion_metadata(payload)
+        ok = response.status_code == 200
+        return _sample(
+            "spend_lease_soak",
+            target,
+            monitor_region,
+            url,
+            status="up" if ok else "down",
+            latency_milliseconds=latency_ms,
+            ttfb_milliseconds=latency_ms,
+            http_status=response.status_code,
+            error_type=None if ok else "spend_lease_soak_http_error",
+            model=SPEND_LEASE_SOAK_MODEL,
+            selected_provider=metadata["selected_provider"],
+            selected_model=metadata["selected_model"],
+            generation_id=metadata["generation_id"],
+            cost_microdollars=metadata["cost_microdollars"],
+        )
+    except httpx.HTTPError as exc:
+        return _sample(
+            "spend_lease_soak",
+            target,
+            monitor_region,
+            url,
+            status="down",
+            latency_milliseconds=_elapsed_ms(started),
+            error_type=exc.__class__.__name__,
+            model=SPEND_LEASE_SOAK_MODEL,
+        )
+
+
 async def responses_pong_probe(
     sdk: AsyncTrustedRouter,
     target: SyntheticTarget,
@@ -1389,6 +1436,10 @@ async def video_generation_probe(
         "aspect_ratio": "16:9",
         "generate_audio": generate_audio,
         "provider": {"only": [provider], "allow_fallbacks": False},
+        "metadata": {
+            "trustedrouter_synthetic": "true",
+            "probe": "video_generation",
+        },
     }
     started = time.perf_counter()
     try:
@@ -2358,40 +2409,44 @@ async def provider_rotation_probe(
         default_first_token_seconds=default_timeout_seconds,
     )
     try:
-        async with client.stream(
-            "POST",
-            url,
-            json=body,
-            headers=_auth_headers(api_key),
-            timeout=httpx.Timeout(deadline.first_token_seconds),
-        ) as response:
-            served_provider = response.headers.get("x-trustedrouter-provider") or provider
-            served_model = response.headers.get("x-trustedrouter-served-model") or model
-            if response.status_code != 200:
-                await response.aread()
-                error_type, error_status, message = _response_error(response)
-                return _rotation_error_sample(
-                    served_provider,
-                    served_model,
-                    region=monitor_region,
-                    elapsed_ms=_elapsed_ms(started),
-                    error_status=error_status,
-                    error_type=error_type,
-                    error_message=message,
-                )
-            observation = await _observe_provider_stream(response, started=started)
-            if observation.stream_error is not None:
-                error_type, status, message = observation.stream_error
-                return _rotation_error_sample(
-                    served_provider,
-                    served_model,
-                    region=monitor_region,
-                    elapsed_ms=observation.elapsed_milliseconds,
-                    error_status=status or 502,
-                    error_type=error_type,
-                    error_message=message,
-                )
-    except (httpx.HTTPError, ValueError) as exc:
+        # httpx's read timeout resets whenever another chunk arrives. The
+        # outer wall-clock deadline is therefore the primary bound for a
+        # provider that trickles bytes forever without completing the stream.
+        async with asyncio.timeout(deadline.first_token_seconds):
+            async with client.stream(
+                "POST",
+                url,
+                json=body,
+                headers=_auth_headers(api_key),
+                timeout=httpx.Timeout(deadline.first_token_seconds),
+            ) as response:
+                served_provider = response.headers.get("x-trustedrouter-provider") or provider
+                served_model = response.headers.get("x-trustedrouter-served-model") or model
+                if response.status_code != 200:
+                    await response.aread()
+                    error_type, error_status, message = _response_error(response)
+                    return _rotation_error_sample(
+                        served_provider,
+                        served_model,
+                        region=monitor_region,
+                        elapsed_ms=_elapsed_ms(started),
+                        error_status=error_status,
+                        error_type=error_type,
+                        error_message=message,
+                    )
+                observation = await _observe_provider_stream(response, started=started)
+                if observation.stream_error is not None:
+                    error_type, status, message = observation.stream_error
+                    return _rotation_error_sample(
+                        served_provider,
+                        served_model,
+                        region=monitor_region,
+                        elapsed_ms=observation.elapsed_milliseconds,
+                        error_status=status or 502,
+                        error_type=error_type,
+                        error_message=message,
+                    )
+    except (TimeoutError, httpx.HTTPError, ValueError) as exc:
         return _rotation_error_sample(
             served_provider,
             served_model,

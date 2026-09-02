@@ -190,6 +190,8 @@ def run_in_transaction_with_retry(
     attempts: int = 8,
     attempts_out: list[int] | None = None,
     total_budget_seconds: float = TXN_BUDGET_SECONDS,
+    transaction_tag: str | None = None,
+    also_retry: tuple[type[BaseException], ...] = (),
 ) -> T:
     """Run a Spanner transaction, retrying on ABORTED within a wall-clock budget.
 
@@ -215,32 +217,41 @@ def run_in_transaction_with_retry(
     callback performs a non-idempotent side effect. Exponential backoff with
     jitter de-synchronizes contenders so they stop lockstepping on the row.
 
-    Only ``Aborted`` is retried; every other callback exception (including
-    ``TypeError``) propagates unchanged and is never mistaken for a signature
-    mismatch. On budget exhaustion the final ``Aborted`` is raised so callers
-    can map it to a retryable error rather than a multi-minute hang.
+    By default only ``Aborted`` is retried. ``also_retry`` lets one caller add
+    its own typed callback conflict without teaching the Spanner client about
+    that exception; every other callback exception (including ``TypeError``)
+    propagates unchanged. On budget exhaustion the final retryable exception
+    is raised so the caller can map it to its ordinary contention response.
 
     ``attempts_out``, if given, receives the winning attempt number (1 = no
     retry) — used to attribute finalize latency to contention.
+
+    ``transaction_tag`` is a stable, non-sensitive operation label forwarded
+    to Spanner on every retry. It makes lock-stat samples attributable without
+    placing workspace, key, request, or authorization identifiers in telemetry.
     """
     from google.api_core.exceptions import Aborted
 
+    retryable_errors = (Aborted,) + also_retry
     deadline = time.monotonic() + max(total_budget_seconds, _MIN_INNER_TIMEOUT_SECONDS)
     delay = 0.05
-    last_aborted: Aborted | None = None
+    last_retryable: BaseException | None = None
     for attempt in range(1, attempts + 1):
         remaining = deadline - time.monotonic()
-        if remaining <= 0 and last_aborted is not None:
+        if remaining <= 0 and last_retryable is not None:
             # Budget spent between the last abort's backoff and here.
-            raise last_aborted
+            raise last_retryable
         # Cap the client's internal retry to what's left of our wall-clock so a
         # single attempt cannot outlive the caller's budget (min floor keeps a
         # valid positive deadline for the final sliver).
         inner_timeout = max(remaining, _MIN_INNER_TIMEOUT_SECONDS)
         try:
-            result = database.run_in_transaction(func, timeout_secs=inner_timeout)
-        except Aborted as exc:
-            last_aborted = exc
+            transaction_kwargs: dict[str, Any] = {"timeout_secs": inner_timeout}
+            if transaction_tag is not None:
+                transaction_kwargs["transaction_tag"] = transaction_tag
+            result = database.run_in_transaction(func, **transaction_kwargs)
+        except retryable_errors as exc:
+            last_retryable = exc
             if attempt >= attempts:
                 raise
             remaining_after = deadline - time.monotonic()

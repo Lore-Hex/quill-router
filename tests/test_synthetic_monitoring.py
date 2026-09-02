@@ -64,6 +64,7 @@ from trusted_router.synthetic.probes import (
     _sse_line_has_content,
     attestation_nonce_probe,
     choose_rotation_target,
+    control_plane_health_probe,
     gateway_billing_probe,
     gateway_fallback_probe,
     gateway_latency_phase_probes,
@@ -397,7 +398,8 @@ def test_gateway_latency_anatomy_distinguishes_global_and_direct_targets() -> No
     }
 
 
-def test_public_status_response_cache_reuses_rendered_body() -> None:
+@pytest.mark.anyio
+async def test_public_status_response_cache_reuses_rendered_body() -> None:
     import trusted_router.routes.public as public_routes
 
     with public_routes._STATUS_RESPONSE_CACHE_LOCK:
@@ -411,7 +413,7 @@ def test_public_status_response_cache_reuses_rendered_body() -> None:
         return f"payload-{calls}".encode()
 
     try:
-        first = public_routes._cached_public_response(
+        first = await public_routes._cached_public_response(
             Settings(environment="local"),
             key="test:status-cache",
             media_type="application/json",
@@ -420,7 +422,7 @@ def test_public_status_response_cache_reuses_rendered_body() -> None:
             background_tasks=BackgroundTasks(),
             build=build,
         )
-        second = public_routes._cached_public_response(
+        second = await public_routes._cached_public_response(
             Settings(environment="local"),
             key="test:status-cache",
             media_type="application/json",
@@ -441,7 +443,8 @@ def test_public_status_response_cache_reuses_rendered_body() -> None:
     assert calls == 1
 
 
-def test_public_response_cache_is_bounded() -> None:
+@pytest.mark.anyio
+async def test_public_response_cache_is_bounded() -> None:
     import trusted_router.routes.public as public_routes
 
     with public_routes._STATUS_RESPONSE_CACHE_LOCK:
@@ -449,7 +452,7 @@ def test_public_response_cache_is_bounded() -> None:
         public_routes._STATUS_RESPONSE_REFRESHING.clear()
     try:
         for index in range(public_routes.PUBLIC_RESPONSE_CACHE_MAX_ENTRIES + 5):
-            public_routes._cached_public_response(
+            await public_routes._cached_public_response(
                 Settings(environment="local"),
                 key=f"bounded-cache-{index}",
                 media_type="application/json",
@@ -880,7 +883,11 @@ def test_status_keeps_provider_failures_out_of_global_slo_classes() -> None:
     snapshot = status_snapshot(
         samples,
         now=now,
-        settings=Settings(environment="test", synthetic_monitor_api_key="sk-tr-monitor-test"),
+        settings=Settings(
+            environment="test",
+            synthetic_monitor_api_key="sk-tr-monitor-test",
+            internal_gateway_token="test-gateway-token",  # noqa: S106 - test fixture.
+        ),
     )
 
     # Provider-effective failures stay out of the SLO math (July decision),
@@ -978,7 +985,14 @@ def test_status_router_core_burn_rate_alerts_on_short_window_failures() -> None:
         ),
     ]
 
-    snapshot = status_snapshot(samples, now=now)
+    snapshot = status_snapshot(
+        samples,
+        now=now,
+        settings=Settings(
+            environment="test",
+            internal_gateway_token="test-gateway-token",  # noqa: S106 - test fixture.
+        ),
+    )
 
     assert snapshot["slo_classes"]["router_core"]["status"] == "down"
     alert = next(
@@ -1266,7 +1280,13 @@ def test_status_components_group_regions_and_control_plane() -> None:
         ),
     ]
 
-    snapshot = status_snapshot(samples)
+    snapshot = status_snapshot(
+        samples,
+        settings=Settings(
+            environment="test",
+            internal_gateway_token="test-gateway-token",  # noqa: S106 - test fixture.
+        ),
+    )
     components = {component["id"]: component for component in snapshot["components"]}
 
     assert components["canonical_api"]["status"] == "up"
@@ -1647,6 +1667,30 @@ async def test_synthetic_http_probes_parse_success_shapes() -> None:
     assert chat.output_match is True
     assert responses.status == "up"
     assert responses.output_match is True
+
+
+@pytest.mark.asyncio
+async def test_control_plane_health_is_global_not_primary_region() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "https://trustedrouter.com/health"
+        return httpx.Response(200, json={"status": "ok"})
+
+    target = SyntheticTarget(
+        "canonical",
+        "https://api.trustedrouter.com/v1",
+        "us-central1",
+        control_plane_url="https://trustedrouter.com",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await control_plane_health_probe(
+            client,
+            target,
+            monitor_region="europe-west4",
+        )
+
+    assert sample.status == "up"
+    assert sample.target == "control-plane"
+    assert sample.target_region is None
 
 
 @pytest.mark.asyncio
@@ -2188,6 +2232,7 @@ def test_configured_targets_include_primary_regional_gateway() -> None:
         api_base_url="https://api.trustedrouter.com/v1",
         regions="us-central1,us-east4,europe-west4,southamerica-east1",
         primary_region="us-central1",
+        synthetic_control_plane_health_url="https://trustedrouter.com",
     )
 
     targets = configured_targets(settings)
@@ -2195,6 +2240,7 @@ def test_configured_targets_include_primary_regional_gateway() -> None:
 
     assert by_name["canonical"].api_base_url == "https://api.trustedrouter.com/v1"
     assert by_name["canonical"].region == "us-central1"
+    assert by_name["canonical"].control_plane_url == "https://trustedrouter.com"
     assert by_name["us-central1"].api_base_url == (
         "https://api-us-central1.quillrouter.com/v1"
     )
@@ -2205,6 +2251,11 @@ def test_configured_targets_include_primary_regional_gateway() -> None:
     )
     assert by_name["southamerica-east1"].api_base_url == (
         "https://api-southamerica-east1.quillrouter.com/v1"
+    )
+    assert all(
+        target.control_plane_url is None
+        for name, target in by_name.items()
+        if name != "canonical"
     )
 
 
@@ -2774,6 +2825,49 @@ async def test_remediator_caller_reports_success_and_failure(
 
 
 @pytest.mark.asyncio
+async def test_remediator_caller_treats_only_active_overlap_as_success(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        message = (
+            "Synthetic operation is already in progress"
+            if request.url.path.endswith("/overlap")
+            else "Synthetic operation rate limit exceeded"
+        )
+        return httpx.Response(
+            429,
+            json={
+                "error": {
+                    "code": 429,
+                    "message": message,
+                    "type": "rate_limited",
+                    "source": "router",
+                }
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        overlap = await cli_module._post_remediator(
+            client,
+            url="https://trustedrouter.com/overlap",
+            internal_token="internal",  # noqa: S106 - test placeholder.
+        )
+        rate_limited = await cli_module._post_remediator(
+            client,
+            url="https://trustedrouter.com/rate-limit",
+            internal_token="internal",  # noqa: S106 - test placeholder.
+        )
+
+    output = capsys.readouterr()
+    assert overlap is True
+    assert rate_limited is False
+    assert "remediator skipped: another pass is already in progress" in output.out
+    assert output.err.count("remediator check failed: HTTPStatusError:") == 1
+
+
+@pytest.mark.asyncio
 async def test_primary_synthetic_job_invokes_scheduled_remediator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3007,8 +3101,13 @@ def test_synthetic_deploy_targets_public_api_and_private_internal_ingest() -> No
     assert '"${throughput_job_name}-every-two-minutes"' in body
     assert 'image_job_name="trusted-router-image-generation-${image_region}"' in body
     assert (
-        'regional_ingest_base="https://${SYNTHETIC_INGEST_SERVICE}-${PROJECT_NUMBER}.'
-        '${monitor_region}.run.app"'
+        'regional_ingest_base="$(synthetic_ingest_base_for_region '
+        '"$monitor_region")"'
+        in body
+    )
+    assert 'printf \'%s\\n\' "https://trustedrouter.com"' in body
+    assert (
+        "printf 'https://%s-%s.%s.run.app\\n'"
         in body
     )
     assert (
@@ -3285,7 +3384,8 @@ def test_rotation_candidates_cover_credits_endpoints() -> None:
     assert "stepfun/step-3.5-flash" not in pool.get("parasail", [])
     assert "z-ai/glm-4.7" not in pool.get("parasail", [])
     assert "z-ai/glm-5" not in pool.get("parasail", [])
-    assert "z-ai/glm-5.1" in pool.get("parasail", [])
+    # Positive Parasail membership follows its live model feed. Do not pin a
+    # transient provider/model pairing after the provider delists it.
     assert "deepseek/deepseek-prover-v2-671b" not in pool.get("novita", [])
     assert "meta-llama/llama-3-8b-instruct" not in pool.get("novita", [])
     assert "qwen/qwen2.5-vl-72b-instruct" not in pool.get("novita", [])
@@ -3589,6 +3689,47 @@ async def test_provider_rotation_probe_measures_ttfb_and_ttft() -> None:
     assert sample.ttfb_milliseconds is not None
     assert sample.first_token_milliseconds is not None
     assert sample.elapsed_milliseconds is not None
+
+
+@pytest.mark.asyncio
+async def test_provider_rotation_probe_has_total_deadline_for_trickling_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An httpx read timeout resets on each chunk; total wall time must not."""
+    from trusted_router.synthetic import probes as probes_module
+
+    class _Trickle(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            while True:
+                await asyncio.sleep(0.005)
+                yield b" "
+
+    class _Deadline:
+        first_token_seconds = 0.03
+
+    monkeypatch.setattr(
+        probes_module,
+        "model_deadlines",
+        lambda *_args, **_kwargs: _Deadline(),
+    )
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=_Trickle())
+
+    target = SyntheticTarget("rotation", "https://api.trustedrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await provider_rotation_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            provider="slow-provider",
+            model="slow/model",
+        )
+
+    assert sample.status == "error"
+    assert sample.error_type == "TimeoutError"
+    assert sample.error_status is None
 
 
 @pytest.mark.asyncio
@@ -3944,6 +4085,7 @@ class _RouteHealthStore:
     def __init__(self, samples: list[ProviderBenchmarkSample]) -> None:
         self.samples = samples
         self.calls: list[dict[str, Any]] = []
+        self.batch_calls: list[dict[str, Any]] = []
 
     def provider_benchmark_samples(
         self,
@@ -3964,6 +4106,39 @@ class _RouteHealthStore:
         ]
         samples.sort(key=lambda sample: sample.created_at, reverse=True)
         return samples[:limit]
+
+    def provider_route_benchmark_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        self.batch_calls.append(
+            {
+                "cutoff": cutoff,
+                "per_route_limit": per_route_limit,
+                "limit": limit,
+            }
+        )
+        rows = [
+            sample
+            for sample in self.samples
+            if sample.source == "synthetic" and sample.created_at >= cutoff
+        ]
+        rows.sort(key=lambda sample: (sample.created_at, sample.id), reverse=True)
+        route_counts: dict[tuple[str, str], int] = {}
+        selected: list[ProviderBenchmarkSample] = []
+        for sample in rows:
+            route = (sample.provider, sample.model)
+            count = route_counts.get(route, 0)
+            if count >= per_route_limit:
+                continue
+            route_counts[route] = count + 1
+            selected.append(sample)
+            if len(selected) >= limit:
+                break
+        return selected
 
 
 def _route_health_sample(
@@ -4091,10 +4266,10 @@ def test_evaluate_route_health_flags_dead_route_but_not_healthy_or_thin_routes()
             newest_error_message="latest failure",
         )
     ]
-    assert store.calls == [
-        {"date": None, "provider": provider, "model": model, "limit": 48}
-        for provider, model in routes
-    ]
+    assert store.calls == []
+    assert len(store.batch_calls) == 1
+    assert store.batch_calls[0]["per_route_limit"] == 48
+    assert store.batch_calls[0]["limit"] >= len(routes) * 48
 
 
 def test_evaluate_route_health_excludes_unsupported_samples_from_rate() -> None:
@@ -4186,11 +4361,10 @@ def test_evaluate_route_health_derives_routes_from_rotation_candidates(
     flags = evaluate_route_health(store)  # type: ignore[arg-type]
 
     assert [(flag.provider, flag.model) for flag in flags] == [("provider-a", "model-3")]
-    assert store.calls == [
-        {"date": None, "provider": provider, "model": model, "limit": 48}
-        for provider, models in candidates.items()
-        for model in models
-    ]
+    assert store.calls == []
+    assert len(store.batch_calls) == 1
+    assert store.batch_calls[0]["per_route_limit"] == 48
+    assert store.batch_calls[0]["limit"] >= sum(map(len, candidates.values())) * 48
 
 
 def test_report_route_health_uses_one_sentry_fingerprint_per_route(

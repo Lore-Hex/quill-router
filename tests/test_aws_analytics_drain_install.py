@@ -83,6 +83,17 @@ def test_install_creates_what_the_unit_hardening_requires() -> None:
     assert "install -d -o '$SERVICE_USER' -g '$SERVICE_USER'" in script
 
 
+def test_drain_unit_is_notify_watchdog_managed() -> None:
+    unit = UNIT.read_text()
+
+    assert "Type=notify" in unit
+    assert "NotifyAccess=main" in unit
+    assert "WatchdogSec=600" in unit
+    assert "Restart=on-failure" in unit
+    assert "RestartSec=5" in unit
+    assert "RestartPreventExitStatus=78" in unit
+
+
 def test_install_refuses_to_proceed_without_dsql_permission() -> None:
     """The one precondition that fails silently at runtime, so it fails loudly here.
 
@@ -122,6 +133,39 @@ def test_install_stages_and_verifies_before_swapping_anything_in() -> None:
     # The swap happens after the smoke test, never before.
     assert script.index("import smoke test (staging)") < script.index("drain: activate")
     assert "${REMOTE_ROOT}.previous" in script
+
+
+def test_aws_installer_replaces_the_running_process_and_verify_can_fail() -> None:
+    """A process must not keep its cwd inside the tree the installer rotates.
+
+    ``enable --now`` does not restart an active unit.  The 2026-08-30 install
+    therefore left the old PID running from ``/opt/tr-clickhouse.previous
+    (deleted)`` for 47 hours, while the verify swallowed ``is-active`` and read
+    healthy-looking ``rows=0`` metrics from that old process.
+
+    Pin the ordering and the identity proof, not merely the presence of a
+    restart-shaped command: deleting the stop, replacing the explicit start
+    with ``enable --now``, or restoring ``|| true`` must make this test red.
+    """
+    script = INSTALL.read_text()
+    capture = script.index('ssm "drain: capture running process"')
+    stop = script.index("systemctl stop $SERVICE")
+    rotate = script.index("rm -rf '${REMOTE_ROOT}.previous'")
+    start = script.index("systemctl start $SERVICE")
+    verify_start = script.index('ssm "drain: verify"')
+    verify = script[verify_start : script.index("cat <<EOF", verify_start)]
+
+    assert capture < stop < rotate < start
+    assert "systemctl enable --now $SERVICE" not in script
+    assert "systemctl is-active $SERVICE" in verify
+    assert "|| true" not in verify
+    assert 'ExecMainPID --value' in verify
+    assert 'ExecMainStartTimestamp --value' in verify
+    assert "test \\\"\\$NEW_PID\\\" != '$PRE_INSTALL_PID'" in verify
+    assert "test \\\"\\$EXEC_MAIN_STARTED_EPOCH\\\" -ge '$INSTALL_STARTED_AT'" in verify
+    assert 'journalctl _PID=\\"\\$NEW_PID\\"' in verify
+    assert "operational_analytics_outbox.metrics" in verify
+    assert "shard_failed|Traceback" in verify
 
 
 def test_install_writes_the_secret_by_running_a_command_not_by_pasting() -> None:

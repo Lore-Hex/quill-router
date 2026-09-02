@@ -53,19 +53,13 @@
   <input type="hidden" name="{{ name }}" value="{{ value }}">
   {% endfor %}
     <div class="limit-fields">
-      <label>
-        Maximum spend (USD)
-        <input type="number" name="limit" min="0" max="10000" step="0.01" inputmode="decimal" value="{{ effective_limit }}" required>
-      </label>
-      <label>
-        Limit resets
-        <select name="usage_limit_type">
-          <option value=""{% if not effective_reset %} selected{% endif %}>Never</option>
-          <option value="daily"{% if effective_reset == "daily" %} selected{% endif %}>Daily</option>
-          <option value="weekly"{% if effective_reset == "weekly" %} selected{% endif %}>Weekly</option>
-          <option value="monthly"{% if effective_reset == "monthly" %} selected{% endif %}>Monthly</option>
-        </select>
-      </label>
+      <label>Maximum spend (USD)<input type="number" name="limit" min="0" max="10000" step="0.01" inputmode="decimal" value="{{ effective_limit }}" required></label>
+      <label>Limit resets<select name="usage_limit_type">
+        <option value=""{% if not effective_reset %} selected{% endif %}>Never</option>
+        <option value="daily"{% if effective_reset == "daily" %} selected{% endif %}>Daily</option>
+        <option value="weekly"{% if effective_reset == "weekly" %} selected{% endif %}>Weekly</option>
+        <option value="monthly"{% if effective_reset == "monthly" %} selected{% endif %}>Monthly</option>
+      </select></label>
     </div>
     <ul class="consent-facts">
       <li>Run model inference and read the requests this key made.</li>

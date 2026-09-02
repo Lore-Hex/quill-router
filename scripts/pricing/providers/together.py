@@ -6,8 +6,10 @@ just hit the API and translate.
 
 `/v1/models` includes models that require a separately provisioned dedicated
 endpoint. Publishing all of them as prepaid routes caused deterministic 400s.
-The documented `/v1/endpoints?type=serverless` endpoint is therefore the
-availability source of truth; prices still come from `/v1/models`.
+The documented `/v1/endpoints?type=serverless` endpoint is the primary
+availability source, while a bounded one-token probe covers curated canary
+models that remain callable but are temporarily omitted from that feed.
+Prices still come from `/v1/models`.
 
 Both endpoints require an API key (Bearer auth). The workflow can provide one
 via the TOGETHER_API_KEY env var. Without it, the fetch returns 401 and
@@ -38,6 +40,7 @@ from scripts.pricing.openai_catalog import positive_int
 SLUG = "together"
 URL = "https://api.together.xyz/v1/models"
 SERVERLESS_ENDPOINTS_URL = "https://api.together.xyz/v1/endpoints?type=serverless"
+CHAT_COMPLETIONS_URL = "https://api.together.xyz/v1/chat/completions"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -47,13 +50,11 @@ MANIFEST_PATH = (
     / "together.json"
 )
 
-# Model IDs we expect Together to expose, in OR-canonical form. Parser
-# below translates Together's native IDs to these. These are the
-# canaries for hourly pricing drift: if Together renames or drops one,
-# the refresh job should keep the previous committed price instead of
-# silently deleting the endpoint from the catalog.
+# Curated models that Together has occasionally omitted from its serverless
+# endpoint feed while they remain callable. Probe only these known feed gaps;
+# every other route follows the authenticated feed and the normal two-miss
+# tombstone policy so provider retirements cannot leave stale routes behind.
 EXPECTED_MODELS = [
-    "deepseek/deepseek-v4-pro",
     "minimax/minimax-m3",
     "z-ai/glm-5.2",
 ]
@@ -91,6 +92,54 @@ UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.ite
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 
 
+def _probe_expected_serverless_model(
+    client: httpx.Client,
+    headers: dict[str, str],
+    native_id: str,
+) -> bool:
+    """Confirm a curated model omitted from Together's endpoint feed.
+
+    A definitive model-not-available response permits normal tombstoning.
+    Transport errors, throttles, auth failures, and ambiguous responses fail
+    the provider refresh so the committed last-known-good catalog is retained.
+    """
+
+    try:
+        response = client.post(
+            CHAT_COMPLETIONS_URL,
+            headers={**headers, "Content-Type": "application/json"},
+            json={
+                "model": native_id,
+                "messages": [{"role": "user", "content": "Reply PONG"}],
+                "max_tokens": 1,
+                "temperature": 0,
+            },
+        )
+    except httpx.HTTPError as exc:
+        raise RuntimeError(
+            f"together: availability probe transport failure for {native_id}"
+        ) from exc
+
+    if 200 <= response.status_code < 300:
+        return True
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    error = payload.get("error") if isinstance(payload, dict) else None
+    code = error.get("code") if isinstance(error, dict) else None
+    if response.status_code in {400, 404} and code in {
+        "model_not_available",
+        "model_not_found",
+    }:
+        return False
+    raise RuntimeError(
+        "together: ambiguous availability probe failure for "
+        f"{native_id} (status={response.status_code}, code={code or 'unknown'})"
+    )
+
+
 def _row_to_micro_per_m(price_per_token: object) -> int | None:
     """Convert Together's USD-per-million value to integer microdollars."""
     if price_per_token is None:
@@ -114,6 +163,7 @@ def fetch() -> ProviderPricingResult:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     transport = httpx.HTTPTransport(retries=PROVIDER_FETCH_TRANSPORT_RETRIES)
+    notes: list[str] = []
     with httpx.Client(
         timeout=PROVIDER_FETCH_TIMEOUT,
         follow_redirects=True,
@@ -125,23 +175,45 @@ def fetch() -> ProviderPricingResult:
         endpoints_response = client.get(SERVERLESS_ENDPOINTS_URL, headers=headers)
         endpoints_response.raise_for_status()
         endpoints_payload = endpoints_response.json()
-    endpoint_rows = (
-        endpoints_payload.get("data") or []
-        if isinstance(endpoints_payload, dict)
-        else endpoints_payload
-    )
-    serverless_model_ids = {
-        row.get("model")
-        for row in endpoint_rows
-        if isinstance(row, dict)
-        and row.get("type") == "serverless"
-        and row.get("state") == "STARTED"
-        and isinstance(row.get("model"), str)
-    }
-    if isinstance(payload, dict):
-        rows = payload.get("data") or []
-    else:
-        rows = payload
+        endpoint_rows = (
+            endpoints_payload.get("data") or []
+            if isinstance(endpoints_payload, dict)
+            else endpoints_payload
+        )
+        serverless_model_ids = {
+            row.get("model")
+            for row in endpoint_rows
+            if isinstance(row, dict)
+            and row.get("type") == "serverless"
+            and row.get("state") == "STARTED"
+            and isinstance(row.get("model"), str)
+        }
+        if isinstance(payload, dict):
+            rows = payload.get("data") or []
+        else:
+            rows = payload
+        catalog_chat_ids = {
+            row.get("id")
+            for row in rows
+            if isinstance(row, dict)
+            and row.get("type") == "chat"
+            and isinstance(row.get("id"), str)
+        }
+        for model_id in EXPECTED_MODELS:
+            native_id = UPSTREAM_ID_MAP.get(model_id)
+            if (
+                native_id is None
+                or native_id not in catalog_chat_ids
+                or native_id in serverless_model_ids
+            ):
+                continue
+            if _probe_expected_serverless_model(client, headers, native_id):
+                serverless_model_ids.add(native_id)
+                notes.append(
+                    f"availability probe retained {native_id} omitted from endpoint feed"
+                )
+            else:
+                notes.append(f"availability probe confirmed {native_id} is unavailable")
     prices: dict[str, ModelPrice] = {}
     discovered: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -187,16 +259,14 @@ def fetch() -> ProviderPricingResult:
             manifest_row["context_length"] = context_length
         discovered[or_id] = manifest_row
 
-    notes: list[str] = []
     if not prices:
         notes.append(
             "no started Together serverless models matched the TrustedRouter "
             "catalog — check both provider API responses"
         )
-    # Validate strictly: Together is a direct JSON API, not a brittle
-    # HTML scraper. If a canary model disappears, treat this provider
-    # as failed so refresh.py reuses the previous committed prices
-    # instead of dropping live endpoints from the catalog.
+    # Together is a direct JSON API, not a brittle HTML scraper. Validation
+    # still rejects malformed prices and newly required routes, while expected
+    # model misses are retirement signals handled by manifest reconciliation.
     errors = validate(prices, EXPECTED_MODELS)
     if errors:
         notes.append(f"validation notes: {errors}")

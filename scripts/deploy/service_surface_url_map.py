@@ -64,7 +64,21 @@ CONTROL_PATH_PATTERNS = (
     "/chat-proxy",
     "/chat-proxy/*",
     "/auth",
+    # Conformant OAuth consent + token exchange need the session cookie,
+    # Stripe and key minting, so they belong beside /auth on control. The
+    # /v1 twins already match the /v1/* control rule; these unversioned
+    # aliases would otherwise fall through to the public default.
+    "/oauth/authorize",
+    "/oauth/token",
     "/auth/*",
+    "/oauth/apps",
+    "/oauth/apps/*",
+    "/oauth/authorized-apps",
+    "/oauth/authorized-apps/*",
+    "/v1/oauth/apps",
+    "/v1/oauth/apps/*",
+    "/v1/oauth/authorized-apps",
+    "/v1/oauth/authorized-apps/*",
     "/byok",
     "/byok/*",
     "/credits",

@@ -913,6 +913,43 @@ def test_enqueue_failure_does_not_fail_settle(
     assert db.reservations[auth.credit_reservation_id]["settled"] is True
 
 
+def test_broadcast_enqueue_failure_after_commit_does_not_fail_or_double_charge(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, _bt = fake_store
+    ws = "ws-route-broadcast-enqueue-fails"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+
+    def fail_list_destinations(_workspace_id: str) -> list[Any]:
+        raise DeadlineExceeded("broadcast store deadline exhausted")
+
+    monkeypatch.setattr(store, "list_broadcast_destinations", fail_list_destinations)
+    client = _client(Settings(environment="test", settle_outbox_enabled=True))
+
+    with caplog.at_level(logging.ERROR, logger=GATEWAY_LOGGER):
+        first = client.post("/v1/internal/gateway/settle", json=_settle_json(auth.id))
+
+    assert first.status_code == 200, first.text
+    charged = first.json()["data"]["cost_microdollars"]
+    assert _typed_credit(db, ws)["total_usage"] == charged
+    assert db.reservations[auth.credit_reservation_id]["settled"] is True
+    assert any(
+        "broadcast_metadata_enqueue_failed" in record.getMessage()
+        and auth.workspace_id in record.getMessage()
+        for record in caplog.records
+    )
+
+    replay = client.post("/v1/internal/gateway/settle", json=_settle_json(auth.id))
+
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["data"]["already_settled"] is True
+    assert _typed_credit(db, ws)["total_usage"] == charged
+
+
 # Integration (drain + reaper)
 
 

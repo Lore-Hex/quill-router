@@ -66,7 +66,7 @@
   ],
   "source": "https://api.sakana.ai/v1/models",
   "pricing_source": "https://console.sakana.ai/pricing",
-  "generated_at": "2026-08-25T22:25:19Z",
+  "generated_at": "2026-09-02T03:25:34Z",
   "price_scale": "microdollars_per_million",
   "model_count": 2
 }

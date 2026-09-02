@@ -14,19 +14,15 @@ Page-only rows (e.g. Nemotron 3 Ultra as of 2026-07-13) and
 API-only models (e.g. qwen3.5-9b) surface as notes so an operator
 notices, but never produce a price.
 
-The pricing page's row structure this parser depends on:
+The current pricing page uses a normal table inside
+``#pricing-panel-serverless``. A legacy ``ptbl-row`` fallback remains so
+historical fixtures and a provider rollback still parse safely. Dedicated and
+batch tables are excluded by scoping to the serverless panel.
 
-    <div class="ptbl-row" ...>
-      <div class="mdl" ...><span class="ep" ...>DISPLAY NAME</span></div>
-      <div ...><span class="num" ...>$IN</span></div>
-      <div ...><span class="num" ...>$OUT</span></div>
-      <div ...><span class="num" ...>$CACHED</span></div>
+    <div id="pricing-panel-serverless">
+      <table><tbody><tr><th>MODEL</th><td>$IN</td><td>$OUT</td><td>$CACHED</td>
+      </tr></tbody></table>
     </div>
-
-scoped to the section between "Per-token model pricing" and
-"Reserved GPU pricing" (the later "Self-service batch pricing"
-tables reuse the same row markup for per-param-size tiers and must
-not be parsed as models).
 """
 from __future__ import annotations
 
@@ -38,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from bs4 import BeautifulSoup
 
 from scripts.pricing.base import (
     PROVIDER_FETCH_TIMEOUT,
@@ -45,6 +42,7 @@ from scripts.pricing.base import (
     PROVIDER_FETCH_UA,
     ModelPrice,
     ProviderPricingResult,
+    reconcile_manifest_tombstones,
     validate,
 )
 from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
@@ -87,6 +85,7 @@ EXPECTED_MODELS = [
     "z-ai/glm-5",
     "z-ai/glm-5.1",
     "z-ai/glm-5.2",
+    "z-ai/glm-5.3",
     "moonshotai/kimi-k2.6",
     "moonshotai/kimi-k2.7-code",
     "minimax/minimax-m2.5",
@@ -162,6 +161,10 @@ _NATIVE_TO_OR_ID = {
     "parasail-glm-52": "z-ai/glm-5.2",
     "zai-org/GLM-5.2": "z-ai/glm-5.2",
     "zai-org/GLM-5.2-FP8": "z-ai/glm-5.2",
+    "zai-org/GLM-5.3-Flash": "z-ai/glm-5.3-flash",
+    "parasail-glm-53-flash": "z-ai/glm-5.3-flash",
+    "zai-org/GLM-5.3": "z-ai/glm-5.3",
+    "parasail-glm-53": "z-ai/glm-5.3",
     "parasail-glm47": "z-ai/glm-4.7",
     "zai-org/GLM-4.7": "z-ai/glm-4.7",
     "zai-org/GLM-4.7-FP8": "z-ai/glm-4.7",
@@ -204,6 +207,7 @@ _NATIVE_TO_OR_ID = {
     "ByteDance-Seed/UI-TARS-1.5-7B": "bytedance/ui-tars-1.5-7b",
 }
 UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}
+_LIVE_MODEL_IDS: set[str] = set()
 
 # SKIPPED — not yet supported by TR's chat-completions path:
 #   - parasail-bge-m3 / BAAI/bge-m3 (embedding model)
@@ -224,6 +228,8 @@ UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.ite
 # a page row NOT in this map lands in notes as "unmapped" so the
 # operator adds it deliberately.
 _DISPLAY_TO_OR_ID = {
+    "GLM-5.3 Flash": "z-ai/glm-5.3-flash",
+    "GLM-5.3": "z-ai/glm-5.3",
     "GLM-5.2": "z-ai/glm-5.2",
     "GLM-5.1": "z-ai/glm-5.1",
     "GLM-5": "z-ai/glm-5",
@@ -286,16 +292,34 @@ def _parse_pricing_page(html: str) -> tuple[dict[str, tuple[float, float, float 
     """Parse the per-token table into display-name → ($/M in, $/M out,
     $/M cached | None). Returns (rows, notes)."""
     notes: list[str] = []
-    start = html.find(_SECTION_START)
-    if start < 0:
-        raise ValueError(f"pricing page missing section marker {_SECTION_START!r}")
-    end = html.find(_SECTION_END, start)
-    section = html[start : end if end > start else len(html)]
-
     rows: dict[str, tuple[float, float, float | None]] = {}
-    for match in _ROW_RE.finditer(section):
-        display = match.group(1).strip()
-        nums = [float(n) for n in _NUM_RE.findall(match.group(2))]
+    soup = BeautifulSoup(html, "html.parser")
+    serverless_panel = soup.find(id="pricing-panel-serverless")
+    if serverless_panel is not None:
+        parsed_rows = []
+        for table_row in serverless_panel.select("tbody tr"):
+            heading = table_row.find("th")
+            if heading is None:
+                continue
+            display = heading.get_text(" ", strip=True)
+            nums = [
+                float(value)
+                for cell in table_row.find_all("td")
+                if (value := next(iter(_NUM_RE.findall(cell.get_text(" ", strip=True))), None))
+            ]
+            parsed_rows.append((display, nums))
+    else:
+        start = html.find(_SECTION_START)
+        if start < 0:
+            raise ValueError(f"pricing page missing section marker {_SECTION_START!r}")
+        end = html.find(_SECTION_END, start)
+        section = html[start : end if end > start else len(html)]
+        parsed_rows = [
+            (match.group(1).strip(), [float(n) for n in _NUM_RE.findall(match.group(2))])
+            for match in _ROW_RE.finditer(section)
+        ]
+
+    for display, nums in parsed_rows:
         if display in _DISPLAY_SKIP:
             continue
         if len(nums) < 2:
@@ -334,6 +358,9 @@ def _http_client() -> httpx.Client:
 def fetch() -> ProviderPricingResult:
     """Scrape prices from the public pricing page, gate on /v1/models
     liveness, and return prices only for models that appear in BOTH."""
+    global _LIVE_MODEL_IDS  # noqa: PLW0603
+
+    _LIVE_MODEL_IDS = set()
     notes: list[str] = []
 
     # Price source: the public pricing page. A fetch/parse failure
@@ -384,6 +411,7 @@ def fetch() -> ProviderPricingResult:
         if provider_model_retired(SLUG, or_id, native_id):
             continue
         or_ids_live.add(or_id)
+    _LIVE_MODEL_IDS = or_ids_live
 
     prices: dict[str, ModelPrice] = {}
     for or_id, rates in sorted(page_prices.items()):
@@ -424,6 +452,44 @@ def fetch() -> ProviderPricingResult:
 # Metadata (context/modalities) mirrors the OR snapshot entries for
 # the same checkpoints served by other providers.
 _MANIFEST_ROW_TEMPLATES: dict[str, dict[str, Any]] = {
+    "z-ai/glm-5.3": {
+        "id": "z-ai/glm-5.3",
+        "upstream_id": "parasail-glm-53",
+        "display_name": "Parasail GLM 5.3",
+        "title": "z-ai/glm-5.3",
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "model_type": "chat",
+        "features": [
+            "reasoning",
+            "function-calling",
+            "structured-outputs",
+            "serverless",
+        ],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+    },
+    "z-ai/glm-5.3-flash": {
+        "id": "z-ai/glm-5.3-flash",
+        "upstream_id": "zai-org/GLM-5.3-Flash",
+        "display_name": "Parasail GLM 5.3 Flash",
+        "title": "z-ai/glm-5.3-flash",
+        "context_length": 1048576,
+        "max_output_tokens": 131072,
+        "model_type": "chat",
+        "features": [
+            "reasoning",
+            "function-calling",
+            "structured-outputs",
+            "serverless",
+        ],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+    },
     "z-ai/glm-5.2": {
         "id": "z-ai/glm-5.2",
         "upstream_id": "parasail-glm-52",
@@ -484,6 +550,7 @@ _MANIFEST_ROW_TEMPLATES: dict[str, dict[str, Any]] = {
 
 # Manifest rows that must always end up priced after a refresh.
 _MANIFEST_EXPECTED = [
+    "z-ai/glm-5.3",
     "z-ai/glm-5.2",
     "qwen/qwen3.5-397b-a17b",
     "moonshotai/kimi-k2.7-code",
@@ -496,10 +563,10 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
 
     Mirrors the wafer.py hook: update existing supplement rows in
     place, append templates for newly-served ahead-of-snapshot models,
-    and stamp provenance. Rows are NOT removed when a model temporarily
-    drops off the page — the runtime treats stale supplement prices as
-    better than delisting a routable model mid-day; removal is an
-    operator decision."""
+    and stamp provenance. Rows are never deleted automatically. A model
+    absent from the authenticated serving catalog is retained on its first
+    fresh miss and marked unroutable on its second; a later reappearance
+    clears that machine-owned tombstone."""
     raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     rows = raw.get("models")
     if not isinstance(rows, list):
@@ -528,6 +595,25 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     }
     updated: list[str] = []
     appended: list[str] = []
+
+    # Current-family routes can appear in Parasail's authenticated catalog
+    # before its public pricing table. Keep the known route visible as dark
+    # metadata so discovery coverage is complete, but never authorize it until
+    # the authoritative pricing page publishes positive rates.
+    for model_id, template in sorted(_MANIFEST_ROW_TEMPLATES.items()):
+        if model_id in existing_by_id or model_id not in _LIVE_MODEL_IDS:
+            continue
+        if model_id not in {"z-ai/glm-5.3", "z-ai/glm-5.3-flash"}:
+            continue
+        row = dict(template)
+        if model_id not in result.prices:
+            row["routable"] = False
+            row["routable_reason"] = "awaiting-price"
+            row["unresolved_since"] = datetime.now(UTC).date().isoformat()
+        rows.append(row)
+        existing_by_id[model_id] = row
+        appended.append(model_id)
+
     for model_id, price in sorted(result.prices.items()):
         row = existing_by_id.get(model_id)
         if row is None:
@@ -545,9 +631,32 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
             row["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
         else:
             row.pop("cached_input_token_price_per_m", None)
+        if row.get("routable_reason") == "awaiting-price":
+            row.pop("routable", None)
+            row.pop("routable_reason", None)
+            row.pop("unresolved_since", None)
         updated.append(model_id)
 
-    missing = sorted(set(_MANIFEST_EXPECTED) - set(updated))
+    # The public pricing table can lag the authenticated serving catalog in
+    # either direction. Require prices for every expected model that the fresh
+    # API still serves, but do not block the entire catalog when Parasail
+    # removes a historical route while its pricing row remains published.
+    # Shared tombstone semantics retain the route on the first fresh miss,
+    # disable it on the second, and recover it if it later reappears.
+    present_rows = {
+        model_id: dict(existing_by_id[model_id])
+        for model_id in _LIVE_MODEL_IDS
+        if model_id in existing_by_id
+    }
+    rows = reconcile_manifest_tombstones(
+        rows,
+        present_rows,
+        priced_ids=set(result.prices),
+        source=result.source,
+    )
+
+    live_expected = set(_MANIFEST_EXPECTED) & _LIVE_MODEL_IDS
+    missing = sorted(live_expected - set(updated))
     if missing:
         raise RuntimeError(f"parasail manifest did not update expected model(s): {missing}")
 
@@ -561,6 +670,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     raw["generated_at"] = datetime.now(UTC).replace(microsecond=0).isoformat().replace(
         "+00:00", "Z"
     )
+    raw["models"] = rows
     raw["model_count"] = len(rows)
     MANIFEST_PATH.write_text(
         json.dumps(raw, indent=2, ensure_ascii=False) + "\n",

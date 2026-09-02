@@ -331,7 +331,10 @@
       "max_output_tokens": 64000,
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 15000000,
-      "cached_input_token_price_per_m": 300000
+      "cached_input_token_price_per_m": 300000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Claude Sonnet 4 20250514 Coding",
@@ -1672,7 +1675,10 @@
       "max_output_tokens": 32768,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 8000000,
-      "cached_input_token_price_per_m": 500000
+      "cached_input_token_price_per_m": 500000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 4.1 mini",
@@ -1716,7 +1722,10 @@
       "max_output_tokens": 32768,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 400000,
-      "cached_input_token_price_per_m": 25000
+      "cached_input_token_price_per_m": 25000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 4o",
@@ -1738,7 +1747,10 @@
       "max_output_tokens": 16384,
       "input_token_price_per_m": 2500000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 1250000
+      "cached_input_token_price_per_m": 1250000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 4o mini",
@@ -1760,7 +1772,10 @@
       "max_output_tokens": 16384,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 600000,
-      "cached_input_token_price_per_m": 75000
+      "cached_input_token_price_per_m": 75000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 5",
@@ -1782,7 +1797,10 @@
       "max_output_tokens": 131072,
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 125000
+      "cached_input_token_price_per_m": 125000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 5 Chat",
@@ -1804,7 +1822,10 @@
       "max_output_tokens": 131072,
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 125000
+      "cached_input_token_price_per_m": 125000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 5 Codex",
@@ -1826,7 +1847,10 @@
       "max_output_tokens": 131072,
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 125000
+      "cached_input_token_price_per_m": 125000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 5 mini",
@@ -1848,7 +1872,10 @@
       "max_output_tokens": 131072,
       "input_token_price_per_m": 250000,
       "output_token_price_per_m": 2000000,
-      "cached_input_token_price_per_m": 25000
+      "cached_input_token_price_per_m": 25000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 5 nano",
@@ -1870,7 +1897,10 @@
       "max_output_tokens": 131072,
       "input_token_price_per_m": 50000,
       "output_token_price_per_m": 400000,
-      "cached_input_token_price_per_m": 5000
+      "cached_input_token_price_per_m": 5000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 5 pro",
@@ -1892,7 +1922,10 @@
       "max_output_tokens": 131072,
       "input_token_price_per_m": 15000000,
       "output_token_price_per_m": 120000000,
-      "cached_input_token_price_per_m": 15000000
+      "cached_input_token_price_per_m": 15000000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 5.1",
@@ -1914,7 +1947,10 @@
       "max_output_tokens": 128000,
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 125000
+      "cached_input_token_price_per_m": 125000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 5.1 Chat",
@@ -1936,7 +1972,10 @@
       "max_output_tokens": 128000,
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 125000
+      "cached_input_token_price_per_m": 125000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 5.1 Codex",
@@ -1958,7 +1997,10 @@
       "max_output_tokens": 128000,
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 125000
+      "cached_input_token_price_per_m": 125000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 5.1 Codex max",
@@ -1980,7 +2022,10 @@
       "max_output_tokens": 128000,
       "input_token_price_per_m": 1250000,
       "output_token_price_per_m": 10000000,
-      "cached_input_token_price_per_m": 125000
+      "cached_input_token_price_per_m": 125000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 5.1 Codex mini",
@@ -2002,7 +2047,10 @@
       "max_output_tokens": 128000,
       "input_token_price_per_m": 250000,
       "output_token_price_per_m": 2000000,
-      "cached_input_token_price_per_m": 25000
+      "cached_input_token_price_per_m": 25000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 5.2",
@@ -2024,7 +2072,10 @@
       "max_output_tokens": 128000,
       "input_token_price_per_m": 1750000,
       "output_token_price_per_m": 14000000,
-      "cached_input_token_price_per_m": 175000
+      "cached_input_token_price_per_m": 175000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 5.2 Chat",
@@ -2046,7 +2097,10 @@
       "max_output_tokens": 16400,
       "input_token_price_per_m": 1750000,
       "output_token_price_per_m": 14000000,
-      "cached_input_token_price_per_m": 175000
+      "cached_input_token_price_per_m": 175000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT 5.2 Codex",
@@ -2296,7 +2350,10 @@
       "max_output_tokens": 100000,
       "input_token_price_per_m": 15000000,
       "output_token_price_per_m": 60000000,
-      "cached_input_token_price_per_m": 7500000
+      "cached_input_token_price_per_m": 7500000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT o3",
@@ -2318,7 +2375,10 @@
       "max_output_tokens": 100000,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 8000000,
-      "cached_input_token_price_per_m": 500000
+      "cached_input_token_price_per_m": 500000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT o3 mini",
@@ -2340,7 +2400,10 @@
       "max_output_tokens": 100000,
       "input_token_price_per_m": 1100000,
       "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 550000
+      "cached_input_token_price_per_m": 550000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT o3 pro",
@@ -2362,7 +2425,10 @@
       "max_output_tokens": 100000,
       "input_token_price_per_m": 20000000,
       "output_token_price_per_m": 80000000,
-      "cached_input_token_price_per_m": 20000000
+      "cached_input_token_price_per_m": 20000000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT o4 mini",
@@ -2384,7 +2450,10 @@
       "max_output_tokens": 100000,
       "input_token_price_per_m": 1100000,
       "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 550000
+      "cached_input_token_price_per_m": 550000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen3-235B-A22B-Instruct-2507",
@@ -3121,7 +3190,10 @@
       ],
       "input_token_price_per_m": 1200000,
       "output_token_price_per_m": 4000000,
-      "cached_input_token_price_per_m": 240000
+      "cached_input_token_price_per_m": 240000,
+      "missing_since": "2026-08-31",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GLM 5.1",
@@ -3771,6 +3843,136 @@
       "status": 1,
       "id": "z-ai/glm-5.3",
       "upstream_id": "zai-org/glm-5.3",
+      "context_length": 262144,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000
+    },
+    {
+      "display_name": "Claude Opus 5 AWS",
+      "title": "anthropic/claude-opus-5-aws",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-5-aws",
+      "upstream_id": "anthropic/claude-opus-5-aws",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Sonnet 5 AWS",
+      "title": "anthropic/claude-sonnet-5-aws",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-5-aws",
+      "upstream_id": "anthropic/claude-sonnet-5-aws",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "DeepSeek V4 Flash Vision Exp",
+      "title": "deepseek-ai/deepseek-v4-flash-vision-exp",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-vision-exp",
+      "upstream_id": "deepseek-ai/deepseek-v4-flash-vision-exp",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 440000,
+      "output_token_price_per_m": 1320000,
+      "cached_input_token_price_per_m": 28000
+    },
+    {
+      "display_name": "GLM 5.3 Flash",
+      "title": "zai-org/glm-5.3-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "zai-org/glm-5.3-flash",
       "context_length": 1048576,
       "max_output_tokens": 131072,
       "supported_features": [
@@ -3792,11 +3994,11 @@
         "max_tokens",
         "logit_bias"
       ],
-      "input_token_price_per_m": 1638000,
-      "output_token_price_per_m": 5148000,
-      "cached_input_token_price_per_m": 304200
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 30000
     }
   ],
-  "generated_at": "2026-08-25T18:42:44Z",
-  "model_count": 139
+  "generated_at": "2026-09-02T03:25:34Z",
+  "model_count": 143
 }

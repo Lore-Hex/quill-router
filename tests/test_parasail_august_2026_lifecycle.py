@@ -158,12 +158,18 @@ def test_parasail_manifest_prunes_retired_rows_at_cutoff(
         for model_id, upstream_id in (*_RETIRING, *_REPLACEMENTS)
     ]
     # The manifest writer requires every first-party supplemental row to be
-    # refreshed. Include Kimi K2.7 Code, which is unrelated to this retirement.
-    rows.append(
-        {
-            "id": "moonshotai/kimi-k2.7-code",
-            "upstream_id": "parasail-kimi-k27-code",
-        }
+    # refreshed. Include current routes unrelated to this retirement.
+    rows.extend(
+        [
+            {
+                "id": "moonshotai/kimi-k2.7-code",
+                "upstream_id": "parasail-kimi-k27-code",
+            },
+            {
+                "id": "z-ai/glm-5.3",
+                "upstream_id": "parasail-glm-53",
+            },
+        ]
     )
     path = tmp_path / "parasail.json"
     path.write_text(json.dumps({"provider": "parasail", "models": rows}), encoding="utf-8")
@@ -174,6 +180,8 @@ def test_parasail_manifest_prunes_retired_rows_at_cutoff(
         model_id: ModelPrice(300_000, 1_200_000) for model_id, _ in _REPLACEMENTS
     }
     active_prices["moonshotai/kimi-k2.7-code"] = ModelPrice(750_000, 3_500_000)
+    active_prices["z-ai/glm-5.3"] = ModelPrice(1_400_000, 4_400_000)
+    monkeypatch.setattr(parasail, "_LIVE_MODEL_IDS", set(active_prices))
     parasail.write_provider_manifest(
         ProviderPricingResult(
             slug="parasail",

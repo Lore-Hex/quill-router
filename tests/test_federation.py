@@ -27,6 +27,7 @@ RECORD = {
     "workspace_id": "ws-1",
     "name": "prod key",
     "scopes": ["inference", "profile"],
+    "app_id": "coding-app",
     "disabled": False,
     "limit_microdollars": 5_000,
     "limit_daily_microdollars": 100,
@@ -173,6 +174,25 @@ class TestFederatedRecordSafety:
     def test_scopes_are_carried_and_missing_scopes_are_legacy(self) -> None:
         assert federated_api_key_from_record(RECORD).scopes == ["inference", "profile"]
         assert federated_api_key_from_record({k: v for k, v in RECORD.items() if k != "scopes"}).scopes == []
+
+    def test_app_id_is_carried_and_missing_app_id_is_legacy(self) -> None:
+        assert federated_api_key_from_record(RECORD).app_id == "coding-app"
+        without_app_id = {k: v for k, v in RECORD.items() if k != "app_id"}
+        assert federated_api_key_from_record(without_app_id).app_id == ""
+
+    def test_app_markup_terms_are_carried_and_legacy_record_defaults_to_zero(self) -> None:
+        imported = federated_api_key_from_record(
+            {
+                **RECORD,
+                "app_markup_basis_points": 1_250,
+                "app_owner_user_id": "home-owner",
+            }
+        )
+        assert imported.federated_app_markup_basis_points == 1_250
+        assert imported.federated_app_owner_user_id == "home-owner"
+        legacy = federated_api_key_from_record(RECORD)
+        assert legacy.federated_app_markup_basis_points == 0
+        assert legacy.federated_app_owner_user_id == ""
 
     def test_never_management(self) -> None:
         """A management key can mint keys and move money. Even if a home

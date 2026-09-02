@@ -631,6 +631,163 @@ def test_confirmed_deepseek_and_gmi_price_transitions_are_allowed(
     assert "deepseek/deepseek-v4-pro" in capsys.readouterr().out
 
 
+def test_confirmed_gmi_deepseek_flash_0731_transition_is_allowed(
+    tmp_path: Path, capsys
+) -> None:
+    from scripts.check_price_spike import main
+
+    before_payload = _make_endpoint_snapshot(
+        ("0.00000014", "0.00000028"),
+        [
+            (
+                "gmi",
+                "deepseek-ai/DeepSeek-V4-Flash-0731",
+                "0.00000014",
+                "0.00000028",
+            ),
+        ],
+        model_id="deepseek/deepseek-v4-flash-0731",
+    )
+    before_payload["models"][0]["endpoints"][0]["tag"] = "gmi"
+    before = _write(tmp_path, "before.json", before_payload)
+
+    after_payload = _make_endpoint_snapshot(
+        ("0.00000044", "0.00000132"),
+        [
+            (
+                "gmi",
+                "deepseek-ai/DeepSeek-V4-Flash-0731",
+                "0.00000044",
+                "0.00000132",
+            ),
+        ],
+        model_id="deepseek/deepseek-v4-flash-0731",
+    )
+    after_payload["models"][0]["endpoints"][0]["tag"] = "gmi"
+    after = _write(tmp_path, "after.json", after_payload)
+
+    assert main([str(before), str(after), "--summary"]) == 0
+    assert "deepseek/deepseek-v4-flash-0731" in capsys.readouterr().out
+
+
+def test_confirmed_gmi_snapshot_deepseek_price_transitions_are_allowed(
+    tmp_path: Path, capsys
+) -> None:
+    """Approve only the exact list-price corrections seen in GMI's feed."""
+
+    from scripts.check_price_spike import main
+
+    flash_before = _make_endpoint_snapshot(
+        ("0.00000014", "0.00000028"),
+        [
+            (
+                "gmi",
+                "deepseek-ai/DeepSeek-V4-Flash-0731",
+                "0.00000014",
+                "0.00000028",
+            )
+        ],
+        model_id="deepseek/deepseek-v4-flash-0731",
+    )
+    flash_after = _make_endpoint_snapshot(
+        ("0.00000044", "0.00000132"),
+        [
+            (
+                "gmi",
+                "deepseek-ai/DeepSeek-V4-Flash-0731",
+                "0.00000044",
+                "0.00000132",
+            )
+        ],
+        model_id="deepseek/deepseek-v4-flash-0731",
+    )
+    for payload in (flash_before, flash_after):
+        payload["models"][0]["endpoints"][0]["tag"] = "gmicloud/fp8"
+
+    pro_before = _make_endpoint_snapshot(
+        ("0.00000132", "0.00000396"),
+        [
+            (
+                "gmi",
+                "deepseek-ai/DeepSeek-V4-Pro",
+                "0.00000132",
+                "0.00000396",
+            )
+        ],
+        model_id="deepseek/deepseek-v4-pro",
+    )
+    pro_after = _make_endpoint_snapshot(
+        ("0.00000174", "0.00000348"),
+        [
+            (
+                "gmi",
+                "deepseek-ai/DeepSeek-V4-Pro",
+                "0.00000174",
+                "0.00000348",
+            )
+        ],
+        model_id="deepseek/deepseek-v4-pro",
+    )
+    for payload, cached in ((pro_before, "0.000000044"), (pro_after, "0.000000145")):
+        endpoint = payload["models"][0]["endpoints"][0]
+        endpoint["tag"] = "gmicloud/fp8"
+        endpoint["pricing"]["input_cache_read"] = cached
+
+    before = _write(
+        tmp_path,
+        "before.json",
+        {
+            "model_count": 2,
+            "models": flash_before["models"] + pro_before["models"],
+        },
+    )
+    after = _write(
+        tmp_path,
+        "after.json",
+        {
+            "model_count": 2,
+            "models": flash_after["models"] + pro_after["models"],
+        },
+    )
+
+    assert main([str(before), str(after), "--summary"]) == 0
+    output = capsys.readouterr().out
+    assert "deepseek/deepseek-v4-flash-0731" in output
+    assert "deepseek/deepseek-v4-pro" in output
+
+
+def test_confirmed_gmi_deepseek_pro_cached_transition_is_allowed() -> None:
+    route = (
+        "deepseek/deepseek-v4-pro "
+        "[gmi:gmicloud/fp8:deepseek-ai/DeepSeek-V4-Pro] cached-input"
+    )
+
+    failures, changes, removed = check(
+        {route: {"prompt": "0.000000044", "completion": "0"}},
+        {route: {"prompt": "0.000000145", "completion": "0"}},
+    )
+
+    assert failures == []
+    assert len(changes) == 1
+    assert removed == []
+
+
+def test_confirmed_gmi_canonical_deepseek_pro_cached_transition_is_allowed() -> None:
+    route = (
+        "deepseek/deepseek-v4-pro "
+        "[gmi:gmi:deepseek-ai/DeepSeek-V4-Pro] cached-input"
+    )
+
+    failures, changes, removed = check(
+        {route: {"prompt": "0.000000044", "completion": "0"}},
+        {route: {"prompt": "0.000000145", "completion": "0"}},
+    )
+
+    assert failures == []
+    assert len(changes) == 1
+    assert removed == []
+
+
 def test_confirmed_atlas_v4_flash_0731_transition_is_allowed(
     tmp_path: Path, capsys
 ) -> None:
@@ -931,3 +1088,110 @@ def test_unapproved_tinfoil_kimi_k3_price_transition_still_blocks(
 
     assert main([str(before), str(after), "--summary"]) == 1
     assert "PRICE SPIKE FAILURES" in capsys.readouterr().out
+
+
+def test_confirmed_io_net_price_transitions_are_allowed() -> None:
+    mistral = (
+        "mistralai/mistral-nemo-instruct-2407 "
+        "[io-net:io-net:mistralai/Mistral-Nemo-Instruct-2407]"
+    )
+    mistral_cached = f"{mistral} cached-input"
+    glm_cached = (
+        "z-ai/glm-5.3-flash "
+        "[io-net:io-net:zai-org/GLM-5.3-Flash] cached-input"
+    )
+    before = {
+        mistral: {"prompt": "0.000000029667", "completion": "0.000000076667"},
+        mistral_cached: {"prompt": "0.000000014834", "completion": "0"},
+        glm_cached: {"prompt": "0.00000003", "completion": "0"},
+    }
+    after = {
+        mistral: {"prompt": "0.0000000635", "completion": "0.00000009875"},
+        mistral_cached: {"prompt": "0.00000003175", "completion": "0"},
+        glm_cached: {"prompt": "0.000000075", "completion": "0"},
+    }
+
+    failures, changes, removed = check(before, after)
+
+    assert failures == []
+    assert len(changes) == 3
+    assert removed == []
+
+
+@pytest.mark.parametrize(
+    ("route", "old_price", "unapproved_price"),
+    [
+        (
+            "mistralai/mistral-nemo-instruct-2407 "
+            "[io-net:io-net:mistralai/Mistral-Nemo-Instruct-2407]",
+            "0.000000029667",
+            "0.0000000636",
+        ),
+        (
+            "mistralai/mistral-nemo-instruct-2407 "
+            "[io-net:io-net:mistralai/Mistral-Nemo-Instruct-2407] cached-input",
+            "0.000000014834",
+            "0.00000003176",
+        ),
+        (
+            "z-ai/glm-5.3-flash "
+            "[io-net:io-net:zai-org/GLM-5.3-Flash] cached-input",
+            "0.00000003",
+            "0.000000076",
+        ),
+    ],
+)
+def test_different_io_net_price_transitions_still_block(
+    route: str,
+    old_price: str,
+    unapproved_price: str,
+) -> None:
+    before = {route: {"prompt": old_price, "completion": "0"}}
+    after = {route: {"prompt": unapproved_price, "completion": "0"}}
+
+    failures, _changes, _removed = check(before, after)
+
+    assert len(failures) == 1
+    assert route in failures[0]
+
+
+def test_confirmed_digitalocean_official_price_transitions_are_allowed() -> None:
+    v32 = "deepseek/deepseek-v3.2 [digitalocean:digitalocean:deepseek-3.2]"
+    flash = (
+        "deepseek/deepseek-v4-flash "
+        "[digitalocean:digitalocean:deepseek-4-flash]"
+    )
+    pro = (
+        "deepseek/deepseek-v4-pro "
+        "[digitalocean:digitalocean:deepseek-v4-pro]"
+    )
+    mimo = "xiaomi/mimo-v2.5-pro [digitalocean:digitalocean:mimo-v2.5-pro]"
+    glm = "z-ai/glm-5.2 [digitalocean:digitalocean:glm-5.2]"
+    before = {
+        v32: {"prompt": "0.00000025", "completion": "0.0000008"},
+        f"{v32} cached-input": {"prompt": "0.000000075", "completion": "0"},
+        flash: {"prompt": "0.000000068", "completion": "0.000000168"},
+        pro: {"prompt": "0.00000087", "completion": "0.00000174"},
+        f"{pro} cached-input": {"prompt": "0.000000174", "completion": "0"},
+        mimo: {"prompt": "0.0000004", "completion": "0.0000015"},
+        f"{mimo} cached-input": {"prompt": "0.00000008", "completion": "0"},
+        glm: {"prompt": "0.0000007", "completion": "0.0000022"},
+        f"{glm} cached-input": {"prompt": "0.000000105", "completion": "0"},
+    }
+    after = {
+        v32: {"prompt": "0.0000005", "completion": "0.0000016"},
+        f"{v32} cached-input": {"prompt": "0.00000015", "completion": "0"},
+        flash: {"prompt": "0.00000014", "completion": "0.00000028"},
+        pro: {"prompt": "0.00000174", "completion": "0.00000348"},
+        f"{pro} cached-input": {"prompt": "0.000000348", "completion": "0"},
+        mimo: {"prompt": "0.0000008", "completion": "0.000003"},
+        f"{mimo} cached-input": {"prompt": "0.00000016", "completion": "0"},
+        glm: {"prompt": "0.0000014", "completion": "0.0000044"},
+        f"{glm} cached-input": {"prompt": "0.00000021", "completion": "0"},
+    }
+
+    failures, changes, removed = check(before, after)
+
+    assert failures == []
+    assert len(changes) == len(before)
+    assert removed == []

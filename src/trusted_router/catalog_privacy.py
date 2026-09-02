@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from trusted_router.catalog_data import (
     _MODEL_PROVIDER_PRIVACY_OVERRIDES,
+    _PHALA_STANDARD_PASSTHROUGH_PRIVACY_OVERRIDE,
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_NO_STORE,
     PRIVACY_TIER_STANDARD,
@@ -65,6 +66,21 @@ def _model_provider_privacy_override(
     )
 
 
+def _endpoint_privacy_override(
+    endpoint: ModelEndpoint,
+) -> ModelProviderPrivacyOverride | None:
+    if endpoint.provider == "phala":
+        # Only the exact phala/* upstream namespace selects Phala's
+        # Confidential AI route. Fail closed for missing or upstream-author
+        # IDs so a newly discovered pass-through model cannot inherit the
+        # provider-wide TEE/ZDR posture before a human reviews it.
+        upstream_id = (endpoint.upstream_id or "").strip().casefold()
+        if upstream_id.startswith("phala/"):
+            return None
+        return _PHALA_STANDARD_PASSTHROUGH_PRIVACY_OVERRIDE
+    return _model_provider_privacy_override(endpoint.model_id, endpoint.provider)
+
+
 def model_provider_privacy_tier(model_id: str, provider_slug: str) -> int:
     override = _model_provider_privacy_override(model_id, provider_slug)
     if override is not None:
@@ -73,7 +89,7 @@ def model_provider_privacy_tier(model_id: str, provider_slug: str) -> int:
 
 
 def endpoint_privacy_tier(endpoint: ModelEndpoint) -> int:
-    override = _model_provider_privacy_override(endpoint.model_id, endpoint.provider)
+    override = _endpoint_privacy_override(endpoint)
     if override is not None:
         return override.privacy_tier
     provider = PROVIDERS[endpoint.provider]
@@ -84,7 +100,7 @@ def endpoint_privacy_tier(endpoint: ModelEndpoint) -> int:
 
 def endpoint_stores_content(endpoint: ModelEndpoint) -> bool:
     """Return the retention posture for this exact provider/model route."""
-    override = _model_provider_privacy_override(endpoint.model_id, endpoint.provider)
+    override = _endpoint_privacy_override(endpoint)
     if override is not None and override.stores_content is not None:
         return override.stores_content
     if endpoint_zero_data_retention(endpoint) is True:
@@ -118,7 +134,7 @@ def endpoint_zero_data_retention(endpoint: ModelEndpoint) -> bool | None:
     provider has it; the test fails loudly if a catalog edit introduces one,
     rather than either function quietly inventing an answer.
     """
-    override = _model_provider_privacy_override(endpoint.model_id, endpoint.provider)
+    override = _endpoint_privacy_override(endpoint)
     if override is not None and override.provider_zero_data_retention is not None:
         return override.provider_zero_data_retention
     provider = PROVIDERS[endpoint.provider]
@@ -131,7 +147,7 @@ def endpoint_zero_data_retention_scope(endpoint: ModelEndpoint) -> str | None:
     """Describe why an endpoint qualifies without broadening the claim."""
     if endpoint_zero_data_retention(endpoint) is not True:
         return None
-    override = _model_provider_privacy_override(endpoint.model_id, endpoint.provider)
+    override = _endpoint_privacy_override(endpoint)
     if override is not None and override.provider_zero_data_retention is True:
         return "model_endpoint"
     provider = PROVIDERS[endpoint.provider]
@@ -155,11 +171,31 @@ def model_provider_e2ee(model_id: str, provider_slug: str) -> bool | None:
 
 
 def endpoint_confidential_compute(endpoint: ModelEndpoint) -> bool | None:
-    return model_provider_confidential_compute(endpoint.model_id, endpoint.provider)
+    override = _endpoint_privacy_override(endpoint)
+    if override is not None and override.provider_confidential_compute is not None:
+        return override.provider_confidential_compute
+    return PROVIDERS[endpoint.provider].provider_confidential_compute
 
 
 def endpoint_e2ee(endpoint: ModelEndpoint) -> bool | None:
-    return model_provider_e2ee(endpoint.model_id, endpoint.provider)
+    override = _endpoint_privacy_override(endpoint)
+    if override is not None and override.provider_e2ee is not None:
+        return override.provider_e2ee
+    return PROVIDERS[endpoint.provider].provider_e2ee
+
+
+def endpoint_provider_policy(endpoint: ModelEndpoint) -> str:
+    override = _endpoint_privacy_override(endpoint)
+    if override is not None and override.provider_policy is not None:
+        return override.provider_policy
+    return PROVIDERS[endpoint.provider].provider_policy
+
+
+def endpoint_provider_policy_url(endpoint: ModelEndpoint) -> str | None:
+    override = _endpoint_privacy_override(endpoint)
+    if override is not None and override.provider_policy_url is not None:
+        return override.provider_policy_url
+    return PROVIDERS[endpoint.provider].provider_policy_url
 
 
 def endpoint_meets_privacy_requirement(endpoint: ModelEndpoint, requirement: int) -> bool:

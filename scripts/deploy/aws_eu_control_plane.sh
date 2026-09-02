@@ -104,6 +104,7 @@ ATTESTATION_PCR0="${ATTESTATION_PCR0:?set ATTESTATION_PCR0 to the published encl
 # component in src/trusted_router/synthetic/components.py — renaming one here
 # silently unpublishes its component, so change both together.
 GATEWAY_REGION_TARGETS="${GATEWAY_REGION_TARGETS:-eu-west-1=quill-enclave-nlb-6ed55aa238055cfc.elb.eu-west-1.amazonaws.com,eu-west-3=quill-enclave-nlb-aa2d3be423fa9027.elb.eu-west-3.amazonaws.com}"
+SYNTHETIC_RUN_DEADLINE_SECONDS="${SYNTHETIC_RUN_DEADLINE_SECONDS:-240}"
 
 release_aws_control_plane_deploy_mutex() {
   local deploy_status=$?
@@ -300,6 +301,7 @@ CONFIG=$(cat <<JSON
         "TR_SYNTHETIC_IMAGE_PROBE_ENABLED": "false",
         "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL": "https://aws.trustedrouter.com",
         "TR_SYNTHETIC_CONTROL_PLANE_BASE_URL": "https://trustedrouter.com",
+        "TR_SYNTHETIC_RUN_DEADLINE_SECONDS": "${SYNTHETIC_RUN_DEADLINE_SECONDS}",
 
         "TR_SYNTHETIC_SCHEDULER_INTERVAL_SECONDS": "0",
         "TR_REMEDIATOR_IN_PROCESS_ENABLED": "false",
@@ -427,6 +429,69 @@ echo "https://${URL}"
 if [ "${SKIP_EVENTBRIDGE:-0}" != "1" ]; then
   log "aligning EventBridge rule tr-eu-synthetic-1min"
 
+  RULE_NAME="tr-eu-synthetic-1min"
+  RULE_ARN="arn:aws:events:${REGION}:${ACCOUNT}:rule/${RULE_NAME}"
+  DLQ_NAME="tr-eu-synthetic-dlq"
+  DLQ_ARN="arn:aws:sqs:${REGION}:${ACCOUNT}:${DLQ_NAME}"
+  DLQ_URL="https://sqs.${REGION}.amazonaws.com/${ACCOUNT}/${DLQ_NAME}"
+  ALARM_TOPIC_NAME="tr-eu-synthetic-alarms"
+  ALARM_TOPIC_ARN="arn:aws:sns:${REGION}:${ACCOUNT}:${ALARM_TOPIC_NAME}"
+
+  if aws sqs get-queue-url --region "$REGION" --queue-name "$DLQ_NAME" >/dev/null 2>&1; then
+    log "reusing SQS DLQ ${DLQ_NAME}"
+  else
+    log "creating SQS DLQ ${DLQ_NAME}"
+    aws sqs create-queue --region "$REGION" --queue-name "$DLQ_NAME" >/dev/null
+  fi
+
+  # EventBridge rule DLQs require a resource policy in addition to the target
+  # execution role permission. Reconcile both deterministic policies on every
+  # run: set-queue-attributes and put-role-policy are idempotent and repair
+  # manual drift instead of treating this as a one-time bootstrap.
+  DLQ_ATTRIBUTES=$(python3 - "$DLQ_ARN" "$RULE_ARN" <<'PY'
+import json
+import sys
+
+queue_arn, rule_arn = sys.argv[1:3]
+policy = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "AllowEventBridgeRuleToSendToDLQ",
+            "Effect": "Allow",
+            "Principal": {"Service": "events.amazonaws.com"},
+            "Action": "sqs:SendMessage",
+            "Resource": queue_arn,
+            "Condition": {"ArnEquals": {"aws:SourceArn": rule_arn}},
+        }
+    ],
+}
+print(json.dumps({"Policy": json.dumps(policy, separators=(",", ":"))}))
+PY
+)
+  aws sqs set-queue-attributes --region "$REGION" --queue-url "$DLQ_URL" \
+    --attributes "$DLQ_ATTRIBUTES"
+
+  ROLE_NAME="tr-eu-eventbridge-invoke-par"
+  ROLE_ARN="arn:aws:iam::${ACCOUNT}:role/${ROLE_NAME}"
+  DLQ_ROLE_POLICY=$(python3 - "$DLQ_ARN" <<'PY'
+import json
+import sys
+
+print(json.dumps({
+    "Version": "2012-10-17",
+    "Statement": [{
+        "Sid": "SendSyntheticFailuresToDLQ",
+        "Effect": "Allow",
+        "Action": "sqs:SendMessage",
+        "Resource": sys.argv[1],
+    }],
+}))
+PY
+)
+  aws iam put-role-policy --role-name "$ROLE_NAME" \
+    --policy-name tr-eu-synthetic-dlq-send --policy-document "$DLQ_ROLE_POLICY"
+
   # Re-authorize the connection with the CURRENT observer-only token.
   #
   # The connection stores its own copy of the credential. When the token
@@ -453,12 +518,11 @@ if [ "${SKIP_EVENTBRIDGE:-0}" != "1" ]; then
   log "connection AUTHORIZED with current token"
 
   DEST_ARN=$(aws events list-api-destinations --region "$REGION" --name-prefix tr-eu-synthetic-run --query 'ApiDestinations[0].ApiDestinationArn' --output text)
-  ROLE_ARN="arn:aws:iam::${ACCOUNT}:role/tr-eu-eventbridge-invoke-par"
-  TARGETS=$(python3 - "$DEST_ARN" "$ROLE_ARN" "$REGION" <<'PY'
+  TARGETS=$(python3 - "$DEST_ARN" "$ROLE_ARN" "$REGION" "$DLQ_ARN" <<'PY'
 import json
 import sys
 
-dest_arn, role_arn, region = sys.argv[1:4]
+dest_arn, role_arn, region, dlq_arn = sys.argv[1:5]
 rule_input = {
     "monitor_region": region,
     "rotation_count": 8,
@@ -477,13 +541,63 @@ print(json.dumps([
         "Id": "synthetic",
         "Arn": dest_arn,
         "RoleArn": role_arn,
+        "DeadLetterConfig": {"Arn": dlq_arn},
         "Input": json.dumps(rule_input),
     }
 ]))
 PY
 )
-  aws events put-rule --region "$REGION" --name tr-eu-synthetic-1min --schedule-expression 'rate(2 minutes)' --state ENABLED >/dev/null
-  aws events put-targets --region "$REGION" --rule tr-eu-synthetic-1min --targets "$TARGETS" >/dev/null
+  aws events put-rule --region "$REGION" --name "$RULE_NAME" --schedule-expression 'rate(2 minutes)' --state ENABLED >/dev/null
+  aws events put-targets --region "$REGION" --rule "$RULE_NAME" --targets "$TARGETS" >/dev/null
+
+  # tr-ops-chat-cloudwatch-alarms exists only in us-east-1. CloudWatch alarm
+  # state-change events and SNS alarm actions are regional, and this repo has
+  # no established cross-region forwarding stack to mirror safely. Use the
+  # existing SNS alarm-action pattern in Paris, but do not invent a subscriber:
+  # an operator MUST subscribe tr-eu-synthetic-alarms to the approved paging
+  # destination before treating these alarms as chat-paged.
+  if aws sns get-topic-attributes --region "$REGION" \
+      --topic-arn "$ALARM_TOPIC_ARN" >/dev/null 2>&1; then
+    log "reusing regional alarm topic ${ALARM_TOPIC_NAME}"
+  else
+    log "creating regional alarm topic ${ALARM_TOPIC_NAME}"
+    aws sns create-topic --region "$REGION" --name "$ALARM_TOPIC_NAME" >/dev/null
+  fi
+  ALARM_SUBSCRIPTIONS=$(aws sns list-subscriptions-by-topic --region "$REGION" \
+    --topic-arn "$ALARM_TOPIC_ARN" --query 'length(Subscriptions)' --output text 2>/dev/null || echo 0)
+  ALARM_SUBSCRIPTIONS="${ALARM_SUBSCRIPTIONS:-0}"
+  if [ "$ALARM_SUBSCRIPTIONS" = "0" ] || [ "$ALARM_SUBSCRIPTIONS" = "None" ]; then
+    echo "WARNING: ${ALARM_TOPIC_ARN} has no subscription; operator must wire the approved paging destination" >&2
+  fi
+
+  FAILED_ALARM="tr-eu-synthetic-failed-invocations"
+  if aws cloudwatch describe-alarms --region "$REGION" --alarm-names "$FAILED_ALARM" \
+      --query 'length(MetricAlarms)' --output text | grep -qx 1; then
+    log "reconciling alarm ${FAILED_ALARM}"
+  else
+    log "creating alarm ${FAILED_ALARM}"
+  fi
+  aws cloudwatch put-metric-alarm --region "$REGION" --alarm-name "$FAILED_ALARM" \
+    --alarm-description "EventBridge failed to invoke the AWS EU synthetic monitor" \
+    --namespace AWS/Events --metric-name FailedInvocations --dimensions "Name=RuleName,Value=${RULE_NAME}" \
+    --statistic Sum --period 300 --evaluation-periods 3 --datapoints-to-alarm 1 \
+    --threshold 0 --comparison-operator GreaterThanThreshold \
+    --treat-missing-data notBreaching --actions-enabled --alarm-actions "$ALARM_TOPIC_ARN"
+
+  DLQ_ALARM="tr-eu-synthetic-dlq-messages-visible"
+  if aws cloudwatch describe-alarms --region "$REGION" --alarm-names "$DLQ_ALARM" \
+      --query 'length(MetricAlarms)' --output text | grep -qx 1; then
+    log "reconciling alarm ${DLQ_ALARM}"
+  else
+    log "creating alarm ${DLQ_ALARM}"
+  fi
+  aws cloudwatch put-metric-alarm --region "$REGION" --alarm-name "$DLQ_ALARM" \
+    --alarm-description "An AWS EU synthetic invocation was dropped into the DLQ" \
+    --namespace AWS/SQS --metric-name ApproximateNumberOfMessagesVisible \
+    --dimensions "Name=QueueName,Value=${DLQ_NAME}" --statistic Maximum \
+    --period 300 --evaluation-periods 1 --datapoints-to-alarm 1 \
+    --threshold 0 --comparison-operator GreaterThanThreshold \
+    --treat-missing-data notBreaching --actions-enabled --alarm-actions "$ALARM_TOPIC_ARN"
   log "rule aligned: one synthetic + remediation pass every two minutes"
 fi
 

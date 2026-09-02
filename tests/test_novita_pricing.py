@@ -342,6 +342,80 @@ def test_novita_zero_price_trial_is_classified_without_blocking_refresh(
     assert novita._new_required_price_ids(rows) == frozenset()
 
 
+def test_novita_fetch_and_writer_exclude_zero_price_trial(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    model_id = "inclusionai/ling-3.0-flash-fin"
+    paid_model_id = "moonshotai/kimi-k3"
+    manifest_path = tmp_path / "novita.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "provider": "novita",
+                "price_scale_to_microdollars_per_million_tokens": 100,
+                "models": [
+                    {"id": paid_model_id},
+                    {
+                        "id": model_id,
+                        "input_token_price_per_m": 0,
+                        "output_token_price_per_m": 0,
+                        "routable": False,
+                        "routable_reason": "zero-price-unbillable",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    discovered = {
+        paid_model_id: {
+            "id": paid_model_id,
+            "upstream_id": paid_model_id,
+            "status": 1,
+        },
+        model_id: {
+            "id": model_id,
+            "upstream_id": model_id,
+            "status": 1,
+            "routable": False,
+            "routable_reason": "zero-price-unbillable",
+        },
+    }
+    monkeypatch.setattr(novita, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(novita, "_live_catalog", lambda: (discovered, {}))
+    monkeypatch.setattr(
+        novita,
+        "fetch_provider",
+        lambda **_kwargs: ProviderPricingResult(
+            slug="novita",
+            prices={
+                paid_model_id: ModelPrice(
+                    prompt_micro_per_m=3_000_000,
+                    completion_micro_per_m=15_000_000,
+                ),
+                model_id: ModelPrice(
+                    prompt_micro_per_m=0,
+                    completion_micro_per_m=0,
+                ),
+            },
+            source="html",
+            fetched_url=novita.URL,
+        ),
+    )
+    monkeypatch.setattr(novita, "EXPECTED_MODELS", [paid_model_id])
+
+    result = novita.fetch()
+
+    assert model_id not in result.prices
+    novita.write_provider_manifest(result)
+    rows = json.loads(manifest_path.read_text(encoding="utf-8"))["models"]
+    row = next(row for row in rows if row["id"] == model_id)
+    assert row["routable"] is False
+    assert "input_token_price_per_m" not in row
+    assert "output_token_price_per_m" not in row
+
+
 def test_novita_manifest_writer_appends_live_priced_model(
     tmp_path: Path,
     monkeypatch,
@@ -396,6 +470,4 @@ def test_novita_manifest_writer_appends_live_priced_model(
             "output_token_price_per_m": 150_000,
         }
     ]
-    assert notes == [
-        "novita: refreshed provider_models/novita.json (1 priced rows, appended 1)"
-    ]
+    assert notes == ["novita: refreshed provider_models/novita.json (1 priced rows, appended 1)"]

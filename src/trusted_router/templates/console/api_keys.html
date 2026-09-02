@@ -102,14 +102,16 @@
   </div>
 </section>
 {% if keys %}
-<details class="panel key-create-panel" id="new-api-key">
-  <summary>
-    <span>Create a new API key</span>
-    <span class="summary-hint">Open only when you need another application or environment key.</span>
-  </summary>
+<section class="panel key-create-panel" id="new-api-key">
+  <div class="panel-head">
+    <div>
+      <h2>Create a new API key</h2>
+      <p class="panel-kicker">Use a separate key for each application or environment.</p>
+    </div>
+  </div>
   <div class="panel-body">
     {{ create_key_form() }}
   </div>
-</details>
+</section>
 {% endif %}
 {% endblock %}

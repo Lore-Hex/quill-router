@@ -2,10 +2,10 @@
   "_about": "Provider-native supplement for Wafer serverless API. Refreshed hourly from Wafer's OpenAI-compatible /v1/models feed.",
   "provider": "wafer",
   "source": "https://pass.wafer.ai/v1/models",
-  "generated_at": "2026-08-25T18:42:44Z",
+  "generated_at": "2026-09-02T03:25:34Z",
   "price_scale": "microdollars_per_million",
   "zdr_header": "Wafer-ZDR: required",
-  "model_count": 9,
+  "model_count": 11,
   "models": [
     {
       "id": "minimax/minimax-m3",
@@ -80,7 +80,8 @@
       "output_token_price_per_m": 3960000,
       "zdr_supported": true,
       "context_length": 1048576,
-      "cached_input_token_price_per_m": 230000
+      "cached_input_token_price_per_m": 230000,
+      "retirement_at": "2026-09-05T06:59:00Z"
     },
     {
       "id": "z-ai/glm-5.2-fast",
@@ -129,9 +130,9 @@
       ],
       "zdr_supported": true,
       "context_length": 1048576,
-      "input_token_price_per_m": 280000,
-      "output_token_price_per_m": 560000,
-      "cached_input_token_price_per_m": 70000
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 250000,
+      "cached_input_token_price_per_m": 50000
     },
     {
       "id": "moonshotai/kimi-k3",
@@ -178,6 +179,40 @@
       "missing_since": "2026-08-19",
       "routable": false,
       "routable_reason": "delisted-upstream"
+    },
+    {
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "GLM-5.3-Flash",
+      "display_name": "GLM-5.3-Flash",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "zdr_supported": true,
+      "context_length": 1048576,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 30000,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "GLM-5.3",
+      "display_name": "GLM-5.3",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "zdr_supported": true,
+      "context_length": 1048576,
+      "routable": true,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000
     }
   ]
 }

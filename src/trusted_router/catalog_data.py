@@ -137,6 +137,10 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
             "akashml",
             "arcee",
             "byteplus",
+            "baidu",
+            "darkbloom",
+            "fal",
+            "huggingface",
             "inception",
             "io-net",
             "krea",
@@ -148,9 +152,11 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
             "perplexity",
             "reka",
             "riverflow",
+            "poolside",
             "sail-research",
             "sakana",
             "sambanova",
+            "tencent",
         )
     },
     "openrouter": (
@@ -243,6 +249,24 @@ _VENICE_PRIVATE_POLICY = (
     "TEE or E2EE and is excluded from trustedrouter/e2e."
 )
 
+_PHALA_STANDARD_PASSTHROUGH_PRIVACY_OVERRIDE = ModelProviderPrivacyOverride(
+    privacy_tier=PRIVACY_TIER_STANDARD,
+    stores_content=True,
+    provider_zero_data_retention=False,
+    provider_confidential_compute=False,
+    provider_e2ee=False,
+    provider_policy=(
+        "Phala currently serves this model through an upstream-author "
+        "pass-through route, not a phala/* Confidential AI endpoint. "
+        "TrustedRouter therefore makes no ZDR, confidential-compute, or "
+        "E2EE claim for this exact route."
+    ),
+    provider_policy_url=(
+        "https://docs.phala.com/phala-cloud/confidential-ai/"
+        "confidential-model/confidential-ai-api"
+    ),
+)
+
 
 _MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOverride] = {
     **{
@@ -287,26 +311,14 @@ _MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOve
             "trustedrouter/zdr and provider.min_privacy=zdr routing."
         ),
     ),
-    (
-        "moonshotai/kimi-k3",
-        "phala",
-    ): ModelProviderPrivacyOverride(
-        privacy_tier=PRIVACY_TIER_STANDARD,
-        stores_content=True,
-        provider_zero_data_retention=False,
-        provider_confidential_compute=False,
-        provider_e2ee=False,
-        provider_policy=(
-            "Phala currently serves this model through the upstream-author "
-            "pass-through route, not a phala/* Confidential AI endpoint. "
-            "TrustedRouter therefore makes no ZDR, confidential-compute, or "
-            "E2EE claim for this exact route."
-        ),
-        provider_policy_url=(
-            "https://docs.phala.com/phala-cloud/confidential-ai/"
-            "confidential-model/confidential-ai-api"
-        ),
-    ),
+    **{
+        (model_id, "phala"): _PHALA_STANDARD_PASSTHROUGH_PRIVACY_OVERRIDE
+        for model_id in (
+            "moonshotai/kimi-k3",
+            "z-ai/glm-5.2",
+            "z-ai/glm-5.3-flash",
+        )
+    },
     **{
         (model_id, "venice"): ModelProviderPrivacyOverride(
             privacy_tier=PRIVACY_TIER_ZERO_RETENTION,
@@ -330,6 +342,7 @@ class Model:
     supports_messages: bool = False
     supports_embeddings: bool = False
     supports_video: bool = False
+    supported_parameters: tuple[str, ...] = ()
     input_modalities: tuple[str, ...] = ("text",)
     output_modalities: tuple[str, ...] = ("text",)
     prepaid_available: bool = False
@@ -358,6 +371,7 @@ class ModelEndpoint:
     provider: str
     usage_type: str
     upstream_id: str | None = None
+    supported_parameters: tuple[str, ...] = ()
     prompt_price_microdollars_per_million_tokens: int = 0
     completion_price_microdollars_per_million_tokens: int = 0
     published_prompt_price_microdollars_per_million_tokens: int = 0
@@ -469,7 +483,7 @@ PROVIDERS: dict[str, Provider] = {
             "Contracted Zero Data Retention is active for TrustedRouter's managed "
             "OpenAI account, effective July 28, 2026, and live enforcement was "
             "verified on July 29, 2026. This guarantee applies only to "
-            "TrustedRouter-funded prepaid routes; customer BYOK credentials use the "
+            "TrustedRouter-funded routes; customer BYOK credentials use the "
             "data controls on the customer's own OpenAI organization or project."
         ),
         provider_policy_url=(
@@ -503,7 +517,7 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy=(
             "TrustedRouter's managed Vertex AI account is covered by contractual "
             "Zero Data Retention. This guarantee applies only to TrustedRouter-funded "
-            "prepaid routes. TrustedRouter does not invoke Google Search or Maps "
+            "routes. TrustedRouter does not invoke Google Search or Maps "
             "grounding or Gemini Live session resumption on these routes. Google AI "
             "Studio is classified separately."
         ),
@@ -1687,9 +1701,10 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=False,
         supports_byok=False,
         provider_policy=(
-            "BytePlus ModelArk requires region-specific activated model endpoint IDs. "
-            "The API key alone is insufficient to create safe routes, so this "
-            "provider remains non-routable pending endpoint configuration."
+            "The BytePlus ModelArk key authenticates and discovers direct model IDs, "
+            "but this account has not activated the model service. Routes remain "
+            "dark until activation, a paid canary, and exact first-party pricing "
+            "all succeed."
         ),
         provider_policy_url="https://docs.byteplus.com/en/docs/ModelArk",
     ),
@@ -1805,6 +1820,80 @@ PROVIDERS: dict[str, Provider] = {
             "remains non-routable until a concrete hosted endpoint is configured."
         ),
         provider_policy_url="https://docs.liquid.ai/",
+    ),
+    "fal": Provider(
+        slug="fal",
+        name="fal.ai",
+        supports_chat=False,
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "TrustedRouter supports a bounded FAL image-generation route with "
+            "first-party per-megapixel pricing and a paid generation canary. "
+            "No contractual ZDR, confidential-compute, or E2EE claim is tracked."
+        ),
+        provider_policy_url="https://fal.ai/models/fal-ai/flux/schnell/api",
+    ),
+    "tencent": Provider(
+        slug="tencent",
+        name="Tencent Cloud TokenHub",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "The TokenHub inference key authenticates and its provider-native "
+            "catalog is discoverable, but inference is blocked by insufficient "
+            "account balance. Routes remain dark until a paid canary succeeds "
+            "and exact first-party postpaid prices are joined."
+        ),
+        provider_policy_url="https://www.tencentcloud.com/document/product/1300/80632",
+    ),
+    "baidu": Provider(
+        slug="baidu",
+        name="Baidu AI Cloud Qianfan",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Credentials are staged for provider discovery, but no canaried route "
+            "with exact first-party pricing is published yet. No contractual ZDR, "
+            "confidential-compute, or E2EE claim is tracked."
+        ),
+        provider_policy_url="https://cloud.baidu.com/doc/WENXINWORKSHOP/",
+    ),
+    "darkbloom": Provider(
+        slug="darkbloom",
+        name="Darkbloom",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Credentials are staged for provider discovery, but no canaried route "
+            "with exact first-party pricing is published yet. No contractual ZDR, "
+            "confidential-compute, or E2EE claim is tracked."
+        ),
+        provider_policy_url="https://darkbloom.dev/",
+    ),
+    "huggingface": Provider(
+        slug="huggingface",
+        name="Hugging Face Inference Providers",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Credentials are staged for provider discovery, but no canaried route "
+            "with an unambiguous downstream provider and exact price is published. "
+            "No contractual ZDR, confidential-compute, or E2EE claim is tracked."
+        ),
+        provider_policy_url="https://huggingface.co/docs/inference-providers/",
+    ),
+    "poolside": Provider(
+        slug="poolside",
+        name="Poolside",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "Credentials are staged, but no shared canaried catalog with exact "
+            "first-party token pricing is published yet. No contractual ZDR, "
+            "confidential-compute, or E2EE claim is tracked."
+        ),
+        provider_policy_url="https://poolside.ai/",
     ),
     # Cohere — first-party embeddings (embed-v4.0, embed-*-v3.0) plus
     # Command chat models. Embeddings are Cohere's flagship retrieval
@@ -1940,6 +2029,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "sakana",
         "perplexity",
         "krea",
+        "fal",
         "nvidia-nim",
         "jina",
         "nebius",
@@ -2400,8 +2490,11 @@ SYNTH_QUALITY_MODEL_ORDER = (
     DEEPSEEK_V4_PRO_0813_MODEL_ID,
 )
 
+# Every member must serve the 1M window this model advertises. minimax-m3 tops
+# out at 524288 and was only ever eligible here because upstream reseller
+# metadata over-reported its context; routing does not filter candidates by
+# capacity, so a large request could land on it and fail at the provider.
 SYNTH_QUALITY_1M_MODEL_ORDER = (
-    "minimax/minimax-m3",
     "xiaomi/mimo-v2.5-pro",
     "z-ai/glm-5.2",
     DEEPSEEK_V4_PRO_0423_MODEL_ID,
@@ -2791,16 +2884,15 @@ _EMBEDDING_SPECS: tuple[_EmbeddingSpec, ...] = (
 )
 
 _PROVIDER_SERVED_MODEL_ALLOWLIST: dict[str, frozenset[str]] = {
-    # 2026-07-18: GMI's /models listing is aspirational — 7d synthetic probes
-    # show exactly four models served on our account (590-670 successes each)
-    # while the other ~45 listed models have ZERO successes ever (uniform
-    # upstream 404 "No matching target server found"). Route Credits traffic
-    # only to the verified set; BYOK stays visible (customer accounts may
-    # differ). A new GMI model earns its way in via probe successes.
+    # GMI's /models listing has historically included models that were not
+    # callable on our account. Route Credits traffic only to the verified set;
+    # BYOK stays visible because customer entitlements may differ. A new GMI
+    # model earns its way in through a paid exact-content canary.
     "gmi": frozenset(
         {
             "deepseek/deepseek-v4-pro",
             "moonshotai/kimi-k3",
+            "tencent/hy4-preview",
             "z-ai/glm-5",
             "z-ai/glm-5.1",
             "z-ai/glm-5.2",

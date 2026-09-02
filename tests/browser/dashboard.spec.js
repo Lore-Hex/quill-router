@@ -16,7 +16,7 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
   const homepageStats = page.locator(".charter-stat-band .charter-stat");
   await expect(homepageStats).toHaveCount(3);
   await expect(homepageStats.nth(0)).toContainText("600+AI models");
-  await expect(homepageStats.nth(1)).toContainText("81+providers");
+  await expect(homepageStats.nth(1)).toContainText("90+providers");
   await expect(homepageStats.last()).toContainText("3 cloudsGCP · AWS · Azure");
   await expect(page.locator(".region-map-card")).toHaveCount(0);
   await expect(page.locator("body")).toHaveCSS("font-size", "15.5px");
@@ -194,7 +194,7 @@ test("new API key quickstart stays inside its reveal panel", async ({ page }) =>
                           <h3>Paste this short message into a Claude Code, Codex, or your favorite agent chat.</h3>
                           <div class="agent-message-row">
                             <div class="agent-message" id="layout-agent-message" data-copy-lines>
-                            <span class="agent-prompt-line">Use TrustedRouter.com with the key below to ask DeepSeek: "What is the capital of France?"</span>
+                            <span class="agent-prompt-line">Use TrustedRouter.com with the key below to ask DeepSeek Flash: "What is the capital of France?"</span>
                             <span class="agent-prompt-line">TrustedRouter API key: sk-tr-v1-layout-regression-key</span>
                             </div>
                             <button class="btn secret-copy-btn" type="button" data-copy-secret="layout-agent-message" aria-label="Copy complete agent message">Copy</button>
@@ -221,7 +221,7 @@ test("new API key quickstart stays inside its reveal panel", async ({ page }) =>
   const message = reveal.locator(".agent-message");
   const directKey = reveal.locator("#layout-api-key");
   await expect(heading).toBeVisible();
-  await expect(message).toContainText('ask DeepSeek: "What is the capital of France?"');
+  await expect(message).toContainText('ask DeepSeek Flash: "What is the capital of France?"');
   await expect(message).not.toContainText("stream the answer into this chat as it arrives");
   await expect(message).not.toContainText("Paste this short message");
   await expect(message).not.toContainText("Keep this agent's settings");
@@ -328,7 +328,7 @@ test("first-call activation runs live request and copies agent chat prompt", asy
         </head><body class="console"><main class="console-main"><div class="console-page-body">
           <div class="activation-flow" data-first-call-flow data-endpoint="/chat-proxy/v1/chat/completions" data-key-source="welcome-api-key">
             <ol class="activation-progress"><li class="complete"><span>1</span><strong>Account</strong></li><li class="current"><span>2</span><strong>First call</strong></li><li><span>3</span><strong>Connect app</strong></li></ol>
-            <section class="panel activation-key-panel"><div class="panel-head"><h2>Save it now</h2></div><div class="panel-body"><div class="activation-code-panel activation-onboarding-agent"><div class="activation-code-head"><strong>Paste this short message into a Claude Code, Codex, or your favorite agent chat.</strong><button class="btn" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key">Copy message</button></div><pre id="welcome-agent-message" data-copy-lines><span>Use TrustedRouter.com with the key below to ask DeepSeek: "What is the capital of France?"</span><span>TrustedRouter API key: ${apiKey}</span></pre></div><div class="secret-row"><code id="welcome-api-key">${apiKey}</code><button class="btn" data-copy-secret="welcome-api-key">Copy</button></div></div></section>
+            <section class="panel activation-key-panel"><div class="panel-head"><h2>Save it now</h2></div><div class="panel-body"><div class="activation-code-panel activation-onboarding-agent"><div class="activation-code-head"><strong>Paste this short message into a Claude Code, Codex, or your favorite agent chat.</strong><button class="btn" data-copy-template-target="welcome-agent-message" data-secret-source="welcome-api-key">Copy message</button></div><pre id="welcome-agent-message" data-copy-lines><span>Use TrustedRouter.com with the key below to ask DeepSeek Flash: "What is the capital of France?"</span><span>TrustedRouter API key: ${apiKey}</span></pre></div><div class="secret-row"><code id="welcome-api-key">${apiKey}</code><button class="btn" data-copy-secret="welcome-api-key">Copy</button></div></div></section>
             <section class="panel activation-test-panel"><div class="panel-head activation-panel-head"><div><p class="activation-eyebrow">Live gateway check</p><h2>Run your first API request</h2><p class="panel-kicker">A real, inexpensive PONG request confirms the route.</p></div><span class="activation-step-number">02</span></div><div class="panel-body">
               <button class="btn primary activation-run-button" type="button" data-action="run-first-call"><span data-run-label>Run my first API request</span><span class="activation-button-arrow">&#8594;</span></button>
               <div class="activation-call-error" data-call-error hidden><strong data-call-error-title></strong><p data-call-error-message></p><a data-call-error-action hidden></a></div>
@@ -358,7 +358,7 @@ test("first-call activation runs live request and copies agent chat prompt", asy
 
   await page.getByRole("button", { name: "Copy message" }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(
-    `Use TrustedRouter.com with the key below to ask DeepSeek: "What is the capital of France?"\n\nTrustedRouter API key: ${apiKey}`,
+    `Use TrustedRouter.com with the key below to ask DeepSeek Flash: "What is the capital of France?"\n\nTrustedRouter API key: ${apiKey}`,
   );
   await page.getByRole("tab", { name: "Python" }).click();
   await expect(page.locator("#setup-python")).toBeVisible();

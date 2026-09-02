@@ -378,9 +378,6 @@ _REHYDRATION_MODULES = frozenset(
         # ByokProviderConfig / BroadcastDestination.__post_init__, rebuilding a
         # stored dict into the dataclass.
         "src/trusted_router/storage_models.py",
-        # The v1 -> v2 backfill, reading an envelope out of a row before
-        # decrypting it. What it WRITES it writes through byok_crypto.
-        "src/trusted_router/byok_aad_backfill.py",
     }
 )
 

@@ -25,12 +25,18 @@ class _RetryingDatabase:
         self.aborts_before_success = aborts_before_success
         self.calls = 0
         self.timeouts: list[float | None] = []
+        self.transaction_tags: list[str | None] = []
 
     def run_in_transaction(
-        self, func: Callable[..., str], *, timeout_secs: float | None = None
+        self,
+        func: Callable[..., str],
+        *,
+        timeout_secs: float | None = None,
+        transaction_tag: str | None = None,
     ) -> str:
         self.calls += 1
         self.timeouts.append(timeout_secs)
+        self.transaction_tags.append(transaction_tag)
         if self.calls <= self.aborts_before_success:
             raise Aborted("spanner aborted")
         return func("txn")
@@ -78,6 +84,24 @@ def test_run_in_transaction_with_retry_records_winning_attempt(
     omitted = _RetryingDatabase(aborts_before_success=1)
     assert run_in_transaction_with_retry(omitted, _txn, attempts=3) == "ok"
     assert omitted.calls == 2
+
+
+def test_run_in_transaction_with_retry_forwards_stable_tag_to_every_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("trusted_router.storage_gcp_io.time.sleep", lambda _seconds: None)
+
+    database = _RetryingDatabase(aborts_before_success=2)
+    assert (
+        run_in_transaction_with_retry(
+            database,
+            _txn,
+            attempts=4,
+            transaction_tag="tr_authorize",
+        )
+        == "ok"
+    )
+    assert database.transaction_tags == ["tr_authorize"] * 3
 
 
 def test_run_in_transaction_with_retry_does_not_record_exhausted_attempts(

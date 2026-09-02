@@ -290,11 +290,37 @@
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 15000000,
       "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Claude Fable 5.1",
+      "title": "claude-fable-5-1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-fable-5.1",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "features": [
+        "function-calling"
+      ],
+      "upstream_id": "claude-fable-5-1",
+      "input_token_price_per_m": 10000000,
+      "output_token_price_per_m": 50000000,
+      "cached_input_token_price_per_m": 250000
     }
   ],
   "provider": "anthropic",
   "source": "https://www.anthropic.com/pricing",
-  "generated_at": "2026-08-25T18:42:44Z",
+  "generated_at": "2026-09-02T03:25:34Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 10
+  "model_count": 11
 }

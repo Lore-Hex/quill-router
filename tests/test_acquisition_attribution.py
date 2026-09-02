@@ -273,6 +273,32 @@ def test_paid_experiment_preserves_exact_landing_path(client: TestClient) -> Non
     assert context.last_touch["utm_content"] == "or_quickstart_v1"
 
 
+def test_misconfigured_axiom_campaign_redirects_to_tracked_article(
+    client: TestClient,
+) -> None:
+    query = (
+        "utm_source=x&utm_medium=paid_social"
+        "&utm_campaign=axios_viral_landing_20260830"
+        "&utm_content=axios_blog_ad_v1&twclid=axios-click-123"
+    )
+
+    redirect = client.get(f"/bedrock-group-buy?{query}", follow_redirects=False)
+
+    assert redirect.status_code == 307
+    assert redirect.headers["location"] == (
+        f"http://testserver/blog/axios-tried-trustedrouter?{query}"
+    )
+
+    final = client.get(redirect.headers["location"])
+    assert final.status_code == 200
+    context = decode_attribution_cookie(
+        client.cookies.get(ATTRIBUTION_COOKIE_NAME), client.app.state.settings
+    )
+    assert context is not None
+    assert context.last_touch["utm_campaign"] == "axios_viral_landing_20260830"
+    assert context.last_touch["landing_path"] == "/blog/axios-tried-trustedrouter"
+
+
 def test_multiarm_landing_redirect_attributes_the_selected_page(
     client: TestClient,
 ) -> None:

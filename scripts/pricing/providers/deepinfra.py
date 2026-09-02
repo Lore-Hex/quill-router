@@ -12,16 +12,16 @@ API-direct, no HTML scraping, no LLM self-heal. Auth: Bearer token in
 `DEEPINFRA_API_KEY`. Without it the fetch 401s and DeepInfra counts as
 one failure under MAX_TOLERATED_FAILURES.
 
-Cached-input rate: DeepInfra's metadata.pricing block exposes only
-`input_tokens` + `output_tokens` (no cache-read discount). If they
-add one — e.g. a `cached_input_tokens` sibling — extend the loop
-to read it into `ModelPrice.prompt_cached_micro_per_m`. Today we
-leave it unset, which TR's gateway treats as "upstream charges
-full rate on cache hits."
+Cached-input rate: DeepInfra exposes `cache_read_tokens` alongside
+`input_tokens` and `output_tokens`. Ingest it when present so repeated
+prompts are billed at DeepInfra's published cache-read rate. Missing or
+invalid cache prices remain unset, which the gateway conservatively treats
+as full-rate input.
 """
 from __future__ import annotations
 
 import os
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -54,12 +54,14 @@ MANIFEST_PATH = (
 EXPECTED_MODELS = [
     "google/gemma-4-31b-it",
     "z-ai/glm-5.2",
+    "z-ai/glm-5.3",
     "z-ai/glm-5.3-flash",
 ]
 
 _MAX_OUTPUT_OVERRIDES = {
     # DeepInfra currently repeats the context window in metadata.max_tokens.
-    # GLM-5.3-Flash's documented generation limit is 131,072 tokens.
+    # Both GLM-5.3 variants have a 131,072-token generation limit.
+    "z-ai/glm-5.3": 131_072,
     "z-ai/glm-5.3-flash": 131_072,
 }
 
@@ -85,6 +87,21 @@ _NATIVE_TO_OR_ID = {
 }
 UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
+_MICRODOLLARS_PER_DOLLAR = Decimal(1_000_000)
+
+
+def _price_micro_per_m(value: Any) -> int | None:
+    try:
+        price = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if not price.is_finite() or price <= 0:
+        return None
+    return int(
+        (price * _MICRODOLLARS_PER_DOLLAR).to_integral_value(
+            rounding=ROUND_HALF_UP
+        )
+    )
 
 
 def fetch() -> ProviderPricingResult:
@@ -126,16 +143,15 @@ def fetch() -> ProviderPricingResult:
         # DeepInfra encodes prices as USD per million tokens directly
         # (e.g. 0.13 for $0.13/M). Convert to microdollars per million
         # by multiplying by 1_000_000.
-        try:
-            prompt = float(pricing.get("input_tokens") or 0)
-            completion = float(pricing.get("output_tokens") or 0)
-        except (TypeError, ValueError):
-            continue
-        if prompt <= 0 or completion <= 0:
+        prompt = _price_micro_per_m(pricing.get("input_tokens"))
+        completion = _price_micro_per_m(pricing.get("output_tokens"))
+        cached_prompt = _price_micro_per_m(pricing.get("cache_read_tokens"))
+        if prompt is None or completion is None:
             continue
         prices[or_id] = ModelPrice(
-            prompt_micro_per_m=int(round(prompt * 1_000_000)),
-            completion_micro_per_m=int(round(completion * 1_000_000)),
+            prompt_micro_per_m=prompt,
+            completion_micro_per_m=completion,
+            prompt_cached_micro_per_m=cached_prompt,
         )
         discovered_row: dict[str, Any] = {
             "id": or_id,

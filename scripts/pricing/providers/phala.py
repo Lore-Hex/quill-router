@@ -2,11 +2,10 @@
 
 Phala runs inference inside Intel TDX + NVIDIA Confidential Compute
 TEEs. Most TrustedRouter routes use their GPU-TEE tier (the
-`phala/<bare>` model id form). A small explicit allowlist may use an
-upstream-author pass-through ID after a direct account canary succeeds.
-Those exact routes receive a model/provider privacy override in
-catalog_data.py and must never inherit the confidential posture of
-`phala/*`. See
+`phala/<bare>` model id form). Phala also exposes upstream-author
+pass-through IDs for supported open-weight families. Those exact routes
+are classified as Standard from their upstream ID and must never inherit
+the confidential posture of `phala/*`. See
 docs.phala.com/phala-cloud/confidential-ai/confidential-model/confidential-ai-api
 for the official model-id convention.
 
@@ -22,10 +21,9 @@ the fetch may still succeed (Phala's /v1/models tolerates anon GET)
 but is treated as one failure under MAX_TOLERATED_FAILURES if it
 401s for any reason.
 
-To add a confidential model, probe /v1/models, find the `phala/<bare>`
-row, and add its canonical mapping. A non-phala pass-through route
-requires an explicit standard-privacy override and a visible-content
-chat canary before it can enter `_STANDARD_PASSTHROUGH_TO_OR_ID`.
+Ordinary future GLM releases are normalized automatically. Other families
+remain on reviewed explicit mappings. Arbitrary proprietary rows and rows
+without embedded prices remain blocked.
 """
 
 from __future__ import annotations
@@ -46,7 +44,14 @@ from scripts.pricing.base import (
     validate,
 )
 from scripts.pricing.manifest import write_discovered_chat_manifest
-from scripts.pricing.openai_catalog import discover_openai_chat_catalog
+from scripts.pricing.model_ids import (
+    canonicalize_native_model_id,
+    canonicalize_unqualified_model_id,
+)
+from scripts.pricing.openai_catalog import (
+    discover_openai_chat_catalog,
+    openai_model_price,
+)
 from trusted_router.provider_lifecycle import (
     provider_model_retired,
     provider_price_microdollars,
@@ -68,6 +73,7 @@ EXPECTED_MODELS = [
     "deepseek/deepseek-v3.2",
     "z-ai/glm-5",
     "z-ai/glm-5.2",
+    "z-ai/glm-5.3-flash",
     "moonshotai/kimi-k2.6",
     "moonshotai/kimi-k3",
     "google/gemma-3-27b-it",
@@ -86,7 +92,6 @@ _NATIVE_TO_OR_ID = {
     "phala/gemma-3-27b-it": "google/gemma-3-27b-it",
     "phala/glm-5": "z-ai/glm-5",
     "phala/glm-5.1": "z-ai/glm-5.1",
-    "phala/glm-5.2": "z-ai/glm-5.2",
     "phala/glm-4.7": "z-ai/glm-4.7",
     "phala/glm-4.7-flash": "z-ai/glm-4.7-flash",
     "phala/kimi-k2.5": "moonshotai/kimi-k2.5",
@@ -102,9 +107,12 @@ _NATIVE_TO_OR_ID = {
     "phala/minimax-m2.5": "minimax/minimax-m2.5",
 }
 _STANDARD_PASSTHROUGH_TO_OR_ID = {
-    # Direct visible-content canary passed on 2026-07-29. This is not a
-    # phala/* Confidential AI ID, so catalog_data.py forces Standard privacy.
+    # Explicit mappings remain for reviewed routes and historical context.
+    # Runtime privacy classification is based on the exact upstream ID, so all
+    # future non-phala pass-through routes are Standard by default.
+    "z-ai/glm-5.2": "z-ai/glm-5.2",
     "moonshotai/kimi-k3": "moonshotai/kimi-k3",
+    "z-ai/glm-5.3-flash": "z-ai/glm-5.3-flash",
 }
 _DISCOVERED_ID_MAP = {
     **_NATIVE_TO_OR_ID,
@@ -112,6 +120,53 @@ _DISCOVERED_ID_MAP = {
 }
 UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _DISCOVERED_ID_MAP.items()}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
+
+# Phala's live catalog can contain unrelated pass-through routes. Only its GLM
+# family participates in the strict current-model coverage gate, and the exact
+# upstream namespace is unambiguous. Keep every other family on the reviewed
+# explicit map above. This family rule admits future priced GLM releases without
+# weakening the intentional review gate for Qwen, OpenAI, and other rows.
+_AUTO_DISCOVERY_PREFIXES = ("z-ai/glm-",)
+
+
+def _canonical_discovered_model_id(native_id: str) -> str | None:
+    explicit = _DISCOVERED_ID_MAP.get(native_id)
+    if explicit is not None:
+        return explicit
+    if native_id.strip().casefold().startswith("phala/"):
+        canonical = canonicalize_unqualified_model_id(native_id)
+    else:
+        canonical = canonicalize_native_model_id(native_id)
+    if canonical is None or not canonical.startswith(_AUTO_DISCOVERY_PREFIXES):
+        return None
+    return canonical
+
+
+def _discoverable_rows(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """Select one safely normalized, priced upstream route per model.
+
+    If both route forms exist, prefer ``phala/*`` because it selects Phala's
+    Confidential AI tier. Invalid or absent pricing never creates a route.
+    """
+
+    selected: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        native_id = row.get("id")
+        if not isinstance(native_id, str) or openai_model_price(row) is None:
+            continue
+        model_id = _canonical_discovered_model_id(native_id)
+        if model_id is None:
+            continue
+        is_confidential = native_id.strip().casefold().startswith("phala/")
+        if model_id in selected and not is_confidential:
+            continue
+        selected[model_id] = row
+
+    ordered = [selected[model_id] for model_id in sorted(selected)]
+    explicit_map = {str(row["id"]): model_id for model_id, row in selected.items()}
+    return ordered, explicit_map
 
 
 def _apply_lifecycle_policy(
@@ -160,17 +215,32 @@ def fetch() -> ProviderPricingResult:
     rows = payload.get("data") or []
     if not isinstance(rows, list):
         raise RuntimeError("phala: /v1/models response has no data list")
-    prices, discovered = discover_openai_chat_catalog(
-        [row for row in rows if isinstance(row, dict)],
-        explicit_map=_DISCOVERED_ID_MAP,
-        upstream_id_map=UPSTREAM_ID_MAP,
-        include=lambda row: row.get("id") in _DISCOVERED_ID_MAP,
+    discoverable_rows, discovered_id_map = _discoverable_rows(
+        [row for row in rows if isinstance(row, dict)]
     )
+    current_upstream_ids: dict[str, str] = {}
+    prices, discovered = discover_openai_chat_catalog(
+        discoverable_rows,
+        explicit_map=discovered_id_map,
+        upstream_id_map=current_upstream_ids,
+    )
+    # The snapshot merger reads this map after fetch. Assignment, rather than
+    # setdefault, is important when Phala moves a model between pass-through
+    # and phala/* route forms.
+    UPSTREAM_ID_MAP.update(current_upstream_ids)
 
     prices = _apply_lifecycle_policy(prices)
-    _DISCOVERED_MANIFEST_ROWS = {
-        model_id: row for model_id, row in discovered.items() if model_id in prices
-    }
+    _DISCOVERED_MANIFEST_ROWS = {}
+    for model_id, row in discovered.items():
+        if model_id not in prices:
+            continue
+        upstream_id = str(row.get("upstream_id") or "")
+        row["provider_route_class"] = (
+            "confidential_ai"
+            if upstream_id.casefold().startswith("phala/")
+            else "standard_pass_through"
+        )
+        _DISCOVERED_MANIFEST_ROWS[model_id] = row
     notes: list[str] = []
     errors = validate(prices, EXPECTED_MODELS)
     if errors:

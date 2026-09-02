@@ -392,6 +392,113 @@ def test_manifest_audit_rejects_naive_timestamp_runtime_would_quarantine(
     assert covered is None
 
 
+def test_manifest_audit_accepts_fresh_fail_closed_canary_quarantine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generated = dt.datetime(2026, 8, 22, tzinfo=dt.UTC)
+    tmp_path.joinpath("krea.json").write_text(
+        json.dumps(
+            {
+                "generated_at": generated.isoformat(),
+                "models": [
+                    {
+                        "id": "krea/krea-2-medium",
+                        "model_type": "image",
+                        "routable": False,
+                        "routable_reason": "provider-canary-failed",
+                        "fixed_output_price_microdollars": {"1k": 30_000},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", tmp_path)
+
+    warning, covered = check_price_coverage._audit_fallback_manifest(
+        "krea",
+        max_age_days=14,
+        now=generated + dt.timedelta(days=1),
+    )
+
+    assert warning is None
+    assert covered is not None
+    assert "safely quarantined after provider canaries" in covered
+
+
+@pytest.mark.parametrize("reason", ["awaiting-price", "operator-hold", None])
+def test_manifest_audit_rejects_non_canary_quarantine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reason: str | None,
+) -> None:
+    row = {
+        "id": "krea/krea-2-medium",
+        "model_type": "image",
+        "routable": False,
+        "fixed_output_price_microdollars": {"1k": 30_000},
+    }
+    if reason is not None:
+        row["routable_reason"] = reason
+    tmp_path.joinpath("krea.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-08-22T00:00:00+00:00",
+                "models": [row],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", tmp_path)
+
+    warning, covered = check_price_coverage._audit_fallback_manifest(
+        "krea",
+        max_age_days=14,
+        now=dt.datetime(2026, 8, 22, tzinfo=dt.UTC),
+    )
+
+    assert warning == (
+        "krea: live scraper fallback manifest fails runtime route validity checks"
+    )
+    assert covered is None
+
+
+def test_manifest_audit_rejects_stale_canary_quarantine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generated = dt.datetime(2026, 8, 1, tzinfo=dt.UTC)
+    tmp_path.joinpath("krea.json").write_text(
+        json.dumps(
+            {
+                "generated_at": generated.isoformat(),
+                "models": [
+                    {
+                        "id": "krea/krea-2-medium",
+                        "model_type": "image",
+                        "routable": False,
+                        "routable_reason": "provider-canary-failed",
+                        "fixed_output_price_microdollars": {"1k": 30_000},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", tmp_path)
+
+    warning, covered = check_price_coverage._audit_fallback_manifest(
+        "krea",
+        max_age_days=14,
+        now=generated + dt.timedelta(days=15),
+    )
+
+    assert warning is not None
+    assert "is 15d stale" in warning
+    assert covered is None
+
+
 def test_transient_docs_fetch_failure_does_not_block_price_publication(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -57,6 +57,7 @@ _VERIFIED_PREPAID_MODELS = frozenset(
     {
         "deepseek/deepseek-v4-pro",
         "moonshotai/kimi-k3",
+        "tencent/hy4-preview",
         "z-ai/glm-5",
         "z-ai/glm-5.1",
         "z-ai/glm-5.2",
@@ -74,6 +75,7 @@ _NATIVE_TO_OR_ID = {
     "deepseek-ai/DeepSeek-V4-Pro": "deepseek/deepseek-v4-pro",
     "deepseek-ai/DeepSeek-V3.1": "deepseek/deepseek-v3.1",
     "moonshotai/kimi-k3": "moonshotai/kimi-k3",
+    "tencent/hy4-preview": "tencent/hy4-preview",
     "zai-org/GLM-5-FP8": "z-ai/glm-5",
     "zai-org/GLM-5.1-FP8": "z-ai/glm-5.1",
     "zai-org/GLM-5.2-FP8": "z-ai/glm-5.2",

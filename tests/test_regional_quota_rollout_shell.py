@@ -18,4 +18,4 @@ def test_regional_quota_rollout_shell_contract() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "8 passed" in result.stdout
+    assert "10 passed" in result.stdout

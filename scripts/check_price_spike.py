@@ -72,6 +72,56 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             Decimal("0.000000695999"),
             Decimal("0.000001392"),
         ),
+        # GMI's billing API now distinguishes the 0731 route from the cheaper
+        # unversioned route. Pin the correction to this exact endpoint and
+        # values so future GMI changes still stop publication for review.
+        (
+            "deepseek/deepseek-v4-flash-0731 "
+            "[gmi:gmi:deepseek-ai/DeepSeek-V4-Flash-0731]",
+            "prompt",
+            Decimal("0.00000014"),
+            Decimal("0.00000044"),
+        ),
+        (
+            "deepseek/deepseek-v4-flash-0731 "
+            "[gmi:gmi:deepseek-ai/DeepSeek-V4-Flash-0731]",
+            "completion",
+            Decimal("0.00000028"),
+            Decimal("0.00000132"),
+        ),
+        # GMI currently emits the same endpoint with its deployment precision
+        # in the tag. Approve that canonical live identity separately rather
+        # than normalizing tags and accidentally widening this exception.
+        (
+            "deepseek/deepseek-v4-flash-0731 "
+            "[gmi:gmicloud/fp8:deepseek-ai/DeepSeek-V4-Flash-0731]",
+            "prompt",
+            Decimal("0.00000014"),
+            Decimal("0.00000044"),
+        ),
+        (
+            "deepseek/deepseek-v4-flash-0731 "
+            "[gmi:gmicloud/fp8:deepseek-ai/DeepSeek-V4-Flash-0731]",
+            "completion",
+            Decimal("0.00000028"),
+            Decimal("0.00000132"),
+        ),
+        # GMI also reduced V4 Pro's cached-input discount. The public billing
+        # API reports the exact old and new per-token values approved here.
+        (
+            "deepseek/deepseek-v4-pro "
+            "[gmi:gmicloud/fp8:deepseek-ai/DeepSeek-V4-Pro] cached-input",
+            "prompt",
+            Decimal("0.000000044"),
+            Decimal("0.000000145"),
+        ),
+        (
+            "deepseek/deepseek-v4-pro "
+            "[gmi:gmi:deepseek-ai/DeepSeek-V4-Pro] cached-input",
+            "prompt",
+            Decimal("0.000000044"),
+            Decimal("0.000000145"),
+        ),
         # Atlas's authenticated /v1/models feed distinguishes the cheap
         # unversioned route from the newer 0731 weights. The old snapshot had
         # inherited the unversioned rate; approve only the exact correction.
@@ -144,6 +194,119 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             "completion",
             Decimal("0.000006"),
             Decimal("0.00002"),
+        ),
+        # DigitalOcean's official pricing page currently publishes these
+        # exact rates. Approve only the observed old-to-current transitions;
+        # every other DigitalOcean increase remains guarded:
+        # https://docs.digitalocean.com/products/inference/details/pricing/
+        (
+            "deepseek/deepseek-v3.2 [digitalocean:digitalocean:deepseek-3.2]",
+            "prompt",
+            Decimal("0.00000025"),
+            Decimal("0.0000005"),
+        ),
+        (
+            "deepseek/deepseek-v3.2 [digitalocean:digitalocean:deepseek-3.2]",
+            "completion",
+            Decimal("0.0000008"),
+            Decimal("0.0000016"),
+        ),
+        (
+            "deepseek/deepseek-v3.2 "
+            "[digitalocean:digitalocean:deepseek-3.2] cached-input",
+            "prompt",
+            Decimal("0.000000075"),
+            Decimal("0.00000015"),
+        ),
+        (
+            "deepseek/deepseek-v4-flash "
+            "[digitalocean:digitalocean:deepseek-4-flash]",
+            "prompt",
+            Decimal("0.000000068"),
+            Decimal("0.00000014"),
+        ),
+        (
+            "deepseek/deepseek-v4-pro "
+            "[digitalocean:digitalocean:deepseek-v4-pro]",
+            "prompt",
+            Decimal("0.00000087"),
+            Decimal("0.00000174"),
+        ),
+        (
+            "deepseek/deepseek-v4-pro "
+            "[digitalocean:digitalocean:deepseek-v4-pro]",
+            "completion",
+            Decimal("0.00000174"),
+            Decimal("0.00000348"),
+        ),
+        (
+            "deepseek/deepseek-v4-pro "
+            "[digitalocean:digitalocean:deepseek-v4-pro] cached-input",
+            "prompt",
+            Decimal("0.000000174"),
+            Decimal("0.000000348"),
+        ),
+        (
+            "xiaomi/mimo-v2.5-pro [digitalocean:digitalocean:mimo-v2.5-pro]",
+            "prompt",
+            Decimal("0.0000004"),
+            Decimal("0.0000008"),
+        ),
+        (
+            "xiaomi/mimo-v2.5-pro [digitalocean:digitalocean:mimo-v2.5-pro]",
+            "completion",
+            Decimal("0.0000015"),
+            Decimal("0.000003"),
+        ),
+        (
+            "xiaomi/mimo-v2.5-pro "
+            "[digitalocean:digitalocean:mimo-v2.5-pro] cached-input",
+            "prompt",
+            Decimal("0.00000008"),
+            Decimal("0.00000016"),
+        ),
+        (
+            "z-ai/glm-5.2 [digitalocean:digitalocean:glm-5.2]",
+            "prompt",
+            Decimal("0.0000007"),
+            Decimal("0.0000014"),
+        ),
+        (
+            "z-ai/glm-5.2 [digitalocean:digitalocean:glm-5.2]",
+            "completion",
+            Decimal("0.0000022"),
+            Decimal("0.0000044"),
+        ),
+        (
+            "z-ai/glm-5.2 [digitalocean:digitalocean:glm-5.2] cached-input",
+            "prompt",
+            Decimal("0.000000105"),
+            Decimal("0.00000021"),
+        ),
+        # IO.NET's authenticated model catalog is the provider-owned source
+        # used by the hourly adapter. The dashboard documentation confirms
+        # that model-specific prices are published in the Models UI/API:
+        # https://io.net/docs/guides/intelligence/exploring-ai-models
+        (
+            "mistralai/mistral-nemo-instruct-2407 "
+            "[io-net:io-net:mistralai/Mistral-Nemo-Instruct-2407]",
+            "prompt",
+            Decimal("0.000000029667"),
+            Decimal("0.0000000635"),
+        ),
+        (
+            "mistralai/mistral-nemo-instruct-2407 "
+            "[io-net:io-net:mistralai/Mistral-Nemo-Instruct-2407] cached-input",
+            "prompt",
+            Decimal("0.000000014834"),
+            Decimal("0.00000003175"),
+        ),
+        (
+            "z-ai/glm-5.3-flash "
+            "[io-net:io-net:zai-org/GLM-5.3-Flash] cached-input",
+            "prompt",
+            Decimal("0.00000003"),
+            Decimal("0.000000075"),
         ),
     }
 )

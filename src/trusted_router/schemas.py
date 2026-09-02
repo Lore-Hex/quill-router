@@ -254,6 +254,22 @@ class EarningsTransferRequest(_Strict):
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=64)
 
 
+class SpendLeaseEcho(_Strict):
+    lease_id: str | None = Field(default=None, max_length=64)
+    state: str = Field(min_length=1, max_length=64)
+    remaining_micro: int | None = Field(default=None, ge=0)
+    enclave_estimate_micro: int | None = Field(default=None, ge=0)
+    catalog_version: str | None = Field(default=None, max_length=128)
+    would_admit: bool | None = None
+
+
+class SpendLeaseBootRegistrationRequest(_Strict):
+    kid: str = Field(min_length=1, max_length=128)
+    receipt_public_key: dict[str, Any]
+    attestation_evidence: str = Field(min_length=1, max_length=2 * 1024 * 1024)
+    attestation_kind: str = Field(min_length=1, max_length=64)
+
+
 class GatewayAuthorizeRequest(_Lenient):
     api_key_hash: str | None = Field(default=None, min_length=1)
     api_key_lookup_hash: str | None = Field(default=None, min_length=1)
@@ -262,6 +278,7 @@ class GatewayAuthorizeRequest(_Lenient):
     model: str = Field(min_length=1)
     models: list[str] | None = None
     provider: dict[str, Any] | None = None
+    requested_parameters: list[str] | None = None
     estimated_input_tokens: int = Field(default=1, ge=0)
     max_output_tokens: int | None = Field(default=None, ge=1)
     max_completion_tokens: int | None = Field(default=None, ge=1)
@@ -282,10 +299,14 @@ class GatewayAuthorizeRequest(_Lenient):
     route_fallbacks: int | None = Field(default=None, ge=0)
     route_failures: list[str] | None = None
     route_type: str | None = None
+    # Set only by the attested gateway after validating x-inference-receipt.
+    # The control plane freezes the resulting total fee on the authorization.
+    inference_receipt: bool = False
     # Attested hosted tools may reserve a bounded non-token cost on the same
     # atomic hold as their planner model call. This is internal-only and is
     # accepted only for enclave-owned hosted tools and asynchronous media.
     additional_cost_reservation_microdollars: int = Field(default=0, ge=0, le=100_000_000)
+    spend_lease_echo: SpendLeaseEcho | None = None
 
     @model_validator(mode="after")
     def key_identifier_required(self) -> GatewayAuthorizeRequest:

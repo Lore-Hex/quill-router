@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import hmac
 import threading
 import uuid
 from typing import Any, cast
@@ -23,6 +24,11 @@ from trusted_router.operational_analytics_freshness import (
     REASON_NOT_CONFIGURED,
     OutboxFreshness,
 )
+from trusted_router.receipt_keys import (
+    ReceiptKeyWriteOutcome,
+    merge_receipt_key_observation,
+)
+from trusted_router.spend_leases import SpendLeaseArtifact, SpendLeaseBoot
 from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage_attribution import InMemoryAcquisitionAttribution
 from trusted_router.storage_auth_context import build_session_auth_context
@@ -48,6 +54,7 @@ from trusted_router.storage_models import (
     BroadcastDeliveryJob,
     BroadcastDestination,
     ByokProviderConfig,
+    ConsentRequest,
     CreditAccount,
     CreditMoney,
     CreditMovement,
@@ -59,10 +66,12 @@ from trusted_router.storage_models import (
     Generation,
     GoogleAdsConversion,
     Member,
+    OAuthApp,
     OAuthAuthorizationCode,
     ProviderAccessGrant,
     ProviderBenchmarkSample,
     RateLimitHit,
+    ReceiptKey,
     Reservation,
     SessionAuthContext,
     SignupResult,
@@ -74,12 +83,14 @@ from trusted_router.storage_models import (
     VideoJob,
     WalletChallenge,
     Workspace,
+    _is_expired,
     federated_api_key_from_record,
     federated_workspace_from_record,
     iso_now,
     normalize_provider_access_role,
     normalize_provider_access_slug,
 )
+from trusted_router.storage_oauth_apps import InMemoryOAuthApps
 from trusted_router.storage_oauth_codes import InMemoryOAuthCodes
 from trusted_router.storage_rate_limits import InMemoryRateLimits
 from trusted_router.storage_synthetic import InMemorySyntheticChecks
@@ -121,6 +132,11 @@ class InMemoryStore:
         self.credit_transfer_claims: dict[str, dict[str, Any]] = {}
         self.client_events_batches: list[dict[str, Any]] = []
         self.client_event_ids: set[str] = set()
+        self.spend_lease_shadow_events: dict[str, dict[str, Any]] = {}
+        self.receipt_keys: dict[str, ReceiptKey] = {}
+        self.spend_lease_boots: dict[str, SpendLeaseBoot] = {}
+        self.spend_lease_generations: dict[tuple[str, str], int] = {}
+        self.active_spend_leases: dict[tuple[str, str], SpendLeaseArtifact] = {}
         #: Federated settlement claims, keyed (source_plane, authorization_id).
         #: Insert-once: the recorded terms are the verdict for every replay.
         self.federated_settlement_claims: dict[tuple[str, str], dict[str, Any]] = {}
@@ -149,6 +165,8 @@ class InMemoryStore:
         self.video_job_store = InMemoryVideoJobs(lock=self._lock)
         self.auth_session_store = InMemoryAuthSessions(lock=self._lock)
         self.oauth_code_store = InMemoryOAuthCodes(lock=self._lock)
+        self.oauth_app_store = InMemoryOAuthApps(lock=self._lock)
+        self.consent_requests: dict[str, ConsentRequest] = {}
         self.rate_limit_store = InMemoryRateLimits(lock=self._lock)
         self.wallet_challenges = InMemoryWalletChallenges()
         self.verification_tokens = InMemoryVerificationTokens()
@@ -173,6 +191,11 @@ class InMemoryStore:
             self.credit_transfer_claims.clear()
             self.client_events_batches.clear()
             self.client_event_ids.clear()
+            self.spend_lease_shadow_events.clear()
+            self.receipt_keys.clear()
+            self.spend_lease_boots.clear()
+            self.spend_lease_generations.clear()
+            self.active_spend_leases.clear()
             self.api_keys.reset()
             self.acquisition_store.reset()
             self.bedrock_group_buy_store.reset()
@@ -185,6 +208,8 @@ class InMemoryStore:
             self.video_job_store.reset()
             self.auth_session_store.reset()
             self.oauth_code_store.reset()
+            self.oauth_app_store.reset()
+            self.consent_requests.clear()
             self.rate_limit_store.reset()
             self.wallet_challenges.reset()
             self.verification_tokens.reset()
@@ -193,12 +218,77 @@ class InMemoryStore:
     def readiness_check(self) -> None:
         """The in-memory backend has no external serving dependency."""
 
+    def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
+        with self._lock:
+            merged, outcome = merge_receipt_key_observation(
+                self.receipt_keys.get(record.kid), record
+            )
+            if merged is not None and outcome in {"appended", "refreshed"}:
+                self.receipt_keys[record.kid] = merged
+            return outcome
+
+    def list_receipt_keys(self, *, limit: int = 5_000) -> list[ReceiptKey]:
+        bounded = max(0, min(limit, 10_000))
+        with self._lock:
+            return [self.receipt_keys[kid] for kid in sorted(self.receipt_keys)[:bounded]]
+
+    def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot:
+        with self._lock:
+            existing = self.spend_lease_boots.get(record.kid)
+            if existing is not None and (
+                existing.jwk != record.jwk
+                or existing.image_digest != record.image_digest
+                or existing.attestation_kind != record.attestation_kind
+            ):
+                raise ValueError("spend-lease boot kid collision")
+            if existing is not None:
+                record = dataclasses.replace(
+                    existing,
+                    approved=existing.approved or record.approved,
+                    verified=existing.verified or record.verified,
+                    image_digest=(record.image_digest or existing.image_digest),
+                )
+            self.spend_lease_boots[record.kid] = record
+            return record
+
+    def get_spend_lease_boot(self, kid: str) -> SpendLeaseBoot | None:
+        with self._lock:
+            return self.spend_lease_boots.get(kid)
+
+    def next_spend_lease_generation(self, key_hash: str, boot_kid: str) -> int:
+        with self._lock:
+            key = (key_hash, boot_kid)
+            generation = self.spend_lease_generations.get(key, 0) + 1
+            self.spend_lease_generations[key] = generation
+            return generation
+
+    def get_active_spend_lease(self, key_hash: str, boot_kid: str) -> SpendLeaseArtifact | None:
+        with self._lock:
+            return self.active_spend_leases.get((key_hash, boot_kid))
+
+    def retain_spend_lease(
+        self,
+        key_hash: str,
+        boot_kid: str,
+        candidate: SpendLeaseArtifact,
+        *,
+        replace: bool,
+    ) -> SpendLeaseArtifact:
+        with self._lock:
+            key = (key_hash, boot_kid)
+            existing = self.active_spend_leases.get(key)
+            if existing is None or (replace and candidate.gen > existing.gen):
+                self.active_spend_leases[key] = candidate
+                return candidate
+            return existing
+
     def ensure_user(
         self,
         user_id: str,
         email: str | None = None,
         *,
         trial_credit_microdollars: int | None = None,
+        email_verified: bool = False,
     ) -> User:
         with self._lock:
             normalized_email = _normalize_email(email or user_id)
@@ -207,7 +297,9 @@ class InMemoryStore:
                 return self.users[existing_id]
 
             new_id = str(uuid.uuid4())
-            self.users[new_id] = User(id=new_id, email=normalized_email)
+            self.users[new_id] = User(
+                id=new_id, email=normalized_email, email_verified=email_verified
+            )
             self.user_ids_by_email[normalized_email] = new_id
             self.create_workspace(
                 owner_user_id=new_id,
@@ -258,6 +350,7 @@ class InMemoryStore:
         email: str,
         workspace_name: str | None = None,
         trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
+        email_verified: bool = False,
     ) -> SignupResult | None:
         """Atomically create a new account end-to-end. Returns None if the
         email is already registered."""
@@ -268,6 +361,7 @@ class InMemoryStore:
                 email,
                 email=email,
                 trial_credit_microdollars=trial_credit_microdollars,
+                email_verified=email_verified,
             )
             workspace = self.list_workspaces_for_user(user.id)[0]
             if workspace_name:
@@ -750,6 +844,7 @@ class InMemoryStore:
         budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
         scopes: list[str] | None = None,
+        app_id: str = "",
     ) -> tuple[str, ApiKey]:
         return self.api_keys.create(
             workspace_id=workspace_id,
@@ -767,6 +862,7 @@ class InMemoryStore:
             budget_alert_only=budget_alert_only,
             tags=tags,
             scopes=scopes,
+            app_id=app_id,
         )
 
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:
@@ -886,6 +982,9 @@ class InMemoryStore:
         usage_type: str,
     ) -> None:
         self.api_keys.refund_limit(key_hash, reserved_microdollars, usage_type=usage_type)
+
+    def supports_key_writes(self) -> bool:
+        return True
 
     def update_key(self, key_hash: str, patch: dict[str, Any]) -> ApiKey | None:
         return self.api_keys.update(key_hash, patch)
@@ -1414,6 +1513,7 @@ class InMemoryStore:
     ) -> bool:
         amount = self._positive_money_amount(amount_microdollars)
         account_id = f"user:{user_id}"
+        is_app_markup = event_id.startswith("app_markup_payout:")
         with self._lock:
             if event_id in self.stripe_events:
                 return False
@@ -1423,11 +1523,15 @@ class InMemoryStore:
             self.credit_movements[(account_id, event_id)] = CreditMovement(
                 account_id=account_id,
                 movement_id=event_id,
-                kind="custom_model_payout",
+                kind="app_markup_payout" if is_app_markup else "custom_model_payout",
                 amount_microdollars=amount,
                 counterparty_account_id=payer_workspace_id,
                 custom_model_id=custom_model_id,
-                authorization_id=(user_model_authorization_id_from_payout_event_id(event_id)),
+                authorization_id=(
+                    event_id.split(":", 1)[1]
+                    if is_app_markup
+                    else user_model_authorization_id_from_payout_event_id(event_id)
+                ),
             )
             return True
 
@@ -1824,6 +1928,10 @@ class InMemoryStore:
         idempotency_key: str | None = None,
         tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
+        app_id: str = "",
+        app_markup_basis_points: int = 0,
+        receipt_fee_basis_points: int = 0,
+        app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         user_provided_model_id: str | None = None,
@@ -1836,6 +1944,7 @@ class InMemoryStore:
         settlement: str = "local",
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
+        spend_lease: SpendLeaseArtifact | None = None,
     ) -> GatewayAuthorization:
         return self.api_keys.create_gateway_authorization(
             workspace_id=workspace_id,
@@ -1854,6 +1963,10 @@ class InMemoryStore:
             idempotency_key=idempotency_key,
             tags=tags,
             idempotency_fingerprint=idempotency_fingerprint,
+            app_id=app_id,
+            app_markup_basis_points=app_markup_basis_points,
+            receipt_fee_basis_points=receipt_fee_basis_points,
+            app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
             user_provided_model_id=user_provided_model_id,
@@ -1868,6 +1981,7 @@ class InMemoryStore:
             settlement=settlement,
             expires_at=expires_at,
             deferred_cap_microdollars=deferred_cap_microdollars,
+            spend_lease=spend_lease,
         )
 
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:
@@ -1949,6 +2063,10 @@ class InMemoryStore:
                 removed = self.client_events_batches.pop(0)
                 self.client_event_ids.discard(f"{removed['tenant_id']}:{removed['batch_id']}")
 
+    def record_spend_lease_shadow(self, event_id: str, payload: dict[str, Any]) -> None:
+        with self._lock:
+            self.spend_lease_shadow_events.setdefault(event_id, dict(payload))
+
     def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None:
         self.generation_store.record_benchmark(sample)
 
@@ -1962,6 +2080,19 @@ class InMemoryStore:
     ) -> list[ProviderBenchmarkSample]:
         return self.generation_store.benchmark_samples(
             date=date, provider=provider, model=model, limit=limit
+        )
+
+    def provider_route_benchmark_samples(
+        self,
+        *,
+        cutoff: str,
+        per_route_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        return self.generation_store.route_benchmark_samples(
+            cutoff=cutoff,
+            per_route_limit=per_route_limit,
+            limit=limit,
         )
 
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
@@ -2193,6 +2324,8 @@ class InMemoryStore:
         code_challenge_method: str | None = None,
         spawn_agent: str | None = None,
         spawn_cloud: str | None = None,
+        client_app_id: str = "",
+        scopes: list[str] | None = None,
     ) -> tuple[str, OAuthAuthorizationCode]:
         return self.oauth_code_store.create(
             workspace_id=workspace_id,
@@ -2208,10 +2341,55 @@ class InMemoryStore:
             code_challenge_method=code_challenge_method,
             spawn_agent=spawn_agent,
             spawn_cloud=spawn_cloud,
+            client_app_id=client_app_id,
+            scopes=scopes,
         )
 
     def consume_oauth_authorization_code(self, raw_code: str) -> OAuthAuthorizationCode | None:
         return self.oauth_code_store.consume(raw_code)
+
+    def create_consent_request(self, consent: ConsentRequest) -> ConsentRequest:
+        with self._lock:
+            self.consent_requests[consent.id] = consent
+            return consent
+
+    def get_consent_request(self, consent_id: str) -> ConsentRequest | None:
+        with self._lock:
+            return self.consent_requests.get(consent_id)
+
+    def consume_consent_request(
+        self, consent_id: str, *, user_id: str, workspace_id: str, csrf_token: str
+    ) -> ConsentRequest | None:
+        with self._lock:
+            consent = self.consent_requests.get(consent_id)
+            if (
+                consent is None
+                or consent.consumed_at is not None
+                or _is_expired(consent.consent_expires_at)
+                or consent.user_id != user_id
+                or consent.workspace_id != workspace_id
+                or not hmac.compare_digest(consent.csrf_token, csrf_token)
+            ):
+                return None
+            consent.consumed_at = iso_now()
+            return consent
+
+    def create_oauth_app(self, app: OAuthApp) -> OAuthApp:
+        return self.oauth_app_store.create(app)
+
+    def get_oauth_app(self, app_id: str) -> OAuthApp | None:
+        return self.oauth_app_store.get(app_id)
+
+    def list_oauth_apps_for_user(self, owner_user_id: str) -> list[OAuthApp]:
+        return self.oauth_app_store.list_for_user(owner_user_id)
+
+    def update_oauth_app(
+        self,
+        app_id: str,
+        *,
+        patch: dict[str, Any],
+    ) -> OAuthApp | None:
+        return self.oauth_app_store.update(app_id, patch=patch)
 
     # ── Email send blocks (SES bounce/complaint suppression) ────────────
     # Delegates to the composed InMemoryEmailBlocks store; see
@@ -2451,6 +2629,12 @@ def create_store(settings: Any) -> Store:
                 settings,
                 "regional_quota_bigtable_app_profile_map",
                 {},
+            ),
+            spend_lease_bigtable_table=getattr(
+                settings, "spend_lease_bigtable_table", "trustedrouter-spend-lease"
+            ),
+            spend_lease_bigtable_app_profiles=getattr(
+                settings, "spend_lease_bigtable_app_profile_map", {}
             ),
         )
     raise ValueError(f"unsupported storage backend: {backend}")

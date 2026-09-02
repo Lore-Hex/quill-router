@@ -150,9 +150,13 @@ issued even after operators disable the serving feature, so a kill switch
 cannot strand globally reserved credit. Cloud Scheduler invokes the job with
 Google OAuth; the deploy identity never reads the internal gateway token. A
 new version must complete a real Spanner read and a Bigtable data read through
-every fixed app profile before the stable schedule points to it. Executions
-have no task or scheduler retry and a 50-second deadline under the one-minute
-cadence, preventing retry-driven overlap. Clean runs publish the
+every fixed app profile before the stable schedule points to it. A private GCS
+generation-guarded admission lease runs before importing Sentry, Spanner, or
+Bigtable. Cloud Scheduler's `jobs:run` request completes when Cloud Run accepts
+an execution, so a slow execution can overlap the next one-minute tick even
+though Scheduler itself has no outstanding request. Overlaps exit before
+opening database clients; the admitted worker then takes the existing Spanner
+fencing lock before reconciliation. Clean runs publish the
 `job:regional-quota-reconcile` heartbeat; failures reach Cloud Logging and
 Sentry.
 

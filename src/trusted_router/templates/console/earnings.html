@@ -5,7 +5,7 @@
 <section class="panel">
   <div class="panel-head"><h2>Your earnings</h2><span class="pill">TrustedRouter credits</span></div>
   <div class="panel-body">
-    <p class="earnings-copy">You earn 70% of every charge in TrustedRouter credits. Transfer earnings into a workspace to spend them.</p>
+    <p class="earnings-copy">You earn 70% of every charge in TrustedRouter credits, including custom-model charges and registered-app markup. Transfer earnings into a workspace to spend them.</p>
     <div class="metrics">
       <div class="metric"><div class="label">Earned</div><div class="value earnings-money">{{ summary.total_earned_display }}</div><div class="sub">lifetime</div></div>
       <div class="metric"><div class="label">Transferred</div><div class="value earnings-money">{{ summary.total_transferred_display }}</div><div class="sub">lifetime</div></div>
@@ -55,7 +55,7 @@
   <div class="panel-body">
     {% if recent %}
     <div class="earnings-table-wrap"><table class="data-table" style="width:100%;border-collapse:collapse">
-      <thead><tr><th>Kind</th><th>Amount</th><th>Model</th><th>Counterparty</th><th>When</th></tr></thead>
+      <thead><tr><th>Kind</th><th>Amount</th><th>Model or app</th><th>Counterparty</th><th>When</th></tr></thead>
       <tbody>
         {% for movement in recent %}
         <tr>

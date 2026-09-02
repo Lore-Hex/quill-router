@@ -5,10 +5,12 @@ from typing import Any
 import pytest
 
 from tests.fakes.spanner import make_fake_store
+from trusted_router.storage_errors import StoreUnavailable
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 from trusted_router.storage_gcp_credit_rebalance import (
     RebalanceOutcome,
+    credit_headroom_precheck,
     rebalance_precheck,
 )
 from trusted_router.storage_gcp_credit_shards import (
@@ -131,6 +133,62 @@ def test_true_exhaustion_skips_rw_rebalance(monkeypatch: pytest.MonkeyPatch) -> 
     assert calls["count"] == 0
 
 
+def test_true_exhaustion_bounds_conditional_credit_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A depleted tenant must not lock every configured credit shard."""
+    from trusted_router import storage_gcp_authorize as authorize_mod
+
+    store, _database, key = _seed([100] * 16, usage=[100] * 16)
+    attempts: list[tuple[int, ...]] = []
+    original = authorize_mod.authorize_atomic
+
+    def spy(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        candidates = tuple(kwargs["credit_shard_candidates"])
+        attempts.append(candidates)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(authorize_mod, "authorize_atomic", spy)
+
+    outcome, authorization = _typed_authorize(store, key, estimate=1)
+
+    assert outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS
+    assert authorization is None
+    assert attempts
+    assert max(len(candidates) for candidates in attempts) <= 4
+
+
+def test_bounded_attempts_repair_headroom_outside_hot_subset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bounding the write set must not turn aggregate funds into a false 402."""
+    totals = [0] * 16
+    totals[7] = 100
+    store, database, key = _seed(totals)
+    candidates = tuple(range(16))
+    monkeypatch.setattr(store, "_credit_shard_candidates", lambda _workspace_id: candidates)
+    monkeypatch.setattr(
+        store,
+        "_refresh_credit_shard_candidates",
+        lambda _workspace_id: candidates,
+    )
+
+    calls = _install_rebalance_spy(monkeypatch)
+
+    outcome, authorization = _typed_authorize(store, key, estimate=80)
+    followup_outcome, followup_authorization = _typed_authorize(store, key, estimate=20)
+
+    assert outcome == AuthorizeOutcome.ACCEPTED
+    assert authorization is not None
+    assert followup_outcome == AuthorizeOutcome.ACCEPTED
+    assert followup_authorization is not None
+    rows = database.typed[CREDIT_BALANCE_TABLE]
+    assert rows[(WORKSPACE_ID, 0)]["reserved"] == 0
+    assert rows[(WORKSPACE_ID, 7)]["reserved"] == 100
+    assert rows[(WORKSPACE_ID, 7)]["total_credits"] == 100
+    assert calls["count"] == 0
+
+
 def test_fragmented_sufficient_still_rebalances_and_accepts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -198,11 +256,63 @@ def test_rebalance_precheck_incomplete_and_nonpositive_are_read_only() -> None:
     )
 
     assert incomplete == RebalanceOutcome.INCOMPLETE
-    assert nonpositive == RebalanceOutcome.NOT_NEEDED
+    assert nonpositive == RebalanceOutcome.INCOMPLETE
     assert _typed_rows(database) == before
 
 
-def test_rebalance_cooldown_suppresses_immediate_followers(
+def test_zero_estimate_precheck_selects_a_viable_later_shard() -> None:
+    """A zero estimate must not blindly select an overdrawn prefix shard."""
+    store, database, _key = _seed(
+        [100, 100, 100, 100, 100, 100],
+        usage=[101, 101, 101, 101, 100, 99],
+    )
+    before = _typed_rows(database)
+
+    precheck = credit_headroom_precheck(
+        store._database,
+        store._param_types,
+        workspace_id=WORKSPACE_ID,
+        shard_count=6,
+        shard_candidates=tuple(range(6)),
+        estimate=0,
+    )
+
+    assert precheck.outcome == RebalanceOutcome.NOT_NEEDED
+    assert precheck.candidate_shard == 4
+    assert _typed_rows(database) == before
+
+
+def test_authoritative_rebalance_exhaustion_returns_402(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A locked all-shard verdict is proof, not a retryable ambiguity."""
+    from trusted_router import storage_gcp_credit_rebalance as rebalance_mod
+
+    store, _database, key = _seed([100, 100], usage=[60, 60])
+    monkeypatch.setattr(
+        rebalance_mod,
+        "credit_headroom_precheck",
+        lambda *_args, **_kwargs: rebalance_mod.CreditHeadroomPrecheck(
+            RebalanceOutcome.MOVED
+        ),
+    )
+    monkeypatch.setattr(
+        rebalance_mod,
+        "rebalance_credit_for_estimate",
+        lambda *_args, **_kwargs: {
+            "outcome": RebalanceOutcome.INSUFFICIENT,
+            "moved_micro": 0,
+            "target_shard": 0,
+        },
+    )
+
+    outcome, authorization = _typed_authorize(store, key, estimate=60)
+
+    assert outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS
+    assert authorization is None
+
+
+def test_rebalance_cooldown_returns_retryable_error_not_false_402(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from trusted_router import storage_gcp_credit_rebalance as rebalance_mod
@@ -225,14 +335,13 @@ def test_rebalance_cooldown_suppresses_immediate_followers(
     database.reservation_idemp.clear()
     _set_credit_rows(database, [100, 100], usage=[60, 60])
 
-    second_outcome, second_authorization = _typed_authorize(
-        store,
-        key,
-        estimate=60,
-        idempotency_key="second",
-    )
-    assert second_outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS
-    assert second_authorization is None
+    with pytest.raises(StoreUnavailable, match="rebalance is busy"):
+        _typed_authorize(
+            store,
+            key,
+            estimate=60,
+            idempotency_key="second",
+        )
     assert calls["count"] == 1
 
     monkeypatch.setattr(rebalance_mod, "REBALANCE_COOLDOWN_SECONDS", 0.0)
@@ -247,6 +356,23 @@ def test_rebalance_cooldown_suppresses_immediate_followers(
     assert third_outcome == AuthorizeOutcome.ACCEPTED
     assert third_authorization is not None
     assert calls["count"] == 2
+
+
+def test_repeated_headroom_races_return_retryable_error_not_false_402(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bounded retry limit is not evidence that aggregate funds are gone."""
+    from trusted_router import storage_gcp_authorize as authorize_mod
+
+    store, _database, key = _seed([100, 100])
+
+    def always_stolen(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+        return {"outcome": AuthorizeOutcome.INSUFFICIENT_CREDITS}
+
+    monkeypatch.setattr(authorize_mod, "authorize_atomic", always_stolen)
+
+    with pytest.raises(StoreUnavailable, match="changed concurrently"):
+        _typed_authorize(store, key, estimate=50)
 
 
 def test_reject_path_refresh_dedupes_loader(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -314,7 +440,7 @@ def test_unsharded_rejection_skips_precheck_and_rebalance(
     def fail_precheck(*args: Any, **kwargs: Any) -> str:
         raise AssertionError("unsharded rejection must not precheck")
 
-    monkeypatch.setattr(rebalance_mod, "rebalance_precheck", fail_precheck)
+    monkeypatch.setattr(rebalance_mod, "credit_headroom_precheck", fail_precheck)
 
     outcome, authorization = _typed_authorize(store, key, estimate=50)
 

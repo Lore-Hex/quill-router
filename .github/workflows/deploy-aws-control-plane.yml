@@ -1,0 +1,113 @@
+name: Deploy AWS control plane
+
+# Dispatch-only: the AWS App Runner control plane (tr-eu, eu-west-3) has no
+# push-triggered deploy on purpose — its rollout includes EventBridge and IAM
+# mutations an operator should choose to run. Before this workflow existed the
+# deploy required a local Docker build, and the service ran a four-week-old
+# image through the 2026-08-28 monitor blackout because nobody had a machine
+# with Docker handy. An ubuntu runner always does.
+#
+# The workflow is nothing but the operator script: scripts/deploy/
+# aws_eu_control_plane.sh is the single source of truth for the deploy (build
+# by digest, serving-digest assertion, EventBridge alignment, DLQ + alarms).
+# Fixes go THERE, never here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "deploy = full control-plane deploy; drain-install = only install the outbox drain on the ClickHouse VM and verify cloud completeness"
+        required: false
+        default: "deploy"
+        type: choice
+        options: ["deploy", "drain-install"]
+      skip_eventbridge:
+        description: "Skip the EventBridge alignment section (SKIP_EVENTBRIDGE=1)"
+        required: false
+        default: "0"
+      attestation_pcr0:
+        description: "Published enclave PCR0 pin (from trust/aws-release.json) - deploy mode refuses to run without it; pinning is the point"
+        required: false
+        default: ""
+      bake_override_reason:
+        description: "Non-empty ONLY to override the cloud bake gate (TR_CLOUD_BAKE_OVERRIDE); state the incident/justification - it is recorded in the run log"
+        required: false
+        default: ""
+
+concurrency:
+  group: deploy-aws-control-plane
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    if: github.repository == 'Lore-Hex/quill-router'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # Checkout into a subdirectory: the GCP auth action writes its
+      # credentials file into the workspace ROOT, and the deploy script
+      # refuses a dirty tree ("a dirty tree deploys unvalidated code").
+      # Keeping the repo one level down keeps the tree clean.
+      - uses: actions/checkout@v4
+        with:
+          path: src
+
+      # The account's GitHub OIDC provider is pre-existing; this role is the
+      # quill-router deploy grant (the TR_AWS_* repo secrets are dead - the
+      # first dispatch failed on them with "security token invalid").
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::330422590279:role/tr-router-github-deploy
+          aws-region: eu-west-3
+
+      # The production deploy mutex lives in GCS (deploy_mutex.sh) so ONE
+      # lock covers every cloud's deploy tooling; this AWS deploy therefore
+      # needs GCP auth too, via the repo's existing workload identity.
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      # The deploy ends by running the repository's Python completeness gate.
+      # A bare GitHub runner has Python but not the project's dependencies, so
+      # without uv the service can deploy successfully and then report a false
+      # failure while importing the verifier.
+      - uses: astral-sh/setup-uv@v7
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Deploy tr-eu from this commit
+        if: ${{ inputs.mode == 'deploy' }}
+        env:
+          SKIP_EVENTBRIDGE: ${{ inputs.skip_eventbridge }}
+          ATTESTATION_PCR0: ${{ inputs.attestation_pcr0 }}
+          TR_CLOUD_BAKE_OVERRIDE: ${{ inputs.bake_override_reason }}
+        working-directory: src
+        run: bash scripts/deploy/aws_eu_control_plane.sh
+
+      - name: Install outbox drain and verify cloud completeness
+        if: ${{ inputs.mode == 'drain-install' }}
+        working-directory: src
+        env:
+          # The installer refuses an admin DSN: the ClickHouse host must not
+          # hold superuser-equivalent credentials for the operational
+          # database. tr_drain is the scoped DSQL role (LOGIN, plus SELECT
+          # and DELETE on the outbox table only) created once by an operator
+          # with admin, per the installer's own instructions.
+          DSQL_USER: tr_drain
+        run: |
+          # Schema first: the drain's own verification queries every
+          # operational table, so a node behind on migrations fails the
+          # install with a delivery-shaped error (run 33335255503, missing
+          # spend_lease_shadow). Applying is a no-op on a converged node.
+          bash scripts/deploy/aws_eu_clickhouse_schema_apply.sh
+          bash scripts/deploy/aws_eu_clickhouse_drain_install.sh
+          bash scripts/deploy/verify_cloud_complete.sh aws

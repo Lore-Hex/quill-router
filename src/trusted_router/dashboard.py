@@ -42,12 +42,12 @@ from trusted_router.catalog import (
     canonical_orchestration_model_id,
     endpoint_confidential_compute,
     endpoint_e2ee,
+    endpoint_provider_policy,
     endpoint_zero_data_retention,
     endpoints_for_model,
     meta_candidate_models,
     model_eu_focused_provider_available,
     model_open_weights,
-    model_provider_policy,
     model_us_provider_available,
     orchestration_primitive,
     orchestration_role,
@@ -129,6 +129,18 @@ PROVIDER_PERFORMANCE_INDEX_MIN_SAMPLES = 20
 MODEL_COMPARE_URL_LIMIT = 2_600
 MODEL_COMPARE_MODEL_LIMIT = 73
 MODEL_COMPARE_PAGE_SIZE = 100
+MODEL_DISCOVERY_PAGE_SIZE = 24
+MODEL_DISCOVERY_PRIORITY: tuple[str, ...] = (
+    "z-ai/glm-5.3-flash",
+    "z-ai/glm-5.3",
+    "moonshotai/kimi-k3",
+    "deepseek/deepseek-v4-pro-0813",
+    "deepseek/deepseek-v4-flash-0731",
+    "minimax/minimax-m3",
+)
+_MODEL_DISCOVERY_PRIORITY_INDEX = {
+    model_id: index for index, model_id in enumerate(MODEL_DISCOVERY_PRIORITY)
+}
 SEO_CORE_PATHS: tuple[str, ...] = (
     "/azure-openai-alternative",
     "/deepseek-api-privacy",
@@ -225,6 +237,8 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/docs/migrate-from-openrouter",
     "/docs/tagging",
     "/docs/telemetry",
+    "/docs/receipts",
+    "/docs/provider-routing",
     "/docs/prompt-caching",
     "/docs/batch",
     "/docs/web-search",
@@ -1316,6 +1330,24 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "Attach AWS style tags and OpenRouter attribution metadata to LLM requests "
             "without adding them to model prompts or provider payloads."
+        ),
+    ),
+    "docs/provider-routing": PublicPage(
+        template="public/provider_routing.html",
+        title="Provider Routing And Pinning",
+        description=(
+            "Pin, prefer, or exclude providers per request with the OpenRouter-compatible "
+            "provider object: only, ignore, order, allow_fallbacks, sort, max_price, "
+            "require_parameters, ZDR, and hard filters that fail closed."
+        ),
+    ),
+    "docs/receipts": PublicPage(
+        template="public/receipts.html",
+        title="Signed Inference Receipts",
+        description=(
+            "Opt into a signed, offline-verifiable receipt on any inference call: exact "
+            "request and response hashes, the routed model and provider, the upstream "
+            "verification tier, and a signing key committed into hardware attestation."
         ),
     ),
     "docs/telemetry": PublicPage(
@@ -3348,14 +3380,22 @@ def subprocessors_json(settings: Settings) -> str:
 
 def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
     test_mode = settings.environment == "test"
-    models = [_model_view(model, test_mode=test_mode) for model in MODELS.values()]
+    all_models = [_model_view(model, test_mode=test_mode) for model in MODELS.values()]
+    all_models.sort(key=_model_discovery_sort_key)
+    models = all_models
     normalized_filter = model_filter.strip().lower()
-    if normalized_filter == "open":
+    if normalized_filter in {"open", "open-weight"}:
+        normalized_filter = "open"
         models = [model for model in models if model.get("open_weights")]
     elif normalized_filter == "us":
         models = [model for model in models if model.get("us_provider_available")]
     elif normalized_filter == "eu":
         models = [model for model in models if model.get("eu_focused_provider_available")]
+    elif normalized_filter == "zdr":
+        models = [model for model in models if model.get("zdr_available")]
+    elif normalized_filter in {"e2e", "confidential"}:
+        normalized_filter = "e2e"
+        models = [model for model in models if model.get("e2e_available")]
     else:
         normalized_filter = "all"
     item_list_rows: list[dict[str, object]] = []
@@ -3381,12 +3421,20 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
                 "privacy policy, and live API routes. Filter open-weight, US, and EU options."
             ),
             models=models,
+            total_model_count=len(all_models),
+            # Count the complete public provider catalog, not only providers with
+            # a currently routable model. TrustedRouter itself is the router,
+            # rather than an upstream provider.
+            total_provider_count=sum(slug != "trustedrouter" for slug in PROVIDERS),
+            initial_page_size=MODEL_DISCOVERY_PAGE_SIZE,
             active_filter=normalized_filter,
             model_filters=[
                 {"id": "all", "label": "All", "href": "/models"},
                 {"id": "open", "label": "Open weights", "href": "/models?filter=open"},
                 {"id": "us", "label": "US providers", "href": "/models?filter=us"},
                 {"id": "eu", "label": "EU-focused", "href": "/models?filter=eu"},
+                {"id": "zdr", "label": "ZDR available", "href": "/models?filter=zdr"},
+                {"id": "e2e", "label": "E2EE available", "href": "/models?filter=e2e"},
             ],
             json_ld_blob=_json_ld_graph(
                 settings,
@@ -3401,6 +3449,24 @@ def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
             static_version=_static_version(settings),
         )
     )
+
+
+def _model_discovery_sort_key(model: Mapping[str, object]) -> tuple[int, int, int, str]:
+    model_id = str(model["id"])
+    featured_rank = _MODEL_DISCOVERY_PRIORITY_INDEX.get(model_id)
+    if featured_rank is not None:
+        return (0, featured_rank, 0, "")
+    ai_iq = model.get("ai_iq")
+    ai_iq_rank = 1_000_000
+    if isinstance(ai_iq, Mapping):
+        try:
+            ai_iq_rank = int(ai_iq.get("rank", ai_iq_rank))
+        except (TypeError, ValueError):
+            pass
+    section = 2 if model.get("is_meta") else 1
+    raw_provider_count = model.get("provider_count")
+    provider_count = raw_provider_count if isinstance(raw_provider_count, int) else 0
+    return (section, ai_iq_rank, -provider_count, str(model["name"]).casefold())
 
 
 def public_benchmarks_html(settings: Settings) -> str:
@@ -3676,7 +3742,9 @@ def public_chat_html(
             # provider response headers are visible without any CORS
             # expose-headers work, so "via {provider}" lights up.
             api_base_url="/chat-proxy/v1",
-            catalog_base_url="https://api.trustedrouter.com/v1",
+            # Catalog discovery is public control-plane metadata. Keep it
+            # same-origin so browsers never depend on gateway CORS policy.
+            catalog_base_url="/v1",
             site_url=f"https://{settings.trusted_domain}/chat",
             title="Chat | TrustedRouter",
             heading="Chat",
@@ -3700,7 +3768,7 @@ def public_fusion_html(settings: Settings) -> str:
         .get_template("public/fusion_playground.html")
         .render(
             api_base_url="/chat-proxy/v1",
-            catalog_base_url="https://api.trustedrouter.com/v1",
+            catalog_base_url="/v1",
             site_url=f"https://{settings.trusted_domain}/synth",
             title="Synth | TrustedRouter",
             heading="Synth",
@@ -4294,10 +4362,14 @@ def llms_txt(settings: Settings) -> str:
         f"- [Video generation](https://{domain}/docs/video)",
         f"- [Request tagging and cost allocation](https://{domain}/docs/tagging)",
         f"- [Client reliability telemetry](https://{domain}/docs/telemetry)",
+        f"- [Signed inference receipts](https://{domain}/docs/receipts)",
+        f"- [Provider routing and pinning](https://{domain}/docs/provider-routing)",
         f"- [Blog](https://{domain}/blog)",
         f"- [Migration guide](https://{domain}/docs/migrate-from-openrouter)",
         f"- [Request tagging and cost allocation](https://{domain}/docs/tagging)",
         f"- [Client reliability telemetry](https://{domain}/docs/telemetry)",
+        f"- [Signed inference receipts](https://{domain}/docs/receipts)",
+        f"- [Provider routing and pinning](https://{domain}/docs/provider-routing)",
         "",
         "## API",
         "- [OpenAI compatible base URL](https://api.trustedrouter.com/v1)",
@@ -4641,12 +4713,14 @@ def docs_llms_full_txt(settings: Settings) -> str:
 
 def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
-    endpoints = endpoints_for_model(model.id) if model.id not in META_MODEL_IDS else []
+    is_meta = model.id in META_MODEL_IDS
+    endpoints = _credits_endpoints(endpoints_for_model(model.id)) if not is_meta else []
+    route_endpoints = _credits_endpoints(_model_route_endpoints(model))
     ai_iq = (
         ai_iq_for_model(model.id, test_mode=test_mode) if model.id not in META_MODEL_IDS else None
     )
     if (
-        model.id in META_MODEL_IDS
+        is_meta
         and model.prompt_price_microdollars_per_million_tokens == 0
         and model.completion_price_microdollars_per_million_tokens == 0
     ):
@@ -4661,7 +4735,16 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
     else:
         prompt = _price(model.prompt_price_microdollars_per_million_tokens)
         completion = _price(model.completion_price_microdollars_per_million_tokens)
-    providers = _endpoint_provider_views(endpoints, fallback_provider=model.provider)
+    cached_prices = _cached_prompt_prices(route_endpoints)
+    if cached_prices:
+        cached_prompt = _price_values_range(cached_prices, include_zero=True)
+    elif is_meta:
+        cached_prompt = "selected route"
+    else:
+        cached_prompt = "Not published"
+    providers = (
+        _endpoint_provider_views(endpoints, fallback_provider=model.provider) if endpoints else []
+    )
     endpoint_postures = {
         (
             endpoint_zero_data_retention(endpoint),
@@ -4684,21 +4767,40 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         provider_confidential_compute,
         provider_e2ee,
     ) = next(iter(endpoint_postures))
+    prompt_price_sort = _minimum_model_price(
+        model,
+        endpoints=route_endpoints,
+        attr="prompt_price_microdollars_per_million_tokens",
+    )
+    completion_price_sort = _minimum_model_price(
+        model,
+        endpoints=route_endpoints,
+        attr="completion_price_microdollars_per_million_tokens",
+    )
+    provider_search_terms = [
+        term
+        for provider_view in providers
+        for term in (provider_view["slug"], provider_view["name"])
+    ]
     return {
         "id": model.id,
         "name": model.name,
         "provider": provider.name,
         "publisher_slug": model.provider,
         "context_length": f"{model.context_length:,}",
+        "context_length_compact": _compact_token_count(model.context_length),
+        "context_length_int": model.context_length,
         "prompt_price": prompt,
+        "cached_prompt_price": cached_prompt,
         "completion_price": completion,
-        # Derive from endpoints (not the raw Model flag): supplemental
-        # provider-native models carry prepaid_available=False as a catalog
-        # dedup marker, but DO have a priced Credits endpoint and are fully
-        # prepaid-routable. Mirror model_to_openrouter_shape so the public
-        # catalog/detail page matches /v1/models.
-        "prepaid": any(endpoint.usage_type == "Credits" for endpoint in endpoints)
-        or model.prepaid_available,
+        "prompt_price_sort": prompt_price_sort,
+        "cached_price_sort": min(cached_prices) if cached_prices else None,
+        "completion_price_sort": completion_price_sort,
+        # Public pricing is route-backed. A raw model flag without a current
+        # Credits endpoint must not claim that customers can fund the route.
+        # Orchestration aliases remain Credits models even though their
+        # component routes are resolved only after authorization.
+        "prepaid": bool(endpoints) or (is_meta and model.prepaid_available),
         "byok": model.byok_available,
         "attested": provider.attested_gateway,
         "provider_zero_data_retention": provider_zero_data_retention,
@@ -4709,6 +4811,19 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
             "varies by route" if len(providers) == 1 else "varies by provider"
         ),
         "open_weights": model_open_weights(model),
+        "is_meta": is_meta,
+        "featured_rank": _MODEL_DISCOVERY_PRIORITY_INDEX.get(model.id),
+        "zdr_available": any(
+            endpoint_zero_data_retention(endpoint) is True for endpoint in route_endpoints
+        ),
+        "confidential_available": any(
+            endpoint_confidential_compute(endpoint) is True for endpoint in route_endpoints
+        ),
+        "e2e_available": any(
+            endpoint_confidential_compute(endpoint) is True
+            and endpoint_e2ee(endpoint) is True
+            for endpoint in route_endpoints
+        ),
         "orchestration_primitive": orchestration_primitive(model.id),
         "orchestration_role": orchestration_role(model.id),
         "canonical_model_id": canonical_orchestration_model_id(model.id),
@@ -4717,6 +4832,16 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         "ai_iq": ai_iq,
         "us_provider_available": model_us_provider_available(model),
         "eu_focused_provider_available": model_eu_focused_provider_available(model),
+        "search_text": " ".join(
+            (
+                model.id,
+                model.name,
+                model.provider,
+                provider.name,
+                *provider_search_terms,
+            )
+        ).casefold(),
+        "endpoints_url": None if is_meta else f"/v1/models/{model.id}/endpoints",
         "detail_href": f"/models/{model.id}",
         "benchmarks_href": (
             f"/models/{model.id}/benchmarks"
@@ -4736,14 +4861,85 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
     }
 
 
+def _model_route_endpoints(
+    model: Model,
+    *,
+    _seen: frozenset[str] = frozenset(),
+) -> list[ModelEndpoint]:
+    """Return reachable concrete endpoints without exposing hidden compositions."""
+    if model.id in _seen:
+        return []
+    if model.id not in META_MODEL_IDS:
+        return endpoints_for_model(model.id)
+    if model.hidden_public_metadata:
+        return []
+    next_seen = frozenset((*_seen, model.id))
+    return [
+        endpoint
+        for candidate in meta_candidate_models(model.id)
+        for endpoint in _model_route_endpoints(candidate, _seen=next_seen)
+    ]
+
+
+def _credits_endpoints(endpoints: Sequence[ModelEndpoint]) -> list[ModelEndpoint]:
+    """Return the customer-funded routes used by public pricing pages.
+
+    The catalog intentionally carries a separate BYOK endpoint for many
+    provider/model pairs. Rendering that raw shape duplicates providers and
+    makes the less-used billing mode look like a distinct serving route.
+    Public model pages focus on Credits; the endpoint API remains complete.
+    """
+    return [endpoint for endpoint in endpoints if endpoint.usage_type == "Credits"]
+
+
+def _cached_prompt_prices(endpoints: Sequence[ModelEndpoint]) -> list[int]:
+    prices: list[int] = []
+    for endpoint in endpoints:
+        tiers = endpoint.price_tiers or ()
+        for tier in tiers:
+            cached = tier.prompt_cached_price_microdollars_per_million_tokens
+            if cached is not None and cached >= 0:
+                prices.append(cached)
+    return prices
+
+
+def _cached_prompt_price_range(endpoints: Sequence[ModelEndpoint]) -> str:
+    prices = _cached_prompt_prices(endpoints)
+    if not prices:
+        return "Not published"
+    return _price_values_range(prices, include_zero=True)
+
+
+def _minimum_model_price(
+    model: Model,
+    *,
+    endpoints: Sequence[ModelEndpoint],
+    attr: str,
+) -> int | None:
+    values = [getattr(endpoint, attr) for endpoint in endpoints if getattr(endpoint, attr) > 0]
+    if values:
+        return min(values)
+    model_value = getattr(model, attr)
+    return model_value if model_value > 0 else None
+
+
+def _compact_token_count(value: int) -> str:
+    if value >= 1_000_000:
+        compact = f"{Decimal(value) / Decimal(1_000_000):.2f}".rstrip("0").rstrip(".")
+        return f"{compact}M"
+    if value >= 1_000:
+        compact = f"{Decimal(value) / Decimal(1_000):.0f}"
+        return f"{compact}K"
+    return str(value)
+
+
 def _endpoint_provider_views(
     endpoints: Sequence[ModelEndpoint], *, fallback_provider: str
 ) -> list[dict[str, str]]:
     """Return distinct serving providers in endpoint order.
 
-    A model can have separate Credits and BYOK endpoints on the same
-    provider. The public catalog should list provider companies once,
-    then let the detail table expose individual endpoint rows.
+    Public callers pass Credits endpoints, so every provider appears once
+    without exposing the catalog's parallel BYOK billing record.
     """
     seen: set[str] = set()
     provider_views: list[dict[str, str]] = []
@@ -4784,12 +4980,19 @@ def _provider_view(provider: Provider) -> dict[str, object]:
         "confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
         "zero_data_retention_label": (
-            "prepaid only"
-            if provider.prepaid_zero_data_retention
-            and provider.provider_zero_data_retention is not True
+            "yes"
+            if provider.provider_zero_data_retention is True
+            or provider.prepaid_zero_data_retention
             else f"scheduled {provider.prepaid_zero_data_retention_effective_on}"
             if provider.prepaid_zero_data_retention_effective_on
             else _policy_label(provider.provider_zero_data_retention)
+        ),
+        "zero_data_retention_scope_label": (
+            "All routes"
+            if provider.provider_zero_data_retention is True
+            else "TR-funded routes"
+            if provider.prepaid_zero_data_retention
+            else None
         ),
         "confidential_compute_label": _policy_label(provider.provider_confidential_compute),
         "provider_e2ee_label": _policy_label(provider.provider_e2ee),
@@ -4807,8 +5010,7 @@ def _provider_detail_view(
 ) -> dict[str, object]:
     view = _provider_view(provider)
     view["served_model_count"] = len(served_models)
-    view["prepaid_model_count"] = sum(1 for model in served_models if model["prepaid"])
-    view["byok_model_count"] = sum(1 for model in served_models if model["byok"])
+    view["credits_model_count"] = len(served_models)
     return view
 
 
@@ -4832,7 +5034,7 @@ def _provider_faq_items(
         )
     elif provider.prepaid_zero_data_retention:
         zdr_answer = (
-            f"TrustedRouter records managed prepaid {provider.name} routes as zero data "
+            f"TrustedRouter records its managed {provider.name} routes as zero data "
             "retention. That classification does not automatically cover every direct or "
             "BYOK account. Use provider.min_privacy=zdr to require an eligible route."
         )
@@ -4882,9 +5084,9 @@ def _provider_privacy_tier(provider: Provider) -> str:
     if provider.provider_e2ee and provider.provider_confidential_compute:
         return "Confidential"
     if provider.provider_zero_data_retention:
-        return "No logs"
+        return "ZDR"
     if provider.prepaid_zero_data_retention:
-        return "No logs (prepaid)"
+        return "ZDR"
     if provider.provider_confidential_compute:
         return "Confidential compute"
     return "No provider claim"
@@ -4911,7 +5113,7 @@ def _model_detail_view(
         model.prompt_price_microdollars_per_million_tokens > 0
         or model.completion_price_microdollars_per_million_tokens > 0
     )
-    endpoints = endpoints_for_model(model.id)
+    endpoints = _credits_endpoints(endpoints_for_model(model.id))
     ai_iq = None if is_meta else ai_iq_for_model(model.id, test_mode=test_mode)
     candidate_models = []
     if not model.hidden_public_metadata:
@@ -4928,8 +5130,8 @@ def _model_detail_view(
                 "provider_slug": endpoint.provider,
                 "provider_href": f"/providers/{endpoint.provider}",
                 "provider_logo_url": provider_logo_url(endpoint.provider),
-                "usage_type": endpoint.usage_type,
                 "prompt_price": _price(endpoint.prompt_price_microdollars_per_million_tokens),
+                "cached_prompt_price": _cached_prompt_price_range((endpoint,)),
                 "completion_price": _price(
                     endpoint.completion_price_microdollars_per_million_tokens
                 ),
@@ -4947,11 +5149,7 @@ def _model_detail_view(
                     endpoint_confidential_compute(endpoint) if ep_provider else None
                 ),
                 "provider_e2ee": endpoint_e2ee(endpoint) if ep_provider else None,
-                "provider_policy": (
-                    model_provider_policy(endpoint.model_id, endpoint.provider)
-                    if ep_provider
-                    else ""
-                ),
+                "provider_policy": endpoint_provider_policy(endpoint) if ep_provider else "",
                 "endpoint_id": endpoint.id,
             }
         )
@@ -4980,6 +5178,9 @@ def _model_detail_view(
         "context_length_int": model.context_length,
         "fixed_price": fixed_price,
         "prompt_price": _price(model.prompt_price_microdollars_per_million_tokens),
+        "cached_prompt_price": (
+            "selected route" if is_meta else _cached_prompt_price_range(endpoints)
+        ),
         "completion_price": _price(model.completion_price_microdollars_per_million_tokens),
         "minimum_charge": (
             format_money_precise(model.minimum_charge_microdollars)
@@ -5028,13 +5229,10 @@ def _model_detail_view(
         "supports_chat": model.supports_chat,
         "supports_messages": model.supports_messages,
         "supports_embeddings": model.supports_embeddings,
-        # Derive from endpoints (not the raw Model flag): supplemental
-        # provider-native models carry prepaid_available=False as a catalog
-        # dedup marker, but DO have a priced Credits endpoint and are fully
-        # prepaid-routable. Mirror model_to_openrouter_shape so the public
-        # catalog/detail page matches /v1/models.
-        "prepaid": any(endpoint.usage_type == "Credits" for endpoint in endpoints)
-        or model.prepaid_available,
+        # Keep the public billing claim tied to an actual Credits route. Meta
+        # models are the only exception because they authorize component
+        # routes dynamically rather than carrying direct endpoint rows.
+        "prepaid": bool(endpoints) or (is_meta and model.prepaid_available),
         "byok": model.byok_available,
     }
 
@@ -5093,7 +5291,7 @@ def _model_section_description(model: Model, section: str) -> str:
     if section == "pricing":
         return (
             f"Compare prompt and completion token prices for every {name} route on TrustedRouter, "
-            "including provider-specific rates and prepaid or BYOK availability."
+            "including provider-specific cached-input rates."
         )
     if section == "uptime":
         return (
@@ -5117,7 +5315,7 @@ def _model_section_indexable(
         sample_count = sum(_sample_count(row) for row in measured)
         return sample_count >= MODEL_PERFORMANCE_INDEX_MIN_SAMPLES
     if section in {"providers", "pricing"}:
-        return len(endpoints_for_model(model.id)) >= 2
+        return len(_credits_endpoints(endpoints_for_model(model.id))) >= 2
     if section == "benchmarks":
         return bool(scores_for_model(model.id))
     return False
@@ -5228,7 +5426,7 @@ def _model_comparison_pairs() -> tuple[tuple[Model, Model], ...]:
     all_models = sorted(
         _public_models_for_seo(),
         key=lambda model: (
-            -len(endpoints_for_model(model.id)),
+            -len(_credits_endpoints(endpoints_for_model(model.id))),
             -(model.context_length or 0),
             model.id.lower(),
         ),
@@ -5307,9 +5505,9 @@ def _model_route_evidence(
     *,
     test_mode: bool = False,
 ) -> dict[str, object]:
-    endpoints = endpoints_for_model(model.id)
+    endpoints = _credits_endpoints(endpoints_for_model(model.id))
     measured = measured_for_model(model.id, test_mode=test_mode)
-    priced_endpoints = [endpoint for endpoint in endpoints if endpoint.usage_type == "Credits"]
+    priced_endpoints = endpoints
     prompt_prices = [
         endpoint.prompt_price_microdollars_per_million_tokens for endpoint in priced_endpoints
     ]
@@ -5364,9 +5562,9 @@ def _model_route_evidence(
         else None
     )
     return {
-        "lowest_prompt_price": _price(lowest_prompt) if lowest_prompt is not None else "BYOK only",
+        "lowest_prompt_price": _price(lowest_prompt) if lowest_prompt is not None else None,
         "lowest_completion_price": (
-            _price(lowest_completion) if lowest_completion is not None else "BYOK only"
+            _price(lowest_completion) if lowest_completion is not None else None
         ),
         "fastest_ttft_ms": fastest_ttft_ms,
         "fastest_ttft": (
@@ -5387,8 +5585,10 @@ def _model_route_evidence(
         ),
         "uptime_range": uptime_range,
         "route_count": len(endpoints),
-        "provider_count": len(
-            _endpoint_provider_views(endpoints, fallback_provider=model.provider)
+        "provider_count": (
+            len(_endpoint_provider_views(endpoints, fallback_provider=model.provider))
+            if endpoints
+            else 0
         ),
     }
 
@@ -5398,23 +5598,38 @@ def _model_faq_items(
     *,
     route_evidence: Mapping[str, object],
 ) -> tuple[tuple[str, str], ...]:
+    credits_endpoints = _credits_endpoints(endpoints_for_model(model.id))
     provider_names = [
         provider["name"]
         for provider in _endpoint_provider_views(
-            endpoints_for_model(model.id),
+            credits_endpoints,
             fallback_provider=model.provider,
         )
-    ]
-    if len(provider_names) == 1:
+    ] if credits_endpoints else []
+    if not provider_names:
+        provider_answer = "no Credits provider route"
+    elif len(provider_names) == 1:
         provider_answer = str(provider_names[0])
     else:
         provider_answer = ", ".join(str(name) for name in provider_names[:-1])
         provider_answer = f"{provider_answer}, and {provider_names[-1]}"
+    if route_evidence["route_count"]:
+        price_answer = (
+            f"The current lowest Credits input price is "
+            f"{route_evidence['lowest_prompt_price']} and the lowest Credits output price is "
+            f"{route_evidence['lowest_completion_price']}. Prices are per one million tokens "
+            "and come from the current route catalog."
+        )
+    else:
+        price_answer = (
+            f"TrustedRouter currently publishes no Credits provider route for {model.name}, "
+            "so no public Credits price is available."
+        )
     return (
         (
             f"What model ID should I use for {model.name}?",
             f"Use {model.id} as the model field with the TrustedRouter OpenAI-compatible "
-            "API. The same model ID works for prepaid and eligible BYOK routes.",
+            "API. Credits routing and provider fallback happen behind that model ID.",
         ),
         (
             f"Which providers serve {model.name}?",
@@ -5423,9 +5638,7 @@ def _model_faq_items(
         ),
         (
             f"How much does {model.name} cost through TrustedRouter?",
-            f"The current lowest prepaid input price is {route_evidence['lowest_prompt_price']} "
-            f"and the lowest output price is {route_evidence['lowest_completion_price']}. "
-            "Prices are per one million tokens and come from the current route catalog.",
+            price_answer,
         ),
         (
             f"How do I require zero data retention for {model.name}?",
@@ -5449,7 +5662,8 @@ def _model_comparison_index() -> dict[
             f"{left.name} vs {right.name}",
             left.id,
             right.id,
-            len(endpoints_for_model(left.id)) + len(endpoints_for_model(right.id)),
+            len(_credits_endpoints(endpoints_for_model(left.id)))
+            + len(_credits_endpoints(endpoints_for_model(right.id))),
         )
         for model_id in {left.id.casefold(), right.id.casefold()}:
             indexed.setdefault(model_id, []).append(row)
@@ -5534,8 +5748,8 @@ def _comparison_view(
 ) -> dict[str, object]:
     left_total = _cheapest_total_microdollars(left)
     right_total = _cheapest_total_microdollars(right)
-    left_routes = len(endpoints_for_model(left.id))
-    right_routes = len(endpoints_for_model(right.id))
+    left_routes = len(_credits_endpoints(endpoints_for_model(left.id)))
+    right_routes = len(_credits_endpoints(endpoints_for_model(right.id)))
     left_evidence = _model_route_evidence(left, test_mode=test_mode)
     right_evidence = _model_route_evidence(right, test_mode=test_mode)
     left_measured = cast(int | None, left_evidence["fastest_ttft_ms"])
@@ -5653,7 +5867,7 @@ def _cheapest_total_microdollars(model: Model) -> int:
 
 
 def _privacy_summary(model: Model) -> str:
-    endpoints = endpoints_for_model(model.id)
+    endpoints = _credits_endpoints(endpoints_for_model(model.id))
     if any(endpoint_e2ee(endpoint) for endpoint in endpoints):
         return "has provider E2EE route"
     if any(endpoint_confidential_compute(endpoint) for endpoint in endpoints):
@@ -5666,8 +5880,11 @@ def _privacy_summary(model: Model) -> str:
 def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for model in _public_models_for_seo():
-        all_endpoints = endpoints_for_model(model.id)
-        endpoints = [endpoint for endpoint in all_endpoints if endpoint.provider == provider_slug]
+        endpoints = [
+            endpoint
+            for endpoint in _credits_endpoints(endpoints_for_model(model.id))
+            if endpoint.provider == provider_slug
+        ]
         if not endpoints:
             continue
         rows.append(
@@ -5679,10 +5896,10 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
                     f"/models/{model.id}/benchmarks" if scores_for_model(model.id) else None
                 ),
                 "providers_href": (
-                    f"/models/{model.id}/providers" if len(all_endpoints) >= 2 else None
+                    f"/models/{model.id}/providers" if len(endpoints) >= 2 else None
                 ),
                 "pricing_href": (
-                    f"/models/{model.id}/pricing" if len(all_endpoints) >= 2 else None
+                    f"/models/{model.id}/pricing" if len(endpoints) >= 2 else None
                 ),
                 "context_length": f"{model.context_length:,}",
                 "endpoint_count": len(endpoints),
@@ -5690,13 +5907,12 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
                     endpoints,
                     "prompt_price_microdollars_per_million_tokens",
                 ),
+                "cached_prompt_price": _cached_prompt_price_range(endpoints),
                 "completion_price": _endpoint_price_range(
                     endpoints,
                     "completion_price_microdollars_per_million_tokens",
                 ),
                 "ai_iq": ai_iq_for_model(model.id, test_mode=test_mode),
-                "prepaid": any(not endpoint.is_byok for endpoint in endpoints),
-                "byok": any(endpoint.is_byok for endpoint in endpoints),
             }
         )
     return sorted(rows, key=lambda row: str(row["id"]))
@@ -5751,7 +5967,7 @@ def _model_json_ld(
 
 
 def _model_service_node(settings: Settings, model: Model, site_url: str) -> dict[str, object]:
-    endpoints = endpoints_for_model(model.id)
+    endpoints = _credits_endpoints(endpoints_for_model(model.id))
     prompt_prices = [
         ep.prompt_price_microdollars_per_million_tokens
         for ep in endpoints
@@ -5806,11 +6022,21 @@ def _endpoint_price_range(endpoints: Sequence[ModelEndpoint], attr: str) -> str:
     values = [getattr(ep, attr) for ep in endpoints if getattr(ep, attr) > 0]
     if not values:
         return _price(0)
+    return _price_values_range(values)
+
+
+def _price_values_range(values: Sequence[int], *, include_zero: bool = False) -> str:
     low = min(values)
     high = max(values)
+
+    def formatted(value: int) -> str:
+        if include_zero and value == 0:
+            return "$0/1M"
+        return _price(value)
+
     if low == high:
-        return _price(low)
-    return f"{_price(low)} to {_price(high)}"
+        return formatted(low)
+    return f"{formatted(low)} to {formatted(high)}"
 
 
 def _price_range(models: list[Model], attr: str) -> str:

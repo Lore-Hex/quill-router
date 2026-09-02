@@ -25,6 +25,7 @@ from trusted_router.security import (
     new_key_id,
     verify_api_key,
 )
+from trusted_router.spend_leases import SpendLeaseArtifact
 from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage_gcp_codec import workspace_key_id as _workspace_key_id
 from trusted_router.storage_gcp_counters import (
@@ -98,9 +99,7 @@ def _apply_key_patch(key: ApiKey, patch: dict[str, Any]) -> None:
         key.disabled = bool(patch["disabled"])
     if "limit" in patch:
         value = patch["limit"]
-        key.limit_microdollars = (
-            None if value is None else dollars_to_microdollars(value)
-        )
+        key.limit_microdollars = None if value is None else dollars_to_microdollars(value)
     if "limit_microdollars" in patch:
         key.limit_microdollars = patch["limit_microdollars"]
     if "limit_reset" in patch:
@@ -148,6 +147,7 @@ class SpannerApiKeys:
         budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
         scopes: list[str] | None = None,
+        app_id: str = "",
         usage_shard_count: int = 1,
     ) -> tuple[str, ApiKey]:
         validated_scopes = validate_api_key_scopes(scopes, management=management)
@@ -165,6 +165,7 @@ class SpannerApiKeys:
             workspace_id=workspace_id,
             creator_user_id=creator_user_id,
             scopes=validated_scopes,
+            app_id=app_id,
             management=management,
             limit_microdollars=limit_microdollars,
             limit_reset=limit_reset,
@@ -216,9 +217,7 @@ class SpannerApiKeys:
         return None
 
     def list_for_workspace(self, workspace_id: str) -> list[ApiKey]:
-        refs = self._io.list_entities(
-            "api_key_by_workspace", prefix=f"{workspace_id}#", cls=dict
-        )
+        refs = self._io.list_entities("api_key_by_workspace", prefix=f"{workspace_id}#", cls=dict)
         keys: list[ApiKey] = []
         for ref in refs:
             key = self.get_by_hash(str(ref["key_id"]))
@@ -263,8 +262,7 @@ class SpannerApiKeys:
             if row[1] is not None:
                 entry[1].append(list(row[1:]))
         return [
-            api_key_usage_snapshot(api_key, usage_rows)
-            for api_key, usage_rows in grouped.values()
+            api_key_usage_snapshot(api_key, usage_rows) for api_key, usage_rows in grouped.values()
         ]
 
     def delete(self, key_hash: str) -> bool:
@@ -383,6 +381,7 @@ class SpannerApiKeys:
     def add_usage(self, key_hash: str, cost_microdollars: int, *, is_byok: bool) -> None:
         """Roll a settled generation's actual cost into the key counters.
         Standalone txn so callers can compose it with their own writes."""
+
         def txn(transaction: Any) -> None:
             key = self._io.read_entity_tx(transaction, "api_key", key_hash, ApiKey)
             if key is None:
@@ -433,6 +432,10 @@ class SpannerApiKeys:
         idempotency_key: str | None = None,
         tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
+        app_id: str = "",
+        app_markup_basis_points: int = 0,
+        receipt_fee_basis_points: int = 0,
+        app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         user_provided_model_id: str | None = None,
@@ -445,6 +448,7 @@ class SpannerApiKeys:
         settlement: str = "local",
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
+        spend_lease: SpendLeaseArtifact | None = None,
     ) -> GatewayAuthorization:
         if deferred_cap_microdollars is not None:
             # Deferred settlement is a PEER-plane mechanism: a plane spending
@@ -483,19 +487,31 @@ class SpannerApiKeys:
             idempotency_key=idempotency_key,
             tags=dict(tags or {}),
             idempotency_fingerprint=idempotency_fingerprint,
+            app_id=app_id,
+            app_markup_basis_points=app_markup_basis_points,
+            receipt_fee_basis_points=receipt_fee_basis_points,
+            app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
             user_provided_model_id=user_provided_model_id,
             user_provided_model_revision=user_provided_model_revision,
-            user_model_prompt_price_microdollars_per_m=(
-                user_model_prompt_price_microdollars_per_m
-            ),
+            user_model_prompt_price_microdollars_per_m=(user_model_prompt_price_microdollars_per_m),
             user_model_completion_price_microdollars_per_m=(
                 user_model_completion_price_microdollars_per_m
             ),
             user_model_owner_user_id=user_model_owner_user_id,
             additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
             native_batch_eligible=native_batch_eligible,
+            spend_lease_token=spend_lease.token if spend_lease else None,
+            spend_lease_id=spend_lease.lease_id if spend_lease else None,
+            spend_lease_cap_micro=spend_lease.cap_micro if spend_lease else None,
+            spend_lease_gen=spend_lease.gen if spend_lease else None,
+            spend_lease_iat=spend_lease.iat if spend_lease else None,
+            spend_lease_exp=spend_lease.exp if spend_lease else None,
+            spend_lease_issuer_kid=spend_lease.issuer_kid if spend_lease else None,
+            spend_lease_boot_kid=spend_lease.boot_kid if spend_lease else None,
+            spend_lease_catalog_version=(spend_lease.catalog_version if spend_lease else None),
+            spend_lease_status=spend_lease.lease_status if spend_lease else None,
         )
         if idempotency_key is None:
             self._io.write_entity("gateway_authorization", auth.id, auth)
@@ -512,21 +528,15 @@ class SpannerApiKeys:
             )
         return auth
 
-    def get_gateway_authorization(
-        self, authorization_id: str
-    ) -> GatewayAuthorization | None:
-        return self._io.read_entity(
-            "gateway_authorization", authorization_id, GatewayAuthorization
-        )
+    def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:
+        return self._io.read_entity("gateway_authorization", authorization_id, GatewayAuthorization)
 
     def get_gateway_authorization_by_idempotency_key(
         self, workspace_id: str, key_hash: str, idempotency_key: str
     ) -> GatewayAuthorization | None:
         ref = self._io.read_entity(
             "gateway_authorization_idempotency",
-            _gateway_authorization_idempotency_index_id(
-                workspace_id, key_hash, idempotency_key
-            ),
+            _gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key),
             dict,
         )
         if not ref:

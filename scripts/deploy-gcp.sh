@@ -34,6 +34,9 @@ bash "${SCRIPT_DIR}/deploy/image.sh"
 bash "${SCRIPT_DIR}/deploy/secrets.sh"
 bash "${SCRIPT_DIR}/deploy/regional_quota_ledger.sh" \
   </dev/null
+bash "${SCRIPT_DIR}/deploy/spend_lease_ledger.sh" \
+  </dev/null
 bash "${SCRIPT_DIR}/deploy/rollout.sh"
 bash "${SCRIPT_DIR}/deploy/regional_quota_reconciler.sh"
+bash "${SCRIPT_DIR}/deploy/spend_lease_reconciler.sh"
 bash "${SCRIPT_DIR}/deploy/synthetic.sh"

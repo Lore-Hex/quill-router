@@ -19,8 +19,11 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
+import socket
 import sqlite3
 import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -1051,6 +1054,182 @@ def test_a_non_admin_role_gets_the_scoped_token_not_the_admin_one(
     assert captured["password"] == "scoped-token"  # noqa: S105 - fake token, not a secret
 
 
+def test_both_connect_paths_bound_every_libpq_socket_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The daemon cannot recover from a socket call that never returns."""
+    import clickhouse.ingest_operational_outbox_postgres as drain
+
+    _, dsql = _connect_with(
+        "host=cluster.dsql.eu-west-3.on.aws user=tr_analytics_drain dbname=postgres",
+        monkeypatch,
+    )
+    plain: dict[str, Any] = {}
+    source = drain.PostgresOperationalOutboxSource(dsn="postgresql://db.internal/tr")
+
+    class _FakePsycopg:
+        @staticmethod
+        def connect(dsn: str, **kwargs: Any) -> str:
+            plain.update(dsn=dsn, **kwargs)
+            return "connection"
+
+    source._psycopg = _FakePsycopg
+    assert source._connect() == "connection"
+
+    expected = {
+        "connect_timeout": 10,
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 3,
+        "tcp_user_timeout": 30_000,
+    }
+    for captured in (dsql, plain):
+        for key, value in expected.items():
+            assert captured[key] == value
+    assert "options" not in dsql
+    assert plain["options"] == "-c statement_timeout=60000"
+
+
+def test_connection_is_recycled_before_dsqls_one_hour_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import clickhouse.ingest_operational_outbox_postgres as drain
+
+    class _Connection:
+        closed = False
+
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    old = _Connection()
+    new = _Connection()
+    connects: list[dict[str, Any]] = []
+    source = drain.PostgresOperationalOutboxSource(dsn="postgresql://db.internal/tr")
+    source._connection = old
+    source._connected_at = 100.0
+
+    class _FakePsycopg:
+        @staticmethod
+        def connect(dsn: str, **kwargs: Any) -> _Connection:
+            connects.append({"dsn": dsn, **kwargs})
+            return new
+
+    source._psycopg = _FakePsycopg
+    monkeypatch.setattr(
+        drain.time,
+        "monotonic",
+        lambda: 100.0 + drain.CONNECTION_MAX_AGE_SECONDS,
+    )
+
+    assert source._live_connection() is new
+    assert old.close_calls == 1
+    assert len(connects) == 1
+
+
+def test_main_loop_iteration_sends_systemd_watchdog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import clickhouse.ingest_operational_outbox_postgres as drain
+
+    class _Source:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        def oldest_enqueued_at(self) -> None:
+            return None
+
+    monkeypatch.setattr(drain, "PostgresOperationalOutboxSource", _Source)
+    monkeypatch.setattr(
+        drain,
+        "clickhouse_targets_from_env",
+        lambda env: [SimpleNamespace(describe=lambda: "test@local/tr")],
+    )
+    monkeypatch.setattr(drain, "build_operational_writer", lambda targets: object())
+    monkeypatch.setattr(
+        drain,
+        "drain_once",
+        lambda *args, **kwargs: drain.SweepResult(
+            fetched=0,
+            inserted=0,
+            rows_per_second=0.0,
+        ),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ingest_operational_outbox_postgres", "--dsn", "postgresql://db/tr", "--once"],
+    )
+
+    with (
+        tempfile.TemporaryDirectory(prefix="tr-notify-", dir="/tmp") as directory,
+        socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as receiver,
+    ):
+        notify_socket = os.path.join(directory, "notify.sock")
+        monkeypatch.setenv("NOTIFY_SOCKET", notify_socket)
+        try:
+            receiver.bind(notify_socket)
+        except PermissionError:
+            # The managed macOS test sandbox denies bind(AF_UNIX) even in /tmp.
+            # CI and normal hosts take the real datagram path above; retain a
+            # call-site proof locally instead of skipping the protection.
+            messages: list[str] = []
+            monkeypatch.setattr(drain, "sd_notify", messages.append)
+            assert drain.main() == 0
+            assert set(messages) == {"READY=1", "WATCHDOG=1"}
+        else:
+            receiver.settimeout(1.0)
+            assert drain.main() == 0
+            messages_bytes = {receiver.recv(128), receiver.recv(128)}
+            assert messages_bytes == {b"READY=1", b"WATCHDOG=1"}
+
+
+def test_sd_notify_translates_systemds_abstract_socket_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import clickhouse._sdnotify as notify
+
+    connected: list[str] = []
+    sent: list[bytes] = []
+
+    class _Socket:
+        def __enter__(self) -> _Socket:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def connect(self, address: str) -> None:
+            connected.append(address)
+
+        def sendall(self, payload: bytes) -> None:
+            sent.append(payload)
+
+    monkeypatch.setenv("NOTIFY_SOCKET", "@tr-drain")
+    monkeypatch.setattr(notify.socket, "socket", lambda *args: _Socket())
+
+    notify.sd_notify("WATCHDOG=1")
+
+    assert connected == ["\0tr-drain"]
+    assert sent == [b"WATCHDOG=1"]
+
+
+def test_busy_sweep_refreshes_watchdog_before_each_shard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import clickhouse.ingest_operational_outbox_postgres as drain
+
+    messages: list[str] = []
+    monkeypatch.setattr(drain, "sd_notify", messages.append)
+
+    drain.drain_once(_FakeSource([]), _FakeWriter(), batch_size=10, shard_count=3)
+
+    assert messages == ["WATCHDOG=1"] * 3
+
+
 def test_a_password_in_the_dsn_is_refused_on_both_connect_paths() -> None:
     """`--dsn` is argv: a password in it is world-readable via ps."""
     from clickhouse.ingest_operational_outbox_postgres import (
@@ -1186,6 +1365,31 @@ class TestClickHouseIdentityIsConfigurable:
         command = seen[0]
         assert command[command.index("--user") + 1] == "default"
         assert command[command.index("--database") + 1] == "default"
+
+    def test_clickhouse_client_subprocess_uses_a_stable_explicit_cwd(
+        self, monkeypatch: Any
+    ) -> None:
+        """A rotated parent cwd must not prevent clickhouse-client from starting.
+
+        The systemd unit deliberately uses ``/opt/tr-clickhouse`` so ``python
+        -m`` can import the flat installed package.  If an installer ever moves
+        that directory out from under a running process, each child must still
+        start somewhere valid.  Removing ``cwd=`` from the subprocess call is
+        the mutation this test guards.
+        """
+        from clickhouse import ingest_operational_outbox as mod
+        from clickhouse.ingest_operational_outbox import ClickHouseOperationalWriter
+
+        calls: list[dict[str, Any]] = []
+
+        def fake_run(_command: list[str], **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+        monkeypatch.setattr(mod.subprocess, "run", fake_run)
+        ClickHouseOperationalWriter(password="x").insert([self._event()])  # noqa: S106
+
+        assert calls[0]["cwd"] == "/"
 
 
 # --------------------------------------------------------------------------

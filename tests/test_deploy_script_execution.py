@@ -139,6 +139,12 @@ if [[ " $* " == *" run jobs list "* ]] && \
   printf '%s\n' "$HARNESS_VERSIONED_JOB_NAME"
 fi
 
+if [[ " $* " == *" run jobs list "* ]] && \
+   [[ " $* " == *" --sort-by="* ]] && \
+   [ -n "${HARNESS_STALE_JOB_NAMES:-}" ]; then
+  printf '%s\n' "$HARNESS_STALE_JOB_NAMES"
+fi
+
 if [[ " $* " == *" projects describe "* ]]; then
   printf '%s\n' '123456789'
 fi
@@ -154,6 +160,7 @@ def _run_regional_quota_reconciler(
     describe_rc: int = 0,
     describe_stderr: str = "",
     versioned_job_exists: bool = False,
+    stale_job_names: str = "",
 ) -> HarnessRun:
     monkeypatch.setitem(
         SCRIPT_FIXTURES,
@@ -167,6 +174,7 @@ def _run_regional_quota_reconciler(
                 "HARNESS_VERSIONED_JOB_NAME": (
                     "trusted-router-regional-quota-reconciler-existing"
                 ),
+                "HARNESS_STALE_JOB_NAMES": stale_job_names,
                 "TR_REGIONAL_QUOTA_RECONCILER_JOB": (
                     "trusted-router-regional-quota-reconciler-existing"
                     if versioned_job_exists
@@ -229,7 +237,7 @@ def _initialize_bake_harness_repo(harness: DeployScriptHarness) -> str:
     ).stdout.strip()
 
 
-def test_gcp_no_traffic_warm_preprovisions_and_tags_candidate(
+def test_gcp_no_traffic_warm_preprovisions_and_validates_private_candidate(
     harness: DeployScriptHarness,
 ) -> None:
     run = harness.run("scripts/deploy/rollout.sh")
@@ -244,6 +252,59 @@ def test_gcp_no_traffic_warm_preprovisions_and_tags_candidate(
     assert deploy[deploy.index("--min") + 1] == "2"
     assert deploy[deploy.index("--min-instances") + 1] == "2"
     assert "--no-traffic" in deploy
+    assert any(
+        call[0:4] == ["gcloud", "run", "revisions", "describe"]
+        and "trusted-router-candidate" in call
+        for call in run.calls
+    )
+    assert not any(
+        call[0] == "curl" and "staged-probe---" in call[-1]
+        for call in run.calls
+    )
+
+
+def test_rollout_lists_optional_secrets_once_without_missing_secret_probes(
+    harness: DeployScriptHarness,
+) -> None:
+    run = harness.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+
+    inventory_calls = [
+        call
+        for call in run.calls
+        if call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "secrets"]
+        and call[4] == "list"
+    ]
+    assert len(inventory_calls) == 1
+    assert not any(
+        call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "secrets"]
+        and call[4] == "describe"
+        for call in run.calls
+    )
+
+
+def test_rollout_fails_closed_when_optional_secret_inventory_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = "scripts/deploy/rollout.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        replace(fixture, failures=(r"secrets list --format=value\(name\)",)),
+    )
+    isolated = DeployScriptHarness(tmp_path / "secret-inventory-failure")
+
+    run = isolated.run(script)
+
+    assert run.returncode != 0
+    assert "cannot list optional secret inventory" in run.stderr
+    assert not any(
+        call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+        and call[4:6] == ["deploy", "trusted-router"]
+        for call in run.calls
+    )
 
 
 def test_warm_primer_caps_below_a_high_service_minimum(
@@ -299,9 +360,8 @@ def test_warm_primer_never_exceeds_a_cold_service_minimum(
     warm_index = next(
         index
         for index, call in enumerate(run.calls)
-        if call[0] == "curl"
-        and call[-1]
-        == "https://staged-probe---trusted-router-hash-uc.a.run.app/ready"
+        if call[0:4] == ["gcloud", "run", "revisions", "describe"]
+        and "trusted-router-candidate" in call
     )
     assert tag_index < warm_index
     assert not any("--remove-tags=staged-probe" in call for call in run.calls)
@@ -312,7 +372,7 @@ def test_gcp_failed_candidate_warm_restores_zero_traffic_capacity(
 ) -> None:
     run = harness.run(
         "scripts/deploy/rollout.sh",
-        extra_env={"HARNESS_PUBLIC_SMOKE_TRANSPORT_PATH": "/ready"},
+        extra_env={"HARNESS_ROLLOUT_CANDIDATE_READY": "0"},
     )
     assert run.returncode != 0
 
@@ -600,6 +660,29 @@ def test_regional_quota_reconciler_updates_existing_version_without_get_probe(
     assert not _gcloud_calls(run, "run", "jobs", "deploy")
 
 
+def test_regional_quota_reconciler_deletes_stale_jobs_without_polling_get(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = "trusted-router-regional-quota-reconciler-existing"
+    previous = "trusted-router-regional-quota-reconciler-previous"
+    stale = "trusted-router-regional-quota-reconciler-stale"
+    run = _run_regional_quota_reconciler(
+        tmp_path,
+        monkeypatch,
+        state="ENABLED",
+        versioned_job_exists=True,
+        stale_job_names=f"{current}\n{previous}\n{stale}",
+    )
+
+    assert run.returncode == 0, summarise(run)
+    deletes = _gcloud_calls(run, "run", "jobs", "delete")
+    assert len(deletes) == 1
+    assert stale in deletes[0]
+    assert "--async" in deletes[0]
+    assert previous not in deletes[0]
+
+
 def test_regional_quota_reconciler_creates_only_when_scheduler_is_not_found(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -706,6 +789,7 @@ def test_aws_observer_executes_bounded_capacity_tcp_health_and_waf_before_schedu
     assert len(service_updates) == 1
     service_config = service_updates[0][service_updates[0].index("--source-configuration") + 1]
     assert '"TR_SYNTHETIC_SCHEDULER_INTERVAL_SECONDS": "0"' in service_config
+    assert '"TR_SYNTHETIC_RUN_DEADLINE_SECONDS": "240"' in service_config
     assert '"TR_REMEDIATOR_IN_PROCESS_ENABLED": "false"' in service_config
     observer_secret_reads = [
         call
@@ -744,6 +828,9 @@ def test_aws_observer_executes_bounded_capacity_tcp_health_and_waf_before_schedu
     assert len(scheduler_targets) == 1
     targets = json.loads(scheduler_targets[0][scheduler_targets[0].index("--targets") + 1])
     assert len(targets) == 1
+    assert targets[0]["DeadLetterConfig"] == {
+        "Arn": "arn:aws:sqs:eu-west-3:330422590279:tr-eu-synthetic-dlq"
+    }
     scheduled_body = json.loads(targets[0]["Input"])
     assert scheduled_body == {
         "monitor_region": "eu-west-3",
@@ -751,6 +838,61 @@ def test_aws_observer_executes_bounded_capacity_tcp_health_and_waf_before_schedu
         "run_remediator": True,
         "detach": True,
     }
+    (queue_policy_call,) = [
+        call for call in run.calls if call[:3] == ["aws", "sqs", "set-queue-attributes"]
+    ]
+    queue_attributes = json.loads(
+        queue_policy_call[queue_policy_call.index("--attributes") + 1]
+    )
+    queue_policy = json.loads(queue_attributes["Policy"])
+    assert queue_policy["Statement"][0]["Principal"] == {
+        "Service": "events.amazonaws.com"
+    }
+    assert queue_policy["Statement"][0]["Condition"] == {
+        "ArnEquals": {
+            "aws:SourceArn": "arn:aws:events:eu-west-3:330422590279:rule/tr-eu-synthetic-1min"
+        }
+    }
+    dlq_role_policies = [
+        call
+        for call in run.calls
+        if call[:3] == ["aws", "iam", "put-role-policy"]
+        and "tr-eu-synthetic-dlq-send" in call
+    ]
+    assert len(dlq_role_policies) == 1
+    role_policy = json.loads(
+        dlq_role_policies[0][dlq_role_policies[0].index("--policy-document") + 1]
+    )
+    assert role_policy["Statement"][0]["Action"] == "sqs:SendMessage"
+    assert role_policy["Statement"][0]["Resource"] == (
+        "arn:aws:sqs:eu-west-3:330422590279:tr-eu-synthetic-dlq"
+    )
+    alarms = [
+        call
+        for call in run.calls
+        if call[:3] == ["aws", "cloudwatch", "put-metric-alarm"]
+    ]
+    assert {call[call.index("--alarm-name") + 1] for call in alarms} == {
+        "tr-eu-synthetic-failed-invocations",
+        "tr-eu-synthetic-dlq-messages-visible",
+    }
+    failed_alarm = next(
+        call for call in alarms if "tr-eu-synthetic-failed-invocations" in call
+    )
+    assert failed_alarm[failed_alarm.index("--metric-name") + 1] == "FailedInvocations"
+    assert failed_alarm[failed_alarm.index("--evaluation-periods") + 1] == "3"
+    assert failed_alarm[failed_alarm.index("--period") + 1] == "300"
+    dlq_alarm = next(call for call in alarms if "tr-eu-synthetic-dlq-messages-visible" in call)
+    assert (
+        dlq_alarm[dlq_alarm.index("--metric-name") + 1]
+        == "ApproximateNumberOfMessagesVisible"
+    )
+    assert all("--actions-enabled" in call for call in alarms)
+    assert all(
+        call[call.index("--alarm-actions") + 1]
+        == "arn:aws:sns:eu-west-3:330422590279:tr-eu-synthetic-alarms"
+        for call in alarms
+    )
     assert waf_attach_index < scheduler_index
 
 
@@ -1218,19 +1360,19 @@ def test_azure_observer_refuses_to_drop_its_only_synthetic_owner(
 def _azure_without_analytics_discovery(fixture: ScriptFixture) -> ScriptFixture:
     discovery_fragments = (
         "vm list-ip-addresses",
-        "keyvault secret show.*clickhouse-default-password",
-        "identity show.*tr-azure-analytics-uaenorth-id",
+        "keyvault secret show.*tr-azure-clickhouse-password",
+        "identity show.*tr-azure-clickhouse-identity",
     )
     return replace(
         fixture,
         responses=(
-            (r"vm list-ip-addresses.*tr-azure-clickhouse-uaenorth", ""),
+            (r"vm list-ip-addresses.*tr-azure-clickhouse-1", ""),
             (
-                r"keyvault secret show.*clickhouse-default-password.*--query id",
+                r"keyvault secret show.*tr-azure-clickhouse-password.*--query id",
                 "",
             ),
             (
-                r"identity show.*tr-azure-analytics-uaenorth-id.*--query id",
+                r"identity show.*tr-azure-clickhouse-identity.*--query id",
                 "",
             ),
             *(
@@ -1298,10 +1440,10 @@ def test_azure_observer_emits_the_discovered_operational_analytics_env(
         argument for argument in secret_set if argument.startswith("clickhouse-password=")
     )
     assert clickhouse_reference == (
-        "clickhouse-password=keyvaultref:https://tr-azure-analytics-kv.vault.azure.net/"
-        "secrets/clickhouse-default-password/harness-version,identityref:/subscriptions/"
+        "clickhouse-password=keyvaultref:https://trquillkv.vault.azure.net/"
+        "secrets/tr-azure-clickhouse-password/harness-version,identityref:/subscriptions/"
         "harness/resourceGroups/tr-azure/providers/Microsoft.ManagedIdentity/"
-        "userAssignedIdentities/tr-azure-analytics-uaenorth-id"
+        "userAssignedIdentities/tr-azure-clickhouse-identity"
     )
 
 
@@ -1322,10 +1464,10 @@ def test_azure_observer_refuses_missing_analytics_discovery_before_any_mutation(
 
     assert run.returncode != 0
     assert "expects_outbox=True" in run.stderr
-    assert "tr-azure-clickhouse-uaenorth" in run.stderr
-    assert "tr-azure-analytics-kv" in run.stderr
-    assert "az vm list-ip-addresses -g tr-azure -n tr-azure-clickhouse-uaenorth" in run.stderr
-    assert "az keyvault secret show --vault-name tr-azure-analytics-kv" in run.stderr
+    assert "tr-azure-clickhouse-1" in run.stderr
+    assert "trquillkv" in run.stderr
+    assert "az vm list-ip-addresses -g tr-azure -n tr-azure-clickhouse-1" in run.stderr
+    assert "az keyvault secret show --vault-name trquillkv" in run.stderr
     mutating_prefixes = (
         ["az", "acr", "build"],
         ["az", "acr", "import"],
@@ -1653,13 +1795,16 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
     run = isolated.run("scripts/deploy/synthetic.sh", verifier_rc=0)
 
     assert run.returncode == 0, summarise(run)
+    scheduler_pauses = _gcloud_calls(run, "scheduler", "jobs", "pause")
+    assert len(scheduler_pauses) == 1
+    assert "trusted-router-spend-lease-soak-us-central1-every-minute" in scheduler_pauses[0]
     deploys = [
         (index, call)
         for index, call in enumerate(run.calls)
         if call[:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
         and call[4:6] == ["jobs", "deploy"]
     ]
-    assert len(deploys) == 5
+    assert len(deploys) == 6
     subnet_updates = [
         (index, call)
         for index, call in enumerate(run.calls)
@@ -1674,7 +1819,7 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
             "update",
         ]
     ]
-    assert len(subnet_updates) == 5
+    assert len(subnet_updates) == 6
     service_contract_reads = [
         (index, call)
         for index, call in enumerate(run.calls)
@@ -1689,7 +1834,7 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
         ]
         and call[6] == "trusted-router-billing"
     ]
-    assert len(service_contract_reads) == 5
+    assert len(service_contract_reads) == 6
     previous_deploy_index = -1
     for deploy_index, deploy in deploys:
         region = deploy[deploy.index("--region") + 1]
@@ -1771,6 +1916,110 @@ def test_synthetic_deploy_requires_explicit_split_billing_service_before_any_gcl
     assert run.calls == []
 
 
+def test_combined_synthetic_refresh_preserves_security_boundaries(tmp_path: Path) -> None:
+    script = "scripts/deploy/synthetic_image_refresh.sh"
+    isolated = DeployScriptHarness(tmp_path / "synthetic-image-refresh")
+
+    run = isolated.run(
+        script,
+        verifier_rc=0,
+        omit_env=("TR_BILLING_SERVICE", "TR_ALLOW_DEPLOYED_COMBINED_SURFACE"),
+    )
+
+    assert run.returncode == 0, summarise(run)
+    updates = [
+        call
+        for call in run.calls
+        if call[:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+        and call[4:6] == ["jobs", "update"]
+    ]
+    assert [(call[6], call[call.index("--region") + 1]) for call in updates] == [
+        ("trusted-router-synthetic-us-central1", "us-central1"),
+        ("trusted-router-synthetic-europe-west4", "europe-west4"),
+        ("trusted-router-throughput-us-central1", "us-central1"),
+        ("trusted-router-spend-lease-soak-us-central1", "us-central1"),
+        ("trusted-router-image-generation-us-central1", "us-central1"),
+        ("trusted-router-video-generation-us-central1", "us-central1"),
+    ]
+    assert not any(call[4:6] == ["jobs", "deploy"] for call in run.calls if len(call) > 5)
+    for update in updates:
+        update_text = " ".join(update)
+        assert "--image" in update
+        assert "--update-env-vars" in update
+        assert "TR_RELEASE=1234567" in update_text
+        assert "--set-secrets" not in update
+        assert "--update-secrets" not in update
+        assert "--service-account" not in update
+        assert "--network" not in update
+        assert "--subnet" not in update
+        assert "--vpc-egress" not in update
+    for update in updates[:2]:
+        assert (
+            "TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL=https://trustedrouter.com"
+            in " ".join(update)
+        )
+    scheduler_pauses = _gcloud_calls(run, "scheduler", "jobs", "pause")
+    assert len(scheduler_pauses) == 1
+    assert "trusted-router-spend-lease-soak-us-central1-every-minute" in scheduler_pauses[0]
+    assert not _gcloud_calls(run, "scheduler", "jobs", "resume")
+
+
+def test_combined_synthetic_refresh_resumes_enabled_spend_lease_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = "scripts/deploy/synthetic_image_refresh.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    job_json = json.loads(fixture.responses[0][1])
+    env = job_json["spec"]["template"]["spec"]["template"]["spec"]["containers"][0][
+        "env"
+    ]
+    next(
+        item for item in env if item["name"] == "TR_SPEND_LEASE_SOAK_PROBE_ENABLED"
+    )["value"] = "true"
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        replace(
+            fixture,
+            responses=(
+                (fixture.responses[0][0], json.dumps(job_json)),
+                (fixture.responses[1][0], "PAUSED"),
+            ),
+        ),
+    )
+    isolated = DeployScriptHarness(tmp_path / "synthetic-image-refresh-enabled-soak")
+
+    run = isolated.run(
+        script,
+        verifier_rc=0,
+        omit_env=("TR_BILLING_SERVICE", "TR_ALLOW_DEPLOYED_COMBINED_SURFACE"),
+    )
+
+    assert run.returncode == 0, summarise(run)
+    scheduler_resumes = _gcloud_calls(run, "scheduler", "jobs", "resume")
+    assert len(scheduler_resumes) == 1
+    assert "trusted-router-spend-lease-soak-us-central1-every-minute" in scheduler_resumes[0]
+    assert not _gcloud_calls(run, "scheduler", "jobs", "pause")
+
+
+def test_combined_synthetic_refresh_is_a_visible_release_gate() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
+    rollout = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
+        "\n  public-surface-companion:\n", 1
+    )[0]
+    synthetic_step = rollout.split(
+        "- name: Deploy synthetic monitor Cloud Run Job", 1
+    )[1].split("- name: Deploy Google Ads conversion uploader", 1)[0]
+
+    assert "synthetic_image_refresh.sh" in synthetic_step
+    assert "synthetic.sh" in synthetic_step
+    assert "if:" not in synthetic_step
+    assert "continue-on-error" not in synthetic_step
+    assert "TR_ALLOW_DEPLOYED_COMBINED_SURFACE" not in synthetic_step
+    assert "deploy_synthetic_monitor" not in workflow
+
+
 def test_synthetic_combined_bridge_restores_legacy_job_deploys(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1800,6 +2049,7 @@ def test_synthetic_combined_bridge_restores_legacy_job_deploys(
         ("trusted-router-synthetic-us-central1", "us-central1"),
         ("trusted-router-synthetic-europe-west4", "europe-west4"),
         ("trusted-router-throughput-us-central1", "us-central1"),
+        ("trusted-router-spend-lease-soak-us-central1", "us-central1"),
         ("trusted-router-image-generation-us-central1", "us-central1"),
         ("trusted-router-video-generation-us-central1", "us-central1"),
     ]
@@ -1831,7 +2081,8 @@ def test_synthetic_combined_bridge_restores_legacy_job_deploys(
         deploy_text = " ".join(deploy)
         deployed_env = _cloud_run_job_env(deploy)
         region = deploy[deploy.index("--region") + 1]
-        assert f"https://trusted-router-stub-output.{region}.run.app" in deploy_text
+        assert "https://trustedrouter.com/v1/internal/synthetic/" in deploy_text
+        assert f"https://trusted-router-stub-output.{region}.run.app" not in deploy_text
         assert (
             "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest" in deploy_text
         )
@@ -1845,9 +2096,9 @@ def test_synthetic_combined_bridge_restores_legacy_job_deploys(
         assert "--network" not in deploy
         assert "--subnet" not in deploy
         assert "--vpc-egress" not in deploy
-        # The combined service keeps ingress=all and the pre-#714 jobs reached it over
-        # the public run.app URL with no VPC; bridge mode must not grow a private path
-        # before the split actually restricts ingress.
+        # The combined service is private behind the load balancer. Bridge jobs
+        # reach token-protected ingest routes through that load balancer and must
+        # not grow a private VPC path before the split service is active.
         assert not any(
             arg == flag or arg.startswith(f"{flag}=")
             for arg in deploy
@@ -1880,7 +2131,7 @@ def test_synthetic_combined_bridge_job_environment_constructs_settings(
         if call[:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
         and call[4:6] == ["jobs", "deploy"]
     ]
-    assert len(deploys) == 5
+    assert len(deploys) == 6
     for deploy in deploys:
         settings_kwargs = _settings_kwargs_from_cloud_run_job(deploy)
         settings = Settings(**settings_kwargs)

@@ -34,11 +34,65 @@ from psycopg.types.numeric import Int8
 
 from trusted_router.storage_gcp import _auth_record
 from trusted_router.storage_key_usage import api_key_from_json
-from trusted_router.storage_models import ApiKey
+from trusted_router.storage_models import ApiKey, ConsentRequest, Generation, OAuthApp
 from trusted_router.store_protocol import Store
 from trusted_router.typed_balance import live_credit_summary
+from trusted_router.types import UsageType
 
 from .conftest import BACKENDS, make_benchmark_sample, make_synthetic_probe_sample
+
+
+def test_oauth_app_registry_is_unique_owner_scoped_and_identity_immutable(
+    store: Store,
+    user_id: str,
+    unique: str,
+) -> None:
+    app_id = f"app-{unique}"
+    original = OAuthApp(
+        id=app_id,
+        owner_user_id=user_id,
+        name="Original app",
+        redirect_uris=["https://app.example/callback"],
+    )
+
+    assert store.create_oauth_app(original) == original
+    assert store.get_oauth_app(app_id) == original
+    assert store.list_oauth_apps_for_user(user_id) == [original]
+    assert store.list_oauth_apps_for_user(f"other-{unique}") == []
+
+    with pytest.raises(ValueError, match="oauth_app_id_taken"):
+        store.create_oauth_app(
+            OAuthApp(
+                id=app_id,
+                owner_user_id=f"other-{unique}",
+                name="Duplicate",
+                redirect_uris=["https://other.example/callback"],
+            )
+        )
+
+    updated = store.update_oauth_app(
+        app_id,
+        patch={
+            "name": "Updated app",
+            "redirect_uris": ["native-app://callback"],
+            "logo_url": "https://app.example/logo.png",
+            "markup_basis_points": 30_000,
+            "suspended": True,
+        },
+    )
+    assert updated is not None
+    assert updated.id == app_id
+    assert updated.owner_user_id == user_id
+    assert updated.name == "Updated app"
+    assert updated.redirect_uris == ["native-app://callback"]
+    assert updated.logo_url == "https://app.example/logo.png"
+    assert updated.markup_basis_points == 30_000
+    assert updated.suspended is True
+    assert store.get_oauth_app(app_id) == updated
+
+    with pytest.raises(ValueError, match="invalid_oauth_app_patch"):
+        store.update_oauth_app(app_id, patch={"owner_user_id": f"other-{unique}"})
+    assert store.update_oauth_app(f"missing-{unique}", patch={"name": "No app"}) is None
 
 # --------------------------------------------------------------------------
 # Exactly-once money
@@ -173,6 +227,55 @@ def test_user_earnings_credit_seeds_an_absent_account(
 ) -> None:
     assert store.credit_user_earnings(user_id, 9, f"evt-bare-payout-{unique}")
     assert store.earnings_summary(user_id)["available"] == 9
+
+
+def test_app_markup_movement_kind_round_trips(
+    store: Store, user_id: str, unique: str
+) -> None:
+    event_id = f"app_markup_payout:auth-{unique}"
+    assert store.credit_user_earnings(
+        user_id,
+        70,
+        event_id,
+        custom_model_id=f"app-{unique}",
+        payer_workspace_id=f"payer-{unique}",
+    )
+    movement = store.list_credit_movements(f"user:{user_id}")[0]
+    assert movement.kind == "app_markup_payout"
+    assert movement.authorization_id == f"auth-{unique}"
+    assert movement.custom_model_id == f"app-{unique}"
+
+
+def test_generation_app_markup_field_round_trips(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    generation = Generation(
+        id=f"gen-{unique}",
+        request_id=f"req-{unique}",
+        workspace_id=workspace_id,
+        key_hash=f"key-{unique}",
+        model="openai/gpt-5.4-nano",
+        provider_name="OpenAI",
+        app="conformance",
+        app_id=f"app-{unique}",
+        app_markup_microdollars=37,
+        tokens_prompt=10,
+        tokens_completion=5,
+        total_cost_microdollars=137,
+        usage_type=UsageType.CREDITS,
+        speed_tokens_per_second=10.0,
+        finish_reason="stop",
+        status="success",
+        streamed=False,
+    )
+    try:
+        store.add_generation(generation)
+    except NotImplementedError:
+        pytest.skip("backend does not implement generation writes")
+    loaded = store.get_generation(generation.id)
+    assert loaded is not None
+    assert loaded.app_markup_microdollars == 37
+    assert loaded.app_id == f"app-{unique}"
 
 
 def test_transfer_earnings_is_atomic_idempotent_and_visible_in_workspace(
@@ -703,6 +806,51 @@ def test_oauth_authorization_code_is_single_use(store: Store, workspace_id: str)
     assert store.consume_oauth_authorization_code(raw_code) is None
 
 
+@pytest.mark.parametrize(
+    ("wrong_field", "wrong_value"),
+    [
+        ("csrf_token", "wrong-csrf"),
+        ("user_id", "wrong-user"),
+        ("workspace_id", "wrong-workspace"),
+    ],
+)
+def test_consent_binding_mismatch_does_not_consume(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+    unique: str,
+    wrong_field: str,
+    wrong_value: str,
+) -> None:
+    consent = ConsentRequest(
+        id=f"consent-{unique}-{wrong_field}",
+        csrf_token=f"csrf-{unique}",
+        user_id=user_id,
+        workspace_id=workspace_id,
+        client_app_id="app",
+        callback_url="https://app.example/callback",
+        scopes=["inference"],
+        code_challenge="challenge",
+        code_challenge_method="S256",
+        key_label="Conformance",
+        limit_microdollars=None,
+        limit_reset=None,
+        expires_at=None,
+        state="state",
+        consent_expires_at=(dt.datetime.now(dt.UTC) + dt.timedelta(minutes=5)).isoformat(),
+    )
+    store.create_consent_request(consent)
+    correct = {
+        "user_id": user_id,
+        "workspace_id": workspace_id,
+        "csrf_token": consent.csrf_token,
+    }
+    mismatched = {**correct, wrong_field: wrong_value}
+
+    assert store.consume_consent_request(consent.id, **mismatched) is None
+    assert store.consume_consent_request(consent.id, **correct) is not None
+
+
 # --------------------------------------------------------------------------
 # Read-your-writes and lifecycle
 # --------------------------------------------------------------------------
@@ -796,6 +944,30 @@ def test_api_key_scopes_round_trip_across_storage(
     assert stored_scoped.scopes == ["inference", "profile"]
 
 
+def test_api_key_app_id_round_trips_and_old_keys_default_empty(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+    unique: str,
+) -> None:
+    _legacy_raw, legacy = store.create_api_key(
+        workspace_id=workspace_id,
+        name=f"legacy-app-id-{unique}",
+        creator_user_id=user_id,
+    )
+    _app_raw, attributed = store.create_api_key(
+        workspace_id=workspace_id,
+        name=f"attributed-app-id-{unique}",
+        creator_user_id=user_id,
+        app_id=f"app-{unique}",
+    )
+
+    stored_legacy = store.get_key_by_hash(legacy.hash)
+    stored_attributed = store.get_key_by_hash(attributed.hash)
+    assert stored_legacy is not None and stored_legacy.app_id == ""
+    assert stored_attributed is not None and stored_attributed.app_id == f"app-{unique}"
+
+
 def test_old_api_key_raw_json_without_scopes_decodes_as_legacy() -> None:
     """Exercise both real entity decoders with the field genuinely absent."""
     raw = json.dumps(
@@ -812,7 +984,9 @@ def test_old_api_key_raw_json_without_scopes_decodes_as_legacy() -> None:
     )
 
     assert api_key_from_json(raw).scopes == []
+    assert api_key_from_json(raw).app_id == ""
     assert _auth_record(raw, ApiKey).scopes == []
+    assert _auth_record(raw, ApiKey).app_id == ""
 
 
 def test_auth_session_lifecycle(store: Store, user_id: str) -> None:
@@ -1400,11 +1574,12 @@ def _authorize(store: Store, workspace_id: str, key_hash: str, **kw: object) -> 
 
 
 def test_gateway_authorization_round_trips(store: Store, workspace_id: str, unique: str) -> None:
-    auth = _authorize(store, workspace_id, f"gw-{unique}")
+    auth = _authorize(store, workspace_id, f"gw-{unique}", app_id=f"app-{unique}")
     fetched = store.get_gateway_authorization(auth.id)  # type: ignore[attr-defined]
     assert fetched is not None
     assert fetched.id == auth.id  # type: ignore[attr-defined]
     assert fetched.settled is False
+    assert fetched.app_id == f"app-{unique}"
 
 
 def test_gateway_authorization_idempotency_key_dedupes(

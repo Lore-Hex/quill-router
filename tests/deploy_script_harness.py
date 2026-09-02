@@ -406,8 +406,22 @@ if tag_path.is_file():
             "tag": "staged-probe",
         }
     )
-print(json.dumps({"status": {"traffic": traffic}}, separators=(",", ":")))
+print(json.dumps({
+    "metadata": {"annotations": {
+        "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
+    }},
+    "status": {"traffic": traffic},
+}, separators=(",", ":")))
 PY
+    exit 0
+  fi
+  if [[ " $* " == *" run revisions describe trusted-router-candidate "* ]] \
+      && [[ " $* " == *" --format=json "* ]]; then
+    if [ "${HARNESS_ROLLOUT_CANDIDATE_READY:-1}" = "1" ]; then
+      printf '%s\n' '{"metadata":{"name":"trusted-router-candidate"},"status":{"conditions":[{"type":"Ready","status":"True"},{"type":"MinInstancesProvisioned","status":"True"}],"desiredReplicas":2}}'
+    else
+      printf '%s\n' '{"metadata":{"name":"trusted-router-candidate"},"status":{"conditions":[{"type":"Ready","status":"False"}],"desiredReplicas":0}}'
+    fi
     exit 0
   fi
   if [[ " $* " == *" run revisions describe trusted-router-public-active "* ]] \
@@ -855,6 +869,51 @@ _SYNTHETIC_INGEST_SERVICE_JSON = json.dumps(
         },
     },
     separators=(",", ":"),
+)
+_SYNTHETIC_COMBINED_JOB_JSON = json.dumps(
+    {
+        "metadata": {"name": "trusted-router-synthetic-harness"},
+        "spec": {
+            "template": {
+                "spec": {
+                    "template": {
+                        "metadata": {"annotations": {}},
+                        "spec": {
+                            "serviceAccountName": (
+                                "44325983244-compute@developer.gserviceaccount.com"
+                            ),
+                            "containers": [
+                                {
+                                    "image": "example.invalid/trusted-router:old",
+                                    "env": [
+                                        {
+                                            "name": "TR_SERVICE_SURFACE",
+                                            "value": "combined",
+                                        },
+                                        {
+                                            "name": "TR_SPEND_LEASE_SOAK_PROBE_ENABLED",
+                                            "value": "false",
+                                        },
+                                        {
+                                            "name": "TR_INTERNAL_GATEWAY_TOKEN",
+                                            "valueFrom": {
+                                                "secretKeyRef": {
+                                                    "name": (
+                                                        "trustedrouter-internal-gateway-token"
+                                                    ),
+                                                    "key": "latest",
+                                                }
+                                            },
+                                        },
+                                    ],
+                                }
+                            ],
+                        },
+                    }
+                }
+            }
+        },
+    }
 )
 
 _PUBLIC_SURFACE_LEGACY_SERVICE_JSON = json.dumps(
@@ -1468,19 +1527,19 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
         },
         responses=(
             (
-                r"vm list-ip-addresses.*tr-azure-clickhouse-uaenorth",
+                r"vm list-ip-addresses.*tr-azure-clickhouse-1",
                 "10.61.3.4",
             ),
             (
-                r"keyvault secret show.*clickhouse-default-password.*--query id",
-                "https://tr-azure-analytics-kv.vault.azure.net/secrets/"
-                "clickhouse-default-password/harness-version",
+                r"keyvault secret show.*tr-azure-clickhouse-password.*--query id",
+                "https://trquillkv.vault.azure.net/secrets/"
+                "tr-azure-clickhouse-password/harness-version",
             ),
             (
-                r"identity show.*tr-azure-analytics-uaenorth-id.*--query id",
+                r"identity show.*tr-azure-clickhouse-identity.*--query id",
                 "/subscriptions/harness/resourceGroups/tr-azure/providers/"
                 "Microsoft.ManagedIdentity/userAssignedIdentities/"
-                "tr-azure-analytics-uaenorth-id",
+                "tr-azure-clickhouse-identity",
             ),
             (r"acr build|acr import", "harness"),
             (r"--query .?loginServer", "trazureuaenorthacr.azurecr.io"),
@@ -1520,6 +1579,7 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
     "scripts/deploy/synthetic.sh": ScriptFixture(
         env={"TR_BILLING_SERVICE": "trusted-router-billing"},
         responses=(
+            (r"scheduler jobs describe .*spend-lease-soak", "ENABLED"),
             (
                 r"run services describe trusted-router-billing.*--format=json",
                 _SYNTHETIC_INGEST_SERVICE_JSON,
@@ -1530,6 +1590,19 @@ SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
                 '"privateVisibilityConfig":{"networks":['
                 '{"networkUrl":"projects/quill-cloud-proxy/global/networks/default"}]}}',
             ),
+        ),
+    ),
+    "scripts/deploy/synthetic_image_refresh.sh": ScriptFixture(
+        env={
+            "IMAGE": (
+                "us-central1-docker.pkg.dev/quill-cloud-proxy/"
+                "trusted-router/trusted-router:harness"
+            ),
+            "SHA": "1234567890abcdef",
+        },
+        responses=(
+            (r"run jobs describe .*--format=json", _SYNTHETIC_COMBINED_JOB_JSON),
+            (r"scheduler jobs describe .*spend-lease-soak", "ENABLED"),
         ),
     ),
 }

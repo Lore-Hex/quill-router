@@ -8,6 +8,8 @@ documentation:
     lock conflicts. Capacity alone does not fix hot-row contention. Inspect
     transaction insights and billing shard distribution. Runbook:
     docs/spanner-reliability.md.
+    Added 2026-08-27: the fast-burn tier catches a five-minute settle convoy
+    that clears before the slow-burn tier's 600-second window can fire.
 conditions:
   - displayName: "More than 100 aborted commits per minute for 10 minutes"
     conditionThreshold:
@@ -31,6 +33,18 @@ conditions:
       comparison: COMPARISON_GT
       thresholdValue: 2
       duration: 600s
+      trigger:
+        count: 1
+  - displayName: "Fast burn (vs 10-minute slow burn): lock wait exceeds 30 seconds per second for 5 minutes"
+    conditionThreshold:
+      filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/lock_stat/total/lock_wait_time"'
+      aggregations:
+        - alignmentPeriod: 60s
+          perSeriesAligner: ALIGN_RATE
+          crossSeriesReducer: REDUCE_SUM
+      comparison: COMPARISON_GT
+      thresholdValue: 30
+      duration: 300s
       trigger:
         count: 1
 alertStrategy:

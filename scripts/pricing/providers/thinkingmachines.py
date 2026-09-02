@@ -13,6 +13,7 @@ URL = "https://tinker-docs.thinkingmachines.ai/tinker/models/"
 EXPECTED_MODELS = [
     "thinkingmachines/inkling",
     "thinkingmachines/inkling-small",
+    "z-ai/glm-5.3",
 ]
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]

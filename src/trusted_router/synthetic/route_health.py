@@ -3,11 +3,12 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
-from trusted_router.storage_models import SyntheticProbeSample
+from trusted_router.storage_models import ProviderBenchmarkSample, SyntheticProbeSample
 from trusted_router.store_protocol import Store
 from trusted_router.synthetic.probes import rotation_candidates
 
 _SAMPLES_PER_ROUTE_LIMIT = 48
+_BATCH_SAMPLE_LIMIT = 100_000
 
 # A route-health alert means "this route is structurally broken — quarantine
 # it". Transient/capacity failures (rate limits, gateway/no-upstream, timeouts,
@@ -65,19 +66,29 @@ def evaluate_route_health(
             for provider, models in rotation_candidates().items()
             for model in models
         ]
+    if not routes:
+        return []
+
+    route_set = set(routes)
+    samples_by_route: dict[tuple[str, str], list[ProviderBenchmarkSample]] = {
+        route: [] for route in route_set
+    }
+    samples = store.provider_route_benchmark_samples(
+        cutoff=cutoff.isoformat().replace("+00:00", "Z"),
+        per_route_limit=_SAMPLES_PER_ROUTE_LIMIT,
+        limit=min(_BATCH_SAMPLE_LIMIT, len(route_set) * _SAMPLES_PER_ROUTE_LIMIT),
+    )
+    for sample in samples:
+        route = (sample.provider, sample.model)
+        if route in samples_by_route:
+            samples_by_route[route].append(sample)
 
     flags: list[RouteHealthFlag] = []
     for provider, model in routes:
         sample_count = 0
         failure_count = 0
         newest_error: tuple[dt.datetime, str | None, str | None] | None = None
-        samples = store.provider_benchmark_samples(
-            date=None,
-            provider=provider,
-            model=model,
-            limit=_SAMPLES_PER_ROUTE_LIMIT,
-        )
-        for sample in samples:
+        for sample in samples_by_route[(provider, model)]:
             if sample.source != "synthetic":
                 continue
             created_at = _parse_created_at(sample.created_at)

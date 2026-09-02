@@ -530,6 +530,7 @@ def test_homepage_has_plain_llm_seo_positioning(client: TestClient) -> None:
     assert "Cheaper routes" in response.text
     assert "Faster migration" in response.text
     assert "More reliable inference" in response.text
+    assert "<strong>90+</strong><span>providers</span>" in response.text
     assert 'href="/llms.txt"' in response.text
 
 
@@ -542,6 +543,9 @@ def test_public_provider_route_defaults_to_html_for_link_checkers(client: TestCl
         in response.text
     )
     assert "Provider transparency" in response.text
+    assert 'class="provider-catalog-grid"' in response.text
+    assert 'class="provider-catalog-table"' not in response.text
+    assert "No logs (prepaid)" not in response.text
     assert "application/json" not in response.headers["content-type"]
 
     json_response = client.get("/providers", headers={"accept": "application/json"})
@@ -957,9 +961,14 @@ def test_public_privacy_terms_and_support_pages_are_distinct(client: TestClient)
     assert "help@trustedrouter.com" in support.text
     assert 'id="support-inquiry"' in support.text
     assert 'fetch("/support/inquiry"' in support.text
+    assert '<option value="feature">Feature request</option>' in support.text
+    assert 'href="/support?category=feature#support-inquiry"' in support.text
+    assert 'button.textContent = "Send feature request"' in support.text
     assert "github.com/Lore-Hex/quill-router/issues" in support.text
     assert "Never send an API key" in support.text
     assert "status.trustedrouter.com" in support.text
+    assert support.text.count('href="https://discord.gg/FREVts9KAG"') == 3
+    assert "Join Discord" in support.text
 
 
 def test_privacy_terms_and_support_are_in_core_sitemap(client: TestClient) -> None:
@@ -1099,16 +1108,31 @@ def test_provider_detail_page_links_served_models(client: TestClient) -> None:
     assert "FAQPage" in json.dumps(provider_schema)
 
 
-def test_vertex_provider_page_scopes_zdr_to_managed_prepaid_routes(
+def test_vertex_provider_page_presents_zdr_with_managed_route_scope(
     client: TestClient,
 ) -> None:
     response = client.get("/providers/google-vertex")
 
     assert response.status_code == 200
-    assert "No logs (prepaid)" in response.text
-    assert "prepaid only" in response.text
+    assert ">ZDR</span>" in response.text
+    assert ">yes</span>" in response.text
+    assert "TR-funded routes" in response.text
+    assert "No logs (prepaid)" not in response.text
+    assert "prepaid only" not in response.text
     assert "contractual Zero Data Retention" in response.text
     assert "Google AI Studio is classified separately" in response.text
+
+
+def test_openai_provider_page_presents_zdr_with_managed_route_scope(
+    client: TestClient,
+) -> None:
+    response = client.get("/providers/openai")
+
+    assert response.status_code == 200
+    assert ">ZDR</span>" in response.text
+    assert ">yes</span>" in response.text
+    assert "TR-funded routes" in response.text
+    assert "No logs (prepaid)" not in response.text
 
 
 def test_provider_detail_links_indexable_performance_page(
@@ -1181,7 +1205,7 @@ def test_model_overview_surfaces_cached_route_evidence(
 
     assert response.status_code == 200
     assert "Current route evidence" in response.text
-    assert "Lowest prepaid input price" in response.text
+    assert "Lowest Credits input price" in response.text
     assert "140 ms" in response.text
     assert "91 tok/s" in response.text
     assert "99.00% to 100.00%" in response.text
@@ -1218,8 +1242,8 @@ def test_model_route_evidence_does_not_invent_a_prepaid_price(
         test_mode=True,
     )
 
-    assert evidence["lowest_prompt_price"] == "BYOK only"
-    assert evidence["lowest_completion_price"] == "BYOK only"
+    assert evidence["lowest_prompt_price"] is None
+    assert evidence["lowest_completion_price"] is None
 
 
 def test_model_overview_links_canonical_related_comparisons(client: TestClient) -> None:
@@ -1481,6 +1505,8 @@ def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> 
     assert 'href="/resources"' in footer.text
     assert 'href="/customers/robot-robot-human"' in footer.text
     assert 'href="/careers"' in footer.text
+    assert 'href="https://discord.gg/FREVts9KAG"' in footer.text
+    assert "Discord community" in footer.text
     footer_markup = footer.text.split('<footer class="site-footer"', maxsplit=1)[1]
     assert 'href="/china-ai-models"' not in footer_markup
 
@@ -1752,6 +1778,36 @@ def test_recent_blog_posts_use_real_product_images(
     assert f'name="twitter:image" content="{image_url}"' in post.text
     assert f'<img src="{image_path}"' in post.text
     assert client.get(image_path).status_code == 200
+
+
+def test_axios_blog_post_links_source_and_conversion_path(client: TestClient) -> None:
+    slug = "axios-tried-trustedrouter"
+    image_path = f"/static/og/blog/{slug}.png"
+    response = client.get(f"/blog/{slug}")
+
+    assert response.status_code == 200
+    assert "Axios tried TrustedRouter in under 30 seconds" in response.text
+    assert (
+        "https://www.axios.com/2026/08/25/"
+        "routing-is-coming-for-the-frontier-ai-labs"
+    ) in response.text
+    assert 'href="/?reason=signin"' in response.text
+    assert f'property="og:image" content="https://trustedrouter.com{image_path}"' in response.text
+    assert f'name="twitter:image" content="https://trustedrouter.com{image_path}"' in response.text
+    assert 'data-video-id="vfOj_im2A1o"' in response.text
+    assert 'data-video-title="Joseph Perla demonstrates TrustedRouter onboarding"' in response.text
+    assert "youtube.com/embed/vfOj_im2A1o" not in response.text
+    assert response.text.index('data-video-id="vfOj_im2A1o"') < response.text.index(
+        f'<img src="/static/og/blog/{slug}.svg"'
+    )
+    assert f'<img src="/static/og/blog/{slug}.svg"' in response.text
+    assert client.get(image_path).status_code == 200
+    assert client.get(f"/static/og/blog/{slug}.svg").status_code == 200
+
+    index = client.get("/blog")
+    assert index.status_code == 200
+    assert f'href="/blog/{slug}"' in index.text
+    assert f'src="https://trustedrouter.com{image_path}"' in index.text
 
 
 def test_blog_index_uses_recent_product_images(client: TestClient) -> None:
