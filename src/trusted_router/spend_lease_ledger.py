@@ -37,6 +37,7 @@ from trusted_router.spend_lease_state import (
     Created,
     LeaseAllocationTransition,
     LeaseTransition,
+    MonetaryMismatchProof,
     RecoveryProof,
     RowBindingMismatch,
     SpendLease,
@@ -708,6 +709,12 @@ def _serialize_contradiction(proof: ContradictionProof | None) -> dict[str, obje
         }
     if isinstance(proof, ConflictingClaim):
         return {"provisional_id": proof.provisional_id, "type": "conflicting_claim"}
+    if isinstance(proof, MonetaryMismatchProof):
+        return {
+            "allocated_micro": proof.allocated_micro,
+            "finalized_cost_microdollars": proof.finalized_cost_microdollars,
+            "type": "monetary_mismatch",
+        }
     return {
         "authorization_id": proof.authorization_id,
         "observed_tuple_or_absent": (
@@ -811,6 +818,13 @@ def _deserialize_contradiction(value: object) -> ContradictionProof | None:
             observed_tuple_or_absent=(
                 None if observed is None else _deserialize_binding(observed)
             ),
+        )
+    if discriminator == "monetary_mismatch":
+        return MonetaryMismatchProof(
+            finalized_cost_microdollars=_integer(
+                payload, "finalized_cost_microdollars"
+            ),
+            allocated_micro=_integer(payload, "allocated_micro"),
         )
     raise ValueError(f"unknown contradiction_proof discriminator {discriminator!r}")
 

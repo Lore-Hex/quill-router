@@ -1,11 +1,11 @@
 """Pure state machine for authoritative spend-lease allocations.
 
-Implements Stage B decisions 9–22 and decision 46 of the spend-lease design
+Implements Stage B decisions 9–22, 46, and 56 of the spend-lease design
 record; each invariant below cites its decision.
 
 This module contains no storage or clock I/O.  It implements design decisions
-9--22: lifetime-monotonic capacity (9), proof-derived allocation terminality
-(10, 14, 20, 22), separate grant generation and CAS version (12), the ordered
+9--22 and 56: lifetime-monotonic capacity (9), proof-derived allocation terminality
+(10, 14, 20, 22, 56), separate grant generation and CAS version (12), the ordered
 authorization-first replay table (13), admission/freeze rules (15, 16, 18),
 construction-time amount and provenance checks (17), the unified open predicate
 (18--20, 22), owner-fenced bind/compensate transitions (21--22), and durable
@@ -45,6 +45,18 @@ class SpendLeaseInvariantError(SpendLeaseStateError):
 
 class SpendLeaseConflictError(SpendLeaseStateError):
     """A transition conflicts with the allocation's durable state."""
+
+
+class SpendLeaseMonetaryMismatch(SpendLeaseConflictError):
+    """A finalized authorization cost exceeds its committed allocation."""
+
+    finalized_cost_microdollars: int
+    allocated_micro: int
+
+    def __init__(self, *, finalized_cost_microdollars: int, allocated_micro: int) -> None:
+        super().__init__("settled actual must fit inside the allocation")
+        self.finalized_cost_microdollars = finalized_cost_microdollars
+        self.allocated_micro = allocated_micro
 
 
 class SpendLeaseProofError(SpendLeaseConflictError):
@@ -258,7 +270,21 @@ class RowBindingMismatch:
             raise SpendLeaseInvariantError("row authorization ID is required")
 
 
-ContradictionProof: TypeAlias = ConflictingBound | ConflictingClaim | RowBindingMismatch
+@dataclass(frozen=True, slots=True)
+class MonetaryMismatchProof:
+    finalized_cost_microdollars: int
+    allocated_micro: int
+
+    def __post_init__(self) -> None:
+        if self.finalized_cost_microdollars <= self.allocated_micro:
+            raise SpendLeaseProofError(
+                "monetary mismatch proof requires finalized cost above allocation"
+            )
+
+
+ContradictionProof: TypeAlias = (
+    ConflictingBound | ConflictingClaim | RowBindingMismatch | MonetaryMismatchProof
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -431,6 +457,10 @@ class SpendLeaseAllocation:
             self.binding_state != BindingState.COMMITTED
         ):
             raise SpendLeaseInvariantError("row-binding contradiction retains COMMITTED binding")
+        if isinstance(self.contradiction_proof, MonetaryMismatchProof) and (
+            self.binding_state != BindingState.COMMITTED
+        ):
+            raise SpendLeaseInvariantError("monetary contradiction retains COMMITTED binding")
 
         # Decisions 17, 21, 22: provenance constrains binding, and COMMITTED needs proof.
         if self.terminal_source == TerminalSource.MIRROR and (
@@ -550,8 +580,11 @@ class SpendLeaseAllocation:
         if observation.finalization_outcome == FinalizationOutcome.SETTLED and (
             observation.finalized_cost_microdollars is not None
         ):
-            if not 0 <= observation.finalized_cost_microdollars <= self.allocated_micro:
-                raise SpendLeaseConflictError("settled actual must fit inside the allocation")
+            if observation.finalized_cost_microdollars > self.allocated_micro:
+                raise SpendLeaseMonetaryMismatch(
+                    finalized_cost_microdollars=observation.finalized_cost_microdollars,
+                    allocated_micro=self.allocated_micro,
+                )
             target_state = AllocationState.SETTLED
             target_outcome = AuthorizationOutcome.SETTLED
             actual = observation.finalized_cost_microdollars
@@ -606,7 +639,7 @@ class SpendLeaseAllocation:
         return AllocationTransition(lost, False)
 
     def quarantine(self, proof: ContradictionProof) -> AllocationTransition:
-        # Decision 22: exactly three contradictions, with binding phase retained.
+        # Decisions 22 and 56: contradiction proofs retain their binding phase.
         if self.state == AllocationState.QUARANTINED:
             if self.contradiction_proof == proof:
                 return AllocationTransition(self, True)
@@ -631,6 +664,11 @@ class SpendLeaseAllocation:
                 and proof.observed_tuple_or_absent == self.binding
             ):
                 raise SpendLeaseProofError("observed row binding matches the allocation")
+        elif isinstance(proof, MonetaryMismatchProof):
+            if self.binding_state != BindingState.COMMITTED:
+                raise SpendLeaseProofError("MonetaryMismatchProof requires COMMITTED allocation")
+            if proof.allocated_micro != self.allocated_micro:
+                raise SpendLeaseProofError("monetary mismatch proof allocation amount mismatch")
         else:  # pragma: no cover - closed union, defensive against dynamic callers
             raise SpendLeaseProofError("unknown contradiction proof")
         quarantined = replace(

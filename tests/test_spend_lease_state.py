@@ -35,6 +35,7 @@ from trusted_router.spend_lease_state import (
     ExistingLocal,
     FinalizationOutcome,
     Mismatch,
+    MonetaryMismatchProof,
     RecoveryProof,
     RowBindingMismatch,
     SpendLease,
@@ -42,6 +43,7 @@ from trusted_router.spend_lease_state import (
     SpendLeaseConflictError,
     SpendLeaseExhaustedError,
     SpendLeaseInvariantError,
+    SpendLeaseMonetaryMismatch,
     SpendLeaseProofError,
     SpendLeaseRefusalReason,
     SpendLeaseState,
@@ -914,8 +916,113 @@ def test_mirror_requires_committed_terminal_view_and_open_view_leaves_reserved()
     unchanged = committed.mirror(open_observation)
     assert unchanged.replayed
     assert unchanged.allocation.state == AllocationState.RESERVED
-    with pytest.raises(SpendLeaseConflictError, match="fit inside"):
+
+
+def test_mirror_cost_above_allocation_raises_monetary_mismatch_with_amounts() -> None:
+    committed = _bind(_created())
+    allocation = committed.allocations[0]
+
+    with pytest.raises(SpendLeaseMonetaryMismatch) as caught:
         committed.mirror(_observation(allocation, actual=allocation.allocated_micro + 1))
+    assert caught.value.finalized_cost_microdollars == allocation.allocated_micro + 1
+    assert caught.value.allocated_micro == allocation.allocated_micro
+
+
+def test_monetary_mismatch_proof_quarantines_committed_allocation_and_blocks_close() -> None:
+    committed = _bind(_created())
+    allocation = committed.allocations[0]
+    proof = MonetaryMismatchProof(
+        finalized_cost_microdollars=allocation.allocated_micro + 1,
+        allocated_micro=allocation.allocated_micro,
+    )
+
+    quarantined = committed.quarantine(
+        idempotency_scope=allocation.idempotency_scope,
+        proof=proof,
+    )
+
+    assert quarantined.allocation.state == AllocationState.QUARANTINED
+    assert quarantined.allocation.terminal_source == TerminalSource.QUARANTINE
+    assert quarantined.allocation.authorization_outcome == AuthorizationOutcome.CONTRADICTION
+    assert quarantined.allocation.contradiction_proof == proof
+    assert quarantined.allocation.actual_micro is None
+    frozen = quarantined.lease.tombstone().lease
+    assert frozen.open_allocations == (quarantined.allocation,)
+    with pytest.raises(SpendLeaseUnavailableError, match="open allocations"):
+        frozen.close(now=EXPIRY + SKEW)
+
+
+def test_monetary_mismatch_quarantine_replays_equal_proof() -> None:
+    committed = _bind(_created())
+    allocation = committed.allocations[0]
+    proof = MonetaryMismatchProof(
+        finalized_cost_microdollars=allocation.allocated_micro + 1,
+        allocated_micro=allocation.allocated_micro,
+    )
+    first = committed.quarantine(
+        idempotency_scope=allocation.idempotency_scope,
+        proof=proof,
+    )
+
+    replay = first.lease.quarantine(
+        idempotency_scope=allocation.idempotency_scope,
+        proof=proof,
+    )
+
+    assert replay.replayed
+    assert replay.lease is first.lease
+    assert replay.allocation is first.allocation
+
+
+def test_monetary_mismatch_proof_rejects_non_mismatch_amounts() -> None:
+    with pytest.raises(SpendLeaseProofError, match="above allocation"):
+        MonetaryMismatchProof(finalized_cost_microdollars=400, allocated_micro=400)
+
+
+def test_monetary_mismatch_proof_rejects_provisional_allocation() -> None:
+    created = _created()
+    proof = MonetaryMismatchProof(
+        finalized_cost_microdollars=created.allocation.allocated_micro + 1,
+        allocated_micro=created.allocation.allocated_micro,
+    )
+
+    with pytest.raises(SpendLeaseProofError, match="requires COMMITTED"):
+        created.lease.quarantine(
+            idempotency_scope=created.allocation.idempotency_scope,
+            proof=proof,
+        )
+
+
+def test_monetary_mismatch_quarantine_construction_requires_committed_binding() -> None:
+    provisional = _created().allocation
+    proof = MonetaryMismatchProof(
+        finalized_cost_microdollars=provisional.allocated_micro + 1,
+        allocated_micro=provisional.allocated_micro,
+    )
+
+    with pytest.raises(SpendLeaseInvariantError, match="retains COMMITTED binding"):
+        replace(
+            provisional,
+            state=AllocationState.QUARANTINED,
+            terminal_source=TerminalSource.QUARANTINE,
+            authorization_outcome=AuthorizationOutcome.CONTRADICTION,
+            contradiction_proof=proof,
+        )
+
+
+def test_monetary_mismatch_proof_rejects_different_allocation_amount() -> None:
+    committed = _bind(_created())
+    allocation = committed.allocations[0]
+    proof = MonetaryMismatchProof(
+        finalized_cost_microdollars=allocation.allocated_micro + 2,
+        allocated_micro=allocation.allocated_micro + 1,
+    )
+
+    with pytest.raises(SpendLeaseProofError, match="allocation amount mismatch"):
+        committed.quarantine(
+            idempotency_scope=allocation.idempotency_scope,
+            proof=proof,
+        )
 
 
 def test_terminal_allocations_are_absorbing_and_same_terminal_input_replays() -> None:
