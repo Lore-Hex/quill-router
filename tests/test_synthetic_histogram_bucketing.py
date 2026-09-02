@@ -25,8 +25,15 @@ from trusted_router.synthetic.rollups import (
     percentile_from_histogram,
 )
 
-# Worst case for values in 0..10^7 ms: 100 exact keys + 90 per decade above.
-MAX_KEYS_TO_TEN_MILLION_MS = HISTOGRAM_EXACT_BELOW + 90 * 5
+
+def _max_keys_up_to(power_of_ten: int) -> int:
+    """Exact key count for every integer in 0..10**power_of_ten inclusive:
+    100 exact keys, 90 per full decade above, plus the top value's own bucket."""
+    return HISTOGRAM_EXACT_BELOW + 90 * (power_of_ten - 2) + 1
+
+
+# Worst case for values in 0..10^7 ms inclusive (551 keys).
+MAX_KEYS_TO_TEN_MILLION_MS = _max_keys_up_to(7)
 
 
 def _exact_percentile(values: list[int], percentile: int) -> int:
@@ -119,6 +126,15 @@ def test_key_cardinality_is_bounded_regardless_of_distinct_values() -> None:
     assert len(compacted) <= MAX_KEYS_TO_TEN_MILLION_MS
     assert len(compacted) < 600
     assert sum(compacted.values()) == 2_000_000
+
+
+def test_key_cardinality_formula_is_exact_on_an_inclusive_decade_range() -> None:
+    # Pins the formula, not just an upper bound: every integer in 0..10^6
+    # inclusive lands in exactly 100 + 90*4 + 1 buckets (the top value,
+    # 1_000_000, is a bucket of its own). Sweeping 0..10^7 would be the same
+    # arithmetic with one more decade, at 10x the runtime.
+    every_millisecond = {str(v): 1 for v in range(0, 10**6 + 1)}
+    assert len(compact_histogram(every_millisecond)) == _max_keys_up_to(6) == 461
 
 
 # --- readers stay correct ------------------------------------------------
