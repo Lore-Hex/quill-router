@@ -210,6 +210,7 @@ from trusted_router.storage_errors import (
 from trusted_router.storage_gcp_io import spanner_rpc_budget
 from trusted_router.storage_gcp_secrets import secret_manager_seed_loader
 from trusted_router.storage_models import (
+    SYNTHETIC_APP_NAME,
     AppMarkupPayout,
     CustomModelMarkupPayout,
     GatewayAuthorization,
@@ -601,7 +602,10 @@ def _authorize_gateway_sync_impl(
     # the deep probes stop proving anything). One set-lookup for monitor
     # traffic, zero cost for everyone else.
     monitor_hash = monitor_lookup_hash(settings)
-    if monitor_hash is not None and body.api_key_lookup_hash == monitor_hash:
+    is_monitor_request = (
+        monitor_hash is not None and body.api_key_lookup_hash == monitor_hash
+    )
+    if is_monitor_request:
         ensure_monitor_funding(STORE, settings, workspace.id)
     body_dict = body.model_dump(exclude_none=True)
     # Preserve pre-web-search idempotency fingerprints byte-for-byte for every
@@ -616,6 +620,11 @@ def _authorize_gateway_sync_impl(
         effective_tags = merge_tags(api_key.tags, body.tags)
     except InvalidTags as exc:
         raise api_error(400, str(exc), ErrorType.INVALID_TAGS) from exc
+    if is_monitor_request:
+        # The dedicated key is the server-owned source of truth. Media
+        # requests intentionally expose a smaller public schema than chat and
+        # cannot carry metadata.trustedrouter_synthetic themselves.
+        effective_tags = {**effective_tags, "purpose": "synthetic_monitoring"}
     try:
         attribution = validate_request_attribution(
             user=body.user,
@@ -2511,6 +2520,12 @@ def _settle_gateway_authorization(
 
     settle_body = _settle_body_with_safe_attribution(body, authorization.id)
     settle_body = _settle_body_with_safe_client_context(settle_body, authorization.id)
+    if _authorization_is_synthetic(authorization):
+        metadata = settle_body.get("metadata")
+        synthetic_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        synthetic_metadata["trustedrouter_synthetic"] = "true"
+        settle_body["metadata"] = synthetic_metadata
+        settle_body["app"] = SYNTHETIC_APP_NAME
     if not success:
         client_context = settle_body.get("client")
         client_fields = client_context if isinstance(client_context, dict) else {}
@@ -3207,7 +3222,7 @@ def _settle_gateway_authorization(
             )
         elif broadcast_enqueued and should_drain_inline(settings):
             drain_broadcast_queue(settings=settings)
-    if not success and not _is_synthetic_settlement(body):
+    if not success and not _is_synthetic_settlement(body, authorization):
         STORE.record_provider_benchmark(
             ProviderBenchmarkSample.from_provider_error(
                 model=model,
@@ -3512,7 +3527,17 @@ def _synthetic_metadata_enabled(metadata: dict[str, Any]) -> bool:
     }
 
 
-def _is_synthetic_settlement(body: GatewaySettleRequest) -> bool:
+def _authorization_is_synthetic(authorization: Any) -> bool:
+    tags = getattr(authorization, "tags", None)
+    return isinstance(tags, dict) and tags.get("purpose") == "synthetic_monitoring"
+
+
+def _is_synthetic_settlement(
+    body: GatewaySettleRequest,
+    authorization: Any | None = None,
+) -> bool:
+    if authorization is not None and _authorization_is_synthetic(authorization):
+        return True
     if body.app == "TrustedRouter Synthetic":
         return True
     metadata = body.metadata

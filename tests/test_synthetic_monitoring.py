@@ -48,7 +48,12 @@ from trusted_router.storage_gcp_synthetic_index import (
 from trusted_router.storage_gcp_synthetic_rollups import (
     synthetic_rollups as _bt_synthetic_rollups,
 )
-from trusted_router.storage_models import ProviderBenchmarkSample, iso_now, utcnow
+from trusted_router.storage_models import (
+    SYNTHETIC_APP_NAME,
+    ProviderBenchmarkSample,
+    iso_now,
+    utcnow,
+)
 from trusted_router.synthetic.components import sample_slo_class_ids
 from trusted_router.synthetic.inference_sdk import build_inference_sdk, close_inference_sdk
 from trusted_router.synthetic.probes import (
@@ -761,6 +766,85 @@ def test_chat_monitor_model_requires_configured_monitor_key() -> None:
         "trustedrouter/monitor is restricted to the synthetic monitor key"
     )
     assert allowed.status_code == 200, allowed.text
+
+
+def test_monitor_key_is_server_classified_without_request_metadata() -> None:
+    monitor_key = "sk-tr-monitor-server-classified"  # noqa: S105 - test key.
+    app = create_app(
+        Settings(environment="test", synthetic_monitor_api_key=monitor_key),
+        init_observability=False,
+    )
+    local_client = TestClient(app)
+    monitor_user = STORE.ensure_user("monitor", email="monitor@trustedrouter.local")
+    monitor_workspace = STORE.list_workspaces_for_user(monitor_user.id)[0]
+    STORE.create_api_key(
+        workspace_id=monitor_workspace.id,
+        name="Synthetic monitor",
+        creator_user_id=monitor_user.id,
+        raw_key=monitor_key,
+    )
+
+    authorize = local_client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_lookup_hash": lookup_hash_api_key(monitor_key),
+            "model": CHEAP_MODEL_ID,
+            "estimated_input_tokens": 1,
+            "max_output_tokens": 1,
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    data = authorize.json()["data"]
+    authorization = STORE.get_gateway_authorization(data["authorization_id"])
+    assert authorization is not None
+    assert authorization.tags["purpose"] == "synthetic_monitoring"
+    selected = data["route_candidates"][0]
+
+    settle = local_client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": data["authorization_id"],
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "request_id": "req_server_classified_synthetic",
+            "model": selected["model"],
+            "selected_endpoint": selected["endpoint_id"],
+        },
+    )
+
+    assert settle.status_code == 200, settle.text
+    events = STORE.activity_events(monitor_workspace.id, limit=10)
+    assert len(events) == 1
+    assert events[0]["app"] == SYNTHETIC_APP_NAME
+    assert STORE.provider_benchmark_samples() == []
+
+    failed_authorize = local_client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_lookup_hash": lookup_hash_api_key(monitor_key),
+            "model": CHEAP_MODEL_ID,
+            "estimated_input_tokens": 1,
+            "max_output_tokens": 1,
+        },
+    )
+    assert failed_authorize.status_code == 200, failed_authorize.text
+    failed_data = failed_authorize.json()["data"]
+    failed_route = failed_data["route_candidates"][0]
+    refund = local_client.post(
+        "/v1/internal/gateway/refund",
+        json={
+            "authorization_id": failed_data["authorization_id"],
+            "input_tokens": 1,
+            "output_tokens": 0,
+            "request_id": "req_server_classified_synthetic_failure",
+            "model": failed_route["model"],
+            "selected_endpoint": failed_route["endpoint_id"],
+            "error_status": 502,
+            "error_type": "provider_error",
+        },
+    )
+    assert refund.status_code == 200, refund.text
+    assert STORE.provider_benchmark_samples() == []
 
 
 def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:

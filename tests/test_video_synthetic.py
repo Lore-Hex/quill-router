@@ -120,13 +120,6 @@ async def test_video_probe_generates_once_validates_media_and_keeps_only_metadat
             "aspect_ratio": "16:9",
             "generate_audio": False,
             "provider": {"only": [VIDEO_GENERATION_PROVIDER], "allow_fallbacks": False},
-            # Without this the video probe's generation lands with synthetic=0
-            # and is counted as real customer traffic; it was the only probe
-            # body in the file that omitted the marker.
-            "metadata": {
-                "trustedrouter_synthetic": "true",
-                "probe": "video_generation",
-            },
         }
     ]
     public = json.dumps(sample.public_dict())

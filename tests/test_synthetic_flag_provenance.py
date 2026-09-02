@@ -4,14 +4,15 @@ Every usage and revenue query filters ``WHERE synthetic = 0``, so a probe whose
 generation lands with the flag off is counted as a paying customer. That has
 happened twice for structurally different reasons, and each is pinned here:
 
-* the ``/videos`` probe was the only one of six gateway request bodies in
-  ``probes.py`` built without ``metadata.trustedrouter_synthetic``;
+* ordinary gateway probes carry ``metadata.trustedrouter_synthetic``;
+* the strict ``/videos`` API deliberately has no public metadata field, so its
+  dedicated monitor key is classified server-side during authorization;
 * ``from_chat_result`` and ``from_embeddings_result`` never set ``synthetic``
   at all, so the direct (non-attested) path took the ``False`` field default
   no matter what it was serving.
 
-The first test is the load-bearing one: it fails on the NEXT probe that forgets
-the marker, which is the failure mode that actually recurs.
+The first test is load-bearing: it permits exactly one server-classified probe
+and fails on the next probe that forgets the marker.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ PROBES_PATH = (
 # the count guards against the test silently finding NOTHING (a rename of
 # `_api_url`, a refactor to a helper) and passing vacuously.
 MINIMUM_GATEWAY_PROBE_BODIES = 6
+SERVER_CLASSIFIED_PROBES = {"video_generation_probe"}
 
 
 def _gateway_probe_functions() -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
@@ -66,7 +68,7 @@ def _marks_synthetic(node: ast.AST) -> bool:
     return False
 
 
-def test_every_gateway_probe_body_marks_itself_synthetic() -> None:
+def test_gateway_probe_bodies_mark_synthetic_or_are_server_classified() -> None:
     functions = _gateway_probe_functions()
 
     assert len(functions) >= MINIMUM_GATEWAY_PROBE_BODIES, (
@@ -75,10 +77,12 @@ def test_every_gateway_probe_body_marks_itself_synthetic() -> None:
         "matches the code, so this test proves nothing"
     )
 
-    unmarked = sorted(node.name for node in functions if not _marks_synthetic(node))
-    assert unmarked == [], (
-        "these probe bodies omit metadata.trustedrouter_synthetic, so their "
-        f"generations are indexed as real customer traffic: {unmarked}"
+    unmarked = {node.name for node in functions if not _marks_synthetic(node)}
+    assert unmarked == SERVER_CLASSIFIED_PROBES, (
+        "gateway probes without metadata.trustedrouter_synthetic must be "
+        "explicitly classified from the dedicated monitor key; unexpected "
+        f"unmarked probes: {sorted(unmarked - SERVER_CLASSIFIED_PROBES)}; "
+        f"missing expected exceptions: {sorted(SERVER_CLASSIFIED_PROBES - unmarked)}"
     )
 
 
