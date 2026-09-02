@@ -165,6 +165,7 @@ def read_gateway_authorization(
         ),
         settled=bool(settled),
         created_at=_timestamp_string(created_at),
+        settlement=str(merged.get("settlement") or "local"),
         spend_lease_id=merged.get("spend_lease_id"),
         spend_lease_gen=merged.get("spend_lease_gen"),
         spend_lease_allocated_micro=merged.get("spend_lease_allocated_micro"),

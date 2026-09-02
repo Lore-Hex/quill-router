@@ -10,7 +10,9 @@ from tests.fakes.spanner import FakeSpannerDatabase, make_fake_store
 from tests.fakes.spend_lease_bigtable import FakeBigtableTable
 from trusted_router.spend_lease_ledger import BigtableSpendLeaseLedger
 from trusted_router.spend_lease_state import (
+    AllocationState,
     BindingState,
+    MonetaryMismatchProof,
     SpendLease,
     SpendLeaseConflictError,
     SpendLeaseState,
@@ -256,6 +258,44 @@ def test_open_sweep_binds_as_last_resort_without_incrementing_attempts(
     assert local.allocations[0].binding_state == BindingState.COMMITTED
     assert result["deferred"] == 1
     assert row["attempts"] == 0
+
+
+def test_reconciler_monetary_mismatch_quarantines_with_proof_and_replays(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, database, ledger = _store()
+    identity = _identity(expires_at=NOW + timedelta(minutes=5))
+    _insert_candidate(store, identity)
+    _open_candidate(store, identity)
+    database.spend_lease_open[identity.lease_id]["next_attempt_at"] = NOW
+    ledger.initialize(_local_candidate(identity), region=REGION)
+    _allocate(ledger, identity)
+    _seed_global(store, identity, state="ACTIVE")
+
+    class Authorization:
+        id = identity.creating_authorization_id
+        spend_lease_id = identity.lease_id
+        spend_lease_gen = identity.gen
+        spend_lease_allocated_micro = 500
+        finalization_outcome = "settled"
+        finalized_cost_microdollars = 800
+        settled = True
+
+    monkeypatch.setattr(type(store), "get_gateway_authorization", lambda *_: Authorization())
+
+    with caplog.at_level(logging.ERROR):
+        first = reconcile_spend_leases(store, now=NOW)
+        database.spend_lease_open[identity.lease_id]["next_attempt_at"] = NOW
+        second = reconcile_spend_leases(store, now=NOW + timedelta(minutes=1))
+
+    local = ledger.get(identity.lease_id, region=REGION)
+    assert first["deferred"] == second["deferred"] == 1
+    assert local is not None
+    allocation = local.allocations[0]
+    assert allocation.state == AllocationState.QUARANTINED
+    assert allocation.contradiction_proof == MonetaryMismatchProof(800, 500)
+    assert "spend_lease.historical_overcharge" in caplog.text
 
 
 @pytest.mark.parametrize(

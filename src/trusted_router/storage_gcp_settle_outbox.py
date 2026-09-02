@@ -255,6 +255,47 @@ def mark_done_unleased_tx(
     return True
 
 
+def rewrite_frozen_settlement_tx(
+    transaction: Any,
+    param_types: Any,
+    *,
+    authorization_id: str,
+    intent_kind: str,
+    lease_owner: str,
+    actual_cost_micro: int,
+    settle_body: str,
+    now: Any,
+) -> int:
+    """Rewrite corrective replay authority under the active worker lease fence."""
+
+    if not lease_owner:
+        raise ValueError("corrective settle rewrite requires a lease owner")
+    return int(
+        transaction.execute_update(
+            "UPDATE tr_settle_outbox SET actual_cost_micro=@actual_cost_micro, "
+            "settle_body=@settle_body, updated_at=@now "
+            "WHERE authorization_id=@aid AND intent_kind=@kind "
+            "AND status='pending' AND lease_owner=@lease_owner",
+            params={
+                "actual_cost_micro": int(actual_cost_micro),
+                "settle_body": settle_body,
+                "now": now,
+                "aid": authorization_id,
+                "kind": intent_kind,
+                "lease_owner": lease_owner,
+            },
+            param_types={
+                "actual_cost_micro": param_types.INT64,
+                "settle_body": param_types.STRING,
+                "now": param_types.TIMESTAMP,
+                "aid": param_types.STRING,
+                "kind": param_types.STRING,
+                "lease_owner": param_types.STRING,
+            },
+        )
+    )
+
+
 def _iso_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 

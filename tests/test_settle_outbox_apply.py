@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterator
 from dataclasses import replace
 from typing import Any
@@ -37,6 +38,10 @@ from trusted_router.services.settle_outbox_apply import ApplyOutcome, apply_froz
 from trusted_router.storage import InMemoryStore, configure_store
 from trusted_router.storage_gcp_authorize import AuthorizeOutcome, SettleOutcome, settle_atomic
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
+from trusted_router.storage_gcp_operational_analytics_outbox import (
+    SpannerOperationalAnalyticsOutbox,
+)
+from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
 from trusted_router.storage_models import CreditAccount, GatewayAuthorization, SettleOutboxRow
 
 MODEL_ID = "anthropic/claude-haiku-4.5"
@@ -261,11 +266,40 @@ def _row(
 
 
 def _generation_bodies(db: Any) -> list[dict[str, Any]]:
-    return [
+    legacy = [
         json.loads(row.body)
         for (kind, _entity_id), row in db.rows.items()
         if kind == "generation"
     ]
+    typed = [json.loads(record["payload"]) for record in db.generation_records.values()]
+    return legacy + typed
+
+
+def _stamp_spend_lease_binding(
+    db: Any,
+    auth: GatewayAuthorization,
+    *,
+    allocation_micro: int,
+) -> None:
+    record = db.gateway_authorizations[auth.id]
+    payload = json.loads(record["payload"])
+    binding = {
+        "settlement": "spend_lease",
+        "spend_lease_id": "lease-repair",
+        "spend_lease_gen": 8,
+        "spend_lease_allocated_micro": allocation_micro,
+    }
+    payload.update(binding)
+    record.update(binding)
+    record["payload"] = json.dumps(payload, separators=(",", ":"))
+
+
+def _enable_typed_generation_durability(store: Any) -> None:
+    outbox = SpannerOperationalAnalyticsOutbox(store._database, store._param_types)
+    store._generation_records_enabled = True
+    store._operational_analytics_outbox = outbox
+    store.generation_store._generation_records_enabled = True
+    store.generation_store._operational_analytics_outbox = outbox
 
 
 class _TypedStoreProxy:
@@ -571,6 +605,203 @@ def test_zero_markup_authorization_without_payout_fields_charges_only(
     assert apply_frozen_settle(_row(auth, cost=800_000)) == ApplyOutcome.SETTLED_NOW
     assert _typed_credit(db, ws)["total_usage"] == 800_000
     assert store.list_credit_movements("user:") == []
+
+
+def test_unclaimed_frozen_overcharge_is_corrected_atomically_and_crash_replays_identically(
+    fake_store: tuple[Any, Any, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, _bt = fake_store
+    store.request_record_write_mode = "typed"
+    _enable_typed_generation_durability(store)
+    ws = "ws-spend-lease-corrective-repair"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_app_authorization(
+        store,
+        workspace_id=ws,
+        key_hash=key.hash,
+        markup_basis_points=2_500,
+    )
+    allocation = 400_000
+    _stamp_spend_lease_binding(db, auth, allocation_micro=allocation)
+    old_markup = app_markup_microdollars_from_charge(800_000, auth.app_markup_basis_points)
+    body = json.loads(_settle_body(auth.id))
+    body.update(
+        {
+            APP_MARKUP_PAYOUT_SETTLE_FIELD: app_markup_owner_share_microdollars(old_markup),
+            APP_MARKUP_OWNER_SETTLE_FIELD: auth.app_owner_user_id,
+            APP_MARKUP_APP_ID_SETTLE_FIELD: auth.app_id,
+        }
+    )
+    outbox = SpannerSettleOutbox(db, store._param_types)
+    outbox.enqueue(_row(auth, cost=800_000, settle_body=json.dumps(body)))
+    [claimed] = outbox.claim(limit=1)
+
+    with caplog.at_level(logging.ERROR):
+        assert apply_frozen_settle(claimed) == ApplyOutcome.SETTLED_NOW
+
+    repaired = db.settle_outbox[(auth.id, "settle")]
+    repaired_body = json.loads(repaired["settle_body"])
+    repaired_markup = app_markup_microdollars_from_charge(
+        allocation, auth.app_markup_basis_points
+    )
+    repaired_payout = app_markup_owner_share_microdollars(repaired_markup)
+    assert repaired["actual_cost_micro"] == allocation
+    assert repaired_body[APP_MARKUP_PAYOUT_SETTLE_FIELD] == repaired_payout
+    assert _typed_credit(db, ws)["total_usage"] == allocation
+    assert db.reservations[auth.credit_reservation_id]["actual_micro"] == allocation
+    assert db.gateway_authorizations[auth.id]["finalized_cost_microdollars"] == allocation
+    assert db.gateway_authorizations[auth.id]["terminal_at"] is None
+    assert db.reservations[auth.credit_reservation_id]["terminal_at"] is None
+    [generation] = _generation_bodies(db)
+    assert generation["total_cost_microdollars"] == allocation
+    assert generation["app_markup_microdollars"] == repaired_markup
+    [analytics_intent] = db.operational_analytics_outbox
+    assert json.loads(analytics_intent["payload"])["total_cost_microdollars"] == allocation
+    assert store.earnings_summary(auth.app_owner_user_id)["total_earned"] == repaired_payout
+    assert "spend_lease.frozen_charge_capped_at_allocation" in caplog.text
+
+    # Crash before mark(done): the corrected row remains the sole replay authority.
+    repaired["leased_until"] = "2000-01-01T00:00:00Z"
+    [reclaimed] = outbox.claim(limit=1)
+    assert reclaimed.actual_cost_micro == allocation
+    assert apply_frozen_settle(reclaimed) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+    assert _typed_credit(db, ws)["total_usage"] == allocation
+    assert store.earnings_summary(auth.app_owner_user_id)["total_earned"] == repaired_payout
+    assert outbox.mark(
+        auth.id,
+        "settle",
+        done=True,
+        lease_owner=reclaimed.lease_owner,
+    ) == "done"
+    assert db.gateway_authorizations[auth.id]["terminal_at"] is not None
+    assert db.reservations[auth.credit_reservation_id]["terminal_at"] is not None
+
+
+def test_lost_outbox_lease_rolls_back_corrective_finalization(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, db, _bt = fake_store
+    store.request_record_write_mode = "typed"
+    _enable_typed_generation_durability(store)
+    ws = "ws-spend-lease-lost-repair-fence"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    _stamp_spend_lease_binding(db, auth, allocation_micro=400_000)
+    outbox = SpannerSettleOutbox(db, store._param_types)
+    outbox.enqueue(_row(auth, cost=800_000))
+    [claimed] = outbox.claim(limit=1)
+    db.settle_outbox[(auth.id, "settle")]["lease_owner"] = "newer-worker"
+
+    assert apply_frozen_settle(claimed) == ApplyOutcome.ERROR
+
+    assert db.reservations[auth.credit_reservation_id]["settled"] is False
+    assert _typed_credit(db, ws)["total_usage"] == 0
+    assert db.settle_outbox[(auth.id, "settle")]["actual_cost_micro"] == 800_000
+    assert _generation_bodies(db) == []
+
+
+def test_already_finalized_historical_overcharge_is_unchanged_logged_and_replayed(
+    fake_store: tuple[Any, Any, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, _bt = fake_store
+    store.request_record_write_mode = "typed"
+    _enable_typed_generation_durability(store)
+    ws = "ws-spend-lease-historical-overcharge"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    allocation = 400_000
+    historical = 800_000
+    _stamp_spend_lease_binding(db, auth, allocation_micro=allocation)
+    reservation = db.reservations[auth.credit_reservation_id]
+    reservation.update(settled=True, actual_micro=historical)
+    db.typed[CREDIT_BALANCE_TABLE][(ws, 0)].update(
+        total_usage=historical,
+        reserved=0,
+    )
+    record = db.gateway_authorizations[auth.id]
+    record.update(
+        settled=True,
+        finalization_outcome="settled",
+        finalized_cost_microdollars=historical,
+    )
+    payload = json.loads(record["payload"])
+    payload.update(
+        settled=True,
+        finalization_outcome="settled",
+        finalized_cost_microdollars=historical,
+    )
+    record["payload"] = json.dumps(payload)
+    outbox = SpannerSettleOutbox(db, store._param_types)
+    outbox.enqueue(_row(auth, cost=900_000))
+    [claimed] = outbox.claim(limit=1)
+
+    with caplog.at_level(logging.ERROR):
+        outcome = apply_frozen_settle(claimed)
+
+    assert outcome == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+    assert reservation["actual_micro"] == historical
+    assert _typed_credit(db, ws)["total_usage"] == historical
+    [generation] = _generation_bodies(db)
+    assert generation["total_cost_microdollars"] == historical
+    assert "spend_lease.historical_overcharge" in caplog.text
+
+
+def test_two_spend_lease_repairs_book_at_most_once(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, db, _bt = fake_store
+    store.request_record_write_mode = "typed"
+    ws = "ws-spend-lease-two-repairs"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    allocation = 400_000
+    _stamp_spend_lease_binding(db, auth, allocation_micro=allocation)
+    outbox = SpannerSettleOutbox(db, store._param_types)
+    outbox.enqueue(_row(auth, cost=800_000))
+    [claimed] = outbox.claim(limit=1)
+    stale_worker_view = replace(claimed)
+
+    assert apply_frozen_settle(claimed) == ApplyOutcome.SETTLED_NOW
+    assert apply_frozen_settle(stale_worker_view) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+
+    assert db.reservations[auth.credit_reservation_id]["actual_micro"] == allocation
+    assert _typed_credit(db, ws)["total_usage"] == allocation
+
+
+def test_spend_lease_repair_losing_to_reaper_never_books_charge(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, db, _bt = fake_store
+    store.request_record_write_mode = "typed"
+    ws = "ws-spend-lease-repair-vs-reaper"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    _stamp_spend_lease_binding(db, auth, allocation_micro=400_000)
+    outbox = SpannerSettleOutbox(db, store._param_types)
+    outbox.enqueue(_row(auth, cost=800_000))
+    [claimed] = outbox.claim(limit=1)
+    freed = settle_atomic(
+        store._database,
+        store._param_types,
+        reservation_id=auth.credit_reservation_id,
+        actual_micro=0,
+        settled_usage_type="Credits",
+        success=False,
+        guard_outbox=False,
+    )
+    assert freed["outcome"] == SettleOutcome.SETTLED
+
+    assert apply_frozen_settle(claimed) == ApplyOutcome.ALREADY_RELEASED_FREE
+    assert db.reservations[auth.credit_reservation_id]["actual_micro"] == 0
+    assert _typed_credit(db, ws)["total_usage"] == 0
+    assert _generation_bodies(db) == []
 
 
 def test_missing_frozen_app_markup_fields_replay_credits_once(

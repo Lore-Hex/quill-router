@@ -5,6 +5,7 @@ import json
 import logging
 import re
 from collections.abc import Iterator
+from dataclasses import asdict, replace
 from typing import Any
 
 import pytest
@@ -12,6 +13,11 @@ from fastapi.testclient import TestClient
 from google.api_core.exceptions import DeadlineExceeded
 
 from tests.fakes.spanner import _FakeTransaction, make_fake_store
+from trusted_router.app_markup_billing import (
+    APP_MARKUP_PAYOUT_SETTLE_FIELD,
+    app_markup_microdollars_from_charge,
+    app_markup_owner_share_microdollars,
+)
 from trusted_router.config import Settings
 from trusted_router.custom_model_billing import user_model_payout_event_id
 from trusted_router.main import create_app
@@ -138,6 +144,9 @@ def _typed_authorization(
     key_hash: str,
     estimate: int = ESTIMATE,
     expires_at: str = "2026-01-01T00:00:00Z",
+    app_id: str = "",
+    app_markup_basis_points: int = 0,
+    app_owner_user_id: str = "",
 ) -> GatewayAuthorization:
     outcome, auth = store.authorize_gateway_typed(
         workspace_id=workspace_id,
@@ -154,6 +163,9 @@ def _typed_authorization(
         candidate_endpoint_ids=[ENDPOINT_ID],
         idempotency_key=None,
         idempotency_fingerprint=None,
+        app_id=app_id,
+        app_markup_basis_points=app_markup_basis_points,
+        app_owner_user_id=app_owner_user_id,
         expires_at=expires_at,
     )
     assert outcome == AuthorizeOutcome.ACCEPTED
@@ -308,6 +320,25 @@ def _settle_timing_records(caplog: pytest.LogCaptureFixture) -> list[logging.Log
         for record in caplog.records
         if record.name == GATEWAY_LOGGER and record.getMessage().startswith("settle timing ")
     ]
+
+
+def _stamp_spend_lease_binding(
+    db: Any,
+    auth: GatewayAuthorization,
+    *,
+    allocation_micro: int,
+) -> None:
+    record = db.gateway_authorizations[auth.id]
+    payload = json.loads(record["payload"])
+    binding = {
+        "settlement": "spend_lease",
+        "spend_lease_id": "lease-settle-clamp",
+        "spend_lease_gen": 7,
+        "spend_lease_allocated_micro": allocation_micro,
+    }
+    payload.update(binding)
+    record.update(binding)
+    record["payload"] = json.dumps(payload, separators=(",", ":"))
 
 
 # Unit (storage)
@@ -2496,11 +2527,13 @@ def _settle_with_sql_spy(
     # A monotonic per-transaction number, NOT id(): CPython reuses the id of a
     # freed transaction object, so a later standalone-mark transaction could
     # alias the finalize one and pass a same-transaction check vacuously.
-    sequence: dict[int, int] = {}
+    next_txn = 0
 
     def spy(self: Any, sql: str, **kwargs: Any) -> int:
-        txn = sequence.setdefault(id(self), len(sequence))
-        self.__dict__.setdefault("_spy_txn", txn)
+        nonlocal next_txn
+        if "_spy_txn" not in self.__dict__:
+            self.__dict__["_spy_txn"] = next_txn
+            next_txn += 1
         calls.append((self.__dict__["_spy_txn"], sql))
         return original_update(self, sql, **kwargs)
 
@@ -2544,6 +2577,174 @@ def test_inline_settle_resolves_the_outbox_row_inside_the_finalize_commit(
     [record] = _settle_timing_records(caplog)
     assert isinstance(record.args, tuple)
     assert record.args[7] == 0.0  # mark_ms: no standalone mark commit
+
+
+def test_inline_spend_lease_overrun_caps_charge_generation_typed_cost_and_outbox(
+    prod_shaped_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, _bt = prod_shaped_store
+    enqueued: list[SettleOutboxRow] = []
+    real_enqueue = SpannerSettleOutbox.enqueue
+
+    def capture(self: SpannerSettleOutbox, row: SettleOutboxRow, **kwargs: Any) -> str:
+        enqueued.append(replace(row))
+        return real_enqueue(self, row, **kwargs)
+
+    monkeypatch.setattr(SpannerSettleOutbox, "enqueue", capture)
+    ws = "ws-spend-lease-inline-clamp"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    allocation = 500
+    markup_basis_points = 2_500
+    app_owner = "owner-spend-lease-inline-clamp"
+    auth = _typed_authorization(
+        store,
+        workspace_id=ws,
+        key_hash=key.hash,
+        app_id="app-spend-lease-inline-clamp",
+        app_markup_basis_points=markup_basis_points,
+        app_owner_user_id=app_owner,
+    )
+    _stamp_spend_lease_binding(db, auth, allocation_micro=allocation)
+    settings = Settings(
+        environment="test",
+        settle_outbox_enabled=True,
+        operational_analytics_outbox_enabled=True,
+        spend_lease_issuance_enabled=True,
+        spend_lease_binding_enabled=True,
+        spend_lease_pilot_workspace_ids=ws,
+        spend_lease_signing_secret_name="test-secret",  # noqa: S106
+    )
+
+    with caplog.at_level(logging.WARNING):
+        response = _client(settings).post(
+            "/v1/internal/gateway/settle",
+            json=_settle_json(auth.id),
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["cost_microdollars"] == allocation
+    assert _typed_credit(db, ws)["total_usage"] == allocation
+    assert db.reservations[auth.credit_reservation_id]["actual_micro"] == allocation
+    typed_auth = db.gateway_authorizations[auth.id]
+    assert typed_auth["finalized_cost_microdollars"] == allocation
+    outbox = db.settle_outbox[(auth.id, "settle")]
+    assert outbox["actual_cost_micro"] == allocation
+    markup = app_markup_microdollars_from_charge(allocation, markup_basis_points)
+    payout = app_markup_owner_share_microdollars(markup)
+    [frozen] = enqueued
+    assert frozen.actual_cost_micro == allocation
+    assert json.loads(frozen.settle_body or "{}")[APP_MARKUP_PAYOUT_SETTLE_FIELD] == payout
+    [generation] = db.generation_records.values()
+    generation_payload = json.loads(generation["payload"])
+    assert generation_payload["total_cost_microdollars"] == allocation
+    assert generation_payload["app_markup_microdollars"] == markup
+    [analytics] = db.operational_analytics_outbox
+    assert json.loads(analytics["payload"])["total_cost_microdollars"] == allocation
+    assert store.earnings_summary(app_owner)["total_earned"] == payout
+
+    replay = _client(settings).post(
+        "/v1/internal/gateway/settle",
+        json=_settle_json(auth.id),
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["data"]["already_settled"] is True
+    assert db.reservations[auth.credit_reservation_id]["actual_micro"] == allocation
+    assert store.earnings_summary(app_owner)["total_earned"] == payout
+    assert "billing.spend_lease_settle_capped_to_allocation" in caplog.text
+
+
+def test_eager_mirror_runs_after_won_finalize_not_lost_replay(
+    prod_shaped_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, db, _bt = prod_shaped_store
+    ws = "ws-spend-lease-eager-winner"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    winner = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    loser = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    _stamp_spend_lease_binding(db, winner, allocation_micro=ESTIMATE)
+    _stamp_spend_lease_binding(db, loser, allocation_micro=ESTIMATE)
+    mirrored: list[str] = []
+    monkeypatch.setattr(
+        "trusted_router.routes.internal.gateway.mirror_finalized_spend_lease_best_effort",
+        lambda _store, committed: mirrored.append(committed.id),
+    )
+    real_finalize = type(store).typed_finalize_gateway_authorization_result
+
+    def finalize_with_lost_replay(self: Any, authorization_id: str, **kwargs: Any) -> Any:
+        if authorization_id == loser.id:
+            return TypedFinalizeResult(finalized=False, activity_indexed=False)
+        return real_finalize(self, authorization_id, **kwargs)
+
+    monkeypatch.setattr(
+        type(store),
+        "typed_finalize_gateway_authorization_result",
+        finalize_with_lost_replay,
+    )
+    client = _client(Settings(environment="test", settle_outbox_enabled=True))
+
+    won = client.post("/v1/internal/gateway/settle", json=_settle_json(winner.id))
+    lost = client.post("/v1/internal/gateway/settle", json=_settle_json(loser.id))
+
+    assert won.status_code == lost.status_code == 200
+    assert mirrored == [winner.id]
+
+
+def test_flag_off_settle_body_outbox_and_charge_ignore_lease_named_extras(
+    prod_shaped_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, _db, _bt = prod_shaped_store
+    captured: list[SettleOutboxRow] = []
+    real_enqueue = SpannerSettleOutbox.enqueue
+
+    def capture(self: SpannerSettleOutbox, row: SettleOutboxRow, **kwargs: Any) -> str:
+        captured.append(row)
+        return real_enqueue(self, row, **kwargs)
+
+    monkeypatch.setattr(SpannerSettleOutbox, "enqueue", capture)
+    client = _client(Settings(environment="test", settle_outbox_enabled=True))
+    responses = []
+    for suffix, extras in (
+        ("plain", {}),
+        (
+            "lease-extras",
+            {
+                "spend_lease_id": "caller-forged",
+                "spend_lease_gen": 99,
+                "spend_lease_allocated_micro": 1,
+                "settlement": "spend_lease",
+            },
+        ),
+    ):
+        ws = f"ws-flag-off-{suffix}"
+        _seed_credit(store, ws)
+        key = _make_key(store, ws)
+        auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+        body = _settle_json(auth.id, request_id="same-request")
+        body.update(extras)
+        responses.append(client.post("/v1/internal/gateway/settle", json=body))
+
+    assert [response.status_code for response in responses] == [200, 200]
+    assert responses[0].json()["data"]["cost_microdollars"] == responses[1].json()["data"][
+        "cost_microdollars"
+    ]
+    normalized_rows = []
+    for row in captured:
+        frozen = asdict(row)
+        frozen["authorization_id"] = "normalized"
+        frozen["reservation_id"] = "normalized"
+        frozen["next_attempt_at"] = "normalized"
+        frozen["created_at"] = "normalized"
+        frozen["settle_body"] = (row.settle_body or "").replace(
+            row.authorization_id, "normalized"
+        )
+        normalized_rows.append(frozen)
+    assert normalized_rows[0] == normalized_rows[1]
 
 
 def test_inline_settle_leaves_a_leased_outbox_row_to_its_drain_worker(

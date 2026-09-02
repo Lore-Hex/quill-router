@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -364,7 +365,8 @@ def test_authorization_typed_columns_round_trip_merge_and_reject_zero_allocation
     assert tuple(typed) == AUTHORIZATION_TYPED_COLUMNS
     assert typed["spend_lease_exp"] == datetime.fromtimestamp(1_800_000_000, tz=UTC)
     assert merge_authorization_typed_columns(None, typed) == {
-        key: value for key, value in payload.items() if key != "authorization_id"
+        **{key: value for key, value in payload.items() if key != "authorization_id"},
+        "settlement": "spend_lease",
     }
 
     old_writer_payload = dict(payload, spend_lease_status="expired", finalization_outcome="refunded")
@@ -382,3 +384,33 @@ def test_authorization_typed_columns_round_trip_merge_and_reject_zero_allocation
             {"spend_lease_allocated_micro": 0},
             {},
         )
+
+
+def test_payload_erased_complete_typed_tuple_derives_spend_lease_settlement() -> None:
+    merged = merge_authorization_typed_columns(
+        None,
+        {
+            "spend_lease_id": "lease-erased",
+            "spend_lease_gen": 4,
+            "spend_lease_allocated_micro": 900,
+        },
+    )
+
+    assert merged["settlement"] == "spend_lease"
+
+
+def test_payload_settlement_disagreement_logs_and_typed_wins(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.ERROR):
+        merged = merge_authorization_typed_columns(
+            {"settlement": "local"},
+            {
+                "spend_lease_id": "lease-mismatch",
+                "spend_lease_gen": 5,
+                "spend_lease_allocated_micro": 901,
+            },
+        )
+
+    assert merged["settlement"] == "spend_lease"
+    assert "spend_lease.settlement_kind_mismatch" in caplog.text

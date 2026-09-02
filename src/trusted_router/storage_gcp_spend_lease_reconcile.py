@@ -27,10 +27,12 @@ from trusted_router.spend_lease_state import (
     ClaimProof,
     ConflictingBound,
     FinalizationOutcome,
+    MonetaryMismatchProof,
     RecoveryProof,
     RowBindingMismatch,
     SpendLease,
     SpendLeaseConflictError,
+    SpendLeaseMonetaryMismatch,
     SpendLeaseState,
 )
 from trusted_router.storage_gcp_counter_dml import release_credit
@@ -538,31 +540,53 @@ def _mirror_allocations(
             if authorization.finalization_outcome is None
             else FinalizationOutcome(authorization.finalization_outcome)
         )
-        ledger.mirror(
-            row.lease_id,
-            region=row.region,
-            observation=AuthorizationObservation(
-                idempotency_scope=allocation.idempotency_scope,
-                authorization_id=allocation.authorization_id,
-                request_fingerprint=allocation.request_fingerprint,
-                lease_id=row.lease_id,
-                gen=row.gen,
-                allocated_micro=allocation.allocated_micro,
-                key_hash=row.key_hash,
-                workspace_id=row.workspace_id,
-                durability=(
-                    AuthorizationDurability.TERMINAL
-                    if authorization.settled
-                    else AuthorizationDurability.OPEN
-                ),
-                finalization_outcome=outcome,
-                finalized_cost_microdollars=(
-                    authorization.finalized_cost_microdollars
-                    if outcome == FinalizationOutcome.SETTLED
-                    else None
-                ),
+        observation = AuthorizationObservation(
+            idempotency_scope=allocation.idempotency_scope,
+            authorization_id=allocation.authorization_id,
+            request_fingerprint=allocation.request_fingerprint,
+            lease_id=row.lease_id,
+            gen=row.gen,
+            allocated_micro=allocation.allocated_micro,
+            key_hash=row.key_hash,
+            workspace_id=row.workspace_id,
+            durability=(
+                AuthorizationDurability.TERMINAL
+                if authorization.settled
+                else AuthorizationDurability.OPEN
+            ),
+            finalization_outcome=outcome,
+            finalized_cost_microdollars=(
+                authorization.finalized_cost_microdollars
+                if outcome == FinalizationOutcome.SETTLED
+                else None
             ),
         )
+        try:
+            ledger.mirror(
+                row.lease_id,
+                region=row.region,
+                observation=observation,
+            )
+        except SpendLeaseMonetaryMismatch as exc:
+            ledger.quarantine(
+                row.lease_id,
+                region=row.region,
+                idempotency_scope=allocation.idempotency_scope,
+                proof=MonetaryMismatchProof(
+                    exc.finalized_cost_microdollars,
+                    exc.allocated_micro,
+                ),
+            )
+            log.error(
+                "spend_lease.historical_overcharge",
+                extra={
+                    "authorization_id": allocation.authorization_id,
+                    "spend_lease_id": row.lease_id,
+                    "spend_lease_gen": row.gen,
+                    "spend_lease_allocated_micro": allocation.allocated_micro,
+                    "finalized_cost_microdollars": exc.finalized_cost_microdollars,
+                },
+            )
     refreshed = ledger.get(row.lease_id, region=row.region)
     if refreshed is None:
         raise RuntimeError("spend lease disappeared during allocation mirror")

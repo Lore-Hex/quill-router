@@ -28,6 +28,10 @@ from trusted_router.partner_billing import PARTNER_OPERATOR_COST_SETTLE_FIELD
 from trusted_router.regional_quota_ledger import RegionalLeaseLedgerError
 from trusted_router.schemas import GatewaySettleRequest
 from trusted_router.services.regional_quota_leases import LeaseSettlementError
+from trusted_router.services.spend_lease_settlement import (
+    derive_spend_lease_repair_amounts,
+    mirror_finalized_spend_lease_best_effort,
+)
 from trusted_router.storage import STORE, Generation, typed_billing_store
 from trusted_router.storage_errors import transient_store_error_types
 from trusted_router.storage_gcp_authorize import SettleOutcome
@@ -148,6 +152,43 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
     if auth is None:
         return ApplyOutcome.RESERVATION_MISSING
 
+    corrective_rewrite: tuple[str, str, str, int, str] | None = None
+    if (
+        success
+        and auth.settlement == "spend_lease"
+        and auth.spend_lease_id is not None
+        and auth.spend_lease_gen is not None
+        and auth.spend_lease_allocated_micro is not None
+        and row.actual_cost_micro > auth.spend_lease_allocated_micro
+    ):
+        if row.lease_owner is None:
+            return ApplyOutcome.ERROR
+        repair = derive_spend_lease_repair_amounts(auth, row.actual_cost_micro, parsed_body)
+        rewritten_body = json.dumps(repair.settle_body, separators=(",", ":"))
+        original_cost = row.actual_cost_micro
+        row.actual_cost_micro = repair.actual_cost_micro
+        row.settle_body = rewritten_body
+        body = GatewaySettleRequest(**repair.settle_body)
+        body_dict = body.model_dump(exclude_none=True)
+        corrective_rewrite = (
+            row.authorization_id,
+            row.intent_kind,
+            row.lease_owner,
+            repair.actual_cost_micro,
+            rewritten_body,
+        )
+        logger.error(
+            "spend_lease.frozen_charge_capped_at_allocation",
+            extra={
+                "authorization_id": auth.id,
+                "spend_lease_id": auth.spend_lease_id,
+                "spend_lease_gen": auth.spend_lease_gen,
+                "spend_lease_allocated_micro": auth.spend_lease_allocated_micro,
+                "original_actual_microdollars": original_cost,
+                "booked_actual_microdollars": repair.actual_cost_micro,
+            },
+        )
+
     # Do not short-circuit auth.settled here. The claim/finalize layer is the
     # authority; this pre-read is only for body construction and is TOCTOU-prone.
     usage_type = UsageType.coerce(row.selected_usage_type)
@@ -185,6 +226,11 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
                 body_dict,
                 usage_type,
                 operator_cost_microdollars=operator_cost,
+                app_markup_microdollars=app_markup_microdollars_from_charge(
+                    row.actual_cost_micro, auth.app_markup_basis_points
+                )
+                if auth.app_markup_basis_points > 0
+                else 0,
             )
             if success
             else None
@@ -203,6 +249,7 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
             generation,
             user_model_payout,
             app_markup_payout,
+            corrective_rewrite,
         )
     elif row.settle_origin == "legacy":
         outcome = _apply_legacy(
@@ -256,6 +303,7 @@ def _frozen_generation(
     usage_type: UsageType,
     *,
     operator_cost_microdollars: int | None = None,
+    app_markup_microdollars: int = 0,
 ) -> Generation:
     # MF5: rebuild generation metadata from the row's frozen decision and
     # settle_body only. Retired endpoints fall back to parsing the stored id;
@@ -279,6 +327,7 @@ def _frozen_generation(
         input_tokens=total_input,
         output_tokens=body.output_count,
         actual_cost_microdollars=row.actual_cost_micro,
+        app_markup_microdollars=app_markup_microdollars,
         operator_cost_microdollars=operator_cost_microdollars,
     )
 
@@ -379,6 +428,7 @@ def _apply_typed(
     generation: Generation | None,
     user_model_payout: UserModelPayout | None,
     app_markup_payout: AppMarkupPayout | None,
+    corrective_rewrite: tuple[str, str, str, int, str] | None,
 ) -> str:
     typed_store = typed_billing_store()
     if typed_store is None:
@@ -464,6 +514,7 @@ def _apply_typed(
                 generation=generation,
                 user_model_payout=user_model_payout,
                 app_markup_payout=app_markup_payout,
+                settle_outbox_rewrite=corrective_rewrite,
             )
         except _TRANSIENT_STORE_EXCS:
             return ApplyOutcome.PARK_TYPED_UNAVAILABLE
@@ -478,6 +529,15 @@ def _apply_typed(
                 generation_store.mirror_after_commit(generation)
             elif not _index_generation_after_commit(typed_store, generation):
                 return ApplyOutcome.ACTIVITY_PENDING
+        if auth.settlement == "spend_lease":
+            committed = cast(Any, typed_store).get_gateway_authorization(auth.id)
+            if committed is None:
+                logger.error(
+                    "spend_lease.eager_mirror_read_missing",
+                    extra={"authorization_id": auth.id},
+                )
+            else:
+                mirror_finalized_spend_lease_best_effort(typed_store, committed)
         return ApplyOutcome.SETTLED_NOW
     if outcome == SettleOutcome.NOT_FOUND:
         return ApplyOutcome.RESERVATION_MISSING
@@ -491,6 +551,21 @@ def _apply_typed(
         if reservation is None:
             return ApplyOutcome.RESERVATION_MISSING
         actual_micro = int(reservation.get("actual_micro") or 0)
+        if (
+            auth.settlement == "spend_lease"
+            and auth.spend_lease_allocated_micro is not None
+            and actual_micro > auth.spend_lease_allocated_micro
+        ):
+            logger.error(
+                "spend_lease.historical_overcharge",
+                extra={
+                    "authorization_id": auth.id,
+                    "spend_lease_id": auth.spend_lease_id,
+                    "spend_lease_gen": auth.spend_lease_gen,
+                    "spend_lease_allocated_micro": auth.spend_lease_allocated_micro,
+                    "finalized_cost_microdollars": actual_micro,
+                },
+            )
         if actual_micro > 0:
             # Refunds never carry a generation, so requiring one here made the
             # benign charged-settle-beats-refund replay unreachable and
@@ -499,7 +574,20 @@ def _apply_typed(
                 return ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
             if generation is None:
                 return ApplyOutcome.INVALID_ROW
-            if not _index_generation_after_commit(typed_store, generation):
+            replay_generation = generation
+            if corrective_rewrite is not None:
+                replay_generation = replace(
+                    generation,
+                    total_cost_microdollars=actual_micro,
+                    app_markup_microdollars=(
+                        app_markup_microdollars_from_charge(
+                            actual_micro, auth.app_markup_basis_points
+                        )
+                        if auth.app_markup_basis_points > 0
+                        else 0
+                    ),
+                )
+            if not _index_generation_after_commit(typed_store, replay_generation):
                 return ApplyOutcome.ACTIVITY_PENDING
             return ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
         if row.actual_cost_micro == 0:

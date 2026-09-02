@@ -142,6 +142,10 @@ from trusted_router.services.settle_outbox_drain import (
     drain_settle_outbox,
     spanner_settle_outbox,
 )
+from trusted_router.services.spend_lease_settlement import (
+    clamp_spend_lease_charge,
+    mirror_finalized_spend_lease_best_effort,
+)
 from trusted_router.services.spend_lease_shadow_dispatch import (
     SpendLeaseShadowDispatcher,
 )
@@ -169,6 +173,7 @@ from trusted_router.spend_leases import (
     freeze_spend_lease_catalog,
     mint_shadow_spend_lease,
     parse_boot_auth_header,
+    spend_lease_binding_ineligibility_reason,
     spend_lease_ineligibility_reason,
     verify_boot_auth,
 )
@@ -1036,12 +1041,23 @@ def _authorize_gateway_sync_impl(
             # Signer, Secret Manager, catalog, and generation failures all
             # degrade to today's synchronous authorization with no lease.
             logger.exception("spend_lease_mint_failed")
+    binding_no_lease_reason = spend_lease_binding_ineligibility_reason(
+        no_lease_reason,
+        deferred_settlement_applies=(
+            settings.spend_lease_binding_enabled
+            and _deferred_settlement_applies(settings, api_key)
+        ),
+    )
+    if binding_no_lease_reason != no_lease_reason:
+        # Binding-only: Stage A eligibility also drives flag-off shadow issuance,
+        # which must remain unchanged when deferred settlement is available.
+        spend_context["no_lease_reason"] = binding_no_lease_reason
     if (
         settings.spend_lease_binding_enabled
         and settings.spend_lease_issuance_enabled
         and bool(spend_context["boot_verified"])
         and boot_auth is not None
-        and no_lease_reason is None
+        and binding_no_lease_reason is None
     ):
         prepare_binding = getattr(_typed_store, "prepare_gateway_spend_lease_binding", None)
         if callable(prepare_binding):
@@ -2659,6 +2675,8 @@ def _settle_gateway_authorization(
             },
         )
         actual_cost = authorization.estimated_microdollars
+    if success and authorization.settlement == "spend_lease":
+        actual_cost = clamp_spend_lease_charge(authorization, actual_cost)
     if success and authorization.app_markup_basis_points > 0:
         # THE PAYOUT IS A FUNCTION OF THE FINAL CHARGE: authorization freezes
         # the rate, while every clamp/cap/adjustment above decides the base.
@@ -2950,6 +2968,16 @@ def _settle_gateway_authorization(
             activity_indexed=finalized,
         )
     finalize_ms = (perf_counter() - finalize_start) * 1000
+    if finalized and is_typed and authorization.settlement == "spend_lease":
+        assert _typed_store is not None
+        committed = cast(Any, _typed_store).get_gateway_authorization(authorization.id)
+        if committed is None:
+            logger.error(
+                "spend_lease.eager_mirror_read_missing",
+                extra={"authorization_id": authorization.id},
+            )
+        else:
+            mirror_finalized_spend_lease_best_effort(_typed_store, committed)
     _release_user_model_slot_safely(authorization)
     if not finalized:
         # §3/§6/§7: leave the row pending on purpose. Inline's False only says

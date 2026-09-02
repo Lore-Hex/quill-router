@@ -60,6 +60,7 @@ from trusted_router.storage_gcp_settle_outbox import (
     _GUARD_STATUS_SQL,
     GUARD_COUNT_SQL,
     mark_done_unleased_tx,
+    rewrite_frozen_settlement_tx,
 )
 from trusted_router.storage_models import (
     AppMarkupPayout,
@@ -902,6 +903,7 @@ def typed_finalize_atomic(
     app_markup_payout: AppMarkupPayout | None = None,
     regional_hold_unknown: bool = False,
     settle_outbox_done: tuple[str, str] | None = None,
+    settle_outbox_rewrite: tuple[str, str, str, int, str] | None = None,
 ) -> dict:
     """Full DML-only finalize for the typed path (codex 3e, Option B).
 
@@ -954,6 +956,23 @@ def typed_finalize_atomic(
         )
         if not won:
             return {"outcome": SettleOutcome.ALREADY_SETTLED}
+
+        if settle_outbox_rewrite is not None:
+            rewrite_aid, rewrite_kind, lease_owner, rewrite_cost, rewrite_body = (
+                settle_outbox_rewrite
+            )
+            rewritten = rewrite_frozen_settlement_tx(
+                transaction,
+                pt,
+                authorization_id=rewrite_aid,
+                intent_kind=rewrite_kind,
+                lease_owner=lease_owner,
+                actual_cost_micro=rewrite_cost,
+                settle_body=rewrite_body,
+                now=now,
+            )
+            if rewritten != 1:
+                raise _SettleError("corrective settle-outbox rewrite lost its lease fence")
 
         missing_key_releases = []
         key_count, warning = _release_key_or_skip_deleted(
