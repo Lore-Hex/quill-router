@@ -117,7 +117,8 @@ def status_snapshot(
         for sample in ordered
         if not sample_component_ids(sample)
         or any(
-            component_id in published_component_ids for component_id in sample_component_ids(sample)
+            component_id in published_component_ids
+            for component_id in sample_component_ids(sample)
         )
     ]
     # Control-plane health is an SLO-only signal, so its rollups intentionally
@@ -127,7 +128,10 @@ def status_snapshot(
         rollup
         for rollup in precomputed_rollups
         if rollup.component in published_component_ids
-        or (rollup.component == UNCATEGORIZED_COMPONENT and bool(rollup_slo_class_ids(rollup)))
+        or (
+            rollup.component == UNCATEGORIZED_COMPONENT
+            and bool(rollup_slo_class_ids(rollup))
+        )
     ]
     router_core_samples = [
         sample

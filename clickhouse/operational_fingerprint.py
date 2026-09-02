@@ -47,7 +47,9 @@ def canonical_fingerprint(payload: dict[str, Any], *, surface: str) -> str:
             if canonical.get(field) is not None:
                 canonical[field] = bool(canonical[field])
         if canonical.get("speed_tokens_per_second") is not None:
-            canonical["speed_tokens_per_second"] = float(canonical["speed_tokens_per_second"])
+            canonical["speed_tokens_per_second"] = float(
+                canonical["speed_tokens_per_second"]
+            )
     if surface == "rollup":
         if canonical.get("target_region") is None:
             canonical["target_region"] = ""
@@ -120,4 +122,8 @@ def _iso(value: Any) -> str:
         return text if text.endswith("Z") else text + "Z"
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=dt.UTC)
-    return parsed.astimezone(dt.UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return (
+        parsed.astimezone(dt.UTC)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
