@@ -102,6 +102,12 @@ COOKIE_FREE_PUBLIC_ANALYTICS_PATHS = frozenset(
         "/status/history",
     }
 )
+CAMPAIGN_LANDING_PATHS = {
+    # The original X creative accidentally pointed at the Bedrock group-buy
+    # page. Keep its campaign identifier useful while sending future clicks to
+    # the Axios article the ad describes.
+    "axios_viral_landing_20260830": "/blog/axios-tried-trustedrouter",
+}
 
 
 def register_http_middleware(app: FastAPI, settings: Settings) -> None:
@@ -218,6 +224,9 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
                 url=_apex_public_url(settings, request, hostname),
                 status_code=308,
             )
+        campaign_url = _canonical_campaign_url(request)
+        if campaign_url is not None:
+            return RedirectResponse(url=campaign_url, status_code=307)
         return await call_next(request)
 
     @app.middleware("http")
@@ -516,6 +525,16 @@ def _apex_public_url(settings: Settings, request: Request, hostname: str) -> str
     suffix = f"?{query}" if query else ""
     domain = control_domain_for_hostname(settings, hostname)
     return f"https://{domain}{request.url.path}{suffix}"
+
+
+def _canonical_campaign_url(request: Request) -> str | None:
+    if request.method.upper() not in {"GET", "HEAD"}:
+        return None
+    campaign = request.query_params.get("utm_campaign", "")
+    target_path = CAMPAIGN_LANDING_PATHS.get(campaign)
+    if target_path is None or request.url.path == target_path:
+        return None
+    return str(request.url.replace(path=target_path))
 
 
 async def _rate_limit_request(
