@@ -202,6 +202,55 @@ def test_paid_landing_sets_signed_httponly_cookie(client: TestClient) -> None:
     assert "twclid" not in context.last_touch
 
 
+def test_valid_experiment_identity_survives_cookie_and_signup(client: TestClient) -> None:
+    response = client.get(
+        "/openrouter-alternative/test/g3_or_migrate_attest_key"
+        "?utm_source=google&utm_medium=paid_search"
+        "&utm_campaign=google_search_messages_v3"
+        "&utm_content=g3_or_migrate_attest_key"
+        "&tr_exp=google_search_messages_v3"
+        "&tr_cell=g3_or_migrate_attest_key"
+    )
+    assert response.status_code == 200
+    context = decode_attribution_cookie(
+        client.cookies.get(ATTRIBUTION_COOKIE_NAME),
+        client.app.state.settings,
+    )
+    assert context is not None
+    assert context.last_touch["experiment_id"] == "google_search_messages_v3"
+    assert context.last_touch["experiment_cell_id"] == "g3_or_migrate_attest_key"
+
+    payload = _signup(client, "experiment-cell@example.com")
+    record = STORE.get_acquisition_attribution(str(payload["workspace_id"]))
+    assert record is not None
+    assert record.first_touch["experiment_id"] == "google_search_messages_v3"
+    assert record.first_touch["experiment_cell_id"] == "g3_or_migrate_attest_key"
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "tr_exp=google_search_messages_v3",
+        "tr_cell=g3_or_migrate_attest_key",
+        "tr_exp=google-search&tr_cell=g3_or_migrate_attest_key",
+        "tr_exp=google_search_messages_v3&tr_cell=bad%3Fcell",
+    ),
+)
+def test_invalid_or_partial_experiment_identity_is_discarded(
+    client: TestClient,
+    query: str,
+) -> None:
+    response = client.get(f"/?utm_source=google&{query}")
+    assert response.status_code == 200
+    context = decode_attribution_cookie(
+        client.cookies.get(ATTRIBUTION_COOKIE_NAME),
+        client.app.state.settings,
+    )
+    assert context is not None
+    assert "experiment_id" not in context.last_touch
+    assert "experiment_cell_id" not in context.last_touch
+
+
 @pytest.mark.parametrize(
     ("path", "campaign"),
     [

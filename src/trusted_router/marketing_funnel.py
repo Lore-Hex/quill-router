@@ -7,7 +7,9 @@ prompts, outputs, account emails, API keys, or payment credentials.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
+import math
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -32,6 +34,7 @@ FUNNEL_EVENTS = (
 )
 
 _DATASET_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+_ANONYMOUS_FINGERPRINT_RE = re.compile(r"^[a-f0-9]{64}$")
 _EVENT_FIELD_BY_NAME = {
     "acquisition.landing_engaged": "engaged_visitors",
     "acquisition.sign_in_opened": "sign_in_visitors",
@@ -58,6 +61,8 @@ class FunnelKey:
     campaign: str
     creative: str
     landing_path: str
+    experiment_id: str
+    experiment_cell_id: str
 
 
 @dataclass
@@ -67,6 +72,8 @@ class FunnelRow:
     campaign: str
     creative: str
     landing_path: str
+    experiment_id: str
+    experiment_cell_id: str
     engaged_visitors: int = 0
     sign_in_visitors: int = 0
     signups: int = 0
@@ -98,12 +105,22 @@ class FunnelRow:
     google_ads_persisted_retained_users_7d: int = 0
 
     def as_dict(self) -> dict[str, object]:
+        activation_interval = wilson_percentage_interval(
+            self.activated_users,
+            self.engaged_visitors,
+        )
+        purchase_interval = wilson_percentage_interval(
+            self.purchasers,
+            self.engaged_visitors,
+        )
         return {
             "source": self.source,
             "medium": self.medium,
             "campaign": self.campaign,
             "creative": self.creative,
             "landing_path": self.landing_path,
+            "experiment_id": self.experiment_id,
+            "experiment_cell_id": self.experiment_cell_id,
             "engaged_visitors": self.engaged_visitors,
             "sign_in_visitors": self.sign_in_visitors,
             "signups": self.signups,
@@ -130,6 +147,7 @@ class FunnelRow:
                 self.activated_users,
                 self.engaged_visitors,
             ),
+            "activation_per_engaged_95ci": activation_interval,
             "checkout_rate": percentage(self.checkout_started_users, self.signups),
             "payment_method_rate": percentage(
                 self.payment_method_saved_users,
@@ -140,6 +158,8 @@ class FunnelRow:
                 self.purchasers,
                 self.engaged_visitors,
             ),
+            "purchase_per_engaged_95ci": purchase_interval,
+            "experiment_state": experiment_state(self),
             "retention_7d_rate": percentage(self.retained_users_7d, self.signups),
         }
 
@@ -228,6 +248,34 @@ def build_axiom_funnel_query(dataset: str) -> str:
     )
 
 
+def build_axiom_cohort_query(dataset: str) -> str:
+    """Return person-level event rows for local acquisition-cohort assignment.
+
+    A conversion is intentionally not grouped by its event timestamp or latest
+    UTM dimensions. The report assigns it to the person's earliest eligible
+    landing engagement, eliminating event-window denominator drift and
+    cross-cell contamination from later visits.
+    """
+    if not _DATASET_RE.fullmatch(dataset):
+        raise ValueError("Axiom dataset contains unsupported characters")
+    event_values = ", ".join(f"'{event}'" for event in FUNNEL_EVENTS)
+    return (
+        f"['{dataset}'] "
+        f"| where event in ({event_values}) "
+        "| extend experiment_id=column_ifexists('experiment_id', ''), "
+        "experiment_cell_id=column_ifexists('experiment_cell_id', '') "
+        "| summarize first_at=min(_time), events=count(), "
+        "revenue_microdollars=sum(amount_microdollars), "
+        "google_ads_click_events=countif(has_gclid == true or has_gbraid == true "
+        "or has_wbraid == true), "
+        "google_ads_persisted_events=countif("
+        "column_ifexists('google_ads_click_persisted', false) == true) "
+        "by event, anonymous_fingerprint, experiment_id, experiment_cell_id, "
+        "utm_source, utm_medium, utm_campaign, utm_content, landing_path "
+        "| sort by anonymous_fingerprint asc, first_at asc, event asc"
+    )
+
+
 def parse_axiom_json_lines(payload: str) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for line_number, line in enumerate(payload.splitlines(), start=1):
@@ -264,6 +312,8 @@ def aggregate_funnel_rows(
             campaign=_dimension(record.get("utm_campaign"), "(none)"),
             creative=_dimension(record.get("utm_content"), "(none)"),
             landing_path=_dimension(record.get("landing_path"), "(unknown)"),
+            experiment_id=_dimension(record.get("experiment_id"), "(none)"),
+            experiment_cell_id=_dimension(record.get("experiment_cell_id"), "(none)"),
         )
         if source is not None and key.source != source:
             continue
@@ -285,6 +335,8 @@ def aggregate_funnel_rows(
                 campaign=key.campaign,
                 creative=key.creative,
                 landing_path=key.landing_path,
+                experiment_id=key.experiment_id,
+                experiment_cell_id=key.experiment_cell_id,
             ),
         )
         people = _nonnegative_int(record.get("people"))
@@ -315,6 +367,139 @@ def aggregate_funnel_rows(
             row.campaign,
             row.creative,
             row.landing_path,
+        ),
+    )
+
+
+def aggregate_cohort_funnel_rows(
+    records: Iterable[dict[str, object]],
+    *,
+    cohort_start: dt.datetime,
+    cohort_end: dt.datetime,
+    observed_through: dt.datetime | None = None,
+    source: str | None = None,
+    campaign: str | None = None,
+    creative: str | None = None,
+    landing_path: str | None = None,
+    experiment_id: str | None = None,
+    experiment_cell_id: str | None = None,
+) -> list[FunnelRow]:
+    """Assign downstream events to each person's first eligible engagement."""
+    if cohort_start.tzinfo is None or cohort_end.tzinfo is None:
+        raise ValueError("Cohort boundaries must be timezone-aware")
+    if cohort_end <= cohort_start:
+        raise ValueError("Cohort end must be after cohort start")
+    observation_end = observed_through or dt.datetime.now(dt.UTC)
+    if observation_end.tzinfo is None:
+        raise ValueError("Observation boundary must be timezone-aware")
+    if observation_end < cohort_end:
+        raise ValueError("Observation boundary cannot precede cohort end")
+
+    by_person: dict[str, list[tuple[dt.datetime, dict[str, object]]]] = {}
+    for record in records:
+        event = _text(record.get("event"))
+        fingerprint = _text(record.get("anonymous_fingerprint"))
+        if event not in _EVENT_FIELD_BY_NAME:
+            continue
+        if not _ANONYMOUS_FINGERPRINT_RE.fullmatch(fingerprint):
+            raise ValueError("Axiom cohort row has an invalid anonymous fingerprint")
+        occurred_at = _timestamp(record.get("first_at"))
+        if occurred_at <= observation_end:
+            by_person.setdefault(fingerprint, []).append((occurred_at, record))
+
+    rows: dict[FunnelKey, FunnelRow] = {}
+    for person_records in by_person.values():
+        person_records.sort(key=lambda item: item[0])
+        acquisition = next(
+            (
+                (occurred_at, record)
+                for occurred_at, record in person_records
+                if record.get("event") == "acquisition.landing_engaged"
+                and cohort_start <= occurred_at < cohort_end
+            ),
+            None,
+        )
+        if acquisition is None:
+            continue
+        acquired_at, acquisition_record = acquisition
+        key = FunnelKey(
+            source=_dimension(acquisition_record.get("utm_source"), "(direct)"),
+            medium=_dimension(acquisition_record.get("utm_medium"), "(none)"),
+            campaign=_dimension(acquisition_record.get("utm_campaign"), "(none)"),
+            creative=_dimension(acquisition_record.get("utm_content"), "(none)"),
+            landing_path=_dimension(acquisition_record.get("landing_path"), "(unknown)"),
+            experiment_id=_dimension(acquisition_record.get("experiment_id"), "(none)"),
+            experiment_cell_id=_dimension(
+                acquisition_record.get("experiment_cell_id"),
+                "(none)",
+            ),
+        )
+        if source is not None and key.source != source:
+            continue
+        if campaign is not None and key.campaign != campaign:
+            continue
+        if creative is not None and key.creative != creative:
+            continue
+        if landing_path is not None and key.landing_path != landing_path:
+            continue
+        if experiment_id is not None and key.experiment_id != experiment_id:
+            continue
+        if experiment_cell_id is not None and key.experiment_cell_id != experiment_cell_id:
+            continue
+        row = rows.setdefault(
+            key,
+            FunnelRow(
+                source=key.source,
+                medium=key.medium,
+                campaign=key.campaign,
+                creative=key.creative,
+                landing_path=key.landing_path,
+                experiment_id=key.experiment_id,
+                experiment_cell_id=key.experiment_cell_id,
+            ),
+        )
+        eligible_by_event: dict[str, list[dict[str, object]]] = {}
+        for occurred_at, record in person_records:
+            if occurred_at >= acquired_at:
+                eligible_by_event.setdefault(_text(record.get("event")), []).append(record)
+        for event, event_records in eligible_by_event.items():
+            field = _EVENT_FIELD_BY_NAME[event]
+            setattr(row, field, getattr(row, field) + 1)
+            google_click_field = _GOOGLE_CLICK_FIELD_BY_NAME[event]
+            if any(
+                _nonnegative_int(record.get("google_ads_click_events")) > 0
+                for record in event_records
+            ):
+                setattr(row, google_click_field, getattr(row, google_click_field) + 1)
+            google_persisted_field = _GOOGLE_PERSISTED_FIELD_BY_NAME[event]
+            if any(
+                _nonnegative_int(record.get("google_ads_persisted_events")) > 0
+                for record in event_records
+            ):
+                setattr(
+                    row,
+                    google_persisted_field,
+                    getattr(row, google_persisted_field) + 1,
+                )
+            if event == "acquisition.credit_purchase_completed":
+                row.purchase_events += sum(
+                    _nonnegative_int(record.get("events")) for record in event_records
+                )
+                row.revenue_microdollars += sum(
+                    _nonnegative_int(record.get("revenue_microdollars"))
+                    for record in event_records
+                )
+    return sorted(
+        rows.values(),
+        key=lambda row: (
+            -row.activated_users,
+            -row.purchasers,
+            -row.signups,
+            -row.engaged_visitors,
+            row.experiment_id,
+            row.experiment_cell_id,
+            row.source,
+            row.campaign,
         ),
     )
 
@@ -393,15 +578,17 @@ def render_measurement_markdown(summary: AcquisitionMeasurementSummary) -> str:
 
 def render_markdown(rows: Iterable[FunnelRow]) -> str:
     header = (
-        "| Source | Campaign | Creative | Landing | Engaged | Sign in | Signups | "
+        "| Experiment | Cell | Source | Campaign | Creative | Landing | Engaged | Sign in | Signups | "
         "Activated | Free used | Checkout | Card saved | Buyers | Revenue | "
         "Signup / engaged | Activated / engaged | Buyers / engaged |\n"
-        "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+        "|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
     )
     body = [
         "| "
         + " | ".join(
             (
+                _markdown_cell(row.experiment_id),
+                _markdown_cell(row.experiment_cell_id),
                 _markdown_cell(row.source),
                 _markdown_cell(row.campaign),
                 _markdown_cell(row.creative),
@@ -431,6 +618,46 @@ def percentage(numerator: int, denominator: int) -> str:
         return "n/a"
     value = Decimal(numerator) * Decimal(100) / Decimal(denominator)
     return f"{value.quantize(Decimal('0.1'))}%"
+
+
+def wilson_percentage_interval(
+    successes: int,
+    observations: int,
+    *,
+    z: float = 1.959963984540054,
+) -> dict[str, str] | None:
+    """Return a two-sided Wilson score interval without a normal shortcut."""
+    if observations <= 0:
+        return None
+    if successes < 0 or successes > observations:
+        raise ValueError("Successes must be between zero and observations")
+    proportion = successes / observations
+    z_squared = z * z
+    denominator = 1 + z_squared / observations
+    center = (proportion + z_squared / (2 * observations)) / denominator
+    margin = (
+        z
+        * math.sqrt(
+            proportion * (1 - proportion) / observations
+            + z_squared / (4 * observations * observations)
+        )
+        / denominator
+    )
+    return {
+        "lower": f"{max(0.0, center - margin) * 100:.1f}%",
+        "upper": f"{min(1.0, center + margin) * 100:.1f}%",
+    }
+
+
+def experiment_state(row: FunnelRow) -> str:
+    """Classify evidence without declaring a winner from an immature cell."""
+    if row.engaged_visitors < 100:
+        return "collecting"
+    if row.activated_users == 0:
+        return "retire"
+    if row.activated_users >= 10:
+        return "eligible"
+    return "collecting"
 
 
 def microdollars_to_usd(value: int) -> str:
@@ -480,3 +707,24 @@ def _nonnegative_int(value: object) -> int:
 
 def _markdown_cell(value: str) -> str:
     return value.replace("|", r"\|").replace("\n", " ")
+
+
+def _timestamp(value: object) -> dt.datetime:
+    if isinstance(value, int) and not isinstance(value, bool):
+        seconds, nanoseconds = divmod(value, 1_000_000_000)
+        try:
+            return dt.datetime.fromtimestamp(seconds, tz=dt.UTC).replace(
+                microsecond=nanoseconds // 1_000
+            )
+        except (OverflowError, OSError, ValueError) as exc:
+            raise ValueError("Axiom cohort row has an invalid first_at") from exc
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Axiom cohort row is missing first_at")
+    normalized = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = dt.datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError("Axiom cohort row has an invalid first_at") from exc
+    if parsed.tzinfo is None:
+        raise ValueError("Axiom cohort row first_at must be timezone-aware")
+    return parsed.astimezone(dt.UTC)

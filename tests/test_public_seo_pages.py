@@ -16,6 +16,11 @@ from trusted_router.dashboard import (
     OPENROUTER_PAID_LANDING_VARIANTS,
     assigned_openrouter_landing_path,
 )
+from trusted_router.marketing_experiments import (
+    GOOGLE_SEARCH_CELLS_BY_ID,
+    GOOGLE_SEARCH_EXPERIMENT_ID,
+    google_search_wave,
+)
 from trusted_router.routes.public import INDEXNOW_KEY
 
 
@@ -272,8 +277,14 @@ def test_openrouter_experiment_router_is_sticky_and_preserves_campaign_query(
     assert first.headers["cache-control"] == "private, no-store"
     assert first.headers["vary"] == "cookie"
     destination = urlsplit(first.headers["location"])
-    assert destination.path in OPENROUTER_PAID_LANDING_PATHS
-    assert parse_qs(destination.query) == parse_qs(query)
+    assert destination.path.startswith("/openrouter-alternative/test/")
+    parsed_query = parse_qs(destination.query)
+    for name, values in parse_qs(query).items():
+        assert parsed_query[name] == values
+    assert parsed_query["tr_exp"] == [GOOGLE_SEARCH_EXPERIMENT_ID]
+    cell_id = parsed_query["tr_cell"][0]
+    assert cell_id in {cell.cell_id for cell in google_search_wave(0)}
+    assert destination.path.endswith(cell_id)
 
     rendered = client.get(first.headers["location"])
     assert rendered.status_code == 200
@@ -303,8 +314,12 @@ def test_openrouter_paid_campaign_enters_landing_experiment_without_ad_edit(
     assert response.headers["cache-control"] == "private, no-store"
     assert response.headers["vary"] == "cookie"
     destination = urlsplit(response.headers["location"])
-    assert destination.path in OPENROUTER_PAID_LANDING_PATHS
-    assert parse_qs(destination.query) == parse_qs(query)
+    assert destination.path.startswith("/openrouter-alternative/test/")
+    parsed_query = parse_qs(destination.query)
+    for name, values in parse_qs(query).items():
+        assert parsed_query[name] == values
+    assert parsed_query["tr_exp"] == [GOOGLE_SEARCH_EXPERIMENT_ID]
+    assert parsed_query["tr_cell"][0] in GOOGLE_SEARCH_CELLS_BY_ID
 
 
 def test_openrouter_non_experiment_campaign_keeps_canonical_page(

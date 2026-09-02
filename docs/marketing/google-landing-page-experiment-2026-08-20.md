@@ -1,5 +1,9 @@
 # Google Ads Landing Page Experiment
 
+> Superseded by [Google Search Experiment V3](google-search-experiment-v3.md),
+> which adds immutable cell IDs, mature acquisition cohorts, exact ad-level
+> spend joins, and a controlled 384-cell candidate catalog.
+
 ## Objective
 
 Improve paid-search conversion through the complete first-party funnel:

@@ -8,12 +8,15 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from google.auth import default as google_auth_default
 from google.auth.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleAuthRequest
+
+from trusted_router.marketing_experiments import valid_experiment_identity
 
 GOOGLE_ADS_API_VERSION = "v25"
 GOOGLE_ADS_SCOPE = "https://www.googleapis.com/auth/adwords"
@@ -78,6 +81,14 @@ class GoogleAdsSpendRow:
     impressions: int
     clicks: int
     spend_microdollars: int
+    ad_group_id: str = ""
+    ad_group_name: str = ""
+    ad_id: str = ""
+    experiment_id: str = ""
+    experiment_cell_id: str = ""
+    utm_campaign: str = ""
+    utm_content: str = ""
+    landing_path: str = ""
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -87,6 +98,14 @@ class GoogleAdsSpendRow:
             "impressions": self.impressions,
             "clicks": self.clicks,
             "spend_microdollars": self.spend_microdollars,
+            "ad_group_id": self.ad_group_id,
+            "ad_group_name": self.ad_group_name,
+            "ad_id": self.ad_id,
+            "experiment_id": self.experiment_id,
+            "experiment_cell_id": self.experiment_cell_id,
+            "utm_campaign": self.utm_campaign,
+            "utm_content": self.utm_content,
+            "landing_path": self.landing_path,
         }
 
 
@@ -111,6 +130,45 @@ class GoogleAdsSpendReport:
     def spend_microdollars(self) -> int:
         return sum(row.spend_microdollars for row in self.rows)
 
+    def spend_by_experiment_cell(self) -> dict[str, int]:
+        result: dict[str, int] = {}
+        for row in self.rows:
+            if row.experiment_cell_id:
+                result[row.experiment_cell_id] = (
+                    result.get(row.experiment_cell_id, 0) + row.spend_microdollars
+                )
+        return result
+
+    def filtered(
+        self,
+        *,
+        campaign: str | None = None,
+        creative: str | None = None,
+        landing_path: str | None = None,
+        experiment_id: str | None = None,
+        experiment_cell_id: str | None = None,
+    ) -> GoogleAdsSpendReport:
+        rows = tuple(
+            row
+            for row in self.rows
+            if (campaign is None or row.utm_campaign == campaign)
+            and (creative is None or row.utm_content == creative)
+            and (landing_path is None or row.landing_path == landing_path)
+            and (experiment_id is None or row.experiment_id == experiment_id)
+            and (
+                experiment_cell_id is None
+                or row.experiment_cell_id == experiment_cell_id
+            )
+        )
+        return GoogleAdsSpendReport(
+            customer_id=self.customer_id,
+            currency_code=self.currency_code,
+            time_zone=self.time_zone,
+            start_date=self.start_date,
+            end_date=self.end_date,
+            rows=rows,
+        )
+
     def as_dict(self) -> dict[str, object]:
         return {
             "status": "available",
@@ -122,6 +180,7 @@ class GoogleAdsSpendReport:
             "impressions": self.impressions,
             "clicks": self.clicks,
             "spend_microdollars": self.spend_microdollars,
+            "spend_by_experiment_cell": self.spend_by_experiment_cell(),
             "rows": [row.as_dict() for row in self.rows],
         }
 
@@ -206,16 +265,19 @@ def google_ads_reporting_window(
     *,
     days: int,
     time_zone: str,
+    lag_days: int = 0,
     now: dt.datetime | None = None,
 ) -> tuple[dt.date, dt.date, dt.datetime]:
     if days < 1:
         raise ValueError("days must be positive")
+    if lag_days < 0:
+        raise ValueError("lag_days cannot be negative")
     zone = ZoneInfo(time_zone)
     current = now or dt.datetime.now(dt.UTC)
     if current.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     local_now = current.astimezone(zone)
-    end_date = local_now.date()
+    end_date = local_now.date() - dt.timedelta(days=lag_days)
     start_date = end_date - dt.timedelta(days=days - 1)
     start_at = dt.datetime.combine(start_date, dt.time.min, tzinfo=zone).astimezone(dt.UTC)
     return start_date, end_date, start_at
@@ -226,11 +288,13 @@ def build_google_ads_spend_query(start_date: dt.date, end_date: dt.date) -> str:
         raise ValueError("Google Ads spend end date precedes start date")
     return (
         "SELECT customer.currency_code, customer.time_zone, campaign.id, campaign.name, "  # noqa: S608 - interpolation is limited to validated date objects.
+        "ad_group.id, ad_group.name, ad_group_ad.ad.id, ad_group_ad.ad.final_urls, "
         "segments.date, metrics.impressions, metrics.clicks, metrics.cost_micros "
-        "FROM campaign "
+        "FROM ad_group_ad "
         f"WHERE segments.date BETWEEN '{start_date.isoformat()}' AND '{end_date.isoformat()}' "
         "AND campaign.status != 'REMOVED' "
-        "ORDER BY segments.date ASC, campaign.id ASC"
+        "AND ad_group.status != 'REMOVED' AND ad_group_ad.status != 'REMOVED' "
+        "ORDER BY segments.date ASC, campaign.id ASC, ad_group.id ASC, ad_group_ad.ad.id ASC"
     )
 
 
@@ -240,7 +304,7 @@ def parse_google_ads_search_stream(
     if not isinstance(payload, list):
         raise GoogleAdsReportingError("Google Ads reporting response was not a list")
     rows: list[GoogleAdsSpendRow] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str, str]] = set()
     currency_codes: set[str] = set()
     time_zones: set[str] = set()
     for chunk in payload:
@@ -254,18 +318,24 @@ def parse_google_ads_search_stream(
                 raise GoogleAdsReportingError("Google Ads reporting row was invalid")
             customer = _object(raw.get("customer"), "customer")
             campaign = _object(raw.get("campaign"), "campaign")
+            ad_group = _object(raw.get("adGroup"), "ad group")
+            ad_group_ad = _object(raw.get("adGroupAd"), "ad group ad")
+            ad = _object(ad_group_ad.get("ad"), "ad")
             segments = _object(raw.get("segments"), "segments")
             metrics = _object(raw.get("metrics"), "metrics")
             currency_code = _short_text(customer.get("currencyCode"), "currency code", 8)
             time_zone = _short_text(customer.get("timeZone"), "time zone", 64)
             date = _iso_date(segments.get("date"))
             campaign_id = _numeric_text(campaign.get("id"), "campaign ID")
-            key = (date, campaign_id)
+            ad_group_id = _numeric_text(ad_group.get("id"), "ad group ID")
+            ad_id = _numeric_text(ad.get("id"), "ad ID")
+            key = (date, campaign_id, ad_group_id, ad_id)
             if key in seen:
                 raise GoogleAdsReportingError("Google Ads reporting returned a duplicate row")
             seen.add(key)
             currency_codes.add(currency_code)
             time_zones.add(time_zone)
+            tracking = _tracking_from_final_urls(ad.get("finalUrls"))
             rows.append(
                 GoogleAdsSpendRow(
                     date=date,
@@ -277,6 +347,14 @@ def parse_google_ads_search_stream(
                         metrics.get("costMicros"),
                         "cost micros",
                     ),
+                    ad_group_id=ad_group_id,
+                    ad_group_name=_short_text(ad_group.get("name"), "ad group name", 256),
+                    ad_id=ad_id,
+                    experiment_id=tracking["experiment_id"],
+                    experiment_cell_id=tracking["experiment_cell_id"],
+                    utm_campaign=tracking["utm_campaign"],
+                    utm_content=tracking["utm_content"],
+                    landing_path=tracking["landing_path"],
                 )
             )
     if len(currency_codes) > 1 or len(time_zones) > 1:
@@ -289,6 +367,72 @@ def _numeric_id(value: str | None, label: str) -> str:
     if not _NUMERIC_ID_RE.fullmatch(normalized):
         raise ValueError(f"{label} must contain only digits")
     return normalized
+
+
+def _tracking_from_final_urls(value: object) -> dict[str, str]:
+    if value is None or value == []:
+        return {
+            "experiment_id": "",
+            "experiment_cell_id": "",
+            "utm_campaign": "",
+            "utm_content": "",
+            "landing_path": "",
+        }
+    if not isinstance(value, list):
+        raise GoogleAdsReportingError("Google Ads final URLs were invalid")
+    tracking_rows: set[tuple[str, str, str, str, str]] = set()
+    for raw_url in value:
+        if not isinstance(raw_url, str) or len(raw_url) > 2_048:
+            raise GoogleAdsReportingError("Google Ads final URL was invalid")
+        try:
+            parsed = urlsplit(raw_url)
+        except ValueError as exc:
+            raise GoogleAdsReportingError("Google Ads final URL was invalid") from exc
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise GoogleAdsReportingError("Google Ads final URL was invalid")
+        query = parse_qs(parsed.query)
+        experiment_values = query.get("tr_exp", [])
+        cell_values = query.get("tr_cell", [])
+        experiment_id = experiment_values[0] if len(experiment_values) == 1 else ""
+        experiment_cell_id = cell_values[0] if len(cell_values) == 1 else ""
+        if experiment_id or experiment_cell_id:
+            if not valid_experiment_identity(experiment_id, experiment_cell_id):
+                raise GoogleAdsReportingError("Google Ads experiment identity was invalid")
+        tracking_rows.add(
+            (
+                experiment_id,
+                experiment_cell_id,
+                _single_query_value(query, "utm_campaign"),
+                _single_query_value(query, "utm_content"),
+                parsed.path or "/",
+            )
+        )
+    if len(tracking_rows) > 1:
+        raise GoogleAdsReportingError("Google Ads ad has conflicting final URL attribution")
+    row = next(iter(tracking_rows), ("", "", "", "", ""))
+    return dict(
+        zip(
+            (
+                "experiment_id",
+                "experiment_cell_id",
+                "utm_campaign",
+                "utm_content",
+                "landing_path",
+            ),
+            row,
+            strict=True,
+        )
+    )
+
+
+def _single_query_value(query: dict[str, list[str]], name: str) -> str:
+    values = query.get(name, [])
+    if len(values) > 1:
+        raise GoogleAdsReportingError(f"Google Ads final URL has duplicate {name}")
+    value = values[0].strip() if values else ""
+    if len(value) > 128:
+        raise GoogleAdsReportingError(f"Google Ads final URL {name} was invalid")
+    return value
 
 
 def _object(value: object, label: str) -> dict[str, Any]:
