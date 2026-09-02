@@ -290,6 +290,57 @@ def test_close_step_two_lost_guard_rolls_back_credit_release(
     assert database.spend_lease_open[identity.lease_id]["global_closed_at"] is None
 
 
+def test_close_step_two_zero_row_credit_release_aborts_every_close_write() -> None:
+    store, database, ledger = _store()
+    identity = _identity()
+    _insert_candidate(store, identity)
+    _open_candidate(store, identity)
+    ledger.initialize(
+        _local_candidate(identity, state=SpendLeaseState.DRAINING), region=REGION
+    )
+    _seed_global(store, identity, state="DRAINING", slot=True, count=1)
+    _seed_credit(database, identity)
+    credit = database.typed["tr_credit_balance"][(identity.workspace_id, 0)]
+    credit["reserved"] = 0
+    fence_id = store._spend_lease_pair_id(identity.key_hash, identity.boot_kid)
+
+    first = reconcile_spend_leases(store, now=NOW, max_attempts=99)
+
+    row = database.spend_lease_open[identity.lease_id]
+    global_body = store._read_entity(SPEND_LEASE_KIND, identity.lease_id, dict)
+    fence = store._read_entity(FENCE_KIND, fence_id, dict)
+    local = ledger.get(identity.lease_id, region=REGION)
+    assert first["errors"] == 1
+    assert first["closed"] == 0
+    assert credit["reserved"] == 0
+    assert credit["total_usage"] == 0
+    assert global_body["state"] == "DRAINING"
+    assert global_body["frozen_local_version"] is None
+    assert global_body["holds_predecessor_slot"] is True
+    assert fence["open_predecessor_count"] == 1
+    assert row["global_closed_at"] is None
+    assert row["local_closed_at"] is None
+    assert row["attempts"] == 1
+    assert row["last_error"] == "spend lease escrow release modified 0 rows"
+    assert row["next_attempt_at"] == NOW + timedelta(seconds=1)
+    assert local is not None and local.state == SpendLeaseState.DRAINING
+
+    database.now = NOW + timedelta(seconds=1)
+    second = reconcile_spend_leases(
+        store, now=NOW + timedelta(seconds=1), max_attempts=99
+    )
+
+    retried = database.spend_lease_open[identity.lease_id]
+    assert second["errors"] == 1
+    assert second["closed"] == 0
+    assert retried["attempts"] == 2
+    assert retried["global_closed_at"] is None
+    assert credit["reserved"] == 0
+    assert credit["total_usage"] == 0
+    assert store._read_entity(FENCE_KIND, fence_id, dict)["open_predecessor_count"] == 1
+    assert store._read_entity(SPEND_LEASE_KIND, identity.lease_id, dict) == global_body
+
+
 @pytest.mark.parametrize("slot", [False, True], ids=["active-owner", "predecessor-owner"])
 def test_close_step_two_and_three_close_global_then_local(slot: bool) -> None:
     store, database, ledger = _store()
@@ -322,6 +373,43 @@ def test_close_step_two_and_three_close_global_then_local(slot: bool) -> None:
             dict,
         )
         assert fence["open_predecessor_count"] == 0
+
+
+def test_global_close_reentry_rejects_changed_local_frozen_version(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, database, ledger = _store()
+    identity = _identity()
+    _insert_candidate(store, identity)
+    _open_candidate(store, identity)
+    ledger.initialize(_local_candidate(identity), region=REGION)
+    ledger.begin_drain(identity.lease_id, region=REGION, now=NOW)
+    global_body = _global_body(identity, state="CLOSED")
+    global_body["frozen_local_version"] = 0
+    global_body["closing_at"] = (NOW - timedelta(seconds=1)).isoformat()
+    store._write_entity(SPEND_LEASE_KIND, identity.lease_id, global_body)
+    database.spend_lease_open[identity.lease_id]["global_closed_at"] = NOW - timedelta(
+        seconds=1
+    )
+    caplog.set_level(logging.ERROR)
+
+    result = reconcile_spend_leases(store, now=NOW)
+
+    row = database.spend_lease_open[identity.lease_id]
+    local = ledger.get(identity.lease_id, region=REGION)
+    assert result["errors"] == 1
+    assert result["dead"] == 1
+    assert row["dead"] is True
+    assert row["attempts"] == 0
+    assert row["next_attempt_at"] is None
+    assert row["last_error"] == (
+        "global frozen_local_version disagrees with local snapshot"
+    )
+    assert row["local_closed_at"] is None
+    assert local is not None
+    assert local.version == 1
+    assert local.state == SpendLeaseState.DRAINING
+    assert "spend_lease.reconcile_contradiction" in caplog.text
 
 
 def test_close_eligible_since_is_monotonic_and_contrary_state_is_dead(
@@ -393,6 +481,62 @@ def test_dead_row_requeue_resets_attempts_and_due_time() -> None:
     assert requeued["attempts"] == 0
     assert requeued["last_error"] is None
     assert requeued["next_attempt_at"] == NOW
+
+
+def test_ordinary_failures_reach_max_attempts_then_requeue_and_sweep_again(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, database, _ledger = _store()
+    identity = _identity()
+    _insert_candidate(store, identity)
+    _open_candidate(store, identity)
+    caplog.set_level(logging.INFO)
+
+    first = reconcile_spend_leases(store, now=NOW, max_attempts=2)
+
+    row = database.spend_lease_open[identity.lease_id]
+    assert first["open"] == 1
+    assert first["errors"] == 1
+    assert first["dead"] == 0
+    assert row["attempts"] == 1
+    assert row["dead"] is False
+    assert row["last_error"] == "open spend lease has no local row"
+    assert row["next_attempt_at"] == NOW + timedelta(seconds=1)
+
+    database.now = NOW + timedelta(seconds=1)
+    second = reconcile_spend_leases(
+        store, now=NOW + timedelta(seconds=1), max_attempts=2
+    )
+
+    dead = database.spend_lease_open[identity.lease_id]
+    assert second["open"] == 1
+    assert second["errors"] == 1
+    assert second["dead"] == 1
+    assert dead["attempts"] == 2
+    assert dead["dead"] is True
+    assert dead["last_error"] == "open spend lease has no local row"
+    assert dead["next_attempt_at"] is None
+    assert "spend_lease.reconcile_dead_count count=1" in caplog.text
+
+    requeue_at = NOW + timedelta(minutes=1)
+    assert requeue_dead_spend_leases(store, now=requeue_at) == 1
+    requeued = database.spend_lease_open[identity.lease_id]
+    assert requeued["attempts"] == 0
+    assert requeued["dead"] is False
+    assert requeued["last_error"] is None
+    assert requeued["next_attempt_at"] == requeue_at
+
+    database.now = requeue_at
+    swept = reconcile_spend_leases(store, now=requeue_at, max_attempts=2)
+
+    swept_row = database.spend_lease_open[identity.lease_id]
+    assert swept["open"] == 1
+    assert swept["errors"] == 1
+    assert swept["dead"] == 0
+    assert swept_row["attempts"] == 1
+    assert swept_row["dead"] is False
+    assert swept_row["last_error"] == "open spend lease has no local row"
+    assert swept_row["next_attempt_at"] == requeue_at + timedelta(seconds=1)
 
 
 def test_spend_lease_singleton_lock_fences_takeover_and_stale_release() -> None:
