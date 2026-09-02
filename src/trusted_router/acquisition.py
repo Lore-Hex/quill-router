@@ -28,6 +28,7 @@ from fastapi import Request, Response
 
 from trusted_router.config import Settings
 from trusted_router.google_ads_conversions import encrypt_google_ads_click_id
+from trusted_router.marketing_experiments import valid_experiment_identity
 from trusted_router.storage import STORE
 from trusted_router.storage_models import AcquisitionAttribution, iso_now
 
@@ -60,6 +61,8 @@ _TOUCH_FIELDS = frozenset(
         "utm_campaign",
         "utm_term",
         "utm_content",
+        "experiment_id",
+        "experiment_cell_id",
         *_CLICK_FINGERPRINT_FIELDS,
         "landing_path",
         "referer_host",
@@ -562,6 +565,8 @@ def _log_conversion(
         "first_utm_source": record.first_touch.get("utm_source"),
         "first_utm_medium": record.first_touch.get("utm_medium"),
         "first_utm_campaign": record.first_touch.get("utm_campaign"),
+        "first_experiment_id": record.first_touch.get("experiment_id"),
+        "first_experiment_cell_id": record.first_touch.get("experiment_cell_id"),
         "first_landing_path": record.first_touch.get("landing_path"),
         "google_ads_click_persisted": bool(
             record.google_click_id_kind and record.encrypted_google_click_id
@@ -579,6 +584,8 @@ def _safe_touch_log_fields(touch: dict[str, str]) -> dict[str, object]:
         "utm_campaign": touch.get("utm_campaign"),
         "utm_term": touch.get("utm_term"),
         "utm_content": touch.get("utm_content"),
+        "experiment_id": touch.get("experiment_id"),
+        "experiment_cell_id": touch.get("experiment_cell_id"),
         "landing_path": touch.get("landing_path"),
         "referer_host": touch.get("referer_host"),
         "has_gclid": bool(touch.get("gclid_fingerprint")),
@@ -594,6 +601,11 @@ def _touch_from_request(request: Request, settings: Settings) -> dict[str, str]:
         value = _safe_text(request.query_params.get(name), 128)
         if value:
             touch[name] = value
+    experiment_id = _safe_text(request.query_params.get("tr_exp"), 64)
+    experiment_cell_id = _safe_text(request.query_params.get("tr_cell"), 96)
+    if valid_experiment_identity(experiment_id, experiment_cell_id):
+        touch["experiment_id"] = experiment_id
+        touch["experiment_cell_id"] = experiment_cell_id
     click_fields: set[str] = set()
     for name in _RAW_CLICK_ID_FIELDS:
         value = str(request.query_params.get(name) or "").strip()
@@ -657,6 +669,11 @@ def _validated_touch(value: Any) -> dict[str, str]:
         safe = _safe_text(raw_value, limit)
         if safe:
             touch[key] = safe
+    experiment_id = touch.get("experiment_id", "")
+    experiment_cell_id = touch.get("experiment_cell_id", "")
+    if not valid_experiment_identity(experiment_id, experiment_cell_id):
+        touch.pop("experiment_id", None)
+        touch.pop("experiment_cell_id", None)
     return touch
 
 
@@ -712,6 +729,8 @@ def _has_explicit_campaign_touch(request: Request) -> bool:
             "utm_campaign",
             "utm_term",
             "utm_content",
+            "tr_exp",
+            "tr_cell",
             *_RAW_CLICK_ID_FIELDS,
         )
     )

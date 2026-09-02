@@ -80,6 +80,7 @@ from trusted_router.content.legal import (
 )
 from trusted_router.content_handling import CONTENT_HANDLING_CLAIM
 from trusted_router.domains import canonical_public_url
+from trusted_router.marketing_experiments import GoogleSearchExperimentCell
 from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.middleware import current_csp_nonce
 from trusted_router.model_regions import MODEL_REGION_SLUGS, model_region_evidence
@@ -2623,6 +2624,30 @@ def public_openrouter_experiment_html(settings: Settings, variant_slug: str) -> 
         ),
         robots_meta="noindex,follow",
         extra_context={"variant": variant},
+    )
+
+
+def public_google_search_experiment_html(
+    settings: Settings,
+    cell: GoogleSearchExperimentCell,
+) -> str:
+    path = f"/openrouter-alternative/test/{cell.cell_id}"
+    page = PublicPage(
+        template="public/experiment_openrouter_variant.html",
+        title=cell.title,
+        description=cell.description,
+    )
+    return _render_public_page(
+        settings,
+        page,
+        path=path,
+        site_url=canonical_public_url(settings, path),
+        canonical_url_override=canonical_public_url(
+            settings,
+            "/openrouter-alternative",
+        ),
+        robots_meta="noindex,follow",
+        extra_context={"variant": cell},
     )
 
 

@@ -1,20 +1,57 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 
 import pytest
 
 from trusted_router.google_ads_reporting import GoogleAdsSpendReport, GoogleAdsSpendRow
 from trusted_router.marketing_funnel import (
+    FunnelRow,
+    aggregate_cohort_funnel_rows,
     aggregate_funnel_rows,
+    build_axiom_cohort_query,
     build_axiom_funnel_query,
+    experiment_state,
     microdollars_to_usd,
     parse_axiom_json_lines,
     percentage,
     render_markdown,
     render_measurement_markdown,
     summarize_measurement,
+    wilson_percentage_interval,
 )
+
+
+def _cohort_record(
+    event: str,
+    *,
+    person: str,
+    occurred_at: str,
+    cell: str = "g3_or_migrate_attest_key",
+    campaign: str = "google_search_messages_v3",
+    source: str = "google",
+    google_click_events: int = 1,
+    google_ads_persisted_events: int = 0,
+    events: int = 1,
+    revenue_microdollars: int = 0,
+) -> dict[str, object]:
+    return {
+        "event": event,
+        "anonymous_fingerprint": person * 64,
+        "first_at": occurred_at,
+        "events": events,
+        "revenue_microdollars": revenue_microdollars,
+        "google_ads_click_events": google_click_events,
+        "google_ads_persisted_events": google_ads_persisted_events,
+        "experiment_id": "google_search_messages_v3",
+        "experiment_cell_id": cell,
+        "utm_source": source,
+        "utm_medium": "paid_search",
+        "utm_campaign": campaign,
+        "utm_content": cell,
+        "landing_path": f"/openrouter-alternative/test/{cell}",
+    }
 
 
 def _record(
@@ -77,6 +114,146 @@ def test_funnel_query_is_metadata_only_and_covers_every_stage() -> None:
         "request_body",
     ):
         assert forbidden not in query.lower()
+
+
+def test_cohort_query_returns_person_level_metadata_without_content() -> None:
+    query = build_axiom_cohort_query("trusted-router-logs")
+
+    assert "anonymous_fingerprint" in query
+    assert "first_at=min(_time)" in query
+    assert "experiment_cell_id" in query
+    assert "dcount(" not in query
+    for forbidden in ("prompt", "output", "email", "workspace_id", "api_key"):
+        assert forbidden not in query.lower()
+
+
+def test_cohort_assigns_delayed_conversions_to_original_engagement_cell() -> None:
+    records = [
+        _cohort_record(
+            "acquisition.landing_engaged",
+            person="a",
+            occurred_at="2026-08-01T12:00:00Z",
+        ),
+        _cohort_record(
+            "acquisition.signup_completed",
+            person="a",
+            occurred_at="2026-08-12T12:00:00Z",
+            cell="g3_sec_privacy_source_key",
+            google_ads_persisted_events=1,
+        ),
+        _cohort_record(
+            "acquisition.first_successful_api_call",
+            person="a",
+            occurred_at="2026-08-14T12:00:00Z",
+            cell="g3_sec_privacy_source_key",
+            google_ads_persisted_events=1,
+        ),
+        _cohort_record(
+            "acquisition.credit_purchase_completed",
+            person="a",
+            occurred_at="2026-08-15T12:00:00Z",
+            cell="g3_sec_privacy_source_key",
+            google_ads_persisted_events=1,
+            events=2,
+            revenue_microdollars=25_000_000,
+        ),
+    ]
+
+    rows = aggregate_cohort_funnel_rows(
+        records,
+        cohort_start=dt.datetime(2026, 8, 1, tzinfo=dt.UTC),
+        cohort_end=dt.datetime(2026, 8, 8, tzinfo=dt.UTC),
+        observed_through=dt.datetime(2026, 8, 20, tzinfo=dt.UTC),
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.experiment_cell_id == "g3_or_migrate_attest_key"
+    assert row.engaged_visitors == 1
+    assert row.signups == 1
+    assert row.activated_users == 1
+    assert row.purchasers == 1
+    assert row.purchase_events == 2
+    assert row.revenue_microdollars == 25_000_000
+    assert row.google_ads_persisted_purchasers == 1
+
+
+def test_cohort_excludes_right_censored_and_unattributed_people() -> None:
+    records = [
+        _cohort_record(
+            "acquisition.landing_engaged",
+            person="b",
+            occurred_at="2026-08-15T12:00:00Z",
+        ),
+        _cohort_record(
+            "acquisition.signup_completed",
+            person="b",
+            occurred_at="2026-08-16T12:00:00Z",
+        ),
+        _cohort_record(
+            "acquisition.signup_completed",
+            person="c",
+            occurred_at="2026-08-04T12:00:00Z",
+        ),
+    ]
+
+    rows = aggregate_cohort_funnel_rows(
+        records,
+        cohort_start=dt.datetime(2026, 8, 1, tzinfo=dt.UTC),
+        cohort_end=dt.datetime(2026, 8, 8, tzinfo=dt.UTC),
+        observed_through=dt.datetime(2026, 8, 20, tzinfo=dt.UTC),
+    )
+
+    assert rows == []
+
+
+def test_cohort_deduplicates_user_milestones_but_sums_purchase_events() -> None:
+    records = [
+        _cohort_record(
+            "acquisition.landing_engaged",
+            person="d",
+            occurred_at="2026-08-02T12:00:00Z",
+        ),
+        _cohort_record(
+            "acquisition.signup_completed",
+            person="d",
+            occurred_at="2026-08-03T12:00:00Z",
+            google_click_events=0,
+        ),
+        _cohort_record(
+            "acquisition.signup_completed",
+            person="d",
+            occurred_at="2026-08-03T13:00:00Z",
+            google_ads_persisted_events=1,
+        ),
+        _cohort_record(
+            "acquisition.credit_purchase_completed",
+            person="d",
+            occurred_at="2026-08-04T12:00:00Z",
+            events=2,
+            revenue_microdollars=5_000_000,
+        ),
+        _cohort_record(
+            "acquisition.credit_purchase_completed",
+            person="d",
+            occurred_at="2026-08-05T12:00:00Z",
+            events=1,
+            revenue_microdollars=20_000_000,
+        ),
+    ]
+
+    row = aggregate_cohort_funnel_rows(
+        records,
+        cohort_start=dt.datetime(2026, 8, 1, tzinfo=dt.UTC),
+        cohort_end=dt.datetime(2026, 8, 8, tzinfo=dt.UTC),
+        observed_through=dt.datetime(2026, 8, 20, tzinfo=dt.UTC),
+    )[0]
+
+    assert row.signups == 1
+    assert row.google_ads_persisted_signups == 1
+    assert row.purchasers == 1
+    assert row.purchase_events == 3
+    assert row.revenue_microdollars == 25_000_000
 
 
 @pytest.mark.parametrize(
@@ -438,3 +615,41 @@ def test_non_google_report_does_not_require_google_measurement() -> None:
 
     assert summary.hold_scale is False
     assert summary.blockers == ()
+
+
+def test_wilson_intervals_and_cell_state_prevent_tiny_sample_winners() -> None:
+    assert wilson_percentage_interval(0, 100) == {
+        "lower": "0.0%",
+        "upper": "3.7%",
+    }
+    assert wilson_percentage_interval(10, 100) == {
+        "lower": "5.5%",
+        "upper": "17.4%",
+    }
+    assert wilson_percentage_interval(0, 0) is None
+
+    row = FunnelRow(
+        source="google",
+        medium="paid_search",
+        campaign="google_search_messages_v3",
+        creative="cell",
+        landing_path="/openrouter-alternative/test/cell",
+        experiment_id="google_search_messages_v3",
+        experiment_cell_id="cell",
+        engaged_visitors=99,
+        activated_users=20,
+    )
+    assert experiment_state(row) == "collecting"
+    row.engaged_visitors = 100
+    assert experiment_state(row) == "eligible"
+    row.activated_users = 0
+    assert experiment_state(row) == "retire"
+    assert row.as_dict()["activation_per_engaged_95ci"] == {
+        "lower": "0.0%",
+        "upper": "3.7%",
+    }
+
+
+def test_wilson_interval_rejects_impossible_counts() -> None:
+    with pytest.raises(ValueError, match="between zero"):
+        wilson_percentage_interval(11, 10)

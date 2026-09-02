@@ -10,6 +10,7 @@ from trusted_router.google_ads_reporting import (
     GoogleAdsReportingClient,
     GoogleAdsReportingConfig,
     GoogleAdsReportingError,
+    GoogleAdsSpendReport,
     build_google_ads_spend_query,
     google_ads_reporting_window,
     parse_google_ads_search_stream,
@@ -27,6 +28,19 @@ def _payload(*, duplicate: bool = False) -> list[dict[str, object]]:
             "timeZone": "America/Los_Angeles",
         },
         "campaign": {"id": "123", "name": "OpenRouter alternative"},
+        "adGroup": {"id": "456", "name": "OpenRouter migration"},
+        "adGroupAd": {
+            "ad": {
+                "id": "789",
+                "finalUrls": [
+                    "https://trustedrouter.com/openrouter-alternative/test/"
+                    "g3_or_migrate_attest_key?utm_campaign=google_search_messages_v3"
+                    "&utm_content=g3_or_migrate_attest_key"
+                    "&tr_exp=google_search_messages_v3"
+                    "&tr_cell=g3_or_migrate_attest_key"
+                ],
+            }
+        },
         "segments": {"date": "2026-08-23"},
         "metrics": {"impressions": "1000", "clicks": "30", "costMicros": "12345678"},
     }
@@ -85,6 +99,8 @@ def test_spend_query_is_bounded_and_metadata_only() -> None:
     assert "metrics.cost_micros" in query
     assert "metrics.clicks" in query
     assert "metrics.impressions" in query
+    assert "ad_group_ad.ad.final_urls" in query
+    assert "FROM ad_group_ad" in query
     for forbidden in ("search_term", "email", "user_id", "prompt", "output"):
         assert forbidden not in query.lower()
 
@@ -113,6 +129,75 @@ def test_search_stream_parser_preserves_integer_micros() -> None:
     assert rows[0].spend_microdollars == 12_345_678
     assert isinstance(rows[0].spend_microdollars, int)
     assert rows[0].clicks == 30
+    assert rows[0].ad_id == "789"
+    assert rows[0].experiment_id == "google_search_messages_v3"
+    assert rows[0].experiment_cell_id == "g3_or_migrate_attest_key"
+    assert rows[0].utm_campaign == "google_search_messages_v3"
+    assert rows[0].landing_path.endswith("g3_or_migrate_attest_key")
+
+
+def test_spend_report_filters_to_exact_experiment_cell() -> None:
+    rows, currency, time_zone = parse_google_ads_search_stream(_payload())
+    report = GoogleAdsSpendReport(
+        customer_id="1234567890",
+        currency_code=currency,
+        time_zone=time_zone,
+        start_date="2026-08-23",
+        end_date="2026-08-23",
+        rows=tuple(rows),
+    )
+
+    matching = report.filtered(
+        campaign="google_search_messages_v3",
+        experiment_id="google_search_messages_v3",
+        experiment_cell_id="g3_or_migrate_attest_key",
+    )
+    missing = report.filtered(experiment_cell_id="g3_sec_privacy_source_key")
+
+    assert matching.spend_microdollars == 12_345_678
+    assert matching.clicks == 30
+    assert matching.spend_by_experiment_cell() == {
+        "g3_or_migrate_attest_key": 12_345_678
+    }
+    assert missing.rows == ()
+    assert missing.spend_microdollars == 0
+
+
+def test_parser_rejects_conflicting_or_partial_experiment_urls() -> None:
+    payload = _payload()
+    result = payload[0]["results"]
+    assert isinstance(result, list)
+    row = result[0]
+    assert isinstance(row, dict)
+    ad_group_ad = row["adGroupAd"]
+    assert isinstance(ad_group_ad, dict)
+    ad = ad_group_ad["ad"]
+    assert isinstance(ad, dict)
+    ad["finalUrls"] = [
+        "https://trustedrouter.com/openrouter-alternative?tr_exp=google_search_messages_v3"
+    ]
+
+    with pytest.raises(GoogleAdsReportingError, match="identity"):
+        parse_google_ads_search_stream(payload)
+
+
+def test_parser_keeps_unattributed_legacy_ads_in_account_totals() -> None:
+    payload = _payload()
+    result = payload[0]["results"]
+    assert isinstance(result, list)
+    row = result[0]
+    assert isinstance(row, dict)
+    ad_group_ad = row["adGroupAd"]
+    assert isinstance(ad_group_ad, dict)
+    ad = ad_group_ad["ad"]
+    assert isinstance(ad, dict)
+    del ad["finalUrls"]
+
+    rows, _, _ = parse_google_ads_search_stream(payload)
+
+    assert rows[0].spend_microdollars == 12_345_678
+    assert rows[0].experiment_cell_id == ""
+    assert rows[0].landing_path == ""
 
 
 def test_search_stream_parser_rejects_duplicates_and_bad_money() -> None:

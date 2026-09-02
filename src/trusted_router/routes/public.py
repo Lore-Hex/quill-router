@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
@@ -75,6 +76,7 @@ from trusted_router.dashboard import (
     public_contact_html,
     public_dpa_html,
     public_fusion_html,
+    public_google_search_experiment_html,
     public_hipaa_readiness_html,
     public_leaderboard_html,
     public_legal_html,
@@ -116,6 +118,11 @@ from trusted_router.domains import (
     request_control_domain,
     request_hostname,
     status_hostname_for_domain,
+)
+from trusted_router.marketing_experiments import (
+    GOOGLE_SEARCH_CELLS_BY_ID,
+    GOOGLE_SEARCH_EXPERIMENT_ID,
+    assigned_google_search_cell,
 )
 from trusted_router.mcp_metadata import (
     MCP_SERVER_DESCRIPTION,
@@ -1079,8 +1086,24 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     def openrouter_landing_experiment_redirect(request: Request) -> RedirectResponse:
         attribution = getattr(request.state, "acquisition_attribution", None)
         seed = getattr(attribution, "anonymous_id", None)
-        selected_path = assigned_openrouter_landing_path(seed)
-        query = request.url.query
+        if seed is None:
+            selected_path = assigned_openrouter_landing_path(None)
+            query = request.url.query
+        else:
+            cell = assigned_google_search_cell(seed)
+            selected_path = f"/openrouter-alternative/test/{cell.cell_id}"
+            query_items = [
+                (name, value)
+                for name, value in parse_qsl(request.url.query, keep_blank_values=True)
+                if name not in {"tr_exp", "tr_cell"}
+            ]
+            query_items.extend(
+                (
+                    ("tr_exp", GOOGLE_SEARCH_EXPERIMENT_ID),
+                    ("tr_cell", cell.cell_id),
+                )
+            )
+            query = urlencode(query_items)
         location = f"{selected_path}?{query}" if query else selected_path
         return RedirectResponse(
             url=location,
@@ -1132,6 +1155,16 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             # before. Returning HTML here would hand every client HTML.
             raise HTTPException(status_code=404)
         return HTMLResponse(public_openrouter_experiment_html(settings, variant_slug))
+
+    @public_html_route(
+        "/openrouter-alternative/test/{cell_id}",
+        include_slash=False,
+    )
+    async def experiment_google_search_landing_cell(cell_id: str) -> Response:
+        cell = GOOGLE_SEARCH_CELLS_BY_ID.get(cell_id)
+        if cell is None:
+            raise HTTPException(status_code=404)
+        return HTMLResponse(public_google_search_experiment_html(settings, cell))
 
     @public_html_route("/private-llm-api/quickstart")
     async def experiment_private_llm_quickstart() -> str:
