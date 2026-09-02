@@ -431,7 +431,7 @@ def _read_fence(
 def _mark_incumbent(transaction: Any, param_types: Any, lease_id: str | None) -> int:
     if lease_id is None:
         return 0
-    return int(transaction.execute_update(
+    return int(transaction.execute_update(  # noqa: S608 - fixed trusted suffix
         "UPDATE tr_entities SET body=TO_JSON_STRING(JSON_SET(PARSE_JSON(body), "
         "'$.holds_predecessor_slot', true)) "
         "WHERE kind=@kind AND id=@id AND JSON_VALUE(body, '$.state') IN ('ACTIVE','DRAINING','TOMBSTONED') "
@@ -441,16 +441,106 @@ def _mark_incumbent(transaction: Any, param_types: Any, lease_id: str | None) ->
     ))
 
 
-def _unmark_incumbent(transaction: Any, param_types: Any, lease_id: str | None) -> int:
+def _unmark_incumbent(
+    transaction: Any,
+    param_types: Any,
+    lease_id: str | None,
+    *,
+    frozen_only: bool = False,
+) -> int:
     if lease_id is None:
         return 0
+    if frozen_only:
+        statement = (
+            "UPDATE tr_entities SET body=TO_JSON_STRING(JSON_SET(PARSE_JSON(body), "
+            "'$.holds_predecessor_slot', false)) "
+            "WHERE kind=@kind AND id=@id "
+            "AND JSON_VALUE(body, '$.holds_predecessor_slot')='true' "
+            "AND JSON_VALUE(body, '$.state') IN ('DRAINING','TOMBSTONED')"
+        )
+    else:
+        statement = (
+            "UPDATE tr_entities SET body=TO_JSON_STRING(JSON_SET(PARSE_JSON(body), "
+            "'$.holds_predecessor_slot', false)) "
+            "WHERE kind=@kind AND id=@id "
+            "AND JSON_VALUE(body, '$.holds_predecessor_slot')='true'"
+        )
     return int(transaction.execute_update(
-        "UPDATE tr_entities SET body=TO_JSON_STRING(JSON_SET(PARSE_JSON(body), "
-        "'$.holds_predecessor_slot', false)) "
-        "WHERE kind=@kind AND id=@id AND JSON_VALUE(body, '$.holds_predecessor_slot')='true'",
+        statement,
         params={"kind": SPEND_LEASE_KIND, "id": lease_id},
         param_types={"kind": param_types.STRING, "id": param_types.STRING},
     ))
+
+
+def _mark_closing(
+    transaction: Any,
+    param_types: Any,
+    lease_id: str,
+    closing_at: datetime,
+) -> int:
+    """Flag-false close guard; callers abort the transaction on zero."""
+
+    return int(
+        transaction.execute_update(
+            "UPDATE tr_entities SET body=TO_JSON_STRING(JSON_SET(PARSE_JSON(body), "
+            "'$.closing_at', @closing_at_text)) "
+            "WHERE kind=@kind AND id=@id "
+            "AND JSON_VALUE(body, '$.state') IN ('DRAINING','TOMBSTONED') "
+            "AND JSON_VALUE(body, '$.holds_predecessor_slot')='false'",
+            params={
+                "kind": SPEND_LEASE_KIND,
+                "id": lease_id,
+                "closing_at_text": closing_at.isoformat(),
+            },
+            param_types={
+                "kind": param_types.STRING,
+                "id": param_types.STRING,
+                "closing_at_text": param_types.STRING,
+            },
+        )
+    )
+
+
+def _decrement_fence(
+    transaction: Any,
+    param_types: Any,
+    fence_id: str,
+) -> int:
+    """Release one predecessor slot, guarded against count underflow."""
+
+    return int(
+        transaction.execute_update(
+            "UPDATE tr_entities SET body=TO_JSON_STRING(JSON_SET(PARSE_JSON(body), "
+            "'$.open_predecessor_count', "
+            "CAST(COALESCE(JSON_VALUE(body, '$.open_predecessor_count'),'0') AS INT64)-1)) "
+            "WHERE kind=@kind AND id=@id "
+            "AND CAST(COALESCE(JSON_VALUE(body, '$.open_predecessor_count'),'0') AS INT64)>0",
+            params={"kind": FENCE_KIND, "id": fence_id},
+            param_types={"kind": param_types.STRING, "id": param_types.STRING},
+        )
+    )
+
+
+def _close_global_lease(
+    transaction: Any,
+    param_types: Any,
+    lease_id: str,
+    body: str,
+) -> int:
+    """Publish CLOSED only after every earlier close-step guard succeeded."""
+
+    return int(
+        transaction.execute_update(
+            "UPDATE tr_entities SET body=@body WHERE kind=@kind AND id=@id "
+            "AND JSON_VALUE(body, '$.state') IN ('DRAINING','TOMBSTONED')",
+            params={"body": body, "kind": SPEND_LEASE_KIND, "id": lease_id},
+            param_types={
+                "body": param_types.STRING,
+                "kind": param_types.STRING,
+                "id": param_types.STRING,
+            },
+        )
+    )
 
 
 def _advance_fence(

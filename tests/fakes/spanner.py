@@ -375,6 +375,10 @@ class FakeSpannerDatabase:
                     }
                     self.spend_lease_open[lease_id] = record
                     self.spend_lease_open_versions[lease_id] = new_version
+                elif op[0] == "delete_spend_open":
+                    _, lease_id = op
+                    self.spend_lease_open.pop(lease_id, None)
+                    self.spend_lease_open_versions[lease_id] = new_version
                 elif op[0] in ("insert_generation", "upsert_generation"):
                     _, generation_id, record = op
                     self.generation_records[generation_id] = record
@@ -1713,6 +1717,19 @@ def _evaluate_spanner_expression(
         return _utc_datetime(params[timestamp_name]) + dt.timedelta(
             seconds=int(params[seconds_name])
         )
+    timestamp_add_days = re.fullmatch(
+        r"TIMESTAMP_ADD\s*\(\s*@([A-Za-z_][A-Za-z0-9_]*)\s*,\s*"
+        r"INTERVAL\s+([0-9]+)\s+DAY\s*\)",
+        expression,
+        re.IGNORECASE,
+    )
+    if timestamp_add_days is not None:
+        timestamp_name, days = timestamp_add_days.groups()
+        if timestamp_name not in params:
+            raise AssertionError(
+                f"spend-lease SQL references missing parameter @{timestamp_name}"
+            )
+        return _utc_datetime(params[timestamp_name]) + dt.timedelta(days=int(days))
     if re.fullmatch(r"'(?:''|[^'])*'", expression):
         return expression[1:-1].replace("''", "'")
     if re.fullmatch(r"-?[0-9]+", expression):
@@ -1934,7 +1951,7 @@ def _execute_spend_lease_entity_update(
     else:
         json_set = re.fullmatch(
             r"TO_JSON_STRING\s*\(\s*JSON_SET\s*\(\s*PARSE_JSON\s*\(\s*body\s*\)\s*,"
-            r"\s*('(?:''|[^'])*')\s*,\s*(TRUE|FALSE)\s*\)\s*\)",
+            r"\s*('(?:''|[^'])*')\s*,\s*(.+)\s*\)\s*\)",
             assignment_sql,
             re.IGNORECASE,
         )
@@ -1944,12 +1961,25 @@ def _execute_spend_lease_entity_update(
             )
         path_sql, value_sql = json_set.groups()
         path = str(_evaluate_spanner_expression(path_sql, params, now))
-        if path != "$.holds_predecessor_slot":
-            raise AssertionError(f"unsupported tr_entities JSON_SET path: {path!r}")
         body = json.loads(str(record["body"]))
-        body["holds_predecessor_slot"] = bool(
-            _evaluate_spanner_expression(value_sql, params, now)
-        )
+        if path in {"$.holds_predecessor_slot", "$.closing_at"}:
+            body[path[2:]] = _evaluate_spanner_expression(value_sql, params, now)
+        elif path == "$.open_predecessor_count":
+            decrement = re.fullmatch(
+                r"CAST\s*\(\s*COALESCE\s*\(\s*JSON_VALUE\s*\(\s*body\s*,\s*"
+                r"'\$\.open_predecessor_count'\s*\)\s*,\s*'0'\s*\)\s+AS\s+INT64\s*\)\s*-\s*1",
+                value_sql,
+                re.IGNORECASE,
+            )
+            if decrement is None:
+                raise AssertionError(
+                    f"unsupported predecessor count update: {value_sql!r}"
+                )
+            body["open_predecessor_count"] = int(
+                body.get("open_predecessor_count", 0)
+            ) - 1
+        else:
+            raise AssertionError(f"unsupported tr_entities JSON_SET path: {path!r}")
         new_body = json.dumps(body, separators=(",", ":"), sort_keys=True)
     transaction.pending_writes.append(
         ("update_entity_dml", kind, entity_id, str(new_body))
@@ -2074,7 +2104,7 @@ def _execute_spend_lease_dml(
         return 1
 
     delete = re.fullmatch(
-        r"DELETE\s+FROM\s+(spend_lease_scope_arbitration)\s+WHERE\s+(.+?)\s*",
+        r"DELETE\s+FROM\s+(spend_lease_scope_arbitration|spend_lease_open)\s+WHERE\s+(.+?)\s*",
         sql,
         re.DOTALL | re.IGNORECASE,
     )
@@ -3034,6 +3064,57 @@ def _execute_sql(
                 else db.spend_lease_open.get(lease_id)
             )
             return [[rec.get(col) for col in cols]] if rec is not None else []
+        if "SELECT MIN(close_eligible_since)" in sql:
+            records = [
+                rec
+                for rec in db.spend_lease_open.values()
+                if rec.get("phase") == "open" and rec.get("local_closed_at") is None
+            ]
+            eligible = [
+                rec["close_eligible_since"]
+                for rec in records
+                if rec.get("close_eligible_since") is not None
+            ]
+            expired_created = [
+                rec["created_at"]
+                for rec in records
+                if _utc_datetime(rec["expires_at"])
+                + dt.timedelta(seconds=int(rec["skew_seconds"]))
+                <= _utc_datetime(params["now"])
+            ]
+            return [[
+                min(eligible) if eligible else None,
+                min(expired_created) if expired_created else None,
+                sum(bool(rec.get("dead")) for rec in db.spend_lease_open.values()),
+            ]]
+        if "WHERE phase='open' AND dead=true" in sql:
+            records = sorted(
+                (
+                    rec
+                    for rec in db.spend_lease_open.values()
+                    if rec.get("phase") == "open" and rec.get("dead") is True
+                ),
+                key=lambda rec: _utc_datetime(rec["created_at"]),
+            )
+            return [
+                [rec.get(col) for col in cols]
+                for rec in records[: int(params["limit"])]
+            ]
+        if "WHERE phase='done' AND created_at<=@cutoff" in sql:
+            records = sorted(
+                (
+                    rec
+                    for rec in db.spend_lease_open.values()
+                    if rec.get("phase") == "done"
+                    and _utc_datetime(rec["created_at"])
+                    <= _utc_datetime(params["cutoff"])
+                ),
+                key=lambda rec: _utc_datetime(rec["created_at"]),
+            )
+            return [
+                [rec.get(col) for col in cols]
+                for rec in records[: int(params["limit"])]
+            ]
         _require_pred(
             sql,
             "@{FORCE_INDEX=spend_lease_open_due}",
@@ -3056,7 +3137,7 @@ def _execute_sql(
             phases = {"open"}
         else:
             raise AssertionError("spend-lease due query missing phase predicate")
-        now = dt.datetime.now(dt.UTC)
+        now = db.current_timestamp()
         records = [
             rec
             for rec in db.spend_lease_open.values()

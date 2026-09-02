@@ -849,6 +849,11 @@ class Settings(BaseSettings):
     # is required because one lease has exactly one regional writer authority.
     regional_quota_bigtable_app_profiles: str = ""
     spend_lease_bigtable_app_profiles: str = ""
+    # Reconciliation is deployed before binding and remains active when the
+    # traffic flag is off. Only the one-shot Cloud Run Job sets worker=True.
+    spend_lease_reconciler_worker: bool = False
+    spend_lease_reconcile_limit: int = 25
+    spend_lease_reconcile_max_attempts: int = 12
     # Stage A spend leases are signed advisory artifacts only. This one flag
     # gates both minting and shadow evidence; default-off deploys never touch
     # Secret Manager. The accepted digest CSV preserves both sides of a GCP

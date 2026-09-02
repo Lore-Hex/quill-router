@@ -3407,6 +3407,71 @@ class SpannerBigtableStore:
             raise RuntimeError("regional quota ledger is disabled")
         return ledger.health_check()
 
+    def verify_spend_lease_ledger(self) -> tuple[str, ...]:
+        """Prove conditional writes and reads through every fixed app profile."""
+
+        ledger = self._spend_lease_ledger
+        if ledger is None:
+            raise RuntimeError("spend lease ledger is disabled")
+        return ledger.health_check()
+
+    def acquire_spend_lease_reconciler_lock(
+        self,
+        *,
+        owner: str,
+        ttl_seconds: int,
+        now: dt.datetime | None = None,
+    ) -> Any | None:
+        from trusted_router.storage_gcp_spend_lease_reconcile import (
+            acquire_spend_lease_reconciler_lock,
+        )
+
+        return acquire_spend_lease_reconciler_lock(
+            self, owner=owner, ttl_seconds=ttl_seconds, now=now
+        )
+
+    def release_spend_lease_reconciler_lock(
+        self,
+        *,
+        owner: str,
+        fencing_token: int,
+        now: dt.datetime | None = None,
+    ) -> bool:
+        from trusted_router.storage_gcp_spend_lease_reconcile import (
+            release_spend_lease_reconciler_lock,
+        )
+
+        return release_spend_lease_reconciler_lock(
+            self, owner=owner, fencing_token=fencing_token, now=now
+        )
+
+    def reconcile_spend_leases(
+        self,
+        *,
+        limit: int = 25,
+        max_attempts: int = 12,
+        now: dt.datetime | None = None,
+    ) -> dict[str, int | float]:
+        from trusted_router.storage_gcp_spend_lease_reconcile import (
+            reconcile_spend_leases,
+        )
+
+        return reconcile_spend_leases(
+            self, limit=limit, max_attempts=max_attempts, now=now
+        )
+
+    def requeue_dead_spend_leases(
+        self,
+        *,
+        lease_ids: tuple[str, ...] = (),
+        limit: int = 1000,
+    ) -> int:
+        from trusted_router.storage_gcp_spend_lease_reconcile import (
+            requeue_dead_spend_leases,
+        )
+
+        return requeue_dead_spend_leases(self, lease_ids=lease_ids, limit=limit)
+
     def authorize_gateway_typed(
         self,
         *,
