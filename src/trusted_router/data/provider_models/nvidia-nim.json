@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-09-02T17:42:35Z",
+  "generated_at": "2026-09-02T21:13:24Z",
   "model_count": 119,
   "models": [
     {
@@ -1535,7 +1535,7 @@
       "upstream_id": "openai/gpt-oss-120b",
       "display_name": "openai/gpt-oss-120b",
       "model_type": "chat",
-      "routable": false,
+      "routable": true,
       "status": 1,
       "input_modalities": [
         "text"
@@ -1547,8 +1547,7 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000,
-      "routable_reason": "provider-canary-failed"
+      "output_token_price_per_m": 10000000
     },
     {
       "id": "openai/gpt-oss-20b",

@@ -62,8 +62,8 @@
       "upstream_id": "zai-org/GLM-5.2",
       "context_length": 262144,
       "routable": true,
-      "input_token_price_per_m": 750000,
-      "output_token_price_per_m": 2400000
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000
     },
     {
       "display_name": "zai-org/GLM-5.3-Flash",
@@ -113,7 +113,7 @@
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/pricing",
-  "generated_at": "2026-09-02T17:42:35Z",
+  "generated_at": "2026-09-02T21:13:23Z",
   "price_scale": "microdollars_per_million",
   "model_count": 5
 }
