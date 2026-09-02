@@ -261,11 +261,39 @@ def test_a_month_of_samples_stays_bounded_where_it_used_to_grow_per_millisecond(
     assert percentile_from_histogram(rollup.latency_histogram, 50) is not None
 
 
-def test_compact_histogram_rejects_nothing_it_would_have_read_before() -> None:
-    # Whatever percentile_from_histogram could parse, compaction can fold.
-    histogram = {"0": 3, "99": 1, "100": 2, "123": 5, "987654": 1}
-    assert compact_histogram(histogram) == {"0": 3, "99": 1, "100": 2, "120": 5, "990000": 1}
-    assert sum(compact_histogram(histogram).values()) == sum(histogram.values())
+def test_compact_histogram_folds_integer_keys_and_keeps_odd_keys_verbatim() -> None:
+    # Whatever percentile_from_histogram could parse, compaction folds; a key
+    # it could not parse is kept exactly as every writer kept it before.
+    histogram = {"0": 3, "99": 1, "100": 2, "123": 5, "987654": 1, "100.0": 1}
+    compacted = compact_histogram(histogram)
+    assert compacted == {"0": 3, "99": 1, "100": 2, "120": 5, "990000": 1, "100.0": 1}
+    assert sum(compacted.values()) == sum(histogram.values())
+
+
+def test_an_odd_legacy_key_never_aborts_a_write_or_a_clickhouse_recompute() -> None:
+    odd = {"100.0": 1, **_legacy_histogram_of(list(range(100, 800)))}
+    rollup = new_rollup_for_sample(_sample("seed", 150), period="month", component="uncategorized")
+    rollup.latency_histogram = dict(odd)
+    apply_sample_to_rollup(rollup, _sample("next", 777))
+    assert rollup.latency_histogram["100.0"] == 1
+    assert len(rollup.latency_histogram) <= MAX_KEYS_TO_TEN_MILLION_MS + 1
+    assert sum(rollup.latency_histogram.values()) == sum(odd.values()) + 1
+
+    daily = SyntheticRollup(
+        id="day1",
+        period="day",
+        period_start="2026-05-01T00:00:00Z",
+        component="canonical_api",
+        target="api",
+        probe_type="tls_health",
+        monitor_region="us-central1",
+        sample_count=sum(odd.values()),
+        up_count=sum(odd.values()),
+        latency_histogram=dict(odd),
+    )
+    (month,) = monthly_from_daily([daily])
+    assert month.latency_histogram["100.0"] == 1
+    assert sum(month.latency_histogram.values()) == sum(odd.values())
 
 
 # --- persistence boundary ------------------------------------------------

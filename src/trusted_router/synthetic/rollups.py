@@ -290,25 +290,30 @@ def histogram_bucket(value: int) -> int:
     return (value + step // 2) // step * step
 
 
+def _bucket_key(raw_key: str) -> str:
+    """The stored key for a histogram key. A key that is not an integer
+    literal cannot be folded; it is kept verbatim, exactly as every writer
+    kept it before bucketing, so one odd historical key never aborts a
+    sample write, a ClickHouse recompute, or a backfill."""
+    try:
+        return str(histogram_bucket(int(raw_key)))
+    except (TypeError, ValueError):
+        return str(raw_key)
+
+
 def compact_histogram(histogram: dict[str, int]) -> dict[str, int]:
-    """Fold every key into its bucket, preserving total count."""
+    """Fold every integer key into its bucket, preserving total count."""
     compacted: dict[str, int] = {}
     for raw_key, count in histogram.items():
-        key = str(histogram_bucket(int(raw_key)))
+        key = _bucket_key(raw_key)
         compacted[key] = compacted.get(key, 0) + int(count)
     return compacted
 
 
 def _compact_histogram_in_place(histogram: dict[str, int]) -> None:
-    try:
-        if all(str(histogram_bucket(int(key))) == key for key in histogram):
-            return
-        compacted = compact_histogram(histogram)
-    except (TypeError, ValueError):
-        # A key that is not an integer literal cannot be folded. Leave the
-        # row exactly as it was (the pre-bucketing behaviour) rather than
-        # failing the sample write that happens in the same transaction.
+    if all(_bucket_key(key) == key for key in histogram):
         return
+    compacted = compact_histogram(histogram)
     histogram.clear()
     histogram.update(compacted)
 
