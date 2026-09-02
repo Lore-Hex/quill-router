@@ -819,9 +819,21 @@ class SpendLease:
                 return TrueReplay(self, existing, True)
             return Mismatch(self, authorization_view.authorization_id)
 
-        # Decision 21(b): a local CAS loser gets no compensation capability.
         existing = self._allocation(idempotency_scope)
         if existing is not None:
+            # Decision 34 / 21(h): equality proves this is the creator's same-attempt retry.
+            if (
+                existing.state == AllocationState.RESERVED
+                and existing.binding_state == BindingState.PROVISIONAL
+                and existing.authorization_id == provisional_authorization_id
+            ):
+                return Created(
+                    lease=self,
+                    allocation=existing,
+                    replayed=True,
+                    provisional_id=provisional_authorization_id,
+                )
+            # Decision 21(b): a local CAS loser gets no compensation capability.
             return ExistingLocal(self, existing, True)
 
         # Decisions 15, 16, 18: only NEW reaches lifecycle and capacity checks.

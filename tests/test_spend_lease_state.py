@@ -293,7 +293,31 @@ def test_replay_table_is_ordered_disjoint_and_capacity_neutral() -> None:
     assert closed.lease.available_micro == before
 
 
-def test_existing_local_returns_no_compensation_capability_and_never_allocates_twice() -> None:
+def test_same_provisional_id_kills_always_existing_local_mutant() -> None:
+    created = _created()
+    capacity_before = created.lease.available_micro
+    allocations_before = len(created.lease.allocations)
+
+    replay = created.lease.allocate(
+        authorization_view=None,
+        idempotency_scope=created.allocation.idempotency_scope,
+        provisional_authorization_id=created.provisional_id,
+        request_fingerprint=created.allocation.request_fingerprint,
+        allocated_micro=created.allocation.allocated_micro,
+        abandon_after=ABANDON_AFTER,
+        now=NOW,
+    )
+
+    assert isinstance(replay, Created)
+    assert replay.replayed
+    assert replay.provisional_id == created.provisional_id
+    assert replay.allocation is created.allocation
+    assert replay.lease is created.lease
+    assert replay.lease.available_micro == capacity_before
+    assert len(replay.lease.allocations) == allocations_before
+
+
+def test_different_provisional_id_kills_any_reserved_created_mutant() -> None:
     created = _created()
     existing = created.lease.allocate(
         authorization_view=None,
@@ -307,6 +331,27 @@ def test_existing_local_returns_no_compensation_capability_and_never_allocates_t
     assert isinstance(existing, ExistingLocal)
     assert not hasattr(existing, "provisional_id")
     assert existing.lease is created.lease
+    assert len(existing.lease.allocations) == 1
+
+
+def test_same_provisional_id_for_committed_allocation_is_existing_local() -> None:
+    created = _created()
+    committed = _bind(created, authorization_id=created.provisional_id)
+    allocation = committed.allocations[0]
+
+    existing = committed.allocate(
+        authorization_view=None,
+        idempotency_scope=allocation.idempotency_scope,
+        provisional_authorization_id=created.provisional_id,
+        request_fingerprint=allocation.request_fingerprint,
+        allocated_micro=allocation.allocated_micro,
+        abandon_after=ABANDON_AFTER,
+        now=NOW,
+    )
+
+    assert isinstance(existing, ExistingLocal)
+    assert not hasattr(existing, "provisional_id")
+    assert existing.lease is committed
     assert len(existing.lease.allocations) == 1
 
 
