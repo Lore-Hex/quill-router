@@ -95,6 +95,8 @@ BIGTABLE_INSTANCE_TYPE="${TR_BIGTABLE_INSTANCE_TYPE:-PRODUCTION}"
 # forcibly bypassed. EU and other gateways therefore use exact Spanner until
 # they receive isolated regional ledgers.
 TR_REGIONAL_QUOTA_CLUSTER_MAP="${TR_REGIONAL_QUOTA_CLUSTER_MAP:-us-central1=trusted-router-logs-c1}"
+# Decision 33: Same regional single-cluster routing as the regional quota ledger; override only to split clusters.
+TR_SPEND_LEASE_CLUSTER_MAP="${TR_SPEND_LEASE_CLUSTER_MAP:-$TR_REGIONAL_QUOTA_CLUSTER_MAP}"
 TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES="${TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES:-us-central1=tr-quota-us-central1}"
 KMS_KEYRING_ID="${TR_KMS_KEYRING_ID:-trusted-router}"
 BYOK_KMS_KEY_ID="${TR_BYOK_KMS_KEY_ID:-byok-envelope}"
