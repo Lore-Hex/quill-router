@@ -116,6 +116,49 @@ def test_krea_pricing_parser_uses_exact_text_to_image_price() -> None:
     assert krea._fixed_text_to_image_price(openapi) == 30_000
 
 
+def test_fal_h3_max_parser_uses_post_promotion_prices() -> None:
+    page = """
+    Video costs $0.0125 per second at 480p and $0.02 per second at 768p.
+    The discount ends September 7, after which 480p is $0.05/second and
+    768p is $0.08/second.
+    """
+    assert fal._h3_max_standard_rates(page) == {"480p": 50_000, "768p": 80_000}
+
+
+def test_fal_h3_max_parser_uses_standard_display_after_promotion() -> None:
+    page = """
+    <p>Video costs <strong>$0.05</strong> per second at <strong>480p</strong>,
+    <strong>$0.08</strong> per second at <strong>768p</strong>.</p>
+    """
+    assert fal._h3_max_standard_rates(page) == {"480p": 50_000, "768p": 80_000}
+
+
+def test_fal_h3_max_parser_never_treats_promotion_as_standard_price() -> None:
+    page = """
+    Video costs $0.0125 per second at 480p and $0.02 per second at 768p.
+    These are promotional launch rates for a limited time.
+    """
+    try:
+        fal._h3_max_standard_rates(page)
+    except RuntimeError as exc:
+        assert "missing or ambiguous" in str(exc)
+    else:
+        raise AssertionError("temporary fal promotion must not become the standard rate")
+
+
+def test_fal_h3_max_parser_rejects_ambiguous_standard_prices() -> None:
+    page = """
+    after which 480p is $0.05/second and 768p is $0.08/second
+    after which 480p is $0.06/second and 768p is $0.09/second
+    """
+    try:
+        fal._h3_max_standard_rates(page)
+    except RuntimeError as exc:
+        assert "missing or ambiguous" in str(exc)
+    else:
+        raise AssertionError("ambiguous fal prices must fail closed")
+
+
 def test_media_manifests_match_runtime_fixed_price_contract() -> None:
     discovered: dict[str, dict[str, int]] = {}
     for provider in ("recraft", "bfl", "decart", "nscale", "krea", "fal"):
@@ -126,6 +169,7 @@ def test_media_manifests_match_runtime_fixed_price_contract() -> None:
         "decart/lucy-vton-3.5": 40_000,
         "decart/lucy-restyle-2": 10_000,
     }
+    assert _manifest_video_prices("fal") == {"minimax/h3-max": 80_000}
 
 
 def test_media_providers_are_refreshable_prepaid_gateway_routes() -> None:
@@ -142,6 +186,11 @@ def test_media_providers_are_refreshable_prepaid_gateway_routes() -> None:
     ):
         assert model_id in models
         assert f"{model_id}@{provider}/prepaid" in endpoints
+
+    # Video routes are installed from the audited enclave registry, not the
+    # generic chat/image manifest ingester.
+    assert "minimax/h3-max" not in models
+    assert "minimax/h3-max@fal/prepaid" not in endpoints
 
     nscale_model = "black-forest-labs/flux.1-schnell"
     assert nscale_model in IMAGE_MODEL_ID_SET

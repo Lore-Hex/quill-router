@@ -548,9 +548,9 @@ upsert_scheduler \
   "17 */6 * * *"
 
 # Video generation is the most expensive synthetic. Run exactly one shortest-
-# valid direct generation per day and rotate through seven providers weekly.
-# The current seven-day total is $2.499276 including TrustedRouter's 20% fee,
-# or about $10.71 per 30 days. max-retries=0 plus a date-scoped idempotency key
+# valid direct generation per day and rotate through direct video providers.
+# The current eight-day total is $2.827276 including TrustedRouter's 20% fee,
+# or about $10.60 per 30 days. max-retries=0 plus a date-scoped idempotency key
 # prevents duplicate billing.
 video_region="us-central1"
 video_ingest_base="$(synthetic_ingest_base_for_region "$video_region")"

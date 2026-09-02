@@ -981,6 +981,18 @@ _VIDEO_MODELS: dict[str, Model] = {
         prepaid_available=True,
         byok_available=False,
     ),
+    "minimax/h3-max": Model(
+        id="minimax/h3-max",
+        name="MiniMax H3 Max",
+        provider="fal",
+        context_length=10_000,
+        supports_chat=False,
+        supports_video=True,
+        input_modalities=("text", "image"),
+        output_modalities=("video",),
+        prepaid_available=True,
+        byok_available=False,
+    ),
     "google/veo-3.1": Model(
         id="google/veo-3.1",
         name="Google Veo 3.1",
@@ -1285,6 +1297,7 @@ _NATIVE_VIDEO_UPSTREAM_IDS = {
     "minimax/hailuo-3": (
         ("atlas-cloud", "minimax/h3/text-to-video"),
     ),
+    "minimax/h3-max": (("fal", "minimax/h3-max/text-to-video"),),
     "google/veo-3.1": (("google-ai-studio", "veo-3.1-generate-preview"),),
     "google/veo-3.1-fast": (("google-ai-studio", "veo-3.1-fast-generate-preview"),),
     "alibaba/wan-2.7": (("alibaba", "wan2.7-t2v"),),

@@ -29,7 +29,7 @@ class DailyVideoProfile:
 
 # One shortest-valid direct generation per UTC day. The order is deliberately
 # stable so retries select the same provider and every route is exercised once
-# per week without multiplying the number of paid generations.
+# per rotation without multiplying the number of paid generations.
 DAILY_VIDEO_PROFILES: tuple[DailyVideoProfile, ...] = (
     DailyVideoProfile("x-ai/grok-imagine-video", "grok", 1, "480p", 60_000),
     DailyVideoProfile("runway/gen-4.5", "runway", 2, "720p", 288_000),
@@ -47,11 +47,14 @@ DAILY_VIDEO_PROFILES: tuple[DailyVideoProfile, ...] = (
     # The current MiniMax operator plan rejects H3 before queueing. Atlas Cloud
     # serves the same H3 model and requires a five-second minimum duration.
     DailyVideoProfile("minimax/hailuo-3", "atlas-cloud", 5, "2K", 700_000, True),
+    DailyVideoProfile("minimax/h3-max", "fal", 5, "480p", 300_000, True),
 )
+_VIDEO_ROTATION_EPOCH = date(2026, 8, 3)
 
 
 def daily_video_profile(day: date) -> DailyVideoProfile:
-    return DAILY_VIDEO_PROFILES[day.weekday()]
+    offset = day.toordinal() - _VIDEO_ROTATION_EPOCH.toordinal()
+    return DAILY_VIDEO_PROFILES[offset % len(DAILY_VIDEO_PROFILES)]
 
 
 async def run() -> int:

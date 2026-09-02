@@ -1,10 +1,12 @@
-"""FAL image generation with authenticated discovery and exact fixed pricing."""
+"""fal media discovery with guarded fixed image and video pricing."""
 
 from __future__ import annotations
 
 import base64
 import binascii
+import html as html_lib
 import os
+import re
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
@@ -26,8 +28,15 @@ API_BASE = "https://api.fal.ai/v1"
 RUN_URL = "https://fal.run/fal-ai/flux/schnell"
 MODEL_ID = "fal/flux-1-schnell"
 UPSTREAM_ID = "fal-ai/flux/schnell"
-CATALOG_URL = f"{API_BASE}/models?endpoint_id=fal-ai%2Fflux%2Fschnell"
+H3_MAX_MODEL_ID = "minimax/h3-max"
+H3_MAX_TEXT_UPSTREAM_ID = "minimax/h3-max/text-to-video"
+H3_MAX_IMAGE_UPSTREAM_ID = "minimax/h3-max/image-to-video"
+CATALOG_URL = f"{API_BASE}/models"
+FLUX_CATALOG_URL = f"{CATALOG_URL}?endpoint_id=fal-ai%2Fflux%2Fschnell"
+H3_MAX_TEXT_CATALOG_URL = f"{CATALOG_URL}?endpoint_id=minimax%2Fh3-max%2Ftext-to-video"
+H3_MAX_IMAGE_CATALOG_URL = f"{CATALOG_URL}?endpoint_id=minimax%2Fh3-max%2Fimage-to-video"
 PRICING_URL = f"{API_BASE}/models/pricing?endpoint_id=fal-ai%2Fflux%2Fschnell"
+H3_MAX_PRICING_URL = "https://fal.ai/models/minimax/h3-max/text-to-video"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/fal.json"
 )
@@ -63,16 +72,62 @@ def _price_for_1024_square(payload: object) -> int:
     return int(microdollars.to_integral_value(ROUND_CEILING))
 
 
-def _catalog_has_route(payload: object) -> bool:
+def _catalog_has_route(payload: object, endpoint_id: str = UPSTREAM_ID) -> bool:
     if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
         return False
     return any(
         isinstance(row, dict)
-        and row.get("endpoint_id") == UPSTREAM_ID
+        and row.get("endpoint_id") == endpoint_id
         and isinstance(row.get("metadata"), dict)
         and row["metadata"].get("status") == "active"
         for row in payload["models"]
     )
+
+
+def _h3_max_standard_rates(page: str) -> dict[str, int]:
+    """Parse the rates that remain after fal's temporary launch promotion."""
+
+    normalized = re.sub(r"<[^>]+>", " ", html_lib.unescape(page))
+    normalized = re.sub(r"\s+", " ", normalized)
+    post_promotion_matches = re.findall(
+        r"after which\s+480p\s+is\s+\$(\d+(?:\.\d+)?)/second\s+and\s+"
+        r"768p\s+is\s+\$(\d+(?:\.\d+)?)/second",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if post_promotion_matches:
+        matches = post_promotion_matches
+    else:
+        # Once the launch promotion is removed, fal should expose only the
+        # ordinary rates. Never accept the displayed pair while promotional
+        # wording remains: that could turn a temporary discount into an
+        # undercharge when it expires.
+        if re.search(r"\b(?:promotional|promotion|discount)\b", normalized, re.IGNORECASE):
+            raise RuntimeError("fal: exact post-promotion H3 Max prices are missing or ambiguous")
+        matches = re.findall(
+            r"video costs\s+\$(\d+(?:\.\d+)?)\s+per second at\s+480p\s*,?\s*"
+            r"(?:and\s+)?\$(\d+(?:\.\d+)?)\s+per second at\s+768p",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        matches.extend(
+            re.findall(
+                r"480p\s+is\s+\$(\d+(?:\.\d+)?)/second\s+and\s+"
+                r"768p\s+is\s+\$(\d+(?:\.\d+)?)/second",
+                normalized,
+                flags=re.IGNORECASE,
+            )
+        )
+    unique = {(Decimal(rate_480), Decimal(rate_768)) for rate_480, rate_768 in matches}
+    if len(unique) != 1:
+        raise RuntimeError("fal: exact post-promotion H3 Max prices are missing or ambiguous")
+    rate_480, rate_768 = unique.pop()
+    if rate_480 <= 0 or rate_768 <= 0 or rate_768 < rate_480:
+        raise RuntimeError("fal: invalid post-promotion H3 Max prices")
+    return {
+        "480p": int((rate_480 * Decimal(1_000_000)).to_integral_value(ROUND_CEILING)),
+        "768p": int((rate_768 * Decimal(1_000_000)).to_integral_value(ROUND_CEILING)),
+    }
 
 
 def _valid_canary_image(payload: object) -> bool:
@@ -129,16 +184,26 @@ def fetch() -> ProviderPricingResult:
     if not api_key:
         raise RuntimeError("fal: FAL_API_KEY is required")
     with httpx.Client(timeout=30, follow_redirects=False) as client:
-        catalog_response = client.get(CATALOG_URL, headers=_headers(api_key))
-        catalog_response.raise_for_status()
-        catalog = catalog_response.json()
-        if not _catalog_has_route(catalog):
+        flux_catalog_response = client.get(FLUX_CATALOG_URL, headers=_headers(api_key))
+        flux_catalog_response.raise_for_status()
+        if not _catalog_has_route(flux_catalog_response.json()):
             raise RuntimeError("fal: FLUX.1 Schnell is not active in the provider catalog")
+        for catalog_url, endpoint_id in (
+            (H3_MAX_TEXT_CATALOG_URL, H3_MAX_TEXT_UPSTREAM_ID),
+            (H3_MAX_IMAGE_CATALOG_URL, H3_MAX_IMAGE_UPSTREAM_ID),
+        ):
+            catalog_response = client.get(catalog_url, headers=_headers(api_key))
+            catalog_response.raise_for_status()
+            if not _catalog_has_route(catalog_response.json(), endpoint_id):
+                raise RuntimeError(f"fal: {endpoint_id} is not active in the provider catalog")
         pricing_response = client.get(PRICING_URL, headers=_headers(api_key))
         pricing_response.raise_for_status()
         fixed_price = _price_for_1024_square(pricing_response.json())
+        h3_pricing_response = client.get(H3_MAX_PRICING_URL)
+        h3_pricing_response.raise_for_status()
+        h3_rates = _h3_max_standard_rates(h3_pricing_response.text)
 
-    rows = {
+    rows: dict[str, dict[str, Any]] = {
         MODEL_ID: {
             "id": MODEL_ID,
             "upstream_id": UPSTREAM_ID,
@@ -150,16 +215,37 @@ def fetch() -> ProviderPricingResult:
             "supported_features": ["image-generation"],
             "fixed_output_price_microdollars": {"1k": fixed_price},
             "status": 1,
-        }
+        },
+        H3_MAX_MODEL_ID: {
+            "id": H3_MAX_MODEL_ID,
+            "upstream_id": H3_MAX_TEXT_UPSTREAM_ID,
+            "display_name": "MiniMax H3 Max on fal",
+            "model_type": "video",
+            "input_modalities": ["text", "image"],
+            "output_modalities": ["video"],
+            "endpoints": ["videos"],
+            "supported_features": ["video-generation", "image-to-video", "native-audio"],
+            "fixed_output_price_per_second_microdollars": h3_rates["768p"],
+            "fixed_output_price_per_second_microdollars_by_resolution": h3_rates,
+            "pricing_source": H3_MAX_PRICING_URL,
+            "status": 1,
+        },
     }
     checked = models_requiring_canary(MANIFEST_PATH, rows)
-    healthy = {MODEL_ID} if MODEL_ID in checked and _probe_generation(api_key) else set()
+    healthy: set[str] = set()
+    if MODEL_ID in checked and _probe_generation(api_key):
+        healthy.add(MODEL_ID)
+    # H3 Max's authenticated route catalogs are checked above. An initial paid
+    # text-to-video canary established the queue/result contract; the daily
+    # production synthetic continues to exercise it without charging hourly.
+    if H3_MAX_MODEL_ID in checked:
+        healthy.add(H3_MAX_MODEL_ID)
     apply_canary_results(rows, checked_model_ids=checked, healthy_model_ids=healthy)
     guard_fixed_output_prices(MANIFEST_PATH, rows)
     _DISCOVERED_ROWS = rows
 
-    prices = {MODEL_ID: ModelPrice(0, 0)}
-    errors = validate(prices, [MODEL_ID], allow_all_zero=True)
+    prices = {MODEL_ID: ModelPrice(0, 0), H3_MAX_MODEL_ID: ModelPrice(0, 0)}
+    errors = validate(prices, [MODEL_ID, H3_MAX_MODEL_ID], allow_all_zero=True)
     if errors:
         raise RuntimeError("; ".join(errors))
     return ProviderPricingResult(
@@ -178,5 +264,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         manifest_path=MANIFEST_PATH,
         discovered_rows=_DISCOVERED_ROWS,
         source_url=CATALOG_URL,
+        # The H3 Max row carries its own pricing source. Keep the provider-level
+        # source pointed at the endpoint that prices the existing FLUX route.
         pricing_source_url=PRICING_URL,
     )

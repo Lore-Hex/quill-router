@@ -42,6 +42,7 @@ def guard_fixed_output_prices(
         "fixed_request_price_microdollars",
         "fixed_output_price_microdollars",
         "fixed_output_price_per_second_microdollars",
+        "fixed_output_price_per_second_microdollars_by_resolution",
     )
     changes: list[str] = []
     for model_id, discovered in discovered_rows.items():
