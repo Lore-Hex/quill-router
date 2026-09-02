@@ -118,6 +118,8 @@ def test_detached_run_deadline_releases_slot_and_logs_tripwire(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     started = threading.Event()
+    deadline_armed = threading.Event()
+    expire_deadline = threading.Event()
     run_calls = 0
 
     async def blocked_forever(
@@ -130,34 +132,65 @@ def test_detached_run_deadline_releases_slot_and_logs_tripwire(
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
 
+    async def controlled_deadline(
+        run: object,
+        *,
+        timeout: float,
+    ) -> dict[str, object]:
+        assert timeout == 0.2
+        task = asyncio.ensure_future(run)  # type: ignore[arg-type]
+        # Let the child reach the blocked backend before exposing the explicit
+        # deadline control to the request thread.
+        await asyncio.sleep(0)
+        assert started.is_set()
+        deadline_armed.set()
+        assert await asyncio.to_thread(expire_deadline.wait, 5.0)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        raise TimeoutError
+
     monkeypatch.setattr(synthetic_routes, "_run_and_record", blocked_forever)
+    monkeypatch.setattr(synthetic_routes, "_wait_for_run_deadline", controlled_deadline)
     with caplog.at_level("ERROR"), _client(synthetic_run_deadline_seconds=0.2) as client:
-        first = client.post(
-            "/v1/internal/synthetic/run",
-            headers=_headers(),
-            json={"detach": True, "rotation_count": 8},
-        )
-        assert first.status_code == 202
-        assert started.wait(timeout=1)
+        try:
+            first = client.post(
+                "/v1/internal/synthetic/run",
+                headers=_headers(),
+                json={"detach": True, "rotation_count": 8},
+            )
+            assert first.status_code == 202
+            assert deadline_armed.wait(timeout=5), "detached run did not arm its deadline"
+            assert started.is_set()
 
-        overlap = client.post(
-            "/v1/internal/synthetic/run",
-            headers=_headers(),
-            json={"detach": True},
-        )
-        assert overlap.status_code == 429
+            # The test controls expiration, so this request necessarily lands
+            # while the first run still owns admission.
+            overlap = client.post(
+                "/v1/internal/synthetic/run",
+                headers=_headers(),
+                json={"detach": True},
+            )
+            assert overlap.status_code == 429
 
-        deadline = time.monotonic() + 2
-        while synthetic_routes._BACKGROUND_RUNS and time.monotonic() < deadline:  # noqa: SLF001
-            time.sleep(0.01)
-        assert not synthetic_routes._BACKGROUND_RUNS  # noqa: SLF001
+            expire_deadline.set()
+            deadline = time.monotonic() + 5
+            while (
+                synthetic_routes._BACKGROUND_RUNS  # noqa: SLF001
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.01)
+            assert not synthetic_routes._BACKGROUND_RUNS  # noqa: SLF001
 
-        recovered = client.post(
-            "/v1/internal/synthetic/run",
-            headers=_headers(),
-            json={"detach": True, "monitor_region": "recovered"},
-        )
-        assert recovered.status_code == 202
+            recovered = client.post(
+                "/v1/internal/synthetic/run",
+                headers=_headers(),
+                json={"detach": True, "monitor_region": "recovered"},
+            )
+            assert recovered.status_code == 202
+        finally:
+            expire_deadline.set()
 
     deadline_logs = [
         record.getMessage()

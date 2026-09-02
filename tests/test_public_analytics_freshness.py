@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import threading
 import time
 
 import httpx
@@ -443,27 +444,35 @@ def test_a_leaky_reason_cannot_reach_the_wire_either(client: TestClient, monkeyp
 
 
 def test_a_backend_that_answers_slowly_does_not_hold_the_status_build_open(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The bound this module OWNS, tested by exceeding it twentyfold.
+    """The bound this module owns, proven by return-before-backend ordering.
 
     The failure it prevents: this read sits on the public /status.json build
     path inside an async handler, so a blocking wait there stops the EVENT LOOP
     -- every request this process is serving, not one worker thread.
 
-    This is written to FAIL against an unbounded implementation, which the
-    previous version of it could not: a backend that slept 0.25s under a 2.0s
-    assertion passes whether anything bounds it or not. Here the backend takes
-    a full second, the bound is 50ms, and the assertion is a tenth of a second
-    -- so the only way to pass is to stop waiting. It also does not rely on the
-    store's own timeouts: this backend does not have any, which is precisely
-    the case (a driver that ignores its cap, a backend added later) the
+    The backend is held on an event with no timeout of its own. The status
+    build must finish while that event is still closed, which cannot happen if
+    the caller waits for the backend. Five-second waits are only hang
+    backstops. This does not rely on the store's own timeouts, which is exactly
+    the case (a driver that ignores its cap, or a backend added later) the
     caller-side bound exists for.
     """
     monkeypatch.setattr(public_routes, "STATUS_ANALYTICS_READ_TIMEOUT_SECONDS", 0.05)
+    backend_started = threading.Event()
+    release_backend = threading.Event()
+    backend_finished = threading.Event()
+    status_finished = threading.Event()
+    sections: list[object] = []
+    errors: list[BaseException] = []
 
     def answers_eventually() -> OutboxFreshness:
-        time.sleep(1.0)
+        backend_started.set()
+        try:
+            release_backend.wait()
+        finally:
+            backend_finished.set()
         return OutboxFreshness(backend=BACKEND_POSTGRES, oldest_enqueued_at=None)
 
     monkeypatch.setattr(
@@ -473,12 +482,27 @@ def test_a_backend_that_answers_slowly_does_not_hold_the_status_build_open(
         raising=False,
     )
 
-    started = time.monotonic()
-    section = _snapshot(monkeypatch)[ANALYTICS_STATUS_KEY]
-    elapsed = time.monotonic() - started
+    def build_status() -> None:
+        try:
+            sections.append(_snapshot(monkeypatch)[ANALYTICS_STATUS_KEY])
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            status_finished.set()
 
-    assert section == {"available": False, "reason": REASON_UNREACHABLE}
-    assert elapsed < 0.5, "the status build waited on the backend rather than bounding it"
+    status_thread = threading.Thread(target=build_status, name="test-status-build")
+    status_thread.start()
+    try:
+        assert backend_started.wait(timeout=5), "status build did not start the backend read"
+        assert status_finished.wait(timeout=5), "status build waited on the blocked backend"
+        assert not errors
+        assert sections == [{"available": False, "reason": REASON_UNREACHABLE}]
+        assert not backend_finished.is_set(), "backend answered before the status build returned"
+    finally:
+        release_backend.set()
+        status_thread.join(timeout=5)
+    assert not status_thread.is_alive(), "status build did not stop after backend release"
+    assert backend_finished.wait(timeout=5), "backend worker did not stop after release"
 
 
 def test_a_backend_that_raises_after_its_own_timeout_publishes_unavailable(
