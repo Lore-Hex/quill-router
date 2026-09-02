@@ -26,6 +26,16 @@ from trusted_router.storage_gcp_operational_analytics_outbox import (
     synthetic_payload,
 )
 from trusted_router.storage_models import Generation, SyntheticProbeSample, SyntheticRollup
+from trusted_router.synthetic.rollups import compact_histogram
+
+ROLLUP_HISTOGRAM_FIELDS = (
+    "latency_histogram",
+    "ttfb_histogram",
+    "dns_histogram",
+    "tcp_connect_histogram",
+    "tls_handshake_histogram",
+    "gateway_processing_histogram",
+)
 
 PROJECT = "quill-cloud-proxy"
 INSTANCE = "trusted-router-logs"
@@ -199,6 +209,12 @@ def insert_rollups(clickhouse: ClickHouse, rollups: list[SyntheticRollup]) -> No
         json.dumps(
             {
                 **dataclasses.asdict(rollup),
+                # Legacy Bigtable bodies keep one key per millisecond until
+                # their next write; never carry that shape into ClickHouse.
+                **{
+                    field: compact_histogram(getattr(rollup, field))
+                    for field in ROLLUP_HISTOGRAM_FIELDS
+                },
                 "target_region": rollup.target_region or "",
                 "ingest_version": version,
             },
@@ -238,32 +254,22 @@ def main() -> int:
     if args.recent_limit is not None and args.recent_limit < 1:
         raise SystemExit("--recent-limit must be positive")
 
-    table = (
-        bigtable.Client(project=PROJECT, admin=False)
-        .instance(INSTANCE)
-        .table(TABLE)
-    )
+    table = bigtable.Client(project=PROJECT, admin=False).instance(INSTANCE).table(TABLE)
     password = os.environ.get("CH_PASSWORD", "")
     if args.apply and not password:
         raise SystemExit("CH_PASSWORD is required with --apply")
 
     clickhouse = ClickHouse(password=password) if args.apply else None
     writer = (
-        ClickHouseOperationalWriter(password=password, database=DATABASE)
-        if args.apply
-        else None
+        ClickHouseOperationalWriter(password=password, database=DATABASE) if args.apply else None
     )
     counts = {"activity": 0, "synthetic": 0, "rollup": 0}
 
     sources = []
     if not args.skip_activity:
-        sources.append(
-            ("activity", iter_activity_events(table, limit=args.recent_limit))
-        )
+        sources.append(("activity", iter_activity_events(table, limit=args.recent_limit)))
     if not args.skip_synthetic:
-        sources.append(
-            ("synthetic", iter_synthetic_events(table, limit=args.recent_limit))
-        )
+        sources.append(("synthetic", iter_synthetic_events(table, limit=args.recent_limit)))
     for kind, events in sources:
         for batch in _batches(events, args.batch):
             counts[kind] += len(batch)

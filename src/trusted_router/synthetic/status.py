@@ -117,8 +117,7 @@ def status_snapshot(
         for sample in ordered
         if not sample_component_ids(sample)
         or any(
-            component_id in published_component_ids
-            for component_id in sample_component_ids(sample)
+            component_id in published_component_ids for component_id in sample_component_ids(sample)
         )
     ]
     # Control-plane health is an SLO-only signal, so its rollups intentionally
@@ -128,10 +127,7 @@ def status_snapshot(
         rollup
         for rollup in precomputed_rollups
         if rollup.component in published_component_ids
-        or (
-            rollup.component == UNCATEGORIZED_COMPONENT
-            and bool(rollup_slo_class_ids(rollup))
-        )
+        or (rollup.component == UNCATEGORIZED_COMPONENT and bool(rollup_slo_class_ids(rollup)))
     ]
     router_core_samples = [
         sample
@@ -617,8 +613,10 @@ def _window_rollup_with_rollup_backfill(
         for rollup in _hour_rollups_in_window(rollups, now=now, seconds=seconds)
         if _rollup_hour_dimension(rollup) not in raw_hour_keys
     ]
+    # Transient and never persisted, so keep exact keys: the window's p50/p95
+    # must agree with the raw-sample percentiles reported beside it.
     combined_rollups = [
-        new_rollup_for_sample(sample, period="hour", component="status_window")
+        new_rollup_for_sample(sample, period="hour", component="status_window", bucket=False)
         for sample in raw_rows
     ]
     combined_rollups.extend(backfill_rollups)

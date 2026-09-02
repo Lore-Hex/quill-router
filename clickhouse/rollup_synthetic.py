@@ -18,6 +18,7 @@ from typing import Any
 from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, iso_now
 from trusted_router.synthetic.rollups import (
     apply_sample_to_rollup,
+    compact_histogram,
     new_rollup_for_sample,
     rollup_id,
     sample_rollup_ids,
@@ -67,9 +68,7 @@ def fetch_samples(
         "ORDER BY created_at FORMAT JSONEachRow"
     )
     return [
-        _sample_from_dict(json.loads(line))
-        for line in rows.decode().splitlines()
-        if line.strip()
+        _sample_from_dict(json.loads(line)) for line in rows.decode().splitlines() if line.strip()
     ]
 
 
@@ -143,9 +142,7 @@ def complete_window_rollups(
         safe_start = safe_starts.get(rollup.period)
         if safe_start is None:
             continue
-        period_start = dt.datetime.fromisoformat(
-            rollup.period_start.replace("Z", "+00:00")
-        )
+        period_start = dt.datetime.fromisoformat(rollup.period_start.replace("Z", "+00:00"))
         if _utc(period_start) >= safe_start:
             result.append(rollup)
     return result
@@ -165,9 +162,7 @@ def fetch_daily_rollups(
         "FORMAT JSONEachRow"
     )
     return [
-        _rollup_from_dict(json.loads(line))
-        for line in rows.decode().splitlines()
-        if line.strip()
+        _rollup_from_dict(json.loads(line)) for line in rows.decode().splitlines() if line.strip()
     ]
 
 
@@ -281,9 +276,20 @@ def _merge_rollup(target: SyntheticRollup, source: SyntheticRollup) -> None:
         destination = getattr(target, field)
         for key, count in getattr(source, field).items():
             destination[key] = destination.get(key, 0) + count
+    # Daily rows written before histogram bucketing carry one key per
+    # millisecond; fold them so a month row is bounded regardless of the
+    # shape of what it was built from.
+    for field in (
+        "latency_histogram",
+        "ttfb_histogram",
+        "dns_histogram",
+        "tcp_connect_histogram",
+        "tls_handshake_histogram",
+        "gateway_processing_histogram",
+    ):
+        setattr(target, field, compact_histogram(getattr(target, field)))
     if source.last_checked_at and (
-        target.last_checked_at is None
-        or source.last_checked_at > target.last_checked_at
+        target.last_checked_at is None or source.last_checked_at > target.last_checked_at
     ):
         target.last_checked_at = source.last_checked_at
     target.updated_at = iso_now()

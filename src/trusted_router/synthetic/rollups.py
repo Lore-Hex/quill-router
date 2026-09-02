@@ -49,7 +49,13 @@ def new_rollup_for_sample(
     *,
     period: str,
     component: str,
+    bucket: bool = True,
 ) -> SyntheticRollup:
+    """Build a one-sample rollup. `bucket=False` keeps exact-millisecond
+    keys; use it only for transient rollups that are never persisted (the
+    status page's raw-sample windows), so they agree with the exact
+    percentiles computed from the same samples. Anything written to a
+    store must stay bucketed."""
     rollup = SyntheticRollup(
         id=rollup_id(
             period=period,
@@ -68,16 +74,22 @@ def new_rollup_for_sample(
         monitor_region=sample.monitor_region,
         target_region=sample.target_region,
     )
-    apply_sample_to_rollup(rollup, sample)
+    apply_sample_to_rollup(rollup, sample, bucket=bucket)
     return rollup
 
 
-def apply_sample_to_rollup(rollup: SyntheticRollup, sample: SyntheticProbeSample) -> None:
-    # A rollup written before bucketing carries one key per distinct
-    # millisecond. Fold it here, so the body shrinks on the very next
-    # read-modify-write rather than growing until the period rolls over.
-    for histogram in _rollup_histograms(rollup):
-        _compact_histogram_in_place(histogram)
+def apply_sample_to_rollup(
+    rollup: SyntheticRollup,
+    sample: SyntheticProbeSample,
+    *,
+    bucket: bool = True,
+) -> None:
+    if bucket:
+        # A rollup written before bucketing carries one key per distinct
+        # millisecond. Fold it here, so the body shrinks on the very next
+        # read-modify-write rather than growing until the period rolls over.
+        for histogram in _rollup_histograms(rollup):
+            _compact_histogram_in_place(histogram)
     rollup.sample_count += 1
     if sample.status == "up":
         rollup.up_count += 1
@@ -91,21 +103,16 @@ def apply_sample_to_rollup(rollup: SyntheticRollup, sample: SyntheticProbeSample
         rollup.trust_degraded_count += 1
     else:
         rollup.unknown_count += 1
-    if sample.latency_milliseconds is not None:
-        _increment_histogram(rollup.latency_histogram, sample.latency_milliseconds)
-    if sample.ttfb_milliseconds is not None:
-        _increment_histogram(rollup.ttfb_histogram, sample.ttfb_milliseconds)
-    if sample.dns_milliseconds is not None:
-        _increment_histogram(rollup.dns_histogram, sample.dns_milliseconds)
-    if sample.tcp_connect_milliseconds is not None:
-        _increment_histogram(rollup.tcp_connect_histogram, sample.tcp_connect_milliseconds)
-    if sample.tls_handshake_milliseconds is not None:
-        _increment_histogram(rollup.tls_handshake_histogram, sample.tls_handshake_milliseconds)
-    if sample.gateway_processing_milliseconds is not None:
-        _increment_histogram(
-            rollup.gateway_processing_histogram,
-            sample.gateway_processing_milliseconds,
-        )
+    for histogram, value in (
+        (rollup.latency_histogram, sample.latency_milliseconds),
+        (rollup.ttfb_histogram, sample.ttfb_milliseconds),
+        (rollup.dns_histogram, sample.dns_milliseconds),
+        (rollup.tcp_connect_histogram, sample.tcp_connect_milliseconds),
+        (rollup.tls_handshake_histogram, sample.tls_handshake_milliseconds),
+        (rollup.gateway_processing_histogram, sample.gateway_processing_milliseconds),
+    ):
+        if value is not None:
+            _increment_histogram(histogram, value, bucket=bucket)
     if sample.error_type:
         rollup.error_counts[sample.error_type] = rollup.error_counts.get(sample.error_type, 0) + 1
     rollup.cost_microdollars += sample.cost_microdollars
@@ -252,7 +259,7 @@ def raw_sample_is_within_retention(
 #: integer milliseconds (as strings), so every reader that sorts keys with
 #: int() and walks counts keeps working, and pre-bucketing rows — whose keys
 #: are just finer-grained integers — need no migration: `compact_histogram`
-#: folds them into buckets lazily, on the next write or merge.
+#: folds them into buckets lazily, on the row's next write.
 HISTOGRAM_EXACT_BELOW = 100
 HISTOGRAM_SIGNIFICANT_DIGITS = 2
 
@@ -267,8 +274,14 @@ def histogram_bucket(value: int) -> int:
     and Bigtable backends is the size of the body re-read and re-written
     on EVERY sample for the rest of the period. The map is monotone
     (a <= b implies bucket(a) <= bucket(b)) and idempotent, so a percentile
-    taken from bucketed counts is exactly bucket(exact percentile):
-    error is at most half a bucket, i.e. <= 5% above 100 ms and 0 below.
+    taken from bucketed counts is exactly bucket(exact percentile). Rounding
+    is to nearest, so the error is at most half a step (10^(digits-2) / 2):
+    within +/-5% above 100 ms, exact below. Nearest keeps the published
+    p50/p95 unbiased; it can sit slightly under the true value as well as
+    over it, unlike `client_reliability.LATENCY_BUCKETS`, which reports
+    bucket upper bounds. (Buckets straddling a decade boundary, e.g. the one
+    keyed 1000 covering 995..1049, are wider than a step but never exceed
+    the 5% bound.)
     """
     value = max(int(value), 0)
     if value < HISTOGRAM_EXACT_BELOW:
@@ -287,9 +300,15 @@ def compact_histogram(histogram: dict[str, int]) -> dict[str, int]:
 
 
 def _compact_histogram_in_place(histogram: dict[str, int]) -> None:
-    if all(str(histogram_bucket(int(key))) == key for key in histogram):
+    try:
+        if all(str(histogram_bucket(int(key))) == key for key in histogram):
+            return
+        compacted = compact_histogram(histogram)
+    except (TypeError, ValueError):
+        # A key that is not an integer literal cannot be folded. Leave the
+        # row exactly as it was (the pre-bucketing behaviour) rather than
+        # failing the sample write that happens in the same transaction.
         return
-    compacted = compact_histogram(histogram)
     histogram.clear()
     histogram.update(compacted)
 
@@ -305,14 +324,18 @@ def _rollup_histograms(rollup: SyntheticRollup) -> tuple[dict[str, int], ...]:
     )
 
 
-def _increment_histogram(histogram: dict[str, int], value: int) -> None:
-    key = str(histogram_bucket(value))
+def _increment_histogram(histogram: dict[str, int], value: int, *, bucket: bool = True) -> None:
+    key = str(histogram_bucket(value) if bucket else max(int(value), 0))
     histogram[key] = histogram.get(key, 0) + 1
 
 
 def _merge_histograms(target: dict[str, int], source: dict[str, int]) -> None:
-    for raw_key, count in source.items():
-        key = str(histogram_bucket(int(raw_key)))
+    # A plain key-sum on purpose: merging never changes precision. Persisted
+    # rows arrive bucketed (or legacy-exact until their next write), transient
+    # status-window rows arrive exact, and a mixed walk still lands within
+    # half a bucket of the exact percentile because every element moved by
+    # at most that much.
+    for key, count in source.items():
         target[key] = target.get(key, 0) + count
 
 
