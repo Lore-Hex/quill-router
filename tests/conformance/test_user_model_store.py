@@ -31,11 +31,13 @@ def _create(
     slug: str,
     *,
     owner_user_id: str = "owner",
+    owner_username: str = "owner",
     kind: str = "machine",
 ) -> UserProvidedModel:
     return store.create_user_model(
         owner_user_id=owner_user_id,
         owner_workspace_id=f"workspace-{owner_user_id}",
+        owner_username=owner_username,
         name=f"Model {slug}",
         kind=kind,
         display_name=f"operator-{owner_user_id}",
@@ -45,56 +47,71 @@ def _create(
     )
 
 
-def test_shared_slug_namespace_rejects_both_creation_orders(
+def test_custom_and_user_models_have_separate_slug_namespaces(
     user_model_store: Store,
 ) -> None:
     store = user_model_store
-    store.create_custom_model(
-        owner_user_id="wrapper-owner",
-        owner_workspace_id="wrapper-workspace",
+    wrapper = store.create_custom_model(
+        owner_user_id="owner",
+        owner_workspace_id="workspace-owner",
+        owner_username="owner",
         name="Wrapper",
         base_model_id="openai/gpt-4o-mini",
         hidden_prompt="hidden",
-        slug="shared-a",
+        slug="shared",
     )
-    with pytest.raises(ValueError, match="^custom_model_slug_taken$"):
-        _create(store, "shared-a")
+    user_model = _create(store, "shared")
+    assert wrapper.id == "tr-custom-model/owner-shared"
+    assert user_model.id == "tr-user-model/owner-shared"
 
-    _create(store, "shared-b")
     with pytest.raises(ValueError, match="^custom_model_slug_taken$"):
         store.create_custom_model(
-            owner_user_id="wrapper-owner",
-            owner_workspace_id="wrapper-workspace",
+            owner_user_id="owner",
+            owner_workspace_id="workspace-owner",
+            owner_username="owner",
             name="Wrapper",
             base_model_id="openai/gpt-4o-mini",
             hidden_prompt="hidden",
-            slug="shared-b",
+            slug="shared",
         )
+    with pytest.raises(ValueError, match="^custom_model_slug_taken$"):
+        _create(store, "shared")
 
 
-def test_shared_slug_namespace_rejects_renames(user_model_store: Store) -> None:
+def test_each_model_namespace_rejects_duplicate_renames(user_model_store: Store) -> None:
     store = user_model_store
     user_model = _create(store, "rename-user")
+    _create(store, "user-target")
     wrapper = store.create_custom_model(
-        owner_user_id="wrapper-owner",
-        owner_workspace_id="wrapper-workspace",
+        owner_user_id="owner",
+        owner_workspace_id="workspace-owner",
+        owner_username="owner",
         name="Wrapper",
         base_model_id="openai/gpt-4o-mini",
         hidden_prompt="hidden",
         slug="rename-wrapper",
+    )
+    store.create_custom_model(
+        owner_user_id="owner",
+        owner_workspace_id="workspace-owner",
+        owner_username="owner",
+        name="Wrapper target",
+        base_model_id="openai/gpt-4o-mini",
+        hidden_prompt="hidden",
+        slug="wrapper-target",
     )
 
     with pytest.raises(ValueError, match="^custom_model_slug_taken$"):
         store.update_user_model(
             user_model.id,
             owner_user_id=user_model.owner_user_id,
-            patch={"slug": "rename-wrapper"},
+            patch={"slug": "user-target"},
         )
     with pytest.raises(ValueError, match="^custom_model_slug_taken$"):
         store.update_custom_model(
             wrapper.id,
             owner_user_id=wrapper.owner_user_id,
-            patch={"slug": "rename-user"},
+            patch={"slug": "wrapper-target"},
         )
 
 
@@ -163,12 +180,12 @@ def test_gateway_authorization_round_trips_frozen_user_model_fields(
     authorization = store.create_gateway_authorization(
         workspace_id="workspace",
         key_hash="key-hash",
-        model_id="trustedrouter/user-frozen",
+        model_id="tr-user-model/owner-frozen",
         provider="trustedrouter",
         usage_type=UsageType.CREDITS,
         estimated_microdollars=123,
         credit_reservation_id=None,
-        user_provided_model_id="trustedrouter/user-frozen",
+        user_provided_model_id="tr-user-model/owner-frozen",
         user_provided_model_revision=7,
         user_model_prompt_price_microdollars_per_m=11,
         user_model_completion_price_microdollars_per_m=22,
@@ -176,7 +193,7 @@ def test_gateway_authorization_round_trips_frozen_user_model_fields(
     )
     loaded = store.get_gateway_authorization(authorization.id)
     assert loaded is not None
-    assert loaded.user_provided_model_id == "trustedrouter/user-frozen"
+    assert loaded.user_provided_model_id == "tr-user-model/owner-frozen"
     assert loaded.user_provided_model_revision == 7
     assert loaded.user_model_prompt_price_microdollars_per_m == 11
     assert loaded.user_model_completion_price_microdollars_per_m == 22
@@ -187,7 +204,7 @@ def test_user_model_slots_are_idempotent_and_release_capacity(
     user_model_store: Store,
 ) -> None:
     store = user_model_store
-    model_id = "trustedrouter/user-slots"
+    model_id = "tr-user-model/owner-slots"
 
     assert store.acquire_user_model_slot(model_id, "gwa-first", limit=1, ttl_seconds=600)
     assert store.acquire_user_model_slot(model_id, "gwa-first", limit=1, ttl_seconds=600)
@@ -209,7 +226,7 @@ def test_user_model_slot_expires_after_its_ttl(
     import time
 
     store = user_model_store
-    model_id = "trustedrouter/user-slot-ttl"
+    model_id = "tr-user-model/owner-slot-ttl"
     assert store.acquire_user_model_slot(model_id, "gwa-stuck", limit=1, ttl_seconds=30)
     assert not store.acquire_user_model_slot(model_id, "gwa-next", limit=1, ttl_seconds=30)
 
@@ -239,7 +256,7 @@ def test_user_model_coerces_secret_envelope_dicts() -> None:
         "nonce": "nonce",
     }
     model = UserProvidedModel(
-        id="trustedrouter/user-envelope",
+        id="tr-user-model/owner-envelope",
         owner_user_id="owner",
         owner_workspace_id="workspace",
         name="Envelope",

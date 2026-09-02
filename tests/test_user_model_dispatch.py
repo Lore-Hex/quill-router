@@ -141,7 +141,7 @@ def _sse_body() -> bytes:
 
 def _request_body(*, stream: bool) -> dict[str, Any]:
     return {
-        "model": "trustedrouter/user-dispatch-test",
+        "model": "tr-user-model/dispatch-owner-dispatch-test",
         "messages": [{"role": "user", "content": "hello"}],
         "stream": stream,
     }
@@ -572,7 +572,7 @@ async def test_owner_request_body_is_allowlisted(test_settings: Settings) -> Non
             "max_tokens": 32,
             "provider": {"order": ["evil"]},
             "models": ["openai/gpt-4o"],
-            "custom_model_id": "trustedrouter/user-someone-else",
+            "custom_model_id": "tr-user-model/someone-else-model",
             "user": "caller-account-id",
             "route": "fallback",
         }

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from tests.fakes.spanner import make_fake_store
 
 
@@ -69,3 +71,19 @@ def test_gcp_wallet_user_email_and_membership_are_uuid_keyed() -> None:
     readded = store.add_members(workspace.id, ["friend@example.com"], role="member")[0]
     assert readded.user_id == invited.user_id
     assert store.user_is_member(readded.user_id, workspace.id)
+
+
+def test_gcp_creator_usernames_are_unique_case_insensitive_and_immutable() -> None:
+    store, _db, _bt = make_fake_store()
+    alice = store.ensure_user("alice@example.com")
+    bob = store.ensure_user("bob@example.com")
+
+    claimed = store.claim_user_username(alice.id, "Ada-Builder")
+    assert claimed.username == "ada-builder"
+    assert store.claim_user_username(alice.id, "ada-builder").id == alice.id
+    assert store.find_user_by_username("ADA-BUILDER").id == alice.id
+
+    with pytest.raises(ValueError, match="creator_username_taken"):
+        store.claim_user_username(bob.id, "ada-builder")
+    with pytest.raises(ValueError, match="creator_username_immutable"):
+        store.claim_user_username(alice.id, "another-name")

@@ -124,10 +124,10 @@ def _nested_function(
 
 def test_console_route_async_split_and_worker_boundaries_are_total() -> None:
     routes = _console_route_functions()
-    assert len(routes) == 52, "guard must inspect every decorated console route"
+    assert len(routes) == 53, "guard must inspect every decorated console route"
     async_routes = {node.name for node in routes if isinstance(node, ast.AsyncFunctionDef)}
     assert async_routes == _ASYNC_CONSOLE_HANDLERS
-    assert sum(isinstance(node, ast.FunctionDef) for node in routes) == 48
+    assert sum(isinstance(node, ast.FunctionDef) for node in routes) == 49
 
     by_name = {node.name: node for node in routes}
     assert set(_threadpool_targets(by_name["console_credit_stripe_details"])) == {

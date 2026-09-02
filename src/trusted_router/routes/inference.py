@@ -73,7 +73,10 @@ from trusted_router.services.user_model_dispatch import (
     stream_user_model,
 )
 from trusted_router.storage import STORE, Generation
-from trusted_router.storage_custom_models import is_custom_model_id, normalize_custom_model_id
+from trusted_router.storage_custom_models import (
+    is_user_provided_model_id,
+    normalize_user_provided_model_id,
+)
 from trusted_router.storage_models import UserProvidedModel
 from trusted_router.types import ErrorType, UsageType
 from trusted_router.user_model_rules import user_model_gateway_pair, user_model_is_on_the_clock
@@ -838,9 +841,9 @@ def _require_chat_model(body: dict[str, Any]) -> Model:
 
 def _local_user_model_or_none(body: dict[str, Any]) -> UserProvidedModel | None:
     model_id = str(body.get("model") or "")
-    if not is_custom_model_id(model_id):
+    if not is_user_provided_model_id(model_id):
         return None
-    model = STORE.get_user_model(normalize_custom_model_id(model_id))
+    model = STORE.get_user_model(normalize_user_provided_model_id(model_id))
     if model is None:
         return None
     if not model.enabled or model.status != "active":

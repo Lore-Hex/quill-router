@@ -10,7 +10,7 @@ from trusted_router.catalog import MODELS, PROVIDERS, Model, ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.services.safe_egress import aassert_public_url, validate_url_scheme
-from trusted_router.storage_custom_models import custom_model_id_from_slug, custom_model_slug
+from trusted_router.storage_custom_models import validate_model_slug
 from trusted_router.storage_models import UserProvidedModel
 from trusted_router.types import ErrorType
 
@@ -134,7 +134,7 @@ def reserved_user_model_names() -> frozenset[str]:
 
 def validate_user_model_slug(slug: str) -> str:
     try:
-        model_id = custom_model_id_from_slug(slug)
+        normalized = validate_model_slug(slug)
     except ValueError as exc:
         # An owner-typed slug that fails the grammar is their input error,
         # not a server fault.
@@ -143,7 +143,6 @@ def validate_user_model_slug(slug: str) -> str:
             "Slug may contain only lowercase letters, digits, and hyphens",
             ErrorType.BAD_REQUEST,
         ) from exc
-    normalized = custom_model_slug(model_id)
     if normalized in _RESERVED_NAMES:
         raise api_error(400, "This model slug is reserved", ErrorType.BAD_REQUEST)
     return normalized

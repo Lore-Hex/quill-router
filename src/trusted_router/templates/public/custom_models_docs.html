@@ -1,0 +1,76 @@
+{% extends "public/_base.html" %}
+
+{% block body %}
+<section class="public-section docs-section">
+  <div class="panel">
+    <div class="panel-head"><h2>Publish a model with a hidden prompt</h2><span class="pill">custom models</span></div>
+    <div class="panel-body">
+      <p>A TrustedRouter custom model combines a catalog model with instructions you control. Callers use one stable model ID. TrustedRouter inserts the hidden prompt inside the attested gateway and routes the selected base model. Only the owner management surface returns the prompt; callers and public catalog responses never receive it.</p>
+      <pre><code>curl {{ control_plane_api_base_url }}/v1/custom-models \
+  -H "Authorization: Bearer $TRUSTEDROUTER_MANAGEMENT_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Contract reviewer",
+    "slug": "contract-reviewer",
+    "base_model_id": "anthropic/claude-sonnet-4.6",
+    "hidden_prompt": "Review the contract and cite each material clause.",
+    "markup_basis_points": 1500,
+    "enabled": true
+  }'</code></pre>
+      <p>For a creator named <span class="mono">ada</span>, this creates <span class="mono">tr-custom-model/ada-contract-reviewer</span>. Use that exact ID in Chat Completions or Responses requests.</p>
+    </div>
+  </div>
+
+  <div class="docs-grid">
+    <div class="panel">
+      <div class="panel-head"><h2>Identity and naming</h2><span class="pill">one namespace</span></div>
+      <div class="panel-body">
+        <ul class="plain-list">
+          <li>Complete Veriff identity verification before publishing.</li>
+          <li>Claim one globally unique creator username.</li>
+          <li>Usernames are permanent because public model IDs depend on them.</li>
+          <li>Slugs use lowercase letters, numbers, and hyphens.</li>
+        </ul>
+        <p><a href="/?reason=signin&amp;next=%2Fconsole%2Faccount%2Fverification">Sign in to verify your account and choose a username</a>, then <a href="/?reason=signin&amp;next=%2Fconsole%2Fcustom-models">open the custom models console</a>.</p>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>Pricing and earnings</h2><span class="pill good">70% creator share</span></div>
+      <div class="panel-body">
+        <ul class="plain-list">
+          <li><span class="mono">markup_basis_points</span> is your percentage above the routed token charge. 100 basis points is 1%.</li>
+          <li>The markup applies to model token charges, not hosted tool or media charges.</li>
+          <li>70% of collected markup enters your earnings wallet. TrustedRouter keeps 30%.</li>
+          <li>All accounting uses integer microdollars. Retries cannot pay or charge twice.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Custom model or user-provided model?</h2><span class="pill">different products</span></div>
+    <div class="panel-body">
+      <div class="model-table-wrap"><table>
+        <thead><tr><th>Product</th><th>Model ID</th><th>Execution</th><th>Creator earnings</th></tr></thead>
+        <tbody>
+          <tr><td>Custom model</td><td class="mono">tr-custom-model/ada-reviewer</td><td>TrustedRouter catalog model plus a hidden prompt</td><td>70% of creator markup</td></tr>
+          <tr><td>User-provided model</td><td class="mono">tr-user-model/ada-live</td><td>Your HTTPS model, agent, or human endpoint</td><td>70% of the model charge</td></tr>
+        </tbody>
+      </table></div>
+      <p>Read the <a href="/docs/user-models">user-provided models guide</a> when you want to operate the endpoint yourself.</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Update without changing the ID</h2><span class="pill">revision bound</span></div>
+    <div class="panel-body">
+      <p>You can update the base model, hidden prompt, markup, or enabled state. Each edit increments a revision. Authorization freezes the revision, price, owner, and markup before inference, so an edit during a request cannot change its settlement.</p>
+      <pre><code>curl {{ control_plane_api_base_url }}/v1/custom-models/tr-custom-model/ada-contract-reviewer \
+  -X PATCH \
+  -H "Authorization: Bearer $TRUSTEDROUTER_MANAGEMENT_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"markup_basis_points": 2000}'</code></pre>
+    </div>
+  </div>
+</section>
+{% endblock %}

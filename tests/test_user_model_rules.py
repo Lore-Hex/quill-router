@@ -30,7 +30,7 @@ from trusted_router.user_model_rules import (
 
 def _model(**overrides: Any) -> UserProvidedModel:
     values: dict[str, Any] = {
-        "id": "trustedrouter/user-demo",
+        "id": "tr-user-model/owner-demo",
         "owner_user_id": "owner",
         "owner_workspace_id": "workspace",
         "name": "Demo",

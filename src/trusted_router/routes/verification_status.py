@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep
+from trusted_router.creator_identity import validate_creator_username
 from trusted_router.errors import api_error
 from trusted_router.identity_guidance import guidance_for
 from trusted_router.money import (
@@ -12,6 +13,7 @@ from trusted_router.money import (
     VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS,
     money_pair,
 )
+from trusted_router.schemas import CreatorUsernameRequest
 from trusted_router.storage import STORE
 from trusted_router.storage_models import User
 from trusted_router.types import ErrorType
@@ -38,6 +40,7 @@ def register_verification_status_routes(router: APIRouter) -> None:
         return {
             "data": {
                 "email": user.email,
+                "username": user.username,
                 "email_verified": bool(user.email_verified),
                 **money_pair("lifetime_topup", lifetime_topup),
                 "phone_verified": bool(user.phone_verified),
@@ -61,6 +64,41 @@ def register_verification_status_routes(router: APIRouter) -> None:
                 "next_step": _next_step(user, lifetime_topup),
             }
         }
+
+    @router.put("/auth/username")
+    async def claim_creator_username(
+        body: CreatorUsernameRequest,
+        principal: ManagementPrincipal,
+    ) -> dict[str, dict[str, str]]:
+        user = _principal_user(principal)
+        if not user.identity_verified or not (user.identity_verified_name or "").strip():
+            raise api_error(
+                403,
+                "Complete Veriff identity verification before choosing a creator username",
+                ErrorType.VERIFICATION_REQUIRED,
+            )
+        try:
+            username = validate_creator_username(body.username)
+            updated = STORE.claim_user_username(user.id, username)
+        except ValueError as exc:
+            error = str(exc)
+            if error in {"invalid_creator_username", "creator_username_reserved"}:
+                raise api_error(
+                    400,
+                    "Username must be 3-32 lowercase letters, numbers, or hyphens and cannot be reserved",
+                    ErrorType.BAD_REQUEST,
+                ) from exc
+            if error == "creator_username_taken":
+                raise api_error(409, "Username is already in use", ErrorType.CONFLICT) from exc
+            if error == "creator_username_immutable":
+                raise api_error(
+                    409,
+                    "Creator usernames cannot be changed after they are claimed",
+                    ErrorType.CONFLICT,
+                ) from exc
+            raise
+        assert updated.username is not None
+        return {"data": {"username": updated.username}}
 
 
 def _principal_user(principal: Any) -> User:

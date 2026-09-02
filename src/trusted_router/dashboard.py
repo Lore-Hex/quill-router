@@ -224,6 +224,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/docs",
     "/docs/x402",
     "/docs/user-models",
+    "/docs/custom-models",
     "/api/reference",
     "/apps",
     "/resources",
@@ -1461,6 +1462,14 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "List your own HTTPS endpoint on TrustedRouter as a priced model — a machine, "
             "an agent, or a person answering by hand — and keep 70% in credits."
+        ),
+    ),
+    "docs/custom-models": PublicPage(
+        template="public/custom_models_docs.html",
+        title="Custom Models: Hidden Prompts And Creator Markup",
+        description=(
+            "Publish a TrustedRouter catalog model with a hidden prompt, a stable "
+            "creator namespace, and an optional markup whose creator keeps 70%."
         ),
     ),
     "docs/x402": PublicPage(

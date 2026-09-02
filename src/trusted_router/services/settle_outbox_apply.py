@@ -24,6 +24,15 @@ from trusted_router.custom_model_billing import (
     USER_MODEL_PAYOUT_SETTLE_FIELD,
     user_model_payout_event_id,
 )
+from trusted_router.custom_model_markup_billing import (
+    CUSTOM_MODEL_MARKUP_CHARGE_SETTLE_FIELD,
+    CUSTOM_MODEL_MARKUP_ID_SETTLE_FIELD,
+    CUSTOM_MODEL_MARKUP_OWNER_SETTLE_FIELD,
+    CUSTOM_MODEL_MARKUP_PAYOUT_SETTLE_FIELD,
+    collected_custom_model_markup_microdollars,
+    custom_model_markup_owner_share_microdollars,
+    custom_model_markup_payout_event_id,
+)
 from trusted_router.partner_billing import PARTNER_OPERATOR_COST_SETTLE_FIELD
 from trusted_router.regional_quota_ledger import RegionalLeaseLedgerError
 from trusted_router.schemas import GatewaySettleRequest
@@ -41,6 +50,7 @@ from trusted_router.storage_gcp_codec import (
 from trusted_router.storage_gcp_codec import json_body as _json_body
 from trusted_router.storage_models import (
     AppMarkupPayout,
+    CustomModelMarkupPayout,
     GatewayAuthorization,
     SettleOutboxRow,
     UserModelPayout,
@@ -199,6 +209,10 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
     app_payout_raw = body_dict.pop(APP_MARKUP_PAYOUT_SETTLE_FIELD, None)
     app_owner_raw = body_dict.pop(APP_MARKUP_OWNER_SETTLE_FIELD, None)
     app_id_raw = body_dict.pop(APP_MARKUP_APP_ID_SETTLE_FIELD, None)
+    custom_markup_raw = body_dict.pop(CUSTOM_MODEL_MARKUP_CHARGE_SETTLE_FIELD, None)
+    custom_payout_raw = body_dict.pop(CUSTOM_MODEL_MARKUP_PAYOUT_SETTLE_FIELD, None)
+    custom_owner_raw = body_dict.pop(CUSTOM_MODEL_MARKUP_OWNER_SETTLE_FIELD, None)
+    custom_model_raw = body_dict.pop(CUSTOM_MODEL_MARKUP_ID_SETTLE_FIELD, None)
     try:
         operator_cost = (
             _operator_cost_microdollars(operator_cost_raw)
@@ -218,6 +232,16 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
             owner_user_id=app_owner_raw,
             app_id=app_id_raw,
         )
+        custom_model_markup_payout, custom_model_markup_microdollars = (
+            _frozen_custom_model_markup_payout(
+                auth,
+                charge_microdollars=row.actual_cost_micro,
+                markup_microdollars=custom_markup_raw,
+                amount=custom_payout_raw,
+                owner_user_id=custom_owner_raw,
+                model_id=custom_model_raw,
+            )
+        )
         generation = (
             _frozen_generation(
                 auth,
@@ -231,6 +255,7 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
                 )
                 if auth.app_markup_basis_points > 0
                 else 0,
+                custom_model_markup_microdollars=custom_model_markup_microdollars,
             )
             if success
             else None
@@ -250,6 +275,8 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
             user_model_payout,
             app_markup_payout,
             corrective_rewrite,
+            custom_model_markup_payout,
+            body.additional_cost_microdollars,
         )
     elif row.settle_origin == "legacy":
         outcome = _apply_legacy(
@@ -259,6 +286,7 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
             generation,
             user_model_payout,
             app_markup_payout,
+            custom_model_markup_payout,
         )
     else:
         return ApplyOutcome.INVALID_ROW
@@ -304,6 +332,7 @@ def _frozen_generation(
     *,
     operator_cost_microdollars: int | None = None,
     app_markup_microdollars: int = 0,
+    custom_model_markup_microdollars: int = 0,
 ) -> Generation:
     # MF5: rebuild generation metadata from the row's frozen decision and
     # settle_body only. Retired endpoints fall back to parsing the stored id;
@@ -328,6 +357,7 @@ def _frozen_generation(
         output_tokens=body.output_count,
         actual_cost_microdollars=row.actual_cost_micro,
         app_markup_microdollars=app_markup_microdollars,
+        custom_model_markup_microdollars=custom_model_markup_microdollars,
         operator_cost_microdollars=operator_cost_microdollars,
     )
 
@@ -405,6 +435,53 @@ def _frozen_app_markup_payout(
     )
 
 
+def _frozen_custom_model_markup_payout(
+    auth: GatewayAuthorization,
+    *,
+    charge_microdollars: int,
+    markup_microdollars: Any,
+    amount: Any,
+    owner_user_id: Any,
+    model_id: Any,
+) -> tuple[CustomModelMarkupPayout | None, int]:
+    fields = (markup_microdollars, amount, owner_user_id, model_id)
+    if auth.custom_model_markup_basis_points <= 0:
+        if fields != (None, None, None, None):
+            raise ValueError("authorization has no custom-model markup")
+        return None, 0
+    if (
+        isinstance(markup_microdollars, bool)
+        or not isinstance(markup_microdollars, int)
+        or markup_microdollars < 0
+        or markup_microdollars > charge_microdollars
+    ):
+        raise ValueError("invalid frozen custom-model markup")
+    derived_amount = custom_model_markup_owner_share_microdollars(
+        markup_microdollars
+    )
+    if isinstance(amount, bool) or not isinstance(amount, int) or amount != derived_amount:
+        raise ValueError("invalid frozen custom-model payout")
+    if owner_user_id != auth.custom_model_owner_user_id:
+        raise ValueError("frozen custom-model owner does not match authorization")
+    if model_id != auth.custom_model_id:
+        raise ValueError("frozen custom-model id does not match authorization")
+    if not isinstance(owner_user_id, str) or not owner_user_id.strip():
+        raise ValueError("invalid frozen custom-model owner")
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise ValueError("invalid frozen custom-model id")
+    if not auth.workspace_id:
+        raise ValueError("invalid payout workspace")
+    return (
+        CustomModelMarkupPayout(
+            owner_user_id=owner_user_id,
+            model_id=model_id,
+            amount_microdollars=amount,
+            payer_workspace_id=auth.workspace_id,
+        ),
+        markup_microdollars,
+    )
+
+
 def _provider_slug(endpoint_id: str | None) -> str:
     endpoint = endpoint_for_id(endpoint_id)
     if endpoint is not None:
@@ -429,6 +506,8 @@ def _apply_typed(
     user_model_payout: UserModelPayout | None,
     app_markup_payout: AppMarkupPayout | None,
     corrective_rewrite: tuple[str, str, str, int, str] | None,
+    custom_model_markup_payout: CustomModelMarkupPayout | None,
+    additional_cost_microdollars: int,
 ) -> str:
     typed_store = typed_billing_store()
     if typed_store is None:
@@ -464,6 +543,7 @@ def _apply_typed(
                     generation=generation,
                     user_model_payout=user_model_payout,
                     app_markup_payout=app_markup_payout,
+                    custom_model_markup_payout=custom_model_markup_payout,
                 )
         except _REGIONAL_SETTLE_RETRY_EXCS:
             # An opposing settle/refund can win the local row just before its
@@ -515,6 +595,7 @@ def _apply_typed(
                 user_model_payout=user_model_payout,
                 app_markup_payout=app_markup_payout,
                 settle_outbox_rewrite=corrective_rewrite,
+                custom_model_markup_payout=custom_model_markup_payout,
             )
         except _TRANSIENT_STORE_EXCS:
             return ApplyOutcome.PARK_TYPED_UNAVAILABLE
@@ -576,6 +657,12 @@ def _apply_typed(
                 return ApplyOutcome.INVALID_ROW
             replay_generation = generation
             if corrective_rewrite is not None:
+                replay_custom_markup = collected_custom_model_markup_microdollars(
+                    actual_micro,
+                    auth.custom_model_markup_basis_points,
+                    app_markup_basis_points=auth.app_markup_basis_points,
+                    additional_cost_microdollars=additional_cost_microdollars,
+                )
                 replay_generation = replace(
                     generation,
                     total_cost_microdollars=actual_micro,
@@ -586,6 +673,7 @@ def _apply_typed(
                         if auth.app_markup_basis_points > 0
                         else 0
                     ),
+                    custom_model_markup_microdollars=replay_custom_markup,
                 )
             if not _index_generation_after_commit(typed_store, replay_generation):
                 return ApplyOutcome.ACTIVITY_PENDING
@@ -623,6 +711,7 @@ def _apply_legacy(
     generation: Generation | None,
     user_model_payout: UserModelPayout | None,
     app_markup_payout: AppMarkupPayout | None,
+    custom_model_markup_payout: CustomModelMarkupPayout | None,
 ) -> str:
     try:
         finalized = STORE.finalize_gateway_authorization(
@@ -669,6 +758,28 @@ def _apply_legacy(
                     app_markup_payout.owner_user_id,
                     exc_info=True,
                 )
+        if (
+            success
+            and custom_model_markup_payout is not None
+            and custom_model_markup_payout.amount_microdollars > 0
+        ):
+            try:
+                STORE.credit_user_earnings(
+                    custom_model_markup_payout.owner_user_id,
+                    custom_model_markup_payout.amount_microdollars,
+                    custom_model_markup_payout_event_id(row.authorization_id),
+                    custom_model_id=custom_model_markup_payout.model_id,
+                    payer_workspace_id=(
+                        custom_model_markup_payout.payer_workspace_id
+                    ),
+                )
+            except Exception:
+                logger.error(
+                    "custom_model_markup_payout_failed authorization_id=%s owner=%s",
+                    row.authorization_id,
+                    custom_model_markup_payout.owner_user_id,
+                    exc_info=True,
+                )
         return ApplyOutcome.SETTLED_NOW
     if success and app_markup_payout is not None and app_markup_payout.amount_microdollars > 0:
         # Legacy settlement committed the customer charge separately from the
@@ -687,6 +798,27 @@ def _apply_legacy(
                 "app_markup_payout_repair_failed authorization_id=%s owner=%s",
                 row.authorization_id,
                 app_markup_payout.owner_user_id,
+                exc_info=True,
+            )
+            return ApplyOutcome.ERROR
+    if (
+        success
+        and custom_model_markup_payout is not None
+        and custom_model_markup_payout.amount_microdollars > 0
+    ):
+        try:
+            STORE.credit_user_earnings(
+                custom_model_markup_payout.owner_user_id,
+                custom_model_markup_payout.amount_microdollars,
+                custom_model_markup_payout_event_id(row.authorization_id),
+                custom_model_id=custom_model_markup_payout.model_id,
+                payer_workspace_id=custom_model_markup_payout.payer_workspace_id,
+            )
+        except Exception:
+            logger.error(
+                "custom_model_markup_payout_repair_failed authorization_id=%s owner=%s",
+                row.authorization_id,
+                custom_model_markup_payout.owner_user_id,
                 exc_info=True,
             )
             return ApplyOutcome.ERROR

@@ -9,6 +9,7 @@ from typing import Any, cast
 
 from trusted_router import credit_transfer, phone_verification
 from trusted_router.analytics_sink import AnalyticsSink, NullAnalyticsSink
+from trusted_router.creator_identity import local_creator_username, validate_creator_username
 from trusted_router.credit_transfer import (
     CreditTransferConflict,
     validate_amount,
@@ -17,6 +18,9 @@ from trusted_router.credit_transfer import (
 )
 from trusted_router.custom_model_billing import (
     user_model_authorization_id_from_payout_event_id,
+)
+from trusted_router.custom_model_markup_billing import (
+    custom_model_markup_authorization_id_from_payout_event_id,
 )
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.operational_analytics_freshness import (
@@ -114,6 +118,7 @@ class InMemoryStore:
         self.users: dict[str, User] = {}
         self.user_ids_by_email: dict[str, str] = {}
         self.user_ids_by_wallet: dict[str, str] = {}
+        self.user_ids_by_username: dict[str, str] = {}
         self.provider_access_grants: dict[tuple[str, str], ProviderAccessGrant] = {}
         self.workspaces: dict[str, Workspace] = {}
         self.members: dict[tuple[str, str], Member] = {}
@@ -177,6 +182,7 @@ class InMemoryStore:
             self.users.clear()
             self.user_ids_by_email.clear()
             self.user_ids_by_wallet.clear()
+            self.user_ids_by_username.clear()
             self.provider_access_grants.clear()
             self.workspaces.clear()
             self.members.clear()
@@ -699,6 +705,32 @@ class InMemoryStore:
                 return None
             return self.users.get(user_id)
 
+    def find_user_by_username(self, username: str) -> User | None:
+        try:
+            normalized = validate_creator_username(username)
+        except ValueError:
+            return None
+        with self._lock:
+            user_id = self.user_ids_by_username.get(normalized)
+            return self.users.get(user_id) if user_id is not None else None
+
+    def claim_user_username(self, user_id: str, username: str) -> User:
+        normalized = validate_creator_username(username)
+        with self._lock:
+            user = self.users.get(user_id)
+            if user is None:
+                raise ValueError("user_not_found")
+            if user.username:
+                if user.username == normalized:
+                    return user
+                raise ValueError("creator_username_immutable")
+            owner = self.user_ids_by_username.get(normalized)
+            if owner is not None and owner != user_id:
+                raise ValueError("creator_username_taken")
+            user.username = normalized
+            self.user_ids_by_username[normalized] = user_id
+            return user
+
     def create_wallet_user(self, address: str) -> User:
         """Create a fresh user keyed only by wallet address. email and
         email_verified stay unset until the verification flow completes."""
@@ -1024,15 +1056,23 @@ class InMemoryStore:
         name: str,
         base_model_id: str,
         hidden_prompt: str,
+        owner_username: str | None = None,
+        markup_basis_points: int = 0,
         enabled: bool = True,
         slug: str | None = None,
     ) -> CustomModel:
+        user = self.get_user(owner_user_id)
+        resolved_username = owner_username or (
+            local_creator_username(user) if user is not None else "dev-creator"
+        )
         return self.custom_model_store.create(
             owner_user_id=owner_user_id,
             owner_workspace_id=owner_workspace_id,
+            owner_username=resolved_username,
             name=name,
             base_model_id=base_model_id,
             hidden_prompt=hidden_prompt,
+            markup_basis_points=markup_basis_points,
             enabled=enabled,
             slug=slug,
             other_model_exists=lambda model_id: self.user_model_store.get(model_id) is not None,
@@ -1070,6 +1110,7 @@ class InMemoryStore:
         owner_workspace_id: str,
         name: str,
         kind: str,
+        owner_username: str | None = None,
         description: str = "",
         display_identity: str = "handle",
         display_name: str = "",
@@ -1088,9 +1129,14 @@ class InMemoryStore:
         status: str = "active",
         slug: str | None = None,
     ) -> UserProvidedModel:
+        user = self.get_user(owner_user_id)
+        resolved_username = owner_username or (
+            local_creator_username(user) if user is not None else "dev-creator"
+        )
         return self.user_model_store.create(
             owner_user_id=owner_user_id,
             owner_workspace_id=owner_workspace_id,
+            owner_username=resolved_username,
             name=name,
             kind=kind,
             description=description,
@@ -1514,6 +1560,7 @@ class InMemoryStore:
         amount = self._positive_money_amount(amount_microdollars)
         account_id = f"user:{user_id}"
         is_app_markup = event_id.startswith("app_markup_payout:")
+        is_custom_markup = event_id.startswith("custom_model_markup_payout:")
         with self._lock:
             if event_id in self.stripe_events:
                 return False
@@ -1523,13 +1570,23 @@ class InMemoryStore:
             self.credit_movements[(account_id, event_id)] = CreditMovement(
                 account_id=account_id,
                 movement_id=event_id,
-                kind="app_markup_payout" if is_app_markup else "custom_model_payout",
+                kind=(
+                    "app_markup_payout"
+                    if is_app_markup
+                    else "custom_model_markup_payout"
+                    if is_custom_markup
+                    else "custom_model_payout"
+                ),
                 amount_microdollars=amount,
                 counterparty_account_id=payer_workspace_id,
                 custom_model_id=custom_model_id,
                 authorization_id=(
                     event_id.split(":", 1)[1]
                     if is_app_markup
+                    else custom_model_markup_authorization_id_from_payout_event_id(
+                        event_id
+                    )
+                    if is_custom_markup
                     else user_model_authorization_id_from_payout_event_id(event_id)
                 ),
             )
@@ -1934,6 +1991,8 @@ class InMemoryStore:
         app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
+        custom_model_markup_basis_points: int = 0,
+        custom_model_owner_user_id: str = "",
         user_provided_model_id: str | None = None,
         user_provided_model_revision: int | None = None,
         user_model_prompt_price_microdollars_per_m: int | None = None,
@@ -1969,6 +2028,8 @@ class InMemoryStore:
             app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
+            custom_model_markup_basis_points=custom_model_markup_basis_points,
+            custom_model_owner_user_id=custom_model_owner_user_id,
             user_provided_model_id=user_provided_model_id,
             user_provided_model_revision=user_provided_model_revision,
             user_model_prompt_price_microdollars_per_m=(user_model_prompt_price_microdollars_per_m),

@@ -32,6 +32,16 @@ from trusted_router.custom_model_billing import (
     USER_MODEL_PAYOUT_SETTLE_FIELD,
     user_model_payout_event_id,
 )
+from trusted_router.custom_model_markup_billing import (
+    CUSTOM_MODEL_MARKUP_CHARGE_SETTLE_FIELD,
+    CUSTOM_MODEL_MARKUP_ID_SETTLE_FIELD,
+    CUSTOM_MODEL_MARKUP_OWNER_SETTLE_FIELD,
+    CUSTOM_MODEL_MARKUP_PAYOUT_SETTLE_FIELD,
+    collected_custom_model_markup_microdollars,
+    custom_model_markup_microdollars,
+    custom_model_markup_owner_share_microdollars,
+    custom_model_markup_payout_event_id,
+)
 from trusted_router.partner_billing import PARTNER_OPERATOR_COST_SETTLE_FIELD
 from trusted_router.services import settle_outbox_apply as apply_mod
 from trusted_router.services.settle_outbox_apply import ApplyOutcome, apply_frozen_settle
@@ -49,8 +59,9 @@ PROVIDER = "anthropic"
 ENDPOINT_ID = "anthropic/claude-haiku-4.5@anthropic/prepaid"
 ESTIMATE = 1_000_000
 TOTAL_CREDIT = 5_000_000
-USER_MODEL_ID = "trustedrouter/user-outbox-payout"
+USER_MODEL_ID = "tr-user-model/test-outbox-payout"
 USER_MODEL_ENDPOINT_ID = f"{USER_MODEL_ID}@trustedrouter/credits"
+CUSTOM_MARKUP_MODEL_ID = "tr-custom-model/test-outbox-markup"
 
 
 @pytest.fixture
@@ -148,6 +159,39 @@ def _typed_app_authorization(
         app_id="app-markup",
         app_markup_basis_points=markup_basis_points,
         app_owner_user_id="owner-app-markup",
+        expires_at="2026-01-01T00:00:00Z",
+    )
+    assert outcome == AuthorizeOutcome.ACCEPTED
+    assert auth is not None
+    return auth
+
+
+def _typed_custom_markup_authorization(
+    store: Any,
+    *,
+    workspace_id: str,
+    key_hash: str,
+    markup_basis_points: int = 1_500,
+) -> GatewayAuthorization:
+    outcome, auth = store.authorize_gateway_typed(
+        workspace_id=workspace_id,
+        key_hash=key_hash,
+        estimate=ESTIMATE,
+        has_credit_candidate=True,
+        reservation_usage_type="Credits",
+        model_id=MODEL_ID,
+        provider=PROVIDER,
+        requested_model_id=CUSTOM_MARKUP_MODEL_ID,
+        candidate_model_ids=[MODEL_ID],
+        region="us",
+        endpoint_id=ENDPOINT_ID,
+        candidate_endpoint_ids=[ENDPOINT_ID],
+        idempotency_key=None,
+        idempotency_fingerprint=None,
+        custom_model_id=CUSTOM_MARKUP_MODEL_ID,
+        custom_model_revision=4,
+        custom_model_markup_basis_points=markup_basis_points,
+        custom_model_owner_user_id="owner-custom-markup",
         expires_at="2026-01-01T00:00:00Z",
     )
     assert outcome == AuthorizeOutcome.ACCEPTED
@@ -492,6 +536,123 @@ def test_typed_app_markup_settle_and_outbox_replay_book_exact_money_once(
     assert markup - payout == 11_429
 
 
+def test_typed_custom_markup_settle_and_replay_book_exact_money_once(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, db, _bt = fake_store
+    workspace_id = "ws_apply_custom_markup"
+    _seed_credit(store, workspace_id)
+    key = _make_key(store, workspace_id)
+    auth = _typed_custom_markup_authorization(
+        store,
+        workspace_id=workspace_id,
+        key_hash=key.hash,
+    )
+    token_cost = 800_000
+    markup = custom_model_markup_microdollars(
+        token_cost,
+        auth.custom_model_markup_basis_points,
+    )
+    charge = token_cost + markup
+    payout = custom_model_markup_owner_share_microdollars(markup)
+    body = json.loads(_settle_body(auth.id))
+    body.update(
+        {
+            CUSTOM_MODEL_MARKUP_CHARGE_SETTLE_FIELD: markup,
+            CUSTOM_MODEL_MARKUP_PAYOUT_SETTLE_FIELD: payout,
+            CUSTOM_MODEL_MARKUP_OWNER_SETTLE_FIELD: auth.custom_model_owner_user_id,
+            CUSTOM_MODEL_MARKUP_ID_SETTLE_FIELD: auth.custom_model_id,
+        }
+    )
+    row = _row(auth, cost=charge, settle_body=json.dumps(body))
+
+    assert apply_frozen_settle(row) == ApplyOutcome.SETTLED_NOW
+    assert apply_frozen_settle(row) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+    assert _typed_credit(db, workspace_id)["total_usage"] == charge
+    assert store.earnings_summary(auth.custom_model_owner_user_id)["total_earned"] == payout
+    movements = store.list_credit_movements(
+        f"user:{auth.custom_model_owner_user_id}"
+    )
+    assert len(movements) == 1
+    assert movements[0].movement_id == custom_model_markup_payout_event_id(auth.id)
+    assert movements[0].kind == "custom_model_markup_payout"
+    assert movements[0].custom_model_id == CUSTOM_MARKUP_MODEL_ID
+    assert movements[0].authorization_id == auth.id
+    generations = _generation_bodies(db)
+    assert len(generations) == 1
+    assert generations[0]["custom_model_id"] == CUSTOM_MARKUP_MODEL_ID
+    assert generations[0]["custom_model_markup_microdollars"] == markup
+
+
+@pytest.mark.parametrize(
+    ("field", "forged"),
+    [
+        (CUSTOM_MODEL_MARKUP_CHARGE_SETTLE_FIELD, 1),
+        (CUSTOM_MODEL_MARKUP_PAYOUT_SETTLE_FIELD, 1),
+        (CUSTOM_MODEL_MARKUP_OWNER_SETTLE_FIELD, "forged-owner"),
+        (CUSTOM_MODEL_MARKUP_ID_SETTLE_FIELD, "tr-custom-model/forged-model"),
+    ],
+)
+def test_forged_custom_markup_outbox_fields_do_not_charge_or_pay(
+    fake_store: tuple[Any, Any, Any],
+    field: str,
+    forged: Any,
+) -> None:
+    store, db, _bt = fake_store
+    workspace_id = f"ws_forged_custom_markup_{field[-12:]}"
+    _seed_credit(store, workspace_id)
+    key = _make_key(store, workspace_id)
+    auth = _typed_custom_markup_authorization(
+        store,
+        workspace_id=workspace_id,
+        key_hash=key.hash,
+    )
+    token_cost = 800_000
+    markup = custom_model_markup_microdollars(
+        token_cost,
+        auth.custom_model_markup_basis_points,
+    )
+    payout = custom_model_markup_owner_share_microdollars(markup)
+    body = json.loads(_settle_body(auth.id))
+    body.update(
+        {
+            CUSTOM_MODEL_MARKUP_CHARGE_SETTLE_FIELD: markup,
+            CUSTOM_MODEL_MARKUP_PAYOUT_SETTLE_FIELD: payout,
+            CUSTOM_MODEL_MARKUP_OWNER_SETTLE_FIELD: auth.custom_model_owner_user_id,
+            CUSTOM_MODEL_MARKUP_ID_SETTLE_FIELD: auth.custom_model_id,
+            field: forged,
+        }
+    )
+
+    assert (
+        apply_frozen_settle(
+            _row(auth, cost=token_cost + markup, settle_body=json.dumps(body))
+        )
+        == ApplyOutcome.INVALID_ROW
+    )
+    assert _typed_credit(db, workspace_id)["total_usage"] == 0
+    assert store.earnings_summary(auth.custom_model_owner_user_id)["total_earned"] == 0
+    assert store.get_gateway_authorization(auth.id).settled is False
+
+
+def test_missing_custom_markup_outbox_fields_fail_closed(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, db, _bt = fake_store
+    workspace_id = "ws_missing_custom_markup_fields"
+    _seed_credit(store, workspace_id)
+    key = _make_key(store, workspace_id)
+    auth = _typed_custom_markup_authorization(
+        store,
+        workspace_id=workspace_id,
+        key_hash=key.hash,
+    )
+
+    assert apply_frozen_settle(_row(auth, cost=900_000)) == ApplyOutcome.INVALID_ROW
+    assert _typed_credit(db, workspace_id)["total_usage"] == 0
+    assert store.earnings_summary(auth.custom_model_owner_user_id)["total_earned"] == 0
+
+
 def test_regional_clamp_frozen_payout_replays_without_dead_letter(
     fake_store: tuple[Any, Any, Any],
 ) -> None:
@@ -677,6 +838,66 @@ def test_unclaimed_frozen_overcharge_is_corrected_atomically_and_crash_replays_i
     ) == "done"
     assert db.gateway_authorizations[auth.id]["terminal_at"] is not None
     assert db.reservations[auth.credit_reservation_id]["terminal_at"] is not None
+
+
+def test_spend_lease_repair_pays_only_collected_custom_model_markup(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, db, _bt = fake_store
+    store.request_record_write_mode = "typed"
+    _enable_typed_generation_durability(store)
+    ws = "ws-spend-lease-custom-markup-repair"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_custom_markup_authorization(
+        store,
+        workspace_id=ws,
+        key_hash=key.hash,
+    )
+    allocation = 400_000
+    original_charge = 900_000
+    _stamp_spend_lease_binding(db, auth, allocation_micro=allocation)
+    original_markup = collected_custom_model_markup_microdollars(
+        original_charge,
+        auth.custom_model_markup_basis_points,
+    )
+    body = json.loads(_settle_body(auth.id))
+    body.update(
+        {
+            CUSTOM_MODEL_MARKUP_CHARGE_SETTLE_FIELD: original_markup,
+            CUSTOM_MODEL_MARKUP_PAYOUT_SETTLE_FIELD: (
+                custom_model_markup_owner_share_microdollars(original_markup)
+            ),
+            CUSTOM_MODEL_MARKUP_OWNER_SETTLE_FIELD: auth.custom_model_owner_user_id,
+            CUSTOM_MODEL_MARKUP_ID_SETTLE_FIELD: auth.custom_model_id,
+        }
+    )
+    outbox = SpannerSettleOutbox(db, store._param_types)
+    outbox.enqueue(
+        _row(auth, cost=original_charge, settle_body=json.dumps(body))
+    )
+    [claimed] = outbox.claim(limit=1)
+
+    assert apply_frozen_settle(claimed) == ApplyOutcome.SETTLED_NOW
+
+    collected_markup = collected_custom_model_markup_microdollars(
+        allocation,
+        auth.custom_model_markup_basis_points,
+    )
+    payout = custom_model_markup_owner_share_microdollars(collected_markup)
+    repaired = db.settle_outbox[(auth.id, "settle")]
+    repaired_body = json.loads(repaired["settle_body"])
+    assert repaired["actual_cost_micro"] == allocation
+    assert (
+        repaired_body[CUSTOM_MODEL_MARKUP_CHARGE_SETTLE_FIELD]
+        == collected_markup
+    )
+    assert repaired_body[CUSTOM_MODEL_MARKUP_PAYOUT_SETTLE_FIELD] == payout
+    assert _typed_credit(db, ws)["total_usage"] == allocation
+    assert store.earnings_summary(auth.custom_model_owner_user_id)["total_earned"] == payout
+    [generation] = _generation_bodies(db)
+    assert generation["total_cost_microdollars"] == allocation
+    assert generation["custom_model_markup_microdollars"] == collected_markup
 
 
 def test_ownerless_corrective_settle_returns_error_without_rewrite_claim_or_charge(

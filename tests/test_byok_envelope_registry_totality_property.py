@@ -60,7 +60,7 @@ disclose was itself a review finding:
     other name would not. On the read side that fails closed, because a model
     with no recognised read gets no kind and the law reports it as uncovered.
     On the write side it does not: see the scope limit below.
-  - `NON_ENVELOPE_KINDS`, five entries today, and `LOOSELY_TYPED_FIELDS`, two.
+  - `NON_ENVELOPE_KINDS`, four entries today, and `LOOSELY_TYPED_FIELDS`, two.
     Both are declarations with reasons and both are asserted in both
     directions, so an entry that stops being true fails the build.
   - `_OPAQUE_CONTAINERS`, the five builtin container types `_admits_any` calls
@@ -1159,7 +1159,6 @@ NON_ENVELOPE_KINDS = {
     # SpannerBroadcastDestinations.create in storage_gcp_broadcast.py.
     "broadcast_destination_by_workspace": "pointer row, dict literal body",
     "custom_model": "prompt-wrapper row, no encrypted envelope fields",
-    "custom_model_by_user": "pointer row, dict literal body",
     "user_model_slot": (
         "concurrency lease row containing only model/authorization ids and created_at"
     ),
@@ -1862,7 +1861,6 @@ def test_the_derivation_reproduces_todays_registry() -> None:
         "broadcast_destination",
         "broadcast_destination_by_workspace",
         "custom_model",
-        "custom_model_by_user",
         "user_model_slot",
         "user_provided_model",
         "user_provided_model_by_user",
@@ -1870,7 +1868,6 @@ def test_the_derivation_reproduces_todays_registry() -> None:
     assert {site.split(":")[0] for sites in DERIVED_ADJACENT_KINDS.values() for site in sites} == {
         "storage_gcp_byok.py",
         "storage_gcp_broadcast.py",
-        "storage_gcp_custom_models.py",
         "storage_gcp_user_models.py",
         "storage_postgres.py",
     }

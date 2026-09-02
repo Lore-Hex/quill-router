@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from trusted_router.auth import ManagementPrincipal, Principal, SettingsDep
+from trusted_router.creator_identity import creator_username_for_models
 from trusted_router.custom_model_rules import (
     assert_user_can_create_custom_models,
     require_custom_model_base_model,
@@ -39,15 +40,31 @@ def register_custom_model_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> JSONResponse:
         owner_user_id = _owner_user_id(principal)
-        assert_user_can_create_custom_models(STORE.get_user(owner_user_id), settings)
+        owner = STORE.get_user(owner_user_id)
+        assert_user_can_create_custom_models(owner, settings)
+        assert owner is not None
+        try:
+            owner_username = creator_username_for_models(
+                owner,
+                enforce_verification=settings.custom_models_verification_enforced,
+            )
+        except ValueError as exc:
+            raise api_error(
+                403,
+                "Choose a creator username before publishing custom models",
+                ErrorType.VERIFICATION_REQUIRED,
+                extra={"verification_url": "/console/account/verification"},
+            ) from exc
         _require_base_model(body.base_model_id)
         try:
             model = STORE.create_custom_model(
                 owner_user_id=owner_user_id,
                 owner_workspace_id=principal.workspace.id,
+                owner_username=owner_username,
                 name=body.name,
                 base_model_id=body.base_model_id,
                 hidden_prompt=body.hidden_prompt,
+                markup_basis_points=body.markup_basis_points,
                 enabled=body.enabled,
                 slug=body.slug,
             )
@@ -89,7 +106,8 @@ def register_custom_model_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> dict[str, Any]:
         owner_user_id = _owner_user_id(principal)
-        assert_user_can_create_custom_models(STORE.get_user(owner_user_id), settings)
+        owner = STORE.get_user(owner_user_id)
+        assert_user_can_create_custom_models(owner, settings)
         existing = _require_owner_model(model_id, principal)
         patch = model_to_dict(body)
         base_model_id = patch.get("base_model_id")

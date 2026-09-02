@@ -26,7 +26,6 @@ from trusted_router.storage import (
     UserProvidedModel,
     Workspace,
 )
-from trusted_router.storage_custom_models import custom_model_slug
 from trusted_router.user_model_rules import user_model_is_on_the_clock
 
 USER_MODEL_PRIVACY_NOTICE = (
@@ -148,10 +147,12 @@ def byok_provider_shape(config: ByokProviderConfig) -> dict[str, Any]:
 def custom_model_owner_shape(model: CustomModel) -> dict[str, Any]:
     return {
         "id": model.id,
-        "slug": custom_model_slug(model.id),
+        "slug": model.slug,
+        "owner_username": model.owner_username,
         "name": model.name,
         "base_model_id": model.base_model_id,
         "hidden_prompt": model.hidden_prompt,
+        "markup_basis_points": model.markup_basis_points,
         "revision": model.revision,
         "enabled": model.enabled,
         "owner_user_id": model.owner_user_id,
@@ -164,9 +165,11 @@ def custom_model_owner_shape(model: CustomModel) -> dict[str, Any]:
 def custom_model_public_shape(model: CustomModel) -> dict[str, Any]:
     return {
         "id": model.id,
-        "slug": custom_model_slug(model.id),
+        "slug": model.slug,
+        "owner_username": model.owner_username,
         "name": model.name,
         "base_model_id": model.base_model_id,
+        "markup_basis_points": model.markup_basis_points,
         "revision": model.revision,
         "enabled": model.enabled,
         "created_at": model.created_at,
@@ -196,7 +199,8 @@ def user_model_public_shape(
         privacy_notice += " A live person will read your messages and type the reply."
     return {
         "id": model.id,
-        "slug": custom_model_slug(model.id),
+        "slug": model.slug,
+        "owner_username": model.owner_username,
         "name": model.name,
         "description": model.description,
         "kind": model.kind,

@@ -7,6 +7,7 @@
     <div class="panel-body">
       <p>TrustedRouter's catalog is models from the usual providers. This is the other shelf: models that belong to whoever posted them. Register an HTTPS endpoint that speaks the OpenAI chat API, set a price per million tokens, and it appears in its own user-provided section — reachable by id, never mixed into the main marketplace, always labeled.</p>
       <p>Requests arrive at your endpoint the way any customer's would. You keep <span class="mono">70%</span> of what the caller is charged, paid in TrustedRouter credits.</p>
+      <p>Your verified creator username becomes part of the public ID. A creator named <span class="mono">ada</span> who chooses <span class="mono">live</span> receives <span class="mono">tr-user-model/ada-live</span>.</p>
       <pre><code>curl {{ control_plane_api_base_url }}/v1/user-models \
   -H "Authorization: Bearer $TRUSTEDROUTER_MANAGEMENT_KEY" \
   -H "Content-Type: application/json" \

@@ -9,10 +9,9 @@ from typing import Any
 from trusted_router.storage_custom_models import (
     CUSTOM_MODEL_ID_CHARS,
     CUSTOM_MODEL_ID_RANDOM_LENGTH,
-    CUSTOM_MODEL_PREFIX,
-    custom_model_id_from_slug,
-    custom_model_slug,
-    normalize_custom_model_id,
+    normalize_user_provided_model_id,
+    user_provided_model_id_from_slug,
+    user_provided_model_slug,
 )
 from trusted_router.storage_models import (
     EncryptedSecretEnvelope,
@@ -60,6 +59,7 @@ class InMemoryUserProvidedModels:
         *,
         owner_user_id: str,
         owner_workspace_id: str,
+        owner_username: str,
         name: str,
         kind: str,
         description: str = "",
@@ -90,9 +90,12 @@ class InMemoryUserProvidedModels:
             if len(existing) >= USER_PROVIDED_MODEL_LIMIT_PER_USER:
                 raise ValueError("custom_model_limit_exceeded")
             model_id = (
-                self._new_id_locked(other_model_exists)
+                self._new_id_locked(owner_username, other_model_exists)
                 if slug is None
-                else custom_model_id_from_slug(slug)
+                else user_provided_model_id_from_slug(
+                    slug,
+                    username=owner_username,
+                )
             )
             if model_id in self.models or (
                 other_model_exists is not None and other_model_exists(model_id)
@@ -102,13 +105,16 @@ class InMemoryUserProvidedModels:
                 id=model_id,
                 owner_user_id=owner_user_id,
                 owner_workspace_id=owner_workspace_id,
+                owner_username=owner_username,
+                slug=user_provided_model_slug(model_id, username=owner_username),
                 name=name,
                 kind=kind,
                 description=description,
                 display_identity=display_identity,
                 display_name=display_name,
                 endpoint_url=endpoint_url,
-                upstream_model_id=upstream_model_id or custom_model_slug(model_id),
+                upstream_model_id=upstream_model_id
+                or user_provided_model_slug(model_id, username=owner_username),
                 encrypted_endpoint_api_key=encrypted_endpoint_api_key,
                 endpoint_key_hint=endpoint_key_hint,
                 encrypted_signing_secret=encrypted_signing_secret,
@@ -140,10 +146,12 @@ class InMemoryUserProvidedModels:
 
     def get(self, model_id: str) -> UserProvidedModel | None:
         with self._lock:
-            return self.models.get(normalize_custom_model_id(model_id))
+            return self.models.get(normalize_user_provided_model_id(model_id))
 
     def get_many(self, model_ids: list[str]) -> dict[str, UserProvidedModel]:
-        canonical_ids = [normalize_custom_model_id(model_id) for model_id in model_ids]
+        canonical_ids = [
+            normalize_user_provided_model_id(model_id) for model_id in model_ids
+        ]
         with self._lock:
             return {
                 model_id: self.models[model_id]
@@ -161,12 +169,15 @@ class InMemoryUserProvidedModels:
     ) -> UserProvidedModel:
         values = dict(patch)
         with self._lock:
-            model = self.models.get(normalize_custom_model_id(model_id))
+            model = self.models.get(normalize_user_provided_model_id(model_id))
             if model is None or model.owner_user_id != owner_user_id:
                 raise ValueError("custom_model_not_found")
             new_id = None
             if "slug" in values:
-                new_id = custom_model_id_from_slug(str(values.pop("slug")))
+                new_id = user_provided_model_id_from_slug(
+                    str(values.pop("slug")),
+                    username=model.owner_username,
+                )
                 if new_id != model.id and (
                     new_id in self.models
                     or (other_model_exists is not None and other_model_exists(new_id))
@@ -178,6 +189,10 @@ class InMemoryUserProvidedModels:
             if new_id is not None and new_id != model.id:
                 self.models.pop(model.id, None)
                 model.id = new_id
+                model.slug = user_provided_model_slug(
+                    new_id,
+                    username=model.owner_username,
+                )
                 self.models[model.id] = model
             model.revision += 1
             model.updated_at = iso_now()
@@ -185,7 +200,7 @@ class InMemoryUserProvidedModels:
 
     def delete(self, model_id: str, *, owner_user_id: str) -> bool:
         with self._lock:
-            canonical = normalize_custom_model_id(model_id)
+            canonical = normalize_user_provided_model_id(model_id)
             model = self.models.get(canonical)
             if model is None or model.owner_user_id != owner_user_id:
                 return False
@@ -266,7 +281,7 @@ class InMemoryUserProvidedModels:
         """
         with self._lock:
             now = time.monotonic()
-            slots = self.slots.setdefault(normalize_custom_model_id(model_id), {})
+            slots = self.slots.setdefault(normalize_user_provided_model_id(model_id), {})
             for stale in [aid for aid, exp in slots.items() if exp <= now]:
                 slots.pop(stale, None)
             if authorization_id in slots:
@@ -278,7 +293,7 @@ class InMemoryUserProvidedModels:
 
     def release_slot(self, model_id: str, authorization_id: str) -> None:
         with self._lock:
-            canonical = normalize_custom_model_id(model_id)
+            canonical = normalize_user_provided_model_id(model_id)
             slots = self.slots.get(canonical)
             if slots is None:
                 return
@@ -299,19 +314,20 @@ class InMemoryUserProvidedModels:
         return rows
 
     def _owned_model(self, model_id: str, owner_user_id: str) -> UserProvidedModel:
-        model = self.models.get(normalize_custom_model_id(model_id))
+        model = self.models.get(normalize_user_provided_model_id(model_id))
         if model is None or model.owner_user_id != owner_user_id:
             raise ValueError("custom_model_not_found")
         return model
 
     def _required_model(self, model_id: str) -> UserProvidedModel:
-        model = self.models.get(normalize_custom_model_id(model_id))
+        model = self.models.get(normalize_user_provided_model_id(model_id))
         if model is None:
             raise ValueError("custom_model_not_found")
         return model
 
     def _new_id_locked(
         self,
+        owner_username: str,
         other_model_exists: Callable[[str], bool] | None,
     ) -> str:
         for _ in range(100):
@@ -319,7 +335,10 @@ class InMemoryUserProvidedModels:
                 secrets.choice(CUSTOM_MODEL_ID_CHARS)
                 for _ in range(CUSTOM_MODEL_ID_RANDOM_LENGTH)
             )
-            model_id = f"{CUSTOM_MODEL_PREFIX}{suffix}"
+            model_id = user_provided_model_id_from_slug(
+                suffix,
+                username=owner_username,
+            )
             if model_id not in self.models and not (
                 other_model_exists is not None and other_model_exists(model_id)
             ):

@@ -51,6 +51,10 @@ class SignupRequest(_Strict):
     name: str | None = Field(default=None, max_length=80)
 
 
+class CreatorUsernameRequest(_Strict):
+    username: str = Field(min_length=3, max_length=32)
+
+
 class CheckoutRequest(_Lenient):
     amount: Decimal | str | int | float = Decimal("20")
     workspace_id: str | None = None
@@ -203,6 +207,7 @@ class CustomModelCreateRequest(_Strict):
     slug: str | None = Field(default=None, min_length=3, max_length=96)
     base_model_id: str = Field(min_length=1, max_length=256)
     hidden_prompt: str = Field(min_length=0, max_length=262_144)
+    markup_basis_points: int = Field(default=0, ge=0, le=30_000)
     enabled: bool = True
 
 
@@ -211,6 +216,7 @@ class CustomModelPatchRequest(_Strict):
     slug: str | None = Field(default=None, min_length=3, max_length=96)
     base_model_id: str | None = Field(default=None, min_length=1, max_length=256)
     hidden_prompt: str | None = Field(default=None, min_length=0, max_length=262_144)
+    markup_basis_points: int | None = Field(default=None, ge=0, le=30_000)
     enabled: bool | None = None
 
 

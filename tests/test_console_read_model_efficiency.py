@@ -81,7 +81,7 @@ def test_spanner_user_model_batch_lookup_is_at_most_one_statement(count: int) ->
 
     database.snapshot_execute_sql_calls = 0
     database.snapshot_sql.clear()
-    lookup_ids = model_ids + (["trustedrouter/user-missing"] if model_ids else [])
+    lookup_ids = model_ids + (["tr-user-model/missing-model"] if model_ids else [])
     models = store.get_user_models_by_ids(lookup_ids)
 
     assert list(models) == model_ids
@@ -94,7 +94,7 @@ def test_postgres_user_model_batch_lookup_is_one_statement(
 ) -> None:
     models = [
         UserProvidedModel(
-            id=f"trustedrouter/user-pg-batch-{index}",
+            id=f"tr-user-model/pg-batch-{index}",
             owner_user_id="usr_owner",
             owner_workspace_id="ws_owner",
             name=f"Postgres model {index}",
@@ -124,7 +124,7 @@ def test_postgres_user_model_batch_lookup_is_one_statement(
     result = store.get_user_models_by_ids(
         [
             f" {models[0].id.upper()} ",
-            models[1].id.removeprefix("trustedrouter/"),
+            f" {models[1].id.upper()} ",
             models[0].id,
             models[2].id,
         ]
@@ -185,7 +185,7 @@ def test_spanner_owner_model_join_rejects_noncanonical_and_unsafe_pointers() -> 
     store._write_entity(
         "custom_model_by_user",
         f"{alice.id}#dangling",
-        {"model_id": "trustedrouter/user-missing"},
+        {"model_id": "tr-user-model/missing-model"},
     )
 
     database.snapshot_execute_sql_calls = 0
@@ -229,7 +229,7 @@ def test_user_model_owner_shape_reuses_known_owner(
     owner = store.ensure_user("owner-shape@example.com")
     workspace = store.list_workspaces_for_user(owner.id)[0]
     model = UserProvidedModel(
-        id="trustedrouter/user-owner-shape",
+        id="tr-user-model/owner-shape-model",
         owner_user_id=owner.id,
         owner_workspace_id=workspace.id,
         name="Known owner",

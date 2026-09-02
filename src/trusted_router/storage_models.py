@@ -126,6 +126,7 @@ class ReceiptKey:
 class User:
     id: str
     email: str | None
+    username: str | None = None
     created_at: str = field(default_factory=iso_now)
     email_verified: bool = False
     wallet_address: str | None = None
@@ -356,6 +357,9 @@ class CustomModel:
     name: str
     base_model_id: str
     hidden_prompt: str
+    owner_username: str = ""
+    slug: str = ""
+    markup_basis_points: int = 0
     revision: int = 1
     enabled: bool = True
     created_at: str = field(default_factory=iso_now)
@@ -369,6 +373,8 @@ class UserProvidedModel:
     owner_workspace_id: str
     name: str
     kind: str
+    owner_username: str = ""
+    slug: str = ""
     description: str = ""
     display_identity: str = "handle"
     display_name: str = ""
@@ -637,6 +643,8 @@ class GatewayAuthorization:
     receipt_fee_basis_points: int = 0
     custom_model_id: str | None = None
     custom_model_revision: int | None = None
+    custom_model_markup_basis_points: int = 0
+    custom_model_owner_user_id: str = ""
     user_provided_model_id: str | None = None
     user_provided_model_revision: int | None = None
     user_model_prompt_price_microdollars_per_m: int | None = None
@@ -764,6 +772,14 @@ class AppMarkupPayout:
     payer_workspace_id: str
 
 
+@dataclass(frozen=True)
+class CustomModelMarkupPayout:
+    owner_user_id: str
+    model_id: str
+    amount_microdollars: int
+    payer_workspace_id: str
+
+
 @dataclass
 class Generation:
     id: str
@@ -785,6 +801,7 @@ class Generation:
     # request metadata above.
     app_id: str = ""
     app_markup_microdollars: int = 0
+    custom_model_markup_microdollars: int = 0
     usage_estimated: bool = True
     cached_input_tokens: int = 0
     reasoning_tokens: int = 0
@@ -948,6 +965,7 @@ class Generation:
         output_tokens: int,
         actual_cost_microdollars: int,
         app_markup_microdollars: int = 0,
+        custom_model_markup_microdollars: int = 0,
         operator_cost_microdollars: int | None = None,
     ) -> Generation:
         elapsed = max(float(body.get("elapsed_seconds") or 0.001), 0.001)
@@ -973,6 +991,7 @@ class Generation:
             app=app,
             app_id=authorization.app_id,
             app_markup_microdollars=app_markup_microdollars,
+            custom_model_markup_microdollars=custom_model_markup_microdollars,
             tokens_prompt=input_tokens,
             tokens_completion=output_tokens,
             total_cost_microdollars=actual_cost_microdollars,
@@ -1045,7 +1064,10 @@ class Generation:
                 client_context.failover_used if client_context is not None else None
             ),
             operator_cost_microdollars=operator_cost_microdollars,
-            custom_model_id=authorization.user_provided_model_id,
+            custom_model_id=(
+                authorization.custom_model_id
+                or authorization.user_provided_model_id
+            ),
             route_type=(str(body["route_type"]) if body.get("route_type") else None),
             video_input_mode=(
                 str(body["video_input_mode"]) if body.get("video_input_mode") else None
@@ -1090,6 +1112,9 @@ class Generation:
             "total_cost": microdollars_to_float(self.total_cost_microdollars),
             "total_cost_microdollars": self.total_cost_microdollars,
             "app_markup_microdollars": self.app_markup_microdollars,
+            "custom_model_markup_microdollars": (
+                self.custom_model_markup_microdollars
+            ),
             "tokens_prompt": self.tokens_prompt,
             "tokens_completion": self.tokens_completion,
             "native_tokens_prompt": self.tokens_prompt,

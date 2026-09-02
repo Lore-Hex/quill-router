@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
+from trusted_router.custom_model_markup_billing import (
+    custom_model_markup_microdollars,
+    custom_model_markup_owner_share_microdollars,
+    custom_model_markup_payout_event_id,
+)
 from trusted_router.main import create_app
 from trusted_router.provider_types import estimate_tokens_from_text
+from trusted_router.routes.internal import gateway
 from trusted_router.storage import STORE
+from trusted_router.storage_models import generation_id_for_authorization
 
 
 def _create_key(client: TestClient, email: str = "alice@example.com") -> dict:
@@ -23,11 +33,13 @@ def _create_custom_model(
     hidden_prompt: str = "private policy",
     enabled: bool = True,
     slug: str | None = None,
+    markup_basis_points: int = 0,
 ) -> dict:
     body = {
         "name": name,
         "base_model_id": base_model_id,
         "hidden_prompt": hidden_prompt,
+        "markup_basis_points": markup_basis_points,
         "enabled": enabled,
     }
     if slug is not None:
@@ -43,7 +55,7 @@ def _create_custom_model(
 
 def test_custom_model_crud_owner_limit_and_public_catalog_redaction(client: TestClient) -> None:
     created = _create_custom_model(client, hidden_prompt="secret reviewer prompt")
-    assert created["id"].startswith("trustedrouter/user-")
+    assert created["id"].startswith("tr-custom-model/alice-")
     assert created["hidden_prompt"] == "secret reviewer prompt"
     assert created["revision"] == 1
 
@@ -100,7 +112,7 @@ def test_custom_model_crud_owner_limit_and_public_catalog_redaction(client: Test
 
 def test_custom_model_slug_create_duplicate_and_rename(client: TestClient) -> None:
     created = _create_custom_model(client, slug="legal-reviewer")
-    assert created["id"] == "trustedrouter/user-legal-reviewer"
+    assert created["id"] == "tr-custom-model/alice-legal-reviewer"
     assert created["slug"] == "legal-reviewer"
 
     duplicate = client.post(
@@ -108,7 +120,7 @@ def test_custom_model_slug_create_duplicate_and_rename(client: TestClient) -> No
         headers={"x-trustedrouter-user": "alice@example.com"},
         json={
             "name": "dupe",
-            "slug": "trustedrouter/user-legal-reviewer",
+            "slug": "legal-reviewer",
             "base_model_id": "anthropic/claude-sonnet-4.6",
             "hidden_prompt": "x",
         },
@@ -133,7 +145,7 @@ def test_custom_model_slug_create_duplicate_and_rename(client: TestClient) -> No
         json={"slug": "litigation-briefs"},
     )
     assert renamed.status_code == 200, renamed.text
-    assert renamed.json()["data"]["id"] == "trustedrouter/user-litigation-briefs"
+    assert renamed.json()["data"]["id"] == "tr-custom-model/alice-litigation-briefs"
     assert renamed.json()["data"]["slug"] == "litigation-briefs"
     assert renamed.json()["data"]["revision"] == 2
 
@@ -143,7 +155,7 @@ def test_custom_model_slug_create_duplicate_and_rename(client: TestClient) -> No
     )
     assert old.status_code == 404
     new = client.get(
-        "/v1/custom-models/trustedrouter/user-litigation-briefs",
+        "/v1/custom-models/tr-custom-model/alice-litigation-briefs",
         headers={"x-trustedrouter-user": "alice@example.com"},
     )
     assert new.status_code == 200
@@ -166,7 +178,7 @@ def test_custom_models_validate_prompt_length_and_base_model(client: TestClient)
         headers={"x-trustedrouter-user": "alice@example.com"},
         json={
             "name": "nested",
-            "base_model_id": "trustedrouter/user-abc123",
+            "base_model_id": "tr-custom-model/alice-abc123",
             "hidden_prompt": "x",
         },
     )
@@ -286,6 +298,178 @@ def test_gateway_authorizes_custom_model_against_base_model_and_revision(
         },
     )
     assert replay.status_code == 409
+
+
+def test_custom_model_markup_is_frozen_charged_and_paid_exactly_once(
+    client: TestClient,
+) -> None:
+    owner = STORE.ensure_user("alice@example.com")
+    payer_key = _create_key(client, email="payer@example.com")
+    unmarked = _create_custom_model(
+        client,
+        slug="plain-reviewer",
+        hidden_prompt="same private policy",
+    )
+    marked = _create_custom_model(
+        client,
+        slug="paid-reviewer",
+        hidden_prompt="same private policy",
+        markup_basis_points=1_500,
+    )
+
+    def authorize(model_id: str, idem: str) -> tuple[dict[str, Any], Any]:
+        response = client.post(
+            "/v1/internal/gateway/authorize",
+            json={
+                "api_key_hash": payer_key["hash"],
+                "model": model_id,
+                "estimated_input_tokens": 1_000,
+                "max_output_tokens": 100,
+                "idempotency_key": idem,
+            },
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        authorization = STORE.get_gateway_authorization(data["authorization_id"])
+        assert authorization is not None
+        return data, authorization
+
+    _plain_data, plain_auth = authorize(unmarked["id"], "plain-markup-hold")
+    marked_data, marked_auth = authorize(marked["id"], "paid-markup-hold")
+    assert marked_auth.estimated_microdollars == (
+        plain_auth.estimated_microdollars
+        + custom_model_markup_microdollars(plain_auth.estimated_microdollars, 1_500)
+    )
+    assert marked_auth.custom_model_markup_basis_points == 1_500
+    assert marked_auth.custom_model_owner_user_id == owner.id
+    assert marked_auth.custom_model_id == marked["id"]
+
+    changed = client.patch(
+        f"/v1/custom-models/{marked['id']}",
+        headers={"x-trustedrouter-user": "alice@example.com"},
+        json={"markup_basis_points": 30_000},
+    )
+    assert changed.status_code == 200, changed.text
+
+    settle_body = {
+        "authorization_id": marked_data["authorization_id"],
+        "actual_input_tokens": 1_000,
+        "actual_output_tokens": 100,
+        "elapsed_seconds": 0.25,
+    }
+    settled = client.post("/v1/internal/gateway/settle", json=settle_body)
+    replayed = client.post("/v1/internal/gateway/settle", json=settle_body)
+    assert settled.status_code == replayed.status_code == 200
+
+    generation = STORE.get_generation(
+        generation_id_for_authorization(marked_data["authorization_id"])
+    )
+    assert generation is not None
+    token_cost = (
+        generation.total_cost_microdollars
+        - generation.custom_model_markup_microdollars
+    )
+    expected_markup = custom_model_markup_microdollars(token_cost, 1_500)
+    expected_payout = custom_model_markup_owner_share_microdollars(expected_markup)
+    assert generation.custom_model_markup_microdollars == expected_markup
+    assert STORE.earnings_summary(owner.id)["total_earned"] == expected_payout
+    movements = STORE.list_credit_movements(f"user:{owner.id}")
+    matching = [
+        movement
+        for movement in movements
+        if movement.movement_id
+        == custom_model_markup_payout_event_id(marked_data["authorization_id"])
+    ]
+    assert len(matching) == 1
+    assert matching[0].kind == "custom_model_markup_payout"
+    assert matching[0].custom_model_id == marked["id"]
+
+
+def test_regional_lease_clamp_pays_only_collected_custom_markup(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = STORE.ensure_user("alice@example.com")
+    payer_key = _create_key(client, email="regional-payer@example.com")
+    custom = _create_custom_model(
+        client,
+        slug="regional-markup",
+        markup_basis_points=30_000,
+    )
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": payer_key["hash"],
+            "model": custom["id"],
+            "estimated_input_tokens": 1_000,
+            "max_output_tokens": 100,
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    authorization_id = authorize.json()["data"]["authorization_id"]
+    authorization = STORE.get_gateway_authorization(authorization_id)
+    assert authorization is not None
+    authorization.estimated_microdollars = 400
+    authorization.settlement = "regional_lease"
+    before = STORE.credit_money_snapshot(authorization.workspace_id)
+    assert before is not None
+    monkeypatch.setattr(
+        gateway,
+        "_endpoint_cost_microdollars",
+        lambda *_args, **_kwargs: 200,
+    )
+
+    settled = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": authorization_id,
+            "actual_input_tokens": 1_000,
+            "actual_output_tokens": 100,
+            "elapsed_seconds": 0.25,
+        },
+    )
+    assert settled.status_code == 200, settled.text
+
+    generation = STORE.get_generation(generation_id_for_authorization(authorization_id))
+    assert generation is not None
+    after = STORE.credit_money_snapshot(authorization.workspace_id)
+    assert after is not None
+    assert generation.total_cost_microdollars == 400
+    assert generation.custom_model_markup_microdollars == 300
+    assert STORE.earnings_summary(owner.id)["total_earned"] == 210
+    assert after[1] - before[1] == 400
+
+
+def test_custom_model_refund_creates_no_markup_payout(client: TestClient) -> None:
+    owner = STORE.ensure_user("alice@example.com")
+    payer_key = _create_key(client, email="payer@example.com")
+    custom = _create_custom_model(
+        client,
+        slug="refunded-reviewer",
+        markup_basis_points=2_000,
+    )
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": payer_key["hash"],
+            "model": custom["id"],
+            "estimated_input_tokens": 100,
+            "max_output_tokens": 10,
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    authorization_id = authorize.json()["data"]["authorization_id"]
+
+    refunded = client.post(
+        "/v1/internal/gateway/refund",
+        json={"authorization_id": authorization_id},
+    )
+    assert refunded.status_code == 200, refunded.text
+    assert STORE.earnings_summary(owner.id)["total_earned"] == 0
+    assert custom_model_markup_payout_event_id(authorization_id) not in {
+        movement.movement_id
+        for movement in STORE.list_credit_movements(f"user:{owner.id}")
+    }
 
 
 def test_web_search_rejects_custom_models_with_private_routing_bases(
@@ -513,4 +697,4 @@ def test_console_custom_models_and_user_chat_locked_model_smoke() -> None:
     chat = client.get(f"/user-chat?model={custom.id}")
     assert chat.status_code == 200
     assert custom.id in chat.text
-    assert "tr_user_chat_state_trustedrouter_user_" in chat.text
+    assert "tr_user_chat_state_tr_custom_model_alice_console_model" in chat.text
