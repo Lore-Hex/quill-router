@@ -3065,6 +3065,7 @@ class SpannerBigtableStore:
             return "unavailable", None
         from trusted_router.regional_quota_ledger import (
             RegionalLeaseLedgerError,
+            RegionalLeaseNotFound,
         )
         from trusted_router.services.regional_quota_leases import (
             LeaseExhaustedError,
@@ -3147,6 +3148,17 @@ class SpannerBigtableStore:
                 break
             except (LeaseExhaustedError, LeaseUnavailableError):
                 continue
+            except RegionalLeaseNotFound:
+                # The row was readable a moment ago and is gone at reserve
+                # time: ledger inconsistency, not latency. Keep the traceback.
+                log.warning(
+                    "regional quota lease vanished between read and reserve "
+                    "workspace_id=%s region=%s",
+                    workspace_id,
+                    region,
+                    exc_info=True,
+                )
+                return "unavailable", None
             except RegionalLeaseLedgerError as exc:
                 # Expected under cross-region latency or row contention: the
                 # request continues on the exact Spanner path. One line, no

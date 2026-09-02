@@ -21,6 +21,7 @@ from trusted_router.provider_lifecycle import provider_model_retired
 from trusted_router.regional_quota_ledger import (
     InMemoryRegionalQuotaLedger,
     RegionalLeaseLedgerError,
+    RegionalLeaseNotFound,
 )
 from trusted_router.routes.helpers import cost_microdollars
 from trusted_router.routes.internal import gateway as gateway_routes
@@ -305,6 +306,75 @@ def test_regional_ledger_read_failure_degrades_with_one_warning_and_no_traceback
     assert warnings[0].exc_info is None
     assert "cause=TimeoutError" in warnings[0].getMessage()
     assert "Traceback" not in caplog.text
+
+
+def test_regional_lease_vanishing_at_reserve_keeps_its_traceback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A row that read fine and is gone at reserve time is an inconsistency,
+    not latency: still degrade to the exact path, but keep the traceback."""
+    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    ledger = InMemoryRegionalQuotaLedger()
+    store._regional_quota_ledger = ledger
+    workspace = store.create_workspace(
+        "owner",
+        "regional-reserve-vanished",
+        trial_credit_microdollars=100_000_000,
+    )
+    _raw, api_key = store.create_api_key(
+        workspace_id=workspace.id,
+        name="regional-reserve-vanished",
+        creator_user_id="owner",
+    )
+    configure_store(store)
+    client = TestClient(
+        create_app(
+            Settings(
+                environment="test",
+                regional_quota_leases_enabled=True,
+                regional_quota_lease_issuance_enabled=True,
+                regional_quota_lease_pilot_workspace_ids=workspace.id,
+            ),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    def authorize(idempotency_key: str) -> httpx.Response:
+        return client.post(
+            "/v1/internal/gateway/authorize",
+            json={
+                "api_key_hash": api_key.hash,
+                "model": "anthropic/claude-opus-4.7",
+                "estimated_input_tokens": 1_000,
+                "max_output_tokens": 100,
+                "route_type": "chat.completions",
+                "idempotency_key": idempotency_key,
+            },
+        )
+
+    first = authorize("regional-reserve-vanished-1")
+    assert first.status_code == 200, first.text
+
+    def vanishing_reserve(*_args: object, **_kwargs: object) -> object:
+        raise RegionalLeaseNotFound("regional lease row is gone")
+
+    ledger.reserve = vanishing_reserve  # type: ignore[method-assign]
+    caplog.set_level(logging.WARNING)
+    second = authorize("regional-reserve-vanished-2")
+
+    assert second.status_code == 200, second.text
+    degraded = store.get_gateway_authorization(second.json()["data"]["authorization_id"])
+    assert degraded is not None and degraded.settlement == "local"
+    assert db.reservations[str(degraded.credit_reservation_id)]["credit_reserved_micro"] > 0
+    vanished = [
+        record
+        for record in caplog.records
+        if "regional quota lease vanished between read and reserve" in record.getMessage()
+    ]
+    assert len(vanished) == 1
+    assert vanished[0].exc_info is not None
+    assert "Traceback" in caplog.text
 
 
 def test_sakana_fugu_uses_exact_global_settlement_not_regional_escrow() -> None:
