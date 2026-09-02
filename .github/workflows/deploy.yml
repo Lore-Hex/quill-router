@@ -285,6 +285,9 @@ jobs:
         # exist before any serving revision can enable the workspace canary.
         run: bash scripts/deploy/regional_quota_ledger.sh
 
+      - name: Provision spend-lease Bigtable ledger
+        run: bash scripts/deploy/spend_lease_ledger.sh
+
   sync-runtime-secrets:
     # Validate the small set of runtime credentials while the image build and
     # schema verification run. SES credentials are rotated directly in GCP
