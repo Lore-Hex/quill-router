@@ -257,6 +257,12 @@ jobs:
           TR_BIGTABLE_INSTANCE_ID: trusted-router-logs
           TR_BIGTABLE_GENERATION_TABLE: trustedrouter-generations
         run: scripts/deploy/migrate_request_retention.sh --apply
+      - name: Apply inert spend-lease schema
+        env:
+          GCP_PROJECT_ID: quill-cloud-proxy
+          SPANNER_INSTANCE_ID: trusted-router-nam6
+          SPANNER_DATABASE_ID: trusted-router
+        run: scripts/deploy/migrate_spend_lease.sh
       - name: Apply bounded generation-record schema
         run: scripts/deploy/migrate_generation_records.sh --apply
       - name: Apply provider analytics outbox schema
