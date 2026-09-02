@@ -353,6 +353,16 @@ def test_regional_lease_shard_count_is_bounded(count: int) -> None:
         Settings(environment="test", regional_quota_lease_shard_count=count)
 
 
+def test_regional_ledger_timeout_defaults_to_a_cross_region_budget_and_is_bounded() -> None:
+    assert Settings(environment="test").regional_quota_ledger_timeout_seconds == 4.0
+    assert (
+        Settings(environment="test", regional_quota_ledger_timeout_seconds=3.0)
+    ).regional_quota_ledger_timeout_seconds == 3.0
+    for unsafe in (1.0, 0.0, 10.5):
+        with pytest.raises(ValidationError, match="LEDGER_TIMEOUT_SECONDS"):
+            Settings(environment="test", regional_quota_ledger_timeout_seconds=unsafe)
+
+
 def test_regional_lease_production_config_requires_fixed_profiles_and_outbox() -> None:
     common = {
         "environment": "staging",

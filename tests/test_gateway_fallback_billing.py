@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -224,6 +227,84 @@ def test_regional_ledger_failure_falls_back_to_exact_global_authorization() -> N
     assert authorization.settlement == "local"
     reservation = db.reservations[str(authorization.credit_reservation_id)]
     assert reservation["credit_reserved_micro"] > 0
+
+
+def test_regional_ledger_read_failure_degrades_with_one_warning_and_no_traceback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A europe-west4 process legitimately reads the us-central1 ledger for
+    callbacks; a cross-region timeout there is expected and the request must
+    continue on the exact path with a single warning line, not a traceback
+    that Error Reporting files as a crash."""
+    store, db, _ = make_fake_store(request_record_write_mode="typed")
+    ledger = InMemoryRegionalQuotaLedger()
+    store._regional_quota_ledger = ledger
+    workspace = store.create_workspace(
+        "owner",
+        "regional-read-failure",
+        trial_credit_microdollars=100_000_000,
+    )
+    _raw, api_key = store.create_api_key(
+        workspace_id=workspace.id,
+        name="regional-read-failure",
+        creator_user_id="owner",
+    )
+    configure_store(store)
+    client = TestClient(
+        create_app(
+            Settings(
+                environment="test",
+                regional_quota_leases_enabled=True,
+                regional_quota_lease_issuance_enabled=True,
+                regional_quota_lease_pilot_workspace_ids=workspace.id,
+            ),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    def authorize(idempotency_key: str) -> httpx.Response:
+        return client.post(
+            "/v1/internal/gateway/authorize",
+            json={
+                "api_key_hash": api_key.hash,
+                "model": "anthropic/claude-opus-4.7",
+                "estimated_input_tokens": 1_000,
+                "max_output_tokens": 100,
+                "route_type": "chat.completions",
+                "idempotency_key": idempotency_key,
+            },
+        )
+
+    first = authorize("regional-read-failure-1")
+    assert first.status_code == 200, first.text
+    seeded = store.get_gateway_authorization(first.json()["data"]["authorization_id"])
+    assert seeded is not None and seeded.settlement == "regional_lease"
+
+    def failing_get(lease_id: str, *, region: str) -> object:
+        del lease_id, region
+        raise RegionalLeaseLedgerError("regional lease read failed") from TimeoutError(
+            "504 Deadline Exceeded"
+        )
+
+    ledger.get = failing_get  # type: ignore[method-assign]
+    caplog.set_level(logging.WARNING)
+    second = authorize("regional-read-failure-2")
+
+    assert second.status_code == 200, second.text
+    degraded = store.get_gateway_authorization(second.json()["data"]["authorization_id"])
+    assert degraded is not None and degraded.settlement == "local"
+    assert db.reservations[str(degraded.credit_reservation_id)]["credit_reserved_micro"] > 0
+    warnings = [
+        record
+        for record in caplog.records
+        if "regional quota lease read/reserve failed" in record.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert warnings[0].levelno == logging.WARNING
+    assert warnings[0].exc_info is None
+    assert "cause=TimeoutError" in warnings[0].getMessage()
+    assert "Traceback" not in caplog.text
 
 
 def test_sakana_fugu_uses_exact_global_settlement_not_regional_escrow() -> None:

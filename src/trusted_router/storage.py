@@ -2681,6 +2681,9 @@ def create_store(settings: Any) -> Store:
                 settings, "analytics_dual_read_grace_seconds", 30
             ),
             regional_quota_leases_enabled=getattr(settings, "regional_quota_leases_enabled", False),
+            regional_quota_ledger_timeout_seconds=float(
+                getattr(settings, "regional_quota_ledger_timeout_seconds", 4.0)
+            ),
             regional_quota_bigtable_table=getattr(
                 settings,
                 "regional_quota_bigtable_table",

@@ -210,6 +210,23 @@ def test_gcp_store_opens_regional_ledger_when_local_issuance_is_disabled(
 
     assert store._regional_quota_ledger is not None
     assert store._regional_quota_ledger.supports_region("us-central1") is True
+    # Cross-region callbacks (a europe-west4 process reading the us-central1
+    # cluster) need more than the client's 1 s padded floor; the default
+    # budget is 4 s and the setting reaches the ledger unchanged.
+    assert store._regional_quota_ledger._operation_timeout_seconds == 4.0
+    tuned = SpannerBigtableStore(
+        project_id="project",
+        spanner_instance_id="spanner",
+        spanner_database_id="database",
+        bigtable_instance_id="bigtable",
+        bigtable_enabled=False,
+        analytics_read_mode="clickhouse-only",
+        regional_quota_leases_enabled=False,
+        regional_quota_bigtable_app_profiles={"us-central1": "quota-us"},
+        regional_quota_ledger_timeout_seconds=6.5,
+    )
+    assert tuned._regional_quota_ledger is not None
+    assert tuned._regional_quota_ledger._operation_timeout_seconds == 6.5
 
 
 def test_gcp_api_key_lookup_uses_index_and_never_stores_raw_key() -> None:

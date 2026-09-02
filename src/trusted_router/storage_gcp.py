@@ -339,6 +339,7 @@ class SpannerBigtableStore:
         regional_quota_leases_enabled: bool = False,
         regional_quota_bigtable_table: str = "trustedrouter-regional-quota",
         regional_quota_bigtable_app_profiles: dict[str, str] | None = None,
+        regional_quota_ledger_timeout_seconds: float = 4.0,
         spend_lease_bigtable_table: str = "trustedrouter-spend-lease",
         spend_lease_bigtable_app_profiles: dict[str, str] | None = None,
     ) -> None:
@@ -495,7 +496,8 @@ class SpannerBigtableStore:
                         app_profile_id=profile,
                     )
                     for region, profile in profiles.items()
-                }
+                },
+                operation_timeout_seconds=regional_quota_ledger_timeout_seconds,
             )
         spend_profiles = dict(spend_lease_bigtable_app_profiles or {})
         if spend_profiles:
@@ -3145,12 +3147,17 @@ class SpannerBigtableStore:
                 break
             except (LeaseExhaustedError, LeaseUnavailableError):
                 continue
-            except RegionalLeaseLedgerError:
+            except RegionalLeaseLedgerError as exc:
+                # Expected under cross-region latency or row contention: the
+                # request continues on the exact Spanner path. One line, no
+                # traceback — a traceback here is what fed Error Reporting.
                 log.warning(
-                    "regional quota lease read/reserve failed workspace_id=%s region=%s",
+                    "regional quota lease read/reserve failed workspace_id=%s region=%s "
+                    "error=%s cause=%s",
                     workspace_id,
                     region,
-                    exc_info=True,
+                    exc,
+                    type(exc.__cause__).__name__ if exc.__cause__ else "-",
                 )
                 return "unavailable", None
 
