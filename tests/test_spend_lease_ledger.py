@@ -33,6 +33,7 @@ from trusted_router.spend_lease_state import (
     ExistingLocal,
     FinalizationOutcome,
     Mismatch,
+    MonetaryMismatchProof,
     RecoveryProof,
     SpendLease,
     SpendLeaseAllocation,
@@ -313,6 +314,49 @@ def test_ambiguous_commit_that_landed_rereads_as_replay_without_second_write() -
     assert table.commit_attempts == commits_before + 1
     assert ledger.get("spend-lease-test", region=REGION) == result.lease
     assert result.lease.version == 1
+
+
+def test_monetary_mismatch_quarantine_round_trips_and_replays_without_write() -> None:
+    table = _FakeBigtableTable()
+    ledger = BigtableSpendLeaseLedger({REGION: table})
+    ledger.initialize(_candidate(), region=REGION)
+    _allocate(ledger)
+    ledger.bind(
+        "spend-lease-test",
+        region=REGION,
+        expected_provisional_id="provisional-1",
+        proof=BoundProof(
+            idempotency_scope="scope-1",
+            authorization_id="authorization-1",
+            lease_id="spend-lease-test",
+            gen=4,
+            allocated_micro=500,
+        ),
+    )
+    proof = MonetaryMismatchProof(
+        finalized_cost_microdollars=501,
+        allocated_micro=500,
+    )
+
+    first = ledger.quarantine(
+        "spend-lease-test",
+        region=REGION,
+        idempotency_scope="scope-1",
+        proof=proof,
+    )
+    commits_after_first = table.commit_attempts
+    replay = ledger.quarantine(
+        "spend-lease-test",
+        region=REGION,
+        idempotency_scope="scope-1",
+        proof=proof,
+    )
+
+    assert first.allocation.contradiction_proof == proof
+    assert ledger.get("spend-lease-test", region=REGION) == first.lease
+    assert replay.replayed
+    assert replay.lease == first.lease
+    assert table.commit_attempts == commits_after_first
 
 
 @pytest.mark.parametrize("transition_name", ["compensate", "bind", "tombstone_unminted"])
