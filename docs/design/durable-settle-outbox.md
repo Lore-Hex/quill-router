@@ -189,6 +189,17 @@ lease-claims due `pending` rows and for each:
   full `_settle_gateway_authorization` HTTP handler — which would re-run pricing
   and re-fire non-idempotent side effects (budget alerts, auto-refill, metadata
   broadcast, provider-benchmark samples) on every replay (SF7).
+- Spend-lease rows have one corrective exception to the general frozen-cost rule.
+  A rolling pre-clamp revision may have frozen a successful charge above its typed
+  allocation. While the reservation is still unclaimed, the drain caps that charge,
+  re-derives every charge-dependent payout hidden in `settle_body`, and rewrites both
+  fields in the same billing transaction. The rewrite is fenced by
+  `status='pending'` and the drain worker's `lease_owner`; a zero-row rewrite aborts
+  the transaction, so billing cannot commit while durable replay authority is stale.
+  The generation and analytics intent are constructed only from the corrected amount.
+  If an older revision already won the reservation, its historical booked charge is
+  left untouched and used for generation repair, then surfaced for spend-lease
+  quarantine rather than charged again.
 - Interprets the **richer finalize outcome** (§3): `settled_now` or
   `already_settled_with_charge` → `status='done'`; `already_released_free` on a
   row that intended a charge → **`dead` + alert** (the reaper beat us — invariant
@@ -204,6 +215,9 @@ lease-claims due `pending` rows and for each:
   outbox terminal retention timestamps in the same transaction. The
   authorization keeps only its content-free replay record so a client
   idempotency key remains valid for the full window.
+  Spend-lease finalization follows the same split retention rule: finalization
+  defers retention, and only the existing lease-fenced `mark(done)` arms it after
+  sibling-intent checks.
 - Final `ApplyOutcome` contract for the drain:
   `settled_now` → done. `already_settled_with_charge` means done for settle
   intent; for refund intent with a charged reservation, done plus the same

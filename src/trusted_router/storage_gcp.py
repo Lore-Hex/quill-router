@@ -3631,6 +3631,7 @@ class SpannerBigtableStore:
                 artifact = spend_lease_binding_plan.artifact
                 selected = dataclasses.replace(
                     base,
+                    settlement="spend_lease",
                     spend_lease_token=artifact.token,
                     spend_lease_id=artifact.lease_id,
                     spend_lease_cap_micro=artifact.cap_micro,

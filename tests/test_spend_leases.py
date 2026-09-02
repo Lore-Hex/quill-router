@@ -21,6 +21,7 @@ from trusted_router.spend_leases import (
     freeze_spend_lease_catalog,
     mint_shadow_spend_lease,
     parse_boot_auth_header,
+    spend_lease_binding_ineligibility_reason,
     spend_lease_catalog_estimate,
     spend_lease_eligible,
     spend_lease_ineligibility_reason,
@@ -103,6 +104,17 @@ def test_spend_lease_scope_salt_pins_sha256_hex_prefix() -> None:
 
 
 def test_spend_lease_eligibility_accepts_exact_credits_chat_cohort() -> None:
+    assert _eligible()
+
+
+def test_deferred_settlement_is_binding_ineligible_but_stage_a_shadow_is_unchanged() -> None:
+    stage_a_reason = _ineligibility_reason()
+
+    assert stage_a_reason is None
+    assert spend_lease_binding_ineligibility_reason(
+        stage_a_reason,
+        deferred_settlement_applies=True,
+    ) == "deferred_settlement"
     assert _eligible()
 
 

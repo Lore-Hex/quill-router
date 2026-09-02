@@ -1302,6 +1302,24 @@ class _FakeTransaction:
             new["updated_at"] = p["now"]
             self.pending_writes.append(("update_settle_outbox", pk, new))
             return 1
+        if sql.startswith("UPDATE tr_settle_outbox SET actual_cost_micro="):
+            _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "corrective-rewrite")
+            _require_pred(sql, "status='pending'", "corrective-rewrite")
+            _require_pred(sql, "lease_owner=@lease_owner", "corrective-rewrite")
+            pk = (p["aid"], p["kind"])
+            rec = self._settle_outbox_current(pk)
+            if rec is None or rec.get("status") != "pending":
+                return 0
+            if rec.get("lease_owner") != p["lease_owner"]:
+                return 0
+            new = dict(
+                rec,
+                actual_cost_micro=p["actual_cost_micro"],
+                settle_body=p["settle_body"],
+                updated_at=p["now"],
+            )
+            self.pending_writes.append(("update_settle_outbox", pk, new))
+            return 1
         if sql.startswith(
             "UPDATE tr_settle_outbox SET auto_refill_workspace_id=@workspace_id"
         ):

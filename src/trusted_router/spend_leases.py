@@ -75,6 +75,7 @@ SpendLeaseBindingFailure = Literal[
     "ledger_unavailable",
     "window_open",
     "mint_lost",
+    "deferred_settlement",
 ]
 SpendLeaseNoLeaseReason = SpendLeaseEligibilityFailure | SpendLeaseBindingFailure
 SpendLeaseBindingOutcome = Literal[
@@ -92,6 +93,18 @@ SpendLeaseBindingOutcome = Literal[
     "mint_lost",
     "ledger_unavailable",
 ]
+
+
+def spend_lease_binding_ineligibility_reason(
+    stage_a_reason: SpendLeaseEligibilityFailure | None,
+    *,
+    deferred_settlement_applies: bool,
+) -> SpendLeaseNoLeaseReason | None:
+    """Extend Stage A only at the binding seam, leaving shadow issuance intact."""
+
+    if stage_a_reason is not None:
+        return stage_a_reason
+    return "deferred_settlement" if deferred_settlement_applies else None
 
 
 def spend_lease_scope_salt(idempotency_scope: str) -> str:

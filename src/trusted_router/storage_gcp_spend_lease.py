@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from trusted_router import spend_leases
+from trusted_router.services.spend_lease_settlement import derive_spend_lease_settlement
 from trusted_router.spend_lease_state import BindingTuple
 
 RegistrationKind = Literal["BOUND", "CLAIM"]
@@ -726,6 +727,7 @@ def merge_authorization_typed_columns(
     allocated = merged.get("spend_lease_allocated_micro")
     if allocated is not None and int(allocated) <= 0:
         raise SpendLeaseDataError("spend_lease_allocated_micro must be NULL or positive")
+    derive_spend_lease_settlement(payload, typed_columns, merged)
     return merged
 
 

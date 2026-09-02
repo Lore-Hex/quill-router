@@ -1019,5 +1019,6 @@ def test_flag_on_store_path_mints_binds_and_returns_token_iff_bound() -> None:
 
     assert verdict.spend_lease_bound is True
     assert authorization is not None
+    assert authorization.settlement == "spend_lease"
     assert bool(authorization.spend_lease_token) is verdict.spend_lease_bound
     assert ledger.binds == 1
