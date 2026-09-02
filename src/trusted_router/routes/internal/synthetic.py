@@ -6,6 +6,7 @@ import logging
 import random
 import threading
 import time
+from collections.abc import Awaitable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Any
@@ -151,6 +152,15 @@ async def _run_with_held_slot(
         slot.release()
 
 
+async def _wait_for_run_deadline(
+    run: Awaitable[dict[str, Any]],
+    *,
+    timeout: float,
+) -> dict[str, Any]:
+    """Wait for one synthetic run behind an injectable deadline boundary."""
+    return await asyncio.wait_for(run, timeout=timeout)
+
+
 async def _run_with_deadline(
     settings: Settings,
     body: dict[str, Any],
@@ -158,7 +168,7 @@ async def _run_with_deadline(
 ) -> dict[str, Any]:
     started = time.monotonic()
     try:
-        return await asyncio.wait_for(
+        return await _wait_for_run_deadline(
             _run_with_held_slot(settings, body, slot),
             timeout=settings.synthetic_run_deadline_seconds,
         )
@@ -194,7 +204,7 @@ async def _run_high_authority_with_deadline(
 ) -> dict[str, Any]:
     started = time.monotonic()
     try:
-        return await asyncio.wait_for(
+        return await _wait_for_run_deadline(
             _run_high_authority_with_held_slot(settings, body, slot),
             timeout=settings.synthetic_run_deadline_seconds,
         )
