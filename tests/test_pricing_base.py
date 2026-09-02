@@ -476,6 +476,35 @@ def test_guard_manifest_prune_allows_small_prune() -> None:
     assert guard_manifest_prune(old_rows, new_rows) is new_rows
 
 
+def test_guard_manifest_prune_allows_confirmed_provider_delistings() -> None:
+    old_rows = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+    new_rows = [
+        {"id": "a"},
+        {
+            "id": "b",
+            "routable": False,
+            "routable_reason": "delisted-upstream",
+            "missing_since": "2026-09-01",
+        },
+        {
+            "id": "c",
+            "routable": False,
+            "routable_reason": "delisted-upstream",
+            "missing_since": "2026-09-01",
+        },
+    ]
+
+    assert (
+        guard_manifest_prune(
+            old_rows,
+            new_rows,
+            allow_confirmed_delistings=True,
+        )
+        is new_rows
+    )
+    assert guard_manifest_prune(old_rows, new_rows) is old_rows
+
+
 def test_guard_manifest_prune_keeps_delisted_rows_in_baseline() -> None:
     old_rows = [
         {

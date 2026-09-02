@@ -26,6 +26,7 @@ from scripts.pricing.base import (
     fetch_json,
     log,
     parser_path,
+    reconcile_manifest_tombstones,
     runtime_required_models,
     validate,
 )
@@ -57,6 +58,11 @@ EXPECTED_MODELS = [
     "moonshotai/kimi-k2.7-code",
     "moonshotai/kimi-k2.7-code-highspeed",
 ]
+
+# The authenticated /v1/models feed is authoritative for routes this operator
+# account can invoke. Two consecutive fresh misses become explicit tombstones;
+# the shared manifest guard may then accept even a large confirmed delisting.
+ALLOW_CONFIRMED_MASS_DELISTINGS = True
 
 _PRICING_LINK_RE = re.compile(
     r"https://platform\.kimi\.ai/docs/pricing/chat(?:-[a-z0-9]+)*\.md",
@@ -247,7 +253,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     existing_by_id: dict[str, dict[str, Any]] = {
         row["id"]: row for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)
     }
-    active_rows: list[dict[str, Any]] = []
+    present_rows: dict[str, dict[str, Any]] = {}
     updated: list[str] = []
     appended: list[str] = []
     for model_id, price in sorted(result.prices.items()):
@@ -267,15 +273,23 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
             row["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
         else:
             row.pop("cached_input_token_price_per_m", None)
-        active_rows.append(row)
+        present_rows[model_id] = row
         updated.append(model_id)
 
     missing = sorted(set(EXPECTED_MODELS) - set(updated))
     if missing:
         raise RuntimeError(f"kimi manifest did not update expected model(s): {missing}")
 
-    active_rows.sort(key=lambda row: str(row.get("id") or ""))
-    raw["models"] = active_rows
+    reconciled_rows = reconcile_manifest_tombstones(
+        rows,
+        present_rows,
+        priced_ids=set(updated),
+        source="api",
+    )
+    reconciled_rows.sort(
+        key=lambda row: str(row.get("id") or "") if isinstance(row, dict) else ""
+    )
+    raw["models"] = reconciled_rows
     raw["_about"] = (
         "Provider-native Moonshot/Kimi routes. Refreshed hourly only for models "
         "present in both the official pricing docs and authenticated /v1/models feed."
@@ -285,7 +299,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     raw["generated_at"] = (
         datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     )
-    raw["model_count"] = len(active_rows)
+    raw["model_count"] = len(updated)
     MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
     MANIFEST_PATH.write_text(
         json.dumps(raw, indent=2, ensure_ascii=False) + "\n",

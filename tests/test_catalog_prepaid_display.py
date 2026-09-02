@@ -227,7 +227,7 @@ def test_nebius_deprecated_june_2026_models_are_not_routable() -> None:
 
 def test_nebius_deprecation_does_not_remove_other_provider_routes() -> None:
     assert "minimax/minimax-m2.5@minimax/byok" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k2.5@kimi/prepaid" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k2.6@kimi/prepaid" in MODEL_ENDPOINTS
     assert "openai/gpt-oss-120b@cerebras/prepaid" in MODEL_ENDPOINTS
     assert "z-ai/glm-5@zai/prepaid" in MODEL_ENDPOINTS
 
