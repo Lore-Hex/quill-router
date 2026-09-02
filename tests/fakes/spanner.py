@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -158,6 +159,14 @@ class FakeSpannerDatabase:
         # catch accidental fallback writes after the typed cutover.
         self.gateway_authorizations: dict[str, dict] = {}
         self.gateway_authorization_versions: dict[str, int] = {}
+        # Unit-2 spend-lease tables. Arbitration is keyed by its salted
+        # two-column primary key; open work is keyed by lease_id. Both keep
+        # per-row versions so INSERT OR IGNORE and guarded phase transitions
+        # serialize like native Spanner DML.
+        self.spend_lease_arbitrations: dict[tuple[str, str], dict] = {}
+        self.spend_lease_arbitration_versions: dict[tuple[str, str], int] = {}
+        self.spend_lease_open: dict[str, dict] = {}
+        self.spend_lease_open_versions: dict[str, int] = {}
         # Metadata-only typed generation records and durable ClickHouse handoff.
         self.generation_records: dict[str, dict] = {}
         self.operational_analytics_outbox: list[dict] = []
@@ -263,6 +272,12 @@ class FakeSpannerDatabase:
                         key[1],
                         0,
                     )
+                elif isinstance(key, tuple) and len(key) == 3 and key[0] == "spend_arb":
+                    current_version = self.spend_lease_arbitration_versions.get(
+                        (key[1], key[2]), 0
+                    )
+                elif isinstance(key, tuple) and len(key) == 2 and key[0] == "spend_open":
+                    current_version = self.spend_lease_open_versions.get(key[1], 0)
                 else:
                     current = self.rows.get(key)
                     current_version = current.version if current is not None else 0
@@ -325,6 +340,28 @@ class FakeSpannerDatabase:
                     _, authorization_id, record = op
                     self.gateway_authorizations[authorization_id] = record
                     self.gateway_authorization_versions[authorization_id] = new_version
+                elif op[0] in ("insert_spend_arbitration", "update_spend_arbitration"):
+                    _, pk, record = op
+                    commit_timestamp = dt.datetime.now(dt.UTC)
+                    record = {
+                        column: commit_timestamp
+                        if value == _SpannerModule.COMMIT_TIMESTAMP
+                        else value
+                        for column, value in record.items()
+                    }
+                    self.spend_lease_arbitrations[pk] = record
+                    self.spend_lease_arbitration_versions[pk] = new_version
+                elif op[0] in ("insert_spend_open", "update_spend_open"):
+                    _, lease_id, record = op
+                    commit_timestamp = dt.datetime.now(dt.UTC)
+                    record = {
+                        column: commit_timestamp
+                        if value == _SpannerModule.COMMIT_TIMESTAMP
+                        else value
+                        for column, value in record.items()
+                    }
+                    self.spend_lease_open[lease_id] = record
+                    self.spend_lease_open_versions[lease_id] = new_version
                 elif op[0] in ("insert_generation", "upsert_generation"):
                     _, generation_id, record = op
                     self.generation_records[generation_id] = record
@@ -381,6 +418,7 @@ class _FakeTransaction:
         # buffers mutations after DML and DML can't see them); fail fast if both.
         self._did_mutation = False
         self._did_dml = False
+        self._spend_open_pending_commit_timestamp_written = False
 
     def execute_sql(
         self,
@@ -389,6 +427,13 @@ class _FakeTransaction:
         params: dict[str, Any] | None = None,
         param_types: Any = None,
     ) -> list[list[str]]:
+        if (
+            self._spend_open_pending_commit_timestamp_written
+            and "spend_lease_open" in sql
+        ):
+            raise FakeFailedPrecondition(
+                "spend_lease_open cannot be read after PENDING_COMMIT_TIMESTAMP()"
+            )
         self.db.transaction_execute_sql_calls += 1
         return _execute_sql(self.db, self, sql, params or {})
 
@@ -485,6 +530,26 @@ class _FakeTransaction:
             self.db.gateway_authorizations.get(authorization_id),
         )
 
+    def _spend_arbitration_current(self, pk: tuple[str, str]) -> dict | None:
+        for op in reversed(self.pending_writes):
+            if op[0] in ("insert_spend_arbitration", "update_spend_arbitration") and op[1] == pk:
+                return dict(op[2])
+        return self._pinned_read(
+            ("spend_arb", *pk),
+            self.db.spend_lease_arbitration_versions.get(pk, 0),
+            self.db.spend_lease_arbitrations.get(pk),
+        )
+
+    def _spend_open_current(self, lease_id: str) -> dict | None:
+        for op in reversed(self.pending_writes):
+            if op[0] in ("insert_spend_open", "update_spend_open") and op[1] == lease_id:
+                return dict(op[2])
+        return self._pinned_read(
+            ("spend_open", lease_id),
+            self.db.spend_lease_open_versions.get(lease_id, 0),
+            self.db.spend_lease_open.get(lease_id),
+        )
+
     def _typed_current(self, table: str, pk: tuple) -> dict | None:
         """In-txn view of a typed row for DML: sees prior DML writes
         (update_typed = read-your-writes) but NOT buffered mutations (real Spanner
@@ -509,6 +574,13 @@ class _FakeTransaction:
         conditionally buffers the SET. Returns the modified-row count.
         """
         self.db.transaction_execute_update_calls += 1
+        if (
+            self._spend_open_pending_commit_timestamp_written
+            and "spend_lease_open" in sql
+        ):
+            raise FakeFailedPrecondition(
+                "spend_lease_open cannot be accessed after PENDING_COMMIT_TIMESTAMP()"
+            )
         if self._did_mutation:
             raise RuntimeError(
                 "DML after a mutation in the same transaction — DML+mutation "
@@ -950,6 +1022,14 @@ class _FakeTransaction:
             new = dict(rec, terminal_at=None)
             self.pending_writes.append(("update_reservation", p["rid"], new))
             return 1
+        spend_lease_dml = sql.strip()
+        if re.match(
+            r"^(?:INSERT(?:\s+OR\s+IGNORE)?\s+INTO|UPDATE)\s+"
+            r"spend_lease_(?:scope_arbitration|open)\b",
+            spend_lease_dml,
+            re.IGNORECASE,
+        ):
+            return _execute_spend_lease_dml(self, spend_lease_dml, p)
         if sql.startswith("INSERT INTO tr_gateway_authorization"):
             authorization_id = p["authorization_id"]
             if authorization_id in self.db.gateway_authorizations:
@@ -1452,6 +1532,280 @@ def _utc_datetime(value: Any) -> dt.datetime:
         return value if value.tzinfo is not None else value.replace(tzinfo=dt.UTC)
     parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=dt.UTC)
+
+
+_SPEND_LEASE_PRIMARY_KEYS = {
+    "spend_lease_scope_arbitration": ("scope_salt", "idempotency_scope"),
+    "spend_lease_open": ("lease_id",),
+}
+
+
+def _split_spanner_sql_list(source: str) -> list[str]:
+    """Split a comma list without splitting nested function arguments."""
+    parts: list[str] = []
+    start = 0
+    depth = 0
+    in_quote = False
+    index = 0
+    while index < len(source):
+        char = source[index]
+        if char == "'":
+            if in_quote and index + 1 < len(source) and source[index + 1] == "'":
+                index += 2
+                continue
+            in_quote = not in_quote
+        elif not in_quote:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth < 0:
+                    raise AssertionError(f"unbalanced spend-lease SQL expression list: {source!r}")
+            elif char == "," and depth == 0:
+                parts.append(source[start:index].strip())
+                start = index + 1
+        index += 1
+    if in_quote or depth != 0:
+        raise AssertionError(f"unbalanced spend-lease SQL expression list: {source!r}")
+    parts.append(source[start:].strip())
+    if any(not part for part in parts):
+        raise AssertionError(f"empty spend-lease SQL expression: {source!r}")
+    return parts
+
+
+def _split_spanner_conjunction(source: str) -> list[str]:
+    """Split top-level AND predicates while respecting literals and functions."""
+    parts: list[str] = []
+    start = 0
+    depth = 0
+    in_quote = False
+    index = 0
+    while index < len(source):
+        char = source[index]
+        if char == "'":
+            if in_quote and index + 1 < len(source) and source[index + 1] == "'":
+                index += 2
+                continue
+            in_quote = not in_quote
+            index += 1
+            continue
+        if not in_quote:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            elif (
+                depth == 0
+                and source[index : index + 3].upper() == "AND"
+                and (index == 0 or source[index - 1].isspace())
+                and (index + 3 == len(source) or source[index + 3].isspace())
+            ):
+                parts.append(source[start:index].strip())
+                start = index + 3
+                index += 3
+                continue
+        index += 1
+    if in_quote or depth != 0:
+        raise AssertionError(f"unbalanced spend-lease WHERE clause: {source!r}")
+    parts.append(source[start:].strip())
+    if any(not part for part in parts):
+        raise AssertionError(f"empty spend-lease WHERE predicate: {source!r}")
+    return parts
+
+
+def _evaluate_spanner_expression(
+    expression: str,
+    params: dict[str, Any],
+    now: dt.datetime,
+) -> Any:
+    expression = expression.strip()
+    param = re.fullmatch(r"@([A-Za-z_][A-Za-z0-9_]*)", expression)
+    if param is not None:
+        name = param.group(1)
+        if name not in params:
+            raise AssertionError(f"spend-lease SQL references missing parameter @{name}")
+        return params[name]
+    if expression.upper() == "NULL":
+        return None
+    if re.fullmatch(r"CURRENT_TIMESTAMP\s*\(\s*\)", expression, re.IGNORECASE):
+        return now
+    if re.fullmatch(
+        r"PENDING_COMMIT_TIMESTAMP\s*\(\s*\)", expression, re.IGNORECASE
+    ):
+        return _SpannerModule.COMMIT_TIMESTAMP
+    timestamp_add = re.fullmatch(
+        r"TIMESTAMP_ADD\s*\(\s*@([A-Za-z_][A-Za-z0-9_]*)\s*,\s*"
+        r"INTERVAL\s+@([A-Za-z_][A-Za-z0-9_]*)\s+SECOND\s*\)",
+        expression,
+        re.IGNORECASE,
+    )
+    if timestamp_add is not None:
+        timestamp_name, seconds_name = timestamp_add.groups()
+        missing = [name for name in (timestamp_name, seconds_name) if name not in params]
+        if missing:
+            raise AssertionError(
+                f"spend-lease SQL references missing parameter(s): {', '.join(missing)}"
+            )
+        return _utc_datetime(params[timestamp_name]) + dt.timedelta(
+            seconds=int(params[seconds_name])
+        )
+    if re.fullmatch(r"'(?:''|[^'])*'", expression):
+        return expression[1:-1].replace("''", "'")
+    if re.fullmatch(r"-?[0-9]+", expression):
+        return int(expression)
+    if expression.upper() in ("TRUE", "FALSE"):
+        return expression.upper() == "TRUE"
+    raise AssertionError(f"unknown spend-lease SQL expression: {expression!r}")
+
+
+def _spend_lease_row_matches(
+    record: dict[str, Any],
+    where_sql: str,
+    params: dict[str, Any],
+    now: dt.datetime,
+) -> bool:
+    for predicate in _split_spanner_conjunction(where_sql):
+        null_match = re.fullmatch(
+            r"([A-Za-z_][A-Za-z0-9_]*)\s+IS\s+(NOT\s+)?NULL",
+            predicate,
+            re.IGNORECASE,
+        )
+        if null_match is not None:
+            column, not_null = null_match.groups()
+            matches = record.get(column) is not None if not_null else record.get(column) is None
+        else:
+            equality = re.fullmatch(
+                r"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)",
+                predicate,
+            )
+            if equality is None:
+                raise AssertionError(f"unknown spend-lease WHERE predicate: {predicate!r}")
+            column, expression = equality.groups()
+            matches = record.get(column) == _evaluate_spanner_expression(expression, params, now)
+        if not matches:
+            return False
+    return True
+
+
+def _spend_lease_rows(
+    transaction: _FakeTransaction,
+    table: str,
+) -> list[tuple[Any, dict[str, Any]]]:
+    if table == "spend_lease_scope_arbitration":
+        keys: set[Any] = set(transaction.db.spend_lease_arbitrations)
+        operation_names = ("insert_spend_arbitration", "update_spend_arbitration")
+    elif table == "spend_lease_open":
+        keys = set(transaction.db.spend_lease_open)
+        operation_names = ("insert_spend_open", "update_spend_open")
+    else:  # pragma: no cover - caller validates the table before dispatch
+        raise AssertionError(f"unknown spend-lease table: {table}")
+    keys.update(
+        operation[1]
+        for operation in transaction.pending_writes
+        if operation[0] in operation_names
+    )
+    return [
+        (key, record)
+        for key in keys
+        if (record := _spend_lease_current(transaction, table, key)) is not None
+    ]
+
+
+def _spend_lease_current(
+    transaction: _FakeTransaction,
+    table: str,
+    key: Any,
+) -> dict[str, Any] | None:
+    if table == "spend_lease_scope_arbitration":
+        return transaction._spend_arbitration_current(key)
+    if table == "spend_lease_open":
+        return transaction._spend_open_current(key)
+    raise AssertionError(f"unknown spend-lease table: {table}")
+
+
+def _spend_lease_operation_name(table: str, action: str) -> str:
+    suffix = "arbitration" if table == "spend_lease_scope_arbitration" else "open"
+    return f"{action}_spend_{suffix}"
+
+
+def _execute_spend_lease_dml(
+    transaction: _FakeTransaction,
+    sql: str,
+    params: dict[str, Any],
+) -> int:
+    """Evaluate the spend-lease DML subset from SQL instead of restating it."""
+    now = dt.datetime.now(dt.UTC)
+    insert = re.fullmatch(
+        r"INSERT(?:\s+(OR)\s+IGNORE)?\s+INTO\s+"
+        r"(spend_lease_scope_arbitration|spend_lease_open)\s*"
+        r"\((.*?)\)\s*VALUES\s*\((.*)\)\s*",
+        sql,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if insert is not None:
+        ignore_sql, table, columns_sql, values_sql = insert.groups()
+        columns = _split_spanner_sql_list(columns_sql)
+        expressions = _split_spanner_sql_list(values_sql)
+        if len(columns) != len(expressions):
+            raise AssertionError(
+                f"spend-lease INSERT column/value count mismatch: {len(columns)} != "
+                f"{len(expressions)}"
+            )
+        if any(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", column) is None for column in columns):
+            raise AssertionError(f"invalid spend-lease INSERT column list: {columns!r}")
+        record = {
+            column: _evaluate_spanner_expression(expression, params, now)
+            for column, expression in zip(columns, expressions, strict=True)
+        }
+        primary_key_columns = _SPEND_LEASE_PRIMARY_KEYS[table]
+        try:
+            primary_key_values = tuple(str(record[column]) for column in primary_key_columns)
+        except KeyError as error:
+            raise AssertionError(
+                f"spend-lease INSERT is missing primary-key column {error.args[0]!r}"
+            ) from error
+        key: Any = primary_key_values if len(primary_key_values) > 1 else primary_key_values[0]
+        if _spend_lease_current(transaction, table, key) is not None:
+            if ignore_sql is not None:
+                return 0
+            raise FakeAlreadyExists(str(key))
+        transaction.pending_writes.append(
+            (_spend_lease_operation_name(table, "insert"), key, record)
+        )
+        return 1
+
+    update = re.fullmatch(
+        r"UPDATE\s+(spend_lease_scope_arbitration|spend_lease_open)"
+        r"(?:@\{[^}]+\})?\s+SET\s+(.*?)\s+WHERE\s+(.+?)\s*",
+        sql,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if update is None:
+        raise AssertionError(f"unknown spend-lease DML statement: {sql}")
+    table, assignments_sql, where_sql = update.groups()
+    assignments: dict[str, Any] = {}
+    for assignment in _split_spanner_sql_list(assignments_sql):
+        match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)", assignment)
+        if match is None:
+            raise AssertionError(f"unknown spend-lease assignment: {assignment!r}")
+        column, expression = match.groups()
+        assignments[column] = _evaluate_spanner_expression(expression, params, now)
+
+    updated = 0
+    for key, record in _spend_lease_rows(transaction, table):
+        if not _spend_lease_row_matches(record, where_sql, params, now):
+            continue
+        transaction.pending_writes.append(
+            (_spend_lease_operation_name(table, "update"), key, dict(record, **assignments))
+        )
+        updated += 1
+    if (
+        updated
+        and table == "spend_lease_open"
+        and _SpannerModule.COMMIT_TIMESTAMP in assignments.values()
+    ):
+        transaction._spend_open_pending_commit_timestamp_written = True
+    return updated
 
 
 def _execute_settle_outbox_sql(
@@ -2338,6 +2692,67 @@ def _execute_sql(
             if len(out) >= limit:
                 break
         return out
+    if "FROM spend_lease_scope_arbitration" in sql:
+        _require_pred(
+            sql,
+            "scope_salt=@scope_salt AND idempotency_scope=@scope",
+            "spend-lease arbitration primary-key read",
+        )
+        pk = (str(params["scope_salt"]), str(params["scope"]))
+        rec = (
+            txn._spend_arbitration_current(pk)
+            if txn is not None
+            else db.spend_lease_arbitrations.get(pk)
+        )
+        if rec is None:
+            return []
+        cols = [col.strip() for col in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
+        return [[rec.get(col) for col in cols]]
+    if "FROM spend_lease_open" in sql:
+        cols = [col.strip() for col in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
+        if "WHERE lease_id=@lease_id" in sql:
+            lease_id = str(params["lease_id"])
+            rec = (
+                txn._spend_open_current(lease_id)
+                if txn is not None
+                else db.spend_lease_open.get(lease_id)
+            )
+            return [[rec.get(col) for col in cols]] if rec is not None else []
+        _require_pred(
+            sql,
+            "@{FORCE_INDEX=spend_lease_open_due}",
+            "spend-lease due index",
+        )
+        _require_pred(
+            sql,
+            "WHERE next_attempt_at IS NOT NULL",
+            "spend-lease due NULL filter",
+        )
+        _require_pred(
+            sql,
+            "AND next_attempt_at <= CURRENT_TIMESTAMP()",
+            "spend-lease due deadline",
+        )
+        _require_pred(sql, "ORDER BY next_attempt_at LIMIT @limit", "spend-lease due order")
+        if "phase IN ('candidate', 'recovering')" in sql:
+            phases = {"candidate", "recovering"}
+        elif "phase IN ('open')" in sql:
+            phases = {"open"}
+        else:
+            raise AssertionError("spend-lease due query missing phase predicate")
+        now = dt.datetime.now(dt.UTC)
+        records = [
+            rec
+            for rec in db.spend_lease_open.values()
+            if rec.get("phase") in phases
+            and rec.get("next_attempt_at") is not None
+            and _utc_datetime(rec["next_attempt_at"]) <= now
+        ]
+        records.sort(key=lambda rec: _utc_datetime(rec["next_attempt_at"]))
+        return [
+            [rec.get(col) for col in cols]
+            for rec in records[: int(params["limit"])]
+        ]
     # tr_settle_outbox (durable settle outbox) — modeled explicitly so a guard/
     # column/status typo makes a test FAIL rather than silently matching a
     # generic branch (the substring-collision hazard the design flags).

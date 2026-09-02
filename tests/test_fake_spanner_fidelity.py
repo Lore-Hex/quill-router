@@ -33,6 +33,49 @@ def test_multi_use_snapshot_allows_multiple_reads() -> None:
                              params={"pk": "ws_x"})  # no raise
 
 
+def test_spend_lease_bound_insert_evaluates_armed_terminal_at() -> None:
+    """The fake must derive retention from VALUES, not the registration kind."""
+    db = _db()
+    scope = "workspace-1:request-armed-bound"
+
+    modified = db.run_in_transaction(
+        lambda transaction: transaction.execute_update(
+            "INSERT OR IGNORE INTO spend_lease_scope_arbitration ("
+            "scope_salt, idempotency_scope, registration_kind, authorization_id, "
+            "spend_lease_id, spend_lease_gen, spend_lease_allocated_micro, "
+            "provisional_id, created_at, terminal_at) VALUES ("
+            "@scope_salt, @scope, 'BOUND', @authorization_id, @lease_id, @gen, "
+            "@allocated_micro, NULL, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())",
+            params={
+                "scope_salt": "abcd",
+                "scope": scope,
+                "authorization_id": "authorization-1",
+                "lease_id": "lease-1",
+                "gen": 1,
+                "allocated_micro": 100,
+            },
+        )
+    )
+
+    assert modified == 1
+    record = db.spend_lease_arbitrations[("abcd", scope)]
+    assert record["terminal_at"] is not None
+    assert record["terminal_at"] == record["created_at"]
+
+
+def test_spend_lease_dml_rejects_unknown_expression() -> None:
+    db = _db()
+
+    with pytest.raises(AssertionError, match="unknown spend-lease SQL expression"):
+        db.run_in_transaction(
+            lambda transaction: transaction.execute_update(
+                "INSERT OR IGNORE INTO spend_lease_scope_arbitration "
+                "(scope_salt, idempotency_scope) VALUES (@scope_salt, DEFAULT)",
+                params={"scope_salt": "abcd"},
+            )
+        )
+
+
 def test_paged_entity_range_scan_serializes_against_a_concurrent_commit() -> None:
     """A range read must join the read set, or a scan-then-DELETE acts on stale state.
 

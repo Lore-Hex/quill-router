@@ -24,6 +24,7 @@ from trusted_router.spend_leases import (
     spend_lease_catalog_estimate,
     spend_lease_eligible,
     spend_lease_ineligibility_reason,
+    spend_lease_scope_salt,
     verify_boot_auth,
 )
 
@@ -95,6 +96,10 @@ def _ineligibility_reason(**overrides: object) -> str | None:
     }
     values.update(overrides)
     return spend_lease_ineligibility_reason(**values)  # type: ignore[arg-type]
+
+
+def test_spend_lease_scope_salt_pins_sha256_hex_prefix() -> None:
+    assert spend_lease_scope_salt("workspace:ws-123:request:req-456") == "8399"
 
 
 def test_spend_lease_eligibility_accepts_exact_credits_chat_cohort() -> None:
