@@ -96,15 +96,24 @@ class AuthorizeVerdict(str):
     """String-compatible typed-authorize outcome with its window decision."""
 
     rate_limit: KeyWindowLimitDecision | None
+    spend_lease_bound: bool
+    no_lease_reason: str | None
+    spend_lease_outcome: str | None
 
     def __new__(
         cls,
         outcome: str,
         *,
         rate_limit: KeyWindowLimitDecision | None = None,
+        spend_lease_bound: bool = False,
+        no_lease_reason: str | None = None,
+        spend_lease_outcome: str | None = None,
     ) -> AuthorizeVerdict:
         verdict = super().__new__(cls, outcome)
         verdict.rate_limit = rate_limit
+        verdict.spend_lease_bound = spend_lease_bound
+        verdict.no_lease_reason = no_lease_reason
+        verdict.spend_lease_outcome = spend_lease_outcome
         return verdict
 
 
@@ -245,6 +254,11 @@ def authorize_atomic(
     credit_shard_candidates: tuple[int, ...] | None = None,
     key_shard_candidates: tuple[int, ...] = (UNSHARDED,),
     authorization_id: str | None = None,
+    spend_lease_hook: Callable[[Any, int], dict[str, Any]] | None = None,
+    build_authorization_for_lease: (
+        Callable[[str, str, bool], GatewayAuthorization] | None
+    ) = None,
+    also_retry: tuple[type[BaseException], ...] = (),
 ) -> dict:
     """Run the atomic authorize. Returns {outcome, reservation_id?, authorization_id?}.
 
@@ -376,6 +390,14 @@ def authorize_atomic(
                 raise _Reject(AuthorizeOutcome.INSUFFICIENT_CREDITS)
             credit_hold = estimate
 
+        lease_result: dict[str, Any] = {
+            "bound": False,
+            "no_lease_reason": None,
+            "spend_lease_outcome": None,
+        }
+        if spend_lease_hook is not None:
+            lease_result = spend_lease_hook(transaction, selected_credit_shard)
+
         insert_reservation(
             transaction, pt,
             reservation_id=reservation_id, workspace_id=workspace_id, key_hash=key_hash,
@@ -388,11 +410,21 @@ def authorize_atomic(
             created_at=created_at,
         )
         if request_record_write_mode == "typed":
-            assert authorization is not None
+            selected_authorization = authorization
+            if build_authorization_for_lease is not None:
+                selected_authorization = build_authorization_for_lease(
+                    authorization_id,
+                    reservation_id,
+                    bool(lease_result.get("bound")),
+                )
+                selected_authorization.created_at = created_at.isoformat().replace(
+                    "+00:00", "Z"
+                )
+            assert selected_authorization is not None
             insert_gateway_authorization(
                 transaction,
                 pt,
-                authorization,
+                selected_authorization,
                 created_at=created_at,
             )
         else:
@@ -410,6 +442,7 @@ def authorize_atomic(
             "authorization_id": authorization_id,
             "credit_shard": selected_credit_shard,
             "key_shard": selected_key_shard,
+            **lease_result,
         }
 
     try:
@@ -417,6 +450,7 @@ def authorize_atomic(
             database,
             txn,
             transaction_tag="tr_authorize",
+            also_retry=also_retry,
         )
     except _Reject as reject:
         return {"outcome": reject.outcome}

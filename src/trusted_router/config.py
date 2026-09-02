@@ -854,6 +854,9 @@ class Settings(BaseSettings):
     # Secret Manager. The accepted digest CSV preserves both sides of a GCP
     # rolling deploy; when empty, the embedded trust digest is the singleton.
     spend_lease_issuance_enabled: bool = False
+    # Stage B traffic mutation.  Keep independent from Stage A issuance so a
+    # deployed revision can continue shadowing while binding remains inert.
+    spend_lease_binding_enabled: bool = False
     spend_lease_pilot_workspace_ids: str = ""
     spend_lease_signing_secret_name: str = ""
     spend_lease_accepted_gcp_image_digests: str = ""
@@ -1361,6 +1364,10 @@ class Settings(BaseSettings):
                     "TR_SPEND_LEASE_ISSUANCE_ENABLED requires the operational "
                     "analytics outbox or direct sink"
                 )
+        if self.spend_lease_binding_enabled and not self.spend_lease_issuance_enabled:
+            raise ValueError(
+                "TR_SPEND_LEASE_BINDING_ENABLED requires TR_SPEND_LEASE_ISSUANCE_ENABLED"
+            )
         if self.spend_lease_soak_probe_enabled and not self.spend_lease_probe_key_secret.strip():
             raise ValueError(
                 "TR_SPEND_LEASE_SOAK_PROBE_ENABLED requires "

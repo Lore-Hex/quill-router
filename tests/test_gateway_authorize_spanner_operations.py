@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import dataclasses
+import inspect
 
 import pytest
 from starlette.requests import Request
 
 from tests.fakes.spanner import make_fake_store
-from trusted_router import storage_gcp_authorize, storage_gcp_key_escrow
+from trusted_router import (
+    spend_lease_authorize,
+    storage_gcp_authorize,
+    storage_gcp_key_escrow,
+    storage_gcp_spend_lease_authorize,
+)
 from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeRequest
@@ -97,6 +103,34 @@ def test_typed_authorize_route_does_not_call_typed_pretransaction_probe(
 
     assert response["data"]["authorization_id"]
     assert response["data"]["idempotent_replay"] is False
+
+
+def test_spend_lease_binding_flag_off_never_calls_prepare_hook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _store, _database, key = _seed_typed_gateway_store()
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("flag-off authorize touched the unit-2 binding path")
+
+    for module in (spend_lease_authorize, storage_gcp_spend_lease_authorize):
+        for name, value in vars(module).items():
+            if (
+                not name.startswith("_")
+                and inspect.isfunction(value)
+                and value.__module__ == module.__name__
+            ):
+                monkeypatch.setattr(module, name, forbidden)
+    monkeypatch.setattr(
+        SpannerBigtableStore,
+        "prepare_gateway_spend_lease_binding",
+        forbidden,
+    )
+
+    response = gateway._authorize_gateway_sync(
+        _request(), _body(key.hash), Settings(environment="test")
+    )
+    assert response["data"]["authorization_id"]
 
 
 def test_typed_authorize_replay_and_mismatch_still_come_from_transaction() -> None:

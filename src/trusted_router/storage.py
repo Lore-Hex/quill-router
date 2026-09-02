@@ -2630,6 +2630,12 @@ def create_store(settings: Any) -> Store:
                 "regional_quota_bigtable_app_profile_map",
                 {},
             ),
+            spend_lease_bigtable_table=getattr(
+                settings, "spend_lease_bigtable_table", "trustedrouter-spend-lease"
+            ),
+            spend_lease_bigtable_app_profiles=getattr(
+                settings, "spend_lease_bigtable_app_profile_map", {}
+            ),
         )
     raise ValueError(f"unsupported storage backend: {backend}")
 

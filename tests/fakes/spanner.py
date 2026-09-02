@@ -140,7 +140,12 @@ class FakeSpannerDatabase:
     Spanner's optimistic concurrency contract closely enough to test the
     credit-ledger retry path."""
 
-    def __init__(self, *, ready_barrier: threading.Barrier | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        ready_barrier: threading.Barrier | None = None,
+        now: dt.datetime | None = None,
+    ) -> None:
         self.rows: dict[tuple[str, str], _Row] = {}
         # Typed counter tables (tr_credit_balance, tr_key_limit): table ->
         # (pk col0, pk col1) -> {column: value}. PK is the first two columns.
@@ -211,6 +216,10 @@ class FakeSpannerDatabase:
         self.snapshot_sql: list[str] = []
         self.transaction_execute_sql_calls = 0
         self.transaction_execute_update_calls = 0
+        self.now = now
+
+    def current_timestamp(self) -> dt.datetime:
+        return _utc_datetime(self.now) if self.now is not None else dt.datetime.now(dt.UTC)
 
     def run_in_transaction(
         self,
@@ -342,7 +351,7 @@ class FakeSpannerDatabase:
                     self.gateway_authorization_versions[authorization_id] = new_version
                 elif op[0] in ("insert_spend_arbitration", "update_spend_arbitration"):
                     _, pk, record = op
-                    commit_timestamp = dt.datetime.now(dt.UTC)
+                    commit_timestamp = self.current_timestamp()
                     record = {
                         column: commit_timestamp
                         if value == _SpannerModule.COMMIT_TIMESTAMP
@@ -351,9 +360,13 @@ class FakeSpannerDatabase:
                     }
                     self.spend_lease_arbitrations[pk] = record
                     self.spend_lease_arbitration_versions[pk] = new_version
+                elif op[0] == "delete_spend_arbitration":
+                    _, pk = op
+                    self.spend_lease_arbitrations.pop(pk, None)
+                    self.spend_lease_arbitration_versions[pk] = new_version
                 elif op[0] in ("insert_spend_open", "update_spend_open"):
                     _, lease_id, record = op
-                    commit_timestamp = dt.datetime.now(dt.UTC)
+                    commit_timestamp = self.current_timestamp()
                     record = {
                         column: commit_timestamp
                         if value == _SpannerModule.COMMIT_TIMESTAMP
@@ -563,6 +576,30 @@ class _FakeTransaction:
             self.db.typed_versions.get((table, pk), 0),
             self.db.typed.get(table, {}).get(pk),
         )
+
+    def _entity_current(self, kind: str, entity_id: str) -> dict[str, Any] | None:
+        entity_key = (kind, entity_id)
+        for op in reversed(self.pending_writes):
+            if op[0] == "delete_entity_dml" and (op[1], op[2]) == entity_key:
+                return None
+            if op[0] in ("insert_entity_dml", "update_entity_dml") and (
+                op[1],
+                op[2],
+            ) == entity_key:
+                return {
+                    "kind": kind,
+                    "id": entity_id,
+                    "body": op[3],
+                }
+        row = self.db.rows.get(entity_key)
+        pinned = self._pinned_read(
+            entity_key,
+            row.version if row is not None else 0,
+            None
+            if row is None
+            else {"kind": kind, "id": entity_id, "body": row.body},
+        )
+        return pinned
 
     def execute_update(
         self, sql: str, *, params: dict[str, Any] | None = None, param_types: Any = None
@@ -1024,7 +1061,7 @@ class _FakeTransaction:
             return 1
         spend_lease_dml = sql.strip()
         if re.match(
-            r"^(?:INSERT(?:\s+OR\s+IGNORE)?\s+INTO|UPDATE)\s+"
+            r"^(?:INSERT(?:\s+OR\s+IGNORE)?\s+INTO|UPDATE|DELETE\s+FROM)\s+"
             r"spend_lease_(?:scope_arbitration|open)\b",
             spend_lease_dml,
             re.IGNORECASE,
@@ -1062,7 +1099,13 @@ class _FakeTransaction:
             rec = self._gateway_authorization_current(authorization_id)
             if rec is None:
                 return 0
-            new = dict(rec, settled=True, payload=p["payload"])
+            new = dict(
+                rec,
+                settled=True,
+                payload=p["payload"],
+                finalization_outcome=p.get("finalization_outcome"),
+                finalized_cost_microdollars=p.get("finalized_cost_microdollars"),
+            )
             self.pending_writes.append(("update_gateway_authorization", authorization_id, new))
             return 1
         if sql.startswith("UPDATE tr_gateway_authorization SET terminal_at=@terminal_at"):
@@ -1126,6 +1169,27 @@ class _FakeTransaction:
             )
             self.pending_writes.append(("update_gateway_authorization", authorization_id, new))
             return 1
+        if sql.startswith("INSERT OR IGNORE INTO tr_entities"):
+            entity_key = (p["kind"], p["id"])
+            present = entity_key in self.db.rows
+            for op in reversed(self.pending_writes):
+                if op[0] in ("insert_entity_dml", "update_entity_dml") and (
+                    op[1], op[2]
+                ) == entity_key:
+                    present = True
+                    break
+            if present:
+                return 0
+            self.pending_writes.append(
+                ("insert_entity_dml", p["kind"], p["id"], p["body"])
+            )
+            return 1
+        if sql.startswith("UPDATE tr_entities SET body=TO_JSON_STRING(JSON_SET"):
+            return _execute_spend_lease_entity_update(self, sql, p)
+        if sql.startswith("UPDATE tr_entities SET body=@body") and p.get("kind") == (
+            "spend_lease_active_grant"
+        ):
+            return _execute_spend_lease_entity_update(self, sql, p)
         if sql.startswith("INSERT INTO tr_entities"):
             entity_key = (p["kind"], p["id"])
             if entity_key in self.db.rows:
@@ -1658,6 +1722,241 @@ def _evaluate_spanner_expression(
     raise AssertionError(f"unknown spend-lease SQL expression: {expression!r}")
 
 
+def _strip_sql_parentheses(expression: str) -> str:
+    expression = expression.strip()
+    while expression.startswith("(") and expression.endswith(")"):
+        depth = 0
+        in_quote = False
+        encloses_all = True
+        for index, char in enumerate(expression):
+            if char == "'":
+                in_quote = not in_quote
+            elif not in_quote:
+                if char == "(":
+                    depth += 1
+                elif char == ")":
+                    depth -= 1
+                    if depth == 0 and index != len(expression) - 1:
+                        encloses_all = False
+                        break
+        if not encloses_all or depth != 0 or in_quote:
+            break
+        expression = expression[1:-1].strip()
+    return expression
+
+
+def _split_spanner_disjunction(source: str) -> list[str]:
+    parts: list[str] = []
+    start = 0
+    depth = 0
+    in_quote = False
+    index = 0
+    while index < len(source):
+        char = source[index]
+        if char == "'":
+            if in_quote and index + 1 < len(source) and source[index + 1] == "'":
+                index += 2
+                continue
+            in_quote = not in_quote
+            index += 1
+            continue
+        if not in_quote:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            elif (
+                depth == 0
+                and source[index : index + 2].upper() == "OR"
+                and (index == 0 or source[index - 1].isspace())
+                and (index + 2 == len(source) or source[index + 2].isspace())
+            ):
+                parts.append(source[start:index].strip())
+                start = index + 2
+                index += 2
+                continue
+        index += 1
+    if in_quote or depth != 0:
+        raise AssertionError(f"unbalanced spend-lease OR expression: {source!r}")
+    parts.append(source[start:].strip())
+    return parts
+
+
+def _entity_json_value(record: dict[str, Any], path: str) -> Any:
+    if not path.startswith("$.") or "." in path[2:]:
+        raise AssertionError(f"unsupported tr_entities JSON path: {path!r}")
+    body = json.loads(str(record["body"]))
+    value = body.get(path[2:])
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (str, int, float)):
+        return str(value)
+    raise AssertionError(f"tr_entities JSON_VALUE cannot scalarize {path!r}: {value!r}")
+
+
+def _evaluate_entity_operand(
+    expression: str,
+    record: dict[str, Any],
+    params: dict[str, Any],
+    now: dt.datetime,
+) -> Any:
+    expression = _strip_sql_parentheses(expression)
+    if expression in {"kind", "id", "body"}:
+        return record[expression]
+    cast_coalesce = re.fullmatch(
+        r"CAST\s*\(\s*COALESCE\s*\(\s*JSON_VALUE\s*\(\s*body\s*,\s*"
+        r"('(?:''|[^'])*')\s*\)\s*,\s*('(?:''|[^'])*')\s*\)\s+AS\s+INT64\s*\)"
+        r"(?:\s*\+\s*(.+))?",
+        expression,
+        re.IGNORECASE,
+    )
+    if cast_coalesce is not None:
+        path_sql, fallback_sql, increment_sql = cast_coalesce.groups()
+        path = _evaluate_spanner_expression(path_sql, params, now)
+        value = _entity_json_value(record, str(path))
+        fallback = _evaluate_spanner_expression(fallback_sql, params, now)
+        result = int(fallback if value is None else value)
+        if increment_sql is not None:
+            result += int(_evaluate_spanner_expression(increment_sql, params, now))
+        return result
+    cast_json = re.fullmatch(
+        r"CAST\s*\(\s*JSON_VALUE\s*\(\s*body\s*,\s*('(?:''|[^'])*')\s*\)"
+        r"\s+AS\s+INT64\s*\)",
+        expression,
+        re.IGNORECASE,
+    )
+    if cast_json is not None:
+        path = _evaluate_spanner_expression(cast_json.group(1), params, now)
+        value = _entity_json_value(record, str(path))
+        return None if value is None else int(value)
+    json_value = re.fullmatch(
+        r"JSON_VALUE\s*\(\s*body\s*,\s*('(?:''|[^'])*')\s*\)",
+        expression,
+        re.IGNORECASE,
+    )
+    if json_value is not None:
+        path = _evaluate_spanner_expression(json_value.group(1), params, now)
+        return _entity_json_value(record, str(path))
+    return _evaluate_spanner_expression(expression, params, now)
+
+
+def _entity_predicate_matches(
+    predicate: str,
+    record: dict[str, Any],
+    params: dict[str, Any],
+    now: dt.datetime,
+) -> bool:
+    predicate = _strip_sql_parentheses(predicate)
+    disjunction = _split_spanner_disjunction(predicate)
+    if len(disjunction) > 1:
+        return any(
+            _entity_predicate_matches(part, record, params, now)
+            for part in disjunction
+        )
+    if predicate.upper() in {"TRUE", "FALSE"}:
+        return bool(_evaluate_spanner_expression(predicate, params, now))
+    if re.fullmatch(r"@[A-Za-z_][A-Za-z0-9_]*", predicate):
+        return bool(_evaluate_spanner_expression(predicate, params, now))
+    membership = re.fullmatch(
+        r"(.+?)\s+IN\s*\((.+)\)", predicate, re.IGNORECASE | re.DOTALL
+    )
+    if membership is not None:
+        operand, values_sql = membership.groups()
+        value = _evaluate_entity_operand(operand, record, params, now)
+        values = [
+            _evaluate_spanner_expression(part, params, now)
+            for part in _split_spanner_sql_list(values_sql)
+        ]
+        return value in values
+    comparison = re.fullmatch(
+        r"(.+?)\s*(<=|>=|=|<|>)\s*(.+)", predicate, re.DOTALL
+    )
+    if comparison is None:
+        raise AssertionError(f"unknown tr_entities WHERE predicate: {predicate!r}")
+    left_sql, operator, right_sql = comparison.groups()
+    left = _evaluate_entity_operand(left_sql, record, params, now)
+    right = _evaluate_entity_operand(right_sql, record, params, now)
+    if operator == "=":
+        return left == right
+    if left is None or right is None:
+        return False
+    if operator == "<=":
+        return bool(left <= right)
+    if operator == ">=":
+        return bool(left >= right)
+    if operator == "<":
+        return bool(left < right)
+    return bool(left > right)
+
+
+def _execute_spend_lease_entity_update(
+    transaction: _FakeTransaction,
+    sql: str,
+    params: dict[str, Any],
+) -> int:
+    """Evaluate the incumbent/fence entity UPDATE directly from its SQL."""
+    update = re.fullmatch(
+        r"UPDATE\s+tr_entities\s+SET\s+body\s*=\s*(.*?)\s+WHERE\s+(.+?)\s*",
+        sql.strip(),
+        re.IGNORECASE | re.DOTALL,
+    )
+    if update is None:
+        raise AssertionError(f"unknown spend-lease tr_entities UPDATE: {sql}")
+    assignment_sql, where_sql = update.groups()
+    kind = str(params.get("kind", ""))
+    entity_id = str(params.get("id", ""))
+    if not kind or not entity_id:
+        raise AssertionError("spend-lease tr_entities UPDATE requires @kind and @id")
+    record = transaction._entity_current(kind, entity_id)
+    if record is None:
+        return 0
+    now = transaction.db.current_timestamp()
+    predicates = _split_spanner_conjunction(where_sql)
+    if not any(
+        re.fullmatch(r"kind\s*=\s*@kind", predicate, re.IGNORECASE)
+        for predicate in predicates
+    ):
+        raise AssertionError("spend-lease tr_entities UPDATE must constrain kind=@kind")
+    if not any(
+        re.fullmatch(r"id\s*=\s*@id", predicate, re.IGNORECASE)
+        for predicate in predicates
+    ):
+        raise AssertionError("spend-lease tr_entities UPDATE must constrain id=@id")
+    for predicate in predicates:
+        if not _entity_predicate_matches(predicate, record, params, now):
+            return 0
+
+    if assignment_sql.strip() == "@body":
+        new_body = _evaluate_spanner_expression("@body", params, now)
+        json.loads(str(new_body))
+    else:
+        json_set = re.fullmatch(
+            r"TO_JSON_STRING\s*\(\s*JSON_SET\s*\(\s*PARSE_JSON\s*\(\s*body\s*\)\s*,"
+            r"\s*('(?:''|[^'])*')\s*,\s*(TRUE|FALSE)\s*\)\s*\)",
+            assignment_sql,
+            re.IGNORECASE,
+        )
+        if json_set is None:
+            raise AssertionError(
+                f"unknown spend-lease tr_entities assignment: {assignment_sql!r}"
+            )
+        path_sql, value_sql = json_set.groups()
+        path = str(_evaluate_spanner_expression(path_sql, params, now))
+        if path != "$.holds_predecessor_slot":
+            raise AssertionError(f"unsupported tr_entities JSON_SET path: {path!r}")
+        body = json.loads(str(record["body"]))
+        body["holds_predecessor_slot"] = bool(
+            _evaluate_spanner_expression(value_sql, params, now)
+        )
+        new_body = json.dumps(body, separators=(",", ":"), sort_keys=True)
+    transaction.pending_writes.append(
+        ("update_entity_dml", kind, entity_id, str(new_body))
+    )
+    return 1
+
+
 def _spend_lease_row_matches(
     record: dict[str, Any],
     where_sql: str,
@@ -1734,7 +2033,7 @@ def _execute_spend_lease_dml(
     params: dict[str, Any],
 ) -> int:
     """Evaluate the spend-lease DML subset from SQL instead of restating it."""
-    now = dt.datetime.now(dt.UTC)
+    now = transaction.db.current_timestamp()
     insert = re.fullmatch(
         r"INSERT(?:\s+(OR)\s+IGNORE)?\s+INTO\s+"
         r"(spend_lease_scope_arbitration|spend_lease_open)\s*"
@@ -1773,6 +2072,23 @@ def _execute_spend_lease_dml(
             (_spend_lease_operation_name(table, "insert"), key, record)
         )
         return 1
+
+    delete = re.fullmatch(
+        r"DELETE\s+FROM\s+(spend_lease_scope_arbitration)\s+WHERE\s+(.+?)\s*",
+        sql,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if delete is not None:
+        table, where_sql = delete.groups()
+        deleted = 0
+        for key, record in _spend_lease_rows(transaction, table):
+            if not _spend_lease_row_matches(record, where_sql, params, now):
+                continue
+            transaction.pending_writes.append(
+                (_spend_lease_operation_name(table, "delete"), key)
+            )
+            deleted += 1
+        return deleted
 
     update = re.fullmatch(
         r"UPDATE\s+(spend_lease_scope_arbitration|spend_lease_open)"
@@ -3289,6 +3605,7 @@ def make_fake_store(
     store._analytics_dual_read_grace_seconds = 0
     store._operational_analytics = None
     store._regional_quota_ledger = None
+    store._spend_lease_ledger = None
     store._regional_quota_lease_cache = {}
     store._regional_quota_lease_cache_lock = threading.Lock()
     from trusted_router.storage_gcp_credit_shards import CreditShardCountCache
