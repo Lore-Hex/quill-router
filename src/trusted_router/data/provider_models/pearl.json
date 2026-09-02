@@ -86,9 +86,9 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 126000,
-      "output_token_price_per_m": 250000,
-      "cached_input_token_price_per_m": 27000
+      "input_token_price_per_m": 60000,
+      "output_token_price_per_m": 170000,
+      "cached_input_token_price_per_m": 16000
     },
     {
       "display_name": "DeepSeek: V4 Pro",
@@ -258,9 +258,9 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 1188000,
-      "output_token_price_per_m": 3564000,
-      "cached_input_token_price_per_m": 117000
+      "input_token_price_per_m": 1100000,
+      "output_token_price_per_m": 3300000,
+      "cached_input_token_price_per_m": 43000
     },
     {
       "display_name": "Z.AI: GLM-5.3-Flash",
@@ -301,11 +301,53 @@
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 135000,
-      "output_token_price_per_m": 450000,
-      "cached_input_token_price_per_m": 27000
+      "input_token_price_per_m": 70000,
+      "output_token_price_per_m": 240000,
+      "cached_input_token_price_per_m": 15000
+    },
+    {
+      "display_name": "Z.AI: GLM-5.3",
+      "title": "zai-org/GLM-5.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "zai-org/GLM-5.3",
+      "context_length": 1000000,
+      "max_output_tokens": 1000000,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "reasoning",
+        "structured_outputs",
+        "prompt_caching"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "routable": true,
+      "input_token_price_per_m": 1100000,
+      "output_token_price_per_m": 3500000,
+      "cached_input_token_price_per_m": 230000
     }
   ],
-  "generated_at": "2026-09-02T03:25:34Z",
-  "model_count": 7
+  "generated_at": "2026-09-02T17:42:35Z",
+  "model_count": 8
 }

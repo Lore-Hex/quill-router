@@ -46,10 +46,10 @@
   },
   "atlas-cloud": {
     "card_version": 2,
-    "model_count": 76,
+    "model_count": 77,
     "name": "Atlas Cloud",
     "privacy": "Policy documented",
-    "route_count": 76,
+    "route_count": 77,
     "route_mode": "Prepaid",
     "slug": "atlas-cloud"
   },
@@ -253,19 +253,19 @@
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 22,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
   "google-vertex": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 11,
     "name": "Google Vertex AI",
     "privacy": "Zero retention",
-    "route_count": 10,
+    "route_count": 11,
     "route_mode": "Prepaid",
     "slug": "google-vertex"
   },
@@ -496,10 +496,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 11,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 13,
+    "route_count": 11,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -541,10 +541,10 @@
   },
   "pearl": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 5,
     "name": "Pearl Research Labs",
     "privacy": "Policy documented",
-    "route_count": 4,
+    "route_count": 5,
     "route_mode": "Prepaid",
     "slug": "pearl"
   },

@@ -147,9 +147,9 @@
         "reasoning",
         "prompt_caching"
       ],
-      "input_token_price_per_m": 1500000,
-      "output_token_price_per_m": 7500000,
-      "cached_input_token_price_per_m": 150000
+      "input_token_price_per_m": 1950000,
+      "output_token_price_per_m": 9750000,
+      "cached_input_token_price_per_m": 195000
     },
     {
       "display_name": "qwen3.8-27b",
@@ -209,6 +209,6 @@
       "cached_input_token_price_per_m": 180000
     }
   ],
-  "generated_at": "2026-09-02T03:25:34Z",
+  "generated_at": "2026-09-02T17:42:35Z",
   "model_count": 7
 }

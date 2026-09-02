@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-09-02T03:25:34Z",
+  "generated_at": "2026-09-02T17:42:35Z",
   "model_count": 150,
   "models": [
     {
@@ -17,7 +17,6 @@
       "output_token_price_per_m": 500,
       "model_type": "chat",
       "features": [
-        "function-calling",
         "serverless"
       ],
       "input_modalities": [
@@ -2079,6 +2078,7 @@
       "features": [
         "function-calling",
         "structured-outputs",
+        "reasoning",
         "serverless"
       ],
       "input_modalities": [
@@ -2604,7 +2604,6 @@
       "output_token_price_per_m": 14800,
       "model_type": "chat",
       "features": [
-        "function-calling",
         "structured-outputs",
         "reasoning",
         "serverless"

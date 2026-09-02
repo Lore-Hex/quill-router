@@ -3997,8 +3997,32 @@
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 500000,
       "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "Qwen3.8 27B",
+      "title": "qwen/qwen3.8-27b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-27b",
+      "upstream_id": "qwen/qwen3.8-27b",
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 50000
     }
   ],
-  "generated_at": "2026-09-02T03:25:34Z",
-  "model_count": 143
+  "generated_at": "2026-09-02T17:42:35Z",
+  "model_count": 144
 }
