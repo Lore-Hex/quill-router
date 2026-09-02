@@ -2,7 +2,7 @@
   "_about": "ByteDance Seed 2.1 Turbo served through one explicitly allowlisted OpenRouter route. ByteDance sells no provider-direct credential this deployment can obtain, so OpenRouter is the billing source. This is not BYOK, ZDR, confidential-compute, or E2EE.",
   "provider": "openrouter",
   "source": "https://openrouter.ai/api/v1/models/bytedance-seed/seed-2-1-turbo/endpoints",
-  "generated_at": "2026-09-01T22:30:30Z",
+  "generated_at": "2026-09-02T01:03:49Z",
   "price_scale": "microdollars_per_million",
   "model_count": 1,
   "models": [

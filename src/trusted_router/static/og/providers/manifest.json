@@ -226,10 +226,10 @@
   },
   "fireworks": {
     "card_version": 2,
-    "model_count": 17,
+    "model_count": 18,
     "name": "Fireworks AI",
     "privacy": "Policy documented",
-    "route_count": 32,
+    "route_count": 34,
     "route_mode": "Prepaid + BYOK",
     "slug": "fireworks"
   },
@@ -244,19 +244,19 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 71,
+    "model_count": 70,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 77,
+    "route_count": 76,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 12,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 24,
+    "route_count": 22,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
