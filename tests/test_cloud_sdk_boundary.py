@@ -47,6 +47,8 @@ ALLOWED = {
     "storage_gcp_synthetic_index.py",
     # Fixed-cluster Bigtable CAS implementation of the regional storage port.
     "regional_quota_ledger.py",
+    # Fixed-cluster Bigtable CAS implementation of the spend-lease storage port.
+    "spend_lease_ledger.py",
     # The two explicit cloud ports. Both import lazily so a non-GCP deployment
     # need not install the Google libraries at all.
     "storage_errors.py",
