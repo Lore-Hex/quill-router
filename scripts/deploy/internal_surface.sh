@@ -432,7 +432,8 @@ for optional_plain_name in \
   TR_SYNTHETIC_MONITOR_MODEL \
   TR_SYNTHETIC_CONTROL_PLANE_BASE_URL \
   TR_SYNTHETIC_CANONICAL_ATTESTED \
-  TR_EXTERNAL_LIVE_REGIONS; do
+  TR_EXTERNAL_LIVE_REGIONS \
+  TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS; do
   if optional_plain_value="$(legacy_env_optional "$optional_plain_name")"; then
     ENV_VARS+=("${optional_plain_name}=${optional_plain_value}")
   fi
