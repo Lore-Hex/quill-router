@@ -838,6 +838,7 @@ class Settings(BaseSettings):
     regional_quota_lease_max_available_basis_points: int = 1_000
     regional_quota_lease_shard_count: int = 16
     regional_quota_bigtable_table: str = "trustedrouter-regional-quota"
+    spend_lease_bigtable_table: str = "trustedrouter-spend-lease"
     # True only in the one-shot reconciliation Cloud Run Job. Serving
     # processes must never set this: it exempts the worker from duplicating the
     # traffic-issuance allowlist because the worker can only drain leases that
@@ -847,6 +848,7 @@ class Settings(BaseSettings):
     # Comma-separated region=single-cluster-app-profile pairs. A fixed profile
     # is required because one lease has exactly one regional writer authority.
     regional_quota_bigtable_app_profiles: str = ""
+    spend_lease_bigtable_app_profiles: str = ""
     # Stage A spend leases are signed advisory artifacts only. This one flag
     # gates both minting and shadow evidence; default-off deploys never touch
     # Secret Manager. The accepted digest CSV preserves both sides of a GCP
@@ -1947,6 +1949,27 @@ class Settings(BaseSettings):
             if region in profiles:
                 raise ValueError(
                     "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES contains a duplicate region"
+                )
+            profiles[region] = profile
+        return profiles
+
+    @property
+    def spend_lease_bigtable_app_profile_map(self) -> dict[str, str]:
+        profiles: dict[str, str] = {}
+        for raw_entry in self.spend_lease_bigtable_app_profiles.split(","):
+            entry = raw_entry.strip()
+            if not entry:
+                continue
+            region, separator, profile = entry.partition("=")
+            region = region.strip()
+            profile = profile.strip()
+            if not separator or not region or not profile:
+                raise ValueError(
+                    "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES entries must be region=app-profile"
+                )
+            if region in profiles:
+                raise ValueError(
+                    "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES contains a duplicate region"
                 )
             profiles[region] = profile
         return profiles
