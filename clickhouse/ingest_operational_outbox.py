@@ -21,6 +21,9 @@ SPANNER_INSTANCE = "trusted-router-nam6"
 SPANNER_DATABASE = "trusted-router"
 OUTBOX_TABLE = "tr_operational_analytics_outbox"
 OUTBOX_SHARDS = 32
+# Watermark used before the first acknowledged batch of a process: seeks from
+# the start of every shard, i.e. the old full walk, exactly once.
+_WATERMARK_EPOCH = dt.datetime(1970, 1, 1, tzinfo=dt.UTC)
 
 ACTIVITY_COLUMNS = (
     "generation_id",
@@ -305,24 +308,65 @@ class SpannerOperationalOutboxSource:
         )
         self._pt = param_types
         self._shard_count = shard_count
+        # Commit-timestamp watermark: every row committed at or before it has
+        # already been drained and deleted. See fetch() for why it is safe.
+        self._after: dt.datetime | None = None
 
     def fetch(self, *, limit: int) -> list[OperationalOutboxRow]:
         if limit < 1:
             return []
-        # Delivery order is not load-bearing: ClickHouse replacement uses the
-        # stable outbox commit timestamp as its version, and delete addresses
-        # only the exact fetched primary keys after every insert succeeds.
-        # Quarantine rows are append-only diagnostics and can repeat after a
-        # partial insert retry, but they have no ordering semantics.
-        # One global LIMIT therefore replaces the ordered query per shard.
+        # One statement, thirty-two key-range seeks, one watermark.
+        #
+        # This table churns: every drained row is deleted, and under the
+        # database's 7-day version retention each deleted row stays behind as
+        # a dead version the storage layer must step over. The previous
+        # unfiltered ``LIMIT @limit`` therefore walked garbage from the head of
+        # the table on EVERY poll: SPANNER_SYS.QUERY_STATS_TOP_HOUR on
+        # 2026-09-01 showed it at 0.207s CPU per execution to return ~2 rows,
+        # 3,300 executions/hour -- ~690 CPU-seconds/hour, the single largest
+        # load on the shared billing-plane instance, in the same hours the
+        # authorize/settle path stalled for seconds. Measured in PROFILE mode
+        # against the live table at the same moment: unfiltered 280ms CPU;
+        # this statement with a warm watermark 24ms (19ms of it plan creation,
+        # amortised by parameterisation); with the epoch watermark 297ms, i.e.
+        # the cost is paid once per process start, not per poll.
+        #
+        # Why a single global watermark is safe: rows are consumed in global
+        # commit_ts order (ORDER BY commit_ts across all shards, then LIMIT),
+        # and each fetch is a strong snapshot read. Any row not yet visible
+        # was committed after the snapshot and carries a larger commit_ts than
+        # every row we have seen, so nothing live can sit below the largest
+        # commit_ts we have deleted. ``>=`` keeps rows that share a commit
+        # timestamp with the last deleted batch (one transaction, several
+        # events) from being skipped when LIMIT cut through the tie; the ones
+        # already deleted do not come back.
+        #
+        # The per-shard predicate is what turns the scan into seeks: the
+        # primary key is (shard, commit_ts, ...), so ``shard IN UNNEST`` gives
+        # one range per shard starting at the watermark. A plain
+        # ``commit_ts >= @after`` alone is not a key prefix and would scan.
+        #
+        # An earlier per-shard loop of 32 statements per poll was itself the
+        # largest query load (measured 2026-08-25); this keeps one statement.
         rows: list[OperationalOutboxRow] = []
+        after = self._after or _WATERMARK_EPOCH
         with self._database.snapshot() as snapshot:
             values = snapshot.execute_sql(
                 # OUTBOX_TABLE is a module constant, not caller input.
                 "SELECT shard, commit_ts, event_kind, event_id, payload "  # noqa: S608
-                f"FROM {OUTBOX_TABLE} LIMIT @limit",
-                params={"limit": limit},
-                param_types={"limit": self._pt.INT64},
+                f"FROM {OUTBOX_TABLE} "
+                "WHERE shard IN UNNEST(@shards) AND commit_ts >= @after "
+                "ORDER BY commit_ts LIMIT @limit",
+                params={
+                    "shards": list(range(self._shard_count)),
+                    "after": after,
+                    "limit": limit,
+                },
+                param_types={
+                    "shards": self._pt.Array(self._pt.INT64),
+                    "after": self._pt.TIMESTAMP,
+                    "limit": self._pt.INT64,
+                },
             )
             rows.extend(
                 OperationalOutboxRow(
@@ -343,6 +387,12 @@ class SpannerOperationalOutboxSource:
 
         with self._database.batch() as batch:
             batch.delete(OUTBOX_TABLE, KeySet(keys=[list(row.key) for row in rows]))
+        # Advance only after the delete committed: a failed insert never
+        # reaches here, so a row that was fetched but not acknowledged stays
+        # above the watermark and is fetched again.
+        newest = max(_utc(row.commit_ts) for row in rows)
+        if self._after is None or newest > self._after:
+            self._after = newest
 
     def oldest_commit_ts(self) -> dt.datetime | None:
         oldest: dt.datetime | None = None
@@ -476,9 +526,7 @@ class ClickHouseOperationalWriter:
                 ) from exc
             if result.returncode != 0:
                 detail = result.stderr.decode("utf-8", errors="replace")[:1000]
-                raise ClickHouseInsertError(
-                    f"ClickHouse {event_kind} insert failed: {detail}"
-                )
+                raise ClickHouseInsertError(f"ClickHouse {event_kind} insert failed: {detail}")
 
 
 def _event_id(tenant_id: str, batch_id: str, kind: str, index: int) -> str:
