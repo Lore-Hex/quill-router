@@ -174,7 +174,7 @@ def test_user_model_crud_ownership_and_one_time_secrets(client: TestClient) -> N
     body = _body()
     body["endpoint_api_key"] = "owner-endpoint-api-key"
     created = _create(client, body=body)
-    assert created["id"] == "trustedrouter/user-community-machine"
+    assert created["id"] == "tr-user-model/user-model-owner-community-machine"
     assert created["signing_secret"]
     assert created["endpoint_key_hint"] == "...-key"
     assert "encrypted_endpoint_api_key" not in created
@@ -229,7 +229,7 @@ def test_patch_rejects_protected_fields(client: TestClient, field: str) -> None:
     assert response.status_code == 400
 
 
-def test_limit_three_and_shared_slug_collisions_both_directions(
+def test_limit_three_and_distinct_namespaces_allow_matching_slugs(
     client: TestClient,
 ) -> None:
     wrapper = client.post(
@@ -243,13 +243,16 @@ def test_limit_three_and_shared_slug_collisions_both_directions(
         },
     )
     assert wrapper.status_code == 201, wrapper.text
-    collision = client.post(
+    matching_user_model = client.post(
         "/v1/user-models", headers=HEADERS, json=_body(slug="wrapper-first")
     )
-    assert collision.status_code == 409
+    assert matching_user_model.status_code == 201, matching_user_model.text
+    assert matching_user_model.json()["data"]["id"] == (
+        "tr-user-model/user-model-owner-wrapper-first"
+    )
 
     _create(client, body=_body(slug="user-first"))
-    reverse = client.post(
+    matching_wrapper = client.post(
         "/v1/custom-models",
         headers=HEADERS,
         json={
@@ -259,10 +262,12 @@ def test_limit_three_and_shared_slug_collisions_both_directions(
             "hidden_prompt": "private",
         },
     )
-    assert reverse.status_code == 409
+    assert matching_wrapper.status_code == 201, matching_wrapper.text
+    assert matching_wrapper.json()["data"]["id"] == (
+        "tr-custom-model/user-model-owner-user-first"
+    )
 
     _create(client, body=_body(slug="second-user-model"))
-    _create(client, body=_body(slug="third-user-model"))
     over_limit = client.post(
         "/v1/user-models", headers=HEADERS, json=_body(slug="fourth-user-model")
     )
@@ -1267,7 +1272,7 @@ def test_console_create_and_rotate_show_signing_secret_once(client: TestClient) 
     created = client.post("/console/user-models", data=form)
     assert created.status_code == 201, created.text
     assert "shown once" in created.text
-    model = STORE.get_user_model("trustedrouter/user-console-community")
+    model = STORE.get_user_model("tr-user-model/console-user-model-console-community")
     assert model is not None
 
     ordinary_page = client.get("/console/user-models")

@@ -267,6 +267,7 @@ def test_verification_status_reports_shape_and_next_step_progression(
     assert initial_response.status_code == 200
     assert initial == {
         "email": "alice@example.com",
+        "username": None,
         "email_verified": False,
         "lifetime_topup": 0.0,
         "lifetime_topup_microdollars": 0,

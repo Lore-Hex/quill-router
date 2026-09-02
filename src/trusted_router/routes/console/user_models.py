@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import SettingsDep
+from trusted_router.creator_identity import creator_username_for_models
 from trusted_router.custom_model_billing import (
     HUMAN_PRICE_MAX_MICRODOLLARS_PER_M,
     HUMAN_PRICE_SUGGESTED_MICRODOLLARS_PER_M,
@@ -63,6 +64,10 @@ def register(app: FastAPI) -> None:
     ) -> Response:
         if missing_custom_model_requirements(ctx.user, settings):
             return _redirect("error=verification")
+        owner_username = creator_username_for_models(
+            ctx.user,
+            enforce_verification=settings.custom_models_verification_enforced,
+        )
         _validate_form_values(
             kind=kind,
             display_identity=display_identity,
@@ -78,6 +83,7 @@ def register(app: FastAPI) -> None:
             STORE.create_user_model(
                 owner_user_id=ctx.user.id,
                 owner_workspace_id=ctx.workspace.id,
+                owner_username=owner_username,
                 name=name,
                 kind=kind,
                 description=description,
@@ -278,6 +284,10 @@ def _render_page(
         user_model_owner_shape(model, owner=ctx.user)
         for model in STORE.list_user_models_for_user(ctx.user.id)
     ]
+    owner_username = creator_username_for_models(
+        ctx.user,
+        enforce_verification=False,
+    )
     return render(
         "console/user_models.html",
         settings=settings,
@@ -300,6 +310,7 @@ def _render_page(
             "missing_requirements": missing,
             "url": "/console/account/verification",
         },
+        model_prefix=f"tr-user-model/{owner_username}-",
         one_time_secret=one_time_secret,
         secret_reason=one_time_reason,
         flash=_flash_message(

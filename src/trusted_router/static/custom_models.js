@@ -33,7 +33,7 @@
 
   function baseAllowed(model) {
     if (!model || model.internal_only) return false;
-    if (!model.id || model.id.startsWith("trustedrouter/user-")) return false;
+    if (!model.id || model.id.startsWith("tr-user-model/")) return false;
     return model.supports_chat !== false;
   }
 

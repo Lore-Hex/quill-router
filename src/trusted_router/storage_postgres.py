@@ -33,6 +33,9 @@ from trusted_router.credit_transfer import (
 from trusted_router.custom_model_billing import (
     user_model_authorization_id_from_payout_event_id,
 )
+from trusted_router.custom_model_markup_billing import (
+    custom_model_markup_authorization_id_from_payout_event_id,
+)
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.operational_analytics_freshness import (
     BACKEND_DIRECT,
@@ -76,7 +79,7 @@ from trusted_router.spend_windows import (
 )
 from trusted_router.storage_auth_context import build_session_auth_context
 from trusted_router.storage_codec import json_body
-from trusted_router.storage_custom_models import normalize_custom_model_id
+from trusted_router.storage_custom_models import normalize_user_provided_model_id
 from trusted_router.storage_errors import (
     DeferredSettlementCapReached,
     StoreConflict,
@@ -1304,13 +1307,19 @@ class PostgresStore:
         self._not_implemented("user_is_member")
 
     def get_user(self, user_id: str) -> User | None:
-        self._not_implemented("get_user")
+        return self._read_entity("user", user_id, User)
 
     def find_user_by_email(self, email: str) -> User | None:
         self._not_implemented("find_user_by_email")
 
     def find_user_by_wallet(self, address: str) -> User | None:
         self._not_implemented("find_user_by_wallet")
+
+    def find_user_by_username(self, username: str) -> User | None:
+        self._not_implemented("find_user_by_username")
+
+    def claim_user_username(self, user_id: str, username: str) -> User:
+        self._not_implemented("claim_user_username")
 
     def create_wallet_user(self, address: str) -> User:
         self._not_implemented("create_wallet_user")
@@ -2736,6 +2745,8 @@ class PostgresStore:
         name: str,
         base_model_id: str,
         hidden_prompt: str,
+        owner_username: str | None = None,
+        markup_basis_points: int = 0,
         enabled: bool = True,
         slug: str | None = None,
     ) -> CustomModel:
@@ -2779,6 +2790,7 @@ class PostgresStore:
         owner_workspace_id: str,
         name: str,
         kind: str,
+        owner_username: str | None = None,
         description: str = "",
         display_identity: str = "handle",
         display_name: str = "",
@@ -2810,7 +2822,9 @@ class PostgresStore:
         model_ids: list[str],
     ) -> dict[str, UserProvidedModel]:
         unique_ids = list(
-            dict.fromkeys(normalize_custom_model_id(model_id) for model_id in model_ids)
+            dict.fromkeys(
+                normalize_user_provided_model_id(model_id) for model_id in model_ids
+            )
         )
         if not unique_ids:
             return {}
@@ -3396,6 +3410,7 @@ class PostgresStore:
     ) -> bool:
         amount = self._positive_money_amount(amount_microdollars)
         is_app_markup = event_id.startswith("app_markup_payout:")
+        is_custom_markup = event_id.startswith("custom_model_markup_payout:")
 
         def credit(conn: Any) -> bool:
             won = self._insert_entity_once_tx(
@@ -3420,13 +3435,23 @@ class PostgresStore:
                 CreditMovement(
                     account_id=f"user:{user_id}",
                     movement_id=event_id,
-                    kind="app_markup_payout" if is_app_markup else "custom_model_payout",
+                    kind=(
+                        "app_markup_payout"
+                        if is_app_markup
+                        else "custom_model_markup_payout"
+                        if is_custom_markup
+                        else "custom_model_payout"
+                    ),
                     amount_microdollars=amount,
                     counterparty_account_id=payer_workspace_id,
                     custom_model_id=custom_model_id,
                     authorization_id=(
                         event_id.split(":", 1)[1]
                         if is_app_markup
+                        else custom_model_markup_authorization_id_from_payout_event_id(
+                            event_id
+                        )
+                        if is_custom_markup
                         else user_model_authorization_id_from_payout_event_id(event_id)
                     ),
                 ),
@@ -4152,6 +4177,8 @@ class PostgresStore:
         app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
+        custom_model_markup_basis_points: int = 0,
+        custom_model_owner_user_id: str = "",
         user_provided_model_id: str | None = None,
         user_provided_model_revision: int | None = None,
         user_model_prompt_price_microdollars_per_m: int | None = None,
@@ -4207,6 +4234,8 @@ class PostgresStore:
             app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
+            custom_model_markup_basis_points=custom_model_markup_basis_points,
+            custom_model_owner_user_id=custom_model_owner_user_id,
             user_provided_model_id=user_provided_model_id,
             user_provided_model_revision=user_provided_model_revision,
             user_model_prompt_price_microdollars_per_m=(user_model_prompt_price_microdollars_per_m),

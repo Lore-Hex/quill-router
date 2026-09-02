@@ -69,4 +69,26 @@
     </div>
   </li>
 </ol>
+
+<section class="panel">
+  <div class="panel-head"><h2>Creator username</h2><span class="pill {{ 'good' if current_user.username else '' }}">{{ 'claimed' if current_user.username else 'optional' }}</span></div>
+  <div class="panel-body">
+    <p>Verified creators use one unique username in public app and model identifiers.</p>
+    {% if username_error == 'username_taken' %}<p class="notice bad">That username is already in use.</p>
+    {% elif username_error == 'username_invalid' %}<p class="notice bad">Use 3-32 lowercase letters, numbers, or hyphens.</p>
+    {% elif username_error == 'username_verification' %}<p class="notice bad">Complete identity verification before choosing a username.</p>
+    {% elif username_error == 'username_immutable' %}<p class="notice bad">Creator usernames cannot be changed after they are claimed.</p>{% endif %}
+    {% if current_user.username %}
+      <p><code>{{ current_user.username }}</code></p>
+      <p class="muted">Usernames are permanent because published model IDs include them.</p>
+    {% else %}
+      <form class="form" method="post" action="/console/account/verification/username">
+        <label>Username
+          <input name="username" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9-]{1,30}[a-z0-9]" placeholder="your-name" {{ '' if current_user.identity_verified and current_user.identity_verified_name else 'disabled' }}>
+        </label>
+        <button class="btn primary" type="submit" {{ '' if current_user.identity_verified and current_user.identity_verified_name else 'disabled' }}>Claim username</button>
+      </form>
+    {% endif %}
+  </div>
+</section>
 {% endblock %}

@@ -12,12 +12,12 @@ from fastapi.responses import JSONResponse
 from trusted_router.auth import SettingsDep
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
+from trusted_router.oauth_app_policy import user_can_receive_creator_payouts
 from trusted_router.routes.console._shared import require_console_context
 from trusted_router.routes.helpers import json_body
 from trusted_router.routes.oauth_keys import _validate_callback_url
 from trusted_router.storage import STORE, OAuthApp, User
 from trusted_router.types import ErrorType
-from trusted_router.verification import verification_level
 
 OAUTH_APP_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 OAUTH_APP_RESERVED_IDS = frozenset(
@@ -83,9 +83,10 @@ def register_oauth_app_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> JSONResponse:
         owner = _resolved_user(request, settings)
-        _require_identity_verification(owner)
         body = await json_body(request)
         values = _validated_create(body)
+        if values["markup_basis_points"] > 0 and not values["suspended"]:
+            _require_identity_verification(owner)
         app = OAuthApp(owner_user_id=owner.id, **values)
         try:
             STORE.create_oauth_app(app)
@@ -129,8 +130,11 @@ def register_oauth_app_routes(router: APIRouter) -> None:
     ) -> dict[str, Any]:
         owner = _resolved_user(request, settings)
         app = _owned_app(app_id, owner)
-        _require_identity_verification(owner)
         patch = _validated_patch(await json_body(request))
+        resulting_markup = int(patch.get("markup_basis_points", app.markup_basis_points))
+        resulting_suspended = bool(patch.get("suspended", app.suspended))
+        if resulting_markup > 0 and not resulting_suspended:
+            _require_identity_verification(owner)
         updated = STORE.update_oauth_app(app.id, patch=patch)
         if updated is None:
             raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
@@ -159,18 +163,11 @@ def _console_session_required() -> HTTPException:
 
 
 def _require_identity_verification(user: User) -> None:
-    if verification_level(user) != "identity":
+    if not user_can_receive_creator_payouts(user):
         raise api_error(
             403,
-            "Full identity verification is required to register or update an OAuth app; "
-            "complete the Veriff identity verification flow first.",
-            ErrorType.VERIFICATION_REQUIRED,
-        )
-    if not (user.identity_verified_name or "").strip():
-        raise api_error(
-            403,
-            "Your verified legal name is missing; re-run identity verification "
-            "before registering or updating an OAuth app.",
+            "Full identity verification is required to enable earnings on a monetized "
+            "OAuth app; complete the Veriff identity verification flow first.",
             ErrorType.VERIFICATION_REQUIRED,
         )
 

@@ -446,6 +446,8 @@ class InMemoryApiKeys:
         app_owner_user_id: str = "",
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
+        custom_model_markup_basis_points: int = 0,
+        custom_model_owner_user_id: str = "",
         user_provided_model_id: str | None = None,
         user_provided_model_revision: int | None = None,
         user_model_prompt_price_microdollars_per_m: int | None = None,
@@ -501,6 +503,8 @@ class InMemoryApiKeys:
                 app_owner_user_id=app_owner_user_id,
                 custom_model_id=custom_model_id,
                 custom_model_revision=custom_model_revision,
+                custom_model_markup_basis_points=custom_model_markup_basis_points,
+                custom_model_owner_user_id=custom_model_owner_user_id,
                 user_provided_model_id=user_provided_model_id,
                 user_provided_model_revision=user_provided_model_revision,
                 user_model_prompt_price_microdollars_per_m=(

@@ -44,7 +44,7 @@
         <label>Name <input name="name" required maxlength="120" placeholder="Community research agent">
           <span class="field-help">Shown on your model's page. Any words you like.</span></label>
         <label>Slug <input name="slug" maxlength="64" pattern="[a-z0-9][a-z0-9-]{1,62}[a-z0-9]" placeholder="research-agent">
-          <span class="field-help">The last part of the id callers type: <span class="mono">trustedrouter/user-<b id="slug-echo">research-agent</b></span></span></label>
+          <span class="field-help">The last part of the id callers type: <span class="mono">{{ model_prefix }}<b id="slug-echo">research-agent</b></span></span></label>
         <label>Kind
           <select name="kind" required><option value="machine">Machine</option><option value="agent">Agent</option><option value="human">Human</option></select>
         </label>

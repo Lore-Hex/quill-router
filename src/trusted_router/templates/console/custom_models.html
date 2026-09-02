@@ -33,7 +33,7 @@
       </label>
       <label>Slug
         <span class="custom-model-slug-input">
-          <span>trustedrouter/user-</span>
+          <span>{{ model_prefix }}</span>
           <input name="slug" maxlength="64" pattern="[a-z0-9][a-z0-9-]{1,62}[a-z0-9]" placeholder="legal-reviewer">
         </span>
       </label>
@@ -50,6 +50,10 @@
       </label>
       <label>Hidden prompt
         <textarea name="hidden_prompt" rows="8" maxlength="{{ prompt_limit }}" placeholder="Instructions prepended inside the attested gateway. Callers cannot see this text."></textarea>
+      </label>
+      <label>Markup (%)
+        <input name="markup_percent" type="number" min="0" max="300" step="0.01" value="0">
+        <span class="form-hint">Added to base token cost. You receive 70% of the markup in your earnings wallet.</span>
       </label>
       <label class="inline-check">
         <input name="enabled" type="checkbox" value="true" checked>
@@ -91,7 +95,7 @@
             </label>
             <label>Slug
               <span class="custom-model-slug-input">
-                <span>trustedrouter/user-</span>
+                <span>{{ model_prefix }}</span>
                 <input name="slug" required maxlength="64" pattern="[a-z0-9][a-z0-9-]{1,62}[a-z0-9]" value="{{ model.slug }}">
               </span>
               <span class="form-hint">Changing the slug changes the callable model ID. Existing callers must update.</span>
@@ -107,6 +111,10 @@
             </label>
             <label>Hidden prompt
               <textarea name="hidden_prompt" rows="8" maxlength="{{ prompt_limit }}">{{ model.hidden_prompt }}</textarea>
+            </label>
+            <label>Markup (%)
+              <input name="markup_percent" type="number" min="0" max="300" step="0.01" value="{{ model.markup_percent }}">
+              <span class="form-hint">You receive 70% of collected markup; TrustedRouter retains 30%.</span>
             </label>
             <label class="inline-check">
               <input name="enabled" type="checkbox" value="true" {{ 'checked' if model.enabled else '' }}>

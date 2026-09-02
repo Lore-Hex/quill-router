@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from trusted_router.auth import SettingsDep
 from trusted_router.config import Settings
+from trusted_router.creator_identity import validate_creator_username
 from trusted_router.identity_guidance import guidance_for
 from trusted_router.money import (
     VERIFF_ATTEMPT_FEE_MICRODOLLARS,
@@ -65,6 +66,7 @@ def register(app: FastAPI) -> None:
                 page_title="Account verification",
                 page_subtitle="Complete each check once to unlock verified account features.",
                 current_user=user,
+                username_error=error if error.startswith("username_") else "",
                 error=error,
                 veriff_done=veriff == "done",
                 dev_approved=bool(dev),
@@ -120,6 +122,25 @@ def register(app: FastAPI) -> None:
                 error = "veriff_unavailable"
             return _back(f"error={error}")
         return RedirectResponse(url=result.url, status_code=303)
+
+    @app.post("/console/account/verification/username")
+    def console_claim_creator_username(
+        ctx: ConsoleDep,
+        username: str = Form(..., min_length=3, max_length=32),
+    ) -> Response:
+        user = STORE.get_user(ctx.user.id) or ctx.user
+        if not user.identity_verified or not (user.identity_verified_name or "").strip():
+            return _back("error=username_verification")
+        try:
+            STORE.claim_user_username(user.id, validate_creator_username(username))
+        except ValueError as exc:
+            error = str(exc)
+            if error == "creator_username_taken":
+                return _back("error=username_taken")
+            if error == "creator_username_immutable":
+                return _back("error=username_immutable")
+            return _back("error=username_invalid")
+        return _back("username=saved")
 
 
 #: The API keeps the machine-readable keys; the page shows words. A person

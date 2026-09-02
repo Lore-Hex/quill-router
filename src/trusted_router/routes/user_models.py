@@ -16,6 +16,7 @@ from trusted_router.auth import (
 )
 from trusted_router.byok_crypto import decrypt_user_model_secret
 from trusted_router.config import Settings
+from trusted_router.creator_identity import creator_username_for_models
 from trusted_router.custom_model_billing import (
     HUMAN_PRICE_MAX_MICRODOLLARS_PER_M,
     MACHINE_PRICE_MAX_MICRODOLLARS_PER_M,
@@ -37,7 +38,7 @@ from trusted_router.services.user_model_secrets import (
     encrypt_user_model_signing_secret,
 )
 from trusted_router.storage import STORE
-from trusted_router.storage_custom_models import normalize_custom_model_id
+from trusted_router.storage_custom_models import normalize_user_provided_model_id
 from trusted_router.storage_models import UserProvidedModel
 from trusted_router.storage_user_models import USER_PROVIDED_MODEL_LIMIT_PER_USER
 from trusted_router.types import ErrorType
@@ -121,7 +122,21 @@ def register_user_model_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> JSONResponse:
         owner_user_id = _owner_user_id(principal)
-        assert_user_can_create_custom_models(STORE.get_user(owner_user_id), settings)
+        owner = STORE.get_user(owner_user_id)
+        assert_user_can_create_custom_models(owner, settings)
+        assert owner is not None
+        try:
+            owner_username = creator_username_for_models(
+                owner,
+                enforce_verification=settings.custom_models_verification_enforced,
+            )
+        except ValueError as exc:
+            raise api_error(
+                403,
+                "Choose a creator username before publishing a user-provided model",
+                ErrorType.VERIFICATION_REQUIRED,
+                extra={"verification_url": "/console/account/verification"},
+            ) from exc
         slug = validate_user_model_slug(body.slug) if body.slug is not None else None
         display_name = validate_user_model_display_name(body.display_name)
         endpoint_url = await validate_endpoint_url(body.endpoint_url, settings)
@@ -149,6 +164,7 @@ def register_user_model_routes(router: APIRouter) -> None:
             model = STORE.create_user_model(
                 owner_user_id=owner_user_id,
                 owner_workspace_id=principal.workspace.id,
+                owner_username=owner_username,
                 name=body.name,
                 kind=body.kind,
                 description=body.description,
@@ -436,7 +452,7 @@ async def _clock_target(
     key can do. It deliberately does NOT extend to editing the model: changing
     endpoint_url decides where prompts go, so it stays with the owner's account.
     """
-    model = STORE.get_user_model(normalize_custom_model_id(model_id))
+    model = STORE.get_user_model(normalize_user_provided_model_id(model_id))
     signature = request.headers.get("tr-signature")
     if signature and model is not None and model.encrypted_signing_secret is not None:
         try:
@@ -468,7 +484,7 @@ def _require_owner_user_model(
     principal: Principal,
 ) -> UserProvidedModel:
     owner_user_id = _owner_user_id(principal)
-    model = STORE.get_user_model(normalize_custom_model_id(model_id))
+    model = STORE.get_user_model(normalize_user_provided_model_id(model_id))
     if model is None or model.owner_user_id != owner_user_id:
         raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
     return model

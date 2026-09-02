@@ -10,10 +10,9 @@ from typing import Any
 from trusted_router.storage_custom_models import (
     CUSTOM_MODEL_ID_CHARS,
     CUSTOM_MODEL_ID_RANDOM_LENGTH,
-    CUSTOM_MODEL_PREFIX,
-    custom_model_id_from_slug,
-    custom_model_slug,
-    normalize_custom_model_id,
+    normalize_user_provided_model_id,
+    user_provided_model_id_from_slug,
+    user_provided_model_slug,
 )
 from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
 from trusted_router.storage_models import (
@@ -58,6 +57,7 @@ class SpannerUserProvidedModels:
         *,
         owner_user_id: str,
         owner_workspace_id: str,
+        owner_username: str,
         name: str,
         kind: str,
         description: str = "",
@@ -83,9 +83,12 @@ class SpannerUserProvidedModels:
             if len(existing) >= USER_PROVIDED_MODEL_LIMIT_PER_USER:
                 raise ValueError("custom_model_limit_exceeded")
             model_id = (
-                self._new_id_tx(transaction)
+                self._new_id_tx(transaction, owner_username)
                 if slug is None
-                else custom_model_id_from_slug(slug)
+                else user_provided_model_id_from_slug(
+                    slug,
+                    username=owner_username,
+                )
             )
             if self._model_id_exists_tx(transaction, model_id):
                 raise ValueError("custom_model_slug_taken")
@@ -93,13 +96,16 @@ class SpannerUserProvidedModels:
                 id=model_id,
                 owner_user_id=owner_user_id,
                 owner_workspace_id=owner_workspace_id,
+                owner_username=owner_username,
+                slug=user_provided_model_slug(model_id, username=owner_username),
                 name=name,
                 kind=kind,
                 description=description,
                 display_identity=display_identity,
                 display_name=display_name,
                 endpoint_url=endpoint_url,
-                upstream_model_id=upstream_model_id or custom_model_slug(model_id),
+                upstream_model_id=upstream_model_id
+                or user_provided_model_slug(model_id, username=owner_username),
                 encrypted_endpoint_api_key=encrypted_endpoint_api_key,
                 endpoint_key_hint=endpoint_key_hint,
                 encrypted_signing_secret=encrypted_signing_secret,
@@ -162,13 +168,15 @@ class SpannerUserProvidedModels:
     def get(self, model_id: str) -> UserProvidedModel | None:
         return self._io.read_entity(
             _USER_PROVIDED_MODEL_KIND,
-            normalize_custom_model_id(model_id),
+            normalize_user_provided_model_id(model_id),
             UserProvidedModel,
         )
 
     def get_many(self, model_ids: list[str]) -> dict[str, UserProvidedModel]:
         canonical_ids = list(
-            dict.fromkeys(normalize_custom_model_id(model_id) for model_id in model_ids)
+            dict.fromkeys(
+                normalize_user_provided_model_id(model_id) for model_id in model_ids
+            )
         )
         if not canonical_ids:
             return {}
@@ -196,7 +204,7 @@ class SpannerUserProvidedModels:
             model = self._io.read_entity_tx(
                 transaction,
                 _USER_PROVIDED_MODEL_KIND,
-                normalize_custom_model_id(model_id),
+                normalize_user_provided_model_id(model_id),
                 UserProvidedModel,
             )
             if model is None or model.owner_user_id != owner_user_id:
@@ -204,7 +212,10 @@ class SpannerUserProvidedModels:
             old_id = model.id
             new_id = None
             if "slug" in values:
-                new_id = custom_model_id_from_slug(str(values.pop("slug")))
+                new_id = user_provided_model_id_from_slug(
+                    str(values.pop("slug")),
+                    username=model.owner_username,
+                )
                 if new_id != model.id and self._model_id_exists_tx(transaction, new_id):
                     raise ValueError("custom_model_slug_taken")
             for key in _EDITABLE_FIELDS:
@@ -212,6 +223,10 @@ class SpannerUserProvidedModels:
                     setattr(model, key, values[key])
             if new_id is not None:
                 model.id = new_id
+                model.slug = user_provided_model_slug(
+                    new_id,
+                    username=model.owner_username,
+                )
             model.revision += 1
             model.updated_at = iso_now()
             self._io.write_entity_tx(
@@ -241,7 +256,7 @@ class SpannerUserProvidedModels:
             model = self._io.read_entity_tx(
                 transaction,
                 _USER_PROVIDED_MODEL_KIND,
-                normalize_custom_model_id(model_id),
+                normalize_user_provided_model_id(model_id),
                 UserProvidedModel,
             )
             if model is None or model.owner_user_id != owner_user_id:
@@ -332,7 +347,7 @@ class SpannerUserProvidedModels:
         budget, not a fixed multi-hour window. Legacy rows without
         ``expires_at`` fall back to ``created_at`` + the reservation TTL.
         """
-        canonical = normalize_custom_model_id(model_id)
+        canonical = normalize_user_provided_model_id(model_id)
         slot_id = _user_model_slot_id(canonical, authorization_id)
         prefix = f"{canonical}#"
         now = dt.datetime.now(dt.UTC)
@@ -403,7 +418,11 @@ class SpannerUserProvidedModels:
     def release_slot(self, model_id: str, authorization_id: str) -> None:
         self._io.delete_entities(
             _USER_MODEL_SLOT_KIND,
-            [_user_model_slot_id(normalize_custom_model_id(model_id), authorization_id)],
+            [
+                _user_model_slot_id(
+                    normalize_user_provided_model_id(model_id), authorization_id
+                )
+            ],
         )
 
     def list_public(self, *, kind: str | None = None) -> list[UserProvidedModel]:
@@ -433,7 +452,7 @@ class SpannerUserProvidedModels:
             model = self._io.read_entity_tx(
                 transaction,
                 _USER_PROVIDED_MODEL_KIND,
-                normalize_custom_model_id(model_id),
+                normalize_user_provided_model_id(model_id),
                 UserProvidedModel,
             )
             if model is None or (
@@ -473,13 +492,16 @@ class SpannerUserProvidedModels:
                 models.append(model)
         return models
 
-    def _new_id_tx(self, transaction: Any) -> str:
+    def _new_id_tx(self, transaction: Any, owner_username: str) -> str:
         for _ in range(100):
             suffix = "".join(
                 secrets.choice(CUSTOM_MODEL_ID_CHARS)
                 for _ in range(CUSTOM_MODEL_ID_RANDOM_LENGTH)
             )
-            model_id = f"{CUSTOM_MODEL_PREFIX}{suffix}"
+            model_id = user_provided_model_id_from_slug(
+                suffix,
+                username=owner_username,
+            )
             if not self._model_id_exists_tx(transaction, model_id):
                 return model_id
         raise RuntimeError("could not allocate custom model id")

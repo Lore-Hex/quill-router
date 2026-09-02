@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -7,6 +8,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from trusted_router.auth import SettingsDep
 from trusted_router.catalog import MODELS
+from trusted_router.creator_identity import creator_username_for_models
 from trusted_router.custom_model_rules import (
     is_allowed_custom_model_base,
     missing_custom_model_requirements,
@@ -37,18 +39,25 @@ def register(app: FastAPI) -> None:
         slug: str | None = Form(default=None, max_length=96),
         base_model_id: str = Form(..., min_length=1, max_length=256),
         hidden_prompt: str = Form("", max_length=CUSTOM_MODEL_PROMPT_CHAR_LIMIT),
+        markup_percent: Decimal = Form(Decimal("0"), ge=0, le=300),
         enabled: bool = Form(False),
     ) -> Response:
         if missing_custom_model_requirements(ctx.user, settings):
             return _custom_model_redirect("error=verification")
+        owner_username = creator_username_for_models(
+            ctx.user,
+            enforce_verification=settings.custom_models_verification_enforced,
+        )
         _require_base_model(base_model_id)
         try:
             STORE.create_custom_model(
                 owner_user_id=ctx.user.id,
                 owner_workspace_id=ctx.workspace.id,
+                owner_username=owner_username,
                 name=name,
                 base_model_id=base_model_id,
                 hidden_prompt=hidden_prompt,
+                markup_basis_points=_percent_to_basis_points(markup_percent),
                 enabled=enabled,
                 slug=slug or None,
             )
@@ -72,6 +81,7 @@ def register(app: FastAPI) -> None:
         slug: str | None = Form(default=None, min_length=3, max_length=96),
         base_model_id: str = Form(..., min_length=1, max_length=256),
         hidden_prompt: str = Form("", max_length=CUSTOM_MODEL_PROMPT_CHAR_LIMIT),
+        markup_percent: Decimal = Form(Decimal("0"), ge=0, le=300),
         enabled: bool = Form(False),
     ) -> Response:
         if missing_custom_model_requirements(ctx.user, settings):
@@ -87,6 +97,7 @@ def register(app: FastAPI) -> None:
                     "slug": slug,
                     "base_model_id": base_model_id,
                     "hidden_prompt": hidden_prompt,
+                    "markup_basis_points": _percent_to_basis_points(markup_percent),
                     "enabled": enabled,
                 },
             )
@@ -109,6 +120,10 @@ def register(app: FastAPI) -> None:
 def _render_page(ctx: ConsoleDep, settings: SettingsDep, *, request: Request) -> str:
     models = [_model_view(model) for model in STORE.list_custom_models_for_user(ctx.user.id)]
     missing_requirements = missing_custom_model_requirements(ctx.user, settings)
+    owner_username = creator_username_for_models(
+        ctx.user,
+        enforce_verification=False,
+    )
     return render(
         "console/custom_models.html",
         settings=settings,
@@ -120,6 +135,7 @@ def _render_page(ctx: ConsoleDep, settings: SettingsDep, *, request: Request) ->
         base_models=_base_model_options(),
         limit=CUSTOM_MODEL_LIMIT_PER_USER,
         prompt_limit=CUSTOM_MODEL_PROMPT_CHAR_LIMIT,
+        model_prefix=f"tr-custom-model/{owner_username}-",
         verification={
             "met": not missing_requirements,
             "missing_requirements": missing_requirements,
@@ -133,11 +149,12 @@ def _model_view(model: CustomModel) -> dict[str, Any]:
     base = MODELS.get(model.base_model_id)
     return {
         "id": model.id,
-        "slug": model.id.removeprefix("trustedrouter/user-"),
+        "slug": model.slug,
         "name": model.name,
         "base_model_id": model.base_model_id,
         "base_model_name": base.name if base else model.base_model_id,
         "hidden_prompt": model.hidden_prompt,
+        "markup_percent": _basis_points_to_percent(model.markup_basis_points),
         "revision": model.revision,
         "enabled": model.enabled,
         "created_at": model.created_at,
@@ -169,6 +186,17 @@ def _require_base_model(model_id: str) -> None:
 
 def _custom_model_redirect(query: str) -> RedirectResponse:
     return RedirectResponse(url=f"/console/custom-models?{query}", status_code=303)
+
+
+def _percent_to_basis_points(value: Decimal) -> int:
+    basis_points = value * 100
+    if basis_points != basis_points.to_integral_value():
+        raise HTTPException(status_code=400, detail="Markup supports two decimal places")
+    return int(basis_points)
+
+
+def _basis_points_to_percent(value: int) -> str:
+    return format(Decimal(value) / 100, "f")
 
 
 def _flash_message(saved: str | None, error: str | None) -> dict[str, str] | None:

@@ -27,6 +27,7 @@ from trusted_router.money import (
     format_money_display,
     microdollars_to_decimal,
 )
+from trusted_router.oauth_app_policy import oauth_app_can_authorize
 from trusted_router.routes.helpers import enforce_rate_limit, json_body
 from trusted_router.schemas import CheckoutRequest
 from trusted_router.scopes import DEFAULT_DELEGATED_SCOPES, KNOWN_SCOPES
@@ -248,7 +249,7 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         _verify_pkce(code, body)
         if code.client_app_id:
             app = STORE.get_oauth_app(code.client_app_id)
-            if app is None or app.suspended:
+            if not _oauth_app_is_available(app):
                 raise api_error(403, "OAuth app is unavailable", ErrorType.FORBIDDEN)
         # Quiesce: a pre-pause OAuth code must not mint a key during pause.
         assert_workspace_billing_active(STORE.get_workspace(code.workspace_id))
@@ -300,7 +301,7 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         if code.code_challenge_method != "S256" or not _pkce_matches(code, verifier):
             return _oauth_error("invalid_grant", "code_verifier does not match")
         app = STORE.get_oauth_app(code.client_app_id)
-        if app is None or app.suspended:
+        if not _oauth_app_is_available(app):
             return _oauth_error("invalid_grant", "OAuth app is unavailable")
         assert_workspace_billing_active(STORE.get_workspace(code.workspace_id))
         raw_key, _key = STORE.create_api_key(
@@ -410,6 +411,13 @@ def _registered_oauth_app(params: dict[str, Any]) -> OAuthApp | None:
     app = STORE.get_oauth_app(client_id)
     if app is None or app.suspended:
         raise api_error(400, "client_id is unknown or suspended", ErrorType.BAD_REQUEST)
+    if not _oauth_app_is_available(app):
+        raise api_error(
+            403,
+            "This app cannot be presented because its owner's verified name is "
+            "unavailable; the owner must re-verify.",
+            ErrorType.VERIFICATION_REQUIRED,
+        )
     callback_url = _validate_callback_url(str(params.get("callback_url") or ""))
     if callback_url not in app.redirect_uris:
         raise api_error(
@@ -418,6 +426,12 @@ def _registered_oauth_app(params: dict[str, Any]) -> OAuthApp | None:
             ErrorType.BAD_REQUEST,
         )
     return app
+
+
+def _oauth_app_is_available(app: OAuthApp | None) -> bool:
+    if app is None:
+        return False
+    return oauth_app_can_authorize(app, STORE.get_user(app.owner_user_id))
 
 
 def _require_programmatic_app_ownership(
@@ -759,7 +773,7 @@ def _conformant_authorize_params(request: Request) -> tuple[dict[str, Any], OAut
     client_id = str(raw.get("client_id") or "")
     redirect_uri = str(raw.get("redirect_uri") or "")
     app = STORE.get_oauth_app(client_id) if client_id else None
-    if app is None or app.suspended:
+    if app is None or not _oauth_app_is_available(app):
         return {}, None, _oauth_error("invalid_request", "client_id is unknown or suspended")
     if not redirect_uri or redirect_uri not in app.redirect_uris:
         return {}, None, _oauth_error("invalid_request", "redirect_uri is not registered")

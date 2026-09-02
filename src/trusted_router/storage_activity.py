@@ -262,6 +262,9 @@ def generation_events(
             "cost": microdollars_to_float(gen.total_cost_microdollars),
             "cost_microdollars": gen.total_cost_microdollars,
             "app_markup_microdollars": gen.app_markup_microdollars,
+            "custom_model_markup_microdollars": (
+                gen.custom_model_markup_microdollars
+            ),
             "usage_type": gen.usage_type,
             "speed_tokens_per_second": gen.speed_tokens_per_second,
             "finish_reason": gen.finish_reason,

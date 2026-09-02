@@ -20,6 +20,14 @@ from trusted_router.custom_model_billing import (
     USER_MODEL_PAYOUT_SETTLE_FIELD,
     owner_share_microdollars,
 )
+from trusted_router.custom_model_markup_billing import (
+    CUSTOM_MODEL_MARKUP_CHARGE_SETTLE_FIELD,
+    CUSTOM_MODEL_MARKUP_ID_SETTLE_FIELD,
+    CUSTOM_MODEL_MARKUP_OWNER_SETTLE_FIELD,
+    CUSTOM_MODEL_MARKUP_PAYOUT_SETTLE_FIELD,
+    collected_custom_model_markup_microdollars,
+    custom_model_markup_owner_share_microdollars,
+)
 from trusted_router.partner_billing import PARTNER_OPERATOR_COST_SETTLE_FIELD
 from trusted_router.spend_lease_state import (
     AuthorizationDurability,
@@ -42,6 +50,8 @@ class SpendLeaseRepairAmounts:
     operator_cost_micro: int | None
     user_model_payout_micro: int | None
     app_markup_payout_micro: int | None
+    custom_model_markup_micro: int
+    custom_model_markup_payout_micro: int | None
     settle_body: dict[str, Any]
 
 
@@ -141,6 +151,25 @@ def derive_spend_lease_repair_amounts(
         body[APP_MARKUP_OWNER_SETTLE_FIELD] = authorization.app_owner_user_id
         body[APP_MARKUP_APP_ID_SETTLE_FIELD] = authorization.app_id
 
+    additional_cost = body.get("additional_cost_microdollars", 0)
+    if isinstance(additional_cost, bool) or not isinstance(additional_cost, int):
+        additional_cost = 0
+    custom_markup = collected_custom_model_markup_microdollars(
+        charge,
+        authorization.custom_model_markup_basis_points,
+        app_markup_basis_points=authorization.app_markup_basis_points,
+        additional_cost_microdollars=additional_cost,
+    )
+    custom_payout: int | None = None
+    if authorization.custom_model_markup_basis_points > 0:
+        custom_payout = custom_model_markup_owner_share_microdollars(custom_markup)
+        body[CUSTOM_MODEL_MARKUP_CHARGE_SETTLE_FIELD] = custom_markup
+        body[CUSTOM_MODEL_MARKUP_PAYOUT_SETTLE_FIELD] = custom_payout
+        body[CUSTOM_MODEL_MARKUP_OWNER_SETTLE_FIELD] = (
+            authorization.custom_model_owner_user_id
+        )
+        body[CUSTOM_MODEL_MARKUP_ID_SETTLE_FIELD] = authorization.custom_model_id
+
     user_payout: int | None = None
     operator_cost: int | None = None
     if authorization.user_provided_model_id is not None:
@@ -157,6 +186,8 @@ def derive_spend_lease_repair_amounts(
         operator_cost_micro=operator_cost,
         user_model_payout_micro=user_payout,
         app_markup_payout_micro=app_payout,
+        custom_model_markup_micro=custom_markup,
+        custom_model_markup_payout_micro=custom_payout,
         settle_body=body,
     )
 

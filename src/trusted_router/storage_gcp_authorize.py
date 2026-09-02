@@ -31,6 +31,9 @@ from google.api_core.exceptions import AlreadyExists
 
 from trusted_router.app_markup_billing import app_markup_payout_event_id
 from trusted_router.custom_model_billing import user_model_payout_event_id
+from trusted_router.custom_model_markup_billing import (
+    custom_model_markup_payout_event_id,
+)
 from trusted_router.spend_windows import (
     KeyWindowLimitDecision,
     decide_key_window_limits,
@@ -64,6 +67,7 @@ from trusted_router.storage_gcp_settle_outbox import (
 )
 from trusted_router.storage_models import (
     AppMarkupPayout,
+    CustomModelMarkupPayout,
     GatewayAuthorization,
     Generation,
     UserModelPayout,
@@ -901,6 +905,7 @@ def typed_finalize_atomic(
     operational_analytics_outbox: Any | None = None,
     user_model_payout: UserModelPayout | None = None,
     app_markup_payout: AppMarkupPayout | None = None,
+    custom_model_markup_payout: CustomModelMarkupPayout | None = None,
     regional_hold_unknown: bool = False,
     settle_outbox_done: tuple[str, str] | None = None,
     settle_outbox_rewrite: tuple[str, str, str, int, str] | None = None,
@@ -1037,6 +1042,18 @@ def typed_finalize_atomic(
                 pt,
                 authorization_id=authorization_id,
                 payout=app_markup_payout,
+                now=now,
+            )
+        if (
+            success
+            and custom_model_markup_payout is not None
+            and custom_model_markup_payout.amount_microdollars > 0
+        ):
+            _apply_custom_model_markup_payout_tx(
+                transaction,
+                pt,
+                authorization_id=authorization_id,
+                payout=custom_model_markup_payout,
                 now=now,
             )
 
@@ -1230,6 +1247,63 @@ def _apply_app_markup_payout_tx(
             "amount": pt.INT64,
             "counterparty": pt.STRING,
             "app_id": pt.STRING,
+            "authorization_id": pt.STRING,
+            "created_at": pt.TIMESTAMP,
+        },
+    )
+    if inserted == 0:
+        return
+    updated = transaction.execute_update(
+        "UPDATE tr_earnings_balance "
+        "SET total_earned = total_earned + @amount, "
+        "updated_at = PENDING_COMMIT_TIMESTAMP() "
+        "WHERE user_id=@user_id AND shard=0",
+        params={"amount": payout.amount_microdollars, "user_id": payout.owner_user_id},
+        param_types={"amount": pt.INT64, "user_id": pt.STRING},
+    )
+    if updated == 0:
+        transaction.execute_update(
+            "INSERT INTO tr_earnings_balance "
+            "(user_id, shard, total_earned, total_transferred, updated_at) "
+            "VALUES (@user_id, 0, @amount, 0, PENDING_COMMIT_TIMESTAMP())",
+            params={"user_id": payout.owner_user_id, "amount": payout.amount_microdollars},
+            param_types={"user_id": pt.STRING, "amount": pt.INT64},
+        )
+
+
+def _apply_custom_model_markup_payout_tx(
+    transaction: Any,
+    param_types: Any,
+    *,
+    authorization_id: str,
+    payout: CustomModelMarkupPayout,
+    now: Any,
+) -> None:
+    """Credit prompt-wrapper markup in the customer finalize transaction."""
+    pt = param_types
+    inserted = transaction.execute_update(
+        "INSERT OR IGNORE INTO tr_credit_movement "
+        "(account_id, movement_id, kind, amount_microdollars, "
+        "counterparty_account_id, custom_model_id, authorization_id, created_at) "
+        "VALUES (@account_id, @movement_id, @kind, @amount, "
+        "@counterparty, @custom_model_id, @authorization_id, @created_at)",
+        params={
+            "account_id": f"user:{payout.owner_user_id}",
+            "movement_id": custom_model_markup_payout_event_id(authorization_id),
+            "kind": "custom_model_markup_payout",
+            "amount": payout.amount_microdollars,
+            "counterparty": payout.payer_workspace_id,
+            "custom_model_id": payout.model_id,
+            "authorization_id": authorization_id,
+            "created_at": now,
+        },
+        param_types={
+            "account_id": pt.STRING,
+            "movement_id": pt.STRING,
+            "kind": pt.STRING,
+            "amount": pt.INT64,
+            "counterparty": pt.STRING,
+            "custom_model_id": pt.STRING,
             "authorization_id": pt.STRING,
             "created_at": pt.TIMESTAMP,
         },

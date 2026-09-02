@@ -39,6 +39,7 @@ from trusted_router import credit_transfer
 from trusted_router.auth import SettingsDep
 from trusted_router.credit_transfer import validate_amount, validate_transfer_id
 from trusted_router.errors import api_error
+from trusted_router.oauth_app_policy import oauth_app_is_effectively_suspended
 from trusted_router.routes.helpers import json_body
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.security import constant_time_equal
@@ -154,7 +155,12 @@ def register(router: APIRouter) -> None:
                 # Match the unknown/scoped-key fail-closed wire shape so a peer
                 # cannot distinguish or cache an orphaned app key as valid.
                 raise api_error(404, "Unknown API key", ErrorType.NOT_FOUND)
-            app_suspended = app.suspended
+            owner = (
+                STORE.get_user(app.owner_user_id)
+                if app.markup_basis_points > 0
+                else None
+            )
+            app_suspended = oauth_app_is_effectively_suspended(app, owner)
             app_markup_basis_points = int(app.markup_basis_points)
             app_owner_user_id = str(app.owner_user_id)
 

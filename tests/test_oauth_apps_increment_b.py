@@ -530,6 +530,7 @@ def test_registration_and_patch_require_verified_legal_name(
             owner_user_id=user.id,
             name="Existing App",
             redirect_uris=[CALLBACK_URL],
+            markup_basis_points=1_000,
         )
     )
     patched = client.patch(
@@ -541,8 +542,8 @@ def test_registration_and_patch_require_verified_legal_name(
     for response in (created, patched):
         assert response.status_code == 403
         assert response.json()["error"]["type"] == "verification_required"
-        assert "verified legal name" in response.json()["error"]["message"]
-        assert "re-run" in response.json()["error"]["message"]
+        assert "enable earnings" in response.json()["error"]["message"]
+        assert "Veriff" in response.json()["error"]["message"]
 
     # Defense in depth for rows predating the stronger registration gate.
     consent = client.get(
@@ -557,6 +558,50 @@ def test_registration_and_patch_require_verified_legal_name(
     assert "cannot be presented" in consent.json()["error"]["message"]
     assert "verified name is unavailable" in consent.json()["error"]["message"]
     assert "must re-verify" in consent.json()["error"]["message"]
+
+
+def test_zero_markup_app_does_not_require_identity_verification(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    _active_session(client)
+
+    created = client.post(
+        "/v1/oauth/apps",
+        headers=user_headers,
+        json=_app_body(markup_basis_points=0),
+    )
+    assert created.status_code == 201, created.text
+
+    patched = client.patch(
+        f"/v1/oauth/apps/{APP_ID}",
+        headers=user_headers,
+        json={"name": "Free integration"},
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["data"]["name"] == "Free integration"
+
+
+def test_unverified_owner_can_configure_suspended_monetized_app_but_not_enable_it(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    _active_session(client)
+    created = client.post(
+        "/v1/oauth/apps",
+        headers=user_headers,
+        json=_app_body(suspended=True, markup_basis_points=1_000),
+    )
+    assert created.status_code == 201, created.text
+
+    enabled = client.patch(
+        f"/v1/oauth/apps/{APP_ID}",
+        headers=user_headers,
+        json={"suspended": False},
+    )
+    assert enabled.status_code == 403
+    assert enabled.json()["error"]["type"] == "verification_required"
+    assert STORE.get_oauth_app(APP_ID).suspended is True
 
 
 def test_registered_consent_escapes_hostile_name_and_logo_url(

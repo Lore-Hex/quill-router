@@ -6,11 +6,14 @@ import string
 from dataclasses import fields
 from typing import Any
 
+from trusted_router.custom_model_markup_billing import (
+    validate_custom_model_markup_basis_points,
+)
 from trusted_router.storage_custom_models import (
     CUSTOM_MODEL_ID_RANDOM_LENGTH,
     CUSTOM_MODEL_LIMIT_PER_USER,
-    CUSTOM_MODEL_PREFIX,
     custom_model_id_from_slug,
+    custom_model_slug,
     normalize_custom_model_id,
 )
 from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
@@ -29,9 +32,11 @@ class SpannerCustomModels:
         *,
         owner_user_id: str,
         owner_workspace_id: str,
+        owner_username: str,
         name: str,
         base_model_id: str,
         hidden_prompt: str,
+        markup_basis_points: int = 0,
         enabled: bool = True,
         slug: str | None = None,
     ) -> CustomModel:
@@ -40,9 +45,9 @@ class SpannerCustomModels:
             if len(existing) >= CUSTOM_MODEL_LIMIT_PER_USER:
                 raise ValueError("custom_model_limit_exceeded")
             model_id = (
-                self._new_id_tx(transaction)
+                self._new_id_tx(transaction, owner_username)
                 if slug is None
-                else custom_model_id_from_slug(slug)
+                else custom_model_id_from_slug(slug, username=owner_username)
             )
             if (
                 self._io.read_entity_tx(transaction, "custom_model", model_id, CustomModel)
@@ -59,9 +64,14 @@ class SpannerCustomModels:
                 id=model_id,
                 owner_user_id=owner_user_id,
                 owner_workspace_id=owner_workspace_id,
+                owner_username=owner_username,
+                slug=custom_model_slug(model_id, username=owner_username),
                 name=name,
                 base_model_id=base_model_id,
                 hidden_prompt=hidden_prompt,
+                markup_basis_points=validate_custom_model_markup_basis_points(
+                    markup_basis_points
+                ),
                 enabled=enabled,
             )
             self._io.write_entity_tx(transaction, "custom_model", model.id, model)
@@ -129,7 +139,10 @@ class SpannerCustomModels:
             old_id = model.id
             new_id = None
             if "slug" in values:
-                new_id = custom_model_id_from_slug(str(values.pop("slug")))
+                new_id = custom_model_id_from_slug(
+                    str(values.pop("slug")),
+                    username=model.owner_username,
+                )
                 if (
                     new_id != model.id
                     and (
@@ -146,11 +159,25 @@ class SpannerCustomModels:
                     )
                 ):
                     raise ValueError("custom_model_slug_taken")
-            for key in ("name", "base_model_id", "hidden_prompt", "enabled"):
+            for key in (
+                "name",
+                "base_model_id",
+                "hidden_prompt",
+                "markup_basis_points",
+                "enabled",
+            ):
                 if key in values:
+                    if key == "markup_basis_points":
+                        values[key] = validate_custom_model_markup_basis_points(
+                            values[key]
+                        )
                     setattr(model, key, values[key])
             if new_id is not None:
                 model.id = new_id
+                model.slug = custom_model_slug(
+                    new_id,
+                    username=model.owner_username,
+                )
             model.revision += 1
             model.updated_at = iso_now()
             self._io.write_entity_tx(transaction, "custom_model", model.id, model)
@@ -204,12 +231,15 @@ class SpannerCustomModels:
                 models.append(model)
         return models
 
-    def _new_id_tx(self, transaction: Any) -> str:
+    def _new_id_tx(self, transaction: Any, owner_username: str) -> str:
         for _ in range(100):
             suffix = "".join(
                 secrets.choice(_ID_CHARS) for _ in range(CUSTOM_MODEL_ID_RANDOM_LENGTH)
             )
-            model_id = f"{CUSTOM_MODEL_PREFIX}{suffix}"
+            model_id = custom_model_id_from_slug(
+                suffix,
+                username=owner_username,
+            )
             if (
                 self._io.read_entity_tx(transaction, "custom_model", model_id, CustomModel)
                 is None

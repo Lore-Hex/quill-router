@@ -64,8 +64,19 @@ from trusted_router.custom_model_billing import (
     owner_share_microdollars,
     user_model_payout_event_id,
 )
+from trusted_router.custom_model_markup_billing import (
+    CUSTOM_MODEL_MARKUP_CHARGE_SETTLE_FIELD,
+    CUSTOM_MODEL_MARKUP_ID_SETTLE_FIELD,
+    CUSTOM_MODEL_MARKUP_OWNER_SETTLE_FIELD,
+    CUSTOM_MODEL_MARKUP_PAYOUT_SETTLE_FIELD,
+    collected_custom_model_markup_microdollars,
+    custom_model_markup_microdollars,
+    custom_model_markup_owner_share_microdollars,
+    custom_model_markup_payout_event_id,
+)
 from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.money import money_pair, token_cost_microdollars
+from trusted_router.oauth_app_policy import oauth_app_is_effectively_suspended
 from trusted_router.openai_service_tiers import (
     OPENAI_PRIORITY_MAX_PROMPT_TOKENS,
     OPENAI_SERVICE_TIERS,
@@ -183,7 +194,13 @@ from trusted_router.storage import (
     ProviderBenchmarkSample,
     typed_billing_store,
 )
-from trusted_router.storage_custom_models import is_custom_model_id, normalize_custom_model_id
+from trusted_router.storage_custom_models import (
+    is_creator_model_id,
+    is_custom_model_id,
+    is_user_provided_model_id,
+    normalize_custom_model_id,
+    normalize_user_provided_model_id,
+)
 from trusted_router.storage_errors import (
     DeferredSettlementCapReached,
     StoreConflict,
@@ -194,6 +211,7 @@ from trusted_router.storage_gcp_io import spanner_rpc_budget
 from trusted_router.storage_gcp_secrets import secret_manager_seed_loader
 from trusted_router.storage_models import (
     AppMarkupPayout,
+    CustomModelMarkupPayout,
     GatewayAuthorization,
     SettleOutboxRow,
     TypedFinalizeResult,
@@ -614,7 +632,7 @@ def _authorize_gateway_sync_impl(
     body_dict.update(attribution.body_fields())
     _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
     requested_model_id = body.model
-    if any(is_custom_model_id(model_id) for model_id in (body.models or [])):
+    if any(is_creator_model_id(model_id) for model_id in (body.models or [])):
         raise api_error(
             400,
             "Custom models cannot be used with models fallback arrays in v1",
@@ -625,40 +643,40 @@ def _authorize_gateway_sync_impl(
     if is_custom_model_id(requested_model_id):
         normalized = normalize_custom_model_id(requested_model_id)
         custom_model = STORE.get_custom_model(normalized)
-        if custom_model is not None:
-            if not custom_model.enabled:
-                raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
-            body_dict["model"] = custom_model.base_model_id
-            body_dict.pop("models", None)
-            body_dict["custom_model_id"] = custom_model.id
-            body_dict["custom_model_revision"] = custom_model.revision
-            _force_custom_model_credit_routes(body_dict)
-        else:
-            user_model = STORE.get_user_model(normalized)
-            if (
-                user_model is None
-                or not user_model.enabled
-                or user_model.status != "active"
-                # Serving is gated until settle/refund exist for these
-                # authorizations; an unreleasable hold is worse than a 404.
-                or not settings.user_models_dispatch_enabled
-            ):
-                raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
-            if not user_model_is_on_the_clock(user_model, datetime.now(dt.UTC)):
-                raise api_error(
-                    503,
-                    f"User-provided {user_model.kind} model {user_model.id} is off the clock",
-                    ErrorType.MODEL_OFF_THE_CLOCK,
-                )
-            # Same fingerprint discipline as prompt wrappers: a same-key retry
-            # after a material edit must 409, not replay stale frozen prices.
-            body_dict.pop("models", None)
-            body_dict["custom_model_id"] = user_model.id
-            body_dict["custom_model_revision"] = user_model.revision
-            _force_custom_model_credit_routes(
-                body_dict,
-                error_message="User-provided models do not support BYOK routes",
+        if custom_model is None or not custom_model.enabled:
+            raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
+        body_dict["model"] = custom_model.base_model_id
+        body_dict.pop("models", None)
+        body_dict["custom_model_id"] = custom_model.id
+        body_dict["custom_model_revision"] = custom_model.revision
+        _force_custom_model_credit_routes(body_dict)
+    elif is_user_provided_model_id(requested_model_id):
+        normalized = normalize_user_provided_model_id(requested_model_id)
+        user_model = STORE.get_user_model(normalized)
+        if (
+            user_model is None
+            or not user_model.enabled
+            or user_model.status != "active"
+            # Serving is gated until settle/refund exist for these
+            # authorizations; an unreleasable hold is worse than a 404.
+            or not settings.user_models_dispatch_enabled
+        ):
+            raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
+        if not user_model_is_on_the_clock(user_model, datetime.now(dt.UTC)):
+            raise api_error(
+                503,
+                f"User-provided {user_model.kind} model {user_model.id} is off the clock",
+                ErrorType.MODEL_OFF_THE_CLOCK,
             )
+        # Same fingerprint discipline as prompt wrappers: a same-key retry
+        # after a material edit must 409, not replay stale frozen prices.
+        body_dict.pop("models", None)
+        body_dict["custom_model_id"] = user_model.id
+        body_dict["custom_model_revision"] = user_model.revision
+        _force_custom_model_credit_routes(
+            body_dict,
+            error_message="User-provided models do not support BYOK routes",
+        )
     presented_idempotency_key = _gateway_idempotency_key(request, body)
     request_idempotency_key = presented_idempotency_key or str(uuid.uuid4())
     _require_native_batch_route_binding(body.route_type, request_idempotency_key)
@@ -823,6 +841,17 @@ def _authorize_gateway_sync_impl(
     )
     if receipt_fee_basis_points and user_model is None and partner_mode is None:
         model_estimate = signed_receipt_price_microdollars(model_estimate, receipt_fee_basis_points)
+    custom_model_markup_basis_points = (
+        int(custom_model.markup_basis_points) if custom_model is not None else 0
+    )
+    custom_model_owner_user_id = (
+        str(custom_model.owner_user_id) if custom_model is not None else ""
+    )
+    if custom_model_markup_basis_points > 0:
+        model_estimate += custom_model_markup_microdollars(
+            model_estimate,
+            custom_model_markup_basis_points,
+        )
     estimate = model_estimate + additional_cost_reservation
     broadcast_destinations = [
         payload
@@ -1201,6 +1230,10 @@ def _authorize_gateway_sync_impl(
                     key_usage_shards=key_usage_shards,
                     custom_model_id=custom_model.id if custom_model else None,
                     custom_model_revision=custom_model.revision if custom_model else None,
+                    custom_model_markup_basis_points=(
+                        custom_model_markup_basis_points
+                    ),
+                    custom_model_owner_user_id=custom_model_owner_user_id,
                     user_provided_model_id=user_model.id if user_model else None,
                     user_provided_model_revision=user_model.revision if user_model else None,
                     user_model_prompt_price_microdollars_per_m=(
@@ -1409,6 +1442,8 @@ def _authorize_gateway_sync_impl(
             app_owner_user_id=app_owner_user_id,
             custom_model_id=custom_model.id if custom_model else None,
             custom_model_revision=custom_model.revision if custom_model else None,
+            custom_model_markup_basis_points=custom_model_markup_basis_points,
+            custom_model_owner_user_id=custom_model_owner_user_id,
             user_provided_model_id=user_model.id if user_model else None,
             user_provided_model_revision=user_model.revision if user_model else None,
             user_model_prompt_price_microdollars_per_m=(
@@ -1559,11 +1594,10 @@ def _gateway_resolve_custom_model_sync(
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
     assert_workspace_billing_active(workspace)
-    if not is_custom_model_id(body.model):
+    if not is_creator_model_id(body.model):
         raise api_error(400, "Model is not a custom model", ErrorType.BAD_REQUEST)
-    normalized = normalize_custom_model_id(body.model)
-    custom_model = STORE.get_custom_model(normalized)
-    if custom_model is None:
+    if is_user_provided_model_id(body.model):
+        normalized = normalize_user_provided_model_id(body.model)
         user_model = STORE.get_user_model(normalized)
         if (
             user_model is None
@@ -1609,7 +1643,10 @@ def _gateway_resolve_custom_model_sync(
                 },
             }
         }
-    if not custom_model.enabled:
+    else:
+        normalized = normalize_custom_model_id(body.model)
+        custom_model = STORE.get_custom_model(normalized)
+    if custom_model is None or not custom_model.enabled:
         raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
     return {
         "data": {
@@ -2165,7 +2202,12 @@ def _oauth_app_provenance(api_key: Any) -> tuple[bool, int, str]:
             owner_user_id = ""
         else:
             # Case 2: a home-plane key uses its authoritative local app row.
-            suspended = bool(app.suspended)
+            owner = (
+                STORE.get_user(app.owner_user_id)
+                if app.markup_basis_points > 0
+                else None
+            )
+            suspended = oauth_app_is_effectively_suspended(app, owner)
             markup_basis_points = int(app.markup_basis_points)
             owner_user_id = str(app.owner_user_id)
 
@@ -2492,6 +2534,10 @@ def _settle_gateway_authorization(
     settle_body.pop(USER_MODEL_PAYOUT_SETTLE_FIELD, None)
     settle_body.pop(USER_MODEL_OWNER_SETTLE_FIELD, None)
     settle_body.pop(USER_MODEL_ID_SETTLE_FIELD, None)
+    settle_body.pop(CUSTOM_MODEL_MARKUP_PAYOUT_SETTLE_FIELD, None)
+    settle_body.pop(CUSTOM_MODEL_MARKUP_CHARGE_SETTLE_FIELD, None)
+    settle_body.pop(CUSTOM_MODEL_MARKUP_OWNER_SETTLE_FIELD, None)
+    settle_body.pop(CUSTOM_MODEL_MARKUP_ID_SETTLE_FIELD, None)
     settle_body.pop(APP_MARKUP_PAYOUT_SETTLE_FIELD, None)
     settle_body.pop(APP_MARKUP_OWNER_SETTLE_FIELD, None)
     settle_body.pop(APP_MARKUP_APP_ID_SETTLE_FIELD, None)
@@ -2578,6 +2624,7 @@ def _settle_gateway_authorization(
         )
     )
     app_markup_micro = 0
+    custom_model_markup_micro = 0
     if not success:
         # A refund books zero and releases the frozen hold. Never require a
         # route marker from a generic abort path; the authorization id is the
@@ -2622,6 +2669,12 @@ def _settle_gateway_authorization(
         actual_cost = signed_receipt_price_microdollars(
             actual_cost, authorization.receipt_fee_basis_points
         )
+    if success and authorization.custom_model_markup_basis_points > 0:
+        custom_model_markup_micro = custom_model_markup_microdollars(
+            actual_cost,
+            authorization.custom_model_markup_basis_points,
+        )
+        actual_cost += custom_model_markup_micro
     additional_cost = body.additional_cost_microdollars
     if user_model_pair is not None and additional_cost:
         raise api_error(
@@ -2683,6 +2736,20 @@ def _settle_gateway_authorization(
         app_markup_micro = app_markup_microdollars_from_charge(
             actual_cost, authorization.app_markup_basis_points
         )
+    if success and authorization.custom_model_markup_basis_points > 0:
+        # Regional and spend-lease caps can truncate the proposed charge. The
+        # payout is based only on the prompt-wrapper markup that survived the
+        # final cap, after the outer app markup and hosted costs are removed.
+        collected_custom_markup = collected_custom_model_markup_microdollars(
+            actual_cost,
+            authorization.custom_model_markup_basis_points,
+            app_markup_basis_points=authorization.app_markup_basis_points,
+            additional_cost_microdollars=additional_cost,
+        )
+        custom_model_markup_micro = min(
+            custom_model_markup_micro,
+            collected_custom_markup,
+        )
     operator_cost = (
         owner_share_microdollars(max(0, actual_cost - app_markup_micro))
         if user_model_pair is not None
@@ -2740,6 +2807,7 @@ def _settle_gateway_authorization(
             output_tokens=output_tokens,
             actual_cost_microdollars=actual_cost,
             app_markup_microdollars=app_markup_micro,
+            custom_model_markup_microdollars=custom_model_markup_micro,
             operator_cost_microdollars=operator_cost,
         )
         generation_id = generation.id
@@ -2779,6 +2847,21 @@ def _settle_gateway_authorization(
             payer_workspace_id=authorization.workspace_id,
         )
 
+    custom_model_markup_payout: CustomModelMarkupPayout | None = None
+    if authorization.custom_model_markup_basis_points > 0:
+        custom_model_markup_payout = CustomModelMarkupPayout(
+            owner_user_id=authorization.custom_model_owner_user_id,
+            model_id=str(authorization.custom_model_id or ""),
+            amount_microdollars=(
+                custom_model_markup_owner_share_microdollars(
+                    custom_model_markup_micro
+                )
+                if success
+                else 0
+            ),
+            payer_workspace_id=authorization.workspace_id,
+        )
+
     # C1 removed the GCP legacy finalize branch; Spanner finalizes through typed
     # billing unconditionally. The memory store still uses the single-book path.
     _typed_store = typed_billing_store(STORE)
@@ -2812,6 +2895,19 @@ def _settle_gateway_authorization(
                 )
                 frozen_settle_body[APP_MARKUP_OWNER_SETTLE_FIELD] = app_markup_payout.owner_user_id
                 frozen_settle_body[APP_MARKUP_APP_ID_SETTLE_FIELD] = app_markup_payout.app_id
+            if custom_model_markup_payout is not None:
+                frozen_settle_body[CUSTOM_MODEL_MARKUP_CHARGE_SETTLE_FIELD] = (
+                    custom_model_markup_micro
+                )
+                frozen_settle_body[CUSTOM_MODEL_MARKUP_PAYOUT_SETTLE_FIELD] = (
+                    custom_model_markup_payout.amount_microdollars
+                )
+                frozen_settle_body[CUSTOM_MODEL_MARKUP_OWNER_SETTLE_FIELD] = (
+                    custom_model_markup_payout.owner_user_id
+                )
+                frozen_settle_body[CUSTOM_MODEL_MARKUP_ID_SETTLE_FIELD] = (
+                    custom_model_markup_payout.model_id
+                )
             # §5.4 honest scope: durability starts only when this INSERT commits;
             # crashes before it still rely on enclave redelivery. MF4/MF5 freeze
             # the finalize path and exact resolved cost used by the inline attempt.
@@ -2901,6 +2997,7 @@ def _settle_gateway_authorization(
                         generation=generation,
                         user_model_payout=user_model_payout,
                         app_markup_payout=app_markup_payout,
+                        custom_model_markup_payout=custom_model_markup_payout,
                         # Resolve the durable intent in the finalize commit
                         # itself (docs/design/durable-settle-outbox.md §7).
                         settle_outbox_done=(
@@ -2938,6 +3035,7 @@ def _settle_gateway_authorization(
                 generation=generation,
                 user_model_payout=user_model_payout,
                 app_markup_payout=app_markup_payout,
+                custom_model_markup_payout=custom_model_markup_payout,
             )
             finalize_result = TypedFinalizeResult(
                 finalized=finalized_legacy_contract,
@@ -2962,6 +3060,11 @@ def _settle_gateway_authorization(
                 authorization,
                 success=success,
                 payout=app_markup_payout,
+            )
+            _credit_custom_model_markup_payout_safely(
+                authorization,
+                success=success,
+                payout=custom_model_markup_payout,
             )
         finalize_result = TypedFinalizeResult(
             finalized=finalized,
@@ -3201,6 +3304,31 @@ def _credit_app_markup_payout_safely(
     except Exception:
         logger.error(
             "app_markup_payout_failed authorization_id=%s owner=%s",
+            authorization.id,
+            payout.owner_user_id,
+            exc_info=True,
+        )
+
+
+def _credit_custom_model_markup_payout_safely(
+    authorization: Any,
+    *,
+    success: bool,
+    payout: CustomModelMarkupPayout | None,
+) -> None:
+    if not success or payout is None or payout.amount_microdollars <= 0:
+        return
+    try:
+        STORE.credit_user_earnings(
+            payout.owner_user_id,
+            payout.amount_microdollars,
+            custom_model_markup_payout_event_id(authorization.id),
+            custom_model_id=payout.model_id,
+            payer_workspace_id=payout.payer_workspace_id,
+        )
+    except Exception:
+        logger.error(
+            "custom_model_markup_payout_failed authorization_id=%s owner=%s",
             authorization.id,
             payout.owner_user_id,
             exc_info=True,
@@ -3545,7 +3673,7 @@ def _select_authorized_endpoint(
         selected_model_id = body.selected_model_id
         if (
             selected_model_id is not None
-            and normalize_custom_model_id(selected_model_id) != frozen_model.id
+            and normalize_user_provided_model_id(selected_model_id) != frozen_model.id
         ):
             return None
         return frozen_endpoint

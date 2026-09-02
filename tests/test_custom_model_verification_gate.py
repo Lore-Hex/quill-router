@@ -33,7 +33,12 @@ def _verify(user: Any) -> None:
     assert started is not None
     code, _updated = started
     assert STORE.confirm_phone_verification(user.id, code)[0] == "ok"
-    STORE.set_user_identity_status(user.id, status="approved")
+    STORE.set_user_identity_status(
+        user.id,
+        status="approved",
+        verified_name="Verified Creator",
+    )
+    STORE.claim_user_username(user.id, "verified-creator")
 
 
 def _direct_model(user: Any) -> Any:
@@ -41,6 +46,7 @@ def _direct_model(user: Any) -> Any:
     return STORE.create_custom_model(
         owner_user_id=user.id,
         owner_workspace_id=workspace.id,
+        owner_username="custom-gate",
         name="Existing",
         slug="existing-model",
         base_model_id="anthropic/claude-sonnet-4.6",
@@ -82,6 +88,7 @@ def test_enforced_api_post_and_patch_return_exact_verification_error() -> None:
         assert error["missing_requirements"] == [
             "phone_verified",
             "identity_verified",
+            "username",
         ]
         assert error["verification_url"] == "/console/account/verification"
 
@@ -135,6 +142,7 @@ def test_api_key_principal_resolves_and_gates_its_creator() -> None:
     assert blocked.json()["error"]["missing_requirements"] == [
         "phone_verified",
         "identity_verified",
+        "username",
     ]
     assert allowed.status_code == 201
 

@@ -34,6 +34,7 @@ from trusted_router.storage_models import (
     CreditMovement,
     CreditTransfer,
     CustomModel,
+    CustomModelMarkupPayout,
     EmailSendBlock,
     EncryptedSecretEnvelope,
     GatewayAuthorization,
@@ -88,7 +89,9 @@ class Store(Protocol):
     ) -> User: ...
     def find_user_by_email(self, email: str) -> User | None: ...
     def find_user_by_wallet(self, address: str) -> User | None: ...
+    def find_user_by_username(self, username: str) -> User | None: ...
     def create_wallet_user(self, address: str) -> User: ...
+    def claim_user_username(self, user_id: str, username: str) -> User: ...
     def set_user_email(self, user_id: str, email: str) -> User | None: ...
     def mark_user_email_verified(self, user_id: str) -> User | None: ...
     def set_user_identity_status(
@@ -468,6 +471,8 @@ class Store(Protocol):
         name: str,
         base_model_id: str,
         hidden_prompt: str,
+        owner_username: str | None = ...,
+        markup_basis_points: int = ...,
         enabled: bool = ...,
         slug: str | None = ...,
     ) -> CustomModel: ...
@@ -490,6 +495,7 @@ class Store(Protocol):
         owner_workspace_id: str,
         name: str,
         kind: str,
+        owner_username: str | None = ...,
         description: str = ...,
         display_identity: str = ...,
         display_name: str = ...,
@@ -779,6 +785,8 @@ class Store(Protocol):
         app_owner_user_id: str = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,
+        custom_model_markup_basis_points: int = ...,
+        custom_model_owner_user_id: str = ...,
         user_provided_model_id: str | None = ...,
         user_provided_model_revision: int | None = ...,
         user_model_prompt_price_microdollars_per_m: int | None = ...,
@@ -987,6 +995,8 @@ class TypedBillingStore(Protocol):
         tags: dict[str, str] | None = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,
+        custom_model_markup_basis_points: int = ...,
+        custom_model_owner_user_id: str = ...,
         user_provided_model_id: str | None = ...,
         user_provided_model_revision: int | None = ...,
         user_model_prompt_price_microdollars_per_m: int | None = ...,
@@ -1010,6 +1020,7 @@ class TypedBillingStore(Protocol):
         generation: Generation | None = ...,
         user_model_payout: UserModelPayout | None = ...,
         app_markup_payout: AppMarkupPayout | None = ...,
+        custom_model_markup_payout: CustomModelMarkupPayout | None = ...,
     ) -> bool: ...
 
     def typed_finalize_gateway(self, **kwargs: Any) -> dict[str, Any]: ...

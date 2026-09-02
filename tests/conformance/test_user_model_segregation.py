@@ -96,7 +96,7 @@ def test_user_models_are_absent_from_every_frozen_catalog_surface(
         )
     }
     comparison = client.get(
-        "/compare/models/trustedrouter/user-segregation-machine/"
+        "/compare/models/tr-user-model/segregation-owner-segregation-machine/"
         "vs/anthropic/claude-sonnet-4.6"
     )
     assert comparison.status_code == 404

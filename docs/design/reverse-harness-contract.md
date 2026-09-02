@@ -8,7 +8,7 @@ UI, TrustedRouter never sees them.
 ## 1. What you are
 
 A **user-provided model** is an OpenAI-compatible HTTP endpoint you operate, registered under
-`trustedrouter/user-<slug>` with a fixed price per million tokens. TrustedRouter's attested gateway
+`tr-user-model/<username>-<slug>` with a fixed price per million tokens. TrustedRouter's attested gateway
 **pushes** requests to it (there is no pull/inbox); you answer, and you are paid 70% of the charge
 in TrustedRouter credits into your earnings wallet (never cash). Three kinds share the contract:
 

@@ -159,7 +159,10 @@ from trusted_router.services.trust_release import (
     validated_azure_metadata,
 )
 from trusted_router.storage import STORE
-from trusted_router.storage_custom_models import normalize_custom_model_id
+from trusted_router.storage_custom_models import (
+    is_user_provided_model_id,
+    normalize_user_provided_model_id,
+)
 from trusted_router.storage_models import (
     ReceiptKey,
     SyntheticProbeSample,
@@ -958,6 +961,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/docs/user-models")
     async def user_models_docs() -> str:
         return public_page_html(settings, "docs/user-models")
+
+    @public_html_route("/docs/custom-models")
+    async def custom_models_docs() -> str:
+        return public_page_html(settings, "docs/custom-models")
 
     @public_html_route("/eu")
     async def eu() -> str:
@@ -1884,8 +1891,12 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @public_html_route("/user-chat")
     async def user_chat(model: str = Query(..., min_length=1)) -> str:
-        locked_model_id = normalize_custom_model_id(model)
-        user_model = STORE.get_user_model(locked_model_id)
+        locked_model_id = model.strip().lower()
+        user_model = (
+            STORE.get_user_model(normalize_user_provided_model_id(locked_model_id))
+            if is_user_provided_model_id(locked_model_id)
+            else None
+        )
         return public_chat_html(
             settings,
             locked_model_id=locked_model_id,
@@ -1932,7 +1943,11 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             return HTMLResponse(body)
         body = public_model_detail_html(settings, cleaned)
         if body is None:
-            user_model = STORE.get_user_model(normalize_custom_model_id(cleaned))
+            user_model = (
+                STORE.get_user_model(normalize_user_provided_model_id(cleaned))
+                if is_user_provided_model_id(cleaned)
+                else None
+            )
             if user_model is not None and user_model.enabled and user_model.status == "active":
                 shape = user_model_public_shape(user_model)
                 body = render_template(

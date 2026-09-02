@@ -49,7 +49,7 @@ from trusted_router.storage_models import (
 MODEL_ID = "anthropic/claude-haiku-4.5"
 PROVIDER = "anthropic"
 ENDPOINT_ID = "anthropic/claude-haiku-4.5@anthropic/prepaid"
-USER_MODEL_ID = "trustedrouter/user-outbox-repair"
+USER_MODEL_ID = "tr-user-model/owner-outbox-repair"
 USER_MODEL_ENDPOINT_ID = f"{USER_MODEL_ID}@trustedrouter/credits"
 ESTIMATE = 1_000_000
 TOTAL_CREDIT = 5_000_000
@@ -2486,7 +2486,7 @@ def test_user_model_settle_accepts_the_callers_raw_model_spelling(
     client = _client(Settings(environment="test", settle_outbox_enabled=False))
     response = client.post(
         "/v1/internal/gateway/settle",
-        json=_typed_settle_body(auth, selected_model="TrustedRouter/User-Outbox-Repair"),
+        json=_typed_settle_body(auth, selected_model="TR-USER-MODEL/OWNER-OUTBOX-REPAIR"),
     )
     assert response.status_code == 200, response.text
 
@@ -2502,7 +2502,7 @@ def test_user_model_settle_refuses_a_different_model_id(
     client = _client(Settings(environment="test", settle_outbox_enabled=False))
     other = client.post(
         "/v1/internal/gateway/settle",
-        json=_typed_settle_body(auth, selected_model="trustedrouter/user-someone-else"),
+        json=_typed_settle_body(auth, selected_model="tr-user-model/owner-someone-else"),
     )
     assert other.status_code == 400, other.text
 
