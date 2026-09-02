@@ -17,6 +17,7 @@ from typing import Any
 
 from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, iso_now
 from trusted_router.synthetic.rollups import (
+    ROLLUP_HISTOGRAM_FIELDS,
     apply_sample_to_rollup,
     compact_histogram,
     new_rollup_for_sample,
@@ -279,14 +280,7 @@ def _merge_rollup(target: SyntheticRollup, source: SyntheticRollup) -> None:
     # Daily rows written before histogram bucketing carry one key per
     # millisecond; fold them so a month row is bounded regardless of the
     # shape of what it was built from.
-    for field in (
-        "latency_histogram",
-        "ttfb_histogram",
-        "dns_histogram",
-        "tcp_connect_histogram",
-        "tls_handshake_histogram",
-        "gateway_processing_histogram",
-    ):
+    for field in ROLLUP_HISTOGRAM_FIELDS:
         setattr(target, field, compact_histogram(getattr(target, field)))
     if source.last_checked_at and (
         target.last_checked_at is None or source.last_checked_at > target.last_checked_at

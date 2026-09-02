@@ -22,6 +22,7 @@ from trusted_router.storage_models import (
     SyntheticProbeSample,
     SyntheticRollup,
 )
+from trusted_router.synthetic.rollups import ROLLUP_HISTOGRAM_FIELDS, compact_histogram
 from trusted_router.types import UsageType
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -479,14 +480,8 @@ def _generation(row: dict[str, Any], *, tenant_id: str) -> Generation:
         ttfb_milliseconds=_optional_int(row.get("ttfb_milliseconds")),
         region=str(row["region"]) if row.get("region") is not None else None,
         user=str(row["user"]) if row.get("user") is not None else None,
-        session_id=(
-            str(row["session_id"]) if row.get("session_id") is not None else None
-        ),
-        http_referer=(
-            str(row["http_referer"])
-            if row.get("http_referer") is not None
-            else None
-        ),
+        session_id=(str(row["session_id"]) if row.get("session_id") is not None else None),
+        http_referer=(str(row["http_referer"]) if row.get("http_referer") is not None else None),
         app_categories=[str(item) for item in row.get("app_categories") or []],
         tags={str(key): str(value) for key, value in (row.get("tags") or {}).items()},
         created_at=_iso(row["created_at"]),
@@ -506,9 +501,7 @@ def _client_event(row: dict[str, Any]) -> dict[str, Any]:
         "first_error_class": str(row.get("first_error_class") or "") or None,
         "sdk": str(row.get("sdk") or ""),
         "sdk_version": str(row.get("sdk_version") or ""),
-        "attempt_request_id": [
-            str(item) for item in row.get("attempt_request_id") or [] if item
-        ],
+        "attempt_request_id": [str(item) for item in row.get("attempt_request_id") or [] if item],
     }
 
 
@@ -521,16 +514,20 @@ def stable_rows_fingerprint(rows: list[Any], *, grace_seconds: int = 30) -> tupl
     cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=max(0, grace_seconds))
     stable: list[dict[str, Any]] = []
     for row in rows:
-        payload = (
-            dataclasses.asdict(cast(Any, row))
-            if dataclasses.is_dataclass(row)
-            else dict(row)
-        )
+        payload = dataclasses.asdict(cast(Any, row)) if dataclasses.is_dataclass(row) else dict(row)
         # Rebuild timestamps are expected to differ across stores. Raw tenant
         # and key identifiers are intentionally replaced by opaque surrogates
         # in ClickHouse, so they are not parity fields either.
         for volatile in ("updated_at", "workspace_id", "key_hash"):
             payload.pop(volatile, None)
+        # Synthetic rollup histograms are bucketed on write, but a Bigtable
+        # row for an already-closed period keeps its pre-bucketing exact keys
+        # (it is never rewritten) while the ClickHouse rebuild of the same
+        # period is bucketed. Fold both to the same shape before comparing.
+        for field in ROLLUP_HISTOGRAM_FIELDS:
+            histogram = payload.get(field)
+            if isinstance(histogram, dict):
+                payload[field] = compact_histogram(histogram)
         speed = payload.get("speed_tokens_per_second")
         if speed is not None and "input_tokens" in payload:
             # The long-lived provider benchmark table intentionally stores
@@ -552,8 +549,7 @@ def stable_rows_fingerprint(rows: list[Any], *, grace_seconds: int = 30) -> tupl
                 continue
         stable.append(payload)
     canonical_rows = sorted(
-        json.dumps(row, sort_keys=True, separators=(",", ":"), default=str)
-        for row in stable
+        json.dumps(row, sort_keys=True, separators=(",", ":"), default=str) for row in stable
     )
     encoded = "\n".join(canonical_rows)
     return len(stable), hashlib.sha256(encoded.encode("utf-8")).hexdigest()

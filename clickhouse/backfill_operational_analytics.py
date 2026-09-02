@@ -26,16 +26,7 @@ from trusted_router.storage_gcp_operational_analytics_outbox import (
     synthetic_payload,
 )
 from trusted_router.storage_models import Generation, SyntheticProbeSample, SyntheticRollup
-from trusted_router.synthetic.rollups import compact_histogram
-
-ROLLUP_HISTOGRAM_FIELDS = (
-    "latency_histogram",
-    "ttfb_histogram",
-    "dns_histogram",
-    "tcp_connect_histogram",
-    "tls_handshake_histogram",
-    "gateway_processing_histogram",
-)
+from trusted_router.synthetic.rollups import ROLLUP_HISTOGRAM_FIELDS, compact_histogram
 
 PROJECT = "quill-cloud-proxy"
 INSTANCE = "trusted-router-logs"

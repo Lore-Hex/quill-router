@@ -9,6 +9,7 @@ from trusted_router.storage_gcp_codec import json_body
 from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, utcnow
 from trusted_router.synthetic.rollups import (
     apply_sample_to_rollup,
+    compact_rollup,
     new_rollup_for_sample,
     rollup_is_within_retention,
     sample_rollup_ids,
@@ -38,6 +39,7 @@ def write_synthetic_rollups(
         if existing is None:
             existing = update
         else:
+            compact_rollup(existing)
             apply_sample_to_rollup(existing, sample)
         _write_json_row(table, family, _rollup_key(existing), existing)
         _write_json_row(table, family, marker_key, {"seen": True})

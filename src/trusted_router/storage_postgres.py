@@ -165,6 +165,7 @@ from trusted_router.synthetic.rollups import (
     RAW_SYNTHETIC_RETENTION_DAYS,
     ROLLUP_RETENTION_MONTHS,
     apply_sample_to_rollup,
+    compact_rollup,
     new_rollup_for_sample,
     sample_rollup_ids,
 )
@@ -4848,6 +4849,7 @@ class PostgresStore:
                 )
                 if existing is None:
                     raise StoreConflict("Synthetic rollup disappeared during update")
+                compact_rollup(existing)
                 apply_sample_to_rollup(existing, sample)
                 self._write_indexed_entity_tx(
                     conn,

@@ -12,23 +12,27 @@ and prove the readers stay correct rather than assuming it.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import math
 import random
 from typing import Any
 
+from clickhouse.backfill_operational_analytics import insert_rollups as backfill_insert_rollups
 from clickhouse.rollup_synthetic import monthly_from_daily
+from trusted_router.operational_analytics import stable_rows_fingerprint
 from trusted_router.storage_gcp_synthetic_rollups import (
     _rollup_key,
     _write_json_row,
     synthetic_rollups,
     write_synthetic_rollups,
 )
-from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup
+from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, iso_now
 from trusted_router.synthetic import status as synthetic_status
 from trusted_router.synthetic.rollups import (
     HISTOGRAM_EXACT_BELOW,
     apply_sample_to_rollup,
     compact_histogram,
+    compact_rollup,
     histogram_bucket,
     merge_rollups,
     new_rollup_for_sample,
@@ -214,7 +218,7 @@ def test_legacy_exact_keys_and_bucketed_keys_merge_to_the_same_answer() -> None:
         assert merged[key] == histogram_bucket(exact), (percentile, exact, merged[key])
 
 
-def test_applying_a_sample_compacts_a_legacy_rollup_and_preserves_counts() -> None:
+def test_compact_rollup_folds_a_legacy_rollup_preserves_counts_and_is_idempotent() -> None:
     values = _distributions()["uniform_ms"]
     legacy = new_rollup_for_sample(
         _sample("seed", values[0]), period="month", component="uncategorized"
@@ -225,6 +229,7 @@ def test_applying_a_sample_compacts_a_legacy_rollup_and_preserves_counts() -> No
     legacy.up_count = len(values)
     assert len(legacy.latency_histogram) > MAX_KEYS_TO_TEN_MILLION_MS
 
+    compact_rollup(legacy)
     apply_sample_to_rollup(legacy, _sample("next", 777))
 
     assert legacy.sample_count == len(values) + 1
@@ -233,14 +238,19 @@ def test_applying_a_sample_compacts_a_legacy_rollup_and_preserves_counts() -> No
     assert sum(legacy.latency_histogram.values()) == len(values) + 1
     assert sum(legacy.ttfb_histogram.values()) == len(values) + 1
     assert legacy.latency_histogram[str(histogram_bucket(777))] >= 1
-    # Every stored key is now a bucket representative: a second apply is a no-op fold.
     before = dict(legacy.latency_histogram)
-    apply_sample_to_rollup(legacy, _sample("again", 777))
-    assert set(legacy.latency_histogram) == set(before)
-    assert (
-        legacy.latency_histogram[str(histogram_bucket(777))]
-        == before[str(histogram_bucket(777))] + 1
-    )
+    compact_rollup(legacy)
+    assert legacy.latency_histogram == before
+
+
+def test_apply_sample_to_rollup_does_not_scan_the_histogram() -> None:
+    # The fold lives at the store read boundary (compact_rollup), so the
+    # per-sample seam used by batch rebuilders stays O(1) in histogram size.
+    rollup = new_rollup_for_sample(_sample("seed", 150), period="day", component="uncategorized")
+    rollup.latency_histogram = _legacy_histogram_of(list(range(100, 3_000)))
+    keys_before = set(rollup.latency_histogram)
+    apply_sample_to_rollup(rollup, _sample("next", 777))
+    assert set(rollup.latency_histogram) == keys_before | {str(histogram_bucket(777))}
 
 
 def test_a_month_of_samples_stays_bounded_where_it_used_to_grow_per_millisecond() -> None:
@@ -274,6 +284,7 @@ def test_an_odd_legacy_key_never_aborts_a_write_or_a_clickhouse_recompute() -> N
     odd = {"100.0": 1, **_legacy_histogram_of(list(range(100, 800)))}
     rollup = new_rollup_for_sample(_sample("seed", 150), period="month", component="uncategorized")
     rollup.latency_histogram = dict(odd)
+    compact_rollup(rollup)
     apply_sample_to_rollup(rollup, _sample("next", 777))
     assert rollup.latency_histogram["100.0"] == 1
     assert len(rollup.latency_histogram) <= MAX_KEYS_TO_TEN_MILLION_MS + 1
@@ -294,6 +305,10 @@ def test_an_odd_legacy_key_never_aborts_a_write_or_a_clickhouse_recompute() -> N
     (month,) = monthly_from_daily([daily])
     assert month.latency_histogram["100.0"] == 1
     assert sum(month.latency_histogram.values()) == sum(odd.values())
+    # ...and the reader skips what it cannot parse instead of raising.
+    assert percentile_from_histogram(month.latency_histogram, 50) == histogram_bucket(
+        _exact_percentile(list(range(100, 800)), 50)
+    )
 
 
 # --- persistence boundary ------------------------------------------------
@@ -342,7 +357,8 @@ def test_store_round_trip_compacts_a_legacy_body_and_preserves_counts() -> None:
     # A month rollup persisted before bucketing: one key per millisecond,
     # well past the bound. Writing ONE more sample through the store must
     # shrink the persisted body and keep every count.
-    seed = _sample("seed", 150)
+    created_at = iso_now()
+    seed = _sample("seed", 150, created_at=created_at)
     (period, component) = next(
         (period, component) for period, component in sample_rollup_ids(seed) if period == "month"
     )
@@ -355,7 +371,7 @@ def test_store_round_trip_compacts_a_legacy_body_and_preserves_counts() -> None:
     table = _MiniBigtable()
     _write_json_row(table, "m", _rollup_key(legacy), legacy)
 
-    write_synthetic_rollups(table, "m", _sample("next", 777))
+    write_synthetic_rollups(table, "m", _sample("next", 777, created_at=created_at))
 
     stored = next(
         row
@@ -424,8 +440,79 @@ def test_status_window_percentiles_from_raw_samples_stay_exact() -> None:
     snapshot = synthetic_status.status_snapshot(samples, now=now)
 
     window = snapshot["windows"]["5m"]["groups"][0]
-    breakdown = snapshot["components"][0]["latency_breakdown_5m"][0]
+    component = next(c for c in snapshot["components"] if c["id"] == "canonical_api")
+    breakdown = component["latency_breakdown_5m"][0]
     assert window["p50_latency_milliseconds"] == _exact_percentile(latencies, 50) == 1240
     assert window["p95_latency_milliseconds"] == _exact_percentile(latencies, 95) == 1270
     assert window["p50_latency_milliseconds"] == breakdown["p50_latency_milliseconds"]
     assert window["p95_latency_milliseconds"] == breakdown["p95_latency_milliseconds"]
+
+
+def test_bigtable_to_clickhouse_backfill_never_carries_legacy_keys() -> None:
+    class _CapturingClickHouse:
+        def __init__(self) -> None:
+            self.payloads: list[bytes] = []
+
+        def query(self, sql: str, *, input_bytes: bytes | None = None, **_: Any) -> str:
+            assert sql.startswith("INSERT INTO synthetic_status_rollups")
+            assert input_bytes is not None
+            self.payloads.append(input_bytes)
+            return ""
+
+    legacy_values = list(range(100, 2_100))
+    rollup = SyntheticRollup(
+        id="legacy",
+        period="day",
+        period_start="2026-05-01T00:00:00Z",
+        component="canonical_api",
+        target="api",
+        probe_type="tls_health",
+        monitor_region="us-central1",
+        sample_count=len(legacy_values),
+        up_count=len(legacy_values),
+        latency_histogram=_legacy_histogram_of(legacy_values),
+    )
+    clickhouse = _CapturingClickHouse()
+
+    backfill_insert_rollups(clickhouse, [rollup])  # type: ignore[arg-type]
+
+    (line,) = clickhouse.payloads[0].split(b"\n")
+    row = json.loads(line)
+    assert len(row["latency_histogram"]) <= MAX_KEYS_TO_TEN_MILLION_MS
+    assert sum(row["latency_histogram"].values()) == len(legacy_values)
+    assert all(str(histogram_bucket(int(key))) == key for key in row["latency_histogram"])
+    assert len(rollup.latency_histogram) == len(legacy_values)  # input left untouched
+
+
+def test_dual_read_fingerprint_treats_legacy_and_bucketed_rows_as_the_same_row() -> None:
+    # Bigtable keeps a closed period's exact keys forever; the ClickHouse
+    # rebuild of that period is bucketed. The parity fingerprint must fold
+    # both, or the shadow comparison mismatches for as long as the row lives.
+    values = list(range(100, 2_100))
+
+    def rollup(histogram: dict[str, int]) -> SyntheticRollup:
+        return SyntheticRollup(
+            id="closed-day",
+            period="day",
+            period_start="2026-05-01T00:00:00Z",
+            component="canonical_api",
+            target="api",
+            probe_type="tls_health",
+            monitor_region="us-central1",
+            sample_count=len(values),
+            up_count=len(values),
+            latency_histogram=histogram,
+            updated_at="2026-05-02T00:00:00Z",
+        )
+
+    legacy = rollup(_legacy_histogram_of(values))
+    bucketed = rollup(_histogram_of(values))
+    assert legacy.latency_histogram != bucketed.latency_histogram
+    assert stable_rows_fingerprint([legacy], grace_seconds=0) == stable_rows_fingerprint(
+        [bucketed], grace_seconds=0
+    )
+    # A genuinely different row still differs.
+    other = rollup(_histogram_of([v + 500 for v in values]))
+    assert stable_rows_fingerprint([legacy], grace_seconds=0) != stable_rows_fingerprint(
+        [other], grace_seconds=0
+    )
