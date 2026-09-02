@@ -26,6 +26,9 @@ permissions:
 
 jobs:
   staleness:
+    # Scheduled runs belong to the canonical repo only; a fork's copy has no
+    # GCP identity and would fail its credential exchange every hour.
+    if: github.repository == 'Lore-Hex/quill-router'
     name: how old is each cloud
     runs-on: ubuntu-latest
     steps:

@@ -56,7 +56,9 @@ jobs:
     # Same rule as prod-smoke: never fail a PR on the state of production. PRs
     # get the offline proofs (tests/test_trust_measurement_drift.py) via ci.yml,
     # which is what keeps this script honest without depending on prod being up.
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    if: >-
+      github.repository == 'Lore-Hex/quill-router'
+      && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     steps:
       - uses: actions/checkout@v4
         with:
