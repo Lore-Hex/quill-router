@@ -64,6 +64,34 @@ SpendLeaseEligibilityFailure = Literal[
     "regional_lease",
     "key_window_limit",
 ]
+SpendLeaseBindingFailure = Literal[
+    "no_idempotency_key",
+    "escrow_headroom",
+    "scope_arbitrated",
+    "predecessor_limit",
+    "lease_transferred",
+    "lease_expired",
+    "stale_advisory",
+    "ledger_unavailable",
+    "window_open",
+    "mint_lost",
+]
+SpendLeaseNoLeaseReason = SpendLeaseEligibilityFailure | SpendLeaseBindingFailure
+SpendLeaseBindingOutcome = Literal[
+    "not_eligible",
+    "ordinary",
+    "replay",
+    "reuse_bound",
+    "mint_bound",
+    "escrow_refused",
+    "scope_claimed",
+    "fence_lost_race",
+    "fence_stale_advisory",
+    "fence_count_exhausted",
+    "fence_window_open",
+    "mint_lost",
+    "ledger_unavailable",
+]
 
 
 def spend_lease_scope_salt(idempotency_scope: str) -> str:
@@ -101,6 +129,7 @@ class SpendLeaseArtifact:
     boot_kid: str
     catalog_version: str
     lease_status: LeaseStatus = "active"
+    open_predecessor_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -138,7 +167,8 @@ class SpendLeaseShadowEvent:
     boot_kid: str
     boot_verified: bool
     lease_id: str | None
-    no_lease_reason: SpendLeaseEligibilityFailure | None
+    no_lease_reason: SpendLeaseNoLeaseReason | None
+    binding_outcome: SpendLeaseBindingOutcome | None
     echo_state: str
     would_admit: bool | None
     enclave_estimate_micro: int | None
@@ -621,7 +651,8 @@ def build_spend_lease_shadow_event(
     key_hash: str,
     boot_kid: str,
     boot_verified: bool,
-    no_lease_reason: SpendLeaseEligibilityFailure | None,
+    no_lease_reason: SpendLeaseNoLeaseReason | None,
+    binding_outcome: SpendLeaseBindingOutcome | None = None,
     echo: SpendLeaseEchoValue | None,
     server_estimate_micro: int | None,
     server_verdict: ShadowVerdict,
@@ -646,6 +677,7 @@ def build_spend_lease_shadow_event(
         boot_verified=boot_verified,
         lease_id=echo.lease_id if echo else None,
         no_lease_reason=no_lease_reason,
+        binding_outcome=binding_outcome,
         echo_state=echo.state if echo else "missing",
         would_admit=echo.would_admit if echo else None,
         enclave_estimate_micro=echo.enclave_estimate_micro if echo else None,

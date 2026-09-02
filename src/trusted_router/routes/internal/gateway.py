@@ -162,7 +162,7 @@ from trusted_router.spend_leases import (
     SpendLeaseArtifact,
     SpendLeaseBoot,
     SpendLeaseEchoValue,
-    SpendLeaseEligibilityFailure,
+    SpendLeaseNoLeaseReason,
     SpendLeaseSigner,
     boot_auth_fails_only_on_digest_approval,
     build_spend_lease_shadow_event,
@@ -506,9 +506,10 @@ def _record_spend_lease_shadow(
             boot_kid=str(context.get("boot_kid") or ""),
             boot_verified=bool(context.get("boot_verified")),
             no_lease_reason=cast(
-                SpendLeaseEligibilityFailure | None,
+                SpendLeaseNoLeaseReason | None,
                 context.get("no_lease_reason"),
             ),
+            binding_outcome=cast(Any, context.get("binding_outcome")),
             echo=cast(SpendLeaseEchoValue | None, context.get("echo")),
             server_estimate_micro=cast(int | None, context.get("server_estimate_micro")),
             server_verdict=cast(Any, verdict),
@@ -654,7 +655,8 @@ def _authorize_gateway_sync_impl(
                 body_dict,
                 error_message="User-provided models do not support BYOK routes",
             )
-    request_idempotency_key = _gateway_idempotency_key(request, body) or str(uuid.uuid4())
+    presented_idempotency_key = _gateway_idempotency_key(request, body)
+    request_idempotency_key = presented_idempotency_key or str(uuid.uuid4())
     _require_native_batch_route_binding(body.route_type, request_idempotency_key)
     partner_mode = _partner_billing_mode_or_error(
         requested_model_id=requested_model_id,
@@ -951,6 +953,7 @@ def _authorize_gateway_sync_impl(
         and receipt_fee_basis_points == 0
     )
     spend_lease: SpendLeaseArtifact | None = None
+    spend_lease_binding_plan: Any | None = None
     no_lease_reason = spend_lease_ineligibility_reason(
         workspace_id=workspace.id,
         pilot_workspace_ids=settings.spend_lease_pilot_workspaces,
@@ -969,6 +972,7 @@ def _authorize_gateway_sync_impl(
     spend_context["no_lease_reason"] = no_lease_reason or spend_context.get("boot_failure_reason")
     if (
         settings.spend_lease_issuance_enabled
+        and not settings.spend_lease_binding_enabled
         and bool(spend_context["boot_verified"])
         and boot_auth is not None
         and no_lease_reason is None
@@ -1033,6 +1037,48 @@ def _authorize_gateway_sync_impl(
             # Signer, Secret Manager, catalog, and generation failures all
             # degrade to today's synchronous authorization with no lease.
             logger.exception("spend_lease_mint_failed")
+    if (
+        settings.spend_lease_binding_enabled
+        and settings.spend_lease_issuance_enabled
+        and bool(spend_context["boot_verified"])
+        and boot_auth is not None
+        and no_lease_reason is None
+    ):
+        prepare_binding = getattr(_typed_store, "prepare_gateway_spend_lease_binding", None)
+        if callable(prepare_binding):
+            echo = cast(SpendLeaseEchoValue | None, spend_context.get("echo"))
+            catalog = freeze_spend_lease_catalog(
+                endpoint_candidates,
+                region=region,
+                route_type=cast(str, body.route_type),
+                service_tier=service_tier,
+            )
+            spend_lease_binding_plan, binding_reason = prepare_binding(
+                workspace_id=workspace.id,
+                key_hash=api_key.hash,
+                authorization_id=authorization_id,
+                idempotency_key=presented_idempotency_key,
+                idempotency_fingerprint=request_fingerprint,
+                estimate=estimate,
+                boot_kid=boot_auth.kid,
+                region=region,
+                signer=_spend_lease_signer(settings),
+                catalog=catalog,
+                ttl_seconds=settings.spend_lease_ttl_seconds,
+                skew_seconds=settings.spend_lease_skew_seconds,
+                max_microdollars=settings.spend_lease_max_microdollars,
+                max_available_basis_points=(
+                    settings.spend_lease_max_available_basis_points
+                ),
+                echo_lease_id=echo.lease_id if echo is not None else None,
+                echo_state=echo.state if echo is not None else None,
+            )
+            if binding_reason is not None:
+                spend_context["no_lease_reason"] = binding_reason
+                spend_context["binding_outcome"] = "ordinary"
+        else:
+            spend_context["no_lease_reason"] = "ledger_unavailable"
+            spend_context["binding_outcome"] = "ledger_unavailable"
     user_model_slot_acquired = False
     if user_model is not None:
         user_model_slot_acquired = acquire_user_model_slot(
@@ -1158,6 +1204,7 @@ def _authorize_gateway_sync_impl(
                     expires_at=expires_at,
                     window_limits=window_limits or None,
                     spend_lease=spend_lease,
+                    spend_lease_binding_plan=spend_lease_binding_plan,
                 )
         except conflict_store_error_types() as exc:
             release_user_model_slot_after_error()
@@ -1181,6 +1228,13 @@ def _authorize_gateway_sync_impl(
             release_user_model_slot_after_error()
             raise
         window_decision = getattr(outcome, "rate_limit", None)
+        if settings.spend_lease_binding_enabled:
+            spend_context["no_lease_reason"] = getattr(
+                outcome, "no_lease_reason", None
+            ) or spend_context.get("no_lease_reason")
+            spend_context["binding_outcome"] = getattr(
+                outcome, "spend_lease_outcome", None
+            ) or spend_context.get("binding_outcome")
         remember_spend_window_decision(request, window_decision)
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
             release_user_model_slot_after_error()

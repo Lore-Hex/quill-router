@@ -699,6 +699,8 @@ ENV_VARS=(
   # is for operator-set values, and a source default cannot override an existing
   # deployed marker.
   "TR_SPEND_LEASE_ISSUANCE_ENABLED=true"
+  # Unit 2 authorize hooks ship inert; the binding flip is a later rollout.
+  "TR_SPEND_LEASE_BINDING_ENABLED=false"
   "TR_SPEND_LEASE_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d"
   "TR_SPEND_LEASE_SIGNING_SECRET_NAME=trustedrouter-spend-lease-signing-seed"
   "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS=${SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS}"

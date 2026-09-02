@@ -673,6 +673,9 @@ class GatewayAuthorization:
     spend_lease_boot_kid: str | None = None
     spend_lease_catalog_version: str | None = None
     spend_lease_status: str | None = None
+    # Per-request amount bound inside the lease.  Distinct from cap_micro,
+    # which is the lease-wide escrow ceiling.
+    spend_lease_allocated_micro: int | None = None
     # Only deferred authorizations carry an expiry: it is what lets the reaper
     # reclaim the outstanding-counter estimate when the enclave dies between
     # authorize and settle. Local authorizations keep their pre-existing

@@ -23,6 +23,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from trusted_router.storage_gcp_codec import json_body
+from trusted_router.storage_gcp_spend_lease import (
+    AUTHORIZATION_TYPED_COLUMNS,
+    authorization_typed_columns,
+    authorization_typed_param_types,
+    merge_authorization_typed_columns,
+)
 from trusted_router.storage_models import GatewayAuthorization
 from trusted_router.types import UsageType
 
@@ -55,15 +61,23 @@ def insert_gateway_authorization(
     created_at: Any,
 ) -> None:
     """Insert active authorization state in the caller's billing transaction."""
+    payload = dataclasses.asdict(authorization)
+    typed = authorization_typed_columns(payload)
     transaction.execute_update(
         "INSERT INTO tr_gateway_authorization ("
         "authorization_id, workspace_id, key_hash, reservation_id, model_id, "
         "provider, usage_type, estimated_microdollars, settled, created_at, "
-        "terminal_at, payload"
+        "terminal_at, payload, spend_lease_id, spend_lease_gen, "
+        "spend_lease_allocated_micro, spend_lease_token, spend_lease_status, "
+        "spend_lease_exp, idempotency_fingerprint, finalization_outcome, "
+        "finalized_cost_microdollars"
         ") VALUES ("
         "@authorization_id, @workspace_id, @key_hash, @reservation_id, @model_id, "
         "@provider, @usage_type, @estimated_microdollars, false, @created_at, "
-        "NULL, @payload"
+        "NULL, @payload, @spend_lease_id, @spend_lease_gen, "
+        "@spend_lease_allocated_micro, @spend_lease_token, @spend_lease_status, "
+        "@spend_lease_exp, @idempotency_fingerprint, @finalization_outcome, "
+        "@finalized_cost_microdollars"
         ")",
         params={
             "authorization_id": authorization.id,
@@ -76,6 +90,7 @@ def insert_gateway_authorization(
             "estimated_microdollars": int(authorization.estimated_microdollars),
             "created_at": created_at,
             "payload": json_body(authorization),
+            **typed,
         },
         param_types={
             "authorization_id": param_types.STRING,
@@ -88,6 +103,7 @@ def insert_gateway_authorization(
             "estimated_microdollars": param_types.INT64,
             "created_at": param_types.TIMESTAMP,
             "payload": param_types.STRING,
+            **authorization_typed_param_types(param_types),
         },
     )
 
@@ -101,7 +117,11 @@ def read_gateway_authorization(
         reader.execute_sql(
             "SELECT authorization_id, workspace_id, key_hash, reservation_id, "
             "model_id, provider, usage_type, estimated_microdollars, settled, "
-            "created_at, payload FROM tr_gateway_authorization "
+            "created_at, payload, spend_lease_id, spend_lease_gen, "
+            "spend_lease_allocated_micro, spend_lease_token, spend_lease_status, "
+            "spend_lease_exp, idempotency_fingerprint, finalization_outcome, "
+            "finalized_cost_microdollars "
+            "FROM tr_gateway_authorization "
             "WHERE authorization_id=@authorization_id",
             params={"authorization_id": authorization_id},
             param_types={"authorization_id": param_types.STRING},
@@ -121,12 +141,17 @@ def read_gateway_authorization(
         settled,
         created_at,
         payload,
+        *typed_values,
     ) = rows[0]
+    typed = dict(zip(AUTHORIZATION_TYPED_COLUMNS, typed_values, strict=True))
     if payload:
-        authorization = _authorization_from_payload(payload)
+        authorization = _authorization_from_payload(
+            json.dumps(merge_authorization_typed_columns(json.loads(payload), typed))
+        )
         authorization.settled = bool(settled)
         authorization.created_at = _timestamp_string(created_at)
         return authorization
+    merged = merge_authorization_typed_columns(None, typed)
     return GatewayAuthorization(
         id=str(row_id),
         workspace_id=str(workspace_id),
@@ -140,6 +165,15 @@ def read_gateway_authorization(
         ),
         settled=bool(settled),
         created_at=_timestamp_string(created_at),
+        spend_lease_id=merged.get("spend_lease_id"),
+        spend_lease_gen=merged.get("spend_lease_gen"),
+        spend_lease_allocated_micro=merged.get("spend_lease_allocated_micro"),
+        spend_lease_token=merged.get("spend_lease_token"),
+        spend_lease_status=merged.get("spend_lease_status"),
+        spend_lease_exp=merged.get("spend_lease_exp"),
+        idempotency_fingerprint=merged.get("idempotency_fingerprint"),
+        finalization_outcome=merged.get("finalization_outcome"),
+        finalized_cost_microdollars=merged.get("finalized_cost_microdollars"),
     )
 
 
@@ -149,16 +183,23 @@ def mark_gateway_authorization_settled(
     authorization: GatewayAuthorization,
 ) -> int:
     """Mark billing settled while keeping repair metadata and TTL disabled."""
+    typed = authorization_typed_columns(dataclasses.asdict(authorization))
     return transaction.execute_update(
-        "UPDATE tr_gateway_authorization SET settled=true, payload=@payload "
+        "UPDATE tr_gateway_authorization SET settled=true, payload=@payload, "
+        "finalization_outcome=@finalization_outcome, "
+        "finalized_cost_microdollars=@finalized_cost_microdollars "
         "WHERE authorization_id=@authorization_id",
         params={
             "authorization_id": authorization.id,
             "payload": json_body(authorization),
+            "finalization_outcome": typed["finalization_outcome"],
+            "finalized_cost_microdollars": typed["finalized_cost_microdollars"],
         },
         param_types={
             "authorization_id": param_types.STRING,
             "payload": param_types.STRING,
+            "finalization_outcome": param_types.STRING,
+            "finalized_cost_microdollars": param_types.INT64,
         },
     )
 

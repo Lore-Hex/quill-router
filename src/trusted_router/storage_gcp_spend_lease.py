@@ -279,6 +279,34 @@ def read_registration(
     raise SpendLeaseDataError(f"unknown arbitration registration kind: {kind!r}")
 
 
+def delete_bound(
+    transaction: Any,
+    param_types: Any,
+    scope: str,
+    authorization_id: str,
+) -> int:
+    """Delete only this attempt's BOUND registration during an exact inverse."""
+
+    return _single_row_count(
+        "delete_bound",
+        transaction.execute_update(
+            "DELETE FROM spend_lease_scope_arbitration "
+            "WHERE scope_salt=@scope_salt AND idempotency_scope=@scope "
+            "AND registration_kind='BOUND' AND authorization_id=@authorization_id",
+            params={
+                "scope_salt": spend_leases.spend_lease_scope_salt(scope),
+                "scope": scope,
+                "authorization_id": authorization_id,
+            },
+            param_types={
+                "scope_salt": param_types.STRING,
+                "scope": param_types.STRING,
+                "authorization_id": param_types.STRING,
+            },
+        ),
+    )
+
+
 def arm_bound_retention(
     transaction: Any,
     param_types: Any,
