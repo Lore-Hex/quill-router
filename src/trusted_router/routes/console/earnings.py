@@ -10,8 +10,13 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from trusted_router.auth import SettingsDep
-from trusted_router.money import dollars_to_microdollars, format_money_display
+from trusted_router.money import (
+    dollars_to_microdollars,
+    format_money_display,
+    microdollars_to_decimal,
+)
 from trusted_router.routes.console._shared import ConsoleDep, render
+from trusted_router.routes.payouts import payout_status
 from trusted_router.storage import STORE
 
 
@@ -88,6 +93,8 @@ def _render_page(request: Request, ctx: ConsoleDep, settings: SettingsDep) -> st
         }
         for movement in STORE.list_credit_movements(f"user:{ctx.user.id}", limit=50)
     ]
+    payouts = payout_status(ctx.user, settings)
+    verified_name = str(ctx.user.identity_verified_name or "").strip().split(maxsplit=1)
     return render(
         "console/earnings.html",
         settings=settings,
@@ -105,6 +112,10 @@ def _render_page(request: Request, ctx: ConsoleDep, settings: SettingsDep) -> st
         },
         by_model_30d=by_model,
         recent=recent,
+        payouts=payouts,
+        payout_available_decimal=microdollars_to_decimal(summary["available"]),
+        payout_default_first_name=verified_name[0] if verified_name else "",
+        payout_default_last_name=verified_name[1] if len(verified_name) == 2 else "",
         transfer_workspaces=[
             workspace for workspace in ctx.workspaces if not workspace.federated_home
         ],

@@ -298,6 +298,7 @@ def test_conformant_oauth_protocol_paths_route_to_control(prefix: str, path: str
         "/internal/paypal/webhook",
         "/internal/adyen/webhook",
         "/internal/veriff/webhook",
+        "/internal/routable/webhook",
         "/internal/ses/notifications",
         "/internal/chat/issue-browser-key",
     ],
@@ -307,6 +308,12 @@ def test_control_exceptions_beat_the_internal_wildcard(prefix: str, path: str) -
     candidate = f"{prefix}/internal{unversioned}"
     assert URL_MAP.route_surface(candidate) == "control"
     assert URL_MAP.route_surface(f"{prefix}/internal/gateway/authorize") == "internal"
+
+
+@pytest.mark.parametrize("prefix", ["", "/v1"])
+@pytest.mark.parametrize("path", ["/payouts", "/payouts/sample"])
+def test_creator_payout_paths_route_to_control(prefix: str, path: str) -> None:
+    assert URL_MAP.route_surface(f"{prefix}{path}") == "control"
 
 
 @pytest.mark.parametrize("prefix", ["", "/v1"])

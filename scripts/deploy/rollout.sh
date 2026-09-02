@@ -189,6 +189,15 @@ add_secret_env_if_exists \
 add_secret_env_if_exists "TR_PAYPAL_CLIENT_ID" "trustedrouter-paypal-client-id"
 add_secret_env_if_exists "TR_PAYPAL_CLIENT_SECRET" "trustedrouter-paypal-client-secret"
 add_secret_env_if_exists "TR_PAYPAL_WEBHOOK_ID" "trustedrouter-paypal-webhook-id"
+add_secret_env_if_exists "TR_ROUTABLE_API_TOKEN" "trustedrouter-routable-api-token"
+add_secret_env_if_exists \
+  "TR_ROUTABLE_WEBHOOK_SECRET" "trustedrouter-routable-webhook-secret"
+add_secret_env_if_exists "TR_ROUTABLE_COMPANY_ID" "trustedrouter-routable-company-id"
+add_secret_env_if_exists \
+  "TR_ROUTABLE_TEAM_MEMBER_ID" "trustedrouter-routable-team-member-id"
+add_secret_env_if_exists \
+  "TR_ROUTABLE_WITHDRAW_FROM_ACCOUNT_ID" \
+  "trustedrouter-routable-withdraw-from-account-id"
 add_secret_env_if_exists "TR_ADYEN_API_KEY" "trustedrouter-adyen-test-api-key"
 add_secret_env_if_exists "TR_ADYEN_CLIENT_KEY" "trustedrouter-adyen-test-client-key"
 add_secret_env_if_exists "TR_ADYEN_HMAC_KEY" "trustedrouter-adyen-test-hmac-key"
@@ -613,6 +622,11 @@ ENV_VARS=(
   # Replace these zeros with the signed Adyen commercial terms before launch.
   "TR_ADYEN_CARD_FEE_BASIS_POINTS=0"
   "TR_ADYEN_CARD_FEE_FIXED_CENTS=0"
+  # Creator payouts stay dark until the Routable account, funding account,
+  # signed webhook, and production canary are all configured. The optional
+  # secrets above make activation a reviewed one-line release.
+  "TR_ROUTABLE_ENABLED=false"
+  "TR_ROUTABLE_API_BASE_URL=https://api.routable.com"
   "TR_CHECKOUT_CARD_FEE_MINIMUM_CENTS=80"
   "TR_OPS_CHAT_WEBHOOK_URLS=https://a.uptimerouter.com,https://b.trustedrouter.com,https://c.allyrouter.com"
   # /trustedos partner-inquiry form leads. Plain env (an address, not a

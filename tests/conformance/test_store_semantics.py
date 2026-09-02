@@ -32,9 +32,21 @@ import threading
 import pytest
 from psycopg.types.numeric import Int8
 
+from trusted_router.routable_payouts import (
+    payout_idempotency_entity_id,
+    payout_request_fingerprint,
+)
+from trusted_router.storage_errors import StoreConflict
 from trusted_router.storage_gcp import _auth_record
 from trusted_router.storage_key_usage import api_key_from_json
-from trusted_router.storage_models import ApiKey, ConsentRequest, Generation, OAuthApp
+from trusted_router.storage_models import (
+    ApiKey,
+    ConsentRequest,
+    EarningsCashout,
+    Generation,
+    OAuthApp,
+    RoutablePayoutProfile,
+)
 from trusted_router.store_protocol import Store
 from trusted_router.typed_balance import live_credit_summary
 from trusted_router.types import UsageType
@@ -303,6 +315,240 @@ def test_transfer_earnings_is_atomic_idempotent_and_visible_in_workspace(
     assert user_movements[0].counterparty_account_id == workspace_id
     assert workspace_movements[0].amount_microdollars == 60
     assert workspace_movements[0].counterparty_account_id == f"user:{user_id}"
+
+
+def test_routable_profile_is_user_scoped_and_company_unique(
+    store: Store,
+    user_id: str,
+    unique: str,
+) -> None:
+    profile = RoutablePayoutProfile(
+        user_id=user_id,
+        routable_company_id=f"company-{unique}",
+        company_status="accepted",
+        payment_method_id=f"bank-{unique}",
+        payment_method_type="bank",
+    )
+
+    assert store.upsert_routable_payout_profile(profile) == profile
+    assert store.get_routable_payout_profile(user_id) == profile
+    assert store.get_routable_payout_profile_by_company(profile.routable_company_id) == profile
+
+    with pytest.raises(StoreConflict, match="already linked"):
+        store.upsert_routable_payout_profile(
+            RoutablePayoutProfile(
+                user_id=f"other-{unique}",
+                routable_company_id=profile.routable_company_id,
+                company_status="accepted",
+            )
+        )
+
+    replacement = RoutablePayoutProfile(
+        user_id=user_id,
+        routable_company_id=f"company-replacement-{unique}",
+        company_status="accepted",
+    )
+    assert store.upsert_routable_payout_profile(replacement) == replacement
+    assert store.get_routable_payout_profile_by_company(profile.routable_company_id) is None
+    assert store.get_routable_payout_profile_by_company(
+        replacement.routable_company_id
+    ) == replacement
+
+
+def test_earnings_cashout_lifecycle_is_exact_and_restart_safe(
+    store: Store,
+    user_id: str,
+    unique: str,
+) -> None:
+    amount = 100_000_000
+    assert store.credit_user_earnings(
+        user_id,
+        3 * amount,
+        f"cashout-funding-{unique}",
+    )
+    payout_id = f"po-{unique}"
+    company_id = f"company-{unique}"
+    payment_method_id = f"bank-{unique}"
+    cashout = EarningsCashout(
+        id=payout_id,
+        user_id=user_id,
+        amount_microdollars=amount,
+        state="reserved",
+        balance_status="reserved",
+        idempotency_fingerprint=payout_request_fingerprint(
+            user_id=user_id,
+            amount_microdollars=amount,
+            routable_company_id=company_id,
+            payment_method_id=payment_method_id,
+        ),
+        routable_idempotency_key=f"routable-{unique}",
+        external_id=f"external-{unique}",
+        routable_company_id=company_id,
+        payment_method_id=payment_method_id,
+    )
+    idempotency_id = payout_idempotency_entity_id(user_id, f"request-{unique}")
+
+    assert store.reserve_earnings_cashout(
+        cashout,
+        idempotency_entity_id=idempotency_id,
+    ) == ("accepted", cashout)
+    assert store.reserve_earnings_cashout(
+        cashout,
+        idempotency_entity_id=idempotency_id,
+    ) == ("duplicate", cashout)
+    assert store.earnings_summary(user_id)["available"] == 2 * amount
+    assert store.get_earnings_cashout(user_id, payout_id) == cashout
+    assert store.get_earnings_cashout_by_external_id(cashout.external_id) == cashout
+
+    payable_id = f"payable-{unique}"
+    pending = store.mark_earnings_cashout(
+        user_id,
+        payout_id,
+        state="pending",
+        routable_payable_id=payable_id,
+        routable_status="pending",
+        increment_attempts=True,
+    )
+    assert pending is not None
+    assert pending.attempts == 1
+    assert store.get_earnings_cashout_by_routable_payable(payable_id) == pending
+
+    failed = store.mark_earnings_cashout(
+        user_id,
+        payout_id,
+        state="failed",
+        routable_status="failed",
+    )
+    assert failed is not None
+    assert failed.balance_status == "reserved"
+    assert store.earnings_summary(user_id)["available"] == 2 * amount
+
+    outcome, canceled = store.release_earnings_cashout(
+        user_id,
+        payout_id,
+        state="canceled",
+        routable_status="canceled",
+    )
+    assert outcome == "released"
+    assert canceled is not None
+    assert canceled.balance_revision == 1
+    assert store.earnings_summary(user_id)["available"] == 3 * amount
+    assert store.release_earnings_cashout(
+        user_id,
+        payout_id,
+        state="canceled",
+        routable_status="canceled",
+    )[0] == "duplicate"
+
+    restarted = store.mark_earnings_cashout(
+        user_id,
+        payout_id,
+        state="initiated",
+        routable_status="initiated",
+    )
+    assert restarted is not None
+    assert restarted.balance_status == "reserved"
+    assert restarted.balance_revision == 2
+    assert store.earnings_summary(user_id)["available"] == 2 * amount
+
+    completed = store.mark_earnings_cashout(
+        user_id,
+        payout_id,
+        state="completed",
+        routable_status="completed",
+    )
+    assert completed is not None
+    assert completed.balance_status == "paid"
+    assert completed.balance_revision == 2
+    assert store.earnings_summary(user_id)["available"] == 2 * amount
+
+    # A late bank failure is restartable and therefore remains reserved until
+    # the payable reaches Routable's final canceled state.
+    late_failure = store.mark_earnings_cashout(
+        user_id,
+        payout_id,
+        state="failed",
+        routable_status="failed",
+    )
+    assert late_failure is not None
+    assert late_failure.balance_status == "paid"
+    assert store.earnings_summary(user_id)["available"] == 2 * amount
+    outcome, late_failure = store.release_earnings_cashout(
+        user_id,
+        payout_id,
+        state="canceled",
+        routable_status="canceled",
+    )
+    assert outcome == "released"
+    assert late_failure is not None
+    assert late_failure.balance_revision == 3
+    assert store.earnings_summary(user_id)["available"] == 3 * amount
+    movements = store.list_credit_movements(f"user:{user_id}")
+    assert [movement.kind for movement in movements].count("earnings_cashout_reserved") == 1
+    assert [movement.kind for movement in movements].count("earnings_cashout_reinstated") == 1
+    assert [movement.kind for movement in movements].count("earnings_cashout_reversed") == 2
+
+    with pytest.raises(ValueError, match="only when canceled"):
+        store.release_earnings_cashout(
+            user_id,
+            payout_id,
+            state="failed",
+            routable_status="failed",
+        )
+
+
+def test_earnings_cashout_idempotency_conflict_and_insufficient_are_side_effect_free(
+    store: Store,
+    user_id: str,
+    unique: str,
+) -> None:
+    amount = 100_000_000
+    assert store.credit_user_earnings(user_id, amount, f"cashout-funding-{unique}")
+    company_id = f"company-{unique}"
+    payment_method_id = f"bank-{unique}"
+
+    def cashout(payout_id: str, cashout_amount: int) -> EarningsCashout:
+        return EarningsCashout(
+            id=payout_id,
+            user_id=user_id,
+            amount_microdollars=cashout_amount,
+            state="reserved",
+            balance_status="reserved",
+            idempotency_fingerprint=payout_request_fingerprint(
+                user_id=user_id,
+                amount_microdollars=cashout_amount,
+                routable_company_id=company_id,
+                payment_method_id=payment_method_id,
+            ),
+            routable_idempotency_key=f"routable-{payout_id}",
+            external_id=f"external-{payout_id}",
+            routable_company_id=company_id,
+            payment_method_id=payment_method_id,
+        )
+
+    idempotency_id = payout_idempotency_entity_id(user_id, f"request-{unique}")
+    original = cashout(f"po-a-{unique}", amount)
+    assert store.reserve_earnings_cashout(
+        original,
+        idempotency_entity_id=idempotency_id,
+    )[0] == "accepted"
+    conflicting = cashout(f"po-b-{unique}", amount + 1)
+    assert store.reserve_earnings_cashout(
+        conflicting,
+        idempotency_entity_id=idempotency_id,
+    ) == ("conflict", None)
+    assert store.earnings_summary(user_id)["available"] == 0
+
+    insufficient = cashout(f"po-c-{unique}", 1)
+    assert store.reserve_earnings_cashout(
+        insufficient,
+        idempotency_entity_id=payout_idempotency_entity_id(
+            user_id,
+            f"second-{unique}",
+        ),
+    ) == ("insufficient", None)
+    assert store.get_earnings_cashout(user_id, insufficient.id) is None
+    assert store.earnings_summary(user_id)["available"] == 0
 
 
 def test_insufficient_earnings_transfer_leaves_both_accounts_unchanged(

@@ -39,6 +39,18 @@ from trusted_router.receipt_keys import (
     ReceiptKeyWriteOutcome,
     merge_receipt_key_observation,
 )
+from trusted_router.routable_payouts import (
+    EARNINGS_CASHOUT_EXTERNAL_KIND,
+    EARNINGS_CASHOUT_IDEMPOTENCY_KIND,
+    EARNINGS_CASHOUT_KIND,
+    EARNINGS_CASHOUT_PAYABLE_KIND,
+    ROUTABLE_PAID_STATUSES,
+    ROUTABLE_PAYOUT_PROFILE_COMPANY_KIND,
+    ROUTABLE_PAYOUT_PROFILE_KIND,
+    ROUTABLE_PENDING_STATUSES,
+    payout_entity_id,
+    validate_routable_release_status,
+)
 from trusted_router.security import lookup_hash_api_key, verify_api_key
 from trusted_router.spend_leases import (
     SPEND_LEASE_ACTIVE_GRANT_KIND,
@@ -96,6 +108,7 @@ from trusted_router.storage_activity import (
 )
 from trusted_router.storage_auth_context import build_session_auth_context
 from trusted_router.storage_errors import (
+    StoreConflict,
     StoreUnavailable,
     is_duplicate_key_error,
     is_transient_store_error,
@@ -121,6 +134,7 @@ from trusted_router.storage_gcp_counter_dml import (
     credit_credit_shard,
     debit_workspace_credit,
     insert_entity_dml_at,
+    update_entity_body_dml,
 )
 from trusted_router.storage_gcp_counters import (
     CREDIT_BALANCE_COLUMNS,
@@ -177,7 +191,9 @@ from trusted_router.storage_models import (
     BedrockGroupBuyPublicMessage,
     CreditMovement,
     CustomModelMarkupPayout,
+    EarningsCashout,
     ReceiptKey,
+    RoutablePayoutProfile,
     SessionAuthContext,
     TypedFinalizeResult,
     UserModelPayout,
@@ -2425,6 +2441,440 @@ class SpannerBigtableStore:
             return "accepted"
 
         return self._run_in_transaction(txn)
+
+    def get_routable_payout_profile(
+        self,
+        user_id: str,
+    ) -> RoutablePayoutProfile | None:
+        return self._read_entity(
+            ROUTABLE_PAYOUT_PROFILE_KIND,
+            user_id,
+            RoutablePayoutProfile,
+        )
+
+    def get_routable_payout_profile_by_company(
+        self,
+        routable_company_id: str,
+    ) -> RoutablePayoutProfile | None:
+        link = self._read_entity(
+            ROUTABLE_PAYOUT_PROFILE_COMPANY_KIND,
+            routable_company_id,
+            dict,
+        )
+        if link is None:
+            return None
+        user_id = str(link.get("user_id") or "")
+        return self.get_routable_payout_profile(user_id) if user_id else None
+
+    def upsert_routable_payout_profile(
+        self,
+        profile: RoutablePayoutProfile,
+    ) -> RoutablePayoutProfile:
+        def txn(transaction: Any) -> RoutablePayoutProfile:
+            company_link = self._read_entity_tx(
+                transaction,
+                ROUTABLE_PAYOUT_PROFILE_COMPANY_KIND,
+                profile.routable_company_id,
+                dict,
+            )
+            if company_link is not None and company_link.get("user_id") != profile.user_id:
+                raise StoreConflict("Routable company is already linked to another user")
+            previous = self._read_entity_tx(
+                transaction,
+                ROUTABLE_PAYOUT_PROFILE_KIND,
+                profile.user_id,
+                RoutablePayoutProfile,
+            )
+            if (
+                previous is not None
+                and previous.routable_company_id != profile.routable_company_id
+            ):
+                self._delete_entities_tx(
+                    transaction,
+                    ROUTABLE_PAYOUT_PROFILE_COMPANY_KIND,
+                    [previous.routable_company_id],
+                )
+            self._write_entity_tx(
+                transaction,
+                ROUTABLE_PAYOUT_PROFILE_KIND,
+                profile.user_id,
+                profile,
+            )
+            self._write_entity_tx(
+                transaction,
+                ROUTABLE_PAYOUT_PROFILE_COMPANY_KIND,
+                profile.routable_company_id,
+                {"user_id": profile.user_id},
+            )
+            return profile
+
+        return cast(RoutablePayoutProfile, self._run_in_transaction(txn))
+
+    def reserve_earnings_cashout(
+        self,
+        cashout: EarningsCashout,
+        *,
+        idempotency_entity_id: str,
+    ) -> tuple[str, EarningsCashout | None]:
+        amount = self._positive_money_amount(cashout.amount_microdollars)
+        entity_id = payout_entity_id(cashout.user_id, cashout.id)
+
+        def txn(transaction: Any) -> tuple[str, EarningsCashout | None]:
+            previous = self._read_entity_tx(
+                transaction,
+                EARNINGS_CASHOUT_IDEMPOTENCY_KIND,
+                idempotency_entity_id,
+                dict,
+            )
+            if previous is not None:
+                if previous.get("fingerprint") != cashout.idempotency_fingerprint:
+                    return "conflict", None
+                existing = self._read_entity_tx(
+                    transaction,
+                    EARNINGS_CASHOUT_KIND,
+                    payout_entity_id(
+                        str(previous.get("user_id") or ""),
+                        str(previous.get("payout_id") or ""),
+                    ),
+                    EarningsCashout,
+                )
+                if existing is None:
+                    raise StoreConflict("cash-out idempotency record lost its payout")
+                return "duplicate", existing
+            if (
+                self._read_entity_tx(
+                    transaction,
+                    EARNINGS_CASHOUT_KIND,
+                    entity_id,
+                    EarningsCashout,
+                )
+                is not None
+            ):
+                return "conflict", None
+            external_link = self._read_entity_tx(
+                transaction,
+                EARNINGS_CASHOUT_EXTERNAL_KIND,
+                cashout.external_id,
+                dict,
+            )
+            if external_link is not None:
+                return "conflict", None
+            now = dt.datetime.now(dt.UTC).replace(microsecond=0)
+            pt = self._param_types
+            updated = transaction.execute_update(
+                "UPDATE tr_earnings_balance "
+                "SET total_transferred = total_transferred + @amount, updated_at=@now "
+                "WHERE user_id=@user_id AND shard=0 "
+                "AND (total_earned - total_transferred) >= @amount",
+                params={"amount": amount, "now": now, "user_id": cashout.user_id},
+                param_types={
+                    "amount": pt.INT64,
+                    "now": pt.TIMESTAMP,
+                    "user_id": pt.STRING,
+                },
+            )
+            if updated == 0:
+                return "insufficient", None
+            self._insert_credit_movement_tx(
+                transaction,
+                account_id=f"user:{cashout.user_id}",
+                movement_id=f"earnings_cashout:{cashout.id}",
+                kind="earnings_cashout_reserved",
+                amount_microdollars=-amount,
+                counterparty_account_id="routable",
+                created_at=now,
+            )
+            insert_entity_dml_at(
+                transaction,
+                pt,
+                EARNINGS_CASHOUT_KIND,
+                entity_id,
+                _json_body(cashout),
+                now,
+            )
+            insert_entity_dml_at(
+                transaction,
+                pt,
+                EARNINGS_CASHOUT_IDEMPOTENCY_KIND,
+                idempotency_entity_id,
+                _json_body(
+                    {
+                        "fingerprint": cashout.idempotency_fingerprint,
+                        "payout_id": cashout.id,
+                        "user_id": cashout.user_id,
+                    }
+                ),
+                now,
+            )
+            insert_entity_dml_at(
+                transaction,
+                pt,
+                EARNINGS_CASHOUT_EXTERNAL_KIND,
+                cashout.external_id,
+                _json_body(
+                    {"user_id": cashout.user_id, "payout_id": cashout.id}
+                ),
+                now,
+            )
+            return "accepted", cashout
+
+        return cast(
+            tuple[str, EarningsCashout | None],
+            self._run_in_transaction(txn),
+        )
+
+    def get_earnings_cashout(
+        self,
+        user_id: str,
+        payout_id: str,
+    ) -> EarningsCashout | None:
+        return self._read_entity(
+            EARNINGS_CASHOUT_KIND,
+            payout_entity_id(user_id, payout_id),
+            EarningsCashout,
+        )
+
+    def get_earnings_cashout_by_routable_payable(
+        self,
+        routable_payable_id: str,
+    ) -> EarningsCashout | None:
+        link = self._read_entity(
+            EARNINGS_CASHOUT_PAYABLE_KIND,
+            routable_payable_id,
+            dict,
+        )
+        if link is None:
+            return None
+        user_id = str(link.get("user_id") or "")
+        payout_id = str(link.get("payout_id") or "")
+        return self.get_earnings_cashout(user_id, payout_id) if user_id and payout_id else None
+
+    def get_earnings_cashout_by_external_id(
+        self,
+        external_id: str,
+    ) -> EarningsCashout | None:
+        link = self._read_entity(
+            EARNINGS_CASHOUT_EXTERNAL_KIND,
+            external_id,
+            dict,
+        )
+        if link is None:
+            return None
+        user_id = str(link.get("user_id") or "")
+        payout_id = str(link.get("payout_id") or "")
+        return self.get_earnings_cashout(user_id, payout_id) if user_id and payout_id else None
+
+    def list_earnings_cashouts(
+        self,
+        user_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[EarningsCashout]:
+        return self._list_entities(
+            EARNINGS_CASHOUT_KIND,
+            cls=EarningsCashout,
+            prefix=f"{user_id}#",
+            limit=max(0, min(int(limit), 100)),
+        )
+
+    def mark_earnings_cashout(
+        self,
+        user_id: str,
+        payout_id: str,
+        *,
+        state: str,
+        routable_payable_id: str | None = None,
+        routable_status: str | None = None,
+        error_code: str | None = None,
+        increment_attempts: bool = False,
+    ) -> EarningsCashout | None:
+        entity_id = payout_entity_id(user_id, payout_id)
+
+        def txn(transaction: Any) -> EarningsCashout | None:
+            existing = self._read_entity_tx(
+                transaction,
+                EARNINGS_CASHOUT_KIND,
+                entity_id,
+                EarningsCashout,
+            )
+            if existing is None:
+                return None
+            payable_id = routable_payable_id or existing.routable_payable_id
+            link: dict[str, Any] | None = None
+            if payable_id:
+                link = self._read_entity_tx(
+                    transaction,
+                    EARNINGS_CASHOUT_PAYABLE_KIND,
+                    payable_id,
+                    dict,
+                )
+                if link is not None and (
+                    link.get("user_id") != user_id or link.get("payout_id") != payout_id
+                ):
+                    raise StoreConflict("Routable payable is already linked")
+            balance_status = (
+                "paid"
+                if routable_status in ROUTABLE_PAID_STATUSES
+                else existing.balance_status
+            )
+            balance_revision = existing.balance_revision
+            if (
+                existing.balance_status == "released"
+                and routable_status in ROUTABLE_PENDING_STATUSES | ROUTABLE_PAID_STATUSES
+            ):
+                now = dt.datetime.now(dt.UTC).replace(microsecond=0)
+                pt = self._param_types
+                updated_rows = transaction.execute_update(
+                    "UPDATE tr_earnings_balance "
+                    "SET total_transferred = total_transferred + @amount, updated_at=@now "
+                    "WHERE user_id=@user_id AND shard=0",
+                    params={
+                        "amount": existing.amount_microdollars,
+                        "now": now,
+                        "user_id": user_id,
+                    },
+                    param_types={
+                        "amount": pt.INT64,
+                        "now": pt.TIMESTAMP,
+                        "user_id": pt.STRING,
+                    },
+                )
+                if updated_rows != 1:
+                    raise StoreConflict("cash-out earnings account is missing")
+                balance_revision += 1
+                balance_status = (
+                    "paid" if routable_status in ROUTABLE_PAID_STATUSES else "reserved"
+                )
+                self._insert_credit_movement_tx(
+                    transaction,
+                    account_id=f"user:{user_id}",
+                    movement_id=(
+                        f"earnings_cashout_reinstated:{payout_id}:{balance_revision}"
+                    ),
+                    kind="earnings_cashout_reinstated",
+                    amount_microdollars=-existing.amount_microdollars,
+                    counterparty_account_id="routable",
+                    created_at=now,
+                )
+            updated = dataclasses.replace(
+                existing,
+                state=state,
+                balance_status=balance_status,
+                routable_payable_id=payable_id,
+                routable_status=routable_status or existing.routable_status,
+                error_code=error_code,
+                attempts=existing.attempts + int(increment_attempts),
+                balance_revision=balance_revision,
+                updated_at=iso_now(),
+            )
+            now = dt.datetime.now(dt.UTC).replace(microsecond=0)
+            pt = self._param_types
+            if (
+                update_entity_body_dml(
+                    transaction,
+                    pt,
+                    EARNINGS_CASHOUT_KIND,
+                    entity_id,
+                    _json_body(updated),
+                    now,
+                )
+                != 1
+            ):
+                raise StoreConflict("cash-out disappeared during update")
+            if payable_id and link is None:
+                insert_entity_dml_at(
+                    transaction,
+                    pt,
+                    EARNINGS_CASHOUT_PAYABLE_KIND,
+                    payable_id,
+                    _json_body({"user_id": user_id, "payout_id": payout_id}),
+                    now,
+                )
+            return updated
+
+        return cast(EarningsCashout | None, self._run_in_transaction(txn))
+
+    def release_earnings_cashout(
+        self,
+        user_id: str,
+        payout_id: str,
+        *,
+        state: str,
+        routable_status: str | None = None,
+        error_code: str | None = None,
+    ) -> tuple[str, EarningsCashout | None]:
+        validate_routable_release_status(routable_status)
+        entity_id = payout_entity_id(user_id, payout_id)
+
+        def txn(transaction: Any) -> tuple[str, EarningsCashout | None]:
+            existing = self._read_entity_tx(
+                transaction,
+                EARNINGS_CASHOUT_KIND,
+                entity_id,
+                EarningsCashout,
+            )
+            if existing is None:
+                return "not_found", None
+            if existing.balance_status == "released":
+                return "duplicate", existing
+            now = dt.datetime.now(dt.UTC).replace(microsecond=0)
+            pt = self._param_types
+            updated_rows = transaction.execute_update(
+                "UPDATE tr_earnings_balance "
+                "SET total_transferred = total_transferred - @amount, updated_at=@now "
+                "WHERE user_id=@user_id AND shard=0 AND total_transferred >= @amount",
+                params={
+                    "amount": existing.amount_microdollars,
+                    "now": now,
+                    "user_id": user_id,
+                },
+                param_types={
+                    "amount": pt.INT64,
+                    "now": pt.TIMESTAMP,
+                    "user_id": pt.STRING,
+                },
+            )
+            if updated_rows != 1:
+                raise StoreConflict("cash-out reservation exceeds transferred earnings")
+            balance_revision = existing.balance_revision + 1
+            updated = dataclasses.replace(
+                existing,
+                state=state,
+                balance_status="released",
+                routable_status=routable_status or existing.routable_status,
+                error_code=error_code,
+                balance_revision=balance_revision,
+                updated_at=iso_now(),
+            )
+            self._insert_credit_movement_tx(
+                transaction,
+                account_id=f"user:{user_id}",
+                movement_id=(
+                    f"earnings_cashout_reversal:{payout_id}:{balance_revision}"
+                ),
+                kind="earnings_cashout_reversed",
+                amount_microdollars=existing.amount_microdollars,
+                counterparty_account_id="routable",
+                created_at=now,
+            )
+            if (
+                update_entity_body_dml(
+                    transaction,
+                    pt,
+                    EARNINGS_CASHOUT_KIND,
+                    entity_id,
+                    _json_body(updated),
+                    now,
+                )
+                != 1
+            ):
+                raise StoreConflict("cash-out disappeared during release")
+            return "released", updated
+
+        return cast(
+            tuple[str, EarningsCashout | None],
+            self._run_in_transaction(txn),
+        )
 
     def ensure_earnings_account(self, user_id: str) -> None:
         def txn(transaction: Any) -> None:

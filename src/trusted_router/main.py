@@ -77,6 +77,7 @@ from trusted_router.routes.oauth import register_oauth_routes
 from trusted_router.routes.oauth_apps import register_oauth_app_routes
 from trusted_router.routes.oauth_authorized_apps import register_oauth_authorized_app_routes
 from trusted_router.routes.oauth_keys import register_oauth_key_routes
+from trusted_router.routes.payouts import register_payout_routes
 from trusted_router.routes.provider_portal import register_provider_portal_routes
 from trusted_router.routes.public import register_public_action_routes, register_public_routes
 from trusted_router.routes.ses_notifications import register_ses_notification_routes
@@ -665,6 +666,7 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         register_oauth_app_routes(router)
         register_oauth_authorized_app_routes(router)
         register_oauth_key_routes(router)
+        register_payout_routes(router)
         register_activity_routes(router)
         register_client_events_routes(router)
         register_workspace_routes(router)

@@ -32,6 +32,11 @@ from trusted_router.receipt_keys import (
     ReceiptKeyWriteOutcome,
     merge_receipt_key_observation,
 )
+from trusted_router.routable_payouts import (
+    ROUTABLE_PAID_STATUSES,
+    ROUTABLE_PENDING_STATUSES,
+    validate_routable_release_status,
+)
 from trusted_router.spend_leases import SpendLeaseArtifact, SpendLeaseBoot
 from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage_attribution import InMemoryAcquisitionAttribution
@@ -64,6 +69,7 @@ from trusted_router.storage_models import (
     CreditMovement,
     CreditTransfer,
     CustomModel,
+    EarningsCashout,
     EmailSendBlock,
     EncryptedSecretEnvelope,
     GatewayAuthorization,
@@ -77,6 +83,7 @@ from trusted_router.storage_models import (
     RateLimitHit,
     ReceiptKey,
     Reservation,
+    RoutablePayoutProfile,
     SessionAuthContext,
     SignupResult,
     SyntheticProbeSample,
@@ -128,6 +135,12 @@ class InMemoryStore:
         self.webhook_events: set[tuple[str, str]] = set()
         self.earnings_money: dict[str, tuple[int, int]] = {}
         self.credit_movements: dict[tuple[str, str], CreditMovement] = {}
+        self.routable_payout_profiles: dict[str, RoutablePayoutProfile] = {}
+        self.routable_payout_profile_users_by_company: dict[str, str] = {}
+        self.earnings_cashouts: dict[tuple[str, str], EarningsCashout] = {}
+        self.earnings_cashout_idempotency: dict[str, tuple[str, str, str]] = {}
+        self.earnings_cashouts_by_routable_payable: dict[str, tuple[str, str]] = {}
+        self.earnings_cashouts_by_external_id: dict[str, tuple[str, str]] = {}
         self.lifetime_topups: dict[str, int] = {}
         # Cross-plane credit transfer (trusted_router.credit_transfer).
         # `credit_transfers` is this plane as the SOURCE (escrow records);
@@ -192,6 +205,12 @@ class InMemoryStore:
             self.webhook_events.clear()
             self.earnings_money.clear()
             self.credit_movements.clear()
+            self.routable_payout_profiles.clear()
+            self.routable_payout_profile_users_by_company.clear()
+            self.earnings_cashouts.clear()
+            self.earnings_cashout_idempotency.clear()
+            self.earnings_cashouts_by_routable_payable.clear()
+            self.earnings_cashouts_by_external_id.clear()
             self.lifetime_topups.clear()
             self.credit_transfers.clear()
             self.credit_transfer_claims.clear()
@@ -1631,6 +1650,253 @@ class InMemoryStore:
                 created_at=created_at,
             )
             return "accepted"
+
+    def get_routable_payout_profile(
+        self,
+        user_id: str,
+    ) -> RoutablePayoutProfile | None:
+        with self._lock:
+            return self.routable_payout_profiles.get(user_id)
+
+    def get_routable_payout_profile_by_company(
+        self,
+        routable_company_id: str,
+    ) -> RoutablePayoutProfile | None:
+        with self._lock:
+            user_id = self.routable_payout_profile_users_by_company.get(
+                routable_company_id
+            )
+            return (
+                None
+                if user_id is None
+                else self.routable_payout_profiles.get(user_id)
+            )
+
+    def upsert_routable_payout_profile(
+        self,
+        profile: RoutablePayoutProfile,
+    ) -> RoutablePayoutProfile:
+        with self._lock:
+            existing_user_id = self.routable_payout_profile_users_by_company.get(
+                profile.routable_company_id
+            )
+            if existing_user_id is not None and existing_user_id != profile.user_id:
+                raise StoreConflict("Routable company is already linked to another user")
+            previous = self.routable_payout_profiles.get(profile.user_id)
+            if (
+                previous is not None
+                and previous.routable_company_id != profile.routable_company_id
+            ):
+                self.routable_payout_profile_users_by_company.pop(
+                    previous.routable_company_id,
+                    None,
+                )
+            self.routable_payout_profiles[profile.user_id] = profile
+            self.routable_payout_profile_users_by_company[
+                profile.routable_company_id
+            ] = profile.user_id
+            return profile
+
+    def reserve_earnings_cashout(
+        self,
+        cashout: EarningsCashout,
+        *,
+        idempotency_entity_id: str,
+    ) -> tuple[str, EarningsCashout | None]:
+        amount = self._positive_money_amount(cashout.amount_microdollars)
+        key = (cashout.user_id, cashout.id)
+        with self._lock:
+            previous = self.earnings_cashout_idempotency.get(idempotency_entity_id)
+            if previous is not None:
+                fingerprint, user_id, payout_id = previous
+                if fingerprint != cashout.idempotency_fingerprint:
+                    return "conflict", None
+                existing = self.earnings_cashouts.get((user_id, payout_id))
+                if existing is None:
+                    raise StoreConflict("cash-out idempotency record lost its payout")
+                return "duplicate", existing
+            if key in self.earnings_cashouts:
+                return "conflict", None
+            external_owner = self.earnings_cashouts_by_external_id.get(cashout.external_id)
+            if external_owner is not None and external_owner != key:
+                return "conflict", None
+            earned, transferred = self.earnings_money.get(cashout.user_id, (0, 0))
+            if earned - transferred < amount:
+                return "insufficient", None
+            self.earnings_money[cashout.user_id] = (earned, transferred + amount)
+            self.earnings_cashouts[key] = cashout
+            self.earnings_cashouts_by_external_id[cashout.external_id] = key
+            self.earnings_cashout_idempotency[idempotency_entity_id] = (
+                cashout.idempotency_fingerprint,
+                cashout.user_id,
+                cashout.id,
+            )
+            movement_id = f"earnings_cashout:{cashout.id}"
+            self.credit_movements[(f"user:{cashout.user_id}", movement_id)] = (
+                CreditMovement(
+                    account_id=f"user:{cashout.user_id}",
+                    movement_id=movement_id,
+                    kind="earnings_cashout_reserved",
+                    amount_microdollars=-amount,
+                    counterparty_account_id="routable",
+                    created_at=cashout.created_at,
+                )
+            )
+            return "accepted", cashout
+
+    def get_earnings_cashout(
+        self,
+        user_id: str,
+        payout_id: str,
+    ) -> EarningsCashout | None:
+        with self._lock:
+            return self.earnings_cashouts.get((user_id, payout_id))
+
+    def get_earnings_cashout_by_routable_payable(
+        self,
+        routable_payable_id: str,
+    ) -> EarningsCashout | None:
+        with self._lock:
+            key = self.earnings_cashouts_by_routable_payable.get(
+                routable_payable_id
+            )
+            return None if key is None else self.earnings_cashouts.get(key)
+
+    def get_earnings_cashout_by_external_id(
+        self,
+        external_id: str,
+    ) -> EarningsCashout | None:
+        with self._lock:
+            key = self.earnings_cashouts_by_external_id.get(external_id)
+            return None if key is None else self.earnings_cashouts.get(key)
+
+    def list_earnings_cashouts(
+        self,
+        user_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[EarningsCashout]:
+        with self._lock:
+            records = [
+                record
+                for (owner_user_id, _), record in self.earnings_cashouts.items()
+                if owner_user_id == user_id
+            ]
+        records.sort(key=lambda record: (record.created_at, record.id), reverse=True)
+        return records[: max(0, min(int(limit), 100))]
+
+    def mark_earnings_cashout(
+        self,
+        user_id: str,
+        payout_id: str,
+        *,
+        state: str,
+        routable_payable_id: str | None = None,
+        routable_status: str | None = None,
+        error_code: str | None = None,
+        increment_attempts: bool = False,
+    ) -> EarningsCashout | None:
+        with self._lock:
+            key = (user_id, payout_id)
+            existing = self.earnings_cashouts.get(key)
+            if existing is None:
+                return None
+            payable_id = routable_payable_id or existing.routable_payable_id
+            if payable_id:
+                owner = self.earnings_cashouts_by_routable_payable.get(payable_id)
+                if owner is not None and owner != key:
+                    raise StoreConflict("Routable payable is already linked")
+            balance_status = (
+                "paid"
+                if routable_status in ROUTABLE_PAID_STATUSES
+                else existing.balance_status
+            )
+            balance_revision = existing.balance_revision
+            if (
+                existing.balance_status == "released"
+                and routable_status in ROUTABLE_PENDING_STATUSES | ROUTABLE_PAID_STATUSES
+            ):
+                earned, transferred = self.earnings_money.get(user_id, (0, 0))
+                self.earnings_money[user_id] = (
+                    earned,
+                    transferred + existing.amount_microdollars,
+                )
+                balance_revision += 1
+                balance_status = (
+                    "paid" if routable_status in ROUTABLE_PAID_STATUSES else "reserved"
+                )
+                movement_id = (
+                    f"earnings_cashout_reinstated:{payout_id}:{balance_revision}"
+                )
+                self.credit_movements[(f"user:{user_id}", movement_id)] = CreditMovement(
+                    account_id=f"user:{user_id}",
+                    movement_id=movement_id,
+                    kind="earnings_cashout_reinstated",
+                    amount_microdollars=-existing.amount_microdollars,
+                    counterparty_account_id="routable",
+                )
+            updated = dataclasses.replace(
+                existing,
+                state=state,
+                balance_status=balance_status,
+                routable_payable_id=payable_id,
+                routable_status=routable_status or existing.routable_status,
+                error_code=error_code,
+                attempts=existing.attempts + int(increment_attempts),
+                balance_revision=balance_revision,
+                updated_at=iso_now(),
+            )
+            self.earnings_cashouts[key] = updated
+            if payable_id:
+                self.earnings_cashouts_by_routable_payable[payable_id] = key
+            return updated
+
+    def release_earnings_cashout(
+        self,
+        user_id: str,
+        payout_id: str,
+        *,
+        state: str,
+        routable_status: str | None = None,
+        error_code: str | None = None,
+    ) -> tuple[str, EarningsCashout | None]:
+        validate_routable_release_status(routable_status)
+        with self._lock:
+            key = (user_id, payout_id)
+            existing = self.earnings_cashouts.get(key)
+            if existing is None:
+                return "not_found", None
+            if existing.balance_status == "released":
+                return "duplicate", existing
+            earned, transferred = self.earnings_money.get(user_id, (0, 0))
+            if transferred < existing.amount_microdollars:
+                raise StoreConflict("cash-out reservation exceeds transferred earnings")
+            balance_revision = existing.balance_revision + 1
+            updated = dataclasses.replace(
+                existing,
+                state=state,
+                balance_status="released",
+                routable_status=routable_status or existing.routable_status,
+                error_code=error_code,
+                balance_revision=balance_revision,
+                updated_at=iso_now(),
+            )
+            self.earnings_money[user_id] = (
+                earned,
+                transferred - existing.amount_microdollars,
+            )
+            self.earnings_cashouts[key] = updated
+            movement_id = (
+                f"earnings_cashout_reversal:{payout_id}:{balance_revision}"
+            )
+            self.credit_movements[(f"user:{user_id}", movement_id)] = CreditMovement(
+                account_id=f"user:{user_id}",
+                movement_id=movement_id,
+                kind="earnings_cashout_reversed",
+                amount_microdollars=existing.amount_microdollars,
+                counterparty_account_id="routable",
+            )
+            return "released", updated
 
     def ensure_earnings_account(self, user_id: str) -> None:
         with self._lock:

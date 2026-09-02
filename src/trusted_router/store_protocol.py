@@ -35,6 +35,7 @@ from trusted_router.storage_models import (
     CreditTransfer,
     CustomModel,
     CustomModelMarkupPayout,
+    EarningsCashout,
     EmailSendBlock,
     EncryptedSecretEnvelope,
     GatewayAuthorization,
@@ -48,6 +49,7 @@ from trusted_router.storage_models import (
     RateLimitHit,
     ReceiptKey,
     Reservation,
+    RoutablePayoutProfile,
     SessionAuthContext,
     SignupResult,
     SyntheticProbeSample,
@@ -695,6 +697,63 @@ class Store(Protocol):
         amount_microdollars: int,
         event_id: str,
     ) -> str: ...
+    def get_routable_payout_profile(
+        self,
+        user_id: str,
+    ) -> RoutablePayoutProfile | None: ...
+    def get_routable_payout_profile_by_company(
+        self,
+        routable_company_id: str,
+    ) -> RoutablePayoutProfile | None: ...
+    def upsert_routable_payout_profile(
+        self,
+        profile: RoutablePayoutProfile,
+    ) -> RoutablePayoutProfile: ...
+    def reserve_earnings_cashout(
+        self,
+        cashout: EarningsCashout,
+        *,
+        idempotency_entity_id: str,
+    ) -> tuple[str, EarningsCashout | None]: ...
+    def get_earnings_cashout(
+        self,
+        user_id: str,
+        payout_id: str,
+    ) -> EarningsCashout | None: ...
+    def get_earnings_cashout_by_routable_payable(
+        self,
+        routable_payable_id: str,
+    ) -> EarningsCashout | None: ...
+    def get_earnings_cashout_by_external_id(
+        self,
+        external_id: str,
+    ) -> EarningsCashout | None: ...
+    def list_earnings_cashouts(
+        self,
+        user_id: str,
+        *,
+        limit: int = ...,
+    ) -> list[EarningsCashout]: ...
+    def mark_earnings_cashout(
+        self,
+        user_id: str,
+        payout_id: str,
+        *,
+        state: str,
+        routable_payable_id: str | None = ...,
+        routable_status: str | None = ...,
+        error_code: str | None = ...,
+        increment_attempts: bool = ...,
+    ) -> EarningsCashout | None: ...
+    def release_earnings_cashout(
+        self,
+        user_id: str,
+        payout_id: str,
+        *,
+        state: str,
+        routable_status: str | None = ...,
+        error_code: str | None = ...,
+    ) -> tuple[str, EarningsCashout | None]: ...
     def ensure_earnings_account(self, user_id: str) -> None: ...
     def earnings_summary(
         self,

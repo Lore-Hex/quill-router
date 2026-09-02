@@ -53,6 +53,19 @@ $20, $100, or no monthly limit; $20/month is selected by default. An app's
 Budget exhaustion uses normal key-limit errors, including `Retry-After` where
 applicable. Authorized apps can be inspected, rebudgeted, and revoked.
 
+### App earnings and USD cash-outs
+
+An app may set a disclosed markup on routed token charges. Monetized apps must
+be owned by a fully identity-verified user and become unavailable if that
+verification is later removed. The owner receives 70% of collected markup in
+the creator earnings wallet; TrustedRouter keeps 30%.
+
+Owners can transfer any available earnings into a TrustedRouter workspace. At
+$100 or more, an owner with full identity verification and a verified email
+can request a USD cash-out through Routable. Routable's hosted onboarding
+collects bank and tax details. TrustedRouter stores only opaque recipient and
+payable identifiers, status, and exact integer-microdollar ledger movements.
+
 ### Legacy migration
 
 `GET /v1/auth` and JSON `POST /v1/auth/keys` remain byte-compatible but are

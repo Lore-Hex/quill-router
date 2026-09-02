@@ -1,16 +1,66 @@
 {% extends "console/_layout.html" %}
+{% block scripts %}<script defer src="/static/earnings.js?v={{ static_version|default('local') }}"></script>{% endblock %}
 {% block body %}
 {% if flash %}<div class="console-flash {{ flash.type }}">{{ flash.text }}</div>{% endif %}
 
 <section class="panel">
-  <div class="panel-head"><h2>Your earnings</h2><span class="pill">TrustedRouter credits</span></div>
+  <div class="panel-head"><h2>Your earnings</h2><span class="pill">70% creator share</span></div>
   <div class="panel-body">
-    <p class="earnings-copy">You earn 70% of every charge in TrustedRouter credits, including custom-model charges and registered-app markup. Transfer earnings into a workspace to spend them.</p>
+    <p class="earnings-copy">You receive 70% of custom model and registered app markup. Transfer earnings into a TrustedRouter workspace, or cash out at least $100 in USD through Routable.</p>
     <div class="metrics">
       <div class="metric"><div class="label">Earned</div><div class="value earnings-money">{{ summary.total_earned_display }}</div><div class="sub">lifetime</div></div>
       <div class="metric"><div class="label">Transferred</div><div class="value earnings-money">{{ summary.total_transferred_display }}</div><div class="sub">lifetime</div></div>
       <div class="metric"><div class="label">Available</div><div class="value earnings-money">{{ summary.available_display }}</div><div class="sub">ready to transfer</div></div>
     </div>
+  </div>
+</section>
+
+<section class="panel" id="usd-cashout">
+  <div class="panel-head"><h2>USD cash-out</h2><span class="pill">$100 minimum</span></div>
+  <div class="panel-body">
+    <div class="console-flash" data-payout-message hidden></div>
+    {% if not payouts.payouts_enabled %}
+      <p class="empty">USD cash-outs are prepared but not enabled yet. Your earnings remain available and can still be transferred into a workspace.</p>
+    {% elif not payouts.identity_verified %}
+      <p>Complete <a href="/console/account/verification">identity verification</a> before enabling a monetized app or requesting a USD cash-out.</p>
+    {% elif not payouts.email_verified %}
+      <p class="empty">Attach and verify an email address before using Routable. Wallet-only accounts can still transfer earnings into TrustedRouter workspaces.</p>
+    {% elif not payouts.profile or payouts.profile.company_status != 'accepted' or not payouts.profile.payment_method_ready %}
+      <p>Routable securely collects your bank and tax details. TrustedRouter stores only opaque account identifiers and payout status.</p>
+      <form class="form" data-routable-onboarding-form>
+        <input type="hidden" name="recipient_type" value="personal">
+        <input type="hidden" name="country_code" value="US">
+        <div class="row">
+          <label>Legal first name<input name="first_name" value="{{ payout_default_first_name }}" maxlength="80" required></label>
+          <label>Legal last name<input name="last_name" value="{{ payout_default_last_name }}" maxlength="80" required></label>
+        </div>
+        <button class="btn primary" type="submit">Set up USD cash-outs</button>
+      </form>
+    {% else %}
+      <p>Your Routable payout account is ready. Cash-outs are submitted to Routable for transfer to your saved bank account.</p>
+      <form class="form" data-routable-cashout-form>
+        <label>Amount (USD)
+          <input name="amount" type="number" min="100" max="{{ payout_available_decimal }}" step="0.01" placeholder="100.00" required>
+        </label>
+        <button class="btn primary" type="submit">Request cash-out</button>
+      </form>
+    {% endif %}
+
+    {% if payouts.data %}
+    <div class="earnings-table-wrap"><table class="data-table" style="width:100%;border-collapse:collapse">
+      <thead><tr><th>Amount</th><th>Status</th><th>Requested</th><th></th></tr></thead>
+      <tbody>
+        {% for payout in payouts.data %}
+        <tr>
+          <td class="earnings-money">{{ payout.amount }}</td>
+          <td>{{ payout.state|replace('_', ' ') }}</td>
+          <td class="earnings-money">{{ payout.created_at|datetime_iso }}</td>
+          <td>{% if payout.state in ['reserved', 'submitting', 'submission_unknown'] %}<button class="btn" type="button" data-payout-retry="{{ payout.id }}">Check status</button>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+    {% endif %}
   </div>
 </section>
 

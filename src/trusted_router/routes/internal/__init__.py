@@ -15,6 +15,7 @@ from . import fetch_image as fetch_image
 from . import gateway as gateway
 from . import paypal as paypal
 from . import reconcile as reconcile
+from . import routable as routable
 from . import sentry as sentry
 from . import synthetic as synthetic
 from . import veriff as veriff
@@ -28,6 +29,7 @@ def register_external_webhook_routes(router: APIRouter) -> None:
     paypal.register(router)
     adyen.register(router)
     veriff.register(router)
+    routable.register(router)
 
 
 def register_control_internal_routes(router: APIRouter) -> None:
