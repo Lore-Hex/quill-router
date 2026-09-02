@@ -679,6 +679,32 @@ def test_unclaimed_frozen_overcharge_is_corrected_atomically_and_crash_replays_i
     assert db.reservations[auth.credit_reservation_id]["terminal_at"] is not None
 
 
+def test_ownerless_corrective_settle_returns_error_without_rewrite_claim_or_charge(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, db, _bt = fake_store
+    store.request_record_write_mode = "typed"
+    ws = "ws-spend-lease-ownerless-corrective"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    allocation = 400_000
+    frozen_cost = 800_000
+    _stamp_spend_lease_binding(db, auth, allocation_micro=allocation)
+    row = _row(auth, cost=frozen_cost)
+    original_body = row.settle_body
+    assert row.lease_owner is None
+
+    assert apply_frozen_settle(row) == ApplyOutcome.ERROR
+
+    assert row.actual_cost_micro == frozen_cost
+    assert row.settle_body == original_body
+    assert db.settle_outbox == {}
+    assert db.reservations[auth.credit_reservation_id]["settled"] is False
+    assert _typed_credit(db, ws)["total_usage"] == 0
+    assert _generation_bodies(db) == []
+
+
 def test_lost_outbox_lease_rolls_back_corrective_finalization(
     fake_store: tuple[Any, Any, Any],
 ) -> None:
@@ -748,7 +774,16 @@ def test_already_finalized_historical_overcharge_is_unchanged_logged_and_replaye
     assert _typed_credit(db, ws)["total_usage"] == historical
     [generation] = _generation_bodies(db)
     assert generation["total_cost_microdollars"] == historical
-    assert "spend_lease.historical_overcharge" in caplog.text
+    [event] = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "spend_lease.historical_overcharge"
+    ]
+    event_fields = vars(event)
+    assert event_fields["finalized_cost_microdollars"] == historical
+    assert event_fields["spend_lease_allocated_micro"] == allocation
+    assert event_fields["authorization_id"] == auth.id
+    assert event_fields["spend_lease_id"] == "lease-repair"
 
 
 def test_two_spend_lease_repairs_book_at_most_once(

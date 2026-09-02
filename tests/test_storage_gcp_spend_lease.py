@@ -10,6 +10,10 @@ import pytest
 
 from tests.fakes.spanner import FakeSpannerDatabase
 from trusted_router import spend_leases
+from trusted_router.storage_gcp_request_records import (
+    insert_gateway_authorization,
+    read_gateway_authorization,
+)
 from trusted_router.storage_gcp_spend_lease import (
     AUTHORIZATION_TYPED_COLUMNS,
     CandidateIdentity,
@@ -28,9 +32,12 @@ from trusted_router.storage_gcp_spend_lease import (
     take_recovery_ownership,
     upgrade_candidate_to_open,
 )
+from trusted_router.storage_models import GatewayAuthorization
+from trusted_router.types import UsageType
 
 PT = SimpleNamespace(STRING="STRING", INT64="INT64", BOOL="BOOL", TIMESTAMP="TIMESTAMP")
 NOW = datetime.now(UTC).replace(microsecond=0)
+LEASE_ARTIFACT = "opaque-signed-artifact"
 
 
 def _txn(db: FakeSpannerDatabase, fn: Callable[[Any], Any]) -> Any:
@@ -386,31 +393,81 @@ def test_authorization_typed_columns_round_trip_merge_and_reject_zero_allocation
         )
 
 
-def test_payload_erased_complete_typed_tuple_derives_spend_lease_settlement() -> None:
-    merged = merge_authorization_typed_columns(
-        None,
-        {
-            "spend_lease_id": "lease-erased",
-            "spend_lease_gen": 4,
-            "spend_lease_allocated_micro": 900,
-        },
+def _insert_bound_authorization(
+    db: FakeSpannerDatabase,
+    *,
+    authorization_id: str,
+    settlement: str,
+) -> None:
+    authorization = GatewayAuthorization(
+        id=authorization_id,
+        workspace_id="workspace-reader",
+        key_hash="k" * 64,
+        model_id="model-reader",
+        provider="provider-reader",
+        usage_type=UsageType.CREDITS,
+        estimated_microdollars=1_000,
+        credit_reservation_id="reservation-reader",
+        settlement=settlement,
+        spend_lease_id="lease-reader",
+        spend_lease_gen=4,
+        spend_lease_allocated_micro=900,
+        spend_lease_token=LEASE_ARTIFACT,
+        spend_lease_status="active",
+        spend_lease_exp=1_800_000_000,
+    )
+    _txn(
+        db,
+        lambda transaction: insert_gateway_authorization(
+            transaction,
+            PT,
+            authorization,
+            created_at=NOW,
+        ),
     )
 
-    assert merged["settlement"] == "spend_lease"
+
+def test_payload_erased_complete_typed_tuple_reads_back_as_spend_lease() -> None:
+    db = FakeSpannerDatabase()
+    authorization_id = "authorization-erased-reader"
+    _insert_bound_authorization(
+        db,
+        authorization_id=authorization_id,
+        settlement="spend_lease",
+    )
+    db.gateway_authorizations[authorization_id]["payload"] = None
+
+    with db.snapshot() as snapshot:
+        authorization = read_gateway_authorization(snapshot, PT, authorization_id)
+
+    assert authorization is not None
+    assert authorization.settlement == "spend_lease"
+    assert authorization.spend_lease_id == "lease-reader"
+    assert authorization.spend_lease_gen == 4
+    assert authorization.spend_lease_allocated_micro == 900
+    assert authorization.spend_lease_token == LEASE_ARTIFACT
+    assert authorization.spend_lease_status == "active"
+    assert authorization.spend_lease_exp == 1_800_000_000
 
 
-def test_payload_settlement_disagreement_logs_and_typed_wins(
+def test_payload_local_complete_typed_tuple_reads_back_as_spend_lease_and_logs_mismatch(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    with caplog.at_level(logging.ERROR):
-        merged = merge_authorization_typed_columns(
-            {"settlement": "local"},
-            {
-                "spend_lease_id": "lease-mismatch",
-                "spend_lease_gen": 5,
-                "spend_lease_allocated_micro": 901,
-            },
-        )
+    db = FakeSpannerDatabase()
+    authorization_id = "authorization-mismatch-reader"
+    _insert_bound_authorization(
+        db,
+        authorization_id=authorization_id,
+        settlement="local",
+    )
 
-    assert merged["settlement"] == "spend_lease"
+    with caplog.at_level(logging.ERROR):
+        with db.snapshot() as snapshot:
+            authorization = read_gateway_authorization(snapshot, PT, authorization_id)
+
+    assert authorization is not None
+    assert authorization.settlement == "spend_lease"
+    assert authorization.spend_lease_id == "lease-reader"
+    assert authorization.spend_lease_gen == 4
+    assert authorization.spend_lease_allocated_micro == 900
     assert "spend_lease.settlement_kind_mismatch" in caplog.text
