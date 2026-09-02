@@ -285,11 +285,8 @@ jobs:
         # exist before any serving revision can enable the workspace canary.
         run: bash scripts/deploy/regional_quota_ledger.sh
 
-      # Provisioning the spend-lease Bigtable ledger (scripts/deploy/spend_lease_ledger.sh)
-      # is NOT wired here yet: on 2026-09-02 the first run failed with PERMISSION_DENIED
-      # (bigtable.tables.create) for this job's service account and blocked every deploy.
-      # Re-add the step once that account holds roles/bigtable.admin on trusted-router-logs;
-      # until then provision by hand via scripts/deploy-gcp.sh (design record decision 39).
+      - name: Provision spend-lease Bigtable ledger
+        run: bash scripts/deploy/spend_lease_ledger.sh
 
   sync-runtime-secrets:
     # Validate the small set of runtime credentials while the image build and

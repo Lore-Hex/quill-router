@@ -18,7 +18,10 @@ from .deploy_script_harness import (
 
 ROOT = Path(__file__).parents[1]
 SCRIPT = "scripts/deploy/spend_lease_ledger.sh"
-CLUSTER_MAP = "us-central1=trusted-router-logs-c1,europe-west4=trusted-router-logs-eu"
+CLUSTER_MAP = (
+    "us-central1=trusted-router-logs-c1,"
+    "europe-west4=trusted-router-logs-eu"
+)
 VALID_TABLE_SCHEMA = json.dumps(
     {"columnFamilies": {"lease": {"gcRule": {"maxNumVersions": 1}}}},
     separators=(",", ":"),
@@ -35,7 +38,9 @@ def _fixture(
     responses: list[tuple[str, str]] = []
     failures: list[str] = []
     if table_schema is None:
-        failures.append(r"bigtable instances tables describe trustedrouter-spend-lease")
+        failures.append(
+            r"bigtable instances tables describe trustedrouter-spend-lease"
+        )
         failures.append(r"bigtable app-profiles describe tr-spend-")
     else:
         responses.append(
@@ -103,7 +108,9 @@ def _assert_workflow_order(workflow: str) -> None:
 
 
 def _assert_orchestrator_order(orchestrator: str) -> None:
-    deploy_scripts = re.findall(r'bash "\$\{SCRIPT_DIR\}/deploy/([^" ]+\.sh)"', orchestrator)
+    deploy_scripts = re.findall(
+        r'bash "\$\{SCRIPT_DIR\}/deploy/([^" ]+\.sh)"', orchestrator
+    )
     regional = deploy_scripts.index("regional_quota_ledger.sh")
     assert deploy_scripts[regional + 1] == "spend_lease_ledger.sh"
 
@@ -116,7 +123,9 @@ def test_fresh_run_creates_latest_version_only_family_without_maxage(
 
     assert run.returncode == 0, summarise(run)
     assert os.access(ROOT / SCRIPT, os.X_OK)
-    assert _gcloud_calls(run, "bigtable", "instances", "tables", "create") == [
+    assert _gcloud_calls(
+        run, "bigtable", "instances", "tables", "create"
+    ) == [
         [
             "gcloud",
             "bigtable",
@@ -268,29 +277,28 @@ def test_second_run_creates_nothing_and_prints_profile_environment(
     ) in run.stdout
 
 
-def test_deploy_workflow_does_not_run_spend_lease_provisioning_until_iam_granted() -> None:
-    """2026-09-02: the migrate-schema service account lacks bigtable.tables.create, so the
-    workflow must not invoke spend_lease_ledger.sh until that grant lands (see the comment
-    beside the regional quota step). deploy-gcp.sh remains the manual provisioning path."""
+def test_deploy_workflow_runs_spend_lease_immediately_after_regional_quota() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
 
-    workflow_path = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "deploy.yml"
-    workflow = workflow_path.read_text(encoding="utf-8")
-    run_lines = [line for line in workflow.splitlines() if line.strip().startswith("run:")]
-    assert not any("spend_lease_ledger.sh" in line for line in run_lines)
-    assert "bigtable.tables.create" in workflow
+    _assert_workflow_order(workflow)
+    spend_step = workflow.split(
+        "      - name: Provision spend-lease Bigtable ledger\n", 1
+    )[1].split("\n      - name:", 1)[0]
+    assert "env:" not in spend_step
+    assert "        run: bash scripts/deploy/spend_lease_ledger.sh" in spend_step
 
 
 def test_deploy_gcp_invokes_spend_lease_immediately_after_regional_quota() -> None:
     orchestrator = (ROOT / "scripts/deploy-gcp.sh").read_text()
 
     _assert_orchestrator_order(orchestrator)
-    assert "TR_SPEND_LEASE_CLUSTER_MAP=" not in orchestrator
+    assert 'TR_SPEND_LEASE_CLUSTER_MAP=' not in orchestrator
 
 
 def test_deploy_lib_defaults_spend_lease_cluster_map_and_honours_override() -> None:
     command = (
         'gcloud() { printf "123456\\n"; }; '
-        "source scripts/deploy/_lib.sh; "
+        'source scripts/deploy/_lib.sh; '
         'printf "%s\\n%s\\n" '
         '"$TR_REGIONAL_QUOTA_CLUSTER_MAP" "$TR_SPEND_LEASE_CLUSTER_MAP"'
     )
