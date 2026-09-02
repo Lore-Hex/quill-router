@@ -1080,3 +1080,56 @@ def test_manifest_dispatch_restores_mass_pruned_file(
 
     assert manifest_path.read_text(encoding="utf-8") == old_text
     assert "mass-prune guard" in capsys.readouterr().err
+
+
+def test_manifest_dispatch_accepts_confirmed_authoritative_delistings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "fake.json"
+    manifest_path.write_text(
+        json.dumps({"provider": "fake", "models": [{"id": "a"}, {"id": "b"}]})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class FakeProvider:
+        MANIFEST_PATH = manifest_path
+        ALLOW_CONFIRMED_MASS_DELISTINGS = True
+
+        @staticmethod
+        def write_provider_manifest(
+            _result: pricing_base.ProviderPricingResult,
+        ) -> list[str]:
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "provider": "fake",
+                        "models": [
+                            {"id": "a"},
+                            {
+                                "id": "b",
+                                "routable": False,
+                                "routable_reason": "delisted-upstream",
+                                "missing_since": "2026-09-01",
+                            },
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return ["fake: rewrote manifest"]
+
+    monkeypatch.setattr(refresh, "_import_provider", lambda _slug: FakeProvider)
+    result = pricing_base.ProviderPricingResult(
+        slug="fake",
+        prices={"a": pricing_base.ModelPrice(1, 1)},
+        source="api",
+    )
+
+    notes = refresh._write_provider_manifests({"fake": result})
+
+    assert notes == ["fake: rewrote manifest"]
+    rows = json.loads(manifest_path.read_text(encoding="utf-8"))["models"]
+    assert rows[1]["routable_reason"] == "delisted-upstream"

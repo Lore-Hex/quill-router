@@ -183,6 +183,7 @@ from trusted_router.storage_errors import (
     DeferredSettlementCapReached,
     StoreConflict,
     conflict_store_error_types,
+    transient_store_error_types,
 )
 from trusted_router.storage_gcp_io import spanner_rpc_budget
 from trusted_router.storage_gcp_secrets import secret_manager_seed_loader
@@ -1213,6 +1214,24 @@ def _authorize_gateway_sync_impl(
             # affected workspace without ever logging a key, prompt, or body.
             logger.warning(
                 "billing.authorize_contention",
+                extra={
+                    "request_id": getattr(request.state, "request_id", None),
+                    "workspace_id": workspace.id,
+                    "requested_model": requested_model_id,
+                    "estimated_microdollars": estimate,
+                    "candidate_count": len(endpoint_candidates),
+                    "key_usage_shards": key_usage_shards,
+                    "error_class": type(exc).__name__,
+                },
+            )
+            raise
+        except transient_store_error_types() as exc:
+            release_user_model_slot_after_error()
+            # Keep enough tenant-safe context to distinguish a Spanner
+            # deadline, service outage, session exhaustion, or retry failure.
+            # The request body, raw key, prompt, and output stay out of logs.
+            logger.warning(
+                "billing.authorize_storage_unavailable",
                 extra={
                     "request_id": getattr(request.state, "request_id", None),
                     "workspace_id": workspace.id,

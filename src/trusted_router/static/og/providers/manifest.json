@@ -325,10 +325,10 @@
   },
   "kimi": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 4,
     "name": "Kimi",
     "privacy": "Policy documented",
-    "route_count": 22,
+    "route_count": 8,
     "route_mode": "Prepaid + BYOK",
     "slug": "kimi"
   },

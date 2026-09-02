@@ -1149,6 +1149,9 @@ def _write_provider_manifests(results: dict[str, ProviderPricingResult]) -> list
                 before_rows,
                 candidate_rows,
                 provider_slug=slug,
+                allow_confirmed_delistings=bool(
+                    getattr(module, "ALLOW_CONFIRMED_MASS_DELISTINGS", False)
+                ),
             )
             if guarded is before_rows:
                 manifest_path.write_text(before_text, encoding="utf-8")

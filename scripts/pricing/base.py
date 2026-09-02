@@ -704,6 +704,7 @@ def guard_manifest_prune(
     new_rows: list[Any],
     *,
     provider_slug: str | None = None,
+    allow_confirmed_delistings: bool = False,
 ) -> list[Any]:
     """Keep the old manifest when one pass would disable 50% of its routes.
 
@@ -736,7 +737,24 @@ def guard_manifest_prune(
     disabled = old_routable_ids - new_routable_ids
     emptied_manifest = bool(old_rows) and not new_rows
     mass_prune = bool(disabled) and len(disabled) * 2 >= len(baseline_ids)
-    if not emptied_manifest and not mass_prune:
+    confirmed_delistings = False
+    if allow_confirmed_delistings and disabled and not emptied_manifest:
+        rows_by_id = {
+            row["id"]: row
+            for row in new_rows
+            if isinstance(row, dict)
+            and isinstance(row.get("id"), str)
+            and row["id"]
+        }
+        confirmed_delistings = all(
+            isinstance((row := rows_by_id.get(model_id)), dict)
+            and row.get("routable") is False
+            and row.get("routable_reason") == "delisted-upstream"
+            and isinstance(row.get("missing_since"), str)
+            and bool(row["missing_since"])
+            for model_id in disabled
+        )
+    if not emptied_manifest and (not mass_prune or confirmed_delistings):
         return new_rows
 
     provider = f"{provider_slug}: " if provider_slug else ""
