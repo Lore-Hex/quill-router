@@ -13,6 +13,7 @@ from clickhouse.ingest_operational_outbox import (
     ACTIVITY_BOOLEAN_COLUMNS,
     ACTIVITY_OPTIONAL_DEFAULTS,
 )
+from trusted_router.synthetic.rollups import ROLLUP_HISTOGRAM_FIELDS, compact_histogram
 
 SAFE_ID = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 
@@ -49,8 +50,20 @@ def canonical_fingerprint(payload: dict[str, Any], *, surface: str) -> str:
             canonical["speed_tokens_per_second"] = float(
                 canonical["speed_tokens_per_second"]
             )
-    if surface == "rollup" and canonical.get("target_region") is None:
-        canonical["target_region"] = ""
+    if surface == "rollup":
+        if canonical.get("target_region") is None:
+            canonical["target_region"] = ""
+        # A source row for a closed period keeps its pre-bucketing exact keys
+        # (never rewritten) while the rebuilt row is bucketed; fold both so
+        # the parity timer compares shape, not key granularity.
+        for field in ROLLUP_HISTOGRAM_FIELDS:
+            histogram = canonical.get(field)
+            if not isinstance(histogram, dict):
+                continue
+            try:
+                canonical[field] = compact_histogram(histogram)
+            except (TypeError, ValueError):
+                continue
     if surface == "benchmark" and canonical.get("speed_tokens_per_second") is not None:
         canonical["speed_tokens_per_second"] = struct.unpack(
             "!f",

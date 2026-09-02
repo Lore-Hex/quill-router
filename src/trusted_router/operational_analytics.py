@@ -22,6 +22,7 @@ from trusted_router.storage_models import (
     SyntheticProbeSample,
     SyntheticRollup,
 )
+from trusted_router.synthetic.rollups import ROLLUP_HISTOGRAM_FIELDS, compact_histogram
 from trusted_router.types import UsageType
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -531,6 +532,20 @@ def stable_rows_fingerprint(rows: list[Any], *, grace_seconds: int = 30) -> tupl
         # in ClickHouse, so they are not parity fields either.
         for volatile in ("updated_at", "workspace_id", "key_hash"):
             payload.pop(volatile, None)
+        # Synthetic rollup histograms are bucketed on write, but a Bigtable
+        # row for an already-closed period keeps its pre-bucketing exact keys
+        # (it is never rewritten) while the ClickHouse rebuild of the same
+        # period is bucketed. Fold both to the same shape before comparing.
+        for field in ROLLUP_HISTOGRAM_FIELDS:
+            histogram = payload.get(field)
+            if not isinstance(histogram, dict):
+                continue
+            try:
+                payload[field] = compact_histogram(histogram)
+            except (TypeError, ValueError):
+                # A count that is not an integer cannot be folded; compare the
+                # row as stored rather than turning a shadow read into a raise.
+                continue
         speed = payload.get("speed_tokens_per_second")
         if speed is not None and "input_tokens" in payload:
             # The long-lived provider benchmark table intentionally stores

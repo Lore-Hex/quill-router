@@ -26,6 +26,7 @@ from trusted_router.storage_gcp_operational_analytics_outbox import (
     synthetic_payload,
 )
 from trusted_router.storage_models import Generation, SyntheticProbeSample, SyntheticRollup
+from trusted_router.synthetic.rollups import ROLLUP_HISTOGRAM_FIELDS, compact_histogram
 
 PROJECT = "quill-cloud-proxy"
 INSTANCE = "trusted-router-logs"
@@ -199,6 +200,12 @@ def insert_rollups(clickhouse: ClickHouse, rollups: list[SyntheticRollup]) -> No
         json.dumps(
             {
                 **dataclasses.asdict(rollup),
+                # Legacy Bigtable bodies keep one key per millisecond until
+                # their next write; never carry that shape into ClickHouse.
+                **{
+                    field: compact_histogram(getattr(rollup, field))
+                    for field in ROLLUP_HISTOGRAM_FIELDS
+                },
                 "target_region": rollup.target_region or "",
                 "ingest_version": version,
             },
