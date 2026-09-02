@@ -1,14 +1,15 @@
 """Pure state machine for authoritative spend-lease allocations.
 
-Implements Stage B decisions 9–22 of the spend-lease design record (the pure state
-machine, decided over twenty adversarial rounds); each invariant below cites its decision.
+Implements Stage B decisions 9–22 and decision 46 of the spend-lease design
+record; each invariant below cites its decision.
 
 This module contains no storage or clock I/O.  It implements design decisions
 9--22: lifetime-monotonic capacity (9), proof-derived allocation terminality
 (10, 14, 20, 22), separate grant generation and CAS version (12), the ordered
 authorization-first replay table (13), admission/freeze rules (15, 16, 18),
 construction-time amount and provenance checks (17), the unified open predicate
-(18--20, 22), and owner-fenced bind/compensate transitions (21--22).
+(18--20, 22), owner-fenced bind/compensate transitions (21--22), and durable
+recovery of never-minted candidates (46).
 
 Only the regional precedent's immutable-record, ``__post_init__`` validation,
 and true-replay-before-lifecycle shape is reused.  In particular, refunds never
@@ -23,6 +24,15 @@ from dataclasses import InitVar, dataclass, replace
 from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import TypeAlias
+
+
+class SpendLeaseRefusalReason(StrEnum):
+    FROZEN_DRAINING = "frozen_draining"
+    FROZEN_TOMBSTONED = "frozen_tombstoned"
+    WINDOW_EXPIRED = "window_expired"
+    WINDOW_NOT_ELAPSED = "window_not_elapsed"
+    CLOSED = "closed"
+    EXHAUSTED = "exhausted"
 
 
 class SpendLeaseStateError(ValueError):
@@ -44,9 +54,26 @@ class SpendLeaseProofError(SpendLeaseConflictError):
 class SpendLeaseUnavailableError(SpendLeaseStateError):
     """The lease cannot admit a new allocation."""
 
+    reason: SpendLeaseRefusalReason
+
+    def __init__(self, message: str, *, reason: SpendLeaseRefusalReason) -> None:
+        super().__init__(message)
+        self.reason = reason
+
 
 class SpendLeaseExhaustedError(SpendLeaseUnavailableError):
     """The lease lacks monotonic capacity for a new allocation."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, reason=SpendLeaseRefusalReason.EXHAUSTED)
+
+
+def is_authoritative_exhaustion(exc: SpendLeaseUnavailableError) -> bool:
+    """Return whether ``exc`` proves authoritative exhaustion (decision 46)."""
+
+    return isinstance(exc, SpendLeaseExhaustedError) or (
+        exc.reason == SpendLeaseRefusalReason.FROZEN_TOMBSTONED
+    )
 
 
 class BindingState(StrEnum):
@@ -155,6 +182,19 @@ class ClaimProof:
             raise SpendLeaseInvariantError("claim proof identity is required")
         if self.registration != ClaimRegistration.CLAIM:
             raise SpendLeaseInvariantError("claim proof must carry a CLAIM registration")
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryProof:
+    """A durable control-plane work row committed to the ``recovering`` phase."""
+
+    recovering_at: datetime
+    creating_authorization_id: str
+
+    def __post_init__(self) -> None:
+        _require_aware(self.recovering_at, "recovering_at")
+        if not self.creating_authorization_id:
+            raise SpendLeaseInvariantError("recovery proof identity is required")
 
 
 @dataclass(frozen=True, slots=True)
@@ -444,11 +484,17 @@ class SpendLeaseAllocation:
         self,
         *,
         expected_provisional_id: str,
-        claim: ClaimProof,
+        claim: ClaimProof | RecoveryProof,
         absence: BindingAbsenceProof,
+        lease_creating_authorization_id: str | None = None,
     ) -> AllocationTransition:
-        # Decisions 10, 15, 21(d/g), 22: claim plus durable absence, owner fenced.
-        self._validate_binding_absence(expected_provisional_id, claim, absence)
+        # Decisions 10, 15, 21(d/g), 22, 46: durable non-binding proof, owner fenced.
+        self._validate_binding_absence(
+            expected_provisional_id,
+            claim,
+            absence,
+            lease_creating_authorization_id=lease_creating_authorization_id,
+        )
         if self.state == AllocationState.REFUNDED and (
             self.terminal_source == TerminalSource.BINDING_ABSENCE
         ):
@@ -479,7 +525,10 @@ class SpendLeaseAllocation:
             return AllocationTransition(self, True)
         self._require_provisional_owner(expected_provisional_id)
         if now < self.abandon_after:
-            raise SpendLeaseUnavailableError("allocation is not eligible for abandonment")
+            raise SpendLeaseUnavailableError(
+                "allocation is not eligible for abandonment",
+                reason=SpendLeaseRefusalReason.WINDOW_NOT_ELAPSED,
+            )
         abandoned = replace(
             self,
             state=AllocationState.ABANDONED,
@@ -612,15 +661,23 @@ class SpendLeaseAllocation:
     def _validate_binding_absence(
         self,
         expected_provisional_id: str,
-        claim: ClaimProof,
+        claim: ClaimProof | RecoveryProof,
         absence: BindingAbsenceProof,
+        *,
+        lease_creating_authorization_id: str | None = None,
     ) -> None:
         if expected_provisional_id != self.authorization_id:
             raise SpendLeaseConflictError("stale provisional allocation owner")
-        if claim.idempotency_scope != self.idempotency_scope:
-            raise SpendLeaseProofError("claim proof scope mismatch")
-        if claim.provisional_id != expected_provisional_id:
-            raise SpendLeaseProofError("claim proof provisional owner mismatch")
+        if isinstance(claim, ClaimProof):
+            if claim.idempotency_scope != self.idempotency_scope:
+                raise SpendLeaseProofError("claim proof scope mismatch")
+            if claim.provisional_id != expected_provisional_id:
+                raise SpendLeaseProofError("claim proof provisional owner mismatch")
+        else:
+            if claim.creating_authorization_id != lease_creating_authorization_id:
+                raise SpendLeaseProofError("recovery proof lease identity mismatch")
+            if self.authorization_id != lease_creating_authorization_id:
+                raise SpendLeaseProofError("recovery proof requires the creating allocation")
         if absence.idempotency_scope != self.idempotency_scope:
             raise SpendLeaseProofError("absence proof scope mismatch")
         if absence.provisional_id != expected_provisional_id:
@@ -737,16 +794,26 @@ class SpendLease:
     key_hash: str
     boot_kid: str
     workspace_id: str
+    creating_authorization_id: str
     cap_micro: int
     expires_at: datetime
     skew: timedelta
     version: int
     state: SpendLeaseState = SpendLeaseState.ACTIVE
     allocations: tuple[SpendLeaseAllocation, ...] = ()
+    tombstoned_unminted: bool = False
 
     def __post_init__(self) -> None:
         # Decisions 12 and 17: grant generation and local CAS version are distinct.
-        if not all((self.lease_id, self.key_hash, self.boot_kid, self.workspace_id)):
+        if not all(
+            (
+                self.lease_id,
+                self.key_hash,
+                self.boot_kid,
+                self.workspace_id,
+                self.creating_authorization_id,
+            )
+        ):
             raise SpendLeaseInvariantError("lease identity fields are required")
         if self.gen <= 0:
             raise SpendLeaseInvariantError("lease generation must be positive")
@@ -757,6 +824,11 @@ class SpendLease:
         _require_aware(self.expires_at, "expires_at")
         if self.skew < timedelta(0):
             raise SpendLeaseInvariantError("lease skew cannot be negative")
+        if self.tombstoned_unminted and self.state not in {
+            SpendLeaseState.TOMBSTONED,
+            SpendLeaseState.CLOSED,
+        }:
+            raise SpendLeaseInvariantError("unminted tombstone provenance requires a frozen lease")
         scopes = [allocation.idempotency_scope for allocation in self.allocations]
         owners = [allocation.authorization_id for allocation in self.allocations]
         if len(scopes) != len(set(scopes)):
@@ -838,9 +910,19 @@ class SpendLease:
 
         # Decisions 15, 16, 18: only NEW reaches lifecycle and capacity checks.
         if self.state != SpendLeaseState.ACTIVE:
-            raise SpendLeaseUnavailableError(f"lease is {self.state}")
+            refusal_reason = {
+                SpendLeaseState.DRAINING: SpendLeaseRefusalReason.FROZEN_DRAINING,
+                SpendLeaseState.TOMBSTONED: SpendLeaseRefusalReason.FROZEN_TOMBSTONED,
+                SpendLeaseState.CLOSED: SpendLeaseRefusalReason.CLOSED,
+            }[self.state]
+            raise SpendLeaseUnavailableError(
+                f"lease is {self.state}", reason=refusal_reason
+            )
         if now >= self.expires_at + self.skew:
-            raise SpendLeaseUnavailableError("lease admission window has expired")
+            raise SpendLeaseUnavailableError(
+                "lease admission window has expired",
+                reason=SpendLeaseRefusalReason.WINDOW_EXPIRED,
+            )
         if allocated_micro <= 0:
             raise SpendLeaseInvariantError("allocated_micro must be positive")
         if allocated_micro > self.available_micro:
@@ -868,6 +950,15 @@ class SpendLease:
             provisional_id=provisional_authorization_id,
         )
 
+    def initialize(self, candidate: SpendLease) -> LeaseTransition:
+        """Replay the same lease identity or reject a corrupt re-initialization."""
+
+        if self._initialization_identity != candidate._initialization_identity:
+            raise SpendLeaseInvariantError(
+                "spend lease initialization identity mismatch is corruption"
+            )
+        return LeaseTransition(self, True)
+
     def bind(self, *, expected_provisional_id: str, proof: BoundProof) -> LeaseAllocationTransition:
         allocation = self._required_allocation(proof.idempotency_scope)
         transition = allocation.bind(expected_provisional_id=expected_provisional_id, proof=proof)
@@ -878,7 +969,7 @@ class SpendLease:
         *,
         idempotency_scope: str,
         expected_provisional_id: str,
-        claim: ClaimProof,
+        claim: ClaimProof | RecoveryProof,
         absence: BindingAbsenceProof,
     ) -> LeaseAllocationTransition:
         allocation = self._required_allocation(idempotency_scope)
@@ -886,6 +977,7 @@ class SpendLease:
             expected_provisional_id=expected_provisional_id,
             claim=claim,
             absence=absence,
+            lease_creating_authorization_id=self.creating_authorization_id,
         )
         return self._apply_allocation(transition)
 
@@ -929,9 +1021,17 @@ class SpendLease:
         if self.state == SpendLeaseState.DRAINING:
             return LeaseTransition(self, True)
         if self.state != SpendLeaseState.ACTIVE:
-            raise SpendLeaseUnavailableError(f"lease is {self.state}")
+            refusal_reason = {
+                SpendLeaseState.TOMBSTONED: SpendLeaseRefusalReason.FROZEN_TOMBSTONED,
+            }[self.state]
+            raise SpendLeaseUnavailableError(
+                f"lease is {self.state}", reason=refusal_reason
+            )
         if now < self.expires_at + self.skew:
-            raise SpendLeaseUnavailableError("lease admission window has not elapsed")
+            raise SpendLeaseUnavailableError(
+                "lease admission window has not elapsed",
+                reason=SpendLeaseRefusalReason.WINDOW_NOT_ELAPSED,
+            )
         return LeaseTransition(replace(self, state=SpendLeaseState.DRAINING, version=self.version + 1), False)
 
     def tombstone(self) -> LeaseTransition:
@@ -943,17 +1043,50 @@ class SpendLease:
             False,
         )
 
+    def tombstone_unminted(self, proof: RecoveryProof) -> LeaseTransition:
+        """Decision 46 step 4b — closes a never-minted candidate's local row so a
+        lagging producer's late ``allocate()`` is refused; serialized against
+        ``allocate()`` by the row CAS.
+        """
+
+        if proof.creating_authorization_id != self.creating_authorization_id:
+            raise SpendLeaseProofError("recovery proof lease identity mismatch")
+        if self.state == SpendLeaseState.TOMBSTONED and self.tombstoned_unminted:
+            return LeaseTransition(self, True)
+        if self.state != SpendLeaseState.ACTIVE:
+            raise SpendLeaseConflictError("unminted tombstone requires an active lease")
+        if self.open_allocations:
+            raise SpendLeaseConflictError("unminted tombstone requires terminal allocations")
+        return LeaseTransition(
+            replace(
+                self,
+                state=SpendLeaseState.TOMBSTONED,
+                version=self.version + 1,
+                tombstoned_unminted=True,
+            ),
+            False,
+        )
+
     def close(self, *, now: datetime) -> LeaseTransition:
         # Decisions 5, 18, 19, 22: two guards, using the one open predicate.
         _require_aware(now, "now")
         if self.state == SpendLeaseState.CLOSED:
             return LeaseTransition(self, True)
         if self.state not in {SpendLeaseState.DRAINING, SpendLeaseState.TOMBSTONED}:
-            raise SpendLeaseUnavailableError("lease must be frozen before close")
+            raise SpendLeaseUnavailableError(
+                "lease must be frozen before close",
+                reason=SpendLeaseRefusalReason.CLOSED,
+            )
         if now < self.expires_at + self.skew:
-            raise SpendLeaseUnavailableError("lease cannot close before expiry plus skew")
+            raise SpendLeaseUnavailableError(
+                "lease cannot close before expiry plus skew",
+                reason=SpendLeaseRefusalReason.WINDOW_NOT_ELAPSED,
+            )
         if self.open_allocations:
-            raise SpendLeaseUnavailableError("lease still has open allocations")
+            raise SpendLeaseUnavailableError(
+                "lease still has open allocations",
+                reason=SpendLeaseRefusalReason.CLOSED,
+            )
         return LeaseTransition(replace(self, state=SpendLeaseState.CLOSED, version=self.version + 1), False)
 
     def _allocation(self, idempotency_scope: str) -> SpendLeaseAllocation | None:
@@ -964,6 +1097,20 @@ class SpendLease:
                 if allocation.idempotency_scope == idempotency_scope
             ),
             None,
+        )
+
+    @property
+    def _initialization_identity(self) -> tuple[object, ...]:
+        return (
+            self.lease_id,
+            self.gen,
+            self.key_hash,
+            self.boot_kid,
+            self.workspace_id,
+            self.creating_authorization_id,
+            self.cap_micro,
+            self.expires_at,
+            self.skew,
         )
 
     def _required_allocation(self, idempotency_scope: str) -> SpendLeaseAllocation:

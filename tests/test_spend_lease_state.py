@@ -35,6 +35,7 @@ from trusted_router.spend_lease_state import (
     ExistingLocal,
     FinalizationOutcome,
     Mismatch,
+    RecoveryProof,
     RowBindingMismatch,
     SpendLease,
     SpendLeaseAllocation,
@@ -42,11 +43,13 @@ from trusted_router.spend_lease_state import (
     SpendLeaseExhaustedError,
     SpendLeaseInvariantError,
     SpendLeaseProofError,
+    SpendLeaseRefusalReason,
     SpendLeaseState,
     SpendLeaseUnavailableError,
     TerminalSource,
     TrueReplay,
     UnboundExisting,
+    is_authoritative_exhaustion,
 )
 
 NOW = datetime(2026, 9, 1, 12, tzinfo=UTC)
@@ -62,6 +65,7 @@ def _lease(*, cap: int = 1_000, state: SpendLeaseState = SpendLeaseState.ACTIVE)
         key_hash="key-hash",
         boot_kid="boot-kid",
         workspace_id="workspace-1",
+        creating_authorization_id="provisional-1",
         cap_micro=cap,
         expires_at=EXPIRY,
         skew=SKEW,
@@ -120,6 +124,15 @@ def _absence(allocation: SpendLeaseAllocation) -> BindingAbsenceProof:
         idempotency_scope=allocation.idempotency_scope,
         provisional_id=allocation.authorization_id,
         observation=AbsenceObservation.ABSENT_ROW,
+    )
+
+
+def _recovery(
+    *, creating_authorization_id: str = "provisional-1",
+) -> RecoveryProof:
+    return RecoveryProof(
+        recovering_at=NOW + timedelta(minutes=5),
+        creating_authorization_id=creating_authorization_id,
     )
 
 
@@ -204,6 +217,146 @@ def test_capacity_is_lifetime_monotonic_across_refund_and_abandon() -> None:
             provisional_id="provisional-3",
             amount=501,
         )
+
+
+@pytest.mark.parametrize(
+    ("site", "state", "expected_reason"),
+    [
+        pytest.param(
+            "allocate_frozen",
+            SpendLeaseState.DRAINING,
+            SpendLeaseRefusalReason.FROZEN_DRAINING,
+            id="allocate-frozen-draining",
+        ),
+        pytest.param(
+            "allocate_frozen",
+            SpendLeaseState.TOMBSTONED,
+            SpendLeaseRefusalReason.FROZEN_TOMBSTONED,
+            id="allocate-frozen-tombstoned",
+        ),
+        pytest.param(
+            "allocate_frozen",
+            SpendLeaseState.CLOSED,
+            SpendLeaseRefusalReason.CLOSED,
+            id="allocate-closed",
+        ),
+        pytest.param(
+            "allocate_window",
+            SpendLeaseState.ACTIVE,
+            SpendLeaseRefusalReason.WINDOW_EXPIRED,
+            id="allocate-window-expired",
+        ),
+        pytest.param(
+            "allocate_capacity",
+            SpendLeaseState.ACTIVE,
+            SpendLeaseRefusalReason.EXHAUSTED,
+            id="allocate-exhausted",
+        ),
+        pytest.param(
+            "abandon_window",
+            SpendLeaseState.ACTIVE,
+            SpendLeaseRefusalReason.WINDOW_NOT_ELAPSED,
+            id="abandon-window-not-elapsed",
+        ),
+        pytest.param(
+            "begin_drain_frozen",
+            SpendLeaseState.TOMBSTONED,
+            SpendLeaseRefusalReason.FROZEN_TOMBSTONED,
+            id="begin-drain-frozen-tombstoned",
+        ),
+        pytest.param(
+            "begin_drain_window",
+            SpendLeaseState.ACTIVE,
+            SpendLeaseRefusalReason.WINDOW_NOT_ELAPSED,
+            id="begin-drain-window-not-elapsed",
+        ),
+        pytest.param(
+            "close_state",
+            SpendLeaseState.ACTIVE,
+            SpendLeaseRefusalReason.CLOSED,
+            id="close-requires-frozen",
+        ),
+        pytest.param(
+            "close_window",
+            SpendLeaseState.TOMBSTONED,
+            SpendLeaseRefusalReason.WINDOW_NOT_ELAPSED,
+            id="close-window-not-elapsed",
+        ),
+        pytest.param(
+            "close_open",
+            SpendLeaseState.TOMBSTONED,
+            SpendLeaseRefusalReason.CLOSED,
+            id="close-open-allocation",
+        ),
+    ],
+)
+def test_each_unavailable_raise_site_has_typed_reason(
+    site: str,
+    state: SpendLeaseState,
+    expected_reason: SpendLeaseRefusalReason,
+) -> None:
+    with pytest.raises(SpendLeaseUnavailableError) as caught:
+        if site == "allocate_frozen":
+            _created(_lease(state=state))
+        elif site == "allocate_window":
+            _lease(state=state).allocate(
+                authorization_view=None,
+                idempotency_scope="scope-expired",
+                provisional_authorization_id="provisional-expired",
+                request_fingerprint="fingerprint-expired",
+                allocated_micro=1,
+                abandon_after=ABANDON_AFTER,
+                now=EXPIRY + SKEW,
+            )
+        elif site == "allocate_capacity":
+            _created(_lease(cap=1), amount=2)
+        elif site == "abandon_window":
+            created = _created()
+            created.lease.abandon(
+                idempotency_scope=created.allocation.idempotency_scope,
+                expected_provisional_id=created.provisional_id,
+                claim=_claim(created.allocation),
+                absence=_absence(created.allocation),
+                now=ABANDON_AFTER - timedelta(microseconds=1),
+            )
+        elif site == "begin_drain_frozen":
+            _lease(state=state).begin_drain(now=EXPIRY + SKEW)
+        elif site == "begin_drain_window":
+            _lease(state=state).begin_drain(now=EXPIRY + SKEW - timedelta(microseconds=1))
+        elif site == "close_state":
+            _lease(state=state).close(now=EXPIRY + SKEW)
+        elif site == "close_window":
+            _lease(state=state).close(now=EXPIRY + SKEW - timedelta(microseconds=1))
+        else:
+            _created().lease.tombstone().lease.close(now=EXPIRY + SKEW)
+
+    assert caught.value.reason == expected_reason
+
+
+def test_authoritative_exhaustion_accepts_exhausted_and_tombstoned_site_mutation_guard() -> None:
+    with pytest.raises(SpendLeaseExhaustedError) as exhausted:
+        _created(_lease(cap=1), amount=2)
+    with pytest.raises(SpendLeaseUnavailableError) as tombstoned:
+        _created(_lease(state=SpendLeaseState.TOMBSTONED))
+
+    assert is_authoritative_exhaustion(exhausted.value)
+    assert is_authoritative_exhaustion(tombstoned.value)
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        SpendLeaseRefusalReason.FROZEN_DRAINING,
+        SpendLeaseRefusalReason.WINDOW_EXPIRED,
+        SpendLeaseRefusalReason.WINDOW_NOT_ELAPSED,
+        SpendLeaseRefusalReason.CLOSED,
+    ],
+)
+def test_authoritative_exhaustion_rejects_frozen_draining_mutation_guard(
+    reason: SpendLeaseRefusalReason,
+) -> None:
+    exc = SpendLeaseUnavailableError("refused", reason=reason)
+    assert not is_authoritative_exhaustion(exc)
 
 
 def test_cas_version_advances_without_changing_grant_generation() -> None:
@@ -402,6 +555,128 @@ def test_compensate_stale_owner_never_refunds() -> None:
             ),
         )
     assert created.lease.allocations[0].state == AllocationState.RESERVED
+
+
+def test_recovery_proof_identity_mismatch_is_rejected_without_state_change() -> None:
+    created = _created()
+    with pytest.raises(SpendLeaseProofError, match="identity mismatch"):
+        created.lease.compensate(
+            idempotency_scope=created.allocation.idempotency_scope,
+            expected_provisional_id=created.provisional_id,
+            claim=_recovery(creating_authorization_id="other-authorization"),
+            absence=_absence(created.allocation),
+        )
+
+    assert created.lease.allocations == (created.allocation,)
+    assert created.lease.available_micro == 600
+
+
+def test_recovery_proof_compensates_creating_allocation_without_restoring_capacity() -> None:
+    created = _created()
+    result = created.lease.compensate(
+        idempotency_scope=created.allocation.idempotency_scope,
+        expected_provisional_id=created.provisional_id,
+        claim=_recovery(),
+        absence=_absence(created.allocation),
+    )
+
+    assert result.allocation.state == AllocationState.REFUNDED
+    assert result.allocation.terminal_source == TerminalSource.BINDING_ABSENCE
+    assert result.lease.available_micro == created.lease.available_micro == 600
+
+
+def test_recovery_proof_rejects_non_creating_allocation() -> None:
+    creating = _created(amount=200)
+    other = _created(
+        creating.lease,
+        scope="scope-2",
+        provisional_id="provisional-2",
+        fingerprint="fingerprint-2",
+        amount=100,
+    )
+    with pytest.raises(SpendLeaseProofError, match="creating allocation"):
+        other.lease.compensate(
+            idempotency_scope=other.allocation.idempotency_scope,
+            expected_provisional_id=other.provisional_id,
+            claim=_recovery(),
+            absence=_absence(other.allocation),
+        )
+
+    assert other.lease.allocations[-1].state == AllocationState.RESERVED
+
+
+@pytest.mark.parametrize("first_proof", ["claim", "recovery"])
+def test_claim_and_recovery_compensation_replay_in_both_orders(first_proof: str) -> None:
+    created = _created()
+    first = _claim(created.allocation) if first_proof == "claim" else _recovery()
+    second = _recovery() if first_proof == "claim" else _claim(created.allocation)
+
+    compensated = created.lease.compensate(
+        idempotency_scope=created.allocation.idempotency_scope,
+        expected_provisional_id=created.provisional_id,
+        claim=first,
+        absence=_absence(created.allocation),
+    )
+    replay = compensated.lease.compensate(
+        idempotency_scope=created.allocation.idempotency_scope,
+        expected_provisional_id=created.provisional_id,
+        claim=second,
+        absence=_absence(created.allocation),
+    )
+
+    assert replay.replayed
+    assert replay.lease == compensated.lease
+    assert replay.allocation == compensated.allocation
+
+
+def test_initialize_rejects_different_creating_authorization_id_as_corruption() -> None:
+    lease = _lease()
+    candidate = replace(lease, creating_authorization_id="other-authorization")
+
+    with pytest.raises(SpendLeaseInvariantError, match="corruption"):
+        lease.initialize(candidate)
+
+
+def test_tombstone_unminted_rejects_non_terminal_allocation_without_state_change() -> None:
+    created = _created()
+
+    with pytest.raises(SpendLeaseConflictError, match="terminal allocations"):
+        created.lease.tombstone_unminted(_recovery())
+
+    assert created.lease.state == SpendLeaseState.ACTIVE
+    assert created.lease.allocations == (created.allocation,)
+
+
+def test_tombstone_unminted_after_recovery_refuses_late_allocate_as_tombstoned() -> None:
+    created = _created()
+    compensated = created.lease.compensate(
+        idempotency_scope=created.allocation.idempotency_scope,
+        expected_provisional_id=created.provisional_id,
+        claim=_recovery(),
+        absence=_absence(created.allocation),
+    ).lease
+    tombstoned = compensated.tombstone_unminted(_recovery()).lease
+
+    assert tombstoned.state == SpendLeaseState.TOMBSTONED
+    with pytest.raises(SpendLeaseUnavailableError) as caught:
+        _created(tombstoned, scope="late", provisional_id="late-provisional", amount=1)
+    assert caught.value.reason == SpendLeaseRefusalReason.FROZEN_TOMBSTONED
+
+
+def test_tombstone_unminted_twice_returns_replay() -> None:
+    created = _created()
+    compensated = created.lease.compensate(
+        idempotency_scope=created.allocation.idempotency_scope,
+        expected_provisional_id=created.provisional_id,
+        claim=_recovery(),
+        absence=_absence(created.allocation),
+    ).lease
+    first = compensated.tombstone_unminted(_recovery())
+    replay = first.lease.tombstone_unminted(_recovery())
+
+    assert not first.replayed
+    assert replay.replayed
+    assert replay.lease == first.lease
 
 
 def test_committed_allocation_requires_matching_bound_proof_for_construction() -> None:
@@ -729,7 +1004,15 @@ def test_abandon_requires_claim_absence_and_deadline_not_timer_alone() -> None:
 )
 def test_bound_proof_revalidates_every_scope_and_tuple_field(field: str, bad_value: object) -> None:
     created = _created()
-    proof = replace(_bound_proof(created.allocation), **{field: bad_value})
+    original = _bound_proof(created.allocation)
+    if field == "idempotency_scope":
+        proof = replace(original, idempotency_scope=str(bad_value))
+    elif field == "lease_id":
+        proof = replace(original, lease_id=str(bad_value))
+    elif field == "gen":
+        proof = replace(original, gen=int(str(bad_value)))
+    else:
+        proof = replace(original, allocated_micro=int(str(bad_value)))
     with pytest.raises(SpendLeaseProofError, match="scope|tuple"):
         created.allocation.bind(expected_provisional_id=created.provisional_id, proof=proof)
 
@@ -791,9 +1074,24 @@ def test_mirror_observation_revalidates_every_identity_and_binding_field(field: 
     committed = _bind(_created())
     allocation = committed.allocations[0]
     observation = _observation(allocation)
-    value: object = 999 if field in {"gen", "allocated_micro"} else "wrong"
+    if field == "idempotency_scope":
+        changed = replace(observation, idempotency_scope="wrong")
+    elif field == "authorization_id":
+        changed = replace(observation, authorization_id="wrong")
+    elif field == "request_fingerprint":
+        changed = replace(observation, request_fingerprint="wrong")
+    elif field == "lease_id":
+        changed = replace(observation, lease_id="wrong")
+    elif field == "gen":
+        changed = replace(observation, gen=999)
+    elif field == "allocated_micro":
+        changed = replace(observation, allocated_micro=999)
+    elif field == "key_hash":
+        changed = replace(observation, key_hash="wrong")
+    else:
+        changed = replace(observation, workspace_id="wrong")
     with pytest.raises(SpendLeaseProofError, match="mismatch"):
-        allocation.mirror(replace(observation, **{field: value}))
+        allocation.mirror(changed)
 
 
 @pytest.mark.parametrize("field", ["idempotency_scope", "authorization_id"])
@@ -801,8 +1099,13 @@ def test_committed_lost_proof_revalidates_identity(field: str) -> None:
     committed = _bind(_created())
     allocation = committed.allocations[0]
     proof = CommittedRowAbsentProof(allocation.idempotency_scope, allocation.authorization_id)
+    changed = (
+        replace(proof, idempotency_scope="wrong")
+        if field == "idempotency_scope"
+        else replace(proof, authorization_id="wrong")
+    )
     with pytest.raises(SpendLeaseProofError, match="mismatch"):
-        allocation.lost(replace(proof, **{field: "wrong"}))
+        allocation.lost(changed)
 
 
 def test_authorization_scope_view_wrong_scope_is_rejected_before_local_lookup() -> None:
