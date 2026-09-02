@@ -288,6 +288,7 @@ class InMemoryStore:
         email: str | None = None,
         *,
         trial_credit_microdollars: int | None = None,
+        email_verified: bool = False,
     ) -> User:
         with self._lock:
             normalized_email = _normalize_email(email or user_id)
@@ -296,7 +297,9 @@ class InMemoryStore:
                 return self.users[existing_id]
 
             new_id = str(uuid.uuid4())
-            self.users[new_id] = User(id=new_id, email=normalized_email)
+            self.users[new_id] = User(
+                id=new_id, email=normalized_email, email_verified=email_verified
+            )
             self.user_ids_by_email[normalized_email] = new_id
             self.create_workspace(
                 owner_user_id=new_id,
@@ -347,6 +350,7 @@ class InMemoryStore:
         email: str,
         workspace_name: str | None = None,
         trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
+        email_verified: bool = False,
     ) -> SignupResult | None:
         """Atomically create a new account end-to-end. Returns None if the
         email is already registered."""
@@ -357,6 +361,7 @@ class InMemoryStore:
                 email,
                 email=email,
                 trial_credit_microdollars=trial_credit_microdollars,
+                email_verified=email_verified,
             )
             workspace = self.list_workspaces_for_user(user.id)[0]
             if workspace_name:

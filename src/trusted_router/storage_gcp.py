@@ -726,6 +726,7 @@ class SpannerBigtableStore:
         email: str | None = None,
         *,
         trial_credit_microdollars: int | None = None,
+        email_verified: bool = False,
     ) -> User:
         normalized_email = _normalize_email(email or user_id)
 
@@ -736,7 +737,9 @@ class SpannerBigtableStore:
                 if user is not None:
                     return user
 
-            new_user = User(id=str(uuid.uuid4()), email=normalized_email)
+            new_user = User(
+                id=str(uuid.uuid4()), email=normalized_email, email_verified=email_verified
+            )
             workspace = Workspace(
                 id=str(uuid.uuid4()),
                 name="Personal Workspace",
@@ -810,6 +813,7 @@ class SpannerBigtableStore:
         email: str,
         workspace_name: str | None = None,
         trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
+        email_verified: bool = False,
     ) -> SignupResult | None:
         if self.find_user_by_email(email) is not None:
             return None
@@ -817,6 +821,7 @@ class SpannerBigtableStore:
             email,
             email=email,
             trial_credit_microdollars=trial_credit_microdollars,
+            email_verified=email_verified,
         )
         workspace = self.list_workspaces_for_user(user.id)[0]
         if workspace_name:

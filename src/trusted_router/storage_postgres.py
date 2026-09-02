@@ -1039,6 +1039,7 @@ class PostgresStore:
         email: str | None = None,
         *,
         trial_credit_microdollars: int | None = None,
+        email_verified: bool = False,
     ) -> User:
         normalized_email = normalize_email(email or user_id)
 
@@ -1060,7 +1061,9 @@ class PostgresStore:
                 if user is not None:
                     return user
 
-            user = User(id=str(uuid.uuid4()), email=normalized_email)
+            user = User(
+                id=str(uuid.uuid4()), email=normalized_email, email_verified=email_verified
+            )
             self._write_entity_tx(conn, "user", user.id, user)
             self._write_entity_tx(
                 conn,
@@ -1140,6 +1143,7 @@ class PostgresStore:
         email: str,
         workspace_name: str | None = None,
         trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
+        email_verified: bool = False,
     ) -> SignupResult | None:
         self._not_implemented("signup")
 

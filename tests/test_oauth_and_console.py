@@ -876,15 +876,11 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
     assert 'data-copy-template-target="welcome-agent-message"' in resp.text
     assert 'data-secret-source="welcome-api-key"' in resp.text
     assert 'id="welcome-agent-message" data-copy-lines' in resp.text
-    agent_message = re.search(
-        r'<pre id="welcome-agent-message".*?</pre>', resp.text, re.DOTALL
-    )
+    agent_message = re.search(r'<pre id="welcome-agent-message".*?</pre>', resp.text, re.DOTALL)
     assert agent_message is not None
     assert fake_raw_key in agent_message.group(0)
     assert "YOUR_TRUSTEDROUTER_API_KEY" not in agent_message.group(0)
-    assert resp.text.index('id="welcome-agent-message"') < resp.text.index(
-        'id="welcome-api-key"'
-    )
+    assert resp.text.index('id="welcome-agent-message"') < resp.text.index('id="welcome-api-key"')
     assert "Run my first API request" in resp.text
     assert 'data-endpoint="/chat-proxy/v1/chat/completions"' in resp.text
     assert "Claude Code, Codex" in resp.text
@@ -908,8 +904,7 @@ def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
 
 def test_console_specific_styles_load_after_shared_charter_styles() -> None:
     layout = (
-        Path(__file__).resolve().parents[1]
-        / "src/trusted_router/templates/console/_layout.html"
+        Path(__file__).resolve().parents[1] / "src/trusted_router/templates/console/_layout.html"
     ).read_text(encoding="utf-8")
 
     assert layout.index("/static/charter.css") < layout.index("/static/console.css")
@@ -973,9 +968,7 @@ def test_console_create_api_key_form_repeats_raw_key_in_agent_message(
         in resp.text
     )
     assert "Paste this short message" not in agent_message.group(0)
-    assert resp.text.index('id="created-agent-message"') < resp.text.index(
-        'id="created-api-key"'
-    )
+    assert resp.text.index('id="created-agent-message"') < resp.text.index('id="created-api-key"')
     assert "stream the answer into this chat as it arrives" not in resp.text
     assert "Keep this agent's model" not in resp.text
     assert "Use it in memory for this request" not in resp.text
@@ -1768,3 +1761,191 @@ def test_recover_address_round_trip() -> None:
     signed = Account.sign_message(encode_defunct(text=message), private_key=private_key)
     recovered = recover_address(message=message, signature="0x" + signed.signature.hex())
     assert recovered == address.lower()
+
+
+# ── Signup path cost and event-loop isolation ─────────────────────────────────
+#
+# /google_oauth_callback measured 2026-09-01: p50 0.47s but p90 3.09s, and the
+# tail was entirely first-time signups (p90 2.32s vs 1.03s returning). The
+# callback ran five sequential Spanner commits inline in an async handler:
+# create (ensure_user txn), api key, attribution, mark-email-verified, session.
+# Two of those were avoidable, and all of them blocked the event loop.
+
+
+def _count_calls(monkeypatch: pytest.MonkeyPatch, name: str) -> dict[str, int]:
+    from trusted_router.storage import STORE
+
+    target = STORE.target
+    original = getattr(target, name)
+    counter = {"n": 0}
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        counter["n"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(target, name, counted)
+    return counter
+
+
+def _google_callback(client: TestClient, email: str) -> Any:
+    state = _begin_oauth(client, "google")
+
+    async def fake_exchange(**_: Any) -> str:
+        return "access-token"  # noqa: S105
+
+    async def fake_fetch_user(**_: Any) -> Any:
+        from trusted_router.oauth_provider import OAuthUserInfo
+
+        return OAuthUserInfo(
+            sub=f"google-{email}", email=email, email_verified=True, display_name="X"
+        )
+
+    with (
+        patch("trusted_router.routes.oauth.exchange_code", fake_exchange),
+        patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user),
+    ):
+        return client.get(
+            f"/google_oauth_callback?code=auth-code&state={state}",
+            follow_redirects=False,
+        )
+
+
+def test_first_time_oauth_signup_is_created_verified_without_a_separate_commit(
+    google_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from trusted_router.storage import STORE
+
+    marks = _count_calls(monkeypatch, "mark_user_email_verified")
+
+    response = _google_callback(google_client, "fresh@example.com")
+
+    assert response.status_code == 302
+    user = STORE.find_user_by_email("fresh@example.com")
+    assert user is not None and user.email_verified is True
+    # The provider asserted the address; the account is created verified and
+    # the old post-creation write is gone.
+    assert marks["n"] == 0
+
+
+def test_returning_verified_user_skips_the_verified_write(
+    google_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _google_callback(google_client, "again@example.com")
+    marks = _count_calls(monkeypatch, "mark_user_email_verified")
+
+    response = _google_callback(google_client, "again@example.com")
+
+    assert response.status_code == 302
+    assert marks["n"] == 0
+
+
+def test_legacy_unverified_user_is_marked_verified_once_on_login(
+    google_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from trusted_router.storage import STORE
+
+    # An account from before verified-at-creation: exists, not yet verified.
+    STORE.ensure_user("legacy@example.com", email="legacy@example.com")
+    assert STORE.find_user_by_email("legacy@example.com").email_verified is False
+    marks = _count_calls(monkeypatch, "mark_user_email_verified")
+
+    response = _google_callback(google_client, "legacy@example.com")
+
+    assert response.status_code == 302
+    assert marks["n"] == 1
+    assert STORE.find_user_by_email("legacy@example.com").email_verified is True
+
+
+def test_signup_attribution_is_still_recorded_after_the_redirect(
+    google_client: TestClient,
+) -> None:
+    """Attribution moved to a background task; it must still land."""
+    from trusted_router.storage import STORE
+
+    response = _google_callback(google_client, "attrib@example.com")
+
+    assert response.status_code == 302
+    user = STORE.find_user_by_email("attrib@example.com")
+    assert user is not None
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    record = STORE.get_acquisition_attribution(workspace.id)
+    assert record is not None
+    assert record.signup_provider == "google"
+
+
+def test_slow_signup_runs_off_the_event_loop(
+    google_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A signup blocked in storage must not stop the loop from serving others.
+
+    Same shape as test_console_event_loop_isolation: block the store call on an
+    Event, prove it runs on a non-loop thread, and prove the loop keeps ticking
+    while it is blocked.
+    """
+    import asyncio
+    import threading
+
+    import httpx
+
+    from trusted_router.storage import InMemoryStore
+
+    app = create_app(google_settings, init_observability=False)
+    started = threading.Event()
+    release = threading.Event()
+    seen: dict[str, int] = {}
+    original = InMemoryStore.signup
+
+    def blocking_signup(self: InMemoryStore, **kwargs: Any) -> Any:
+        seen["thread"] = threading.get_ident()
+        started.set()
+        assert release.wait(timeout=2.0), "signup ran on the blocked event loop"
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(InMemoryStore, "signup", blocking_signup)
+
+    async def fake_exchange(**_: Any) -> str:
+        return "access-token"  # noqa: S105
+
+    async def fake_fetch_user(**_: Any) -> Any:
+        from trusted_router.oauth_provider import OAuthUserInfo
+
+        return OAuthUserInfo(
+            sub="google-slow", email="slow@example.com", email_verified=True, display_name="S"
+        )
+
+    async def scenario() -> None:
+        loop_thread = threading.get_ident()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            login = await client.get("/auth/google/login", follow_redirects=False)
+            assert login.status_code == 302
+            state = parse_qs(urlsplit(login.headers["location"]).query)["state"][0]
+            with (
+                patch("trusted_router.routes.oauth.exchange_code", fake_exchange),
+                patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user),
+            ):
+                request = asyncio.create_task(
+                    client.get(
+                        f"/google_oauth_callback?code=c&state={state}",
+                        follow_redirects=False,
+                    )
+                )
+                try:
+                    # Wait for the store call to begin, then prove the loop is alive.
+                    for _ in range(200):
+                        if started.is_set():
+                            break
+                        await asyncio.sleep(0.01)
+                    assert started.is_set(), "signup never started"
+                    ticks = 0
+                    for _ in range(5):
+                        await asyncio.sleep(0.01)
+                        ticks += 1
+                    assert ticks == 5
+                    assert seen["thread"] != loop_thread
+                finally:
+                    release.set()
+                response = await asyncio.wait_for(request, timeout=5.0)
+        assert response.status_code == 302
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=10.0))

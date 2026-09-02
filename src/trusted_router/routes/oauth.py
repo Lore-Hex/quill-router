@@ -21,10 +21,12 @@ import base64
 import hashlib
 import hmac
 import secrets
+from dataclasses import dataclass
 from urllib.parse import parse_qsl, urlsplit
 
-from fastapi import APIRouter, FastAPI, Request, Response
+from fastapi import APIRouter, BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import RedirectResponse
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.acquisition import record_signup_attribution
 from trusted_router.auth import SettingsDep, set_session_cookie
@@ -34,6 +36,7 @@ from trusted_router.errors import api_error
 from trusted_router.oauth_provider import (
     OAUTH_PROVIDERS,
     OAuthProvider,
+    OAuthUserInfo,
     exchange_code,
     fetch_user,
 )
@@ -85,10 +88,11 @@ def _register_provider(app: FastAPI, router: APIRouter, provider: OAuthProvider)
     async def callback(
         request: Request,
         settings: SettingsDep,
+        background_tasks: BackgroundTasks,
         code: str | None = None,
         state: str | None = None,
     ) -> Response:
-        return await _handle_callback(provider, request, settings, code, state)
+        return await _handle_callback(provider, request, settings, code, state, background_tasks)
 
 
 async def _handle_login(
@@ -128,12 +132,113 @@ async def _handle_login(
     return response
 
 
+@dataclass(frozen=True)
+class _PersistedLogin:
+    user_id: str
+    first_time: bool
+    pending_reveal_raw_key: str | None
+    raw_token: str
+    next_target: str | None
+    # (workspace_id, starter_credit_microdollars) when an account was created.
+    attribution: tuple[str, int] | None
+
+
+def _persist_login(
+    provider: OAuthProvider,
+    settings: Settings,
+    info: OAuthUserInfo,
+    next_target: str | None,
+) -> _PersistedLogin:
+    """Create-or-load the account and mint the session. Synchronous by design;
+    the caller runs it on a worker thread."""
+    existing_user = STORE.find_user_by_email(info.email)
+    first_time = existing_user is None
+    delegated_signup = first_time and _is_credit_delegation_target(next_target)
+    # `pending_reveal_raw_key` is the raw API key minted during signup; it
+    # must survive the 302 to /console/welcome so the user can copy it.
+    # Without this hand-off, the welcome page shows "key already been
+    # displayed" on every first login. See PENDING_REVEAL_COOKIE above.
+    pending_reveal_raw_key: str | None = None
+    attribution: tuple[str, int] | None = None
+    if existing_user is None:
+        # Creation-only global brake: provider login/state/profile validation
+        # still runs, and returning users never enter this branch.
+        require_new_account_creation(settings)
+        # The provider has already asserted the address is verified (the
+        # caller rejects anything else), so the account is CREATED verified.
+        # That replaces the separate mark_user_email_verified commit that
+        # every first-time signup used to pay after creation.
+        if delegated_signup:
+            # An app-originated signup receives no promotional credit and no
+            # management API key. The app gets an inference-only key after
+            # explicit consent, and the user can fund the workspace in that
+            # same consent flow. Direct TrustedRouter signups keep the normal
+            # starter-credit and one-time management-key experience below.
+            user = STORE.ensure_user(
+                info.email,
+                email=info.email,
+                trial_credit_microdollars=0,
+                email_verified=True,
+            )
+            workspace = STORE.list_workspaces_for_user(user.id)[0]
+            user_id = user.id
+            attribution = (workspace.id, 0)
+        else:
+            # signup() returns None only on a TOCTOU race; fall back to a
+            # fresh lookup, surface a real 500 if even that fails so we
+            # don't deref None silently.
+            result = STORE.signup(
+                email=info.email,
+                trial_credit_microdollars=settings.signup_trial_credit_microdollars,
+                email_verified=True,
+            )
+            if result is not None:
+                user_id = result.user.id
+                pending_reveal_raw_key = result.raw_key
+                attribution = (result.workspace.id, result.trial_credit_microdollars)
+            else:
+                concurrent = STORE.find_user_by_email(info.email)
+                if concurrent is None:
+                    raise api_error(
+                        500,
+                        "Could not create or find user account; please retry sign-in",
+                        ErrorType.INTERNAL_ERROR,
+                    )
+                user_id = concurrent.id
+                if not concurrent.email_verified:
+                    STORE.mark_user_email_verified(user_id)
+    else:
+        user_id = existing_user.id
+        # Returning users are verified already in the common case; skipping
+        # the write saves a commit on every login. Accounts that predate
+        # verified-at-creation still get marked here, once.
+        if not existing_user.email_verified:
+            STORE.mark_user_email_verified(user_id)
+
+    raw_token, _ = STORE.create_auth_session(
+        user_id=user_id,
+        provider=provider.slug,
+        label=info.email,
+        ttl_seconds=settings.auth_session_ttl_seconds,
+        state="active",
+    )
+    return _PersistedLogin(
+        user_id=user_id,
+        first_time=first_time,
+        pending_reveal_raw_key=pending_reveal_raw_key,
+        raw_token=raw_token,
+        next_target=next_target,
+        attribution=attribution,
+    )
+
+
 async def _handle_callback(
     provider: OAuthProvider,
     request: Request,
     settings: Settings,
     code: str | None,
     state: str | None,
+    background_tasks: BackgroundTasks,
 ) -> Response:
     if not code or not state:
         raise api_error(400, "Missing OAuth code or state", ErrorType.BAD_REQUEST)
@@ -175,75 +280,28 @@ async def _handle_callback(
             ErrorType.BAD_REQUEST,
         )
 
-    existing_user = STORE.find_user_by_email(info.email)
-    first_time = existing_user is None
-    next_target = _next_target(request)
-    delegated_signup = first_time and _is_credit_delegation_target(next_target)
-    # `pending_reveal_raw_key` is the raw API key minted during signup; it
-    # must survive the 302 to /console/welcome so the user can copy it.
-    # Without this hand-off, the welcome page shows "key already been
-    # displayed" on every first login. See PENDING_REVEAL_COOKIE above.
-    pending_reveal_raw_key: str | None = None
-    if existing_user is None:
-        # Creation-only global brake: provider login/state/profile validation
-        # still runs, and returning users never enter this branch.
-        require_new_account_creation(settings)
-        if delegated_signup:
-            # An app-originated signup receives no promotional credit and no
-            # management API key. The app gets an inference-only key after
-            # explicit consent, and the user can fund the workspace in that
-            # same consent flow. Direct TrustedRouter signups keep the normal
-            # starter-credit and one-time management-key experience below.
-            user = STORE.ensure_user(
-                info.email,
-                email=info.email,
-                trial_credit_microdollars=0,
-            )
-            workspace = STORE.list_workspaces_for_user(user.id)[0]
-            user_id = user.id
-            record_signup_attribution(
-                request,
-                workspace_id=workspace.id,
-                signup_provider=provider.slug,
-                starter_credit_microdollars=0,
-            )
-        else:
-            # signup() returns None only on a TOCTOU race; fall back to a
-            # fresh lookup, surface a real 500 if even that fails so we
-            # don't deref None silently.
-            result = STORE.signup(
-                email=info.email,
-                trial_credit_microdollars=settings.signup_trial_credit_microdollars,
-            )
-            if result is not None:
-                user_id = result.user.id
-                pending_reveal_raw_key = result.raw_key
-                record_signup_attribution(
-                    request,
-                    workspace_id=result.workspace.id,
-                    signup_provider=provider.slug,
-                    starter_credit_microdollars=result.trial_credit_microdollars,
-                )
-            else:
-                concurrent = STORE.find_user_by_email(info.email)
-                if concurrent is None:
-                    raise api_error(
-                        500,
-                        "Could not create or find user account; please retry sign-in",
-                        ErrorType.INTERNAL_ERROR,
-                    )
-                user_id = concurrent.id
-    else:
-        user_id = existing_user.id
-    STORE.mark_user_email_verified(user_id)
-
-    raw_token, _ = STORE.create_auth_session(
-        user_id=user_id,
-        provider=provider.slug,
-        label=info.email,
-        ttl_seconds=settings.auth_session_ttl_seconds,
-        state="active",
-    )
+    # Every store call below is a synchronous Spanner round trip -- a first-time
+    # signup is several sequential commits on a multi-region instance. Run them
+    # on a worker thread so a slow signup never stalls the event loop for the
+    # other requests sharing this instance.
+    login = await run_in_threadpool(_persist_login, provider, settings, info, _next_target(request))
+    first_time = login.first_time
+    pending_reveal_raw_key = login.pending_reveal_raw_key
+    raw_token = login.raw_token
+    next_target = login.next_target
+    if login.attribution is not None:
+        # Attribution is analytics, not part of signing the user in. Record it
+        # after the redirect has been sent so its commit is off the critical
+        # path; record_signup_attribution reads only request metadata (cookies,
+        # headers, query) which remains available after the response.
+        workspace_id, starter_credit = login.attribution
+        background_tasks.add_task(
+            record_signup_attribution,
+            request,
+            workspace_id=workspace_id,
+            signup_provider=provider.slug,
+            starter_credit_microdollars=starter_credit,
+        )
 
     target = next_target or ("/console/welcome?first=1" if first_time else "/console/api-keys")
     response = RedirectResponse(url=target, status_code=302)
@@ -343,11 +401,7 @@ def _provider_redirect_uri(
     configured = getattr(settings, f"{provider.slug}_oauth_redirect_url", None)
     if configured:
         return configured
-    scheme = (
-        request.url.scheme
-        if settings.environment.lower() in {"local", "test"}
-        else "https"
-    )
+    scheme = request.url.scheme if settings.environment.lower() in {"local", "test"} else "https"
     host = request.headers.get("host", request.url.netloc)
     return f"{scheme}://{host}/{provider.slug}_oauth_callback"
 
