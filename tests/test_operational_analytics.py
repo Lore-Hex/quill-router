@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 from clickhouse.ingest_operational_outbox import (
+    _WATERMARK_EPOCH,
     CanonicalOperationalEvent,
     OperationalOutboxRow,
     OutboxSource,
@@ -87,6 +88,11 @@ def _generation() -> Generation:
 class _ParamTypes:
     INT64 = "INT64"
     STRING = "STRING"
+    TIMESTAMP = "TIMESTAMP"
+
+    @staticmethod
+    def Array(element: str) -> str:  # noqa: N802 - mirrors google.cloud.spanner_v1.param_types
+        return f"ARRAY<{element}>"
 
 
 class _Transaction:
@@ -121,9 +127,7 @@ def test_activity_payload_names_its_workspace_but_never_keys_or_content() -> Non
     payload = activity_payload(generation)
     encoded = json.dumps(payload, sort_keys=True)
 
-    assert payload["tenant_id"] == analytics_surrogate(
-        "workspace", generation.workspace_id
-    )
+    assert payload["tenant_id"] == analytics_surrogate("workspace", generation.workspace_id)
     assert payload["workspace_id"] == generation.workspace_id
     assert payload["key_id"] == analytics_surrogate("api-key", generation.key_hash)
     assert generation.key_hash not in encoded
@@ -137,17 +141,13 @@ def test_activity_payload_names_its_workspace_but_never_keys_or_content() -> Non
 def test_operational_outbox_enqueue_is_sharded_and_commit_timestamped() -> None:
     database = _Database()
     generation = _generation()
-    SpannerOperationalAnalyticsOutbox(database, _ParamTypes()).enqueue_activity(
-        generation
-    )
+    SpannerOperationalAnalyticsOutbox(database, _ParamTypes()).enqueue_activity(generation)
 
     [(sql, params, param_types)] = database.transaction.calls
     assert "PENDING_COMMIT_TIMESTAMP()" in sql
     assert params["event_kind"] == "activity"
     assert params["event_id"] == generation.id
-    assert params["shard"] == operational_analytics_shard(
-        f"activity:{generation.id}"
-    )
+    assert params["shard"] == operational_analytics_shard(f"activity:{generation.id}")
     assert json.loads(params["payload"])["tenant_id"] != generation.workspace_id
     assert param_types == {
         "shard": "INT64",
@@ -277,18 +277,14 @@ def test_spanner_client_events_enqueue_uses_one_batch_outbox_row() -> None:
     database = _Database()
     payload = _client_events_payload()
 
-    SpannerOperationalAnalyticsOutbox(database, _ParamTypes()).enqueue_client_events(
-        payload
-    )
+    SpannerOperationalAnalyticsOutbox(database, _ParamTypes()).enqueue_client_events(payload)
 
     [(sql, params, _)] = database.transaction.calls
     event_id = f"{payload['tenant_id']}:{payload['batch_id']}"
     assert "PENDING_COMMIT_TIMESTAMP()" in sql
     assert params["event_kind"] == CLIENT_EVENTS_EVENT_KIND
     assert params["event_id"] == event_id
-    assert params["shard"] == operational_analytics_shard(
-        f"{CLIENT_EVENTS_EVENT_KIND}:{event_id}"
-    )
+    assert params["shard"] == operational_analytics_shard(f"{CLIENT_EVENTS_EVENT_KIND}:{event_id}")
     assert json.loads(params["payload"]) == payload
 
 
@@ -300,9 +296,7 @@ def test_postgres_client_events_enqueue_uses_one_idempotent_batch_row() -> None:
             statements.append((sql, params))
 
     connection = Connection()
-    outbox = PostgresOperationalAnalyticsOutbox(
-        lambda operation: operation(connection)
-    )
+    outbox = PostgresOperationalAnalyticsOutbox(lambda operation: operation(connection))
     payload = _client_events_payload()
 
     outbox.enqueue_client_events(payload)
@@ -582,9 +576,7 @@ def test_public_snapshot_reads_newest_revision_across_month_partitions(
         transport=httpx.MockTransport(handler),
     )
 
-    assert client.public_snapshot(snapshot_name) == {
-        "generated_at": "2026-08-01T00:00:00Z"
-    }
+    assert client.public_snapshot(snapshot_name) == {"generated_at": "2026-08-01T00:00:00Z"}
 
 
 def test_public_snapshot_rejects_unknown_products_without_querying() -> None:
@@ -700,10 +692,12 @@ class _QueryCountingSnapshot:
     ) -> list[tuple[object, ...]]:
         self.database.select_statements.append(sql)
         self.database.select_params.append((params, param_types))
-        if len(self.database.select_statements) > 1:
+        if not self.database.pending_rows:
             return []
-        row = _outbox_row()
-        return [(row.shard, row.commit_ts, row.event_kind, row.event_id, row.payload)]
+        batch = self.database.pending_rows.pop(0)
+        return [
+            (row.shard, row.commit_ts, row.event_kind, row.event_id, row.payload) for row in batch
+        ]
 
 
 class _QueryCountingBatch:
@@ -721,10 +715,14 @@ class _QueryCountingBatch:
 
 
 class _QueryCountingDatabase:
-    def __init__(self) -> None:
+    def __init__(self, rows: list[list[OperationalOutboxRow]] | None = None) -> None:
         self.select_statements: list[str] = []
         self.select_params: list[tuple[dict[str, Any], dict[str, Any]]] = []
         self.delete_calls: list[tuple[str, object]] = []
+        # Each fetch pops one batch; an exhausted queue means an empty outbox.
+        self.pending_rows: list[list[OperationalOutboxRow]] = (
+            [[_outbox_row()]] if rows is None else rows
+        )
 
     def snapshot(self, **_kwargs: object) -> _QueryCountingSnapshot:
         return _QueryCountingSnapshot(self)
@@ -733,23 +731,66 @@ class _QueryCountingDatabase:
         return _QueryCountingBatch(self)
 
 
-def test_spanner_drain_loop_uses_one_global_fetch_query_plus_ack() -> None:
-    database = _QueryCountingDatabase()
+def _spanner_source(database: _QueryCountingDatabase) -> SpannerOperationalOutboxSource:
     source = object.__new__(SpannerOperationalOutboxSource)
     source._database = database
     source._pt = _ParamTypes()
     source._shard_count = 32
+    source._after = None
+    return source
+
+
+def test_spanner_drain_fetch_is_one_seek_statement_with_a_watermark() -> None:
+    """One statement per poll, seeking every shard from the watermark.
+
+    The unfiltered ``LIMIT @limit`` this replaces walked the table's deleted-row
+    garbage on every poll: 0.207s CPU per execution for ~2 rows, 3,300/hour --
+    the largest load on the billing-plane instance (SPANNER_SYS, 2026-09-01).
+    The per-shard predicate is what makes the read a set of key-range seeks;
+    a bare ``commit_ts >= @after`` is not a key prefix and would still scan.
+    """
+    database = _QueryCountingDatabase()
+    source = _spanner_source(database)
 
     result = drain_once(source, _Writer(), batch_size=100)
 
     assert result.fetched == 1
     assert len(database.select_statements) == 1
-    assert "WHERE shard" not in database.select_statements[0]
-    assert "ORDER BY" not in database.select_statements[0]
-    assert database.select_params == [
-        ({"limit": 100}, {"limit": _ParamTypes.INT64})
-    ]
+    statement = database.select_statements[0]
+    assert "WHERE shard IN UNNEST(@shards)" in statement
+    assert "commit_ts >= @after" in statement
+    assert "ORDER BY commit_ts LIMIT @limit" in statement
+    params, types = database.select_params[0]
+    assert params == {"shards": list(range(32)), "after": _WATERMARK_EPOCH, "limit": 100}
+    assert types == {"shards": "ARRAY<INT64>", "after": "TIMESTAMP", "limit": "INT64"}
     assert len(database.delete_calls) == 1
+
+
+def test_spanner_drain_watermark_advances_only_after_clickhouse_ack() -> None:
+    """The watermark moves to the newest DELETED commit_ts, never to a fetched one.
+
+    A batch whose insert failed is never deleted, so the next poll must seek
+    from the old watermark and see it again; after an acknowledged batch the
+    next poll seeks from that batch's newest commit timestamp (``>=`` keeps
+    tie-sharing rows that LIMIT may have cut).
+    """
+    row = _outbox_row()
+    database = _QueryCountingDatabase(rows=[[row], [row], []])
+    source = _spanner_source(database)
+
+    with pytest.raises(RuntimeError, match="ClickHouse unavailable"):
+        drain_once(source, _Writer(failures=1), batch_size=100)
+    assert database.delete_calls == []
+    assert source._after is None
+
+    acked = drain_once(source, _Writer(), batch_size=100)
+    assert acked.fetched == 1
+    assert len(database.delete_calls) == 1
+    assert source._after == row.commit_ts
+
+    drain_once(source, _Writer(), batch_size=100)
+    assert database.select_params[-1][0]["after"] == row.commit_ts
+    assert database.select_params[0][0]["after"] == _WATERMARK_EPOCH
 
 
 def test_operational_cursor_advances_only_after_clickhouse_ack() -> None:
@@ -914,9 +955,7 @@ def test_client_reliability_reader_binds_tenant_and_uses_final_rollups() -> None
         "p50_total_ms": 100,
         "p95_total_ms": 200,
         "p50_ttft_ms": 100,
-        "by_host": {
-            "apex": {"attempts": 110, "attempt_tr_fault": 2, "rate": 0.018182}
-        },
+        "by_host": {"apex": {"attempts": 110, "attempt_tr_fault": 2, "rate": 0.018182}},
     }
 
 
@@ -1249,9 +1288,7 @@ class _SnapshotDatabase:
                 outer.queries.append((sql, kwargs.get("params") or {}))
                 shards = [int(value) for value in re.findall(r"WHERE shard=(\d+)", sql)]
                 stamps = sorted(
-                    stamp
-                    for shard in shards
-                    for stamp in outer._rows_by_shard.get(shard, [])
+                    stamp for shard in shards for stamp in outer._rows_by_shard.get(shard, [])
                 )
                 return [[stamps[0]]] if stamps else [[None]]
 
