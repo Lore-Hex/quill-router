@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from google.api_core import exceptions as google_exceptions
 
 import trusted_router.spend_lease_ledger as ledger_module
 from tests.fakes.spend_lease_bigtable import FakeBigtableTable as _FakeBigtableTable
@@ -16,6 +17,7 @@ from trusted_router.spend_lease_ledger import (
     BigtableSpendLeaseLedger,
     SpendLeaseCasExhausted,
     SpendLeaseLedgerError,
+    SpendLeaseLedgerUnprovisioned,
     SpendLeaseVersionError,
 )
 from trusted_router.spend_lease_state import (
@@ -85,6 +87,104 @@ def _allocate(ledger: BigtableSpendLeaseLedger) -> Created:
     )
     assert isinstance(result, Created)
     return result
+
+
+def test_health_check_classifies_missing_table_as_unprovisioned() -> None:
+    table = _FakeBigtableTable()
+    missing = google_exceptions.NotFound(
+        "Table trustedrouter-spend-lease was not found"
+    )
+    table.commit_error = missing
+    ledger = BigtableSpendLeaseLedger({REGION: table})
+
+    with pytest.raises(SpendLeaseLedgerUnprovisioned) as raised:
+        ledger.health_check()
+
+    assert raised.value.table_id == "trustedrouter-spend-lease"
+    assert raised.value.profile == "tr-spend-us-central1"
+    assert raised.value.region == REGION
+    assert raised.value.__cause__ is missing
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        google_exceptions.FailedPrecondition(
+            "App profile tr-spend-us-central1 does not exist"
+        ),
+        google_exceptions.InvalidArgument(
+            "Invalid app_profile_id: tr-spend-us-central1"
+        ),
+    ],
+)
+def test_health_check_classifies_missing_profile_as_unprovisioned(
+    missing: Exception,
+) -> None:
+    table = _FakeBigtableTable()
+    table.commit_error = missing
+    ledger = BigtableSpendLeaseLedger({REGION: table})
+
+    with pytest.raises(SpendLeaseLedgerUnprovisioned) as raised:
+        ledger.health_check()
+
+    assert raised.value.table_id == "trustedrouter-spend-lease"
+    assert raised.value.profile == "tr-spend-us-central1"
+    assert raised.value.region == REGION
+    assert raised.value.__cause__ is missing
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        google_exceptions.PermissionDenied("missing permission"),
+        google_exceptions.DeadlineExceeded("request timed out"),
+    ],
+)
+def test_health_check_propagates_non_provisioning_failures_unchanged(
+    failure: Exception,
+) -> None:
+    table = _FakeBigtableTable()
+    table.commit_error = failure
+    ledger = BigtableSpendLeaseLedger({REGION: table})
+
+    with pytest.raises(type(failure)) as raised:
+        ledger.health_check()
+
+    assert raised.value is failure
+
+
+def test_health_check_propagates_unrelated_precondition_failure_unchanged() -> None:
+    table = _FakeBigtableTable()
+    failure = google_exceptions.FailedPrecondition(
+        "single-row transactions are disabled for this routing policy"
+    )
+    table.commit_error = failure
+    ledger = BigtableSpendLeaseLedger({REGION: table})
+
+    with pytest.raises(google_exceptions.FailedPrecondition) as raised:
+        ledger.health_check()
+
+    assert raised.value is failure
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        google_exceptions.FailedPrecondition("column family lease not found"),
+        google_exceptions.InvalidArgument("instance missing"),
+    ],
+)
+def test_health_check_propagates_unrelated_missing_resource_unchanged(
+    failure: Exception,
+) -> None:
+    table = _FakeBigtableTable()
+    table.commit_error = failure
+    ledger = BigtableSpendLeaseLedger({REGION: table})
+
+    with pytest.raises(type(failure)) as raised:
+        ledger.health_check()
+
+    assert raised.value is failure
 
 
 def test_allocate_created_writes_decision_33_row_at_version_one() -> None:

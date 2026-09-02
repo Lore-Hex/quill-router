@@ -17,6 +17,8 @@ from datetime import UTC, datetime, timedelta
 from time import sleep
 from typing import Any, Protocol, TypeVar, cast
 
+from google.api_core import exceptions as google_exceptions
+
 from trusted_router.spend_lease_state import (
     AllocateResult,
     AllocationState,
@@ -58,6 +60,19 @@ class SpendLeaseLedgerError(RuntimeError):
     """The durable spend-lease ledger could not safely complete an operation."""
 
 
+class SpendLeaseLedgerUnprovisioned(SpendLeaseLedgerError):
+    """The configured Bigtable table or fixed app profile does not exist."""
+
+    def __init__(self, *, table_id: str, profile: str, region: str) -> None:
+        self.table_id = table_id
+        self.profile = profile
+        self.region = region
+        super().__init__(
+            "spend lease ledger is unprovisioned "
+            f"(table={table_id}, profile={profile}, region={region})"
+        )
+
+
 class SpendLeaseNotFound(SpendLeaseLedgerError):
     """The requested regional spend lease does not exist."""
 
@@ -68,6 +83,30 @@ class SpendLeaseCasExhausted(SpendLeaseLedgerError):
 
 class SpendLeaseVersionError(SpendLeaseLedgerError):
     """A pure transition attempted to reuse or skip a durable CAS version."""
+
+
+def _is_unprovisioned_bigtable_error(exc: Exception, *, profile: str) -> bool:
+    if isinstance(exc, google_exceptions.NotFound):
+        return True
+    if not isinstance(
+        exc,
+        (google_exceptions.FailedPrecondition, google_exceptions.InvalidArgument),
+    ):
+        return False
+
+    message = str(exc).casefold().replace("_", " ").replace("-", " ")
+    normalized_profile = profile.casefold().replace("_", " ").replace("-", " ")
+    identifies_profile = "app profile" in message or (
+        profile != "<unknown>" and normalized_profile in message
+    )
+    missing_profile = any(
+        marker in message
+        for marker in ("not found", "does not exist", "unknown", "missing")
+    )
+    invalid_profile = isinstance(exc, google_exceptions.InvalidArgument) and (
+        "invalid" in message
+    )
+    return identifies_profile and (missing_profile or invalid_profile)
 
 
 class SpendLeaseLedger(Protocol):
@@ -262,6 +301,8 @@ class BigtableSpendLeaseLedger:
 
         for region in sorted(self._tables):
             table = self._tables[region]
+            table_id = str(getattr(table, "table_id", "<unknown>"))
+            profile = str(getattr(table, "_app_profile_id", "<unknown>"))
             row_key = f"health#spend-lease#{region}".encode()
             version = uuid.uuid4().hex.encode("ascii")
             row = table.row(row_key, filter_=self._version_exists_filter())
@@ -272,9 +313,13 @@ class BigtableSpendLeaseLedger:
                 row.commit()
                 durable = table.read_row(row_key, filter_=self._state_filter())
             except Exception as exc:  # pragma: no cover - remote transport
-                raise SpendLeaseLedgerError(
-                    "spend lease ledger transactional health check failed"
-                ) from exc
+                if _is_unprovisioned_bigtable_error(exc, profile=profile):
+                    raise SpendLeaseLedgerUnprovisioned(
+                        table_id=table_id,
+                        profile=profile,
+                        region=region,
+                    ) from exc
+                raise
             if durable is None:
                 raise SpendLeaseLedgerError(
                     "spend lease ledger health check write was not durable"

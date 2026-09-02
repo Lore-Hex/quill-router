@@ -1384,6 +1384,13 @@ spend-lease binding is off: an empty pass verifies the regional Bigtable
 profiles, records both lag values as zero, publishes
 `job:spend-lease-reconcile`, and exits.
 
+Until the spend-lease Bigtable table and fixed regional app profiles are
+provisioned, the job reports `spend_lease.reconciler_ledger_unprovisioned` as
+a clean idle pass and records its heartbeat; this means the job is alive while
+binding remains off, not that the ledger health proof was weakened or skipped.
+Once provisioning lands, the next scheduled execution automatically performs
+the conditional-write and strong-read proof through every configured profile.
+
 For `spend_lease.reconcile_lag_exceeded`, compare
 `eligibility_lag_seconds` with `open_age_lag_seconds`. Eligibility lag measures
 rows that have already produced the frozen/zero-open close proof. Open-age lag

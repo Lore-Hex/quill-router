@@ -11,6 +11,7 @@ from typing import Any, cast
 
 from trusted_router.config import get_settings
 from trusted_router.sentry_config import init_sentry
+from trusted_router.spend_lease_ledger import SpendLeaseLedgerUnprovisioned
 from trusted_router.storage import configure_store, create_store
 from trusted_router.synthetic.fleet import record_heartbeat
 
@@ -49,6 +50,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if command == "requeue-dead":
         try:
             regions = verify()
+        except SpendLeaseLedgerUnprovisioned as exc:
+            logger.error(
+                "spend_lease.requeue_ledger_unprovisioned "
+                "table=%s profile=%s region=%s nothing_to_requeue=true",
+                exc.table_id,
+                exc.profile,
+                exc.region,
+            )
+            return 1
         except Exception:
             logger.exception("spend_lease.reconciler_health_check_failed")
             return 1
@@ -99,6 +109,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         try:
             regions = verify()
+        except SpendLeaseLedgerUnprovisioned as exc:
+            logger.info(
+                "spend_lease.reconciler_ledger_unprovisioned "
+                "table=%s profile=%s region=%s",
+                exc.table_id,
+                exc.profile,
+                exc.region,
+            )
+            exit_code = 0
         except Exception:
             logger.exception("spend_lease.reconciler_health_check_failed")
         else:

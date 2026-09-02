@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -7,6 +8,7 @@ from typing import Any
 import pytest
 
 import trusted_router.spend_lease_reconcile_cli as cli
+from trusted_router.spend_lease_ledger import SpendLeaseLedgerUnprovisioned
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -14,9 +16,12 @@ ROOT = Path(__file__).resolve().parents[1]
 class _Store:
     def __init__(self) -> None:
         self.events: list[str] = []
+        self.health_error: Exception | None = None
 
     def verify_spend_lease_ledger(self) -> tuple[str, ...]:
         self.events.append("health")
+        if self.health_error is not None:
+            raise self.health_error
         return ("us-central1",)
 
     def acquire_spend_lease_reconciler_lock(self, **_kwargs: Any) -> Any:
@@ -92,6 +97,43 @@ def test_failed_ledger_health_gate_does_no_work_or_heartbeat(
     assert heartbeats == []
 
 
+def test_unprovisioned_ledger_is_clean_idle_pass_with_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = _Store()
+    store.health_error = SpendLeaseLedgerUnprovisioned(
+        table_id="trustedrouter-spend-lease",
+        profile="tr-spend-us-central1",
+        region="us-central1",
+    )
+    heartbeats = _wire(monkeypatch, store)
+
+    with caplog.at_level(logging.INFO, logger=cli.__name__):
+        assert cli.main(["reconcile"]) == 0
+
+    assert store.events == ["acquire", "health", "release"]
+    assert heartbeats == ["job:spend-lease-reconcile"]
+    assert caplog.messages.count(
+        "spend_lease.reconciler_ledger_unprovisioned "
+        "table=trustedrouter-spend-lease "
+        "profile=tr-spend-us-central1 region=us-central1"
+    ) == 1
+
+
+def test_generic_health_failure_returns_one_without_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store()
+    store.health_error = RuntimeError("ledger transport failed")
+    heartbeats = _wire(monkeypatch, store)
+
+    assert cli.main(["reconcile"]) == 1
+
+    assert store.events == ["acquire", "health", "release"]
+    assert heartbeats == []
+
+
 def test_operator_requeue_runs_after_health_gate_without_worker_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -101,6 +143,30 @@ def test_operator_requeue_runs_after_health_gate_without_worker_lock(
     assert cli.main(["requeue-dead", "lease-a", "lease-b"]) == 0
 
     assert store.events == ["health", "requeue"]
+
+
+def test_operator_requeue_rejects_unprovisioned_ledger(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = _Store()
+    store.health_error = SpendLeaseLedgerUnprovisioned(
+        table_id="trustedrouter-spend-lease",
+        profile="tr-spend-us-central1",
+        region="us-central1",
+    )
+    heartbeats = _wire(monkeypatch, store)
+
+    with caplog.at_level(logging.ERROR, logger=cli.__name__):
+        assert cli.main(["requeue-dead"]) == 1
+
+    assert store.events == ["health"]
+    assert heartbeats == []
+    assert (
+        "spend_lease.requeue_ledger_unprovisioned "
+        "table=trustedrouter-spend-lease profile=tr-spend-us-central1 "
+        "region=us-central1 nothing_to_requeue=true"
+    ) in caplog.messages
 
 
 def test_spend_lease_reconciler_deploy_and_workflow_wiring() -> None:
