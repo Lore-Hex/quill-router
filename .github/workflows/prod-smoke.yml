@@ -19,7 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     # Don't fail PRs on prod issues — only main + scheduled + manual runs
     # touch the live service. PRs run the offline suite via ci.yml.
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    if: >-
+      github.repository == 'Lore-Hex/quill-router'
+      && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     steps:
       - uses: actions/checkout@v4
         with:

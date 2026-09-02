@@ -37,6 +37,9 @@ concurrency:
 
 jobs:
   check:
+    # Scheduled runs belong to the canonical repo only; a fork's copy has no
+    # GCP identity and would fail its credential exchange every hour.
+    if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
