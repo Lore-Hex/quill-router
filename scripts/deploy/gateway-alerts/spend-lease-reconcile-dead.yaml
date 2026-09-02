@@ -1,0 +1,16 @@
+displayName: "TR Spend Lease: dead reconciliation rows"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    At least one spend-lease work row exhausted automatic retries. Inspect the
+    durable last_error before requeueing it. Runbook: docs/runbook.md#spend-lease-reconciler.
+conditions:
+  - displayName: "Spend-lease dead-row count is nonzero"
+    conditionMatchedLog:
+      filter: 'resource.type = "cloud_run_job" AND textPayload:"spend_lease.reconcile_dead_count"'
+alertStrategy:
+  notificationRateLimit:
+    period: 1800s
+  autoClose: 86400s

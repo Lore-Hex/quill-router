@@ -160,6 +160,15 @@ class OpenRow:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class LagInputs:
+    """Oldest timestamps used to publish both decision-38 lag numbers."""
+
+    close_eligible_since: Any | None
+    expired_open_created_at: Any | None
+    dead_rows: int
+
+
 def register_bound(
     transaction: Any,
     param_types: Any,
@@ -485,6 +494,200 @@ def due_candidates(
 def due_open(snapshot: Any, param_types: Any, limit: int) -> list[OpenRow]:
     """Ordered open-lease work from the NULL-filtered due index."""
     return _due_rows(snapshot, param_types, limit, phases=("open",))
+
+
+def defer_open_row(
+    transaction: Any,
+    param_types: Any,
+    row: OpenRow,
+    *,
+    next_attempt_at: Any,
+    error: str | None,
+    increment_attempts: bool,
+    dead: bool = False,
+) -> int:
+    """Guarded per-row retry update; closeability polling does not count."""
+
+    attempts = row.attempts + int(increment_attempts)
+    return _single_row_count(
+        "defer_open_row",
+        transaction.execute_update(
+            "UPDATE spend_lease_open SET attempts=@attempts, last_error=@error, "
+            "next_attempt_at=@next_attempt_at, dead=@dead "
+            "WHERE lease_id=@lease_id AND phase=@phase AND attempts=@expected_attempts",
+            params={
+                "attempts": attempts,
+                "error": None if error is None else error[:1000],
+                "next_attempt_at": None if dead else next_attempt_at,
+                "dead": dead,
+                "lease_id": row.lease_id,
+                "phase": row.phase,
+                "expected_attempts": row.attempts,
+            },
+            param_types={
+                "attempts": param_types.INT64,
+                "error": param_types.STRING,
+                "next_attempt_at": param_types.TIMESTAMP,
+                "dead": param_types.BOOL,
+                "lease_id": param_types.STRING,
+                "phase": param_types.STRING,
+                "expected_attempts": param_types.INT64,
+            },
+        ),
+    )
+
+
+def set_close_eligible_once(
+    transaction: Any,
+    param_types: Any,
+    lease_id: str,
+    observed_at: Any,
+) -> int:
+    """Set the monotonic close proof timestamp without ever clearing it."""
+
+    return _single_row_count(
+        "set_close_eligible_once",
+        transaction.execute_update(
+            "UPDATE spend_lease_open SET close_eligible_since=@observed_at "
+            "WHERE lease_id=@lease_id AND phase='open' AND close_eligible_since IS NULL",
+            params={"lease_id": lease_id, "observed_at": observed_at},
+            param_types={
+                "lease_id": param_types.STRING,
+                "observed_at": param_types.TIMESTAMP,
+            },
+        ),
+    )
+
+
+def mark_global_closed(
+    transaction: Any,
+    param_types: Any,
+    lease_id: str,
+    closed_at: Any,
+) -> int:
+    return _single_row_count(
+        "mark_global_closed",
+        transaction.execute_update(
+            "UPDATE spend_lease_open SET global_closed_at=@closed_at, "
+            "next_attempt_at=@closed_at WHERE lease_id=@lease_id AND phase='open' "
+            "AND global_closed_at IS NULL",
+            params={"lease_id": lease_id, "closed_at": closed_at},
+            param_types={
+                "lease_id": param_types.STRING,
+                "closed_at": param_types.TIMESTAMP,
+            },
+        ),
+    )
+
+
+def mark_local_closed(
+    transaction: Any,
+    param_types: Any,
+    lease_id: str,
+    closed_at: Any,
+) -> int:
+    return _single_row_count(
+        "mark_local_closed",
+        transaction.execute_update(
+            "UPDATE spend_lease_open SET local_closed_at=@closed_at, "
+            "next_attempt_at=TIMESTAMP_ADD(@closed_at, INTERVAL 30 DAY) "
+            "WHERE lease_id=@lease_id AND phase='open' "
+            "AND global_closed_at IS NOT NULL AND local_closed_at IS NULL",
+            params={"lease_id": lease_id, "closed_at": closed_at},
+            param_types={
+                "lease_id": param_types.STRING,
+                "closed_at": param_types.TIMESTAMP,
+            },
+        ),
+    )
+
+
+def delete_open_row(
+    transaction: Any,
+    param_types: Any,
+    lease_id: str,
+    *,
+    phase: OpenPhase,
+) -> int:
+    return _single_row_count(
+        "delete_open_row",
+        transaction.execute_update(
+            "DELETE FROM spend_lease_open WHERE lease_id=@lease_id AND phase=@phase",
+            params={"lease_id": lease_id, "phase": phase},
+            param_types={"lease_id": param_types.STRING, "phase": param_types.STRING},
+        ),
+    )
+
+
+def requeue_dead(
+    transaction: Any,
+    param_types: Any,
+    lease_id: str,
+    next_attempt_at: Any,
+) -> int:
+    return _single_row_count(
+        "requeue_dead",
+        transaction.execute_update(
+            "UPDATE spend_lease_open SET attempts=0, last_error=NULL, dead=false, "
+            "next_attempt_at=@next_attempt_at "
+            "WHERE lease_id=@lease_id AND phase='open' AND dead=true",
+            params={"lease_id": lease_id, "next_attempt_at": next_attempt_at},
+            param_types={
+                "lease_id": param_types.STRING,
+                "next_attempt_at": param_types.TIMESTAMP,
+            },
+        ),
+    )
+
+
+def dead_rows(snapshot: Any, param_types: Any, limit: int) -> list[OpenRow]:
+    rows = list(
+        snapshot.execute_sql(
+            f"SELECT {', '.join(OPEN_COLUMNS)} FROM spend_lease_open "  # noqa: S608
+            "WHERE phase='open' AND dead=true ORDER BY created_at LIMIT @limit",
+            params={"limit": int(limit)},
+            param_types={"limit": param_types.INT64},
+        )
+    )
+    return [_open_row(row) for row in rows]
+
+
+def retained_done_candidates(
+    snapshot: Any,
+    param_types: Any,
+    cutoff: Any,
+    limit: int,
+) -> list[OpenRow]:
+    rows = list(
+        snapshot.execute_sql(
+            f"SELECT {', '.join(OPEN_COLUMNS)} FROM spend_lease_open "  # noqa: S608
+            "WHERE phase='done' AND created_at<=@cutoff "
+            "ORDER BY created_at LIMIT @limit",
+            params={"cutoff": cutoff, "limit": int(limit)},
+            param_types={
+                "cutoff": param_types.TIMESTAMP,
+                "limit": param_types.INT64,
+            },
+        )
+    )
+    return [_open_row(row) for row in rows]
+
+
+def lag_inputs(snapshot: Any, param_types: Any, now: Any) -> LagInputs:
+    rows = list(
+        snapshot.execute_sql(
+            "SELECT MIN(close_eligible_since), "
+            "MIN(IF(TIMESTAMP_ADD(expires_at, INTERVAL skew_seconds SECOND)<=@now, "
+            "created_at, NULL)), "
+            "(SELECT COUNTIF(dead) FROM spend_lease_open) "
+            "FROM spend_lease_open WHERE phase='open' AND local_closed_at IS NULL",
+            params={"now": now},
+            param_types={"now": param_types.TIMESTAMP},
+        )
+    )
+    if not rows:
+        return LagInputs(None, None, 0)
+    return LagInputs(rows[0][0], rows[0][1], int(rows[0][2] or 0))
 
 
 def authorization_typed_columns(payload: Mapping[str, Any]) -> dict[str, Any]:

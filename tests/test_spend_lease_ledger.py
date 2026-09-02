@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from google.cloud.bigtable.row_filters import ValueRegexFilter
 
 import trusted_router.spend_lease_ledger as ledger_module
+from tests.fakes.spend_lease_bigtable import FakeBigtableTable as _FakeBigtableTable
+from tests.fakes.spend_lease_bigtable import ReadRow as _ReadRow
 from trusted_router.config import Settings
 from trusted_router.spend_lease_ledger import (
     BigtableSpendLeaseLedger,
@@ -463,79 +463,3 @@ def test_spend_lease_profile_map_rejects_ambiguous_entries(value: str) -> None:
             environment="test",
             spend_lease_bigtable_app_profiles=value,
         ).spend_lease_bigtable_app_profile_map
-
-
-@dataclass
-class _Cell:
-    value: bytes
-
-
-class _ReadRow:
-    def __init__(self, values: dict[bytes, bytes]) -> None:
-        self.cells = {
-            "lease": {qualifier: [_Cell(value)] for qualifier, value in values.items()}
-        }
-
-
-class _FakeConditionalRow:
-    def __init__(self, table: _FakeBigtableTable, row_key: bytes, filter_: Any) -> None:
-        self.table = table
-        self.row_key = row_key
-        self.filter = filter_
-        self.mutations: list[tuple[bool, bytes, bytes]] = []
-
-    def set_cell(
-        self,
-        _family: str,
-        column: bytes,
-        value: bytes,
-        *,
-        state: bool,
-    ) -> None:
-        self.mutations.append((state, column, value))
-
-    def commit(self) -> bool:
-        self.table.commit_attempts += 1
-        current = self.table.rows.get(self.row_key)
-        regex_filter = next(
-            (
-                candidate
-                for candidate in self.filter.filters
-                if isinstance(candidate, ValueRegexFilter)
-            ),
-            None,
-        )
-        if regex_filter is None:
-            matched = current is not None and b"version" in current
-        else:
-            expected = regex_filter.regex.removeprefix(b"^").removesuffix(b"$")
-            matched = (
-                not self.table.force_cas_misses
-                and current is not None
-                and re.fullmatch(expected, current.get(b"version", b"")) is not None
-            )
-        selected = [mutation for mutation in self.mutations if mutation[0] == matched]
-        if selected:
-            values = self.table.rows.setdefault(self.row_key, {})
-            for _state, column, value in selected:
-                values[column] = value
-        if self.table.raise_after_next_applied_commit and selected:
-            self.table.raise_after_next_applied_commit = False
-            raise TimeoutError("reply lost after durable apply")
-        return matched
-
-
-class _FakeBigtableTable:
-    def __init__(self) -> None:
-        self.rows: dict[bytes, dict[bytes, bytes]] = {}
-        self.commit_attempts = 0
-        self.force_cas_misses = False
-        self.raise_after_next_applied_commit = False
-
-    def row(self, row_key: bytes, *, filter_: Any) -> _FakeConditionalRow:
-        return _FakeConditionalRow(self, row_key, filter_)
-
-    def read_row(self, row_key: bytes, *, filter_: Any) -> _ReadRow | None:
-        del filter_
-        values = self.rows.get(row_key)
-        return None if values is None else _ReadRow(values)

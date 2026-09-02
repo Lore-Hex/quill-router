@@ -30,6 +30,7 @@ Index:
 - [One workspace 503s "Workspace billing is paused" (interrupted reshard)](#reshard-interrupted)
 - [DNS-vendor-split symptoms (Cloudflare vs Cloud DNS)](#dns-vendor-split)
 - [Adding a cloud (and when it is allowed to be called done)](#adding-a-cloud)
+- [Spend-lease reconciler](#spend-lease-reconciler)
 
 ---
 
@@ -1375,3 +1376,29 @@ for entry in \
     --format='value(versions[0].instanceTemplate,targetSize,status.isStable)'
 done
 ```
+# Spend-lease reconciler
+
+The versioned `trusted-router-spend-lease-reconciler-*` Cloud Run Job runs once
+per minute with a 50-second task deadline. It is intentionally active while
+spend-lease binding is off: an empty pass verifies the regional Bigtable
+profiles, records both lag values as zero, publishes
+`job:spend-lease-reconcile`, and exits.
+
+For `spend_lease.reconcile_lag_exceeded`, compare
+`eligibility_lag_seconds` with `open_age_lag_seconds`. Eligibility lag measures
+rows that have already produced the frozen/zero-open close proof. Open-age lag
+also includes expired dead rows, so a pre-eligibility failure cannot disappear
+from the signal. Inspect `spend_lease_open` by `lease_id`, including `phase`,
+`attempts`, `last_error`, and all three close timestamps. Do not manually
+release credit: close step 2 deliberately couples release, lease guards, fence
+slot accounting, and `global_closed_at` in one transaction.
+
+For a dead row, repair the reported cause, then run:
+
+```bash
+python -m trusted_router.spend_lease_reconcile_cli requeue-dead LEASE_ID
+```
+
+Omit `LEASE_ID` to requeue all dead rows. A quarantine alert requires comparing
+the local allocation proof with the strong typed authorization before any
+operator action; quarantined allocations remain open and can retain escrow.

@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import secrets
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from time import sleep
@@ -71,6 +72,8 @@ class SpendLeaseVersionError(SpendLeaseLedgerError):
 
 class SpendLeaseLedger(Protocol):
     def supports_region(self, region: str) -> bool: ...
+
+    def health_check(self) -> tuple[str, ...]: ...
 
     def initialize(self, candidate: SpendLease, *, region: str) -> LeaseTransition: ...
 
@@ -173,6 +176,8 @@ class SpendLeaseLedger(Protocol):
         now: datetime,
     ) -> LeaseTransition: ...
 
+    def delete(self, lease_id: str, *, region: str) -> None: ...
+
 
 class _TransitionResult(Protocol):
     @property
@@ -251,6 +256,30 @@ class BigtableSpendLeaseLedger:
 
     def get(self, lease_id: str, *, region: str) -> SpendLease | None:
         return self._read_lease(self._table(region), _row_key_for(region, lease_id))
+
+    def health_check(self) -> tuple[str, ...]:
+        """Prove a conditional write and strong read through every fixed profile."""
+
+        for region in sorted(self._tables):
+            table = self._tables[region]
+            row_key = f"health#spend-lease#{region}".encode()
+            version = uuid.uuid4().hex.encode("ascii")
+            row = table.row(row_key, filter_=self._version_exists_filter())
+            for state in (False, True):
+                row.set_cell(_FAMILY, _STATE_COLUMN, b'{"status":"ok"}', state=state)
+                row.set_cell(_FAMILY, _VERSION_COLUMN, version, state=state)
+            try:
+                row.commit()
+                durable = table.read_row(row_key, filter_=self._state_filter())
+            except Exception as exc:  # pragma: no cover - remote transport
+                raise SpendLeaseLedgerError(
+                    "spend lease ledger transactional health check failed"
+                ) from exc
+            if durable is None:
+                raise SpendLeaseLedgerError(
+                    "spend lease ledger health check write was not durable"
+                )
+        return tuple(sorted(self._tables))
 
     def allocate(
         self,
@@ -431,6 +460,17 @@ class BigtableSpendLeaseLedger:
             region=region,
             transition=lambda lease: lease.close(now=now),
         )
+
+    def delete(self, lease_id: str, *, region: str) -> None:
+        """Delete a reconciler-proven retained CLOSED row."""
+
+        table = self._table(region)
+        row = table.direct_row(_row_key_for(region, lease_id))
+        row.delete()
+        try:
+            row.commit()
+        except Exception as exc:  # pragma: no cover - remote transport
+            raise SpendLeaseLedgerError("spend lease row deletion failed") from exc
 
     def _mutating_transition(
         self,
