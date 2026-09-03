@@ -6,7 +6,7 @@ from collections.abc import Mapping
 
 from fastapi.testclient import TestClient
 
-from trusted_router.catalog import META_MODEL_IDS, MODEL_ENDPOINTS, MODELS, PROVIDERS
+from trusted_router.catalog import META_MODEL_IDS, MODELS, PROVIDERS, endpoints_for_model
 from trusted_router.dashboard import PUBLIC_PAGES
 from trusted_router.seo_catalog import seo_catalog_evidence
 
@@ -30,9 +30,7 @@ def test_seo_evidence_counts_the_live_public_catalog(client: TestClient) -> None
     response = client.get("/openai-compatible-llm-api")
     public_model_count = sum(model.id not in META_MODEL_IDS for model in MODELS.values())
     public_model_ids = {model.id for model in MODELS.values() if model.id not in META_MODEL_IDS}
-    public_route_count = sum(
-        endpoint.model_id in public_model_ids for endpoint in MODEL_ENDPOINTS.values()
-    )
+    public_route_count = sum(len(endpoints_for_model(model_id)) for model_id in public_model_ids)
 
     assert response.status_code == 200
     assert f"<strong>{public_model_count}</strong><span>public models</span>" in response.text

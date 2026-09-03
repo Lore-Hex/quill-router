@@ -1079,9 +1079,7 @@ class PostgresStore:
                 if user is not None:
                     return user
 
-            user = User(
-                id=str(uuid.uuid4()), email=normalized_email, email_verified=email_verified
-            )
+            user = User(id=str(uuid.uuid4()), email=normalized_email, email_verified=email_verified)
             self._write_entity_tx(conn, "user", user.id, user)
             self._write_entity_tx(
                 conn,
@@ -2836,9 +2834,7 @@ class PostgresStore:
         model_ids: list[str],
     ) -> dict[str, UserProvidedModel]:
         unique_ids = list(
-            dict.fromkeys(
-                normalize_user_provided_model_id(model_id) for model_id in model_ids
-            )
+            dict.fromkeys(normalize_user_provided_model_id(model_id) for model_id in model_ids)
         )
         if not unique_ids:
             return {}
@@ -3348,6 +3344,73 @@ class PostgresStore:
                 raise ValueError("credit_balance_shard_missing")
 
     @staticmethod
+    def _ensure_earnings_account_tx(conn: Any, user_id: str) -> None:
+        """Seed separately because PGAdapter cannot execute our conflict increment."""
+
+        conn.execute(
+            "INSERT INTO tr_earnings_balance "
+            "(user_id, shard, total_earned, total_transferred, updated_at) "
+            "VALUES (%s, 0, 0, 0, CURRENT_TIMESTAMP) "
+            "ON CONFLICT (user_id, shard) DO NOTHING",
+            (user_id,),
+            prepare=False,
+        )
+
+    @staticmethod
+    def _reserve_earnings_balance_tx(
+        conn: Any,
+        user_id: str,
+        amount_microdollars: int,
+    ) -> bool:
+        """Check under lock; PGAdapter errors on a zero-row guarded update."""
+
+        row = conn.execute(
+            "SELECT total_earned, total_transferred FROM tr_earnings_balance "
+            "WHERE user_id = %s AND shard = 0 FOR UPDATE",
+            (user_id,),
+            prepare=False,
+        ).fetchone()
+        if row is None or int(row[0]) - int(row[1]) < amount_microdollars:
+            return False
+        cursor = conn.execute(
+            "UPDATE tr_earnings_balance "
+            "SET total_transferred = total_transferred + %s, "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE user_id = %s AND shard = 0",
+            (_int8_param(amount_microdollars), user_id),
+            prepare=False,
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError("earnings account disappeared during reservation")
+        return True
+
+    @staticmethod
+    def _release_earnings_balance_tx(
+        conn: Any,
+        user_id: str,
+        amount_microdollars: int,
+    ) -> bool:
+        row = conn.execute(
+            "SELECT total_transferred FROM tr_earnings_balance "
+            "WHERE user_id = %s AND shard = 0 FOR UPDATE",
+            (user_id,),
+            prepare=False,
+        ).fetchone()
+        if row is None or int(row[0]) < amount_microdollars:
+            return False
+        cursor = conn.execute(
+            "UPDATE tr_earnings_balance "
+            "SET total_transferred = total_transferred - %s, "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE user_id = %s AND shard = 0",
+            (_int8_param(amount_microdollars), user_id),
+            prepare=False,
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError("earnings account disappeared during release")
+        return True
+
+    @staticmethod
     def _insert_credit_movement_tx(conn: Any, movement: CreditMovement) -> None:
         conn.execute(
             "INSERT INTO tr_credit_movement "
@@ -3435,15 +3498,16 @@ class PostgresStore:
             )
             if not won:
                 return False
-            conn.execute(
-                "INSERT INTO tr_earnings_balance "
-                "(user_id, shard, total_earned, total_transferred, updated_at) "
-                "VALUES (%s, 0, %s, 0, CURRENT_TIMESTAMP) "
-                "ON CONFLICT (user_id, shard) DO UPDATE SET "
-                "total_earned = tr_earnings_balance.total_earned + EXCLUDED.total_earned, "
-                "updated_at = CURRENT_TIMESTAMP",
-                (user_id, amount),
+            self._ensure_earnings_account_tx(conn, user_id)
+            cursor = conn.execute(
+                "UPDATE tr_earnings_balance "
+                "SET total_earned = total_earned + %s, updated_at = CURRENT_TIMESTAMP "
+                "WHERE user_id = %s AND shard = 0",
+                (_int8_param(amount), user_id),
+                prepare=False,
             )
+            if cursor.rowcount != 1:
+                raise RuntimeError("earnings account disappeared during credit")
             self._insert_credit_movement_tx(
                 conn,
                 CreditMovement(
@@ -3462,9 +3526,7 @@ class PostgresStore:
                     authorization_id=(
                         event_id.split(":", 1)[1]
                         if is_app_markup
-                        else custom_model_markup_authorization_id_from_payout_event_id(
-                            event_id
-                        )
+                        else custom_model_markup_authorization_id_from_payout_event_id(event_id)
                         if is_custom_markup
                         else user_model_authorization_id_from_payout_event_id(event_id)
                     ),
@@ -3493,15 +3555,7 @@ class PostgresStore:
             )
             if not won:
                 return "duplicate"
-            cursor = conn.execute(
-                "UPDATE tr_earnings_balance "
-                "SET total_transferred = total_transferred + %s, "
-                "updated_at = CURRENT_TIMESTAMP "
-                "WHERE user_id = %s AND shard = 0 "
-                "AND (total_earned - total_transferred) >= %s",
-                (amount, user_id, amount),
-            )
-            if cursor.rowcount != 1:
+            if not self._reserve_earnings_balance_tx(conn, user_id, amount):
                 self._delete_entity_tx(conn, "stripe_event", event_id)
                 return "insufficient"
             self._credit_workspace_balance_tx(conn, workspace_id, amount)
@@ -3592,10 +3646,7 @@ class PostgresStore:
                 RoutablePayoutProfile,
                 for_update=True,
             )
-            if (
-                previous is not None
-                and previous.routable_company_id != profile.routable_company_id
-            ):
+            if previous is not None and previous.routable_company_id != profile.routable_company_id:
                 self._delete_entity_tx(
                     conn,
                     ROUTABLE_PAYOUT_PROFILE_COMPANY_KIND,
@@ -3679,15 +3730,7 @@ class PostgresStore:
                     idempotency_entity_id,
                 )
                 return "conflict", None
-            cursor = conn.execute(
-                "UPDATE tr_earnings_balance "
-                "SET total_transferred = total_transferred + %s, "
-                "updated_at = CURRENT_TIMESTAMP "
-                "WHERE user_id = %s AND shard = 0 "
-                "AND (total_earned - total_transferred) >= %s",
-                (amount, cashout.user_id, amount),
-            )
-            if cursor.rowcount != 1:
+            if not self._reserve_earnings_balance_tx(conn, cashout.user_id, amount):
                 self._delete_entity_tx(conn, EARNINGS_CASHOUT_KIND, entity_id)
                 self._delete_entity_tx(
                     conn,
@@ -3832,14 +3875,11 @@ class PostgresStore:
                         for_update=True,
                     )
                     if link is None or (
-                        link.get("user_id") != user_id
-                        or link.get("payout_id") != payout_id
+                        link.get("user_id") != user_id or link.get("payout_id") != payout_id
                     ):
                         raise StoreConflict("Routable payable is already linked")
             balance_status = (
-                "paid"
-                if routable_status in ROUTABLE_PAID_STATUSES
-                else existing.balance_status
+                "paid" if routable_status in ROUTABLE_PAID_STATUSES else existing.balance_status
             )
             balance_revision = existing.balance_revision
             if (
@@ -3851,21 +3891,18 @@ class PostgresStore:
                     "SET total_transferred = total_transferred + %s, "
                     "updated_at = CURRENT_TIMESTAMP "
                     "WHERE user_id = %s AND shard = 0",
-                    (existing.amount_microdollars, user_id),
+                    (_int8_param(existing.amount_microdollars), user_id),
+                    prepare=False,
                 )
                 if cursor.rowcount != 1:
                     raise StoreConflict("cash-out earnings account is missing")
                 balance_revision += 1
-                balance_status = (
-                    "paid" if routable_status in ROUTABLE_PAID_STATUSES else "reserved"
-                )
+                balance_status = "paid" if routable_status in ROUTABLE_PAID_STATUSES else "reserved"
                 self._insert_credit_movement_tx(
                     conn,
                     CreditMovement(
                         account_id=f"user:{user_id}",
-                        movement_id=(
-                            f"earnings_cashout_reinstated:{payout_id}:{balance_revision}"
-                        ),
+                        movement_id=(f"earnings_cashout_reinstated:{payout_id}:{balance_revision}"),
                         kind="earnings_cashout_reinstated",
                         amount_microdollars=-existing.amount_microdollars,
                         counterparty_account_id="routable",
@@ -3911,14 +3948,11 @@ class PostgresStore:
                 return "not_found", None
             if existing.balance_status == "released":
                 return "duplicate", existing
-            cursor = conn.execute(
-                "UPDATE tr_earnings_balance "
-                "SET total_transferred = total_transferred - %s, "
-                "updated_at = CURRENT_TIMESTAMP "
-                "WHERE user_id = %s AND shard = 0 AND total_transferred >= %s",
-                (existing.amount_microdollars, user_id, existing.amount_microdollars),
-            )
-            if cursor.rowcount != 1:
+            if not self._release_earnings_balance_tx(
+                conn,
+                user_id,
+                existing.amount_microdollars,
+            ):
                 raise StoreConflict("cash-out reservation exceeds transferred earnings")
             balance_revision = existing.balance_revision + 1
             updated = dataclasses.replace(
@@ -3934,9 +3968,7 @@ class PostgresStore:
                 conn,
                 CreditMovement(
                     account_id=f"user:{user_id}",
-                    movement_id=(
-                        f"earnings_cashout_reversal:{payout_id}:{balance_revision}"
-                    ),
+                    movement_id=(f"earnings_cashout_reversal:{payout_id}:{balance_revision}"),
                     kind="earnings_cashout_reversed",
                     amount_microdollars=existing.amount_microdollars,
                     counterparty_account_id="routable",
@@ -3949,13 +3981,7 @@ class PostgresStore:
 
     def ensure_earnings_account(self, user_id: str) -> None:
         def ensure(conn: Any) -> None:
-            conn.execute(
-                "INSERT INTO tr_earnings_balance "
-                "(user_id, shard, total_earned, total_transferred, updated_at) "
-                "VALUES (%s, 0, 0, 0, CURRENT_TIMESTAMP) "
-                "ON CONFLICT (user_id, shard) DO NOTHING",
-                (user_id,),
-            )
+            self._ensure_earnings_account_tx(conn, user_id)
 
         self._run_transaction(ensure)
 
