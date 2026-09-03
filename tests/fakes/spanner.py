@@ -803,6 +803,39 @@ class _FakeTransaction:
             )
             self.pending_writes.append(("update_typed", "tr_earnings_balance", pk, new))
             return 1
+        if sql.startswith(
+            "UPDATE tr_earnings_balance SET total_transferred = total_transferred - @amount"
+        ):
+            _require_pred(
+                sql,
+                "AND total_transferred >= @amount",
+                "earnings-cashout-release",
+            )
+            pk = (p["user_id"], 0)
+            rec = self._typed_current("tr_earnings_balance", pk)
+            if rec is None or rec["total_transferred"] < p["amount"]:
+                return 0
+            new = dict(
+                rec,
+                total_transferred=rec["total_transferred"] - p["amount"],
+                updated_at=p["now"],
+            )
+            self.pending_writes.append(("update_typed", "tr_earnings_balance", pk, new))
+            return 1
+        if sql.startswith(
+            "UPDATE tr_earnings_balance SET total_transferred = total_transferred + @amount"
+        ) and "AND (total_earned - total_transferred) >= @amount" not in sql:
+            pk = (p["user_id"], 0)
+            rec = self._typed_current("tr_earnings_balance", pk)
+            if rec is None:
+                return 0
+            new = dict(
+                rec,
+                total_transferred=rec["total_transferred"] + p["amount"],
+                updated_at=p["now"],
+            )
+            self.pending_writes.append(("update_typed", "tr_earnings_balance", pk, new))
+            return 1
         if sql.startswith("UPDATE tr_earnings_balance SET total_transferred"):
             _require_pred(
                 sql,

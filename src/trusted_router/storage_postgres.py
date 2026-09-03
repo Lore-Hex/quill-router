@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import secrets
 import time
 import uuid
@@ -52,6 +53,18 @@ from trusted_router.receipt_keys import (
     RECEIPT_KEY_KIND,
     ReceiptKeyWriteOutcome,
     merge_receipt_key_observation,
+)
+from trusted_router.routable_payouts import (
+    EARNINGS_CASHOUT_EXTERNAL_KIND,
+    EARNINGS_CASHOUT_IDEMPOTENCY_KIND,
+    EARNINGS_CASHOUT_KIND,
+    EARNINGS_CASHOUT_PAYABLE_KIND,
+    ROUTABLE_PAID_STATUSES,
+    ROUTABLE_PAYOUT_PROFILE_COMPANY_KIND,
+    ROUTABLE_PAYOUT_PROFILE_KIND,
+    ROUTABLE_PENDING_STATUSES,
+    payout_entity_id,
+    validate_routable_release_status,
 )
 from trusted_router.scopes import validate_api_key_scopes
 from trusted_router.security import (
@@ -113,6 +126,7 @@ from trusted_router.storage_models import (
     CreditMovement,
     CreditTransfer,
     CustomModel,
+    EarningsCashout,
     EmailSendBlock,
     EncryptedSecretEnvelope,
     GatewayAuthorization,
@@ -126,6 +140,7 @@ from trusted_router.storage_models import (
     RateLimitHit,
     ReceiptKey,
     Reservation,
+    RoutablePayoutProfile,
     SessionAuthContext,
     SignupResult,
     SyntheticProbeSample,
@@ -207,6 +222,26 @@ _RETRYABLE_ROLLBACK_SQLSTATES = frozenset(
         "40P01",  # deadlock_detected -- ordinary Postgres lock ordering
     }
 )
+
+_PGADAPTER_INTERNAL_INDEX_ERROR = re.compile(
+    r"^Index \d+ out of bounds for length \d+$"
+)
+
+
+def _is_retryable_pgadapter_internal_error(exc: psycopg.Error) -> bool:
+    """Recognize the PGAdapter analyzer failure that aborts a transaction.
+
+    PGAdapter occasionally surfaces this Java bounds error as SQLSTATE P0001
+    while resolving parameter types. The statement is rejected and psycopg's
+    transaction context rolls the whole transaction back, so replaying on a
+    fresh connection has the same safety property as a serialization retry.
+    Keep this message match exact: arbitrary user-raised P0001 errors are not
+    evidence that replay is safe.
+    """
+
+    return isinstance(exc, psycopg.errors.RaiseException) and bool(
+        _PGADAPTER_INTERNAL_INDEX_ERROR.fullmatch(str(exc))
+    )
 
 
 #: Hard cap on the /status.json outbox-lag read, applied to BOTH the pool wait
@@ -603,7 +638,7 @@ class PostgresStore:
     # Generic entity IO ------------------------------------------------------
 
     def _run_transaction(self, operation: Callable[[Any], T]) -> T:
-        last_serialization_error: BaseException | None = None
+        last_retryable_error: BaseException | None = None
         for _attempt in range(self._transaction_attempts):
             try:
                 with self._pool.connection() as conn:
@@ -618,15 +653,18 @@ class PostgresStore:
                 # Safe to retry because the transaction rolled back whole: an
                 # idempotency row inserted on the failed attempt is gone, so
                 # the retry re-inserts and credits exactly once.
-                if exc.sqlstate in _RETRYABLE_ROLLBACK_SQLSTATES:
-                    last_serialization_error = exc
+                if (
+                    exc.sqlstate in _RETRYABLE_ROLLBACK_SQLSTATES
+                    or _is_retryable_pgadapter_internal_error(exc)
+                ):
+                    last_retryable_error = exc
                     continue
                 if isinstance(exc, psycopg.IntegrityError):
                     raise StoreConflict("Postgres write conflict") from exc
                 raise StoreUnavailable("Postgres could not service the storage operation") from exc
         raise StoreConflict(
-            "Postgres transaction repeatedly rolled back (serialization failure or deadlock)"
-        ) from last_serialization_error
+            "Postgres transaction repeatedly rolled back after a retryable database error"
+        ) from last_retryable_error
 
     def _read_entity_tx(
         self,
@@ -1065,9 +1103,7 @@ class PostgresStore:
                 if user is not None:
                     return user
 
-            user = User(
-                id=str(uuid.uuid4()), email=normalized_email, email_verified=email_verified
-            )
+            user = User(id=str(uuid.uuid4()), email=normalized_email, email_verified=email_verified)
             self._write_entity_tx(conn, "user", user.id, user)
             self._write_entity_tx(
                 conn,
@@ -2822,9 +2858,7 @@ class PostgresStore:
         model_ids: list[str],
     ) -> dict[str, UserProvidedModel]:
         unique_ids = list(
-            dict.fromkeys(
-                normalize_user_provided_model_id(model_id) for model_id in model_ids
-            )
+            dict.fromkeys(normalize_user_provided_model_id(model_id) for model_id in model_ids)
         )
         if not unique_ids:
             return {}
@@ -3334,6 +3368,73 @@ class PostgresStore:
                 raise ValueError("credit_balance_shard_missing")
 
     @staticmethod
+    def _ensure_earnings_account_tx(conn: Any, user_id: str) -> None:
+        """Seed separately because PGAdapter cannot execute our conflict increment."""
+
+        conn.execute(
+            "INSERT INTO tr_earnings_balance "
+            "(user_id, shard, total_earned, total_transferred, updated_at) "
+            "VALUES (%s, 0, 0, 0, CURRENT_TIMESTAMP) "
+            "ON CONFLICT (user_id, shard) DO NOTHING",
+            (user_id,),
+            prepare=False,
+        )
+
+    @staticmethod
+    def _reserve_earnings_balance_tx(
+        conn: Any,
+        user_id: str,
+        amount_microdollars: int,
+    ) -> bool:
+        """Check under lock; PGAdapter errors on a zero-row guarded update."""
+
+        row = conn.execute(
+            "SELECT total_earned, total_transferred FROM tr_earnings_balance "
+            "WHERE user_id = %s AND shard = 0 FOR UPDATE",
+            (user_id,),
+            prepare=False,
+        ).fetchone()
+        if row is None or int(row[0]) - int(row[1]) < amount_microdollars:
+            return False
+        cursor = conn.execute(
+            "UPDATE tr_earnings_balance "
+            "SET total_transferred = total_transferred + %s, "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE user_id = %s AND shard = 0",
+            (_int8_param(amount_microdollars), user_id),
+            prepare=False,
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError("earnings account disappeared during reservation")
+        return True
+
+    @staticmethod
+    def _release_earnings_balance_tx(
+        conn: Any,
+        user_id: str,
+        amount_microdollars: int,
+    ) -> bool:
+        row = conn.execute(
+            "SELECT total_transferred FROM tr_earnings_balance "
+            "WHERE user_id = %s AND shard = 0 FOR UPDATE",
+            (user_id,),
+            prepare=False,
+        ).fetchone()
+        if row is None or int(row[0]) < amount_microdollars:
+            return False
+        cursor = conn.execute(
+            "UPDATE tr_earnings_balance "
+            "SET total_transferred = total_transferred - %s, "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE user_id = %s AND shard = 0",
+            (_int8_param(amount_microdollars), user_id),
+            prepare=False,
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError("earnings account disappeared during release")
+        return True
+
+    @staticmethod
     def _insert_credit_movement_tx(conn: Any, movement: CreditMovement) -> None:
         conn.execute(
             "INSERT INTO tr_credit_movement "
@@ -3421,15 +3522,16 @@ class PostgresStore:
             )
             if not won:
                 return False
-            conn.execute(
-                "INSERT INTO tr_earnings_balance "
-                "(user_id, shard, total_earned, total_transferred, updated_at) "
-                "VALUES (%s, 0, %s, 0, CURRENT_TIMESTAMP) "
-                "ON CONFLICT (user_id, shard) DO UPDATE SET "
-                "total_earned = tr_earnings_balance.total_earned + EXCLUDED.total_earned, "
-                "updated_at = CURRENT_TIMESTAMP",
-                (user_id, amount),
+            self._ensure_earnings_account_tx(conn, user_id)
+            cursor = conn.execute(
+                "UPDATE tr_earnings_balance "
+                "SET total_earned = total_earned + %s, updated_at = CURRENT_TIMESTAMP "
+                "WHERE user_id = %s AND shard = 0",
+                (_int8_param(amount), user_id),
+                prepare=False,
             )
+            if cursor.rowcount != 1:
+                raise RuntimeError("earnings account disappeared during credit")
             self._insert_credit_movement_tx(
                 conn,
                 CreditMovement(
@@ -3448,9 +3550,7 @@ class PostgresStore:
                     authorization_id=(
                         event_id.split(":", 1)[1]
                         if is_app_markup
-                        else custom_model_markup_authorization_id_from_payout_event_id(
-                            event_id
-                        )
+                        else custom_model_markup_authorization_id_from_payout_event_id(event_id)
                         if is_custom_markup
                         else user_model_authorization_id_from_payout_event_id(event_id)
                     ),
@@ -3479,15 +3579,7 @@ class PostgresStore:
             )
             if not won:
                 return "duplicate"
-            cursor = conn.execute(
-                "UPDATE tr_earnings_balance "
-                "SET total_transferred = total_transferred + %s, "
-                "updated_at = CURRENT_TIMESTAMP "
-                "WHERE user_id = %s AND shard = 0 "
-                "AND (total_earned - total_transferred) >= %s",
-                (amount, user_id, amount),
-            )
-            if cursor.rowcount != 1:
+            if not self._reserve_earnings_balance_tx(conn, user_id, amount):
                 self._delete_entity_tx(conn, "stripe_event", event_id)
                 return "insufficient"
             self._credit_workspace_balance_tx(conn, workspace_id, amount)
@@ -3518,15 +3610,402 @@ class PostgresStore:
 
         return self._run_transaction(transfer)
 
+    def get_routable_payout_profile(
+        self,
+        user_id: str,
+    ) -> RoutablePayoutProfile | None:
+        return self._read_entity(
+            ROUTABLE_PAYOUT_PROFILE_KIND,
+            user_id,
+            RoutablePayoutProfile,
+        )
+
+    def get_routable_payout_profile_by_company(
+        self,
+        routable_company_id: str,
+    ) -> RoutablePayoutProfile | None:
+        link = self._read_entity(
+            ROUTABLE_PAYOUT_PROFILE_COMPANY_KIND,
+            routable_company_id,
+            dict,
+        )
+        if link is None:
+            return None
+        user_id = str(link.get("user_id") or "")
+        return self.get_routable_payout_profile(user_id) if user_id else None
+
+    def upsert_routable_payout_profile(
+        self,
+        profile: RoutablePayoutProfile,
+    ) -> RoutablePayoutProfile:
+        def upsert(conn: Any) -> RoutablePayoutProfile:
+            company_link = self._read_entity_tx(
+                conn,
+                ROUTABLE_PAYOUT_PROFILE_COMPANY_KIND,
+                profile.routable_company_id,
+                dict,
+                for_update=True,
+            )
+            if company_link is not None and company_link.get("user_id") != profile.user_id:
+                raise StoreConflict("Routable company is already linked to another user")
+            if company_link is None and not self._insert_entity_once_tx(
+                conn,
+                ROUTABLE_PAYOUT_PROFILE_COMPANY_KIND,
+                profile.routable_company_id,
+                {"user_id": profile.user_id},
+            ):
+                company_link = self._read_entity_tx(
+                    conn,
+                    ROUTABLE_PAYOUT_PROFILE_COMPANY_KIND,
+                    profile.routable_company_id,
+                    dict,
+                    for_update=True,
+                )
+                if company_link is None or company_link.get("user_id") != profile.user_id:
+                    raise StoreConflict("Routable company is already linked to another user")
+            previous = self._read_entity_tx(
+                conn,
+                ROUTABLE_PAYOUT_PROFILE_KIND,
+                profile.user_id,
+                RoutablePayoutProfile,
+                for_update=True,
+            )
+            if previous is not None and previous.routable_company_id != profile.routable_company_id:
+                self._delete_entity_tx(
+                    conn,
+                    ROUTABLE_PAYOUT_PROFILE_COMPANY_KIND,
+                    previous.routable_company_id,
+                )
+            self._write_entity_tx(
+                conn,
+                ROUTABLE_PAYOUT_PROFILE_KIND,
+                profile.user_id,
+                profile,
+            )
+            return profile
+
+        return self._run_transaction(upsert)
+
+    def reserve_earnings_cashout(
+        self,
+        cashout: EarningsCashout,
+        *,
+        idempotency_entity_id: str,
+    ) -> tuple[str, EarningsCashout | None]:
+        amount = self._positive_money_amount(cashout.amount_microdollars)
+        entity_id = payout_entity_id(cashout.user_id, cashout.id)
+
+        def reserve(conn: Any) -> tuple[str, EarningsCashout | None]:
+            won = self._insert_entity_once_tx(
+                conn,
+                EARNINGS_CASHOUT_IDEMPOTENCY_KIND,
+                idempotency_entity_id,
+                {
+                    "fingerprint": cashout.idempotency_fingerprint,
+                    "payout_id": cashout.id,
+                    "user_id": cashout.user_id,
+                },
+            )
+            if not won:
+                previous = self._read_entity_tx(
+                    conn,
+                    EARNINGS_CASHOUT_IDEMPOTENCY_KIND,
+                    idempotency_entity_id,
+                    dict,
+                )
+                if previous is None:
+                    raise StoreConflict("cash-out idempotency insert lost its row")
+                if previous.get("fingerprint") != cashout.idempotency_fingerprint:
+                    return "conflict", None
+                existing = self._read_entity_tx(
+                    conn,
+                    EARNINGS_CASHOUT_KIND,
+                    payout_entity_id(
+                        str(previous.get("user_id") or ""),
+                        str(previous.get("payout_id") or ""),
+                    ),
+                    EarningsCashout,
+                )
+                if existing is None:
+                    raise StoreConflict("cash-out idempotency record lost its payout")
+                return "duplicate", existing
+            if not self._insert_entity_once_tx(
+                conn,
+                EARNINGS_CASHOUT_KIND,
+                entity_id,
+                cashout,
+            ):
+                self._delete_entity_tx(
+                    conn,
+                    EARNINGS_CASHOUT_IDEMPOTENCY_KIND,
+                    idempotency_entity_id,
+                )
+                return "conflict", None
+            if not self._insert_entity_once_tx(
+                conn,
+                EARNINGS_CASHOUT_EXTERNAL_KIND,
+                cashout.external_id,
+                {"user_id": cashout.user_id, "payout_id": cashout.id},
+            ):
+                self._delete_entity_tx(conn, EARNINGS_CASHOUT_KIND, entity_id)
+                self._delete_entity_tx(
+                    conn,
+                    EARNINGS_CASHOUT_IDEMPOTENCY_KIND,
+                    idempotency_entity_id,
+                )
+                return "conflict", None
+            if not self._reserve_earnings_balance_tx(conn, cashout.user_id, amount):
+                self._delete_entity_tx(conn, EARNINGS_CASHOUT_KIND, entity_id)
+                self._delete_entity_tx(
+                    conn,
+                    EARNINGS_CASHOUT_EXTERNAL_KIND,
+                    cashout.external_id,
+                )
+                self._delete_entity_tx(
+                    conn,
+                    EARNINGS_CASHOUT_IDEMPOTENCY_KIND,
+                    idempotency_entity_id,
+                )
+                return "insufficient", None
+            self._insert_credit_movement_tx(
+                conn,
+                CreditMovement(
+                    account_id=f"user:{cashout.user_id}",
+                    movement_id=f"earnings_cashout:{cashout.id}",
+                    kind="earnings_cashout_reserved",
+                    amount_microdollars=-amount,
+                    counterparty_account_id="routable",
+                    created_at=cashout.created_at,
+                ),
+            )
+            return "accepted", cashout
+
+        return self._run_transaction(reserve)
+
+    def get_earnings_cashout(
+        self,
+        user_id: str,
+        payout_id: str,
+    ) -> EarningsCashout | None:
+        return self._read_entity(
+            EARNINGS_CASHOUT_KIND,
+            payout_entity_id(user_id, payout_id),
+            EarningsCashout,
+        )
+
+    def get_earnings_cashout_by_routable_payable(
+        self,
+        routable_payable_id: str,
+    ) -> EarningsCashout | None:
+        link = self._read_entity(
+            EARNINGS_CASHOUT_PAYABLE_KIND,
+            routable_payable_id,
+            dict,
+        )
+        if link is None:
+            return None
+        user_id = str(link.get("user_id") or "")
+        payout_id = str(link.get("payout_id") or "")
+        return self.get_earnings_cashout(user_id, payout_id) if user_id and payout_id else None
+
+    def get_earnings_cashout_by_external_id(
+        self,
+        external_id: str,
+    ) -> EarningsCashout | None:
+        link = self._read_entity(
+            EARNINGS_CASHOUT_EXTERNAL_KIND,
+            external_id,
+            dict,
+        )
+        if link is None:
+            return None
+        user_id = str(link.get("user_id") or "")
+        payout_id = str(link.get("payout_id") or "")
+        return self.get_earnings_cashout(user_id, payout_id) if user_id and payout_id else None
+
+    def list_earnings_cashouts(
+        self,
+        user_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[EarningsCashout]:
+        bounded = max(0, min(int(limit), 100))
+
+        def list_records(conn: Any) -> list[EarningsCashout]:
+            rows = conn.execute(
+                "SELECT body FROM tr_entities WHERE kind = %s "
+                "AND id LIKE %s ESCAPE '\\\\' ORDER BY id LIMIT %s",
+                (
+                    EARNINGS_CASHOUT_KIND,
+                    self._like_prefix(f"{user_id}#"),
+                    bounded,
+                ),
+            ).fetchall()
+            return [
+                EarningsCashout(**(json.loads(row[0]) if isinstance(row[0], str) else row[0]))
+                for row in rows
+            ]
+
+        return self._run_transaction(list_records)
+
+    def mark_earnings_cashout(
+        self,
+        user_id: str,
+        payout_id: str,
+        *,
+        state: str,
+        routable_payable_id: str | None = None,
+        routable_status: str | None = None,
+        error_code: str | None = None,
+        increment_attempts: bool = False,
+    ) -> EarningsCashout | None:
+        entity_id = payout_entity_id(user_id, payout_id)
+
+        def mark(conn: Any) -> EarningsCashout | None:
+            existing = self._read_entity_tx(
+                conn,
+                EARNINGS_CASHOUT_KIND,
+                entity_id,
+                EarningsCashout,
+                for_update=True,
+            )
+            if existing is None:
+                return None
+            payable_id = routable_payable_id or existing.routable_payable_id
+            link: dict[str, Any] | None = None
+            if payable_id:
+                link = self._read_entity_tx(
+                    conn,
+                    EARNINGS_CASHOUT_PAYABLE_KIND,
+                    payable_id,
+                    dict,
+                    for_update=True,
+                )
+                if link is not None and (
+                    link.get("user_id") != user_id or link.get("payout_id") != payout_id
+                ):
+                    raise StoreConflict("Routable payable is already linked")
+                if link is None and not self._insert_entity_once_tx(
+                    conn,
+                    EARNINGS_CASHOUT_PAYABLE_KIND,
+                    payable_id,
+                    {"user_id": user_id, "payout_id": payout_id},
+                ):
+                    link = self._read_entity_tx(
+                        conn,
+                        EARNINGS_CASHOUT_PAYABLE_KIND,
+                        payable_id,
+                        dict,
+                        for_update=True,
+                    )
+                    if link is None or (
+                        link.get("user_id") != user_id or link.get("payout_id") != payout_id
+                    ):
+                        raise StoreConflict("Routable payable is already linked")
+            balance_status = (
+                "paid" if routable_status in ROUTABLE_PAID_STATUSES else existing.balance_status
+            )
+            balance_revision = existing.balance_revision
+            if (
+                existing.balance_status == "released"
+                and routable_status in ROUTABLE_PENDING_STATUSES | ROUTABLE_PAID_STATUSES
+            ):
+                cursor = conn.execute(
+                    "UPDATE tr_earnings_balance "
+                    "SET total_transferred = total_transferred + %s, "
+                    "updated_at = CURRENT_TIMESTAMP "
+                    "WHERE user_id = %s AND shard = 0",
+                    (_int8_param(existing.amount_microdollars), user_id),
+                    prepare=False,
+                )
+                if cursor.rowcount != 1:
+                    raise StoreConflict("cash-out earnings account is missing")
+                balance_revision += 1
+                balance_status = "paid" if routable_status in ROUTABLE_PAID_STATUSES else "reserved"
+                self._insert_credit_movement_tx(
+                    conn,
+                    CreditMovement(
+                        account_id=f"user:{user_id}",
+                        movement_id=(f"earnings_cashout_reinstated:{payout_id}:{balance_revision}"),
+                        kind="earnings_cashout_reinstated",
+                        amount_microdollars=-existing.amount_microdollars,
+                        counterparty_account_id="routable",
+                    ),
+                )
+            updated = dataclasses.replace(
+                existing,
+                state=state,
+                balance_status=balance_status,
+                routable_payable_id=payable_id,
+                routable_status=routable_status or existing.routable_status,
+                error_code=error_code,
+                attempts=existing.attempts + int(increment_attempts),
+                balance_revision=balance_revision,
+                updated_at=iso_now(),
+            )
+            self._write_entity_tx(conn, EARNINGS_CASHOUT_KIND, entity_id, updated)
+            return updated
+
+        return self._run_transaction(mark)
+
+    def release_earnings_cashout(
+        self,
+        user_id: str,
+        payout_id: str,
+        *,
+        state: str,
+        routable_status: str | None = None,
+        error_code: str | None = None,
+    ) -> tuple[str, EarningsCashout | None]:
+        validate_routable_release_status(routable_status)
+        entity_id = payout_entity_id(user_id, payout_id)
+
+        def release(conn: Any) -> tuple[str, EarningsCashout | None]:
+            existing = self._read_entity_tx(
+                conn,
+                EARNINGS_CASHOUT_KIND,
+                entity_id,
+                EarningsCashout,
+                for_update=True,
+            )
+            if existing is None:
+                return "not_found", None
+            if existing.balance_status == "released":
+                return "duplicate", existing
+            if not self._release_earnings_balance_tx(
+                conn,
+                user_id,
+                existing.amount_microdollars,
+            ):
+                raise StoreConflict("cash-out reservation exceeds transferred earnings")
+            balance_revision = existing.balance_revision + 1
+            updated = dataclasses.replace(
+                existing,
+                state=state,
+                balance_status="released",
+                routable_status=routable_status or existing.routable_status,
+                error_code=error_code,
+                balance_revision=balance_revision,
+                updated_at=iso_now(),
+            )
+            self._insert_credit_movement_tx(
+                conn,
+                CreditMovement(
+                    account_id=f"user:{user_id}",
+                    movement_id=(f"earnings_cashout_reversal:{payout_id}:{balance_revision}"),
+                    kind="earnings_cashout_reversed",
+                    amount_microdollars=existing.amount_microdollars,
+                    counterparty_account_id="routable",
+                ),
+            )
+            self._write_entity_tx(conn, EARNINGS_CASHOUT_KIND, entity_id, updated)
+            return "released", updated
+
+        return self._run_transaction(release)
+
     def ensure_earnings_account(self, user_id: str) -> None:
         def ensure(conn: Any) -> None:
-            conn.execute(
-                "INSERT INTO tr_earnings_balance "
-                "(user_id, shard, total_earned, total_transferred, updated_at) "
-                "VALUES (%s, 0, 0, 0, CURRENT_TIMESTAMP) "
-                "ON CONFLICT (user_id, shard) DO NOTHING",
-                (user_id,),
-            )
+            self._ensure_earnings_account_tx(conn, user_id)
 
         self._run_transaction(ensure)
 

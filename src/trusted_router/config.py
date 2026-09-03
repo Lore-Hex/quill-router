@@ -252,6 +252,12 @@ SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     "paypal_client_id": frozenset({"control"}),
     "paypal_client_secret": frozenset({"control"}),
     "paypal_webhook_id": frozenset({"control"}),
+    "routable_enabled": frozenset({"control"}),
+    "routable_api_token": frozenset({"control"}),
+    "routable_webhook_secret": frozenset({"control"}),
+    "routable_company_id": frozenset({"control"}),
+    "routable_team_member_id": frozenset({"control"}),
+    "routable_withdraw_from_account_id": frozenset({"control"}),
     "adyen_enabled": frozenset({"control"}),
     "adyen_api_key": frozenset({"control"}),
     "adyen_client_key": frozenset({"control"}),
@@ -636,6 +642,17 @@ class Settings(BaseSettings):
     paypal_client_secret: str | None = None
     paypal_webhook_id: str | None = None
     paypal_api_base_url: str = "https://api-m.paypal.com"
+    # Creator USD cash-outs. This stays dark until every required Routable
+    # identifier and secret is configured. Enabling it never changes earnings
+    # accounting; it only permits an already-durable cash-out reservation to
+    # be submitted to Routable.
+    routable_enabled: bool = False
+    routable_api_token: str | None = None
+    routable_webhook_secret: str | None = None
+    routable_company_id: str | None = None
+    routable_team_member_id: str | None = None
+    routable_withdraw_from_account_id: str | None = None
+    routable_api_base_url: str = "https://api.routable.com"
     # Adyen is staged dark until the test merchant, HMAC webhook, and end-to-end
     # checkout canary are all green. Keep checkout enablement separate from
     # credentials so late webhooks remain verifiable after an operator disables
@@ -1531,6 +1548,27 @@ class Settings(BaseSettings):
             ]
             if missing_veriff:
                 raise ValueError("TR_VERIFF_ENABLED requires " + ", ".join(missing_veriff))
+        if self.routable_enabled:
+            missing_routable = [
+                name
+                for name, value in (
+                    ("TR_ROUTABLE_API_TOKEN", self.routable_api_token),
+                    ("TR_ROUTABLE_WEBHOOK_SECRET", self.routable_webhook_secret),
+                    ("TR_ROUTABLE_COMPANY_ID", self.routable_company_id),
+                    ("TR_ROUTABLE_TEAM_MEMBER_ID", self.routable_team_member_id),
+                    (
+                        "TR_ROUTABLE_WITHDRAW_FROM_ACCOUNT_ID",
+                        self.routable_withdraw_from_account_id,
+                    ),
+                )
+                if not value
+            ]
+            if missing_routable:
+                raise ValueError(
+                    "TR_ROUTABLE_ENABLED requires " + ", ".join(missing_routable)
+                )
+        if not self.routable_api_base_url.startswith("https://"):
+            raise ValueError("TR_ROUTABLE_API_BASE_URL must use https")
         if self.adyen_environment not in {"test", "live"}:
             raise ValueError("TR_ADYEN_ENVIRONMENT must be test or live")
         if not 0 <= self.adyen_card_fee_basis_points < 10_000:
@@ -1894,6 +1932,20 @@ class Settings(BaseSettings):
         return bool(self.paypal_client_id and self.paypal_client_secret)
 
     @property
+    def routable_configured(self) -> bool:
+        return bool(self.routable_enabled and self.routable_credentials_configured)
+
+    @property
+    def routable_credentials_configured(self) -> bool:
+        return bool(
+            self.routable_api_token
+            and self.routable_webhook_secret
+            and self.routable_company_id
+            and self.routable_team_member_id
+            and self.routable_withdraw_from_account_id
+        )
+
+    @property
     def phone_verification_funding_enforced(self) -> bool:
         if self.phone_verification_requires_funding is not None:
             return self.phone_verification_requires_funding
@@ -2062,6 +2114,13 @@ _LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
     "paypal_client_secret",
     "paypal_webhook_id",
     "paypal_api_base_url",
+    "routable_enabled",
+    "routable_api_token",
+    "routable_webhook_secret",
+    "routable_company_id",
+    "routable_team_member_id",
+    "routable_withdraw_from_account_id",
+    "routable_api_base_url",
     "adyen_api_key",
     "adyen_client_key",
     "adyen_hmac_key",

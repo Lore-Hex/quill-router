@@ -77,6 +77,24 @@ _ACTION_FORBIDDEN_CONFIG: tuple[tuple[str, object, str], ...] = (
     ("paypal_client_id", "paypal-client", "TR_PAYPAL_CLIENT_ID"),
     ("paypal_client_secret", "paypal-secret", "TR_PAYPAL_CLIENT_SECRET"),
     ("paypal_webhook_id", "paypal-webhook", "TR_PAYPAL_WEBHOOK_ID"),
+    ("routable_enabled", True, "TR_ROUTABLE_ENABLED"),
+    ("routable_api_token", "routable-token", "TR_ROUTABLE_API_TOKEN"),
+    (
+        "routable_webhook_secret",
+        "routable-webhook",
+        "TR_ROUTABLE_WEBHOOK_SECRET",
+    ),
+    ("routable_company_id", "routable-company", "TR_ROUTABLE_COMPANY_ID"),
+    (
+        "routable_team_member_id",
+        "routable-member",
+        "TR_ROUTABLE_TEAM_MEMBER_ID",
+    ),
+    (
+        "routable_withdraw_from_account_id",
+        "routable-account",
+        "TR_ROUTABLE_WITHDRAW_FROM_ACCOUNT_ID",
+    ),
     ("adyen_enabled", True, "TR_ADYEN_ENABLED"),
     ("adyen_api_key", "adyen-secret", "TR_ADYEN_API_KEY"),
     ("adyen_client_key", "adyen-client", "TR_ADYEN_CLIENT_KEY"),
@@ -162,6 +180,12 @@ _SENSITIVE_TEST_VALUES: dict[str, object] = {
     "paypal_client_id": "paypal-client",
     "paypal_client_secret": "paypal-secret",
     "paypal_webhook_id": "paypal-webhook",
+    "routable_enabled": True,
+    "routable_api_token": "routable-token",
+    "routable_webhook_secret": "routable-webhook",
+    "routable_company_id": "routable-company",
+    "routable_team_member_id": "routable-member",
+    "routable_withdraw_from_account_id": "routable-account",
     "adyen_enabled": True,
     "adyen_api_key": "adyen-api",
     "adyen_client_key": "adyen-client",
@@ -228,6 +252,12 @@ _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
             "paypal_client_id",
             "paypal_client_secret",
             "paypal_webhook_id",
+            "routable_enabled",
+            "routable_api_token",
+            "routable_webhook_secret",
+            "routable_company_id",
+            "routable_team_member_id",
+            "routable_withdraw_from_account_id",
             "adyen_enabled",
             "adyen_api_key",
             "adyen_client_key",
@@ -475,6 +505,14 @@ def test_every_sensitive_setting_rejects_an_unauthorized_deployed_surface(
             adyen_reference_key="r" * 32,
             adyen_merchant_account="merchant",
         )
+    if field_name == "routable_enabled":
+        overrides.update(
+            routable_api_token="routable-token",  # noqa: S106 - test value.
+            routable_webhook_secret="routable-webhook",  # noqa: S106 - test value.
+            routable_company_id="routable-company",
+            routable_team_member_id="routable-member",
+            routable_withdraw_from_account_id="routable-account",
+        )
     if field_name == "x402_enabled":
         overrides.update(
             stripe_secret_key="sk-test",  # noqa: S106 - test credential.
@@ -607,6 +645,14 @@ def test_actions_production_rejects_non_form_credentials_and_clients(
             adyen_hmac_key="ab" * 32,
             adyen_reference_key="r" * 32,
             adyen_merchant_account="merchant",
+        )
+    if name == "routable_enabled":
+        overrides.update(
+            routable_api_token="routable-token",  # noqa: S106 - test value.
+            routable_webhook_secret="routable-webhook",  # noqa: S106 - test value.
+            routable_company_id="routable-company",
+            routable_team_member_id="routable-member",
+            routable_withdraw_from_account_id="routable-account",
         )
     if name == "veriff_enabled":
         overrides.update(

@@ -594,6 +594,50 @@ class CreditMovement:
 
 
 @dataclass
+class RoutablePayoutProfile:
+    """Non-sensitive Routable vendor linkage for one verified creator.
+
+    Bank details and tax forms stay in Routable. TrustedRouter persists only
+    opaque Routable identifiers and the minimum status needed to prepare a
+    payout.
+    """
+
+    user_id: str
+    routable_company_id: str
+    company_status: str
+    recipient_type: str = "personal"
+    country_code: str = "US"
+    payment_method_id: str | None = None
+    payment_method_type: str | None = None
+    created_at: str = field(default_factory=iso_now)
+    updated_at: str = field(default_factory=iso_now)
+
+
+@dataclass
+class EarningsCashout:
+    """Durable reservation of creator earnings for an external USD payout."""
+
+    id: str
+    user_id: str
+    amount_microdollars: int
+    state: str
+    balance_status: str
+    idempotency_fingerprint: str
+    routable_idempotency_key: str
+    external_id: str
+    routable_company_id: str
+    payment_method_id: str
+    currency: str = "USD"
+    routable_payable_id: str | None = None
+    routable_status: str | None = None
+    error_code: str | None = None
+    attempts: int = 0
+    balance_revision: int = 0
+    created_at: str = field(default_factory=iso_now)
+    updated_at: str = field(default_factory=iso_now)
+
+
+@dataclass
 class Reservation:
     id: str
     workspace_id: str

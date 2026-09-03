@@ -349,6 +349,11 @@ grant_tr_deploy_secret_access "trustedrouter-adyen-test-api-key"
 grant_tr_deploy_secret_access "trustedrouter-adyen-test-client-key"
 grant_tr_deploy_secret_access "trustedrouter-adyen-test-hmac-key"
 grant_tr_deploy_secret_access "trustedrouter-adyen-test-reference-key"
+grant_tr_deploy_secret_access "trustedrouter-routable-api-token"
+grant_tr_deploy_secret_access "trustedrouter-routable-webhook-secret"
+grant_tr_deploy_secret_access "trustedrouter-routable-company-id"
+grant_tr_deploy_secret_access "trustedrouter-routable-team-member-id"
+grant_tr_deploy_secret_access "trustedrouter-routable-withdraw-from-account-id"
 
 # Axiom logging — ship structured logs to a dedicated dataset for
 # slice-and-dice analysis (request_id correlation, rate-limit hits,
@@ -378,6 +383,15 @@ ensure_secret_from_env_file "AWS_SECRET_ACCESS_KEY" "trustedrouter-aws-secret-ac
 ensure_secret_from_env_file "PAYPAL_CLIENT_ID" "trustedrouter-paypal-client-id"
 ensure_secret_from_env_file "PAYPAL_CLIENT_SECRET" "trustedrouter-paypal-client-secret"
 ensure_secret_from_env_file "PAYPAL_WEBHOOK_ID" "trustedrouter-paypal-webhook-id"
+ensure_secret_from_env_file "ROUTABLE_API_TOKEN" "trustedrouter-routable-api-token"
+ensure_secret_from_env_file \
+  "ROUTABLE_WEBHOOK_SECRET" "trustedrouter-routable-webhook-secret"
+ensure_secret_from_env_file "ROUTABLE_COMPANY_ID" "trustedrouter-routable-company-id"
+ensure_secret_from_env_file \
+  "ROUTABLE_TEAM_MEMBER_ID" "trustedrouter-routable-team-member-id"
+ensure_secret_from_env_file \
+  "ROUTABLE_WITHDRAW_FROM_ACCOUNT_ID" \
+  "trustedrouter-routable-withdraw-from-account-id"
 ensure_secret_from_env_file "ADYEN_API_KEY" "trustedrouter-adyen-test-api-key"
 ensure_secret_from_env_file "ADYEN_CLIENT_KEY" "trustedrouter-adyen-test-client-key"
 ensure_secret_from_env_file "ADYEN_HMAC_KEY" "trustedrouter-adyen-test-hmac-key"
