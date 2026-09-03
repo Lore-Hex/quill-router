@@ -1054,6 +1054,12 @@ def test_closed_lease_is_absorbing_for_lifecycle_transitions() -> None:
     ("outcome", "actual", "state", "authorization_outcome"),
     [
         (FinalizationOutcome.SETTLED, 0, AllocationState.SETTLED, AuthorizationOutcome.SETTLED),
+        (
+            FinalizationOutcome.REAPED_SNAPSHOT,
+            250,
+            AllocationState.SETTLED,
+            AuthorizationOutcome.SETTLED,
+        ),
         (FinalizationOutcome.REFUNDED, 0, AllocationState.REFUNDED, AuthorizationOutcome.REFUNDED),
         (None, None, AllocationState.ABANDONED, AuthorizationOutcome.TERMINAL_NO_OUTCOME),
         (
@@ -1078,7 +1084,7 @@ def test_mirror_mapping_and_same_outcome_replay_are_exact(
     assert first.allocation.state == state
     assert first.allocation.authorization_outcome == authorization_outcome
     assert replay.replayed
-    if outcome == FinalizationOutcome.SETTLED and actual is not None:
+    if outcome is not None and outcome.charged and actual is not None:
         with pytest.raises(SpendLeaseConflictError, match="different terminal"):
             first.lease.mirror(replace(observation, finalized_cost_microdollars=actual + 1))
 

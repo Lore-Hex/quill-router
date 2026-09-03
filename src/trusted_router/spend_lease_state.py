@@ -139,6 +139,11 @@ class AuthorizationDurability(StrEnum):
 class FinalizationOutcome(StrEnum):
     SETTLED = "settled"
     REFUNDED = "refunded"
+    REAPED_SNAPSHOT = "reaped_snapshot"
+
+    @property
+    def charged(self) -> bool:
+        return self in {self.SETTLED, self.REAPED_SNAPSHOT}
 
 
 class ClaimRegistration(StrEnum):
@@ -577,8 +582,10 @@ class SpendLeaseAllocation:
                 raise SpendLeaseConflictError("terminal allocation conflicts with open observation")
             return AllocationTransition(self, True)
 
-        if observation.finalization_outcome == FinalizationOutcome.SETTLED and (
-            observation.finalized_cost_microdollars is not None
+        if (
+            observation.finalization_outcome is not None
+            and observation.finalization_outcome.charged
+            and observation.finalized_cost_microdollars is not None
         ):
             if observation.finalized_cost_microdollars > self.allocated_micro:
                 raise SpendLeaseMonetaryMismatch(

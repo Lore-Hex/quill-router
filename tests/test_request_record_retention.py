@@ -604,7 +604,11 @@ def test_typed_reaper_compacts_unresolved_authorization(
     assert reservation["actual_micro"] == 0
     assert reservation["terminal_at"] is not None
     assert auth_row["settled"] is True
-    assert auth_row["payload"] is None
+    assert auth_row["payload"] is not None
+    payload = json.loads(auth_row["payload"])
+    assert payload["id"] == authorization.id
+    assert payload["credit_reservation_id"] == authorization.credit_reservation_id
+    assert payload["finalization_outcome"] == "refunded"
     assert auth_row["terminal_at"] is not None
 
 

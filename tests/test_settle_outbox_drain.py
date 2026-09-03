@@ -33,6 +33,7 @@ from trusted_router.services.settle_outbox_apply import ApplyOutcome
 from trusted_router.storage import InMemoryStore, configure_store
 from trusted_router.storage_gcp_authorize import (
     AuthorizeOutcome,
+    ReapPassResult,
     SettleOutcome,
     reap_expired_reservations,
     settle_atomic,
@@ -867,6 +868,7 @@ def test_settle_replay_emits_no_timing_line(
 
     assert replay.status_code == 200, replay.text
     assert replay.json()["data"]["already_settled"] is True
+    assert replay.json()["data"]["disposition"] == "already_finalized"
     assert _settle_timing_records(caplog) == []
 
 
@@ -881,6 +883,7 @@ def test_flag_on_refund_enqueues_refund_done_row(fake_store: tuple[Any, Any, Any
     resp = client.post("/v1/internal/gateway/refund", json=_settle_json(auth.id))
 
     assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["disposition"] == "finalized"
     row = _outbox(store).get(auth.id, "refund")
     assert row is not None
     assert row.status == "done"
@@ -925,7 +928,13 @@ def test_inline_finalize_false_leaves_outbox_pending(fake_store: tuple[Any, Any,
     resp = client.post("/v1/internal/gateway/settle", json=_settle_json(auth.id))
 
     assert resp.status_code == 200, resp.text
-    assert resp.json()["data"]["already_settled"] is True
+    assert resp.json()["data"] == {
+        "authorization_id": auth.id,
+        "settled": False,
+        "already_settled": False,
+        "disposition": "intent_durable",
+        "finalization_outcome": "pending",
+    }
     row = _outbox(store).get(auth.id, "settle")
     assert row is not None and row.status == "pending"
     assert db.reservations[auth.credit_reservation_id]["actual_micro"] == 0
@@ -1539,6 +1548,79 @@ def test_activity_pending_dead_row_reset_to_pending_is_reclaimed(
     assert ob.get(auth.id, "settle").status == "done"
 
 
+def test_drain_resolves_late_intent_after_reaped_snapshot_and_logs_loss(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, _db, _bt = fake_store
+    auth = _bare_authorization("gwa-late-reaped-snapshot")
+    ob = _outbox(store)
+    ob.enqueue(_row(auth, cost=777_777))
+    monkeypatch.setattr(
+        drain_mod,
+        "apply_frozen_settle",
+        lambda _row: ApplyOutcome.REAPED_SNAPSHOT,
+    )
+
+    with caplog.at_level(logging.WARNING, logger=drain_mod.__name__):
+        result = drain_mod.drain_settle_outbox(10)
+
+    assert result["outcomes"] == {ApplyOutcome.REAPED_SNAPSHOT: 1}
+    settled = ob.get(auth.id, "settle")
+    assert settled is not None and settled.status == "done"
+    assert "gateway.settle_lost" in caplog.text
+    assert "disposition=reaped_snapshot" in caplog.text
+
+
+def test_reaper_pass_emits_metrics_and_burst_alert(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, _db, _bt = fake_store
+    alerts: list[tuple[str, list[str], dict[str, str]]] = []
+    monkeypatch.setattr(
+        type(store),
+        "reap_expired_reservations_result",
+        lambda _self, **_kwargs: ReapPassResult(
+            count=20,
+            released_hold_micro=4_000,
+            started_markers=5,
+            snapshot_bookings=3,
+            out_of_cohort=2,
+            not_eligible=4,
+            guarded=5,
+            guard_lost=1,
+            errors=2,
+            refunded=17,
+        ),
+    )
+    monkeypatch.setattr(
+        drain_mod,
+        "ops_alert",
+        lambda message, *, fingerprint, tags: alerts.append(
+            (message, fingerprint, tags)
+        ),
+    )
+
+    with caplog.at_level(logging.INFO, logger=drain_mod.__name__):
+        result = drain_mod.drain_settle_outbox(
+            10,
+            reap_snapshot_booking_enabled=True,
+        )
+
+    assert result["reaped"] == 20
+    assert (
+        "gateway.reaped count=20 released_hold_micro=4000 "
+        "started_marker_share=0.250000 snapshot_bookings=3 "
+        "out_of_cohort_share=0.100000 not_eligible=4 guarded=5 "
+        "guard_lost=1 errors=2 refunded=17"
+    ) in caplog.text
+    assert len(alerts) == 1
+    assert alerts[0][1] == ["gateway", "reaped-burst"]
+
+
 @pytest.mark.parametrize(
     "since",
     [
@@ -1879,7 +1961,8 @@ def test_lost_charge_recovery_end_to_end(
         raise_server_exceptions=False,
     )
     first = client.post("/v1/internal/gateway/settle", json=_settle_json(auth.id))
-    assert first.status_code == 500
+    assert first.status_code == 200, first.text
+    assert first.json()["data"]["disposition"] == "intent_durable"
     row = _outbox(store).get(auth.id, "settle")
     assert row is not None and row.status == "pending"
     assert db.reservations[auth.credit_reservation_id]["settled"] is False
@@ -1930,9 +2013,14 @@ def test_regional_settlement_failure_is_retryable_after_outbox_enqueue(
         json=_settle_json(auth.id),
     )
 
-    assert response.status_code == 503
-    assert response.headers["retry-after"] == "1"
-    assert response.json()["error"]["type"] == "service_unavailable"
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == {
+        "authorization_id": auth.id,
+        "settled": False,
+        "already_settled": False,
+        "disposition": "intent_durable",
+        "finalization_outcome": "pending",
+    }
     row = _outbox(store).get(auth.id, "settle")
     assert row is not None and row.status == "pending"
     assert db.reservations[auth.credit_reservation_id]["settled"] is False
@@ -1968,7 +2056,8 @@ def test_user_model_inline_finalize_loss_repairs_one_payout_from_frozen_outbox(
         },
     )
     assert response.status_code == 200, response.text
-    assert response.json()["data"]["already_settled"] is True
+    assert response.json()["data"]["disposition"] == "intent_durable"
+    assert response.json()["data"]["already_settled"] is False
     row = _outbox(store).get(auth.id, "settle")
     assert row is not None
     assert row.status == "pending"

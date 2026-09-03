@@ -260,6 +260,38 @@ def test_open_sweep_binds_as_last_resort_without_incrementing_attempts(
     assert row["attempts"] == 0
 
 
+def test_open_sweep_treats_reaped_snapshot_as_a_charged_settlement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, database, ledger = _store()
+    identity = _identity(expires_at=NOW + timedelta(minutes=5))
+    _insert_candidate(store, identity)
+    _open_candidate(store, identity)
+    database.spend_lease_open[identity.lease_id]["next_attempt_at"] = NOW
+    ledger.initialize(_local_candidate(identity), region=REGION)
+    _allocate(ledger, identity)
+    _seed_global(store, identity, state="ACTIVE")
+
+    class Authorization:
+        id = identity.creating_authorization_id
+        spend_lease_id = identity.lease_id
+        spend_lease_gen = identity.gen
+        spend_lease_allocated_micro = 500
+        finalization_outcome = "reaped_snapshot"
+        finalized_cost_microdollars = 120
+        settled = True
+
+    monkeypatch.setattr(type(store), "get_gateway_authorization", lambda *_: Authorization())
+
+    result = reconcile_spend_leases(store, now=NOW)
+
+    local = ledger.get(identity.lease_id, region=REGION)
+    assert result["deferred"] == 1
+    assert local is not None
+    assert local.allocations[0].state == AllocationState.SETTLED
+    assert local.allocations[0].actual_micro == 120
+
+
 def test_reconciler_monetary_mismatch_quarantines_with_proof_and_replays(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,

@@ -231,7 +231,7 @@ def mirror_finalized_spend_lease_best_effort(store: Any, authorization: GatewayA
             finalization_outcome=outcome,
             finalized_cost_microdollars=(
                 authorization.finalized_cost_microdollars
-                if outcome == FinalizationOutcome.SETTLED
+                if outcome is not None and outcome.charged
                 else None
             ),
         )

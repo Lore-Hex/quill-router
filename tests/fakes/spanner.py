@@ -1038,6 +1038,13 @@ class _FakeTransaction:
             return updated
         if "UPDATE tr_reservation SET settled=true" in sql:
             _require_pred(sql, "reservation_id=@rid AND settled=false", "reservation-claim")
+            expiry_guarded = "reap_now" in p
+            if expiry_guarded:
+                _require_pred(
+                    sql,
+                    "AND expires_at < @reap_now",
+                    "reservation-claim-expiry",
+                )
             guarded = "tr_settle_outbox" in sql
             if guarded:
                 _require_pred(
@@ -1062,7 +1069,18 @@ class _FakeTransaction:
                     "reservation-claim-retention-unguarded",
                 )
             rec = self._reservation_current(p["rid"])
-            if rec is None or rec["settled"]:
+            if (
+                rec is None
+                or rec["settled"]
+                or (
+                    expiry_guarded
+                    and (
+                        rec.get("expires_at") is None
+                        or _utc_datetime(rec["expires_at"])
+                        >= _utc_datetime(p["reap_now"])
+                    )
+                )
+            ):
                 return 0  # missing or already-claimed (replay)
             terminal_at = p["terminal_at"]
             if guarded and self._has_guarded_outbox_intent(str(rec["authorization_id"])):
@@ -1200,9 +1218,14 @@ class _FakeTransaction:
             )
             return 1
         if sql.startswith("UPDATE tr_gateway_authorization SET settled=true, payload=@payload"):
+            _require_pred(
+                sql,
+                "WHERE authorization_id=@authorization_id AND settled=false",
+                "authorization-finalize-guard",
+            )
             authorization_id = p["authorization_id"]
             rec = self._gateway_authorization_current(authorization_id)
-            if rec is None:
+            if rec is None or rec.get("settled"):
                 return 0
             new = dict(
                 rec,
@@ -1256,22 +1279,6 @@ class _FakeTransaction:
             if rec is None or rec.get("terminal_at") is None:
                 return 0
             new = dict(rec, terminal_at=None)
-            self.pending_writes.append(("update_gateway_authorization", authorization_id, new))
-            return 1
-        if sql.startswith(
-            "UPDATE tr_gateway_authorization SET settled=true, terminal_at=@terminal_at"
-        ):
-            _require_pred(sql, "AND settled=false", "authorization-reaper-close")
-            authorization_id = p["authorization_id"]
-            rec = self._gateway_authorization_current(authorization_id)
-            if rec is None or rec.get("settled"):
-                return 0
-            new = dict(
-                rec,
-                settled=True,
-                terminal_at=p["terminal_at"],
-                payload=None,
-            )
             self.pending_writes.append(("update_gateway_authorization", authorization_id, new))
             return 1
         if sql.startswith("INSERT OR IGNORE INTO tr_entities"):
@@ -3123,7 +3130,8 @@ def _execute_sql(
     if "FROM tr_reservation WHERE settled=false AND expires_at" in sql:
         _require_pred(
             sql,
-            "SELECT reservation_id, authorization_id FROM tr_reservation",
+            "SELECT reservation_id, authorization_id, credit_reserved_micro, "
+            "key_reserved_micro FROM tr_reservation",
             "reaper-scan",
         )
         _require_pred(sql, "expires_at < @now", "reaper-scan")
@@ -3153,7 +3161,14 @@ def _execute_sql(
                     for row in db.settle_outbox.values()
                 ):
                     continue
-            out.append([rid, rec.get("authorization_id")])
+            out.append(
+                [
+                    rid,
+                    rec.get("authorization_id"),
+                    rec.get("credit_reserved_micro"),
+                    rec.get("key_reserved_micro"),
+                ]
+            )
             if len(out) >= limit:
                 break
         return out

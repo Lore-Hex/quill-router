@@ -898,6 +898,10 @@ class Settings(BaseSettings):
     # code rollout while authorize continues to expose cohort metadata.
     stage_d_heartbeat_enabled: bool = True
     heartbeat_grace_seconds: int = 300
+    # Decision 70's billing change. Heartbeats and guarded zero refunds ship
+    # first; only an explicit rollout may book a crashed request's last durable
+    # usage snapshot.
+    reap_snapshot_booking_enabled: bool = False
     # Dedicated Stage A traffic. The key belongs to a Credits-only pilot
     # workspace and is loaded lazily from Secret Manager by the isolated
     # once-a-minute synthetic job; it is never placed in an environment

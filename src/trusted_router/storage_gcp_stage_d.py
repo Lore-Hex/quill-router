@@ -7,6 +7,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from trusted_router.app_markup_billing import app_markup_microdollars
+from trusted_router.catalog import endpoint_for_id
+from trusted_router.pricing import signed_receipt_price_microdollars
 from trusted_router.stage_d import (
     endpoint_cost_microdollars_from_document,
     parse_pricing_snapshot,
@@ -96,18 +99,20 @@ def heartbeat_gateway_atomic(
                 return reject("stale_seq")
             if stored_seq == 0:
                 return reject("stale_seq")
-            stored_usage = _stored_usage(authorization.delivered_usage)
+            stored_usage = delivered_usage_counts(authorization.delivered_usage)
             document = parse_pricing_snapshot(authorization.pricing_snapshot)
             cap_micro = _cap_micro(authorization, credit_reserved_micro)
+            stored_endpoint_id = str(authorization.selected_endpoint_id)
             return HeartbeatResult(
                 accepted=True,
                 seq=seq,
                 expires_at_ms=_epoch_millis(expires_at),
                 cap_micro=cap_micro,
-                running_micro=_running_micro(
+                running_micro=delivered_usage_charge_microdollars(
+                    authorization,
                     document,
-                    authorization.provider,
-                    str(authorization.selected_endpoint_id),
+                    _selected_provider(authorization, stored_endpoint_id),
+                    stored_endpoint_id,
                     stored_usage,
                 ),
                 replay=True,
@@ -115,7 +120,7 @@ def heartbeat_gateway_atomic(
 
         if seq > 1 and selected_endpoint_id != authorization.selected_endpoint_id:
             return reject("endpoint_mismatch")
-        stored_usage = _stored_usage(authorization.delivered_usage)
+        stored_usage = delivered_usage_counts(authorization.delivered_usage)
         if any(int(usage[name]) < int(stored_usage[name]) for name in usage):
             return reject("usage_regression")
         if _usage_exceeds_authorized_tokens(authorization, usage):
@@ -123,15 +128,18 @@ def heartbeat_gateway_atomic(
 
         document = parse_pricing_snapshot(authorization.pricing_snapshot)
         try:
-            running_micro = _running_micro(
+            running_micro = delivered_usage_charge_microdollars(
+                authorization,
                 document,
-                authorization.provider,
+                _selected_provider(authorization, selected_endpoint_id),
                 selected_endpoint_id,
                 usage,
             )
         except ValueError:
             return reject("endpoint_mismatch")
         cap_micro = _cap_micro(authorization, credit_reserved_micro)
+        if running_micro > cap_micro:
+            return reject("usage_exceeds_cap")
         updated = transaction.execute_update(
             "UPDATE tr_gateway_authorization SET heartbeat_seq=@seq, "
             "heartbeat_at=@heartbeat_at, heartbeat_hash=@heartbeat_hash, "
@@ -195,7 +203,7 @@ def heartbeat_gateway_atomic(
         return rejected.result
 
 
-def _stored_usage(value: str | None) -> dict[str, int]:
+def delivered_usage_counts(value: str | None) -> dict[str, int]:
     empty = {
         "input_tokens": 0,
         "output_tokens": 0,
@@ -210,7 +218,9 @@ def _stored_usage(value: str | None) -> dict[str, int]:
     return {name: int(parsed.get(name, 0)) for name in empty}
 
 
-def _priced_prompt(provider: str, usage: dict[str, int]) -> tuple[int, int]:
+def normalized_delivered_prompt(
+    provider: str, usage: dict[str, int]
+) -> tuple[int, int]:
     reported = int(usage["input_tokens"])
     cached = int(usage["cache_read_input_tokens"])
     created = int(usage["cache_creation_input_tokens"])
@@ -221,13 +231,13 @@ def _priced_prompt(provider: str, usage: dict[str, int]) -> tuple[int, int]:
     return reported, reported
 
 
-def _running_micro(
+def delivered_usage_cost_microdollars(
     document: dict[str, Any],
     provider: str,
     endpoint_id: str,
     usage: dict[str, int],
 ) -> int:
-    uncached, _total_prompt = _priced_prompt(provider, usage)
+    uncached, _total_prompt = normalized_delivered_prompt(provider, usage)
     return endpoint_cost_microdollars_from_document(
         document,
         endpoint_id,
@@ -239,12 +249,39 @@ def _running_micro(
     )
 
 
+def delivered_usage_charge_microdollars(
+    authorization: Any,
+    document: dict[str, Any],
+    provider: str,
+    endpoint_id: str,
+    usage: dict[str, int],
+) -> int:
+    """Price a heartbeat through the same frozen downstream fee layers as settle."""
+
+    charge = delivered_usage_cost_microdollars(
+        document,
+        provider,
+        endpoint_id,
+        usage,
+    )
+    receipt_fee_basis_points = int(authorization.receipt_fee_basis_points or 0)
+    if receipt_fee_basis_points > 0:
+        charge = signed_receipt_price_microdollars(
+            charge,
+            receipt_fee_basis_points,
+        )
+    app_markup_basis_points = int(authorization.app_markup_basis_points or 0)
+    if app_markup_basis_points > 0:
+        charge += app_markup_microdollars(charge, app_markup_basis_points)
+    return charge
+
+
 def _usage_exceeds_authorized_tokens(authorization: Any, usage: dict[str, int]) -> bool:
     prompt_limit = authorization.stage_d_prompt_tokens
     output_limit = authorization.stage_d_max_output_tokens
     if prompt_limit is None or output_limit is None:
         return True
-    _uncached, total_prompt = _priced_prompt(authorization.provider, usage)
+    _uncached, total_prompt = normalized_delivered_prompt(authorization.provider, usage)
     return total_prompt + int(usage["output_tokens"]) > int(prompt_limit) + int(output_limit)
 
 
@@ -253,6 +290,11 @@ def _cap_micro(authorization: Any, credit_reserved_micro: Any) -> int:
     if authorization.spend_lease_allocated_micro is not None:
         cap = min(cap, int(authorization.spend_lease_allocated_micro))
     return cap
+
+
+def _selected_provider(authorization: Any, endpoint_id: str) -> str:
+    endpoint = endpoint_for_id(endpoint_id)
+    return endpoint.provider if endpoint is not None else str(authorization.provider)
 
 
 def _utc(value: datetime) -> datetime:

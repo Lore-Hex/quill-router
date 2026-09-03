@@ -1133,6 +1133,7 @@ def test_gateway_settle_ancient_legacy_reservation_missing_typed_row_is_clean() 
         "authorization_id": auth.id,
         "settled": False,
         "already_settled": True,
+        "disposition": "intent_durable",
         "finalization_outcome": "pending",
     }
     assert auth.credit_reservation_id not in db.reservations
