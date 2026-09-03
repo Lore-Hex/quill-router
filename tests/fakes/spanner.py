@@ -967,6 +967,29 @@ class _FakeTransaction:
             record["terminal_at"] = None
             self.pending_writes.append(("insert_reservation", record))
             return 1
+        if sql.startswith("UPDATE tr_reservation SET expires_at=GREATEST"):
+            _require_pred(
+                sql,
+                "expires_at=GREATEST(expires_at,@renewed_expires_at)",
+                "stage-d-heartbeat-renewal",
+            )
+            _require_pred(
+                sql,
+                "WHERE reservation_id=@rid AND settled=false",
+                "stage-d-heartbeat-renewal",
+            )
+            rec = self._reservation_current(p["rid"])
+            if rec is None or rec.get("settled"):
+                return 0
+            new = dict(
+                rec,
+                expires_at=max(
+                    _utc_datetime(rec["expires_at"]),
+                    _utc_datetime(p["renewed_expires_at"]),
+                ),
+            )
+            self.pending_writes.append(("update_reservation", p["rid"], new))
+            return 1
         if (
             sql.startswith("UPDATE tr_reservation SET terminal_at=@terminal_at")
             and "IN UNNEST" in sql
@@ -1115,6 +1138,51 @@ class _FakeTransaction:
             record["settled"] = False
             record["terminal_at"] = None
             self.pending_writes.append(("insert_gateway_authorization", authorization_id, record))
+            return 1
+        if sql.startswith("UPDATE tr_gateway_authorization SET heartbeat_seq=@seq"):
+            _require_pred(
+                sql,
+                "started_at=IF(@seq=1 AND started_at IS NULL,@started_at,started_at)",
+                "stage-d-heartbeat-write-once-start",
+            )
+            _require_pred(
+                sql,
+                "selected_endpoint_id=IF(@seq=1 AND selected_endpoint_id IS NULL,@selected_endpoint_id,selected_endpoint_id)",
+                "stage-d-heartbeat-write-once-endpoint",
+            )
+            _require_pred(
+                sql,
+                "WHERE authorization_id=@authorization_id AND settled=false",
+                "stage-d-heartbeat-guard",
+            )
+            _require_pred(
+                sql,
+                "AND COALESCE(heartbeat_seq,0)<@seq",
+                "stage-d-heartbeat-sequence-guard",
+            )
+            authorization_id = p["authorization_id"]
+            rec = self._gateway_authorization_current(authorization_id)
+            if (
+                rec is None
+                or rec.get("settled")
+                or int(rec.get("heartbeat_seq") or 0) >= int(p["seq"])
+            ):
+                return 0
+            new = dict(
+                rec,
+                heartbeat_seq=int(p["seq"]),
+                heartbeat_at=p["heartbeat_at"],
+                heartbeat_hash=p["heartbeat_hash"],
+                delivered_usage=p["delivered_usage"],
+            )
+            if int(p["seq"]) == 1:
+                if new.get("started_at") is None:
+                    new["started_at"] = p["started_at"]
+                if new.get("selected_endpoint_id") is None:
+                    new["selected_endpoint_id"] = p["selected_endpoint_id"]
+            self.pending_writes.append(
+                ("update_gateway_authorization", authorization_id, new)
+            )
             return 1
         if sql.startswith("INSERT INTO tr_generation"):
             generation_id = str(p["generation_id"])

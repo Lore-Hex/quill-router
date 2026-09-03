@@ -3248,6 +3248,15 @@ class SpannerBigtableStore:
             return typed
         return self.api_keys.get_gateway_authorization(authorization_id)
 
+    def heartbeat_gateway_typed(self, **kwargs: Any) -> Any:
+        from trusted_router.storage_gcp_stage_d import heartbeat_gateway_atomic
+
+        return heartbeat_gateway_atomic(
+            self._database,
+            self._param_types,
+            **kwargs,
+        )
+
     def get_gateway_authorization_by_idempotency_key(
         self, workspace_id: str, key_hash: str, idempotency_key: str
     ) -> GatewayAuthorization | None:
@@ -3705,6 +3714,7 @@ class SpannerBigtableStore:
             regional_lease_id=selected_global.lease_id,
             regional_fencing_token=selected_global.fencing_token,
             regional_hold_id=authorization_id,
+            stage_d_reason="pricing_kind",
         )
         try:
             result = record_regional_gateway_authorization(
@@ -4059,6 +4069,10 @@ class SpannerBigtableStore:
         window_limits: dict[str, int] | None = None,
         spend_lease: SpendLeaseArtifact | None = None,
         spend_lease_binding_plan: Any = None,
+        pricing_snapshot: str | None = None,
+        stage_d_reason: str | None = None,
+        stage_d_prompt_tokens: int | None = None,
+        stage_d_max_output_tokens: int | None = None,
     ) -> tuple[str, GatewayAuthorization | None]:
         """Route-facing typed authorize. Runs the atomic conditional-DML authorize
         (holds + reservation + gateway_authorization DML-insert) and returns
@@ -4148,6 +4162,11 @@ class SpannerBigtableStore:
                 spend_lease_boot_kid=spend_lease.boot_kid if spend_lease else None,
                 spend_lease_catalog_version=(spend_lease.catalog_version if spend_lease else None),
                 spend_lease_status=spend_lease.lease_status if spend_lease else None,
+                heartbeat_seq=0 if pricing_snapshot is not None else None,
+                pricing_snapshot=pricing_snapshot,
+                stage_d_reason=stage_d_reason,
+                stage_d_prompt_tokens=stage_d_prompt_tokens,
+                stage_d_max_output_tokens=stage_d_max_output_tokens,
             )
             built_authorizations[authorization_id] = built
             base_authorizations[authorization_id] = built

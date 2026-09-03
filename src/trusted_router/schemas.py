@@ -290,6 +290,7 @@ class GatewayAuthorizeRequest(_Lenient):
     max_completion_tokens: int | None = Field(default=None, ge=1)
     max_tokens: int | None = Field(default=None, ge=1)
     service_tier: str | None = Field(default=None, min_length=1, max_length=20)
+    stream: bool | None = None
     region: str | None = None
     user: str | None = Field(default=None, max_length=256)
     session_id: str | None = Field(default=None, max_length=256)
@@ -514,6 +515,49 @@ class GatewaySettleRequest(_Lenient):
     @property
     def selected_endpoint_id(self) -> str | None:
         return self.selected_endpoint or self.endpoint
+
+
+class GatewayHeartbeatUsage(_Strict):
+    actual_input_tokens: int | None = Field(default=None, ge=0)
+    actual_output_tokens: int | None = Field(default=None, ge=0)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    cache_read_input_tokens: int | None = Field(default=None, ge=0)
+    cache_creation_input_tokens: int | None = Field(default=None, ge=0)
+    price_tier_input_tokens: int | None = Field(default=None, ge=0)
+    reasoning_tokens: int | None = Field(default=None, ge=0)
+
+    @property
+    def input_count(self) -> int:
+        if self.actual_input_tokens is not None:
+            return self.actual_input_tokens
+        return self.input_tokens or 0
+
+    @property
+    def output_count(self) -> int:
+        if self.actual_output_tokens is not None:
+            return self.actual_output_tokens
+        return self.output_tokens or 0
+
+    def canonical_counts(self) -> dict[str, int]:
+        return {
+            "input_tokens": self.input_count,
+            "output_tokens": self.output_count,
+            "cache_read_input_tokens": self.cache_read_input_tokens or 0,
+            "cache_creation_input_tokens": self.cache_creation_input_tokens or 0,
+            "price_tier_input_tokens": self.price_tier_input_tokens or 0,
+            "reasoning_tokens": self.reasoning_tokens or 0,
+        }
+
+
+class GatewayHeartbeatRequest(_Strict):
+    authorization_id: str = Field(min_length=1, max_length=128)
+    seq: int = Field(ge=1)
+    started_at_ms: int = Field(ge=0)
+    selected_endpoint_id: str = Field(min_length=1, max_length=128)
+    usage: GatewayHeartbeatUsage
+    elapsed_ms: int = Field(ge=0)
+    stream: bool
 
 
 def model_to_dict(model: BaseModel) -> dict[str, Any]:

@@ -1067,6 +1067,10 @@ class TypedBillingStore(Protocol):
         window_limits: dict[str, int] | None = ...,
         spend_lease: SpendLeaseArtifact | None = ...,
         spend_lease_binding_plan: Any = ...,
+        pricing_snapshot: str | None = ...,
+        stage_d_reason: str | None = ...,
+        stage_d_prompt_tokens: int | None = ...,
+        stage_d_max_output_tokens: int | None = ...,
     ) -> tuple[str, GatewayAuthorization | None]: ...
 
     def typed_finalize_gateway_authorization(

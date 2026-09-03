@@ -70,14 +70,16 @@ def insert_gateway_authorization(
         "terminal_at, payload, spend_lease_id, spend_lease_gen, "
         "spend_lease_allocated_micro, spend_lease_token, spend_lease_status, "
         "spend_lease_exp, idempotency_fingerprint, finalization_outcome, "
-        "finalized_cost_microdollars"
+        "finalized_cost_microdollars, started_at, heartbeat_seq, heartbeat_at, "
+        "heartbeat_hash, selected_endpoint_id, delivered_usage, pricing_snapshot"
         ") VALUES ("
         "@authorization_id, @workspace_id, @key_hash, @reservation_id, @model_id, "
         "@provider, @usage_type, @estimated_microdollars, false, @created_at, "
         "NULL, @payload, @spend_lease_id, @spend_lease_gen, "
         "@spend_lease_allocated_micro, @spend_lease_token, @spend_lease_status, "
         "@spend_lease_exp, @idempotency_fingerprint, @finalization_outcome, "
-        "@finalized_cost_microdollars"
+        "@finalized_cost_microdollars, @started_at, @heartbeat_seq, @heartbeat_at, "
+        "@heartbeat_hash, @selected_endpoint_id, @delivered_usage, @pricing_snapshot"
         ")",
         params={
             "authorization_id": authorization.id,
@@ -120,7 +122,8 @@ def read_gateway_authorization(
             "created_at, payload, spend_lease_id, spend_lease_gen, "
             "spend_lease_allocated_micro, spend_lease_token, spend_lease_status, "
             "spend_lease_exp, idempotency_fingerprint, finalization_outcome, "
-            "finalized_cost_microdollars "
+            "finalized_cost_microdollars, started_at, heartbeat_seq, heartbeat_at, "
+            "heartbeat_hash, selected_endpoint_id, delivered_usage, pricing_snapshot "
             "FROM tr_gateway_authorization "
             "WHERE authorization_id=@authorization_id",
             params={"authorization_id": authorization_id},
@@ -175,6 +178,13 @@ def read_gateway_authorization(
         idempotency_fingerprint=merged.get("idempotency_fingerprint"),
         finalization_outcome=merged.get("finalization_outcome"),
         finalized_cost_microdollars=merged.get("finalized_cost_microdollars"),
+        started_at=merged.get("started_at"),
+        heartbeat_seq=merged.get("heartbeat_seq"),
+        heartbeat_at=merged.get("heartbeat_at"),
+        heartbeat_hash=merged.get("heartbeat_hash"),
+        selected_endpoint_id=merged.get("selected_endpoint_id"),
+        delivered_usage=merged.get("delivered_usage"),
+        pricing_snapshot=merged.get("pricing_snapshot"),
     )
 
 

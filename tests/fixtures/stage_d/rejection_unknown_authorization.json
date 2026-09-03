@@ -1,0 +1,1 @@
+{"error":{"code":404,"message":"Gateway heartbeat rejected","type":"heartbeat_rejected","source":"router","reason":"unknown_authorization"}}

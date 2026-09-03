@@ -30,6 +30,13 @@ AUTHORIZATION_TYPED_COLUMNS = (
     "idempotency_fingerprint",
     "finalization_outcome",
     "finalized_cost_microdollars",
+    "started_at",
+    "heartbeat_seq",
+    "heartbeat_at",
+    "heartbeat_hash",
+    "selected_endpoint_id",
+    "delivered_usage",
+    "pricing_snapshot",
 )
 
 ARBITRATION_COLUMNS = (
@@ -692,7 +699,7 @@ def lag_inputs(snapshot: Any, param_types: Any, now: Any) -> LagInputs:
 
 
 def authorization_typed_columns(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Map JSON payload lease/finalization facts to the nine typed columns.
+    """Map JSON payload facts to the authorization's typed columns.
 
     ``spend_lease_exp`` is an epoch second in the JSON payload and a TIMESTAMP
     in Spanner.  ``spend_lease_allocated_micro`` is deliberately distinct from
@@ -706,6 +713,13 @@ def authorization_typed_columns(payload: Mapping[str, Any]) -> dict[str, Any]:
     expires = values["spend_lease_exp"]
     if expires is not None:
         values["spend_lease_exp"] = _timestamp_from_payload(expires)
+    for column in ("started_at", "heartbeat_at"):
+        timestamp = values[column]
+        if timestamp is not None:
+            values[column] = _authorization_timestamp_from_payload(timestamp)
+    heartbeat_seq = values["heartbeat_seq"]
+    if heartbeat_seq is not None and int(heartbeat_seq) < 0:
+        raise SpendLeaseDataError("heartbeat_seq must be NULL or non-negative")
     return values
 
 
@@ -723,7 +737,12 @@ def merge_authorization_typed_columns(
         value = typed_columns.get(column)
         if value is None:
             continue
-        merged[column] = _payload_expiry(value) if column == "spend_lease_exp" else value
+        if column == "spend_lease_exp":
+            merged[column] = _payload_expiry(value)
+        elif column in {"started_at", "heartbeat_at"}:
+            merged[column] = _payload_timestamp(value)
+        else:
+            merged[column] = value
     allocated = merged.get("spend_lease_allocated_micro")
     if allocated is not None and int(allocated) <= 0:
         raise SpendLeaseDataError("spend_lease_allocated_micro must be NULL or positive")
@@ -743,6 +762,13 @@ def authorization_typed_param_types(param_types: Any) -> dict[str, Any]:
         "idempotency_fingerprint": param_types.STRING,
         "finalization_outcome": param_types.STRING,
         "finalized_cost_microdollars": param_types.INT64,
+        "started_at": param_types.TIMESTAMP,
+        "heartbeat_seq": param_types.INT64,
+        "heartbeat_at": param_types.TIMESTAMP,
+        "heartbeat_hash": param_types.STRING,
+        "selected_endpoint_id": param_types.STRING,
+        "delivered_usage": param_types.STRING,
+        "pricing_snapshot": param_types.STRING,
     }
 
 
@@ -819,6 +845,26 @@ def _payload_expiry(value: Any) -> Any:
         return value
     normalized = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
     return int(normalized.astimezone(UTC).timestamp())
+
+
+def _authorization_timestamp_from_payload(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise SpendLeaseDataError("authorization timestamp must be ISO-8601") from exc
+    else:
+        raise SpendLeaseDataError("authorization timestamp must be ISO-8601")
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _payload_timestamp(value: Any) -> Any:
+    if not isinstance(value, datetime):
+        return value
+    normalized = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return normalized.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _single_row_count(statement: str, count: Any) -> int:

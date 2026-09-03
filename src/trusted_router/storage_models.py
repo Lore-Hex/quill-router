@@ -733,6 +733,20 @@ class GatewayAuthorization:
     # authorize and settle. Local authorizations keep their pre-existing
     # lifecycle untouched.
     expires_at: str | None = None
+    # Stage D's durable running-usage snapshot. These seven fields mirror the
+    # nullable typed Spanner columns; ineligible authorizations leave all seven
+    # NULL. The three stage_d_* fields below remain payload-only facts needed to
+    # replay the cohort verdict and enforce the authorize-time token ceiling.
+    started_at: str | None = None
+    heartbeat_seq: int | None = None
+    heartbeat_at: str | None = None
+    heartbeat_hash: str | None = None
+    selected_endpoint_id: str | None = None
+    delivered_usage: str | None = None
+    pricing_snapshot: str | None = None
+    stage_d_reason: str | None = None
+    stage_d_prompt_tokens: int | None = None
+    stage_d_max_output_tokens: int | None = None
     # Durable, content-free replay facts written in the same transaction that
     # settles or refunds the billing reservation. Bigtable generation mirrors
     # are deliberately not the source of truth for this outcome: a successful
