@@ -947,7 +947,8 @@ def test_custom_model_public_docs_cover_namespaces_and_creator_cashouts() -> Non
     assert "tr-custom-model/ada-contract-reviewer" in page.text
     assert "70% of collected markup" in page.text
     assert "$100" in page.text
-    assert "Routable" in page.text
+    assert "Routable" not in page.text
+    assert "secure hosted payout flow" in page.text
     assert "https://trustedrouter.com/v1/custom-models" in page.text
     assert "/v1/v1/" not in page.text
 
