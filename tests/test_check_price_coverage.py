@@ -1153,19 +1153,17 @@ def test_strict_model_discovery_allows_visibility_only_price_warnings(
 def test_strict_model_discovery_does_not_fail_provider_api_visibility_warning(
     monkeypatch,
 ) -> None:
-    def fake_model_discovery_audit(*args, **kwargs):  # noqa: ANN001, ANN202
+    def fake_run_audit(*args, **kwargs):  # noqa: ANN001, ANN202
         return (
             ["novita: live model API lists unpublished model(s) test/model"],
             ["zai: model discovery matched catalog (1 docs model(s)) ✓"],
+            [],
         )
 
-    monkeypatch.setattr(
-        check_price_coverage,
-        "_model_discovery_audit",
-        fake_model_discovery_audit,
+    monkeypatch.setattr(check_price_coverage, "_run_audit", fake_run_audit)
+
+    rc = check_price_coverage.main(
+        ["--strict-model-discovery", "--now", "2026-06-14T00:00:00Z"]
     )
 
-    assert (
-        check_price_coverage.main(["--strict-model-discovery", "--now", "2026-06-14T00:00:00Z"])
-        == 0
-    )
+    assert rc == 0
