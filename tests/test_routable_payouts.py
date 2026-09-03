@@ -948,6 +948,8 @@ def test_custom_model_public_docs_cover_namespaces_and_creator_cashouts() -> Non
     assert "70% of collected markup" in page.text
     assert "$100" in page.text
     assert "Routable" in page.text
+    assert "https://trustedrouter.com/v1/custom-models" in page.text
+    assert "/v1/v1/" not in page.text
 
     docs_index = client.get("/docs")
     assert docs_index.status_code == 200
