@@ -29,12 +29,12 @@
     <form class="form" method="post" action="/console/custom-models">
       <fieldset class="form-gate" {% if not verification.met %}disabled{% endif %}>
       <label>Name
-        <input name="name" required maxlength="120" placeholder="Legal reviewer">
+        <input name="name" required maxlength="120" placeholder="Custom model name">
       </label>
       <label>Slug
         <span class="custom-model-slug-input">
           <span>{{ model_prefix }}</span>
-          <input name="slug" maxlength="64" pattern="[a-z0-9][a-z0-9-]{1,62}[a-z0-9]" placeholder="legal-reviewer">
+          <input name="slug" maxlength="64" pattern="[a-z0-9][a-z0-9-]{1,62}[a-z0-9]" placeholder="custom-model-name">
         </span>
       </label>
       <label>Base model
