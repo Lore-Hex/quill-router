@@ -543,6 +543,9 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .event-row p { margin:0; color:var(--muted); font-size:12px; line-height:1.45; overflow-wrap:anywhere; }
 .status-empty { margin:0; }
 .status-actions { display:flex; gap:10px; flex-wrap:wrap; }
+.status-peers { display:grid; gap:10px; margin-top:14px; }
+.status-peers .status-note { margin:0; }
+.status-peer-current { color:var(--muted); cursor:default; opacity:.75; }
 .status-history-page .status-section { overflow:hidden; }
 .status-section-subhead { border-top:1px solid var(--line2); }
 .status-history-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; padding:0 18px 18px; }

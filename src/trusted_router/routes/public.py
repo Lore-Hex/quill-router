@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qsl, urlencode
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
@@ -170,7 +170,7 @@ from trusted_router.storage_models import (
     iso_now,
     utcnow,
 )
-from trusted_router.synthetic.fleet import fleet_snapshot
+from trusted_router.synthetic.fleet import fleet_peers, fleet_snapshot
 from trusted_router.synthetic.leaderboard import aggregate_leaderboard
 from trusted_router.synthetic.status import history_payload, status_snapshot
 from trusted_router.synthetic.video_leaderboard import aggregate_video_leaderboard
@@ -3024,6 +3024,38 @@ def _dates_covering_recent_hours(*, hours: int) -> list[str]:
     return dates
 
 
+_CLOUD_LABELS = {"gcp": "Google Cloud", "aws": "AWS", "azure": "Azure"}
+
+
+def _peer_status_pages(settings: Settings, *, hostname: str) -> list[dict[str, Any]]:
+    """The other clouds' independently computed status pages.
+
+    Every deployment builds this page from its OWN probes and its own store —
+    the documents differ in components and in freshness, they are not mirrors.
+    That is exactly why the links are worth rendering: when the cloud serving
+    this page is the thing that is broken, the page a reader needs is served
+    from somewhere else, and a reader who cannot reach this origin has no way
+    to discover that another origin exists. Absolute cross-origin URLs for the
+    same reason.
+
+    Peers come from ``synthetic_fleet_peers``, the same list the peer_monitor
+    probes already watch, so a cloud added to the fleet appears here with no
+    second edit.
+    """
+    pages: list[dict[str, Any]] = []
+    for name, base_url in fleet_peers(settings):
+        peer_hostname = (urlparse(base_url).hostname or "").casefold()
+        pages.append(
+            {
+                "name": name,
+                "label": _CLOUD_LABELS.get(name, name.upper()),
+                "url": f"{base_url.rstrip('/')}/status",
+                "current": bool(peer_hostname) and peer_hostname == hostname,
+            }
+        )
+    return pages
+
+
 def _status_page_html(settings: Settings, *, host: str) -> str:
     hostname = host.split(":", 1)[0].lower()
     domain = control_domain_for_hostname(settings, hostname)
@@ -3073,4 +3105,5 @@ def _status_page_html(settings: Settings, *, host: str) -> str:
         public_client_observed_enabled=settings.public_client_observed_enabled,
         provider_health=provider_health,
         provider_health_window=leaderboard.get("window_label"),
+        peer_status_pages=_peer_status_pages(settings, hostname=hostname),
     )
