@@ -35,7 +35,11 @@ MANIFEST_PATH = (
     / "provider_models"
     / "neurometric.json"
 )
-EXPECTED_MODELS = ["ibm-granite/granite-4.1-8b"]
+DOCUMENT_STRUCTURED_EXTRACTION_MODEL = "neurometric/document-structured-extraction"
+EXPECTED_MODELS = [
+    "ibm-granite/granite-4.1-8b",
+    DOCUMENT_STRUCTURED_EXTRACTION_MODEL,
+]
 TOOL_CHOICE_MODELS = frozenset({"neurometric/tool-choice"})
 UPSTREAM_ID_MAP: dict[str, str] = {}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
