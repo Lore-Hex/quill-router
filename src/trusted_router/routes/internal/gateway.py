@@ -23,6 +23,7 @@ from datetime import datetime
 from functools import lru_cache
 from time import perf_counter
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Request
 from starlette.concurrency import run_in_threadpool
@@ -239,6 +240,34 @@ from trusted_router.user_model_rules import (
 )
 
 logger = logging.getLogger(__name__)
+
+_LOG_VALUE_MAX_CHARS = 120
+
+
+def _log_value(value: object) -> str:
+    """One request-derived field, safe to interpolate into a log MESSAGE.
+
+    ``GatewayAuthorizeRequest.model`` is an unconstrained string, so anything
+    derived from it can carry newlines or control characters — enough to forge
+    a second log line in a text-formatted sink. Strip those and bound the
+    length; the field is for attribution, not for reconstructing the request.
+    """
+    text = str(value)
+    cleaned = "".join(character for character in text if character.isprintable())
+    if len(cleaned) > _LOG_VALUE_MAX_CHARS:
+        cleaned = cleaned[:_LOG_VALUE_MAX_CHARS] + "...(truncated)"
+    return cleaned or "<empty>"
+
+
+def _log_home_host(home: str) -> str:
+    """The peer plane's HOST only: a configured URL may carry a path, a query,
+    or embedded credentials, none of which belong in a log line."""
+    try:
+        return urlsplit(home).hostname or "<unparseable>"
+    except ValueError:
+        return "<unparseable>"
+
+
 REQUEST_METADATA_VERSION = 1
 # The enclave stops waiting for response headers after 25 seconds. Preserve the
 # transaction layer's 20-second retry budget while leaving five seconds for this
@@ -785,8 +814,8 @@ def _authorize_gateway_sync_impl(
                 "user_model_id=%s kind=%s",
                 workspace.id,
                 getattr(request.state, "request_id", None),
-                user_model.id,
-                user_model.kind,
+                _log_value(user_model.id),
+                _log_value(user_model.kind),
             )
             raise api_error(
                 503,
@@ -1665,7 +1694,7 @@ def _authorize_gateway_sync_impl(
                 "requested_model=%s estimated_microdollars=%s error_class=%s",
                 workspace.id,
                 getattr(request.state, "request_id", None),
-                requested_model_id,
+                _log_value(requested_model_id),
                 estimate,
                 type(conflict_exc).__name__,
             )
@@ -2507,8 +2536,8 @@ def _federated_key_still_valid(cached: Any | None, lookup_hash: str) -> Any | No
             )
             return cached
         logger.warning(
-            "federation.key_directory_unavailable home=%s cached_age_s=%s error_class=%s",
-            home,
+            "federation.key_directory_unavailable home_host=%s cached_age_s=%s error_class=%s",
+            _log_home_host(home),
             # An unstampable cached record reads as infinitely old; int(inf)
             # would raise OverflowError and turn the 503 into a 500.
             None if cached is None or age == float("inf") else int(age),

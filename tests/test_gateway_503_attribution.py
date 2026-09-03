@@ -184,7 +184,7 @@ def test_federated_key_directory_outage_logs_home_and_error_class(
     assert raised.value.status_code == 503
     assert raised.value.headers == {"Retry-After": "5"}
     line = _single_warning(caplog, "federation.key_directory_unavailable")
-    assert "home=https://home.example" in line
+    assert "home_host=home.example" in line
     assert "cached_age_s=None" in line
     assert "error_class=FederationUnavailable" in line
     assert "home-token" not in line
@@ -198,7 +198,10 @@ def test_federated_key_directory_outage_with_unstampable_cache_still_answers_503
 ) -> None:
     """A cached record with no usable ``created_at`` is "infinitely old"; the
     log line must not turn that into an OverflowError (a 500 in place of 503)."""
-    monkeypatch.setenv("TR_FEDERATION_HOME_BASE_URL", "https://home.example")
+    monkeypatch.setenv(
+        "TR_FEDERATION_HOME_BASE_URL",
+        "https://peer:secret-in-url@home.example/plane?token=secret-query",
+    )
     monkeypatch.setenv("TR_FEDERATION_HOME_TOKEN", "home-token")
     cache_clear = getattr(get_settings, "cache_clear", None)
     if cache_clear is not None:
@@ -219,6 +222,10 @@ def test_federated_key_directory_outage_with_unstampable_cache_still_answers_503
     line = _single_warning(caplog, "federation.key_directory_unavailable")
     assert "cached_age_s=None" in line
     assert "cached-hash-never-logged" not in line
+    # A configured URL can carry credentials, a path, or a query: host only.
+    assert "home_host=home.example" in line
+    assert "secret-in-url" not in line
+    assert "secret-query" not in line
 
 
 @pytest.mark.asyncio
@@ -248,3 +255,42 @@ async def test_app_level_503_logs_route_template_not_hash_bearing_path(
     assert "request_id=req-hash-route" in line
     assert "hash-value-never-logged" not in line
     assert ROW_NAMING_BACKEND_MESSAGE not in line
+
+
+@pytest.mark.asyncio
+async def test_escrow_conflict_line_cannot_be_forged_by_the_requested_model(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``model`` is an unconstrained request field, so a newline in it must not
+    be able to forge a second line in a text-formatted log sink."""
+    app = create_app(_settings(), init_observability=False)
+    key = _seed_key()
+    forged = "anthropic/claude-haiku-4.5\nWARNING trusted_router forged.line request_id=spoofed"
+
+    def raise_conflict(_self: Any, *_args: Any, **_kwargs: Any) -> Any:
+        raise StoreConflict("hot outstanding row")
+
+    monkeypatch.setattr(InMemoryStore, "create_gateway_authorization", raise_conflict)
+
+    transport = httpx.ASGITransport(app=app)
+    with caplog.at_level("WARNING", logger="trusted_router"):
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            await ac.post(
+                AUTHORIZE,
+                headers={"X-Request-ID": "req-forge"},
+                json={
+                    "api_key_hash": key.hash,
+                    "model": "anthropic/claude-haiku-4.5",
+                    "estimated_input_tokens": 100,
+                    "max_output_tokens": 100,
+                },
+            )
+
+    line = _single_warning(caplog, "billing.authorize_conflict_after_escrow")
+    assert "\n" not in line
+    # The sanitiser is what makes that true for any hostile model string.
+    assert "\n" not in gateway_routes._log_value(forged)
+    assert "forged.line" in gateway_routes._log_value(forged)
+    assert gateway_routes._log_value("x" * 500).endswith("...(truncated)")
+    assert gateway_routes._log_value("") == "<empty>"
