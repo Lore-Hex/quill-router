@@ -1416,8 +1416,14 @@ def _authorize_gateway_sync_impl(
             # The generic 503 request log cannot identify a tenant hot row.
             # Emit only safe billing metadata so an operator can reshard the
             # affected workspace without ever logging a key, prompt, or body.
+            # request_id and error_class ride in the message so this line can
+            # be joined with the app-level ``storage.transaction_aborted`` line
+            # that answers the re-raise (the console formatter drops ``extra``).
             logger.warning(
-                "billing.authorize_contention",
+                "billing.authorize_contention request_id=%s workspace_id=%s error_class=%s",
+                getattr(request.state, "request_id", None),
+                workspace.id,
+                type(exc).__name__,
                 extra={
                     "request_id": getattr(request.state, "request_id", None),
                     "workspace_id": workspace.id,
@@ -1435,7 +1441,11 @@ def _authorize_gateway_sync_impl(
             # deadline, service outage, session exhaustion, or retry failure.
             # The request body, raw key, prompt, and output stay out of logs.
             logger.warning(
-                "billing.authorize_storage_unavailable",
+                "billing.authorize_storage_unavailable request_id=%s workspace_id=%s "
+                "error_class=%s",
+                getattr(request.state, "request_id", None),
+                workspace.id,
+                type(exc).__name__,
                 extra={
                     "request_id": getattr(request.state, "request_id", None),
                     "workspace_id": workspace.id,
