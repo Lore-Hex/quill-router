@@ -8,6 +8,7 @@ from tests.lifecycle_clock import catalog_predates
 from trusted_router.catalog import (
     ADVISOR_CATALOG_MODEL_ORDERS,
     ADVISOR_MODEL_ID,
+    ARCHIMEDES_1_0_MODEL_ID,
     ARISTOTLE_1_0_MODEL_ID,
     ARISTOTLE_1_1_MODEL_ID,
     ARISTOTLE_2_0_MODEL_ID,
@@ -34,6 +35,7 @@ from trusted_router.catalog import (
     LIBERTY_3_0_MODEL_ID,
     MAPREDUCE_MODEL_ID,
     META_MODEL_IDS,
+    MISTRAL_LARGE_MODEL_ID,
     MODEL_ENDPOINTS,
     MODELS,
     OPEN_PATCHER_A1_MODEL_ID,
@@ -105,6 +107,37 @@ from trusted_router.routing import chat_route_candidates, chat_route_endpoint_ca
 
 def _cataloged_model_ids(model_ids: list[str]) -> list[str]:
     return [model_id for model_id in model_ids if model_id in MODELS]
+
+
+def test_archimedes_private_proxy_tracks_mistral_large_without_exposing_it() -> None:
+    archimedes = MODELS[ARCHIMEDES_1_0_MODEL_ID]
+    backing = MODELS[MISTRAL_LARGE_MODEL_ID]
+    archimedes_shape = model_to_openrouter_shape(archimedes)
+    backing_shape = model_to_openrouter_shape(backing)
+
+    assert [candidate.id for candidate in meta_candidate_models(archimedes.id)] == [backing.id]
+    assert archimedes.context_length == backing.context_length
+    assert archimedes.supported_parameters == backing.supported_parameters
+    assert archimedes.input_modalities == backing.input_modalities
+    assert archimedes.output_modalities == backing.output_modalities
+    assert archimedes.price_tiers == backing.price_tiers
+    assert archimedes_shape["pricing"] == backing_shape["pricing"]
+
+    metadata = archimedes_shape["trustedrouter"]
+    assert metadata["route_kind"] == "private_proxy"
+    assert metadata["configuration_hidden"] is True
+    assert metadata["auto_candidates"] is None
+    assert metadata["byok_available"] is False
+    assert metadata["orchestration_primitive"] is None
+    assert metadata["orchestration_role"] == "private_proxy"
+    assert metadata["provider_zero_data_retention"] is False
+    assert metadata["provider_confidential_compute"] is False
+    assert metadata["provider_e2ee"] is False
+    assert metadata["privacy_tier"] == PRIVACY_TIER_STANDARD
+
+    encoded = json.dumps(archimedes_shape)
+    assert MISTRAL_LARGE_MODEL_ID not in encoded
+    assert "mistral-large-latest" not in encoded
 
 
 def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:

@@ -44,6 +44,7 @@ from trusted_router.catalog_data import (
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_STANDARD,
     PRIVACY_TIER_ZERO_RETENTION,
+    PRIVATE_PROXY_MODEL_TARGETS,
     PROMETHEUS_1_0_1M_MODEL_ID,
     PROMETHEUS_1_0_MODEL_ID,
     PROMETHEUS_2_0_MODEL_ID,
@@ -342,6 +343,9 @@ def socrates_candidate_models() -> list[Model]:
 
 def meta_candidate_models(model_id: str) -> list[Model]:
     model_id = ROUTING_MODEL_ALIAS_TARGETS.get(model_id, model_id)
+    private_proxy_target = PRIVATE_PROXY_MODEL_TARGETS.get(model_id)
+    if private_proxy_target is not None:
+        return _models_for_ids((private_proxy_target,))
     if model_id == AUTO_MODEL_ID:
         return auto_candidate_models()
     if model_id == FREE_MODEL_ID:
@@ -415,6 +419,8 @@ def meta_candidate_models(model_id: str) -> list[Model]:
 
 def _meta_route_kind(model_id: str) -> str:
     model_id = ROUTING_MODEL_ALIAS_TARGETS.get(model_id, model_id)
+    if model_id in PRIVATE_PROXY_MODEL_TARGETS:
+        return "private_proxy"
     if model_id == FREE_MODEL_ID:
         return "free_pool"
     if model_id == CHEAP_MODEL_ID:

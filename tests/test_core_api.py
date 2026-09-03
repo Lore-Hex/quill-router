@@ -804,6 +804,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert models
     assert {
         "trustedrouter/auto",
+        "trustedrouter/archimedes-1.0",
         "trustedrouter/fast",
         "trustedrouter/eu",
         "trustedrouter/zdr",

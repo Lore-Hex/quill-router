@@ -7,7 +7,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.fakes.spanner import make_fake_store
-from trusted_router.catalog import MODELS, default_endpoint_for_model, endpoint_for_id
+from trusted_router.catalog import (
+    ARCHIMEDES_1_0_MODEL_ID,
+    MISTRAL_LARGE_MODEL_ID,
+    MODELS,
+    default_endpoint_for_model,
+    endpoint_for_id,
+)
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import token_cost_microdollars
@@ -39,6 +45,83 @@ def _client_and_key() -> tuple[TestClient, dict]:
     )
     assert created.status_code == 201, created.text
     return client, created.json()["data"]
+
+
+def test_gateway_archimedes_authorizes_private_credits_route() -> None:
+    client, key = _client_and_key()
+
+    response = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": ARCHIMEDES_1_0_MODEL_ID,
+            "estimated_input_tokens": 11,
+            "max_output_tokens": 3,
+            "idempotency_key": "archimedes-private-proxy",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["requested_model"] == ARCHIMEDES_1_0_MODEL_ID
+    assert data["response_model"] == ARCHIMEDES_1_0_MODEL_ID
+    assert data["hide_public_metadata"] is True
+    assert data["model"] == MISTRAL_LARGE_MODEL_ID
+    assert data["usage_type"] == "Credits"
+    assert {candidate["model"] for candidate in data["route_candidates"]} == {
+        MISTRAL_LARGE_MODEL_ID
+    }
+    assert {candidate["usage_type"] for candidate in data["route_candidates"]} == {"Credits"}
+
+    direct = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": MISTRAL_LARGE_MODEL_ID,
+            "estimated_input_tokens": 11,
+            "max_output_tokens": 3,
+            "idempotency_key": "mistral-large-direct-price-comparison",
+            "provider": {"usage": "credits"},
+        },
+    )
+    assert direct.status_code == 200, direct.text
+    assert data["estimated_cost_microdollars"] == direct.json()["data"][
+        "estimated_cost_microdollars"
+    ]
+
+
+def test_gateway_archimedes_rejects_byok_and_fallback_arrays() -> None:
+    client, key = _client_and_key()
+
+    byok = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": ARCHIMEDES_1_0_MODEL_ID,
+            "estimated_input_tokens": 1,
+            "max_output_tokens": 1,
+            "idempotency_key": "archimedes-byok",
+            "provider": {"usage": "byok"},
+        },
+    )
+    assert byok.status_code == 400, byok.text
+
+    fallbacks = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": ARCHIMEDES_1_0_MODEL_ID,
+            "models": ["openai/gpt-5.4-nano"],
+            "estimated_input_tokens": 1,
+            "max_output_tokens": 1,
+            "idempotency_key": "archimedes-fallback-array",
+        },
+    )
+    assert fallbacks.status_code == 400, fallbacks.text
+    assert (
+        fallbacks.json()["error"]["message"]
+        == "Private proxy models cannot be combined with models fallback arrays"
+    )
 
 
 def test_gateway_authorize_never_escapes_no_fallback_provider_order() -> None:

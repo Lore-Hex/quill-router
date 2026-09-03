@@ -23,6 +23,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     _UNSERVED_CREDITS_MODELS,
     ADVISOR_CATALOG_MODEL_ORDERS,
     ADVISOR_MODEL_ID,
+    ARCHIMEDES_1_0_MODEL_ID,
     ARISTOTLE_1_0_MODEL_ID,
     ARISTOTLE_1_1_MODEL_ID,
     ARISTOTLE_2_0_MODEL_ID,
@@ -58,6 +59,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     MAPREDUCE_CATALOG_MODEL_ORDER,
     MAPREDUCE_MODEL_ID,
     META_MODEL_IDS,
+    MISTRAL_LARGE_MODEL_ID,
     MONITOR_MODEL_ID,
     OPEN_PATCHER_A1_MODEL_ID,
     OPEN_PATCHER_FAST1_MODEL_ID,
@@ -896,6 +898,21 @@ for _model_id, _model in _SUPPLEMENTAL_MODELS.items():
             dict.fromkeys((*_existing_model.output_modalities, *_model.output_modalities))
         ),
     )
+
+# Archimedes is a one-model private proxy. Clone the canonical model after
+# native manifests have merged so context, capabilities, cache pricing, and
+# future price refreshes remain byte-for-byte aligned with Mistral Large.
+_archimedes_backing_model = MODELS[MISTRAL_LARGE_MODEL_ID]
+MODELS[ARCHIMEDES_1_0_MODEL_ID] = replace(
+    _archimedes_backing_model,
+    id=ARCHIMEDES_1_0_MODEL_ID,
+    name="TrustedRouter Archimedes 1.0",
+    provider="trustedrouter",
+    upstream_id=None,
+    prepaid_available=True,
+    byok_available=False,
+    hidden_public_metadata=True,
+)
 # Embedding models override any snapshot/supplemental collision: the
 # hand-curated embedding entry (input-only pricing, supports_embeddings) is
 # authoritative for these IDs. Merge BEFORE `_build_endpoints` so each gets
