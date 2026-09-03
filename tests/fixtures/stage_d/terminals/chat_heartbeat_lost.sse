@@ -1,0 +1,4 @@
+data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}],"created":1767225600,"id":"chatcmpl_stage_d","model":"fixture-model","object":"chat.completion.chunk","tr_finish_reason":"heartbeat_lost"}
+
+data: [DONE]
+
