@@ -1,10 +1,8 @@
 # First-Party Acquisition Attribution
 
-TrustedRouter measures paid and organic acquisition internally. For visitors
-who arrive through a Google ad, it also reports three narrowly scoped
-server-side conversion classes to Google Ads: signup, first successful API
-call, and settled credit purchase. X and other advertising platforms receive
-no downstream conversion events.
+TrustedRouter measures paid and organic acquisition internally. It does not
+send downstream conversion events or customer activity to Google Ads, X, or
+another advertising platform.
 
 ## Collection Boundary
 
@@ -86,15 +84,11 @@ TrustedRouter does not load Google Analytics, Google Tag Manager, a Google Ads
 browser tag, an X pixel, or another advertising SDK. It exposes no conversion
 CSV feed.
 
-A separate server-side Google Data Manager worker sends only Google's original
-click identifier, one of the three conversion classes, event time, an opaque
-deduplication ID, and, for a settled purchase, exact amount and currency. It
-does not send email, name, account ID, user ID, workspace ID, API key, model,
-provider, IP address, prompt, output, request body, or retention activity. The
-worker decrypts click identifiers in memory with a dedicated KMS key that
-cannot decrypt customer BYOK credentials. Delivery is durable, idempotent, and
-confirmed through Google Data Manager's asynchronous request-status API before
-the outbox marks an event submitted.
+The former Google Data Manager integration remains disabled in production.
+Its scheduler is paused, its Cloud Run job is configured with
+`TR_GOOGLE_DATA_MANAGER_ENABLED=false`, and production configuration rejects
+attempts to enable it. First-party campaign reporting stays inside
+TrustedRouter.
 
 ## Campaign Conventions
 

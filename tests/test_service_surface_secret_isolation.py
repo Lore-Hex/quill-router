@@ -68,7 +68,6 @@ _ACTION_FORBIDDEN_CONFIG: tuple[tuple[str, object, str], ...] = (
         "ops-clickhouse-write-secret",
         "TR_OPERATIONAL_ANALYTICS_CLICKHOUSE_WRITE_PASSWORD",
     ),
-    ("google_data_manager_enabled", True, "TR_GOOGLE_DATA_MANAGER_ENABLED"),
     (
         "google_data_manager_kms_key_name",
         "projects/test/locations/global/keyRings/test/cryptoKeys/data-manager",
@@ -169,7 +168,6 @@ _SENSITIVE_TEST_VALUES: dict[str, object] = {
     "operational_analytics_clickhouse_password": "ops-clickhouse-secret",
     "operational_analytics_clickhouse_write_password": "ops-clickhouse-write-secret",
     "sentry_dsn": "https://example@example.ingest.sentry.io/1",
-    "google_data_manager_enabled": True,
     "google_data_manager_kms_key_name": "projects/test/locations/global/keyRings/gdm/keys/k",
     "attribution_cookie_key": _ATTRIBUTION_KEY,
     "attribution_cookie_secret": _ATTRIBUTION_SECRET,
@@ -245,7 +243,6 @@ _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
             "provider_analytics_clickhouse_password",
             "byok_kms_key_name",
             "byok_envelope_key_b64",
-            "google_data_manager_enabled",
             "google_data_manager_kms_key_name",
             "stripe_webhook_secret",
             "stripe_secret_key",
@@ -487,16 +484,6 @@ def test_every_sensitive_setting_rejects_an_unauthorized_deployed_surface(
         overrides["ops_chat_webhook_urls"] = "https://ops.example/hook"
     if field_name == "postgres_iam_auth":
         overrides["postgres_dsn"] = "postgresql://surface:secret@db.example/surface"
-    if field_name == "google_data_manager_enabled":
-        overrides.update(
-            google_data_manager_account_id="account",
-            google_data_manager_signup_action_id="signup",
-            google_data_manager_activated_action_id="activation",
-            google_data_manager_purchase_action_id="purchase",
-            google_data_manager_kms_key_name=(
-                "projects/test/locations/global/keyRings/gdm/keys/k"
-            ),
-        )
     if field_name == "adyen_enabled":
         overrides.update(
             adyen_api_key="adyen-api",
@@ -628,16 +615,6 @@ def test_actions_production_rejects_non_form_credentials_and_clients(
     environment_name: str,
 ) -> None:
     overrides: dict[str, object] = {name: value}
-    if name == "google_data_manager_enabled":
-        overrides.update(
-            google_data_manager_account_id="account",
-            google_data_manager_signup_action_id="signup",
-            google_data_manager_activated_action_id="activation",
-            google_data_manager_purchase_action_id="purchase",
-            google_data_manager_kms_key_name=(
-                "projects/test/locations/global/keyRings/test/cryptoKeys/data-manager"
-            ),
-        )
     if name == "adyen_enabled":
         overrides.update(
             adyen_api_key="adyen-api",

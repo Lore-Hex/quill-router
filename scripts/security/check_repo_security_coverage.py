@@ -217,6 +217,12 @@ def main() -> int:
         "For runs whose token has no administration rights; the SECURITY.md "
         "assertion still holds and still fails the run.",
     )
+    ap.add_argument(
+        "--allow-unreadable-branch-protection",
+        action="store_true",
+        help="Exit 0 when branch protection is the only unreadable control. "
+        "An actually unprotected branch or missing required check still fails.",
+    )
     args = ap.parse_args()
 
     token = os.environ.get("REPO_SECURITY_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
@@ -288,8 +294,12 @@ def main() -> int:
 
     if uncovered or protection_problems:
         return 1
-    if unreadable or protection_unreadable:
-        return 0 if args.allow_unreadable else 1
+    if unreadable and not args.allow_unreadable:
+        return 1
+    if protection_unreadable and not (
+        args.allow_unreadable or args.allow_unreadable_branch_protection
+    ):
+        return 1
     return 0
 
 

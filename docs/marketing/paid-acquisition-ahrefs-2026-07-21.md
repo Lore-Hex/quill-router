@@ -176,18 +176,16 @@ Persist attribution through these product events:
 5. `credit_purchase_completed`
 6. `retained_api_usage_7d`
 
-Send Google only signup, first successful API call, and settled purchase
-conversions through the metadata-only Data Manager worker. Never send user or
-workspace data, prompts, outputs, API keys, BYOK secrets, payment credentials,
-model or provider choices, or request bodies. X remains a source of impression,
-click, and spend reports only.
+Do not send signup, usage, or purchase events to Google or X. The former
+Google Data Manager worker is disabled in production and its scheduler is
+paused. Google and X remain sources of impression, click, and spend reports
+only; first-party attribution remains internal.
 
 Report signup CAC and activated CAC internally; signup CAC alone is easy to
 make look good. Compare campaign and creative UTMs against first-party signup,
 activation, purchase, and retention records, then adjust budgets manually.
-Google automated bidding may use the reported activation and purchase signals
-after those actions are verified as recording. Google remains an optimization
-input; the first-party ledger remains the source of truth.
+Google remains an optimization input through aggregate campaign reports; the
+first-party ledger remains the source of truth.
 
 ## Raw Inputs
 
