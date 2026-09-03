@@ -496,10 +496,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 12,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 13,
+    "route_count": 12,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
