@@ -32,6 +32,7 @@ from trusted_router.storage_errors import StoreConflict, StoreUnavailable
 from trusted_router.storage_postgres import (
     _RETRYABLE_ROLLBACK_SQLSTATES,
     PostgresStore,
+    _is_retryable_pgadapter_internal_error,
 )
 
 
@@ -105,6 +106,42 @@ def test_rolled_back_transactions_are_replayed(
     # A fresh connection per attempt -- a retry on the same aborted connection
     # would fail identically forever.
     assert pool.connections_handed_out == 3
+
+
+def test_pgadapter_internal_parameter_error_is_replayed() -> None:
+    """PGAdapter's analyzer abort is transient and the transaction is gone."""
+
+    error = psycopg.errors.RaiseException("Index 2 out of bounds for length 2")
+    assert error.sqlstate == "P0001"
+    assert _is_retryable_pgadapter_internal_error(error)
+    store, pool = _store()
+    operation = _raise_then_succeed(error, failures=2)
+
+    assert store._run_transaction(operation) == "committed"
+    assert operation.calls["n"] == 3
+    assert pool.connections_handed_out == 3
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Index 2 out of bounds for length two",
+        "business rule rejected the transfer",
+        "Index 2 out of bounds for length 2; retry me",
+    ],
+)
+def test_other_raise_exceptions_are_not_replayed(message: str) -> None:
+    """A P0001 is not retryable unless it is the exact PGAdapter defect."""
+
+    error = psycopg.errors.RaiseException(message)
+    assert not _is_retryable_pgadapter_internal_error(error)
+    store, pool = _store()
+    operation = _raise_then_succeed(error, failures=1)
+
+    with pytest.raises(StoreUnavailable):
+        store._run_transaction(operation)
+    assert operation.calls["n"] == 1
+    assert pool.connections_handed_out == 1
 
 
 @pytest.mark.parametrize(

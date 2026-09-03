@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import secrets
 import time
 import uuid
@@ -221,6 +222,26 @@ _RETRYABLE_ROLLBACK_SQLSTATES = frozenset(
         "40P01",  # deadlock_detected -- ordinary Postgres lock ordering
     }
 )
+
+_PGADAPTER_INTERNAL_INDEX_ERROR = re.compile(
+    r"^Index \d+ out of bounds for length \d+$"
+)
+
+
+def _is_retryable_pgadapter_internal_error(exc: psycopg.Error) -> bool:
+    """Recognize the PGAdapter analyzer failure that aborts a transaction.
+
+    PGAdapter occasionally surfaces this Java bounds error as SQLSTATE P0001
+    while resolving parameter types. The statement is rejected and psycopg's
+    transaction context rolls the whole transaction back, so replaying on a
+    fresh connection has the same safety property as a serialization retry.
+    Keep this message match exact: arbitrary user-raised P0001 errors are not
+    evidence that replay is safe.
+    """
+
+    return isinstance(exc, psycopg.errors.RaiseException) and bool(
+        _PGADAPTER_INTERNAL_INDEX_ERROR.fullmatch(str(exc))
+    )
 
 
 #: Hard cap on the /status.json outbox-lag read, applied to BOTH the pool wait
@@ -617,7 +638,7 @@ class PostgresStore:
     # Generic entity IO ------------------------------------------------------
 
     def _run_transaction(self, operation: Callable[[Any], T]) -> T:
-        last_serialization_error: BaseException | None = None
+        last_retryable_error: BaseException | None = None
         for _attempt in range(self._transaction_attempts):
             try:
                 with self._pool.connection() as conn:
@@ -632,15 +653,18 @@ class PostgresStore:
                 # Safe to retry because the transaction rolled back whole: an
                 # idempotency row inserted on the failed attempt is gone, so
                 # the retry re-inserts and credits exactly once.
-                if exc.sqlstate in _RETRYABLE_ROLLBACK_SQLSTATES:
-                    last_serialization_error = exc
+                if (
+                    exc.sqlstate in _RETRYABLE_ROLLBACK_SQLSTATES
+                    or _is_retryable_pgadapter_internal_error(exc)
+                ):
+                    last_retryable_error = exc
                     continue
                 if isinstance(exc, psycopg.IntegrityError):
                     raise StoreConflict("Postgres write conflict") from exc
                 raise StoreUnavailable("Postgres could not service the storage operation") from exc
         raise StoreConflict(
-            "Postgres transaction repeatedly rolled back (serialization failure or deadlock)"
-        ) from last_serialization_error
+            "Postgres transaction repeatedly rolled back after a retryable database error"
+        ) from last_retryable_error
 
     def _read_entity_tx(
         self,
