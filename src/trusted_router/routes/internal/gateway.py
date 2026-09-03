@@ -1133,6 +1133,11 @@ def _authorize_gateway_sync_impl(
             endpoint_candidates=existing_candidates,
             idempotent_replay=True,
             custom_model=custom_model,
+            stage_d_reason_override=(
+                None
+                if settings.stage_d_eligibility_enabled
+                else "stage_d_disabled"
+            ),
         )
 
     _typed_store = typed_billing_store(STORE)
@@ -2346,7 +2351,7 @@ def _stage_d_eligibility_reason(
     # the Stage D cohort, so the enclave never sends a heartbeat and streaming
     # takes the synchronous path exactly as before Stage D.
     if not eligibility_enabled:
-        return "settlement_backend"
+        return "stage_d_disabled"
     if stream is not True:
         return "not_streaming"
     if route_type not in {"chat.completions", "responses"}:
@@ -2370,8 +2375,10 @@ def _gateway_stage_d_payload(
     *,
     reason_override: str | None = None,
 ) -> dict[str, Any]:
+    if reason_override is not None and reason_override != "ok":
+        return {"stage_d": {"eligible": False, "reason": reason_override}}
     snapshot = authorization.pricing_snapshot
-    reason = authorization.stage_d_reason or reason_override or "settlement_backend"
+    reason = reason_override or authorization.stage_d_reason or "settlement_backend"
     if snapshot is None:
         return {"stage_d": {"eligible": False, "reason": reason}}
     document = parse_pricing_snapshot(snapshot)
