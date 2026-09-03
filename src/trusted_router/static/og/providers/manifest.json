@@ -172,10 +172,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 99,
+    "model_count": 100,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 192,
+    "route_count": 194,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -496,10 +496,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 13,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 13,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -820,10 +820,10 @@
   },
   "zero-g": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 2,
     "name": "0G Private Computer",
     "privacy": "Confidential compute",
-    "route_count": 3,
+    "route_count": 2,
     "route_mode": "Prepaid",
     "slug": "zero-g"
   }

@@ -48,7 +48,7 @@
         "top_k",
         "top_p"
       ],
-      "routable": true,
+      "routable": false,
       "trust_mode": "private",
       "verifiability": "TeeML",
       "tee_attested": true,
@@ -59,7 +59,8 @@
       "input_token_price_per_m": 900000,
       "output_token_price_per_m": 3000000,
       "cached_input_token_price_per_m": 180000,
-      "missing_since": "2026-09-03"
+      "missing_since": "2026-09-03",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "0GM-1.0-35B-A3B",
@@ -168,5 +169,5 @@
     }
   ],
   "model_count": 3,
-  "generated_at": "2026-09-03T03:27:13Z"
+  "generated_at": "2026-09-03T06:28:16Z"
 }

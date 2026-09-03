@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for DeepInfra models whose live /v1/openai/models feed is ahead of the shared snapshot. Verified against https://api.deepinfra.com/v1/openai/models on 2026-06-20. DeepInfra uses mixed-case upstream author/model IDs, so the enclave preserves upstream_id verbatim for this provider.",
   "provider": "deepinfra",
   "source": "https://api.deepinfra.com/v1/openai/models",
-  "generated_at": "2026-09-03T03:27:13Z",
-  "model_count": 110,
+  "generated_at": "2026-09-03T06:28:16Z",
+  "model_count": 111,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -2395,6 +2395,28 @@
       "input_token_price_per_m": 1200000,
       "output_token_price_per_m": 4000000,
       "cached_input_token_price_per_m": 120000
+    },
+    {
+      "display_name": "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+      "title": "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-vision-exp",
+      "upstream_id": "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+      "context_length": 131072,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 440000,
+      "output_token_price_per_m": 1320000,
+      "cached_input_token_price_per_m": 140000
     }
   ],
   "price_scale": "microdollars_per_million"
