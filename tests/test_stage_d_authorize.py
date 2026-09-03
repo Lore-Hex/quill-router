@@ -62,7 +62,7 @@ def test_stage_d_eligibility_has_each_closed_reason(
         "settlement_backend": True,
         **overrides,
     }
-    assert _stage_d_eligibility_reason(**kwargs) == reason  # type: ignore[arg-type]
+    assert _stage_d_eligibility_reason(eligibility_enabled=True, **kwargs) == reason  # type: ignore[arg-type]
 
 
 def test_typed_authorize_inserts_cohort_sequence_zero_and_snapshot() -> None:
@@ -239,7 +239,7 @@ def test_app_markup_and_receipt_fee_remain_in_stage_d_cohort(
     response = gateway._authorize_gateway_sync(
         Request({"type": "http", "method": "POST", "path": "/", "headers": []}),
         body,
-        Settings(environment="test"),
+        Settings(environment="test", stage_d_eligibility_enabled=True),
     )["data"]
 
     stored = db.gateway_authorizations[response["authorization_id"]]
@@ -247,3 +247,23 @@ def test_app_markup_and_receipt_fee_remain_in_stage_d_cohort(
     assert response["receipt_fee_basis_points"] == 1_200
     assert response["stage_d"] == {"eligible": True, "reason": "ok"}
     assert response["candidate_prices"]
+
+
+def test_stage_d_eligibility_kill_switch_declares_nothing_eligible() -> None:
+    """Emergency kill (2026-09-03): with eligibility off the router never puts a
+    request in the Stage D cohort, so the enclave never sends a heartbeat."""
+    from trusted_router.routes.internal.gateway import _stage_d_eligibility_reason
+
+    assert Settings(environment="test").stage_d_eligibility_enabled is False
+    rollout = (Path(__file__).parents[1] / "scripts" / "deploy" / "rollout.sh").read_text()
+    assert '"TR_STAGE_D_ELIGIBILITY_ENABLED=${TR_STAGE_D_ELIGIBILITY_ENABLED:-false}"' in rollout
+    reason = _stage_d_eligibility_reason(
+        eligibility_enabled=False,
+        stream=True,
+        route_type="chat.completions",
+        endpoint_candidates=[],
+        standard_endpoint_pricing=True,
+        service_tier=None,
+        settlement_backend=True,
+    )
+    assert reason == "settlement_backend"

@@ -1206,6 +1206,7 @@ def _authorize_gateway_sync_impl(
         and not native_batch_eligible
     )
     stage_d_reason = _stage_d_eligibility_reason(
+        eligibility_enabled=settings.stage_d_eligibility_enabled,
         stream=body.stream,
         route_type=body.route_type,
         endpoint_candidates=endpoint_candidates,
@@ -2333,6 +2334,7 @@ def _gateway_authorize_response(
 
 def _stage_d_eligibility_reason(
     *,
+    eligibility_enabled: bool = False,
     stream: bool | None,
     route_type: str | None,
     endpoint_candidates: list[tuple[Model, ModelEndpoint]],
@@ -2340,6 +2342,11 @@ def _stage_d_eligibility_reason(
     service_tier: str | None,
     settlement_backend: bool,
 ) -> str:
+    # Emergency kill (2026-09-03): with eligibility off no request is declared in
+    # the Stage D cohort, so the enclave never sends a heartbeat and streaming
+    # takes the synchronous path exactly as before Stage D.
+    if not eligibility_enabled:
+        return "settlement_backend"
     if stream is not True:
         return "not_streaming"
     if route_type not in {"chat.completions", "responses"}:

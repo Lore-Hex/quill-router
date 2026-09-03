@@ -897,6 +897,8 @@ class Settings(BaseSettings):
     # runtime kill switch so heartbeat writes can be stopped independently of a
     # code rollout while authorize continues to expose cohort metadata.
     stage_d_heartbeat_enabled: bool = True
+    # Emergency kill added 2026-09-03: declares no request Stage D eligible.
+    stage_d_eligibility_enabled: bool = False
     heartbeat_grace_seconds: int = 300
     # Decision 70's billing change. Heartbeats and guarded zero refunds ship
     # first; only an explicit rollout may book a crashed request's last durable
