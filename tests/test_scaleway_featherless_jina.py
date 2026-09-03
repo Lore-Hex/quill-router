@@ -52,7 +52,76 @@ def test_featherless_uses_shared_canonical_model_ids() -> None:
     )
     assert featherless.CATALOG.model_id("zai-org/GLM-5.3") == "z-ai/glm-5.3"
     assert featherless.CATALOG.model_id("moonshotai/Kimi-K3") == "moonshotai/kimi-k3"
-    assert "zai-org/GLM-5.3" in featherless.CURATED_NATIVE_MODELS
+    assert (
+        featherless.CATALOG.model_id("Qwen/Qwen3.8-Flash-Next")
+        == "qwen/qwen3.8-flash-next"
+    )
+    assert {
+        "Qwen/Qwen3.8-Flash-Next",
+        "zai-org/GLM-5.3",
+    } <= set(featherless.CURATED_NATIVE_MODELS)
+
+
+def test_featherless_qwen38_flash_next_is_routable() -> None:
+    endpoint = MODEL_ENDPOINTS["qwen/qwen3.8-flash-next@featherless/prepaid"]
+
+    assert endpoint.provider == "featherless"
+    assert endpoint.upstream_id == "Qwen/Qwen3.8-Flash-Next"
+    assert endpoint.usage_type == "Credits"
+    assert endpoint.published_prompt_price_microdollars_per_million_tokens == 158_250
+    assert endpoint.published_completion_price_microdollars_per_million_tokens == 527_500
+
+
+def test_featherless_discovers_only_first_party_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    listing = {
+        "data": [
+            {
+                "id": "Qwen/Qwen3.8-27B",
+                "available_on_current_plan": True,
+            },
+            {
+                "id": "community/Qwen3.8-27B-fine-tune",
+                "available_on_current_plan": True,
+            },
+            {
+                "id": "zai-org/future-model",
+                "available_on_current_plan": False,
+            },
+        ]
+    }
+    required = {
+        native_id: {
+            "id": native_id,
+            "available_on_current_plan": True,
+        }
+        for native_id in featherless.CURATED_NATIVE_MODELS
+    }
+    requested_urls: list[str] = []
+
+    def fake_fetch(url: str, **_kwargs: Any) -> dict[str, Any]:
+        requested_urls.append(url)
+        if "?" in url:
+            return listing
+        native_id = next(
+            native_id
+            for native_id in featherless.CURATED_NATIVE_MODELS
+            if url.endswith(native_id.replace("/", "%2F"))
+        )
+        return required[native_id]
+
+    monkeypatch.setattr(featherless, "fetch_json", fake_fetch)
+
+    rows = featherless._load_rows("test-key")
+
+    assert {row["id"] for row in rows} == {
+        *featherless.CURATED_NATIVE_MODELS,
+        "Qwen/Qwen3.8-27B",
+    }
+    assert "community/Qwen3.8-27B-fine-tune" not in {row["id"] for row in rows}
+    assert "available_on_current_plan=true" in requested_urls[0]
+    assert f"per_page={featherless.DISCOVERY_PAGE_SIZE}" in requested_urls[0]
 
 
 def test_jina_discovers_only_priced_embedding_models(
