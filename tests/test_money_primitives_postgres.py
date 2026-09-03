@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from tests.fakes.postgres import postgres_store_on, sqlite_postgres_conn
-from trusted_router.storage_models import CreditAccount
+from trusted_router.storage_models import CreditAccount, CreditMovement
 
 
 def _seed_workspace(store: object, conn: object, workspace_id: str) -> None:
@@ -19,6 +19,34 @@ def _seed_workspace(store: object, conn: object, workspace_id: str) -> None:
         "VALUES (%s, 0, 0, 0, 0)",
         (workspace_id,),
     )
+
+
+def test_credit_movement_insert_never_uses_server_preparation() -> None:
+    calls: list[dict[str, object]] = []
+
+    class RecordingConnection:
+        def execute(
+            self,
+            sql: str,
+            params: tuple[object, ...],
+            **kwargs: object,
+        ) -> None:
+            calls.append({"sql": sql, "params": params, "kwargs": kwargs})
+
+    from trusted_router.storage_postgres import PostgresStore
+
+    PostgresStore._insert_credit_movement_tx(
+        RecordingConnection(),
+        CreditMovement(
+            account_id="user:test",
+            movement_id="movement-test",
+            kind="custom_model_payout",
+            amount_microdollars=1,
+        ),
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["kwargs"] == {"prepare": False}
 
 
 def test_postgres_guarded_debit_runs_real_conditional_sql_once() -> None:

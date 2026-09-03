@@ -3451,6 +3451,7 @@ class PostgresStore:
                 movement.authorization_id,
                 _parse_timestamp(movement.created_at),
             ),
+            prepare=False,
         )
 
     def debit_workspace_guarded(
