@@ -778,6 +778,16 @@ def _authorize_gateway_sync_impl(
         ):
             raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
         if not user_model_is_on_the_clock(user_model, datetime.now(dt.UTC)):
+            # The billing-path 5xx alert counts this 503; without a line the
+            # request log alone cannot tell it from storage contention.
+            logger.warning(
+                "billing.authorize_user_model_off_the_clock workspace_id=%s request_id=%s "
+                "user_model_id=%s kind=%s",
+                workspace.id,
+                getattr(request.state, "request_id", None),
+                user_model.id,
+                user_model.kind,
+            )
             raise api_error(
                 503,
                 f"User-provided {user_model.kind} model {user_model.id} is off the clock",
@@ -1640,6 +1650,15 @@ def _authorize_gateway_sync_impl(
             # ever release it for a request that produced no authorization —
             # swallowing this into a bare 503 leaks it silently, forever.
             STORE.refund_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
+            logger.warning(
+                "billing.authorize_conflict_after_escrow workspace_id=%s request_id=%s "
+                "requested_model=%s estimated_microdollars=%s error_class=%s",
+                workspace.id,
+                getattr(request.state, "request_id", None),
+                requested_model_id,
+                estimate,
+                type(conflict_exc).__name__,
+            )
             raise api_error(
                 503,
                 "Authorization contention; retry shortly.",
@@ -2477,6 +2496,12 @@ def _federated_key_still_valid(cached: Any | None, lookup_hash: str) -> Any | No
                 int(age),
             )
             return cached
+        logger.warning(
+            "federation.key_directory_unavailable home=%s cached_age_s=%s error_class=%s",
+            home,
+            int(age) if cached is not None else None,
+            type(exc).__name__,
+        )
         raise api_error(
             503,
             "Key directory is temporarily unavailable; retry shortly",

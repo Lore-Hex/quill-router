@@ -325,24 +325,38 @@ def test_clock_in_probe_failure_stays_offline(
 
 def test_gateway_rejects_off_clock_user_model_with_stable_error(
     dispatch_client: TestClient,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     client = dispatch_client
     key = _create_key(client)
     created = _create(client)
 
-    response = client.post(
-        "/v1/internal/gateway/authorize",
-        json={
-            "api_key_hash": key["hash"],
-            "model": created["id"],
-            "estimated_input_tokens": 10,
-            "max_output_tokens": 10,
-        },
-    )
+    with caplog.at_level("WARNING", logger="trusted_router"):
+        response = client.post(
+            "/v1/internal/gateway/authorize",
+            headers={"X-Request-ID": "req-off-the-clock"},
+            json={
+                "api_key_hash": key["hash"],
+                "model": created["id"],
+                "estimated_input_tokens": 10,
+                "max_output_tokens": 10,
+            },
+        )
     assert response.status_code == 503, response.text
     assert response.json()["error"]["type"] == "model_off_the_clock"
     assert created["id"] in response.json()["error"]["message"]
     assert "machine" in response.json()["error"]["message"]
+    # This 503 counts against the billing-path 5xx alert, so it names itself.
+    lines = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("billing.authorize_user_model_off_the_clock ")
+    ]
+    assert len(lines) == 1, lines
+    assert f"user_model_id={created['id']}" in lines[0]
+    assert "kind=machine" in lines[0]
+    assert "request_id=req-off-the-clock" in lines[0]
+    assert key["hash"] not in lines[0]
 
 
 def test_gateway_authorization_freezes_user_model_attribution(

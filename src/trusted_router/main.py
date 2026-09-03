@@ -100,6 +100,9 @@ from trusted_router.storage_errors import (
 )
 from trusted_router.types import ErrorType
 
+# Storage-level 503s leave no other trace: the request log shows a bare 503.
+_storage_error_logger = logging.getLogger(__name__)
+
 _APP_CONSOLE_HANDLER_MARKER = "_trusted_router_app_console"
 
 
@@ -470,10 +473,28 @@ def create_app(
         message = first.get("msg") or "Invalid request body"
         return error_response(400, f"{loc}: {message}", ErrorType.BAD_REQUEST)
 
-    async def aborted_exception_handler(_request: Request, _exc: Exception) -> Response:
+    def _log_storage_503(request: Request, exc: Exception, event: str) -> None:
+        # The console formatter keeps only the message, so the attribution
+        # fields go INTO the message rather than ``extra``. Only the error
+        # CLASS is logged: a backend message can name rows, and a key hash,
+        # prompt, or body must never reach a log line.
+        request_id = getattr(request.state, "request_id", None) or request.headers.get(
+            "x-request-id"
+        )
+        _storage_error_logger.warning(
+            "%s method=%s path=%s request_id=%s error_class=%s",
+            event,
+            request.method,
+            request.url.path,
+            request_id,
+            type(exc).__name__,
+        )
+
+    async def aborted_exception_handler(request: Request, exc: Exception) -> Response:
         # A storage transaction exhausted its retry budget under contention.
         # This is transient, so signal the caller to retry rather than
         # surfacing a 500.
+        _log_storage_503(request, exc, "storage.transaction_aborted")
         response = error_response(
             503,
             "The request was aborted due to transient database contention; retry.",
@@ -490,7 +511,8 @@ def create_app(
     for conflict_type in conflict_store_error_types():
         app.add_exception_handler(conflict_type, aborted_exception_handler)
 
-    async def unavailable_exception_handler(_request: Request, _exc: Exception) -> Response:
+    async def unavailable_exception_handler(request: Request, exc: Exception) -> Response:
+        _log_storage_503(request, exc, "storage.unavailable")
         response = error_response(
             503,
             "Persistent storage is temporarily unavailable; retry.",
