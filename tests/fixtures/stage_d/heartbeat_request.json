@@ -1,0 +1,1 @@
+{"authorization_id":"gwa-stage-d-fixture","seq":1,"started_at_ms":1788307200000,"selected_endpoint_id":"anthropic/test","usage":{"input_tokens":100,"output_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"price_tier_input_tokens":0,"reasoning_tokens":0},"elapsed_ms":1000,"stream":true}

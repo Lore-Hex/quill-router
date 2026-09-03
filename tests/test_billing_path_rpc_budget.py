@@ -32,6 +32,7 @@ GATEWAY = ROOT / "src" / "trusted_router" / "routes" / "internal" / "gateway.py"
 BILLING_PATH_FUNCTIONS = frozenset(
     {
         "_authorize_gateway_sync",
+        "_heartbeat_gateway_sync",
         "_settle_gateway_with_admission_sync",
         "_settle_gateway_authorization",
     }

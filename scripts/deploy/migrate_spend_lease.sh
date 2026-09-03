@@ -89,8 +89,8 @@ wait_index_read_write() {
 
 # Existing authorization rows must retain NULL, which is distinct from zero or
 # an empty finalization result. Spanner also forbids adding NOT NULL columns to
-# a populated table, so these nine additions deliberately have no backfill and
-# no DEFAULT clauses.
+# a populated table, so these additions deliberately have no backfill and no
+# DEFAULT clauses.
 ensure_column tr_gateway_authorization spend_lease_id \
   "STRING(64)"
 ensure_column tr_gateway_authorization spend_lease_gen \
@@ -109,6 +109,20 @@ ensure_column tr_gateway_authorization finalization_outcome \
   "STRING(32)"
 ensure_column tr_gateway_authorization finalized_cost_microdollars \
   "INT64"
+ensure_column tr_gateway_authorization started_at \
+  "TIMESTAMP"
+ensure_column tr_gateway_authorization heartbeat_seq \
+  "INT64"
+ensure_column tr_gateway_authorization heartbeat_at \
+  "TIMESTAMP"
+ensure_column tr_gateway_authorization heartbeat_hash \
+  "STRING(64)"
+ensure_column tr_gateway_authorization selected_endpoint_id \
+  "STRING(128)"
+ensure_column tr_gateway_authorization delivered_usage \
+  "STRING(MAX)"
+ensure_column tr_gateway_authorization pricing_snapshot \
+  "STRING(MAX)"
 
 if table_exists spend_lease_scope_arbitration; then
   log "spend_lease_scope_arbitration: already present"

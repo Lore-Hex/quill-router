@@ -168,6 +168,7 @@ def test_internal_surface_route_inventory_matches_capability_audit() -> None:
         ("POST", "/internal/gateway/key"),
         ("POST", "/internal/gateway/resolve-custom-model"),
         ("POST", "/internal/gateway/authorize"),
+        ("POST", "/internal/gateway/heartbeat"),
         ("POST", "/internal/gateway/settle"),
         ("POST", "/internal/gateway/refund"),
         ("POST", "/internal/gateway/settle-outbox/drain"),

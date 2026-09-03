@@ -48,7 +48,6 @@ from trusted_router.catalog import (
     PROVIDERS,
     Model,
     ModelEndpoint,
-    cache_token_prices_microdollars,
     default_endpoint_for_model,
     effective_endpoint,
     endpoint_for_id,
@@ -75,7 +74,7 @@ from trusted_router.custom_model_markup_billing import (
     custom_model_markup_payout_event_id,
 )
 from trusted_router.errors import api_error, assert_workspace_billing_active
-from trusted_router.money import money_pair, token_cost_microdollars
+from trusted_router.money import money_pair
 from trusted_router.oauth_app_policy import oauth_app_is_effectively_suspended
 from trusted_router.openai_service_tiers import (
     OPENAI_PRIORITY_MAX_PROMPT_TOKENS,
@@ -92,7 +91,6 @@ from trusted_router.partner_billing import (
 )
 from trusted_router.pricing import (
     SIGNED_RECEIPT_TOTAL_FEE_BASIS_POINTS,
-    resolve_request_rates,
     signed_receipt_price_microdollars,
 )
 from trusted_router.provider_compat import byok_storage_provider_candidates
@@ -130,6 +128,7 @@ from trusted_router.routing import (
 )
 from trusted_router.schemas import (
     GatewayAuthorizeRequest,
+    GatewayHeartbeatRequest,
     GatewayResolveCustomModelRequest,
     GatewaySettleRequest,
     GatewayValidateRequest,
@@ -187,6 +186,14 @@ from trusted_router.spend_leases import (
     spend_lease_binding_ineligibility_reason,
     spend_lease_ineligibility_reason,
     verify_boot_auth,
+)
+from trusted_router.stage_d import (
+    canonical_pricing_snapshot,
+    endpoint_pricing_document,
+    parse_pricing_snapshot,
+)
+from trusted_router.stage_d import (
+    endpoint_cost_microdollars_from_document as _stage_d_document_cost,
 )
 from trusted_router.storage import (
     STORE,
@@ -460,6 +467,105 @@ async def settle_gateway(
         body,
         settings=settings,
         background_tasks=background_tasks,
+    )
+
+
+async def heartbeat_gateway(
+    request: Request,
+    body: GatewayHeartbeatRequest,
+    settings: Settings,
+) -> dict[str, Any]:
+    require_internal_gateway(request, settings)
+    if not settings.stage_d_heartbeat_enabled:
+        raise api_error(
+            503,
+            "Stage D heartbeats are disabled",
+            ErrorType.SERVICE_UNAVAILABLE,
+            headers={"Retry-After": "1"},
+        )
+    raw_body = await request.body()
+    return await run_in_threadpool(
+        _heartbeat_gateway_sync,
+        request,
+        body,
+        settings,
+        raw_body,
+    )
+
+
+@spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)
+def _heartbeat_gateway_sync(
+    request: Request,
+    body: GatewayHeartbeatRequest,
+    settings: Settings,
+    raw_body: bytes,
+) -> dict[str, Any]:
+    require_internal_gateway(request, settings)
+    headers = request.headers.getlist("X-TR-Boot-Auth")
+    boot_auth = parse_boot_auth_header(headers[0]) if len(headers) == 1 else None
+    if boot_auth is None:
+        raise _heartbeat_rejection("boot_not_accepted")
+    boot = STORE.get_spend_lease_boot(boot_auth.kid)
+    if not verify_boot_auth(
+        boot=boot,
+        auth=boot_auth,
+        method=request.method,
+        path=request.url.path,
+        exact_body_bytes=raw_body,
+        # Heartbeats identify the already-authorized request rather than
+        # carrying a customer lookup hash. Equality preserves authorize's
+        # verifier contract; the signature binds the authorization id and the
+        # exact body bytes.
+        signed_lookup_hash="",
+        resolved_lookup_hash="",
+        accepted_image_digests=settings.spend_lease_accepted_gcp_digests,
+    ):
+        raise _heartbeat_rejection("boot_not_accepted")
+    typed_store = typed_billing_store(STORE)
+    heartbeat = getattr(typed_store, "heartbeat_gateway_typed", None)
+    if (
+        typed_store is None
+        or getattr(typed_store, "request_record_write_mode", "legacy") != "typed"
+        or not callable(heartbeat)
+    ):
+        raise _heartbeat_rejection("out_of_cohort")
+    try:
+        started_at = dt.datetime.fromtimestamp(body.started_at_ms / 1000, tz=dt.UTC)
+    except (OverflowError, OSError, ValueError) as exc:
+        raise api_error(400, "started_at_ms is invalid", ErrorType.BAD_REQUEST) from exc
+    canonical_body = json.dumps(
+        body.model_dump(exclude_none=True),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    result = heartbeat(
+        authorization_id=body.authorization_id,
+        seq=body.seq,
+        started_at=started_at,
+        selected_endpoint_id=body.selected_endpoint_id,
+        usage=body.usage.canonical_counts(),
+        heartbeat_hash=hashlib.sha256(canonical_body).hexdigest(),
+        stream=body.stream,
+        grace_seconds=settings.heartbeat_grace_seconds,
+    )
+    if not result.accepted:
+        raise _heartbeat_rejection(str(result.reason))
+    return {
+        "accepted": True,
+        "seq": int(result.seq),
+        "expires_at_ms": int(result.expires_at_ms),
+        "cap_micro": int(result.cap_micro),
+        "running_micro": int(result.running_micro),
+    }
+
+
+def _heartbeat_rejection(reason: str) -> Exception:
+    code = 404 if reason == "unknown_authorization" else 401 if reason == "boot_not_accepted" else 409
+    return api_error(
+        code,
+        "Gateway heartbeat rejected",
+        ErrorType.HEARTBEAT_REJECTED,
+        extra={"reason": reason},
     )
 
 
@@ -814,6 +920,7 @@ def _authorize_gateway_sync_impl(
     model, endpoint = endpoint_candidates[0]
 
     output_tokens = body.output_estimate
+    pricing_effective_at = dt.datetime.now(dt.UTC)
     model_estimate = (
         custom_model_cost_microdollars(
             input_tokens=input_tokens,
@@ -833,6 +940,7 @@ def _authorize_gateway_sync_impl(
                 candidate_endpoint,
                 input_tokens,
                 output_tokens,
+                effective_at=pricing_effective_at,
                 service_tier=service_tier,
                 reserve_auto=True,
             )
@@ -994,6 +1102,32 @@ def _authorize_gateway_sync_impl(
         and app_markup_basis_points == 0
         and receipt_fee_basis_points == 0
     )
+    standard_endpoint_pricing = (
+        custom_model is None
+        and user_model is None
+        and partner_mode is None
+        and additional_cost_reservation == 0
+        and not native_batch_eligible
+    )
+    stage_d_reason = _stage_d_eligibility_reason(
+        stream=body.stream,
+        route_type=body.route_type,
+        endpoint_candidates=endpoint_candidates,
+        standard_endpoint_pricing=standard_endpoint_pricing,
+        service_tier=service_tier,
+        settlement_backend=(
+            _typed_store is not None
+            and getattr(_typed_store, "request_record_write_mode", "legacy") == "typed"
+        ),
+    )
+    pricing_snapshot = None
+    if stage_d_reason == "ok":
+        pricing_snapshot = canonical_pricing_snapshot(
+            endpoint_pricing_document(
+                effective_endpoint(candidate_endpoint, at=pricing_effective_at)
+                for _candidate_model, candidate_endpoint in endpoint_candidates
+            )
+        )
     spend_lease: SpendLeaseArtifact | None = None
     spend_lease_binding_plan: Any | None = None
     no_lease_reason = spend_lease_ineligibility_reason(
@@ -1262,6 +1396,10 @@ def _authorize_gateway_sync_impl(
                     window_limits=window_limits or None,
                     spend_lease=spend_lease,
                     spend_lease_binding_plan=spend_lease_binding_plan,
+                    pricing_snapshot=pricing_snapshot,
+                    stage_d_reason=stage_d_reason,
+                    stage_d_prompt_tokens=input_tokens,
+                    stage_d_max_output_tokens=output_tokens,
                 )
         except conflict_store_error_types() as exc:
             release_user_model_slot_after_error()
@@ -1532,6 +1670,7 @@ def _authorize_gateway_sync_impl(
         endpoint_candidates=endpoint_candidates,
         idempotent_replay=idempotent_replay,
         custom_model=custom_model,
+        stage_d_reason_override=stage_d_reason,
     )
 
 
@@ -1717,6 +1856,14 @@ def register(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> dict[str, Any]:
         return await authorize_gateway(request, body, settings)
+
+    @router.post("/internal/gateway/heartbeat")
+    async def gateway_heartbeat(
+        request: Request,
+        body: GatewayHeartbeatRequest,
+        settings: SettingsDep,
+    ) -> dict[str, Any]:
+        return await heartbeat_gateway(request, body, settings)
 
     @router.post("/internal/gateway/spend-lease/register-boot")
     async def gateway_spend_lease_boot_register(
@@ -1992,7 +2139,12 @@ def _gateway_authorize_response(
     endpoint_candidates: list[tuple[Model, ModelEndpoint]],
     idempotent_replay: bool,
     custom_model: Any | None,
+    stage_d_reason_override: str | None = None,
 ) -> dict[str, Any]:
+    stage_d = _gateway_stage_d_payload(
+        authorization,
+        reason_override=stage_d_reason_override,
+    )
     return {
         "data": {
             "authorization_id": authorization.id,
@@ -2021,6 +2173,7 @@ def _gateway_authorize_response(
             "receipt_fee_basis_points": authorization.receipt_fee_basis_points,
             "request_metadata_version": REQUEST_METADATA_VERSION,
             "native_batch_eligible": authorization.native_batch_eligible,
+            **stage_d,
             **_gateway_spend_lease_payload(authorization),
             "tags": dict(authorization.tags),
             "custom_model": None
@@ -2039,6 +2192,53 @@ def _gateway_authorize_response(
                 for candidate_model, candidate_endpoint in endpoint_candidates
             ],
         }
+    }
+
+
+def _stage_d_eligibility_reason(
+    *,
+    stream: bool | None,
+    route_type: str | None,
+    endpoint_candidates: list[tuple[Model, ModelEndpoint]],
+    standard_endpoint_pricing: bool,
+    service_tier: str | None,
+    settlement_backend: bool,
+) -> str:
+    if stream is not True:
+        return "not_streaming"
+    if route_type not in {"chat.completions", "responses"}:
+        return "route"
+    if not all(
+        UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
+        for _candidate_model, candidate_endpoint in endpoint_candidates
+    ):
+        return "mixed_usage_type"
+    if not standard_endpoint_pricing:
+        return "pricing_kind"
+    if service_tier in {"priority", "auto"}:
+        return "service_tier"
+    if not settlement_backend:
+        return "settlement_backend"
+    return "ok"
+
+
+def _gateway_stage_d_payload(
+    authorization: GatewayAuthorization,
+    *,
+    reason_override: str | None = None,
+) -> dict[str, Any]:
+    snapshot = authorization.pricing_snapshot
+    reason = authorization.stage_d_reason or reason_override or "settlement_backend"
+    if snapshot is None:
+        return {"stage_d": {"eligible": False, "reason": reason}}
+    document = parse_pricing_snapshot(snapshot)
+    cap_micro = int(authorization.estimated_microdollars)
+    if authorization.spend_lease_allocated_micro is not None:
+        cap_micro = min(cap_micro, int(authorization.spend_lease_allocated_micro))
+    return {
+        "stage_d": {"eligible": True, "reason": "ok"},
+        "candidate_prices": document["candidates"],
+        "cap_micro": cap_micro,
     }
 
 
@@ -3999,59 +4199,38 @@ def _endpoint_cost_microdollars(
             cache_read_tokens=cache_read_tokens,
             cache_creation_tokens=cache_creation_tokens,
         )
-    total_prompt = input_tokens + cache_read_tokens + cache_creation_tokens
-    # Some providers expose separately billable internal orchestration tokens
-    # while selecting their long-context tier from the initial request context.
-    # The attested gateway supplies that exact provider-metered count. Invalid
-    # values fall back to the larger aggregate, which is conservative for COGS.
-    tier_prompt = total_prompt
-    if (
-        price_tier_input_tokens is not None
-        and price_tier_input_tokens > 0
-        and price_tier_input_tokens <= total_prompt
-    ):
-        tier_prompt = price_tier_input_tokens
-    rates = resolve_request_rates(
-        getattr(endpoint, "price_tiers", ()) or (),
-        headline_prompt_micro_per_m=endpoint.prompt_price_microdollars_per_million_tokens,
-        headline_completion_micro_per_m=endpoint.completion_price_microdollars_per_million_tokens,
-        total_prompt_tokens=tier_prompt,
+    document = endpoint_pricing_document((endpoint,))
+    return _endpoint_cost_microdollars_from_document(
+        document,
+        endpoint.id,
+        input_tokens,
+        output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_creation_tokens=cache_creation_tokens,
+        price_tier_input_tokens=price_tier_input_tokens,
     )
-    prompt_price = rates.prompt_price_microdollars_per_million_tokens
 
-    cost = (
-        endpoint.request_price_microdollars
-        + token_cost_microdollars(input_tokens, prompt_price)
-        + token_cost_microdollars(
-            output_tokens,
-            rates.completion_price_microdollars_per_million_tokens,
-        )
+
+def _endpoint_cost_microdollars_from_document(
+    document: dict[str, Any],
+    endpoint_id: str,
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+    price_tier_input_tokens: int | None = None,
+) -> int:
+    """The Stage D cost path, with the frozen document as its sole price input."""
+    return _stage_d_document_cost(
+        document,
+        endpoint_id,
+        input_tokens,
+        output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_creation_tokens=cache_creation_tokens,
+        price_tier_input_tokens=price_tier_input_tokens,
     )
-    has_positive_charge = (
-        endpoint.request_price_microdollars > 0
-        or (input_tokens > 0 and prompt_price > 0)
-        or (output_tokens > 0 and rates.completion_price_microdollars_per_million_tokens > 0)
-    )
-    if cache_read_tokens or cache_creation_tokens:
-        default_read_price, write_price = cache_token_prices_microdollars(
-            endpoint.provider, prompt_price
-        )
-        read_price = (
-            rates.prompt_cached_price_microdollars_per_million_tokens
-            if rates.prompt_cached_price_microdollars_per_million_tokens is not None
-            else default_read_price
-        )
-        cost += token_cost_microdollars(cache_read_tokens, read_price)
-        cost += token_cost_microdollars(cache_creation_tokens, write_price)
-        has_positive_charge = (
-            has_positive_charge
-            or (cache_read_tokens > 0 and read_price > 0)
-            or (cache_creation_tokens > 0 and write_price > 0)
-        )
-    # Microdollars are the ledger's smallest unit. A positive-priced request
-    # must still reserve and settle one unit when its exact fractional cost
-    # rounds below one microdollar; otherwise tiny calls can bypass key limits.
-    return max(cost, 1) if has_positive_charge else 0
 
 
 def _partner_billing_mode_or_error(

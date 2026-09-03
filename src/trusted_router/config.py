@@ -894,6 +894,11 @@ class Settings(BaseSettings):
     spend_lease_skew_seconds: int = 10
     spend_lease_max_microdollars: int = 1_000_000
     spend_lease_max_available_basis_points: int = 1_000
+    # Stage D is inert until an attested enclave calls the new endpoint. Keep a
+    # runtime kill switch so heartbeat writes can be stopped independently of a
+    # code rollout while authorize continues to expose cohort metadata.
+    stage_d_heartbeat_enabled: bool = True
+    heartbeat_grace_seconds: int = 300
     # Dedicated Stage A traffic. The key belongs to a Credits-only pilot
     # workspace and is loaded lazily from Secret Manager by the isolated
     # once-a-minute synthetic job; it is never placed in an environment

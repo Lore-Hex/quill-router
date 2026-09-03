@@ -27,6 +27,13 @@ AUTHORIZATION_COLUMNS = {
     "idempotency_fingerprint": "STRING(64)",
     "finalization_outcome": "STRING(32)",
     "finalized_cost_microdollars": "INT64",
+    "started_at": "TIMESTAMP",
+    "heartbeat_seq": "INT64",
+    "heartbeat_at": "TIMESTAMP",
+    "heartbeat_hash": "STRING(64)",
+    "selected_endpoint_id": "STRING(128)",
+    "delivered_usage": "STRING(MAX)",
+    "pricing_snapshot": "STRING(MAX)",
 }
 
 ARBITRATION_COLUMNS = {
@@ -190,10 +197,19 @@ def test_spend_lease_migration_is_executable_and_unconditional() -> None:
     assert "--apply" not in script
 
 
-def test_authorization_alters_are_exactly_nine_nullable_columns_without_defaults(
+def test_authorization_alters_match_manifest_and_stage_d_adds_exactly_seven(
     fresh_ddls: list[str],
 ) -> None:
     _assert_authorization_manifest(fresh_ddls)
+    assert list(AUTHORIZATION_COLUMNS)[-7:] == [
+        "started_at",
+        "heartbeat_seq",
+        "heartbeat_at",
+        "heartbeat_hash",
+        "selected_endpoint_id",
+        "delivered_usage",
+        "pricing_snapshot",
+    ]
 
 
 def test_arbitration_table_matches_frozen_manifest(fresh_ddls: list[str]) -> None:
@@ -238,7 +254,7 @@ def test_done_row_with_null_next_attempt_is_absent_from_due_index(
 def test_indexes_are_waited_until_read_write(fresh_ddls: list[str]) -> None:
     script = (ROOT / SCRIPT).read_text()
 
-    assert len(fresh_ddls) == 13
+    assert len(fresh_ddls) == 20
     for name in (
         "spend_lease_scope_arbitration_by_authorization",
         "spend_lease_open_due",
@@ -255,7 +271,7 @@ def test_fresh_apply_reports_every_object_created(
     run = _run(tmp_path, monkeypatch, objects_exist=False)
 
     assert run.returncode == 0, summarise(run)
-    assert len(_ddls(run)) == 13
+    assert len(_ddls(run)) == 20
     for object_name in (
         *(f"tr_gateway_authorization.{name}" for name in AUTHORIZATION_COLUMNS),
         "spend_lease_scope_arbitration",

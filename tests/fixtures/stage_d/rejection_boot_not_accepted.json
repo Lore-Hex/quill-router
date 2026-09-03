@@ -1,0 +1,1 @@
+{"error":{"code":401,"message":"Gateway heartbeat rejected","type":"heartbeat_rejected","source":"router","reason":"boot_not_accepted"}}
