@@ -1512,6 +1512,11 @@ class Settings(BaseSettings):
                 "TR_GOOGLE_DATA_MANAGER_STATUS_POLL_SECONDS must be between 0.1 and 30"
             )
         if self.google_data_manager_enabled:
+            if environment not in {"local", "test"}:
+                raise ValueError(
+                    "TR_GOOGLE_DATA_MANAGER_ENABLED is forbidden outside local/test; "
+                    "TrustedRouter's no-sharing policy disables outbound advertising uploads"
+                )
             missing_google_data_manager = [
                 name
                 for name, value in (

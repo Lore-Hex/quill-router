@@ -57,22 +57,28 @@ jobs:
           REPO_SECURITY_TOKEN: ${{ secrets.REPO_SECURITY_TOKEN || github.token }}
         run: |
           set -o pipefail
-          ARGS=""
+          # The org token can assert private-vulnerability-reporting across
+          # repositories but intentionally lacks Administration: read on the
+          # two production repositories. Keep that unreadable control visible
+          # without turning 40/40 vulnerability intake coverage red. A real
+          # missing protection or required check remains fatal.
+          ARGS="--allow-unreadable-branch-protection"
           if [ -z "${{ secrets.REPO_SECURITY_TOKEN }}" ]; then
             echo "::warning::REPO_SECURITY_TOKEN not set — private vulnerability"\
               " reporting state cannot be read and is NOT being asserted."
-            ARGS="--allow-unreadable"
+            ARGS="${ARGS} --allow-unreadable"
           fi
           python3 scripts/security/check_repo_security_coverage.py \
             --org "${GITHUB_REPOSITORY_OWNER}" $ARGS 2>&1 | tee /tmp/coverage.txt
 
       - name: File or update an issue on failure
         if: failure()
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           BODY=$(printf '%s\n\n```\n%s\n```\n' \
-            "A public repository cannot receive a vulnerability report. Enable private vulnerability reporting and add a SECURITY.md, then re-run this workflow." \
+            "Repository security coverage or production branch protection failed. Unreadable controls are reported separately and are not described as missing." \
             "$(tail -40 /tmp/coverage.txt)")
           EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" \
             --label security --state open \
@@ -85,4 +91,20 @@ jobs:
               --title "Repository security coverage gap" \
               --label security \
               --body "$BODY"
+          fi
+
+      - name: Close the resolved coverage issue
+        if: success()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" \
+            --label security --state open \
+            --search "Repository security coverage gap in:title" \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue close "$EXISTING" --repo "$GITHUB_REPOSITORY" \
+              --reason completed \
+              --comment "Coverage is clean. The latest run covered every public repository; branch-protection reads that require unavailable Administration permission remain explicitly reported as unreadable."
           fi

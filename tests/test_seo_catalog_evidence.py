@@ -3,11 +3,16 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 
 from trusted_router.catalog import META_MODEL_IDS, MODELS, PROVIDERS, endpoints_for_model
 from trusted_router.dashboard import PUBLIC_PAGES
+from trusted_router.provider_lifecycle import (
+    LIFECYCLE_CLOCK_OVERRIDE_ENV,
+    latest_scheduled_cutover,
+)
 from trusted_router.seo_catalog import seo_catalog_evidence
 
 
@@ -26,7 +31,18 @@ def test_every_dedicated_seo_page_renders_current_catalog_evidence(
         assert "/static/provider-logos/" in response.text, page_key
 
 
-def test_seo_evidence_counts_the_live_public_catalog(client: TestClient) -> None:
+def test_seo_evidence_counts_the_live_public_catalog(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    # A price-refresh run can straddle an effective-dated provider retirement.
+    # Pin both the rendered page and the independent expectation to one instant
+    # so the gate tests catalog coherence rather than the wall-clock boundary.
+    after_latest_cutover = latest_scheduled_cutover() + timedelta(days=1)
+    monkeypatch.setenv(
+        LIFECYCLE_CLOCK_OVERRIDE_ENV,
+        after_latest_cutover.isoformat(),
+    )
     response = client.get("/openai-compatible-llm-api")
     public_model_count = sum(model.id not in META_MODEL_IDS for model in MODELS.values())
     public_model_ids = {model.id for model in MODELS.values() if model.id not in META_MODEL_IDS}

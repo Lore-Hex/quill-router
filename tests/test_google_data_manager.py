@@ -3,6 +3,8 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import json
+import os
+import subprocess
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -304,8 +306,8 @@ def test_config_fails_closed_when_enabled_without_destination_ids() -> None:
         )
 
 
-def test_worker_config_requires_dedicated_kms_outside_local_test() -> None:
-    with pytest.raises(ValueError, match="TR_GOOGLE_DATA_MANAGER_KMS_KEY_NAME"):
+def test_worker_config_forbids_outbound_sharing_outside_local_test() -> None:
+    with pytest.raises(ValueError, match="no-sharing policy"):
         _settings(environment="worker", service_surface="control")
 
 
@@ -579,25 +581,71 @@ def test_conversion_storage_is_versioned_away_from_retired_plaintext_rows() -> N
     ]
 
 
-def test_deploy_worker_has_only_dedicated_kms_and_metadata_config() -> None:
+def test_deploy_enforces_google_data_manager_is_disabled() -> None:
     root = Path(__file__).parents[1]
     deploy_script = (root / "scripts/deploy/google_data_manager.sh").read_text()
-    infra = (root / "scripts/deploy/infra.sh").read_text()
+    workflow = (root / ".github/workflows/deploy.yml").read_text()
 
-    assert "TR_ENVIRONMENT=worker" in deploy_script
-    assert "tr-google-data-manager@" in deploy_script
-    assert "TR_GOOGLE_DATA_MANAGER_KMS_KEY_NAME=" in deploy_script
-    assert "TR_STRIPE_SECRET_KEY=" not in deploy_script
-    assert "TR_INTERNAL_GATEWAY_TOKEN=" not in deploy_script
-    assert "TR_SENTRY_DSN=" not in deploy_script
-    assert "TR_BIGTABLE_" not in deploy_script
-    assert "TR_BYOK_KMS_KEY_NAME=" not in deploy_script
-    assert "--update-secrets" not in deploy_script
-    assert '"$GOOGLE_ADS_KMS_KEY_ID"' in infra
-    assert (
-        '"$BYOK_KMS_KEY_ID"'
-        not in infra.split("# Metadata-only Google Ads conversion worker", 1)[1]
+    assert "scheduler jobs pause" in deploy_script
+    assert "TR_GOOGLE_DATA_MANAGER_ENABLED=false" in deploy_script
+    assert "scheduler is not paused" in deploy_script
+    assert "job is not disabled" in deploy_script
+    assert "scheduler jobs create" not in deploy_script
+    assert "scheduler jobs update http" not in deploy_script
+    assert "TR_GOOGLE_DATA_MANAGER_ENABLED=true" not in deploy_script
+    assert "Enforce Google Data Manager sharing disabled" in workflow
+    assert "steps.optional.outputs.deploy_google_data_manager" not in workflow
+
+
+def _run_disable_script(tmp_path: Path, *, reported_enabled: str) -> subprocess.CompletedProcess[str]:
+    argv_log = tmp_path / "gcloud-argv.log"
+    fake_gcloud = tmp_path / "gcloud"
+    fake_gcloud.write_text(
+        """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$HARNESS_ARGV_LOG"
+if [[ " $* " == *" projects describe "* ]]; then
+  printf '123456789\\n'
+elif [[ " $* " == *" scheduler jobs describe "* ]]; then
+  printf 'PAUSED\\n'
+elif [[ " $* " == *" run jobs describe "* ]] && [[ " $* " == *" --format=json "* ]]; then
+  printf '{"spec":{"template":{"spec":{"template":{"spec":{"containers":[{"env":[{"name":"TR_GOOGLE_DATA_MANAGER_ENABLED","value":"%s"}]}]}}}}}}\\n' "$HARNESS_JOB_ENABLED"
+fi
+""",
+        encoding="utf-8",
     )
+    fake_gcloud.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "HARNESS_ARGV_LOG": str(argv_log),
+        "HARNESS_JOB_ENABLED": reported_enabled,
+    }
+    return subprocess.run(  # noqa: S603 - fixed repository script under a stub CLI PATH
+        [str(Path(__file__).parents[1] / "scripts/deploy/google_data_manager.sh")],
+        cwd=Path(__file__).parents[1],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_disable_deploy_pauses_scheduler_before_disabling_job(tmp_path: Path) -> None:
+    result = _run_disable_script(tmp_path, reported_enabled="false")
+
+    assert result.returncode == 0, result.stderr
+    calls = (tmp_path / "gcloud-argv.log").read_text(encoding="utf-8").splitlines()
+    pause_index = next(i for i, call in enumerate(calls) if "scheduler jobs pause" in call)
+    update_index = next(i for i, call in enumerate(calls) if "run jobs update" in call)
+    assert pause_index < update_index
+    assert "--update-env-vars=TR_GOOGLE_DATA_MANAGER_ENABLED=false" in calls[update_index]
+
+
+def test_disable_deploy_fails_if_job_still_reports_enabled(tmp_path: Path) -> None:
+    result = _run_disable_script(tmp_path, reported_enabled="true")
+
+    assert result.returncode != 0
+    assert "Google Data Manager job is not disabled" in result.stderr
 
 
 def test_control_plane_can_encrypt_click_ids_but_worker_alone_can_decrypt() -> None:
