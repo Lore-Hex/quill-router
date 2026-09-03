@@ -721,10 +721,10 @@
   },
   "tinfoil": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 8,
     "name": "Tinfoil",
     "privacy": "E2EE + confidential",
-    "route_count": 12,
+    "route_count": 16,
     "route_mode": "Prepaid + BYOK",
     "slug": "tinfoil"
   },

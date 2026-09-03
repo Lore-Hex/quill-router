@@ -27,6 +27,7 @@ PHALA_JULY_2026_EFFECTIVE_AT = datetime(2026, 7, 29, 18, 0, tzinfo=UTC)
 TOGETHER_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 7, 27, 0, 0, tzinfo=UTC)
 BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 TINFOIL_KIMI_K26_RETIREMENT_AT = datetime(2026, 8, 3, 0, 0, tzinfo=UTC)
+TINFOIL_GLM52_RETIREMENT_AT = datetime(2026, 9, 10, 0, 0, tzinfo=UTC)
 PARASAIL_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
 FRIENDLI_QWEN3_235B_RETIREMENT_AT = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
 FRIENDLI_K_EXAONE_236B_RETIREMENT_AT = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
@@ -455,6 +456,18 @@ _RETIREMENTS = (
         model_ids=frozenset({"moonshotai/kimi-k2.6"}),
         upstream_ids=frozenset({"kimi-k2-6"}),
         effective_at=TINFOIL_KIMI_K26_RETIREMENT_AT,
+    ),
+    # Tinfoil announced that GLM 5.2 will be replaced by GLM 5.3 on
+    # 2026-09-10. The notice did not specify a time zone, so retire the
+    # Tinfoil route conservatively at 00:00 UTC. Other GLM 5.2 providers are
+    # unaffected. Tinfoil removed GLM 5.2 from its discovery feed early while
+    # the route remained callable, so its adapter preserves the committed
+    # route until this lifecycle cutoff.
+    _Retirement(
+        provider="tinfoil",
+        model_ids=frozenset({"z-ai/glm-5.2"}),
+        upstream_ids=frozenset({"glm-5-2"}),
+        effective_at=TINFOIL_GLM52_RETIREMENT_AT,
     ),
     # Parasail announced that these three serverless routes retire on
     # 2026-08-04. The notice did not specify a time zone, so use 00:00 UTC as

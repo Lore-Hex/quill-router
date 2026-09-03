@@ -239,7 +239,6 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         ("z-ai/glm-5.2", "novita"),
         ("z-ai/glm-5.2", "phala"),
         ("z-ai/glm-5.2", "siliconflow"),
-        ("z-ai/glm-5.2", "tinfoil"),
         ("z-ai/glm-5.2", "together"),
         ("z-ai/glm-5.2", "venice"),
         ("z-ai/glm-5.2", "parasail"),
@@ -2279,7 +2278,6 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     novita = MODEL_ENDPOINTS["z-ai/glm-5.2@novita/prepaid"]
     phala = MODEL_ENDPOINTS["z-ai/glm-5.2@phala/prepaid"]
     siliconflow = MODEL_ENDPOINTS["z-ai/glm-5.2@siliconflow/prepaid"]
-    tinfoil = MODEL_ENDPOINTS["z-ai/glm-5.2@tinfoil/prepaid"]
     together = MODEL_ENDPOINTS["z-ai/glm-5.2@together/prepaid"]
     venice = MODEL_ENDPOINTS["z-ai/glm-5.2@venice/prepaid"]
     parasail = MODEL_ENDPOINTS["z-ai/glm-5.2@parasail/prepaid"]
@@ -2298,7 +2296,6 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert novita.upstream_id == "zai-org/glm-5.2"
     assert phala.upstream_id == "z-ai/glm-5.2"
     assert siliconflow.upstream_id == "zai-org/GLM-5.2"
-    assert tinfoil.upstream_id == "glm-5-2"
     assert together.upstream_id == "zai-org/GLM-5.2"
     assert venice.upstream_id == "zai-org-glm-5-2"
     assert parasail.upstream_id == "parasail-glm-52"

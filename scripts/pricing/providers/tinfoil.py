@@ -14,6 +14,8 @@ OpenAI-compatible chat completions at inference.tinfoil.sh/v1.
 
 from __future__ import annotations
 
+import json
+import re
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -43,6 +45,8 @@ EXPECTED_MODELS = [
     "deepseek/deepseek-v4-flash",
     "moonshotai/kimi-k3",
     "z-ai/glm-5.2",
+    "z-ai/glm-5.3",
+    "z-ai/glm-5.3-flash",
     "google/gemma-4-31b-it",
 ]
 
@@ -59,6 +63,8 @@ _NATIVE_TO_OR_ID = {
     "kimi-k3": "moonshotai/kimi-k3",
     "glm-5-1": "z-ai/glm-5.1",
     "glm-5-2": "z-ai/glm-5.2",
+    "glm-5-3": "z-ai/glm-5.3",
+    "glm-5-3-flash": "z-ai/glm-5.3-flash",
     "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
     "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
     "gemma4-31b": "google/gemma-4-31b-it",
@@ -72,6 +78,116 @@ _NATIVE_TO_OR_ID = {
 }
 UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
+
+# Only variants whose canonical spelling is stable may bypass manual review.
+# Quantization/build suffixes (for example ``-fp8`` or a date) can describe a
+# deployment rather than a distinct public model and must stay review-gated.
+_GLM_NATIVE_ID_RE = re.compile(r"^glm-(\d+)-(\d+)(?:-(flash|air|fast|turbo))?$")
+_ANNOUNCED_FEED_REMOVALS = (("z-ai/glm-5.2", "glm-5-2"),)
+_PRESERVED_MANIFEST_FIELDS = frozenset(
+    {
+        "id",
+        "upstream_id",
+        "display_name",
+        "title",
+        "model_type",
+        "features",
+        "input_modalities",
+        "output_modalities",
+        "endpoints",
+        "status",
+        "context_length",
+        "max_output_tokens",
+        # A model may have been held by a canary or operator after the last
+        # successful discovery. Preserving a delisted-but-announced route must
+        # never clear that safety state on the next refresh.
+        "routable",
+        "routable_reason",
+        "unresolved_since",
+    }
+)
+
+
+def _canonical_model_id(native_id: str) -> str | None:
+    """Map reviewed IDs and safely recognize future Tinfoil GLM releases."""
+
+    normalized = native_id.strip().casefold()
+    explicit = _NATIVE_TO_OR_ID.get(normalized)
+    if explicit is not None:
+        return explicit
+    match = _GLM_NATIVE_ID_RE.fullmatch(normalized)
+    if match is not None:
+        major, minor, variant = match.groups()
+        suffix = f"-{variant}" if variant else ""
+        return f"z-ai/glm-{major}.{minor}{suffix}"
+    return mapped_or_canonical_model_id(native_id, _NATIVE_TO_OR_ID)
+
+
+def _preserve_announced_feed_removals(
+    prices: dict[str, ModelPrice],
+    discovered: dict[str, dict[str, Any]],
+    notes: list[str],
+) -> None:
+    """Keep announced, still-callable routes until their lifecycle cutoff.
+
+    Tinfoil can remove a model from ``/v1/models`` before its stated API
+    retirement. Preserve the committed, last-known-good price and metadata
+    during that migration window; the shared lifecycle policy removes the
+    route at the exact cutoff even if this manifest remains unchanged.
+    """
+
+    pending = [
+        (model_id, upstream_id)
+        for model_id, upstream_id in _ANNOUNCED_FEED_REMOVALS
+        if model_id not in prices
+        and not provider_model_retired(SLUG, model_id, upstream_id)
+    ]
+    if not pending:
+        return
+    try:
+        payload = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError) as exc:
+        notes.append(f"could not preserve announced feed removals: {type(exc).__name__}")
+        return
+    rows = payload.get("models") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        notes.append("could not preserve announced feed removals: invalid manifest")
+        return
+    existing = {
+        row.get("id"): row
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+    for model_id, upstream_id in pending:
+        row = existing.get(model_id)
+        if not isinstance(row, dict):
+            notes.append(f"announced feed removal missing from manifest: {model_id}")
+            continue
+        prompt = row.get("input_token_price_per_m")
+        completion = row.get("output_token_price_per_m")
+        cached = row.get("cached_input_token_price_per_m")
+        if (
+            not isinstance(prompt, int)
+            or isinstance(prompt, bool)
+            or not isinstance(completion, int)
+            or isinstance(completion, bool)
+            or (cached is not None and (not isinstance(cached, int) or isinstance(cached, bool)))
+        ):
+            notes.append(f"announced feed removal has invalid manifest price: {model_id}")
+            continue
+        prices[model_id] = ModelPrice(
+            prompt_micro_per_m=prompt,
+            completion_micro_per_m=completion,
+            prompt_cached_micro_per_m=cached,
+        )
+        discovered[model_id] = {
+            key: value for key, value in row.items() if key in _PRESERVED_MANIFEST_FIELDS
+        }
+        discovered[model_id]["upstream_id"] = upstream_id
+        notes.append(
+            f"preserved {model_id} with last-known-good manifest pricing "
+            "until its announced retirement"
+        )
 
 
 def _microdollars_per_million(raw: object) -> int | None:
@@ -147,7 +263,7 @@ def fetch() -> ProviderPricingResult:
         native_id = row.get("id")
         if not isinstance(native_id, str):
             continue
-        or_id = mapped_or_canonical_model_id(native_id, _NATIVE_TO_OR_ID)
+        or_id = _canonical_model_id(native_id)
         if or_id is None:
             notes.append(f"unmapped native id: {native_id}")
             continue
@@ -178,15 +294,24 @@ def fetch() -> ProviderPricingResult:
             prompt_cached_micro_per_m=cached_input_micro,
         )
         # The shared snapshot merger still refreshes every mapped live route.
-        # The provider-native supplement is intentionally limited to explicit
-        # required routes so a newly mapped but not yet reviewed model cannot
-        # bypass catalog review merely by appearing in the upstream feed.
-        if manifest_row is not None and or_id in EXPECTED_MODELS:
+        # Explicitly expected models and syntactically strict GLM releases are
+        # safe to append from Tinfoil's structured catalog. Other families stay
+        # review-gated even when generic canonicalization can name them.
+        if manifest_row is not None and (
+            or_id in EXPECTED_MODELS
+            or _GLM_NATIVE_ID_RE.fullmatch(native_id.strip().casefold()) is not None
+        ):
             discovered[or_id] = manifest_row
 
+    _preserve_announced_feed_removals(prices, discovered, notes)
     _DISCOVERED_MANIFEST_ROWS = discovered
 
-    errors = validate(prices, EXPECTED_MODELS)
+    active_expected_models = [
+        model_id
+        for model_id in EXPECTED_MODELS
+        if not provider_model_retired(SLUG, model_id, UPSTREAM_ID_MAP.get(model_id))
+    ]
+    errors = validate(prices, active_expected_models)
     if errors:
         notes.append(f"validation notes: {errors}")
     return ProviderPricingResult(
