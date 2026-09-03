@@ -6,8 +6,12 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from tests.lifecycle_clock import catalog_predates
 from trusted_router.catalog import PROVIDERS, endpoints_for_model
 from trusted_router.dashboard import PUBLIC_PAGES
+from trusted_router.provider_lifecycle import (
+    XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT,
+)
 from trusted_router.storage import STORE
 
 
@@ -658,7 +662,10 @@ def test_public_meta_model_detail_renders_orchestration_components(client: TestC
     assert '<span class="pill">advisor</span>' in response.text
     assert '<span class="pill">named preset</span>' in response.text
     assert "Models used by this orchestration" in response.text
-    assert "xiaomi/mimo-v2.5-pro-ultraspeed" in response.text
+    if catalog_predates(XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT):
+        assert "xiaomi/mimo-v2.5-pro-ultraspeed" in response.text
+    else:
+        assert "xiaomi/mimo-v2.5-pro-ultraspeed" not in response.text
     assert "minimax/minimax-m3" in response.text
     assert "z-ai/glm-5.2-fast" in response.text
     assert "deepseek/deepseek-v4-flash" in response.text

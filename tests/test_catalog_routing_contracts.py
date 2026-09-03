@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from tests.lifecycle_clock import catalog_predates
 from trusted_router.catalog import (
     ADVISOR_CATALOG_MODEL_ORDERS,
     ADVISOR_MODEL_ID,
@@ -94,7 +95,10 @@ from trusted_router.catalog import (
 from trusted_router.catalog_ingest import _authoritative_provider_model_ids, _modalities
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.provider_lifecycle import provider_model_retired
+from trusted_router.provider_lifecycle import (
+    XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT,
+    provider_model_retired,
+)
 from trusted_router.routes.internal.gateway import _gateway_provider_route_payload
 from trusted_router.routing import chat_route_candidates, chat_route_endpoint_candidates
 
@@ -1958,8 +1962,9 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
     expected = {
         "xiaomi/mimo-v2.5": "mimo-v2.5",
         "xiaomi/mimo-v2.5-pro": "mimo-v2.5-pro",
-        "xiaomi/mimo-v2.5-pro-ultraspeed": "mimo-v2.5-pro-ultraspeed",
     }
+    if catalog_predates(XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT):
+        expected["xiaomi/mimo-v2.5-pro-ultraspeed"] = "mimo-v2.5-pro-ultraspeed"
     xiaomi_credits = {}
     for model_id, upstream in expected.items():
         model = MODELS.get(model_id)
@@ -1993,14 +1998,15 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
     # ($1.305/$2.61) cost, marked up by the manifest loader (cost x 1.055,
     # $0.01/M floor). Guard the exact prices so a regen can't silently
     # collapse them onto the regular v2.5-pro numbers.
-    ultraspeed_xiaomi = xiaomi_credits["xiaomi/mimo-v2.5-pro-ultraspeed"]
-    assert ultraspeed_xiaomi.prompt_price_microdollars_per_million_tokens == 1_376_775
-    assert ultraspeed_xiaomi.completion_price_microdollars_per_million_tokens == 2_753_550
-    # ...and that it is genuinely a distinct row from regular v2.5-pro.
-    assert (
-        ultraspeed_xiaomi.completion_price_microdollars_per_million_tokens
-        != pro_xiaomi.completion_price_microdollars_per_million_tokens
-    )
+    if catalog_predates(XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT):
+        ultraspeed_xiaomi = xiaomi_credits["xiaomi/mimo-v2.5-pro-ultraspeed"]
+        assert ultraspeed_xiaomi.prompt_price_microdollars_per_million_tokens == 1_376_775
+        assert ultraspeed_xiaomi.completion_price_microdollars_per_million_tokens == 2_753_550
+        # It is genuinely a distinct tier from regular V2.5 Pro.
+        assert (
+            ultraspeed_xiaomi.completion_price_microdollars_per_million_tokens
+            != pro_xiaomi.completion_price_microdollars_per_million_tokens
+        )
 
 
 def test_crusoe_provider_models_follow_authoritative_manifest() -> None:
