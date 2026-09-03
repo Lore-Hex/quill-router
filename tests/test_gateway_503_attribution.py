@@ -100,7 +100,7 @@ async def test_app_level_conflict_503_logs_path_and_error_class(
     assert response.headers["Retry-After"] == "1"
     line = _single_warning(caplog, "storage.transaction_aborted")
     assert "method=POST" in line
-    assert f"route={AUTHORIZE}" in line
+    assert "route=/internal/gateway/authorize" in line
     assert "error_class=Aborted" in line
     _assert_attributable_and_safe(line, key, "req-app-aborted")
 
@@ -123,7 +123,7 @@ async def test_app_level_unavailable_503_logs_path_and_error_class(
 
     assert response.status_code == 503
     line = _single_warning(caplog, "storage.unavailable")
-    assert f"route={AUTHORIZE}" in line
+    assert "route=/internal/gateway/authorize" in line
     assert "error_class=DeadlineExceeded" in line
     _assert_attributable_and_safe(line, key, "req-app-unavailable")
 
