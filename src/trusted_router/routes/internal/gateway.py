@@ -46,6 +46,7 @@ from trusted_router.byok_crypto import byok_cache_key, encrypted_secret_payload
 from trusted_router.catalog import (
     MODELS,
     MONITOR_MODEL_ID,
+    PRIVATE_PROXY_MODEL_TARGETS,
     PROVIDERS,
     Model,
     ModelEndpoint,
@@ -821,6 +822,17 @@ def _authorize_gateway_sync_impl(
     body_dict.update(attribution.body_fields())
     _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
     requested_model_id = body.model
+    private_proxy_ids = {
+        model_id
+        for model_id in (requested_model_id, *(body.models or []))
+        if model_id in PRIVATE_PROXY_MODEL_TARGETS
+    }
+    if private_proxy_ids and body.models:
+        raise api_error(
+            400,
+            "Private proxy models cannot be combined with models fallback arrays",
+            ErrorType.BAD_REQUEST,
+        )
     if any(is_creator_model_id(model_id) for model_id in (body.models or [])):
         raise api_error(
             400,
@@ -2264,6 +2276,9 @@ def _gateway_authorize_response(
         authorization,
         reason_override=stage_d_reason_override,
     )
+    response_model = (
+        requested_model_id if requested_model_id in PRIVATE_PROXY_MODEL_TARGETS else None
+    )
     return {
         "data": {
             "authorization_id": authorization.id,
@@ -2276,6 +2291,8 @@ def _gateway_authorize_response(
             "provider_name": PROVIDERS[endpoint.provider].name,
             **_gateway_provider_route_payload(endpoint),
             "requested_model": requested_model_id,
+            "response_model": response_model,
+            "hide_public_metadata": response_model is not None,
             "usage_type": model_usage_type.value,
             "limit_usage_type": limit_usage_type.value,
             **money_pair("estimated_cost", estimate),

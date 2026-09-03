@@ -2098,6 +2098,17 @@ DEEPSEEK_V4_PRO_0423_MODEL_ID = "deepseek/deepseek-v4-pro-0423"
 
 DEEPSEEK_V4_PRO_0813_MODEL_ID = "deepseek/deepseek-v4-pro-0813"
 
+MISTRAL_LARGE_MODEL_ID = "mistralai/mistral-large"
+
+ARCHIMEDES_1_0_MODEL_ID = "trustedrouter/archimedes-1.0"
+
+# Private proxy aliases select one ordinary catalog model without publishing
+# the backing model/provider in customer-visible responses or catalog metadata.
+# Billing and provider fallback still use the concrete target internally.
+PRIVATE_PROXY_MODEL_TARGETS: dict[str, str] = {
+    ARCHIMEDES_1_0_MODEL_ID: MISTRAL_LARGE_MODEL_ID,
+}
+
 SOCRATES_1_0_MODEL_ID = "trustedrouter/socrates-1.0"
 
 SOCRATES_1_1_MODEL_ID = "trustedrouter/socrates-1.1"
@@ -2243,6 +2254,7 @@ META_MODEL_IDS = frozenset(
         E2E_MODEL_ID,
         CONFIDENTIAL_MODEL_ID,
         MONITOR_MODEL_ID,
+        ARCHIMEDES_1_0_MODEL_ID,
         SOCRATES_1_0_MODEL_ID,
         SOCRATES_1_1_MODEL_ID,
         SOCRATES_2_0_MODEL_ID,

@@ -17,6 +17,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     _UNSERVED_CREDITS_MODELS,
     ADVISOR_CATALOG_MODEL_ORDERS,
     ADVISOR_MODEL_ID,
+    ARCHIMEDES_1_0_MODEL_ID,
     ARISTOTLE_1_0_MODEL_ID,
     ARISTOTLE_1_1_MODEL_ID,
     ARISTOTLE_2_0_MODEL_ID,
@@ -54,6 +55,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     MAPREDUCE_CATALOG_MODEL_ORDER,
     MAPREDUCE_MODEL_ID,
     META_MODEL_IDS,
+    MISTRAL_LARGE_MODEL_ID,
     MONITOR_MODEL_ID,
     OPEN_PATCHER_A1_MODEL_ID,
     OPEN_PATCHER_FAST1_MODEL_ID,
@@ -81,6 +83,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     PRIVACY_TIER_NO_STORE,
     PRIVACY_TIER_STANDARD,
     PRIVACY_TIER_ZERO_RETENTION,
+    PRIVATE_PROXY_MODEL_TARGETS,
     PROMETHEUS_1_0_1M_MODEL_ID,
     PROMETHEUS_1_0_MODEL_ID,
     PROMETHEUS_2_0_MODEL_ID,
@@ -287,6 +290,8 @@ def canonical_orchestration_model_id(model_id: str) -> str | None:
 def orchestration_role(model_id: str) -> str | None:
     if model_id not in META_MODEL_IDS:
         return None
+    if model_id in PRIVATE_PROXY_MODEL_TARGETS:
+        return "private_proxy"
     if model_id in ORCHESTRATION_LEGACY_ALIAS_MODEL_IDS:
         return "legacy_alias"
     if model_id in ORCHESTRATION_ROLLING_ALIAS_MODEL_IDS:
@@ -627,7 +632,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     if is_meta and not model.hidden_public_metadata:
         auto_candidates = [c.id for c in meta_candidate_models(model.id)]
     if model.hidden_public_metadata:
-        route_kind = "private_orchestration"
+        route_kind = "private_proxy" if model.id in PRIVATE_PROXY_MODEL_TARGETS else "private_orchestration"
 
     tr_block: dict[str, object] = {
         "provider": model.provider,
@@ -726,6 +731,25 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         tr_block["published_prompt_price_max_microdollars_per_million_tokens"] = pub_prompt_max
         tr_block["published_completion_price_max_microdollars_per_million_tokens"] = (
             pub_completion_max
+        )
+    if model.id in PRIVATE_PROXY_MODEL_TARGETS:
+        tr_block.update(
+            {
+                "provider_zero_data_retention": False,
+                "zero_data_retention_available": False,
+                "provider_confidential_compute": False,
+                "provider_e2ee": False,
+                "provider_policy": (
+                    "Private route configuration. Standard provider data-handling terms apply."
+                ),
+                "provider_policy_url": "https://trust.trustedrouter.com",
+                "provider_headquarters_country": None,
+                "provider_us_based": False,
+                "us_provider_available": False,
+                "eu_focused_provider_available": False,
+                "privacy_tier": PRIVACY_TIER_STANDARD,
+                "privacy_tier_label": PRIVACY_TIER_LABELS[PRIVACY_TIER_STANDARD],
+            }
         )
 
     return {
