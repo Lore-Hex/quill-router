@@ -306,9 +306,12 @@ def test_config_fails_closed_when_enabled_without_destination_ids() -> None:
         )
 
 
-def test_worker_config_forbids_outbound_sharing_outside_local_test() -> None:
+@pytest.mark.parametrize("environment", ("worker", "canary", "production"))
+def test_deployed_config_forbids_outbound_sharing_outside_local_test(
+    environment: str,
+) -> None:
     with pytest.raises(ValueError, match="no-sharing policy"):
-        _settings(environment="worker", service_surface="control")
+        _settings(environment=environment, service_surface="control")
 
 
 def test_metadata_identity_token_is_scoped_and_cached() -> None:
