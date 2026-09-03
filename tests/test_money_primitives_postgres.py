@@ -21,7 +21,7 @@ def _seed_workspace(store: object, conn: object, workspace_id: str) -> None:
     )
 
 
-def test_credit_movement_insert_never_uses_server_preparation() -> None:
+def test_credit_movement_insert_types_parameters_without_server_preparation() -> None:
     calls: list[dict[str, object]] = []
 
     class RecordingConnection:
@@ -46,6 +46,10 @@ def test_credit_movement_insert_never_uses_server_preparation() -> None:
     )
 
     assert len(calls) == 1
+    sql = str(calls[0]["sql"])
+    assert sql.count("CAST(%s AS TEXT)") == 6
+    assert "CAST(%s AS BIGINT)" in sql
+    assert sql.endswith("CAST(%s AS TEXT), %s)")
     assert calls[0]["kwargs"] == {"prepare": False}
 
 
