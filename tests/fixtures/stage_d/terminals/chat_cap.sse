@@ -1,0 +1,4 @@
+data: {"choices":[{"delta":{},"finish_reason":"length","index":0}],"created":1767225600,"id":"chatcmpl_stage_d","model":"fixture-model","object":"chat.completion.chunk","tr_finish_reason":"cap_reached"}
+
+data: [DONE]
+

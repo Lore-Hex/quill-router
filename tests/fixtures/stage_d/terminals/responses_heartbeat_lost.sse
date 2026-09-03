@@ -1,0 +1,17 @@
+event: response.output_text.delta
+data: {"content_index":0,"delta":"first","item_id":"msg_stage_d","output_index":0,"sequence_number":5,"type":"response.output_text.delta"}
+
+event: response.output_text.done
+data: {"content_index":0,"item_id":"msg_stage_d","output_index":0,"sequence_number":6,"text":"first","type":"response.output_text.done"}
+
+event: response.content_part.done
+data: {"content_index":0,"item_id":"msg_stage_d","output_index":0,"part":{"annotations":[],"text":"first","type":"output_text"},"sequence_number":7,"type":"response.content_part.done"}
+
+event: response.output_item.done
+data: {"item":{"content":[{"annotations":[],"text":"first","type":"output_text"}],"id":"msg_stage_d","role":"assistant","status":"incomplete","type":"message"},"output_index":0,"sequence_number":8,"type":"response.output_item.done"}
+
+event: response.incomplete
+data: {"response":{"completed_at":null,"created_at":1767225600,"error":null,"id":"resp_stage_d","incomplete_details":{"reason":"server_error"},"instructions":null,"max_output_tokens":null,"model":"fixture-model","object":"response","output":[{"content":[{"annotations":[],"text":"first","type":"output_text"}],"id":"msg_stage_d","role":"assistant","status":"incomplete","type":"message"}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"status":"incomplete","store":false,"temperature":1,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1,"tr_finish_reason":"heartbeat_lost","truncation":"disabled","usage":null},"sequence_number":9,"type":"response.incomplete"}
+
+data: [DONE]
+
