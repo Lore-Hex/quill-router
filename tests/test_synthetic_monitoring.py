@@ -3481,7 +3481,8 @@ def test_rotation_candidates_cover_credits_endpoints() -> None:
     assert not (
         set(pool.get("tinfoil", [])) & _PROVIDER_DEPRECATED_UPSTREAM_MODELS["tinfoil"]
     )
-    assert "z-ai/glm-5.2" in pool.get("tinfoil", [])
+    assert "z-ai/glm-5.3" in pool.get("tinfoil", [])
+    assert "z-ai/glm-5.3-flash" in pool.get("tinfoil", [])
     assert "google/gemma-4-31b-it" in pool.get("tinfoil", [])
 
 
@@ -3712,6 +3713,8 @@ def test_rotation_probe_uses_reasoning_safe_request_budget() -> None:
     assert _rotation_max_tokens("cerebras", "cerebras/gpt-oss-120b") == 512
     assert _rotation_max_tokens("cerebras", "z-ai/glm-4.7") == 512
     assert _rotation_max_tokens("zai", "z-ai/glm-4.6") == 512
+    assert _rotation_max_tokens("tinfoil", "z-ai/glm-5.3") == 512
+    assert _rotation_max_tokens("tinfoil", "z-ai/glm-5.3-flash") == 512
     assert _rotation_max_tokens("openai", "openai/o3") == 512
     assert _rotation_max_tokens("openai", "openai/gpt-5.5") == 512
     assert _rotation_max_tokens("baseten", "nvidia/nemotron-120b-a12b") == 512

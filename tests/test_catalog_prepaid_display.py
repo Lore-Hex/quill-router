@@ -243,12 +243,12 @@ def test_tinfoil_june_2026_deprecations_and_replacements_are_routable() -> None:
         assert endpoint.model_id not in deprecated
         assert endpoint.upstream_id not in deprecated
 
-    glm_52 = MODEL_ENDPOINTS["z-ai/glm-5.2@tinfoil/prepaid"]
+    glm_53 = MODEL_ENDPOINTS["z-ai/glm-5.3@tinfoil/prepaid"]
     gemma4 = MODEL_ENDPOINTS["google/gemma-4-31b-it@tinfoil/prepaid"]
-    assert glm_52.upstream_id == "glm-5-2"
+    assert glm_53.upstream_id == "glm-5-3"
     assert (
-        glm_52.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
-        == 395_625
+        glm_53.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+        == 474_750
     )
     assert gemma4.upstream_id == "gemma4-31b"
 

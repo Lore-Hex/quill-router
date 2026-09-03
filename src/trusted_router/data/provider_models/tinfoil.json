@@ -1,9 +1,9 @@
 {
-  "_about": "Provider-native supplement for Tinfoil models whose live API is ahead of the snapshot. Tinfoil launched Kimi K3 and DeepSeek V4 Flash on 2026-08-20 and supports confidential prompt caching where published by its live feed. Deprecated Tinfoil routes are filtered in catalog.py.",
+  "_about": "Provider-native supplement for Tinfoil models whose live API is ahead of the snapshot. Tinfoil launched Kimi K3 and DeepSeek V4 Flash on 2026-08-20, then GLM 5.3 and multimodal GLM 5.3 Flash on 2026-09-03. Tinfoil supports confidential prompt caching where published by its live feed. Deprecated Tinfoil routes are filtered in catalog.py.",
   "provider": "tinfoil",
   "source": "https://inference.tinfoil.sh/v1/models",
-  "generated_at": "2026-09-03T17:37:35Z",
-  "model_count": 4,
+  "generated_at": "2026-09-03T18:25:14Z",
+  "model_count": 6,
   "models": [
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -84,8 +84,7 @@
         "chat/completions",
         "responses"
       ],
-      "status": 1,
-      "missing_since": "2026-09-03"
+      "status": 1
     },
     {
       "id": "google/gemma-4-31b-it",
@@ -114,6 +113,60 @@
         "responses"
       ],
       "status": 1
+    },
+    {
+      "display_name": "GLM-5.3",
+      "title": "z-ai/glm-5.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "responses"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "glm-5-3",
+      "features": [
+        "reasoning",
+        "function-calling"
+      ],
+      "context_length": 1048576,
+      "input_token_price_per_m": 1800000,
+      "output_token_price_per_m": 5750000,
+      "cached_input_token_price_per_m": 450000
+    },
+    {
+      "display_name": "GLM-5.3 Flash",
+      "title": "z-ai/glm-5.3-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "responses"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-flash",
+      "upstream_id": "glm-5-3-flash",
+      "features": [
+        "reasoning",
+        "function-calling",
+        "multimodal"
+      ],
+      "context_length": 1048576,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 1250000,
+      "cached_input_token_price_per_m": 100000
     }
   ],
   "price_scale": "microdollars_per_million"

@@ -53,10 +53,14 @@ def test_kimi_parser_accepts_new_kimi_family_ids_without_hand_map() -> None:
     }
 
 
-def test_tinfoil_native_ids_track_june_2026_replacements() -> None:
+def test_tinfoil_native_ids_track_provider_replacements() -> None:
     assert tinfoil._NATIVE_TO_OR_ID["kimi-k2-7-code"] == "moonshotai/kimi-k2.7-code"
     assert tinfoil._NATIVE_TO_OR_ID["glm-5-2"] == "z-ai/glm-5.2"
+    assert tinfoil._NATIVE_TO_OR_ID["glm-5-3"] == "z-ai/glm-5.3"
+    assert tinfoil._NATIVE_TO_OR_ID["glm-5-3-flash"] == "z-ai/glm-5.3-flash"
     assert tinfoil._NATIVE_TO_OR_ID["gemma4-31b"] == "google/gemma-4-31b-it"
     assert tinfoil._NATIVE_TO_OR_ID["qwen3-vl-30b"] == "qwen/qwen3-vl-30b-a3b-instruct"
     assert tinfoil.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "glm-5-2"
+    assert tinfoil.UPSTREAM_ID_MAP["z-ai/glm-5.3"] == "glm-5-3"
+    assert tinfoil.UPSTREAM_ID_MAP["z-ai/glm-5.3-flash"] == "glm-5-3-flash"
     assert tinfoil.UPSTREAM_ID_MAP["google/gemma-4-31b-it"] == "gemma4-31b"

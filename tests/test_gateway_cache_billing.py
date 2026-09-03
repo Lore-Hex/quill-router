@@ -108,7 +108,7 @@ def test_openai_compatible_cached_subset_is_normalized() -> None:
     auth = _authorize(
         client,
         key,
-        "z-ai/glm-5.2",
+        "z-ai/glm-5.3",
         provider={"only": ["tinfoil"]},
     )
     endpoint = endpoint_for_id(auth["endpoint_id"])
@@ -147,12 +147,12 @@ def test_openai_compatible_cached_subset_is_normalized() -> None:
     assert generation.tokens_prompt == 1_000
 
 
-def test_tinfoil_glm_52_uses_published_cached_input_rate() -> None:
+def test_tinfoil_glm_53_uses_published_cached_input_rate() -> None:
     client, key = _client_and_key()
     auth = _authorize(
         client,
         key,
-        "z-ai/glm-5.2",
+        "z-ai/glm-5.3",
         provider={"only": ["tinfoil"]},
     )
     endpoint = endpoint_for_id(auth["endpoint_id"])
@@ -173,7 +173,7 @@ def test_tinfoil_glm_52_uses_published_cached_input_rate() -> None:
 
     tier = endpoint.price_tiers[0]
     cached_price = tier.prompt_cached_price_microdollars_per_million_tokens
-    assert cached_price == 395_625
+    assert cached_price == 474_750
     expected = (
         token_cost_microdollars(
             100, tier.prompt_price_microdollars_per_million_tokens
@@ -231,7 +231,7 @@ def test_settle_records_cache_reads_on_the_generation() -> None:
     auth = _authorize(
         client,
         key,
-        "z-ai/glm-5.2",
+        "z-ai/glm-5.3",
         provider={"only": ["tinfoil"]},
     )
 
