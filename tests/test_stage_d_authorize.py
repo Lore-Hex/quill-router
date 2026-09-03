@@ -9,6 +9,7 @@ from starlette.requests import Request
 
 from tests.fakes.spanner import make_fake_store
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, effective_endpoint
+from trusted_router.catalog_data import Model, ModelEndpoint
 from trusted_router.config import Settings
 from trusted_router.routes.internal import gateway
 from trusted_router.routes.internal.gateway import (
@@ -26,7 +27,7 @@ from trusted_router.types import UsageType
 FIXTURES = Path(__file__).parent / "fixtures" / "stage_d"
 
 
-def _credit_candidate() -> tuple[object, object]:
+def _credit_candidate() -> tuple[Model, ModelEndpoint]:
     endpoint = effective_endpoint(
         next(endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.usage_type == "Credits")
     )
@@ -43,6 +44,7 @@ def _credit_candidate() -> tuple[object, object]:
         ({"standard_endpoint_pricing": False}, "pricing_kind"),
         ({"service_tier": "priority"}, "service_tier"),
         ({"settlement_backend": False}, "settlement_backend"),
+        ({"eligibility_enabled": False}, "stage_d_disabled"),
     ],
 )
 def test_stage_d_eligibility_has_each_closed_reason(
@@ -62,7 +64,8 @@ def test_stage_d_eligibility_has_each_closed_reason(
         "settlement_backend": True,
         **overrides,
     }
-    assert _stage_d_eligibility_reason(eligibility_enabled=True, **kwargs) == reason  # type: ignore[arg-type]
+    eligibility_enabled = bool(kwargs.pop("eligibility_enabled", True))
+    assert _stage_d_eligibility_reason(eligibility_enabled=eligibility_enabled, **kwargs) == reason  # type: ignore[arg-type]
 
 
 def test_typed_authorize_inserts_cohort_sequence_zero_and_snapshot() -> None:
@@ -266,4 +269,60 @@ def test_stage_d_eligibility_kill_switch_declares_nothing_eligible() -> None:
         service_tier=None,
         settlement_backend=True,
     )
-    assert reason == "settlement_backend"
+    assert reason == "stage_d_disabled"
+
+
+def test_stage_d_replay_applies_current_kill_switch() -> None:
+    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    workspace = Workspace(id="stage-d-replay", name="Stage D replay", owner_user_id="user-1")
+    store._write_entity("workspace", workspace.id, workspace)
+    store._write_entity("credit", workspace.id, CreditAccount(workspace_id=workspace.id))
+    db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(workspace.id, 0)] = {
+        "workspace_id": workspace.id,
+        "shard": 0,
+        "total_credits": 1_000_000,
+        "total_usage": 0,
+        "reserved": 0,
+        "source_updated_at": None,
+        "updated_at": None,
+    }
+    _raw, key = store.api_keys.create(
+        workspace_id=workspace.id,
+        name="stage-d-replay",
+        creator_user_id=workspace.owner_user_id,
+        limit_microdollars=1_000_000,
+    )
+    configure_store(store)
+    body = GatewayAuthorizeRequest(
+        api_key_hash=key.hash,
+        idempotency_key="stage-d-replay",
+        model="anthropic/claude-haiku-4.5",
+        estimated_input_tokens=100,
+        max_output_tokens=100,
+        stream=True,
+        route_type="chat.completions",
+    )
+    request = Request({"type": "http", "method": "POST", "path": "/", "headers": []})
+    enabled = Settings(environment="test", stage_d_eligibility_enabled=True)
+
+    first = gateway._authorize_gateway_sync(request, body, enabled)["data"]
+    assert first["stage_d"] == {"eligible": True, "reason": "ok"}
+
+    disabled_replay = gateway._authorize_gateway_sync(
+        request,
+        body,
+        Settings(environment="test", stage_d_eligibility_enabled=False),
+    )["data"]
+    assert disabled_replay["idempotent_replay"] is True
+    assert disabled_replay["stage_d"] == {
+        "eligible": False,
+        "reason": "stage_d_disabled",
+    }
+    assert "candidate_prices" not in disabled_replay
+    assert "cap_micro" not in disabled_replay
+
+    enabled_replay = gateway._authorize_gateway_sync(request, body, enabled)["data"]
+    assert enabled_replay["idempotent_replay"] is True
+    assert enabled_replay["stage_d"] == first["stage_d"]
+    assert enabled_replay["candidate_prices"] == first["candidate_prices"]
+    assert enabled_replay["cap_micro"] == first["cap_micro"]
