@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-09-03T06:28:16Z",
+  "generated_at": "2026-09-03T08:40:33Z",
   "model_count": 119,
   "models": [
     {
@@ -1546,7 +1546,8 @@
         "chat/completions"
       ],
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "missing_since": "2026-09-03"
     },
     {
       "id": "openai/gpt-oss-20b",

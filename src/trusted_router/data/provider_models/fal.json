@@ -62,7 +62,7 @@
   ],
   "source": "https://api.fal.ai/v1/models",
   "pricing_source": "https://api.fal.ai/v1/models/pricing?endpoint_id=fal-ai%2Fflux%2Fschnell",
-  "generated_at": "2026-09-03T06:28:16Z",
+  "generated_at": "2026-09-03T08:40:33Z",
   "price_scale": "microdollars_per_million",
   "model_count": 2
 }

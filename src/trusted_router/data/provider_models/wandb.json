@@ -664,7 +664,7 @@
   ],
   "source": "https://api.inference.wandb.ai/v1/models",
   "pricing_source": "https://wandb.ai/site/pricing/inference/",
-  "generated_at": "2026-09-03T06:28:16Z",
+  "generated_at": "2026-09-03T08:40:33Z",
   "price_scale": "microdollars_per_million",
   "model_count": 30
 }
