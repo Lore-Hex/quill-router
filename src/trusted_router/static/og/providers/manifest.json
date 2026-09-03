@@ -73,10 +73,10 @@
   },
   "baseten": {
     "card_version": 2,
-    "model_count": 15,
+    "model_count": 16,
     "name": "Baseten",
     "privacy": "Zero retention",
-    "route_count": 29,
+    "route_count": 31,
     "route_mode": "Prepaid + BYOK",
     "slug": "baseten"
   },
@@ -244,10 +244,10 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 70,
+    "model_count": 71,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 76,
+    "route_count": 77,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },

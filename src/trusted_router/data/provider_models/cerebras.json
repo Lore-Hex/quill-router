@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement generated from Cerebras's public model catalog. Canonical model IDs and cerebras/* provider aliases are included when the upstream catalog exposes them.",
   "provider": "cerebras",
   "source": "https://api.cerebras.ai/public/v1/models",
-  "generated_at": "2026-09-02T21:13:23Z",
+  "generated_at": "2026-09-03T03:27:13Z",
   "model_count": 6,
   "models": [
     {
@@ -170,7 +170,8 @@
       "context_length": 131072,
       "max_output_tokens": 40960,
       "input_token_price_per_m": 990000,
-      "output_token_price_per_m": 1490000
+      "output_token_price_per_m": 1490000,
+      "missing_since": "2026-09-03"
     },
     {
       "display_name": "Gemma 4 31B",
@@ -205,7 +206,8 @@
       "context_length": 131072,
       "max_output_tokens": 40960,
       "input_token_price_per_m": 990000,
-      "output_token_price_per_m": 1490000
+      "output_token_price_per_m": 1490000,
+      "missing_since": "2026-09-03"
     }
   ],
   "price_scale": "microdollars_per_million"
