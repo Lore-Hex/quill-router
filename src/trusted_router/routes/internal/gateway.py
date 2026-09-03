@@ -501,25 +501,7 @@ def _heartbeat_gateway_sync(
     raw_body: bytes,
 ) -> dict[str, Any]:
     require_internal_gateway(request, settings)
-    headers = request.headers.getlist("X-TR-Boot-Auth")
-    boot_auth = parse_boot_auth_header(headers[0]) if len(headers) == 1 else None
-    if boot_auth is None:
-        raise _heartbeat_rejection("boot_not_accepted")
-    boot = STORE.get_spend_lease_boot(boot_auth.kid)
-    if not verify_boot_auth(
-        boot=boot,
-        auth=boot_auth,
-        method=request.method,
-        path=request.url.path,
-        exact_body_bytes=raw_body,
-        # Heartbeats identify the already-authorized request rather than
-        # carrying a customer lookup hash. Equality preserves authorize's
-        # verifier contract; the signature binds the authorization id and the
-        # exact body bytes.
-        signed_lookup_hash="",
-        resolved_lookup_hash="",
-        accepted_image_digests=settings.spend_lease_accepted_gcp_digests,
-    ):
+    if not _gateway_boot_auth_accepted(request, settings, raw_body):
         raise _heartbeat_rejection("boot_not_accepted")
     typed_store = typed_billing_store(STORE)
     heartbeat = getattr(typed_store, "heartbeat_gateway_typed", None)
@@ -556,6 +538,69 @@ def _heartbeat_gateway_sync(
         "expires_at_ms": int(result.expires_at_ms),
         "cap_micro": int(result.cap_micro),
         "running_micro": int(result.running_micro),
+    }
+
+
+def _gateway_boot_auth_accepted(
+    request: Request,
+    settings: Settings,
+    exact_body_bytes: bytes,
+) -> bool:
+    headers = request.headers.getlist("X-TR-Boot-Auth")
+    boot_auth = parse_boot_auth_header(headers[0]) if len(headers) == 1 else None
+    if boot_auth is None:
+        return False
+    boot = STORE.get_spend_lease_boot(boot_auth.kid)
+    return verify_boot_auth(
+        boot=boot,
+        auth=boot_auth,
+        method=request.method,
+        path=request.url.path,
+        exact_body_bytes=exact_body_bytes,
+        # Heartbeats identify the already-authorized request rather than
+        # carrying a customer lookup hash. Equality preserves authorize's
+        # verifier contract; the signature binds the authorization id and the
+        # exact body bytes.
+        signed_lookup_hash="",
+        resolved_lookup_hash="",
+        accepted_image_digests=settings.spend_lease_accepted_gcp_digests,
+    )
+
+
+async def gateway_authorization_disposition(
+    request: Request,
+    authorization_id: str,
+    settings: Settings,
+) -> dict[str, Any]:
+    require_internal_gateway(request, settings)
+    raw_body = await request.body()
+    return await run_in_threadpool(
+        _gateway_authorization_disposition_sync,
+        request,
+        authorization_id,
+        settings,
+        raw_body,
+    )
+
+
+@spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)
+def _gateway_authorization_disposition_sync(
+    request: Request,
+    authorization_id: str,
+    settings: Settings,
+    raw_body: bytes,
+) -> dict[str, Any]:
+    require_internal_gateway(request, settings)
+    if not _gateway_boot_auth_accepted(request, settings, raw_body):
+        raise api_error(401, "Gateway boot was not accepted", ErrorType.UNAUTHORIZED)
+    authorization = STORE.get_gateway_authorization(authorization_id)
+    if authorization is None:
+        raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
+    return {
+        "data": {
+            "authorization_id": authorization.id,
+            "disposition": _current_disposition(authorization),
+        }
     }
 
 
@@ -1865,6 +1910,18 @@ def register(router: APIRouter) -> None:
     ) -> dict[str, Any]:
         return await heartbeat_gateway(request, body, settings)
 
+    @router.get("/internal/gateway/authorizations/{authorization_id}/disposition")
+    async def gateway_disposition(
+        request: Request,
+        authorization_id: str,
+        settings: SettingsDep,
+    ) -> dict[str, Any]:
+        return await gateway_authorization_disposition(
+            request,
+            authorization_id,
+            settings,
+        )
+
     @router.post("/internal/gateway/spend-lease/register-boot")
     async def gateway_spend_lease_boot_register(
         request: Request,
@@ -1910,7 +1967,11 @@ def register(router: APIRouter) -> None:
         limit: int = 100,
     ) -> dict[str, Any]:
         require_internal_gateway(request, settings)
-        result = await run_in_threadpool(drain_settle_outbox, limit)
+        result = await run_in_threadpool(
+            drain_settle_outbox,
+            limit,
+            reap_snapshot_booking_enabled=settings.reap_snapshot_booking_enabled,
+        )
         # Cloud Scheduler drives this on a cadence; the heartbeat makes that
         # cadence visible on /fleet so a silently-dead scheduler is seen.
         await run_in_threadpool(record_heartbeat, "job:settle-outbox-drain", settings=settings)
@@ -3146,6 +3207,11 @@ def _settle_gateway_authorization(
                 # sees rows whose inline attempt is dead >=60s, avoiding replays.
                 initial_delay_seconds=60,
             )
+            # The intent is durable at this exact point. Any later attachment,
+            # inline-finalize, or response-side failure must report
+            # intent_durable rather than inviting the enclave to infer that no
+            # settlement record exists.
+            outbox_enqueued = True
             if refill_required:
                 # Pre-cutover combined rows have no refill columns. Attaching is
                 # an independent NULL -> pending transition, so it is safe even
@@ -3157,7 +3223,6 @@ def _settle_gateway_authorization(
                 )
                 if not refill_attached:
                     raise RuntimeError("settlement auto-refill attachment was not confirmed")
-            outbox_enqueued = True
         except Exception:
             logger.error(
                 "settle outbox enqueue failed authorization_id=%s",
@@ -3167,6 +3232,13 @@ def _settle_gateway_authorization(
         enqueue_ms = (perf_counter() - enqueue_start) * 1000
 
     if refill_required and not refill_attached:
+        if outbox_enqueued:
+            logger.error(
+                "settlement deferred after refill attachment failure "
+                "authorization_id=%s",
+                authorization.id,
+            )
+            return {"data": _intent_durable_gateway_data(authorization)}
         raise api_error(
             503,
             "Settlement refill durability is temporarily unavailable",
@@ -3235,36 +3307,66 @@ def _settle_gateway_authorization(
                     authorization.regional_lease_id,
                     exc_info=True,
                 )
+                if outbox_enqueued:
+                    return {"data": _intent_durable_gateway_data(authorization)}
                 raise api_error(
                     503,
                     "Settlement is temporarily unavailable",
                     ErrorType.SERVICE_UNAVAILABLE,
                     headers={"Retry-After": "1"},
                 ) from None
+            except Exception:
+                if not outbox_enqueued:
+                    raise
+                logger.exception(
+                    "settlement deferred after inline finalize failure "
+                    "authorization_id=%s",
+                    authorization.id,
+                )
+                return {"data": _intent_durable_gateway_data(authorization)}
         else:
-            finalized_legacy_contract = _typed_store.typed_finalize_gateway_authorization(
-                authorization.id,
-                success=success,
-                actual_microdollars=actual_cost,
-                selected_usage_type=selected_usage_type,
-                generation=generation,
-                user_model_payout=user_model_payout,
-                app_markup_payout=app_markup_payout,
-                custom_model_markup_payout=custom_model_markup_payout,
-            )
+            try:
+                finalized_legacy_contract = _typed_store.typed_finalize_gateway_authorization(
+                    authorization.id,
+                    success=success,
+                    actual_microdollars=actual_cost,
+                    selected_usage_type=selected_usage_type,
+                    generation=generation,
+                    user_model_payout=user_model_payout,
+                    app_markup_payout=app_markup_payout,
+                    custom_model_markup_payout=custom_model_markup_payout,
+                )
+            except Exception:
+                if not outbox_enqueued:
+                    raise
+                logger.exception(
+                    "settlement deferred after inline finalize failure "
+                    "authorization_id=%s",
+                    authorization.id,
+                )
+                return {"data": _intent_durable_gateway_data(authorization)}
             finalize_result = TypedFinalizeResult(
                 finalized=finalized_legacy_contract,
                 activity_indexed=finalized_legacy_contract,
             )
         finalized = finalize_result.finalized
     else:
-        finalized = STORE.finalize_gateway_authorization(
-            authorization.id,
-            success=success,
-            actual_microdollars=actual_cost,
-            selected_usage_type=selected_usage_type,
-            generation=generation,
-        )
+        try:
+            finalized = STORE.finalize_gateway_authorization(
+                authorization.id,
+                success=success,
+                actual_microdollars=actual_cost,
+                selected_usage_type=selected_usage_type,
+                generation=generation,
+            )
+        except Exception:
+            if not outbox_enqueued:
+                raise
+            logger.exception(
+                "settlement deferred after inline finalize failure authorization_id=%s",
+                authorization.id,
+            )
+            return {"data": _intent_durable_gateway_data(authorization)}
         if finalized:
             _credit_user_model_payout_safely(
                 authorization,
@@ -3288,7 +3390,16 @@ def _settle_gateway_authorization(
     finalize_ms = (perf_counter() - finalize_start) * 1000
     if finalized and is_typed and authorization.settlement == "spend_lease":
         assert _typed_store is not None
-        committed = cast(Any, _typed_store).get_gateway_authorization(authorization.id)
+        try:
+            committed = cast(Any, _typed_store).get_gateway_authorization(
+                authorization.id
+            )
+        except Exception:
+            committed = None
+            logger.exception(
+                "spend_lease.eager_mirror_read_failed authorization_id=%s",
+                authorization.id,
+            )
         if committed is None:
             logger.error(
                 "spend_lease.eager_mirror_read_missing",
@@ -3304,7 +3415,22 @@ def _settle_gateway_authorization(
         # marking done here would silently swallow a lost charge.
         # No timing line for replays: they would dominate the latency dataset
         # with noise instead of measuring full settle/refund work.
-        return {"data": _already_settled_gateway_data(authorization)}
+        try:
+            refreshed = STORE.get_gateway_authorization(authorization.id) or authorization
+        except Exception:
+            if outbox_enqueued:
+                logger.exception(
+                    "settlement disposition read failed after durable intent "
+                    "authorization_id=%s",
+                    authorization.id,
+                )
+                return {"data": _intent_durable_gateway_data(authorization)}
+            raise
+        if refreshed.settled:
+            return {"data": _already_settled_gateway_data(refreshed)}
+        if outbox_enqueued:
+            return {"data": _intent_durable_gateway_data(refreshed)}
+        return {"data": _already_settled_gateway_data(refreshed)}
     _record_user_model_gateway_outcome_safely(
         authorization,
         success=success,
@@ -3423,21 +3549,31 @@ def _settle_gateway_authorization(
         elif broadcast_enqueued and should_drain_inline(settings):
             drain_broadcast_queue(settings=settings)
     if not success and not _is_synthetic_settlement(body, authorization):
-        STORE.record_provider_benchmark(
-            ProviderBenchmarkSample.from_provider_error(
-                model=model,
-                provider_name=PROVIDERS[selected_endpoint.provider].name,
-                input_tokens=input_tokens,
-                elapsed_seconds=float(body.elapsed_seconds or 0.001),
-                streamed=body.streamed,
-                usage_type=selected_usage_type,
-                error_status=body.error_status or 502,
-                error_type=body.error_type or "provider_error",
-                region=authorization.region,
-                provider=selected_endpoint.provider,
-                workspace_id=authorization.workspace_id,
+        try:
+            STORE.record_provider_benchmark(
+                ProviderBenchmarkSample.from_provider_error(
+                    model=model,
+                    provider_name=PROVIDERS[selected_endpoint.provider].name,
+                    input_tokens=input_tokens,
+                    elapsed_seconds=float(body.elapsed_seconds or 0.001),
+                    streamed=body.streamed,
+                    usage_type=selected_usage_type,
+                    error_status=body.error_status or 502,
+                    error_type=body.error_type or "provider_error",
+                    region=authorization.region,
+                    provider=selected_endpoint.provider,
+                    workspace_id=authorization.workspace_id,
+                )
             )
-        )
+        except Exception:
+            # Money is already committed. Observability must not turn the
+            # finalized disposition into a retryable transport failure.
+            logger.warning(
+                "provider benchmark write failed after refund finalize "
+                "authorization_id=%s",
+                authorization.id,
+                exc_info=True,
+            )
 
     total_ms = (perf_counter() - timing_start) * 1000
     # Request-log latency minus total_ms ~= Cloud Run queue + transport time;
@@ -3458,6 +3594,7 @@ def _settle_gateway_authorization(
         "data": {
             "authorization_id": authorization.id,
             "settled": True,
+            "disposition": "finalized",
             "finalization_outcome": "settled" if success else "refunded",
             "generation_id": generation_id,
             **money_pair("cost", actual_cost),
@@ -3602,18 +3739,29 @@ def _already_settled_gateway_data(authorization: Any) -> dict[str, Any]:
     mirrors may lag or fail after the Spanner money transaction commits, so
     their presence must never be used to distinguish a charge from a refund.
     """
-    authorization = STORE.get_gateway_authorization(authorization.id) or authorization
+    try:
+        authorization = STORE.get_gateway_authorization(authorization.id) or authorization
+    except Exception:
+        # The caller already has an authoritative terminal record. A replay
+        # lookup is useful for freshness, but it must not turn a known money
+        # disposition into a retryable transport failure.
+        logger.warning(
+            "settlement replay refresh failed authorization_id=%s",
+            authorization.id,
+            exc_info=True,
+        )
     outcome = str(authorization.finalization_outcome or "").strip().lower()
     data: dict[str, Any] = {
         "authorization_id": authorization.id,
-        "settled": outcome == "settled",
+        "settled": outcome in {"settled", "reaped_snapshot"},
         "already_settled": True,
+        "disposition": _current_disposition(authorization),
         "finalization_outcome": outcome or "pending",
     }
     if outcome == "refunded":
         data.update(money_pair("cost", 0))
         return data
-    if outcome != "settled":
+    if outcome not in {"settled", "reaped_snapshot"}:
         # Rolling records without the explicit outcome fail closed. A missing
         # Bigtable generation cannot be interpreted as a refund.
         return data
@@ -3633,6 +3781,25 @@ def _already_settled_gateway_data(authorization: Any) -> dict[str, Any]:
     data["reasoning_tokens"] = int(authorization.finalized_reasoning_tokens or 0)
     data["cache_read_input_tokens"] = int(authorization.finalized_cached_input_tokens or 0)
     return data
+
+
+def _current_disposition(authorization: Any) -> str:
+    outcome = str(authorization.finalization_outcome or "").strip().lower()
+    if outcome == "reaped_snapshot":
+        return "reaped_snapshot"
+    if authorization.settled:
+        return "already_finalized"
+    return "intent_durable"
+
+
+def _intent_durable_gateway_data(authorization: Any) -> dict[str, Any]:
+    return {
+        "authorization_id": authorization.id,
+        "settled": False,
+        "already_settled": False,
+        "disposition": "intent_durable",
+        "finalization_outcome": "pending",
+    }
 
 
 def _settle_body_with_safe_attribution(

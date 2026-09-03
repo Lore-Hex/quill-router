@@ -557,7 +557,7 @@ def _mirror_allocations(
             finalization_outcome=outcome,
             finalized_cost_microdollars=(
                 authorization.finalized_cost_microdollars
-                if outcome == FinalizationOutcome.SETTLED
+                if outcome is not None and outcome.charged
                 else None
             ),
         )

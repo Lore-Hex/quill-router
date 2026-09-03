@@ -4766,6 +4766,30 @@ class SpannerBigtableStore:
 
         return _reap(self._database, self._param_types, now=now, limit=limit)
 
+    def reap_expired_reservations_result(
+        self,
+        *,
+        now: Any,
+        limit: int = 100,
+        snapshot_booking_enabled: bool = False,
+    ) -> Any:
+        from trusted_router.storage_gcp_authorize import (
+            reap_expired_reservations_result as _reap_result,
+        )
+
+        return _reap_result(
+            self._database,
+            self._param_types,
+            now=now,
+            limit=limit,
+            snapshot_booking_enabled=snapshot_booking_enabled,
+            operational_analytics_outbox=getattr(
+                self,
+                "_operational_analytics_outbox",
+                None,
+            ),
+        )
+
     def typed_key_usage(
         self,
         key_hash: str,

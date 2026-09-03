@@ -452,6 +452,71 @@ def test_replay_reports_already_charged(fake_store: tuple[Any, Any, Any]) -> Non
     assert len(_generation_bodies(db)) == 1
 
 
+def test_late_settle_after_reaped_snapshot_preserves_money_and_heartbeat_generation(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, db, _bt = fake_store
+    store.request_record_write_mode = "typed"
+    ws = "ws-late-after-reaped-snapshot"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    snapshot_cost = 120
+    reservation = db.reservations[auth.credit_reservation_id]
+    credit = _typed_credit(db, ws)
+    key_row = _typed_key(db, key.hash)
+    reservation.update(settled=True, actual_micro=snapshot_cost)
+    credit.update(
+        reserved=credit["reserved"] - ESTIMATE,
+        total_usage=snapshot_cost,
+    )
+    key_row.update(
+        reserved=key_row["reserved"] - ESTIMATE,
+        usage=snapshot_cost,
+    )
+    record = db.gateway_authorizations[auth.id]
+    payload = json.loads(record["payload"])
+    payload.update(
+        settled=True,
+        finalization_outcome="reaped_snapshot",
+        finalized_cost_microdollars=snapshot_cost,
+        finalized_generation_id="heartbeat-generation",
+    )
+    record.update(
+        settled=True,
+        finalization_outcome="reaped_snapshot",
+        finalized_cost_microdollars=snapshot_cost,
+        payload=json.dumps(payload, separators=(",", ":")),
+    )
+    heartbeat_payload = json.dumps(
+        {
+            "id": "heartbeat-generation",
+            "settled_from": "heartbeat",
+            "usage_estimated": True,
+        },
+        separators=(",", ":"),
+    )
+    db.generation_records["heartbeat-generation"] = {
+        "generation_id": "heartbeat-generation",
+        "payload": heartbeat_payload,
+    }
+    late = _row(auth, cost=777_777)
+
+    outcome = apply_frozen_settle(late)
+
+    assert outcome == ApplyOutcome.REAPED_SNAPSHOT
+    assert reservation["actual_micro"] == snapshot_cost
+    assert credit["total_usage"] == snapshot_cost
+    assert key_row["usage"] == snapshot_cost
+    assert late.actual_cost_micro == 777_777
+    assert db.generation_records == {
+        "heartbeat-generation": {
+            "generation_id": "heartbeat-generation",
+            "payload": heartbeat_payload,
+        }
+    }
+
+
 def test_user_model_outbox_repair_pays_owner_exactly_once(
     fake_store: tuple[Any, Any, Any],
 ) -> None:

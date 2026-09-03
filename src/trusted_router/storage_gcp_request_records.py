@@ -199,7 +199,7 @@ def mark_gateway_authorization_settled(
         "UPDATE tr_gateway_authorization SET settled=true, payload=@payload, "
         "finalization_outcome=@finalization_outcome, "
         "finalized_cost_microdollars=@finalized_cost_microdollars "
-        "WHERE authorization_id=@authorization_id",
+        "WHERE authorization_id=@authorization_id AND settled=false",
         params={
             "authorization_id": authorization.id,
             "payload": json_body(authorization),
@@ -254,28 +254,6 @@ def clear_gateway_authorization_retention(
         "WHERE authorization_id=@authorization_id AND terminal_at IS NOT NULL",
         params={"authorization_id": authorization_id},
         param_types={"authorization_id": param_types.STRING},
-    )
-
-
-def close_reaped_gateway_authorization(
-    transaction: Any,
-    param_types: Any,
-    authorization_id: str,
-    *,
-    terminal_at: Any,
-) -> int:
-    """Close an expired authorization whose hold was released by the reaper."""
-    return transaction.execute_update(
-        "UPDATE tr_gateway_authorization SET settled=true, terminal_at=@terminal_at, "
-        "payload=NULL WHERE authorization_id=@authorization_id AND settled=false",
-        params={
-            "authorization_id": authorization_id,
-            "terminal_at": terminal_at,
-        },
-        param_types={
-            "authorization_id": param_types.STRING,
-            "terminal_at": param_types.TIMESTAMP,
-        },
     )
 
 

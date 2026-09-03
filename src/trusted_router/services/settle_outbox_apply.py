@@ -85,6 +85,7 @@ class ApplyOutcome:
     SETTLED_NOW = "settled_now"
     ACTIVITY_PENDING = "activity_pending"
     ALREADY_SETTLED_WITH_CHARGE = "already_settled_with_charge"
+    REAPED_SNAPSHOT = "reaped_snapshot"
     RESOLVED_ZERO_COST_ELSEWHERE = "resolved_zero_cost_elsewhere"
     # Legacy origin cannot disambiguate a charged replay from a refund/
     # failure-settle free release (legacy Reservation records no actual
@@ -161,6 +162,13 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
         return ApplyOutcome.ERROR
     if auth is None:
         return ApplyOutcome.RESERVATION_MISSING
+
+    # Decision 70: a heartbeat snapshot is already the charged winner. Resolve
+    # a late settle/refund intent before any spend-lease corrective rewrite or
+    # generation indexing. Those repair steps use the late terminal payload
+    # and would overwrite the heartbeat generation even though money is fixed.
+    if auth.settled and auth.finalization_outcome == "reaped_snapshot":
+        return ApplyOutcome.REAPED_SNAPSHOT
 
     corrective_rewrite: tuple[str, str, str, int, str] | None = None
     if (

@@ -25,21 +25,30 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from google.api_core.exceptions import AlreadyExists
 
-from trusted_router.app_markup_billing import app_markup_payout_event_id
+from trusted_router.app_markup_billing import (
+    app_markup_microdollars_from_charge,
+    app_markup_owner_share_microdollars,
+    app_markup_payout_event_id,
+)
+from trusted_router.catalog import PROVIDERS, endpoint_for_id
 from trusted_router.custom_model_billing import user_model_payout_event_id
 from trusted_router.custom_model_markup_billing import (
     custom_model_markup_payout_event_id,
 )
+from trusted_router.services.spend_lease_settlement import clamp_spend_lease_charge
 from trusted_router.spend_windows import (
     KeyWindowLimitDecision,
     decide_key_window_limits,
     utcnow,
     window_floors,
 )
+from trusted_router.stage_d import parse_pricing_snapshot
 from trusted_router.storage_gcp_counter_dml import (
     KEY_ACCEPTED,
     KEY_INSUFFICIENT,
@@ -55,15 +64,21 @@ from trusted_router.storage_gcp_counters import UNSHARDED
 from trusted_router.storage_gcp_generation_records import insert_generation_record
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 from trusted_router.storage_gcp_request_records import (
-    close_reaped_gateway_authorization,
+    complete_gateway_authorization_retention,
     insert_gateway_authorization,
     mark_gateway_authorization_settled,
+    read_gateway_authorization,
 )
 from trusted_router.storage_gcp_settle_outbox import (
     _GUARD_STATUS_SQL,
     GUARD_COUNT_SQL,
     mark_done_unleased_tx,
     rewrite_frozen_settlement_tx,
+)
+from trusted_router.storage_gcp_stage_d import (
+    delivered_usage_charge_microdollars,
+    delivered_usage_counts,
+    normalized_delivered_prompt,
 )
 from trusted_router.storage_models import (
     AppMarkupPayout,
@@ -72,6 +87,7 @@ from trusted_router.storage_models import (
     Generation,
     UserModelPayout,
 )
+from trusted_router.types import UsageType
 
 log = logging.getLogger(__name__)
 
@@ -489,11 +505,61 @@ class SettleOutcome:
     NOT_FOUND = "not_found"  # no such reservation
     ERROR = "error"  # a release row-count != 1 -> rolled back, re-drive/alarm
     OUTBOX_GUARDED = "outbox_guarded"  # reaper aborted: a pending/dead outbox row intends a charge
+    NOT_ELIGIBLE = "not_eligible"  # reaper strong read found renewed/already-terminal state
+    GUARD_LOST = "guard_lost"  # reaper candidate changed after its decisive read
+    AUTHORIZATION_NOT_TYPED = "authorization_not_typed"
 
 
 class _SettleError(Exception):
     """A release returned row-count != 1 — roll the settle back (don't leave the
     reservation claimed with the hold unreleased / charge unbooked)."""
+
+
+class _ReapGuardLost(Exception):
+    """Abort a reaper transaction whose final row-count guard lost."""
+
+
+@dataclass(frozen=True, slots=True)
+class ReapPassResult:
+    count: int = 0
+    released_hold_micro: int = 0
+    started_markers: int = 0
+    snapshot_bookings: int = 0
+    out_of_cohort: int = 0
+    not_eligible: int = 0
+    guarded: int = 0
+    guard_lost: int = 0
+    errors: int = 0
+    refunded: int = 0
+
+    @property
+    def outcome_counts(self) -> dict[str, int]:
+        return {
+            SettleOutcome.NOT_ELIGIBLE: self.not_eligible,
+            SettleOutcome.OUTBOX_GUARDED: self.guarded,
+            SettleOutcome.GUARD_LOST: self.guard_lost,
+            SettleOutcome.ERROR: self.errors,
+            "refunded": self.refunded,
+            "snapshot_booked": self.snapshot_bookings,
+        }
+
+    @property
+    def started_marker_share(self) -> float:
+        return self.started_markers / self.count if self.count else 0.0
+
+    @property
+    def out_of_cohort_share(self) -> float:
+        return self.out_of_cohort / self.count if self.count else 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class _ReapOneResult:
+    outcome: str
+    released_hold_micro: int = 0
+    started_marker: bool = False
+    snapshot_booked: bool = False
+    out_of_cohort: bool = False
+    missing_key_releases: tuple[dict[str, Any], ...] = ()
 
 
 def _release_key_or_skip_deleted(
@@ -553,8 +619,8 @@ def settle_atomic(
     settled_usage_type: str,
     success: bool,
     guard_outbox: bool = False,
-    mark_authorization_terminal: bool = False,
     outbox_available: bool | None = None,
+    expires_before: Any | None = None,
 ) -> dict:
     """Claim-gated settle/refund in ONE transaction (key then credit lock order).
 
@@ -606,6 +672,7 @@ def settle_atomic(
             settled_usage_type=settled_usage_type,
             terminal_at=terminal_at,
             outbox_available=resolved_outbox_available,
+            expires_before=expires_before,
         )
         if not won:
             return {"outcome": SettleOutcome.ALREADY_SETTLED}  # replay, no double-apply
@@ -615,13 +682,6 @@ def settle_atomic(
         # lease reconciler imports aggregate spend later. Releasing counters
         # here would double-release the grant and recreate the hot global row.
         if res.get("hold_usage_type") == "RegionalCredits":
-            if mark_authorization_terminal and res.get("authorization_id"):
-                close_reaped_gateway_authorization(
-                    transaction,
-                    pt,
-                    str(res["authorization_id"]),
-                    terminal_at=terminal_at,
-                )
             return {
                 "outcome": SettleOutcome.SETTLED,
                 "missing_key_releases": [],
@@ -652,13 +712,6 @@ def settle_atomic(
             )
             if credit_count != 1:
                 raise _SettleError("credit release row-count != 1")
-        if mark_authorization_terminal and res.get("authorization_id"):
-            close_reaped_gateway_authorization(
-                transaction,
-                pt,
-                str(res["authorization_id"]),
-                terminal_at=terminal_at,
-            )
         return {
             "outcome": SettleOutcome.SETTLED,
             "missing_key_releases": missing_key_releases,
@@ -805,11 +858,14 @@ def _outbox_table_available(database: Any, param_types: Any) -> bool:
 # EXISTS runs on a snapshot, so it is ADVISORY ONLY — the strong re-read
 # inside settle_atomic(guard_outbox=True) remains the MF2 interlock.
 _REAP_SCAN_SQL = (
-    "SELECT reservation_id, authorization_id FROM tr_reservation "
+    "SELECT reservation_id, authorization_id, credit_reserved_micro, key_reserved_micro "
+    "FROM tr_reservation "
     "WHERE settled=false AND expires_at < @now LIMIT @limit"
 )
 _REAP_SCAN_GUARDED_SQL = (
-    "SELECT reservation_id, authorization_id FROM tr_reservation "  # noqa: S608
+    "SELECT reservation_id, authorization_id, credit_reserved_micro, "  # noqa: S608
+    "key_reserved_micro "
+    "FROM tr_reservation "
     "WHERE settled=false AND expires_at < @now "
     "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o "
     "WHERE o.authorization_id = tr_reservation.authorization_id "
@@ -818,9 +874,15 @@ _REAP_SCAN_GUARDED_SQL = (
 )
 
 
-def reap_expired_reservations(
-    database: Any, param_types: Any, *, now: Any, limit: int = 100
-) -> int:
+def reap_expired_reservations_result(
+    database: Any,
+    param_types: Any,
+    *,
+    now: Any,
+    limit: int = 100,
+    snapshot_booking_enabled: bool = False,
+    operational_analytics_outbox: Any | None = None,
+) -> ReapPassResult:
     """Reclaim crashed-before-settle reservations (settled=false AND expires_at<now).
 
     Releases each stranded reservation's holds via the SAME claim-gated settle
@@ -868,22 +930,380 @@ def reap_expired_reservations(
                 param_types={"now": pt.TIMESTAMP, "limit": pt.INT64},
             )
         )
-    reaped = 0
-    for reservation_id, _authorization_id in rows:
-        result = settle_atomic(
+    count = 0
+    released_hold_micro = 0
+    started_markers = 0
+    snapshot_bookings = 0
+    out_of_cohort = 0
+    not_eligible = 0
+    guarded = 0
+    guard_lost = 0
+    errors = 0
+    refunded = 0
+    for (
+        reservation_id,
+        _authorization_id,
+        advisory_credit_hold_micro,
+        advisory_key_hold_micro,
+    ) in rows:
+        result = _finalize_reaped_reservation_atomic(
             database,
             pt,
-            reservation_id=reservation_id,
-            actual_micro=0,
-            settled_usage_type="Credits",
-            success=False,
+            reservation_id=str(reservation_id),
+            reap_now=now,
             guard_outbox=guard_active,
-            mark_authorization_terminal=True,
-            outbox_available=guard_active,
+            snapshot_booking_enabled=snapshot_booking_enabled,
+            operational_analytics_outbox=operational_analytics_outbox,
         )
-        if result["outcome"] == SettleOutcome.SETTLED:
-            reaped += 1
-    return reaped
+        if result.outcome == SettleOutcome.AUTHORIZATION_NOT_TYPED:
+            # Rolling legacy authorizations have no heartbeat columns. Preserve
+            # their existing zero-release behavior, now with the same strong
+            # expiry predicate that protects typed Stage D reservations.
+            legacy = settle_atomic(
+                database,
+                pt,
+                reservation_id=str(reservation_id),
+                actual_micro=0,
+                settled_usage_type="Credits",
+                success=False,
+                guard_outbox=guard_active,
+                outbox_available=guard_active,
+                expires_before=now,
+            )
+            if legacy["outcome"] == SettleOutcome.SETTLED:
+                result = _ReapOneResult(
+                    outcome=SettleOutcome.SETTLED,
+                    released_hold_micro=max(
+                        int(advisory_credit_hold_micro or 0),
+                        int(advisory_key_hold_micro or 0),
+                    ),
+                    out_of_cohort=True,
+                )
+            elif legacy["outcome"] == SettleOutcome.OUTBOX_GUARDED:
+                result = _ReapOneResult(SettleOutcome.OUTBOX_GUARDED)
+            elif legacy["outcome"] == SettleOutcome.ERROR:
+                result = _ReapOneResult(SettleOutcome.ERROR)
+            else:
+                result = _ReapOneResult(SettleOutcome.GUARD_LOST)
+        if result.outcome == SettleOutcome.NOT_ELIGIBLE:
+            not_eligible += 1
+            continue
+        if result.outcome == SettleOutcome.OUTBOX_GUARDED:
+            guarded += 1
+            continue
+        if result.outcome == SettleOutcome.GUARD_LOST:
+            guard_lost += 1
+            continue
+        if result.outcome == SettleOutcome.ERROR:
+            errors += 1
+            continue
+        if result.outcome != SettleOutcome.SETTLED:
+            errors += 1
+            continue
+        count += 1
+        released_hold_micro += result.released_hold_micro
+        started_markers += int(result.started_marker)
+        snapshot_bookings += int(result.snapshot_booked)
+        refunded += int(not result.snapshot_booked)
+        out_of_cohort += int(result.out_of_cohort)
+    return ReapPassResult(
+        count=count,
+        released_hold_micro=released_hold_micro,
+        started_markers=started_markers,
+        snapshot_bookings=snapshot_bookings,
+        out_of_cohort=out_of_cohort,
+        not_eligible=not_eligible,
+        guarded=guarded,
+        guard_lost=guard_lost,
+        errors=errors,
+        refunded=refunded,
+    )
+
+
+def reap_expired_reservations(
+    database: Any, param_types: Any, *, now: Any, limit: int = 100
+) -> int:
+    """Compatibility wrapper for callers that only need the reaped count."""
+
+    return reap_expired_reservations_result(
+        database,
+        param_types,
+        now=now,
+        limit=limit,
+    ).count
+
+
+def _finalize_reaped_reservation_atomic(
+    database: Any,
+    param_types: Any,
+    *,
+    reservation_id: str,
+    reap_now: Any,
+    guard_outbox: bool,
+    snapshot_booking_enabled: bool,
+    operational_analytics_outbox: Any | None,
+) -> _ReapOneResult:
+    """Finalize one advisory reaper candidate under strong transaction reads."""
+
+    from trusted_router.storage_gcp_counter_dml import (
+        claim_reservation,
+        read_reservation,
+        release_credit,
+    )
+
+    pt = param_types
+    reap_timestamp = _reap_datetime(reap_now)
+
+    def txn(transaction: Any) -> _ReapOneResult:
+        # Decision 70's decisive read: the scan may be stale, but this read and
+        # every write below share one serializable transaction.
+        res = read_reservation(transaction, pt, reservation_id)
+        if (
+            res is None
+            or bool(res.get("settled"))
+            or res.get("expires_at") is None
+            or _reap_datetime(res["expires_at"]) >= reap_timestamp
+        ):
+            return _ReapOneResult(SettleOutcome.NOT_ELIGIBLE)
+        authorization_id = str(res.get("authorization_id") or "")
+        if guard_outbox and authorization_id:
+            guarded = list(
+                transaction.execute_sql(
+                    GUARD_COUNT_SQL,
+                    params={"aid": authorization_id},
+                    param_types={"aid": pt.STRING},
+                )
+            )
+            if guarded and int(guarded[0][0]) > 0:
+                return _ReapOneResult(SettleOutcome.OUTBOX_GUARDED)
+
+        authorization = read_gateway_authorization(transaction, pt, authorization_id)
+        if authorization is None:
+            return _ReapOneResult(SettleOutcome.AUTHORIZATION_NOT_TYPED)
+        if (
+            authorization.settled
+            or authorization.credit_reservation_id != reservation_id
+        ):
+            raise _ReapGuardLost("authorization terminal/binding guard lost")
+
+        started_marker = authorization.started_at is not None
+        out_of_cohort = authorization.pricing_snapshot is None
+        snapshot_booked = bool(
+            snapshot_booking_enabled and started_marker and not out_of_cohort
+        )
+        generation: Generation | None = None
+        app_markup_payout: AppMarkupPayout | None = None
+        actual_micro = 0
+        if snapshot_booked:
+            if (
+                authorization.selected_endpoint_id is None
+                or authorization.delivered_usage is None
+            ):
+                raise _SettleError("started snapshot is missing endpoint or delivered usage")
+            usage = delivered_usage_counts(authorization.delivered_usage)
+            document = parse_pricing_snapshot(authorization.pricing_snapshot or "")
+            selected_endpoint = endpoint_for_id(authorization.selected_endpoint_id)
+            selected_provider = (
+                selected_endpoint.provider
+                if selected_endpoint is not None
+                else authorization.provider
+            )
+            selected_model_id = (
+                selected_endpoint.model_id
+                if selected_endpoint is not None
+                else authorization.model_id
+            )
+            actual_micro = delivered_usage_charge_microdollars(
+                authorization,
+                document,
+                selected_provider,
+                authorization.selected_endpoint_id,
+                usage,
+            )
+            if authorization.settlement == "spend_lease":
+                actual_micro = min(
+                    clamp_spend_lease_charge(authorization, actual_micro),
+                    int(res["credit_reserved_micro"]),
+                )
+            _uncached_input, total_input = normalized_delivered_prompt(
+                selected_provider,
+                usage,
+            )
+            provider = PROVIDERS.get(selected_provider)
+            app_markup_micro = 0
+            if authorization.app_markup_basis_points > 0:
+                app_markup_micro = app_markup_microdollars_from_charge(
+                    actual_micro,
+                    authorization.app_markup_basis_points,
+                )
+                payout_micro = min(
+                    app_markup_owner_share_microdollars(app_markup_micro),
+                    app_markup_micro,
+                )
+                app_markup_payout = AppMarkupPayout(
+                    owner_user_id=authorization.app_owner_user_id,
+                    app_id=authorization.app_id,
+                    amount_microdollars=payout_micro,
+                    payer_workspace_id=authorization.workspace_id,
+                )
+            generation = Generation.from_settle_body(
+                authorization=authorization,
+                provider_name=str(getattr(provider, "name", selected_provider)),
+                model_id=selected_model_id,
+                usage_type=UsageType.CREDITS,
+                provider=selected_provider,
+                body={
+                    "streamed": True,
+                    "usage_estimated": True,
+                    "cache_read_input_tokens": usage["cache_read_input_tokens"],
+                    "reasoning_tokens": usage["reasoning_tokens"],
+                    "status": "success",
+                    "finish_reason": "reaped_snapshot",
+                },
+                input_tokens=total_input,
+                output_tokens=usage["output_tokens"],
+                actual_cost_microdollars=actual_micro,
+                app_markup_microdollars=app_markup_micro,
+            )
+            generation.settled_from = "heartbeat"
+
+        won = claim_reservation(
+            transaction,
+            pt,
+            reservation_id,
+            actual_micro=actual_micro,
+            settled_usage_type="Credits",
+            terminal_at=reap_timestamp,
+            defer_retention=True,
+            outbox_available=guard_outbox,
+            expires_before=reap_timestamp,
+        )
+        if not won:
+            raise _ReapGuardLost("expired reservation claim guard lost")
+
+        missing_key_releases = []
+        if res.get("hold_usage_type") != "RegionalCredits":
+            key_count, warning = _release_key_or_skip_deleted(
+                transaction,
+                pt,
+                res,
+                actual_micro,
+                book_to_byok=False,
+            )
+            if warning is not None:
+                missing_key_releases.append(warning)
+            if res["key_reserved_micro"] > 0 and key_count != 1:
+                raise _SettleError("key release row-count != 1")
+            if res["credit_reserved_micro"] > 0:
+                credit_count = release_credit(
+                    transaction,
+                    pt,
+                    res["workspace_id"],
+                    res["credit_reserved_micro"],
+                    actual_micro,
+                    shard=res["credit_shard"],
+                )
+                if credit_count != 1:
+                    raise _SettleError("credit release row-count != 1")
+
+        if (
+            snapshot_booked
+            and app_markup_payout is not None
+            and app_markup_payout.amount_microdollars > 0
+        ):
+            _apply_app_markup_payout_tx(
+                transaction,
+                pt,
+                authorization_id=authorization_id,
+                payout=app_markup_payout,
+                now=reap_timestamp,
+            )
+
+        authorization.record_finalization(
+            success=snapshot_booked,
+            actual_microdollars=actual_micro,
+            selected_usage_type=UsageType.CREDITS,
+            generation=generation,
+            outcome="reaped_snapshot" if snapshot_booked else "refunded",
+        )
+        marked = mark_gateway_authorization_settled(transaction, pt, authorization)
+        if marked != 1:
+            raise _ReapGuardLost("gateway authorization finalize guard lost")
+        if generation is not None:
+            insert_generation_record(
+                transaction,
+                pt,
+                generation,
+                terminal_at=reap_timestamp,
+            )
+            if operational_analytics_outbox is not None:
+                operational_analytics_outbox.enqueue_activity_tx(transaction, generation)
+        if (
+            complete_reservation_retention(
+                transaction,
+                pt,
+                reservation_id,
+                terminal_at=reap_timestamp,
+                outbox_available=guard_outbox,
+            )
+            != 1
+        ):
+            raise _ReapGuardLost("reservation retention guard lost")
+        if (
+            complete_gateway_authorization_retention(
+                transaction,
+                pt,
+                authorization_id,
+                terminal_at=reap_timestamp,
+                outbox_available=guard_outbox,
+            )
+            != 1
+        ):
+            raise _ReapGuardLost("authorization retention guard lost")
+        return _ReapOneResult(
+            outcome=SettleOutcome.SETTLED,
+            released_hold_micro=max(
+                int(res["credit_reserved_micro"] or 0),
+                int(res["key_reserved_micro"] or 0),
+            ),
+            started_marker=started_marker,
+            snapshot_booked=snapshot_booked,
+            out_of_cohort=out_of_cohort,
+            missing_key_releases=tuple(missing_key_releases),
+        )
+
+    try:
+        result = run_in_transaction_with_retry(
+            database,
+            txn,
+            transaction_tag="tr_reap_snapshot_finalize",
+        )
+        _log_missing_key_releases(
+            {"missing_key_releases": result.missing_key_releases}
+        )
+        return result
+    except _ReapGuardLost as exc:
+        log.warning(
+            "gateway snapshot reap guard lost reservation_id=%s reason=%s",
+            reservation_id,
+            exc,
+        )
+        return _ReapOneResult(SettleOutcome.GUARD_LOST)
+    except (_SettleError, TypeError, ValueError):
+        log.exception("gateway snapshot reap finalize failed reservation_id=%s", reservation_id)
+        return _ReapOneResult(SettleOutcome.ERROR)
+
+
+def _reap_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    else:
+        raise TypeError("reap timestamp is not a datetime")
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def typed_finalize_atomic(

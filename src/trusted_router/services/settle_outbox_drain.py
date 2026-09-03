@@ -12,6 +12,7 @@ from trusted_router.services.settle_outbox_apply import (
     apply_frozen_settle,
 )
 from trusted_router.storage import STORE
+from trusted_router.storage_gcp_authorize import ReapPassResult
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
 from trusted_router.storage_models import SettleOutboxRow, generation_id_for_authorization
 from trusted_router.synthetic.alerts import ops_alert
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 # parks, but short enough that a permanently broken row cannot churn the drain
 # forever before an operator takes over.
 _ACTIVITY_REPAIR_MAX_AGE_SECONDS = 6 * 60 * 60
+_REAP_BURST_ALERT_THRESHOLD = 20
 
 # SF7 / §6: the drain fires NONE of the inline post-settle side effects:
 # auto-refill, budget-alert emails, metadata broadcast, or provider-error
@@ -39,7 +41,11 @@ def spanner_settle_outbox() -> SpannerSettleOutbox:
     return SpannerSettleOutbox(database, param_types)
 
 
-def drain_settle_outbox(limit: int) -> dict[str, Any]:
+def drain_settle_outbox(
+    limit: int,
+    *,
+    reap_snapshot_booking_enabled: bool = False,
+) -> dict[str, Any]:
     limit = max(1, min(int(limit), 500))
     outbox = spanner_settle_outbox()
     rows = outbox.claim(limit=limit)
@@ -85,19 +91,54 @@ def drain_settle_outbox(limit: int) -> dict[str, Any]:
     # still only has request logs. The durable health signals are request-log
     # tick latency plus the response's reaped/outcomes fields. See
     # docs/runbook.md#settle-outbox.
-    reaped = cast(Any, STORE).reap_expired_reservations(
-        now=dt.datetime.now(dt.UTC),
-        limit=200,
+    reap_now = dt.datetime.now(dt.UTC)
+    rich_reaper = getattr(STORE, "reap_expired_reservations_result", None)
+    if callable(rich_reaper):
+        reap_result = cast(
+            ReapPassResult,
+            rich_reaper(
+                now=reap_now,
+                limit=200,
+                snapshot_booking_enabled=reap_snapshot_booking_enabled,
+            ),
+        )
+    else:
+        reaped_count = cast(Any, STORE).reap_expired_reservations(
+            now=reap_now,
+            limit=200,
+        )
+        reap_result = ReapPassResult(count=int(reaped_count))
+    logger.info(
+        "gateway.reaped count=%s released_hold_micro=%s started_marker_share=%.6f "
+        "snapshot_bookings=%s out_of_cohort_share=%.6f not_eligible=%s guarded=%s "
+        "guard_lost=%s errors=%s refunded=%s",
+        reap_result.count,
+        reap_result.released_hold_micro,
+        reap_result.started_marker_share,
+        reap_result.snapshot_bookings,
+        reap_result.out_of_cohort_share,
+        reap_result.not_eligible,
+        reap_result.guarded,
+        reap_result.guard_lost,
+        reap_result.errors,
+        reap_result.refunded,
     )
-    if reaped > 0:
-        logger.info("reaped %s expired reservations", reaped)
+    if reap_result.count >= _REAP_BURST_ALERT_THRESHOLD:
+        ops_alert(
+            "ALERT gateway reaper burst "
+            f"count={reap_result.count} "
+            f"released_hold_micro={reap_result.released_hold_micro} "
+            f"snapshot_bookings={reap_result.snapshot_bookings}",
+            fingerprint=["gateway", "reaped-burst"],
+            tags={"reaped_count": str(reap_result.count)},
+        )
 
     return {
         "claimed": len(rows),
         "outcomes": dict(outcomes),
         "recovered_micro": recovered_micro,
         "purged": purged,
-        "reaped": reaped,
+        "reaped": reap_result.count,
     }
 
 
@@ -228,6 +269,18 @@ def _resolve_row(
                 "settle outbox review: kept charge beat refund intent authorization_id=%s",
                 row.authorization_id,
             )
+        return
+
+    if outcome == ApplyOutcome.REAPED_SNAPSHOT:
+        outbox.mark(row.authorization_id, row.intent_kind, done=True, lease_owner=lease_owner)
+        telemetry = "settle_lost" if row.intent_kind == "settle" else "refund_lost"
+        logger.warning(
+            "gateway.%s authorization_id=%s disposition=reaped_snapshot "
+            "late_actual_cost_micro=%s",
+            telemetry,
+            row.authorization_id,
+            row.actual_cost_micro,
+        )
         return
 
     if outcome == ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE:

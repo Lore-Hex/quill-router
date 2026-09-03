@@ -776,11 +776,12 @@ class GatewayAuthorization:
         actual_microdollars: int,
         selected_usage_type: UsageType | str,
         generation: Generation | None,
+        outcome: str | None = None,
     ) -> None:
         """Persist the authoritative replay result beside the billing claim."""
         usage_type = UsageType.coerce(selected_usage_type)
         self.settled = True
-        self.finalization_outcome = "settled" if success else "refunded"
+        self.finalization_outcome = outcome or ("settled" if success else "refunded")
         self.finalized_cost_microdollars = max(0, int(actual_microdollars)) if success else 0
         self.finalized_usage_type = usage_type.value
         self.finalized_generation_id = generation.id if generation is not None else None
@@ -861,6 +862,9 @@ class Generation:
     app_markup_microdollars: int = 0
     custom_model_markup_microdollars: int = 0
     usage_estimated: bool = True
+    # Normal gateway settles leave this unset; Stage D's crash reaper records
+    # ``heartbeat`` to identify a last-durable-snapshot generation.
+    settled_from: str | None = None
     cached_input_tokens: int = 0
     reasoning_tokens: int = 0
     tool_calls: list[dict[str, Any]] | None = None

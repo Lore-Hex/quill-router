@@ -1097,3 +1097,15 @@ class TypedBillingStore(Protocol):
     ) -> GatewayAuthorization | None: ...
 
     def typed_credit_snapshot(self, workspace_id: str) -> tuple[int, int, int] | None: ...
+
+
+class SnapshotReaperStore(Protocol):
+    """Optional typed-Spanner capability for decision 70's rich reap result."""
+
+    def reap_expired_reservations_result(
+        self,
+        *,
+        now: Any,
+        limit: int = ...,
+        snapshot_booking_enabled: bool = ...,
+    ) -> Any: ...

@@ -485,7 +485,7 @@ def read_reservation(transaction: Any, param_types: Any, reservation_id: str) ->
         transaction.execute_sql(
             "SELECT reservation_id, workspace_id, key_hash, ws_shard, credit_shard, key_shard, "
             "credit_reserved_micro, key_reserved_micro, hold_usage_type, "
-            "settled_usage_type, actual_micro, authorization_id, settled "
+            "settled_usage_type, actual_micro, authorization_id, settled, expires_at "
             "FROM tr_reservation WHERE reservation_id=@rid",
             params={"rid": reservation_id},
             param_types={"rid": param_types.STRING},
@@ -497,7 +497,7 @@ def read_reservation(transaction: Any, param_types: Any, reservation_id: str) ->
     keys = (
         "reservation_id", "workspace_id", "key_hash", "ws_shard", "credit_shard", "key_shard",
         "credit_reserved_micro", "key_reserved_micro", "hold_usage_type",
-        "settled_usage_type", "actual_micro", "authorization_id", "settled",
+        "settled_usage_type", "actual_micro", "authorization_id", "settled", "expires_at",
     )
     result = dict(zip(keys, r, strict=True))
     raw_credit_shard = result.get("credit_shard")
@@ -542,6 +542,7 @@ def claim_reservation(
     terminal_at: Any | None = None,
     defer_retention: bool = False,
     outbox_available: bool = True,
+    expires_before: Any | None = None,
 ) -> bool:
     """Claim a reservation for settle/refund: first caller wins.
 
@@ -553,23 +554,27 @@ def claim_reservation(
     resolved_terminal_at = (
         None if defer_retention else (terminal_at or datetime.now(UTC))
     )
-    count = transaction.execute_update(
-        _CLAIM_RESERVATION_GUARDED_SQL
-        if outbox_available
-        else _CLAIM_RESERVATION_SQL,
-        params={
+    sql = _CLAIM_RESERVATION_GUARDED_SQL if outbox_available else _CLAIM_RESERVATION_SQL
+    params = {
             "rid": reservation_id,
             "actual": int(actual_micro),
             "sut": settled_usage_type,
             "terminal_at": resolved_terminal_at,
-        },
-        param_types={
+        }
+    types = {
             "rid": param_types.STRING,
             "actual": param_types.INT64,
             "sut": param_types.STRING,
             "terminal_at": param_types.TIMESTAMP,
-        },
-    )
+        }
+    if expires_before is not None:
+        # The reaper's snapshot scan is advisory. This predicate is the final
+        # row-count guard, inside the same read-write transaction as booking;
+        # a heartbeat renewal after the scan therefore cannot lose its hold.
+        sql += " AND expires_at < @reap_now"
+        params["reap_now"] = expires_before
+        types["reap_now"] = param_types.TIMESTAMP
+    count = transaction.execute_update(sql, params=params, param_types=types)
     return count == 1
 
 
