@@ -111,16 +111,16 @@ def test_custom_model_crud_owner_limit_and_public_catalog_redaction(client: Test
 
 
 def test_custom_model_slug_create_duplicate_and_rename(client: TestClient) -> None:
-    created = _create_custom_model(client, slug="legal-reviewer")
-    assert created["id"] == "tr-custom-model/alice-legal-reviewer"
-    assert created["slug"] == "legal-reviewer"
+    created = _create_custom_model(client, slug="custom-model-name")
+    assert created["id"] == "tr-custom-model/alice-custom-model-name"
+    assert created["slug"] == "custom-model-name"
 
     duplicate = client.post(
         "/v1/custom-models",
         headers={"x-trustedrouter-user": "alice@example.com"},
         json={
             "name": "dupe",
-            "slug": "legal-reviewer",
+            "slug": "custom-model-name",
             "base_model_id": "anthropic/claude-sonnet-4.6",
             "hidden_prompt": "x",
         },
@@ -673,6 +673,9 @@ def test_console_custom_models_and_user_chat_locked_model_smoke() -> None:
     assert "Socrates, Prometheus, Zeus" in page.text
     assert "Published" in page.text
     assert "Enabled" not in page.text
+    assert 'placeholder="Custom model name"' in page.text
+    assert 'placeholder="custom-model-name"' in page.text
+    assert "Legal reviewer" not in page.text
 
     created = client.post(
         "/console/custom-models",

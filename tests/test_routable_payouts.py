@@ -944,7 +944,7 @@ def test_custom_model_public_docs_cover_namespaces_and_creator_cashouts() -> Non
     client = _client(Settings(environment="test"))
     page = client.get("/docs/custom-models")
     assert page.status_code == 200
-    assert "tr-custom-model/ada-contract-reviewer" in page.text
+    assert "tr-custom-model/ada-custom-model-name" in page.text
     assert "70% of collected markup" in page.text
     assert "$100" in page.text
     assert "Routable" not in page.text

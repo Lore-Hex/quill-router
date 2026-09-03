@@ -49,8 +49,8 @@ curl https://trustedrouter.com/v1/custom-models \
   -H "Authorization: Bearer $TRUSTEDROUTER_MANAGEMENT_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "Contract reviewer",
-    "slug": "contract-reviewer",
+    "name": "Custom model name",
+    "slug": "custom-model-name",
     "base_model_id": "anthropic/claude-sonnet-4.6",
     "hidden_prompt": "Review the contract and cite each material clause.",
     "markup_basis_points": 1500,
