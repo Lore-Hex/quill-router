@@ -3440,14 +3440,12 @@ class PostgresStore:
             "INSERT INTO tr_credit_movement "
             "(account_id, movement_id, kind, amount_microdollars, "
             "counterparty_account_id, custom_model_id, authorization_id, created_at) "
-            "VALUES (CAST(%s AS TEXT), CAST(%s AS TEXT), CAST(%s AS TEXT), "
-            "CAST(%s AS BIGINT), CAST(%s AS TEXT), CAST(%s AS TEXT), "
-            "CAST(%s AS TEXT), %s)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 movement.account_id,
                 movement.movement_id,
                 movement.kind,
-                movement.amount_microdollars,
+                _int8_param(movement.amount_microdollars),
                 movement.counterparty_account_id,
                 movement.custom_model_id,
                 movement.authorization_id,

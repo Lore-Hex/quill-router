@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from psycopg.types.numeric import Int8
 
 from tests.fakes.postgres import postgres_store_on, sqlite_postgres_conn
 from trusted_router.storage_models import CreditAccount, CreditMovement
@@ -21,7 +22,7 @@ def _seed_workspace(store: object, conn: object, workspace_id: str) -> None:
     )
 
 
-def test_credit_movement_insert_types_parameters_without_server_preparation() -> None:
+def test_credit_movement_insert_binds_bigint_without_server_preparation() -> None:
     calls: list[dict[str, object]] = []
 
     class RecordingConnection:
@@ -44,12 +45,11 @@ def test_credit_movement_insert_types_parameters_without_server_preparation() ->
             amount_microdollars=1,
         ),
     )
-
     assert len(calls) == 1
-    sql = str(calls[0]["sql"])
-    assert sql.count("CAST(%s AS TEXT)") == 6
-    assert "CAST(%s AS BIGINT)" in sql
-    assert sql.endswith("CAST(%s AS TEXT), %s)")
+    params = calls[0]["params"]
+    assert isinstance(params, tuple)
+    assert isinstance(params[3], Int8)
+    assert int(params[3]) == 1
     assert calls[0]["kwargs"] == {"prepare": False}
 
 
