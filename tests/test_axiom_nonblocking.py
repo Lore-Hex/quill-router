@@ -65,6 +65,25 @@ class _SlowShipper(logging.Handler):
         self.arrived.set()
 
 
+class _BlockingShipper(logging.Handler):
+    """Block shipping until the test explicitly allows it to finish."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = threading.Event()
+        self.release_event = threading.Event()
+        self.finished = threading.Event()
+        self.thread_id: int | None = None
+        self.received: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.thread_id = threading.get_ident()
+        self.started.set()
+        self.release_event.wait()
+        self.received.append(record)
+        self.finished.set()
+
+
 def _record(message: str, **extra: object) -> logging.LogRecord:
     record = logging.LogRecord(
         name="trusted_router.test",
@@ -82,20 +101,40 @@ def _record(message: str, **extra: object) -> logging.LogRecord:
 
 def test_emitting_does_not_wait_for_the_shipper() -> None:
     """The property the whole change exists for."""
-    shipper = _SlowShipper(delay=0.5)
-    handler = _DroppingQueueHandler(queue.Queue(maxsize=100))
-    listener = logging.handlers.QueueListener(handler.queue, shipper)
+    shipper = _BlockingShipper()
+    handler, listener = build_axiom_pipeline(shipper, resolved_level=logging.INFO)
     listener.start()
-    try:
-        started = time.monotonic()
-        handler.handle(_record("event happened"))
-        elapsed = time.monotonic() - started
+    worker = listener._thread
+    assert worker is not None
+    test_thread_id = threading.get_ident()
+    emitting_thread_ids: list[int] = []
+    emit_returned = threading.Event()
 
-        assert elapsed < 0.05, f"emit blocked for {elapsed:.3f}s; shipping must be off-thread"
-        assert shipper.arrived.wait(timeout=5), "record never reached the shipper"
-        assert len(shipper.received) == 1
+    def emit_record() -> None:
+        emitting_thread_ids.append(threading.get_ident())
+        handler.handle(_record("event happened"))
+        emit_returned.set()
+
+    emitter = threading.Thread(target=emit_record, daemon=True)
+    emitter.start()
+    try:
+        assert shipper.started.wait(timeout=5), "record never reached the shipper"
+        assert emit_returned.wait(timeout=5), "emit waited for the blocked shipper"
+        assert not shipper.release_event.is_set(), "shipper was released before emit returned"
+        assert not shipper.finished.is_set(), "emit waited for the blocked shipper"
+        assert shipper.thread_id != test_thread_id, "shipping ran on the test thread"
+        assert shipper.thread_id != emitting_thread_ids[0], "shipping ran on the emitting thread"
+        assert shipper.thread_id == worker.ident
     finally:
-        listener.stop()
+        shipper.release_event.set()
+        emitter.join(timeout=5)
+        listener.enqueue_sentinel()
+        worker.join(timeout=5)
+        assert not emitter.is_alive(), "emitting thread did not stop"
+        assert not worker.is_alive(), "shipper worker did not stop"
+
+    assert shipper.finished.is_set()
+    assert len(shipper.received) == 1
 
 
 def test_scrubbing_runs_before_the_queue() -> None:
