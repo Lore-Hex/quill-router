@@ -23,6 +23,7 @@ from datetime import datetime
 from functools import lru_cache
 from time import perf_counter
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Request
 from starlette.concurrency import run_in_threadpool
@@ -239,6 +240,34 @@ from trusted_router.user_model_rules import (
 )
 
 logger = logging.getLogger(__name__)
+
+_LOG_VALUE_MAX_CHARS = 120
+
+
+def _log_value(value: object) -> str:
+    """One request-derived field, safe to interpolate into a log MESSAGE.
+
+    ``GatewayAuthorizeRequest.model`` is an unconstrained string, so anything
+    derived from it can carry newlines or control characters — enough to forge
+    a second log line in a text-formatted sink. Strip those and bound the
+    length; the field is for attribution, not for reconstructing the request.
+    """
+    text = str(value)
+    cleaned = "".join(character for character in text if character.isprintable())
+    if len(cleaned) > _LOG_VALUE_MAX_CHARS:
+        cleaned = cleaned[:_LOG_VALUE_MAX_CHARS] + "...(truncated)"
+    return cleaned or "<empty>"
+
+
+def _log_home_host(home: str) -> str:
+    """The peer plane's HOST only: a configured URL may carry a path, a query,
+    or embedded credentials, none of which belong in a log line."""
+    try:
+        return urlsplit(home).hostname or "<unparseable>"
+    except ValueError:
+        return "<unparseable>"
+
+
 REQUEST_METADATA_VERSION = 1
 # The enclave stops waiting for response headers after 25 seconds. Preserve the
 # transaction layer's 20-second retry budget while leaving five seconds for this
@@ -778,6 +807,16 @@ def _authorize_gateway_sync_impl(
         ):
             raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
         if not user_model_is_on_the_clock(user_model, datetime.now(dt.UTC)):
+            # The billing-path 5xx alert counts this 503; without a line the
+            # request log alone cannot tell it from storage contention.
+            logger.warning(
+                "billing.authorize_user_model_off_the_clock workspace_id=%s request_id=%s "
+                "user_model_id=%s kind=%s",
+                workspace.id,
+                getattr(request.state, "request_id", None),
+                _log_value(user_model.id),
+                _log_value(user_model.kind),
+            )
             raise api_error(
                 503,
                 f"User-provided {user_model.kind} model {user_model.id} is off the clock",
@@ -1406,8 +1445,14 @@ def _authorize_gateway_sync_impl(
             # The generic 503 request log cannot identify a tenant hot row.
             # Emit only safe billing metadata so an operator can reshard the
             # affected workspace without ever logging a key, prompt, or body.
+            # request_id and error_class ride in the message so this line can
+            # be joined with the app-level ``storage.transaction_aborted`` line
+            # that answers the re-raise (the console formatter drops ``extra``).
             logger.warning(
-                "billing.authorize_contention",
+                "billing.authorize_contention request_id=%s workspace_id=%s error_class=%s",
+                getattr(request.state, "request_id", None),
+                workspace.id,
+                type(exc).__name__,
                 extra={
                     "request_id": getattr(request.state, "request_id", None),
                     "workspace_id": workspace.id,
@@ -1425,7 +1470,11 @@ def _authorize_gateway_sync_impl(
             # deadline, service outage, session exhaustion, or retry failure.
             # The request body, raw key, prompt, and output stay out of logs.
             logger.warning(
-                "billing.authorize_storage_unavailable",
+                "billing.authorize_storage_unavailable request_id=%s workspace_id=%s "
+                "error_class=%s",
+                getattr(request.state, "request_id", None),
+                workspace.id,
+                type(exc).__name__,
                 extra={
                     "request_id": getattr(request.state, "request_id", None),
                     "workspace_id": workspace.id,
@@ -1640,6 +1689,15 @@ def _authorize_gateway_sync_impl(
             # ever release it for a request that produced no authorization —
             # swallowing this into a bare 503 leaks it silently, forever.
             STORE.refund_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
+            logger.warning(
+                "billing.authorize_conflict_after_escrow workspace_id=%s request_id=%s "
+                "requested_model=%s estimated_microdollars=%s error_class=%s",
+                workspace.id,
+                getattr(request.state, "request_id", None),
+                _log_value(requested_model_id),
+                estimate,
+                type(conflict_exc).__name__,
+            )
             raise api_error(
                 503,
                 "Authorization contention; retry shortly.",
@@ -2477,6 +2535,14 @@ def _federated_key_still_valid(cached: Any | None, lookup_hash: str) -> Any | No
                 int(age),
             )
             return cached
+        logger.warning(
+            "federation.key_directory_unavailable home_host=%s cached_age_s=%s error_class=%s",
+            _log_home_host(home),
+            # An unstampable cached record reads as infinitely old; int(inf)
+            # would raise OverflowError and turn the 503 into a 500.
+            None if cached is None or age == float("inf") else int(age),
+            type(exc).__name__,
+        )
         raise api_error(
             503,
             "Key directory is temporarily unavailable; retry shortly",

@@ -126,7 +126,9 @@ async def test_gateway_authorize_contention_logs_safe_tenant_context(
 
     assert response.status_code == 503
     record = next(
-        record for record in caplog.records if record.msg == "billing.authorize_contention"
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("billing.authorize_contention ")
     )
     context = record.__dict__
     assert context["workspace_id"] == key.workspace_id
@@ -174,7 +176,7 @@ async def test_gateway_authorize_storage_outage_logs_safe_tenant_context(
     record = next(
         record
         for record in caplog.records
-        if record.msg == "billing.authorize_storage_unavailable"
+        if record.getMessage().startswith("billing.authorize_storage_unavailable ")
     )
     context = record.__dict__
     assert context["workspace_id"] == key.workspace_id
