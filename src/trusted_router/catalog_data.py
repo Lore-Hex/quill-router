@@ -563,11 +563,16 @@ PROVIDERS: dict[str, Provider] = {
         slug="mistral",
         name="Mistral",
         supports_prepaid=True,
+        provider_zero_data_retention=False,
         provider_policy=(
-            "No provider-ZDR claim is tracked here. This is separate from any "
-            "no-training or enterprise retention commitments Mistral may offer."
+            "TrustedRouter's managed Mistral account has model-training use disabled, "
+            "so new input and output sent through TR-funded routes is opted out of model "
+            "training. This is not zero data retention: Mistral's published policy says "
+            "ordinary API input and output may be retained for 30 rolling days unless "
+            "ZDR is separately activated. Customer BYOK accounts keep their own Mistral "
+            "privacy settings."
         ),
-        provider_policy_url="https://docs.mistral.ai/admin/security-access/privacy",
+        provider_policy_url="https://legal.mistral.ai/terms/privacy-policy/",
         # Mistral AI, a French SAS registered at 15 rue des Halles, 75001 Paris,
         # RCS Paris 952 418 325, per its own legal notice.
         # https://legal.mistral.ai/legal-notice
