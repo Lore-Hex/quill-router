@@ -724,6 +724,55 @@ def test_status_subdomain_root_renders_status_page(client: TestClient) -> None:
     assert "Provider Effective" not in page.text
 
 
+def test_status_page_links_the_other_clouds_status_pages(client: TestClient) -> None:
+    """The page must offer a way off this origin.
+
+    Each cloud computes its own status document; the links exist so a reader
+    whose cloud is the broken one can reach a report that is still being
+    produced. A reader who cannot load this origin cannot discover the others
+    unless this page names them, so the URLs are absolute and cross-origin.
+    """
+    page = client.get("/status")
+
+    assert page.status_code == 200
+    assert "https://aws.trustedrouter.com/status" in page.text
+    assert "https://azure.trustedrouter.com/status" in page.text
+    assert "AWS status" in page.text
+    assert "Azure status" in page.text
+    # The cross-cloud watch already runs every pass; the page has to surface it.
+    assert 'href="/fleet"' in page.text
+
+
+def test_status_page_does_not_link_the_cloud_serving_it(client: TestClient) -> None:
+    """Self-link would be a dead end during the outage the links are for."""
+    page = client.get("/status", headers={"host": "trustedrouter.com"})
+
+    assert page.status_code == 200
+    # Rendered as a marker, not a link, when the peer IS this origin.
+    assert "Google Cloud &middot; this page" in page.text or "Google Cloud · this page" in page.text
+    assert '<a class="btn" href="https://trustedrouter.com/status"' not in page.text
+    # ...while the other two stay reachable.
+    assert 'href="https://aws.trustedrouter.com/status"' in page.text
+
+
+def test_status_page_peer_links_follow_the_fleet_setting() -> None:
+    """One list drives peer probes and peer links, so a new cloud needs one edit."""
+    app = create_app(
+        Settings(
+            environment="test",
+            synthetic_fleet_peers="gcp=https://trustedrouter.com,oracle=https://oci.trustedrouter.com",
+        )
+    )
+    local_client = TestClient(app)
+
+    page = local_client.get("/status")
+
+    assert page.status_code == 200
+    assert "https://oci.trustedrouter.com/status" in page.text
+    assert "ORACLE status" in page.text
+    assert "aws.trustedrouter.com" not in page.text
+
+
 def test_chat_monitor_model_requires_configured_monitor_key() -> None:
     monitor_key = "sk-tr-monitor-test"  # noqa: S105 - test key.
     app = create_app(

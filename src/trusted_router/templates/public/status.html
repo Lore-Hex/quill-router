@@ -370,5 +370,26 @@
     <a class="btn" href="/status/history?window=48h">View 48h rollup</a>
     <a class="btn" href="/status/history?window=monthly">View monthly rollups</a>
   </div>
+
+  {% if peer_status_pages %}
+  <div class="status-peers">
+    <p class="status-note">
+      Every cloud runs its own probes and builds this page from its own samples, so these
+      are independent reports rather than copies of one. If the cloud serving this page is
+      the thing that is down, the others keep answering. Every cloud also watches every
+      other cloud's page each pass and flags one that stops reporting.
+    </p>
+    <div class="status-actions">
+      <a class="btn" href="/fleet">View fleet health</a>
+      {% for peer in peer_status_pages %}
+      {% if peer.current %}
+      <span class="btn status-peer-current" aria-current="page">{{ peer.label }} &middot; this page</span>
+      {% else %}
+      <a class="btn" href="{{ peer.url }}" rel="noopener">{{ peer.label }} status</a>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
 </section>
 {% endblock %}
