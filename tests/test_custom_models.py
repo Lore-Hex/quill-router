@@ -698,3 +698,11 @@ def test_console_custom_models_and_user_chat_locked_model_smoke() -> None:
     assert chat.status_code == 200
     assert custom.id in chat.text
     assert "tr_user_chat_state_tr_custom_model_alice_console_model" in chat.text
+
+    deleted = client.post(
+        f"/console/custom-models/{custom.id}/delete",
+        follow_redirects=False,
+    )
+    assert deleted.status_code == 303
+    assert deleted.headers["location"] == "/console/custom-models?saved=deleted"
+    assert STORE.get_custom_model(custom.id) is None
