@@ -477,16 +477,19 @@ def create_app(
         # The console formatter keeps only the message, so the attribution
         # fields go INTO the message rather than ``extra``. Only the error
         # CLASS is logged: a backend message can name rows, and a key hash,
-        # prompt, or body must never reach a log line.
-        request_id = getattr(request.state, "request_id", None) or request.headers.get(
-            "x-request-id"
-        )
+        # prompt, or body must never reach a log line. That is also why this
+        # logs the matched ROUTE TEMPLATE and not the concrete path: several
+        # routes carry a key or lookup hash as a path segment.
+        template = getattr(request.scope.get("route"), "path", None)
+        if template:
+            # Routes under a mounted sub-app carry the mount in root_path.
+            template = f"{request.scope.get('root_path') or ''}{template}"
         _storage_error_logger.warning(
-            "%s method=%s path=%s request_id=%s error_class=%s",
+            "%s method=%s route=%s request_id=%s error_class=%s",
             event,
             request.method,
-            request.url.path,
-            request_id,
+            template or "<unmatched>",
+            getattr(request.state, "request_id", None),
             type(exc).__name__,
         )
 

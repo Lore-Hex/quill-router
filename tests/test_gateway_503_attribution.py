@@ -10,11 +10,12 @@ formatter renders only the message, so the fields are IN the message.
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from google.api_core.exceptions import Aborted, DeadlineExceeded
 
 from trusted_router.config import Settings, get_settings
@@ -99,7 +100,7 @@ async def test_app_level_conflict_503_logs_path_and_error_class(
     assert response.headers["Retry-After"] == "1"
     line = _single_warning(caplog, "storage.transaction_aborted")
     assert "method=POST" in line
-    assert f"path={AUTHORIZE}" in line
+    assert f"route={AUTHORIZE}" in line
     assert "error_class=Aborted" in line
     _assert_attributable_and_safe(line, key, "req-app-aborted")
 
@@ -122,7 +123,7 @@ async def test_app_level_unavailable_503_logs_path_and_error_class(
 
     assert response.status_code == 503
     line = _single_warning(caplog, "storage.unavailable")
-    assert f"path={AUTHORIZE}" in line
+    assert f"route={AUTHORIZE}" in line
     assert "error_class=DeadlineExceeded" in line
     _assert_attributable_and_safe(line, key, "req-app-unavailable")
 
@@ -153,7 +154,7 @@ async def test_conflict_after_key_escrow_logs_tenant_context(
     assert "estimated_microdollars=" in line
     assert "error_class=StoreConflict" in line
     _assert_attributable_and_safe(line, key, "req-escrow-conflict")
-    # The escrow taken before the conflict came back: a retry is not charged twice.
+    # The route-level arm answered, so the app-level handler did not also fire.
     assert not [r for r in caplog.records if r.getMessage().startswith("storage.")]
 
 
@@ -188,4 +189,62 @@ def test_federated_key_directory_outage_logs_home_and_error_class(
     assert "error_class=FederationUnavailable" in line
     assert "home-token" not in line
     assert "lookup-hash-never-logged" not in line
+    assert ROW_NAMING_BACKEND_MESSAGE not in line
+
+
+def test_federated_key_directory_outage_with_unstampable_cache_still_answers_503(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A cached record with no usable ``created_at`` is "infinitely old"; the
+    log line must not turn that into an OverflowError (a 500 in place of 503)."""
+    monkeypatch.setenv("TR_FEDERATION_HOME_BASE_URL", "https://home.example")
+    monkeypatch.setenv("TR_FEDERATION_HOME_TOKEN", "home-token")
+    cache_clear = getattr(get_settings, "cache_clear", None)
+    if cache_clear is not None:
+        cache_clear()
+
+    class HomeUnreachable:
+        def resolve(self, _lookup_hash: str) -> Any:
+            raise FederationUnavailable("home unreachable")
+
+    monkeypatch.setattr(gateway_routes, "_federation_client", lambda *_a, **_k: HomeUnreachable())
+    cached = SimpleNamespace(created_at="not-a-timestamp", hash="cached-hash-never-logged")
+
+    with caplog.at_level("WARNING", logger="trusted_router"):
+        with pytest.raises(HTTPException) as raised:
+            gateway_routes._federated_key_still_valid(cached, "lookup-hash-never-logged")
+
+    assert raised.value.status_code == 503
+    line = _single_warning(caplog, "federation.key_directory_unavailable")
+    assert "cached_age_s=None" in line
+    assert "cached-hash-never-logged" not in line
+
+
+@pytest.mark.asyncio
+async def test_app_level_503_logs_route_template_not_hash_bearing_path(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``/v1/keys/{hash}`` and the console key routes carry a key hash as a
+    path segment; the handler must log the template, never the concrete path."""
+    app = create_app(_settings(), init_observability=False)
+    handler = app.exception_handlers[Aborted]
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/v1/keys/hash-value-never-logged",
+        "root_path": "/v1",
+        "headers": [],
+        "route": SimpleNamespace(path="/keys/{hash}"),
+        "state": {"request_id": "req-hash-route"},
+    }
+
+    with caplog.at_level("WARNING", logger="trusted_router"):
+        response = await handler(Request(scope), Aborted(ROW_NAMING_BACKEND_MESSAGE))
+
+    assert response.status_code == 503
+    line = _single_warning(caplog, "storage.transaction_aborted")
+    assert "route=/v1/keys/{hash}" in line
+    assert "request_id=req-hash-route" in line
+    assert "hash-value-never-logged" not in line
     assert ROW_NAMING_BACKEND_MESSAGE not in line

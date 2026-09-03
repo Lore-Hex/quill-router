@@ -2499,7 +2499,9 @@ def _federated_key_still_valid(cached: Any | None, lookup_hash: str) -> Any | No
         logger.warning(
             "federation.key_directory_unavailable home=%s cached_age_s=%s error_class=%s",
             home,
-            int(age) if cached is not None else None,
+            # An unstampable cached record reads as infinitely old; int(inf)
+            # would raise OverflowError and turn the 503 into a 500.
+            None if cached is None or age == float("inf") else int(age),
             type(exc).__name__,
         )
         raise api_error(
