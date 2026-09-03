@@ -2010,7 +2010,7 @@ def test_combined_synthetic_refresh_is_a_visible_release_gate() -> None:
     )[0]
     synthetic_step = rollout.split(
         "- name: Deploy synthetic monitor Cloud Run Job", 1
-    )[1].split("- name: Deploy Google Ads conversion uploader", 1)[0]
+    )[1].split("- name: Enforce Google Data Manager sharing disabled", 1)[0]
 
     assert "synthetic_image_refresh.sh" in synthetic_step
     assert "synthetic.sh" in synthetic_step
