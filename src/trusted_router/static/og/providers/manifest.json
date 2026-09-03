@@ -217,10 +217,10 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 17,
     "name": "Featherless AI",
     "privacy": "Policy documented",
-    "route_count": 5,
+    "route_count": 17,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },

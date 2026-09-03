@@ -3445,12 +3445,13 @@ class PostgresStore:
                 movement.account_id,
                 movement.movement_id,
                 movement.kind,
-                movement.amount_microdollars,
+                _int8_param(movement.amount_microdollars),
                 movement.counterparty_account_id,
                 movement.custom_model_id,
                 movement.authorization_id,
                 _parse_timestamp(movement.created_at),
             ),
+            prepare=False,
         )
 
     def debit_workspace_guarded(
