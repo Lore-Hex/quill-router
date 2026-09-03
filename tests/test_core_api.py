@@ -980,11 +980,15 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     ]
     socrates_pro_plus_meta = models_by_id["trustedrouter/socrates-pro-plus-1.0"]["trustedrouter"]
     assert socrates_pro_plus_meta["auto_candidates"] == [
-        "xiaomi/mimo-v2.5-pro-ultraspeed",
-        "minimax/minimax-m3",
-        "z-ai/glm-5.2-fast",
-        "deepseek/deepseek-v4-flash",
-        "trustedrouter/zeus-1.0",
+        model_id
+        for model_id in [
+            "xiaomi/mimo-v2.5-pro-ultraspeed",
+            "minimax/minimax-m3",
+            "z-ai/glm-5.2-fast",
+            "deepseek/deepseek-v4-flash",
+            "trustedrouter/zeus-1.0",
+        ]
+        if model_id in MODELS
     ]
     assert (
         models_by_id["trustedrouter/socrates-1.1"]["trustedrouter"]["auto_candidates"]

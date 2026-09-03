@@ -7,6 +7,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from scripts.pricing.base import ProviderPricingResult, fetch_provider
+from trusted_router.provider_lifecycle import (
+    XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT,
+)
 
 SLUG = "xiaomi"
 PUBLIC_PRICING_URL = "https://mimo.mi.com/docs/en-US/price/pay-as-you-go"
@@ -24,6 +27,7 @@ EXPECTED_MODELS = [
     "xiaomi/mimo-v2.5",
     "xiaomi/mimo-v2.5-pro",
 ]
+_ULTRASPEED_MODEL_ID = "xiaomi/mimo-v2.5-pro-ultraspeed"
 
 
 def fetch() -> ProviderPricingResult:
@@ -47,6 +51,12 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         model_id = row.get("id")
         if not isinstance(model_id, str):
             continue
+        if model_id == _ULTRASPEED_MODEL_ID:
+            row["retirement_at"] = (
+                XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT.astimezone(UTC)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
         price = result.prices.get(model_id)
         if price is None:
             continue
@@ -67,10 +77,10 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     raw["_note"] = (
         "Xiaomi MiMo provider-native routes. PAYG prices for MiMo V2.5 and "
         "V2.5 Pro are refreshed hourly from Xiaomi's official overseas USD "
-        "table. V2.5 Pro UltraSpeed remains live in Xiaomi's authenticated "
-        "/v1/models feed but has no public PAYG row, so its last verified "
-        "price is retained until Xiaomi republishes one. Legacy V2 rows are "
-        "kept only as historical fallback metadata."
+        "table. The limited-beta V2.5 Pro UltraSpeed Model API is scheduled "
+        "to retire at the start of September 8, 2026 in UTC+08; its last "
+        "verified price is retained until that provider-scoped cutoff. "
+        "Legacy V2 rows are kept only as historical fallback metadata."
     )
     raw["generated_at"] = (
         datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")

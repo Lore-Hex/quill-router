@@ -51,6 +51,9 @@ FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT = datetime(
 )
 FIREWORKS_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 27, 0, 0, tzinfo=UTC)
 FIREWORKS_QWEN37_RETIREMENT_AT = datetime(2026, 9, 4, 0, 0, tzinfo=UTC)
+XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT = datetime(
+    2026, 9, 8, 0, 0, tzinfo=timezone(timedelta(hours=8), "Asia/Shanghai")
+)
 
 # DeepSeek prices direct V4 traffic at twice the off-peak rate during these
 # half-open UTC windows. Keep them as seconds since midnight so boundary
@@ -106,6 +109,17 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # Xiaomi announced that the limited-beta MiMo V2.5 Pro UltraSpeed Model
+    # API ends on 2026-09-08 in UTC+08. No exact hour or replacement was
+    # provided, so retire conservatively at the start of that local date.
+    # This is provider-specific: regular MiMo V2.5 Pro and equivalent models
+    # served elsewhere are unaffected.
+    _Retirement(
+        provider="xiaomi",
+        model_ids=frozenset({"xiaomi/mimo-v2.5-pro-ultraspeed"}),
+        upstream_ids=frozenset({"mimo-v2.5-pro-ultraspeed"}),
+        effective_at=XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT,
+    ),
     # Fireworks announced that these Serverless routes retire on 2026-08-27.
     # The two Kimi retirements apply only to the separately billed Fast
     # routers; standard Kimi K2.6 and Kimi K2.7 Code remain available. The

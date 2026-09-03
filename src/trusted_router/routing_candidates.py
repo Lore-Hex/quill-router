@@ -157,17 +157,14 @@ def cheap_candidate_models(limit: int = 8) -> list[Model]:
 
 FAST_MODEL_ORDER = (
     "cerebras/gpt-oss-120b",
-    "xiaomi/mimo-v2.5-pro-ultraspeed",
     "cerebras/zai-glm-4.7",
 )
 
 
 def fast_candidate_models(limit: int = 8) -> list[Model]:
-    # Low-latency pool: Cerebras first, then Xiaomi MiMo's UltraSpeed tier.
-    # Keep this as a small explicit pool so callers who choose
+    # Keep this as a small explicit Cerebras pool so callers who choose
     # `trustedrouter/fast` do not accidentally get a cheap-but-slower model
-    # just because it has a lower token price. Delisted provider-native aliases
-    # disappear from MODELS and are pruned here without blocking catalog refresh.
+    # just because it has a lower token price.
     candidates: list[Model] = []
     seen: set[str] = set()
     for model_id in FAST_MODEL_ORDER:
