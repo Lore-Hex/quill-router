@@ -175,7 +175,8 @@
       "routable": true,
       "input_token_price_per_m": 120000,
       "output_token_price_per_m": 360000,
-      "cached_input_token_price_per_m": 90000
+      "cached_input_token_price_per_m": 90000,
+      "missing_since": "2026-09-03"
     },
     {
       "display_name": "Z.AI: GLM-5.2",
@@ -217,7 +218,8 @@
       "routable": true,
       "input_token_price_per_m": 1200000,
       "output_token_price_per_m": 4100000,
-      "cached_input_token_price_per_m": 200000
+      "cached_input_token_price_per_m": 200000,
+      "missing_since": "2026-09-03"
     },
     {
       "display_name": "DeepSeek: DeepSeek V4 Pro 0813",
@@ -348,6 +350,6 @@
       "cached_input_token_price_per_m": 230000
     }
   ],
-  "generated_at": "2026-09-03T13:24:22Z",
+  "generated_at": "2026-09-03T17:37:35Z",
   "model_count": 8
 }

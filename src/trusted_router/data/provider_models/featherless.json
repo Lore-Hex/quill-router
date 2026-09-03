@@ -104,7 +104,7 @@
       "status": 1,
       "id": "z-ai/glm-5.3",
       "upstream_id": "zai-org/GLM-5.3",
-      "context_length": 32768,
+      "context_length": 262144,
       "max_output_tokens": 32768,
       "routable": true,
       "input_token_price_per_m": 1400000,
@@ -371,7 +371,7 @@
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/pricing",
-  "generated_at": "2026-09-03T13:24:22Z",
+  "generated_at": "2026-09-03T17:37:35Z",
   "price_scale": "microdollars_per_million",
   "model_count": 17
 }

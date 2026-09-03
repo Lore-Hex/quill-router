@@ -100,10 +100,10 @@
   },
   "cerebras": {
     "card_version": 2,
-    "model_count": 2,
+    "model_count": 4,
     "name": "Cerebras",
     "privacy": "Zero retention",
-    "route_count": 4,
+    "route_count": 8,
     "route_mode": "Prepaid + BYOK",
     "slug": "cerebras"
   },
@@ -172,10 +172,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 100,
+    "model_count": 101,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 194,
+    "route_count": 196,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -253,10 +253,10 @@
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 14,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 24,
+    "route_count": 26,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
@@ -496,10 +496,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 11,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 11,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },

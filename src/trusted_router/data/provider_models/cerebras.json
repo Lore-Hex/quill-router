@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement generated from Cerebras's public model catalog. Canonical model IDs and cerebras/* provider aliases are included when the upstream catalog exposes them.",
   "provider": "cerebras",
   "source": "https://api.cerebras.ai/public/v1/models",
-  "generated_at": "2026-09-03T13:24:22Z",
-  "model_count": 6,
+  "generated_at": "2026-09-03T17:37:35Z",
+  "model_count": 8,
   "models": [
     {
       "id": "openai/gpt-oss-120b",
@@ -212,6 +212,72 @@
       "missing_since": "2026-09-03",
       "routable": false,
       "routable_reason": "delisted-upstream"
+    },
+    {
+      "display_name": "Qwen 3.8 27B",
+      "title": "qwen-3.8-27b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "cerebras/qwen-3.8-27b",
+      "upstream_id": "qwen-3.8-27b",
+      "features": [
+        "function-calling",
+        "high-throughput",
+        "json-mode",
+        "parallel-tool-calls",
+        "reasoning",
+        "response-format",
+        "structured-outputs",
+        "tool-choice",
+        "tools"
+      ],
+      "context_length": 65536,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "Qwen 3.8 27B",
+      "title": "qwen-3.8-27b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.8-27b",
+      "upstream_id": "qwen-3.8-27b",
+      "features": [
+        "function-calling",
+        "high-throughput",
+        "json-mode",
+        "parallel-tool-calls",
+        "reasoning",
+        "response-format",
+        "structured-outputs",
+        "tool-choice",
+        "tools"
+      ],
+      "context_length": 65536,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0
     }
   ],
   "price_scale": "microdollars_per_million"
