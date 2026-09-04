@@ -90,12 +90,20 @@ def test_region_map_payload_marks_primary() -> None:
     assert primaries[0]["id"] == settings.primary_region
 
 
-def test_default_region_map_marks_sao_paulo_live() -> None:
+def test_retired_sao_paulo_is_off_the_map_entirely() -> None:
+    """A retired region must vanish, not linger as a dimmed pin.
+
+    southamerica-east1 was retired on 2026-09-04: its two confidential VMs
+    were the only AMD SEV deployment on GCP, it carried 2.1% of generations
+    over its last 30 days, and its only traffic in the final week was the
+    synthetic monitor. The map is a factual claim about where we serve, so a
+    region we no longer serve does not belong on it in any state -- "staged"
+    would read as "coming soon" for something that is going the other way.
+    """
     rendered = region_map_payload(Settings(environment="local"))
 
-    sao_paulo = next(row for row in rendered if row["id"] == "southamerica-east1")
-    assert sao_paulo["city"] == "São Paulo"
-    assert sao_paulo["status_label"] == "live"
+    assert not [row for row in rendered if row["id"] == "southamerica-east1"]
+    assert not [row for row in rendered if row.get("city") == "São Paulo"]
 
 
 def test_default_region_map_shows_gcp_region_marketing_footprint() -> None:
@@ -110,7 +118,6 @@ def test_default_region_map_shows_gcp_region_marketing_footprint() -> None:
         "asia-northeast1",
         "asia-east2",
         "asia-southeast1",
-        "southamerica-east1",
     ]
     assert [r["status_label"] for r in gcp[:2]] == ["live", "live"]
     assert all(r["status_label"] == "edge" for r in gcp[2:])
@@ -178,7 +185,9 @@ def test_map_shows_multicloud_deployments_with_honest_serving_flags() -> None:
     # come with compute actually serving there.
     assert rows["aws-eu-north-1"]["serving"] is False
 
-    assert sum(row["serving"] for row in rows.values()) == 7
+    # Six, not seven: southamerica-east1 was retired on 2026-09-04 and its row
+    # is gone rather than flipped to serving=False, so the count moved with it.
+    assert sum(row["serving"] for row in rows.values()) == 6
     assert {row["cloud"] for row in rows.values() if row["serving"]} == {
         "gcp",
         "aws",

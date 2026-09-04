@@ -35,7 +35,6 @@ GCP_COMPONENT_IDS = (
     "us_central1_regional_api",
     "us_east4_regional_api",
     "eu_regional_api",
-    "sa_regional_api",
     "attestation",
     "billing_settlement",
     "provider_fallback",
@@ -46,12 +45,16 @@ REGIONAL_GCP_COMPONENT_IDS = (
     "us_central1_regional_api",
     "us_east4_regional_api",
     "eu_regional_api",
-    "sa_regional_api",
 )
 
 
 def _gcp_settings() -> Settings:
-    """Production GCP shape: four warm attested regions."""
+    """Production GCP shape: three warm attested regions.
+
+    Four until 2026-09-04, when southamerica-east1 was retired. sa_regional_api
+    stays in the CATALOGUE so 24-month rollups naming it still render; it drops
+    out of the PUBLISHED set on its own because no probe target produces it.
+    """
     return Settings(
         environment="test",
         sentry_dsn=None,
@@ -146,7 +149,6 @@ def test_gcp_current_checks_expose_regions_without_blending_router_core_slo() ->
             "us-central1",
             "us-east4",
             "europe-west4",
-            "southamerica-east1",
         )
     ]
 
@@ -161,13 +163,11 @@ def test_gcp_current_checks_expose_regions_without_blending_router_core_slo() ->
         "us-central1",
         "us-east4",
         "europe-west4",
-        "southamerica-east1",
     }
     assert {row["target_region"] for row in checks if row["target"] != "canonical"} == {
         "us-central1",
         "us-east4",
         "europe-west4",
-        "southamerica-east1",
     }
 
     # Direct regional diagnostics must not inflate uptime denominators or

@@ -81,8 +81,8 @@ PROBES: list[tuple[str, str]] = [
 #     running instance. If the MIG is at targetSize=0 the smoke will
 #     fail TLS for this region — that's a deployment-state signal,
 #     not a smoke bug. Resize the MIG and re-probe.
-#   - asia-northeast1, asia-southeast1, southamerica-east1: control-
-#     plane only (no enclave MIG by design). They serve
+#   - asia-northeast1, asia-southeast1: control-plane only (no enclave
+#     MIG by design). They serve
 #     authorize/settle from local Cloud Run instances but the
 #     inference path lands on the closest warm enclave. The smoke
 #     skips the enclave probe for these regions; the synthetic
@@ -92,7 +92,6 @@ REGIONS = {
     "us-central1": "https://api.trustedrouter.com",
     "europe-west4": "https://api-europe-west4.quillrouter.com",
     "us-east4": "https://api-us-east4.quillrouter.com",
-    "southamerica-east1": "https://api-southamerica-east1.quillrouter.com",
     # Aliases preserved for backward-compat with operator muscle memory.
     "us": "https://api.trustedrouter.com",
     "europe": "https://api-europe-west4.quillrouter.com",

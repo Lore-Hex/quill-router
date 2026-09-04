@@ -1008,11 +1008,10 @@ class Settings(BaseSettings):
     # regions where we've actually deployed a VM. Adding a region here
     # without an actual VM in that region is dishonest — the cert SAN
     # mismatch breaks TLS and the attestation page lies.
-    regions: str = "us-central1,us-east4,europe-west4,southamerica-east1"
+    regions: str = "us-central1,us-east4,europe-west4"
     marketing_regions: str = (
         "us-central1,europe-west4,us-east4,"
         "asia-northeast1,asia-east2,asia-southeast1,"
-        "southamerica-east1,"
         # Standalone deployments on other clouds (multi-cloud-separation.md).
         "aws-eu-west-1,aws-eu-west-3,aws-eu-north-1,azure-australiaeast"
     )
