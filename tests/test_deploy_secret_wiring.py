@@ -76,6 +76,20 @@ def test_deploy_pins_thirty_cent_signup_credit_policy() -> None:
     assert '"TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=300000"' in rollout
 
 
+def test_deploy_enables_spend_lease_binding_with_emergency_override() -> None:
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+
+    assert '"TR_SPEND_LEASE_ISSUANCE_ENABLED=true"' in rollout
+    assert (
+        '"TR_SPEND_LEASE_BINDING_ENABLED='
+        '${TR_SPEND_LEASE_BINDING_ENABLED:-true}"' in rollout
+    )
+    assert (
+        '"TR_SPEND_LEASE_PILOT_WORKSPACE_IDS='
+        '45819281-0ce9-4811-a0cd-c660ab3a116d"' in rollout
+    )
+
+
 def test_deploy_removes_only_explicitly_missing_optional_secrets() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
 

@@ -30,6 +30,7 @@ Index:
 - [One workspace 503s "Workspace billing is paused" (interrupted reshard)](#reshard-interrupted)
 - [DNS-vendor-split symptoms (Cloudflare vs Cloud DNS)](#dns-vendor-split)
 - [Adding a cloud (and when it is allowed to be called done)](#adding-a-cloud)
+- [Spend-lease binding (pilot)](#spend-lease-binding-pilot)
 - [Spend-lease reconciler](#spend-lease-reconciler)
 
 ---
@@ -1376,7 +1377,19 @@ for entry in \
     --format='value(versions[0].instanceTemplate,targetSize,status.isStable)'
 done
 ```
-# Spend-lease reconciler
+## <a id="spend-lease-binding-pilot"></a>Spend-lease binding (pilot)
+
+`TR_SPEND_LEASE_BINDING_ENABLED` makes issued spend leases authoritative for
+allocation, arbitration, the authorize pre-read, and the mint-entry rule.
+Production defaults it on, but only the workspace in
+`TR_SPEND_LEASE_PILOT_WORKSPACE_IDS` is eligible; issuance remains required.
+
+For an emergency hotfix deploy, set
+`TR_SPEND_LEASE_BINDING_ENABLED=false`. Never roll back below spend-lease unit 4
+while binding is on: the rollout fence requires the unit-4 settlement clamp and
+repair/mirror marker before it will deploy a binding-enabled revision.
+
+## <a id="spend-lease-reconciler"></a>Spend-lease reconciler
 
 The versioned `trusted-router-spend-lease-reconciler-*` Cloud Run Job runs once
 per minute with a 50-second task deadline. It is intentionally active while
