@@ -880,8 +880,8 @@ class Settings(BaseSettings):
     spend_lease_reconcile_max_attempts: int = 12
     # Stage A spend leases are signed advisory artifacts only. This one flag
     # gates both minting and shadow evidence; default-off deploys never touch
-    # Secret Manager. The accepted digest CSV preserves both sides of a GCP
-    # rolling deploy; when empty, the embedded trust digest is the singleton.
+    # Secret Manager. Runtime boot acceptance comes from the separately signed
+    # Stage D policy; the CSV below is only an explicit break-glass addition.
     spend_lease_issuance_enabled: bool = False
     # Stage B traffic mutation.  Keep independent from Stage A issuance so a
     # deployed revision can continue shadowing while binding remains inert.
@@ -893,6 +893,8 @@ class Settings(BaseSettings):
     spend_lease_admission_accept: bool = False
     spend_lease_pilot_workspace_ids: str = ""
     spend_lease_signing_secret_name: str = ""
+    # Audited break-glass addition to the signed Stage D runtime policy. This
+    # is deliberately empty and rollout.sh never inherits it from a revision.
     spend_lease_accepted_gcp_image_digests: str = ""
     spend_lease_ttl_seconds: int = 60
     spend_lease_skew_seconds: int = 10
@@ -904,6 +906,13 @@ class Settings(BaseSettings):
     stage_d_heartbeat_enabled: bool = True
     # Emergency kill added 2026-09-03: declares no request Stage D eligible.
     stage_d_eligibility_enabled: bool = False
+    stage_d_pilot_workspace_ids: str = "45819281-0ce9-4811-a0cd-c660ab3a116d"
+    stage_d_policy_refresh_seconds: int = 60
+    stage_d_policy_cert_identity: str = (
+        "https://github.com/Lore-Hex/quill-cloud-proxy/.github/workflows/"
+        "publish-trust-gcp.yml@refs/heads/main"
+    )
+    stage_d_policy_oidc_issuer: str = "https://token.actions.githubusercontent.com"
     heartbeat_grace_seconds: int = 300
     # Decision 70's billing change. Heartbeats and guarded zero refunds ship
     # first; only an explicit rollout may book a crashed request's last durable
@@ -1392,6 +1401,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS entries must be sha256 digests"
                 )
+        if self.stage_d_policy_refresh_seconds <= 0:
+            raise ValueError("TR_STAGE_D_POLICY_REFRESH_SECONDS must be positive")
+        if not self.stage_d_policy_cert_identity.strip():
+            raise ValueError("TR_STAGE_D_POLICY_CERT_IDENTITY must not be empty")
+        if not self.stage_d_policy_oidc_issuer.strip():
+            raise ValueError("TR_STAGE_D_POLICY_OIDC_ISSUER must not be empty")
         if self.spend_lease_issuance_enabled:
             if not self.spend_lease_pilot_workspace_ids.strip():
                 raise ValueError(
@@ -2021,14 +2036,19 @@ class Settings(BaseSettings):
 
     @property
     def spend_lease_accepted_gcp_digests(self) -> frozenset[str]:
-        configured = frozenset(
+        return frozenset(
             digest.strip()
             for digest in self.spend_lease_accepted_gcp_image_digests.split(",")
             if digest.strip()
         )
-        if configured:
-            return configured
-        return frozenset({self.trust_gcp_image_digest}) if self.trust_gcp_image_digest else frozenset()
+
+    @property
+    def stage_d_pilot_workspaces(self) -> frozenset[str]:
+        return frozenset(
+            workspace_id.strip()
+            for workspace_id in self.stage_d_pilot_workspace_ids.split(",")
+            if workspace_id.strip()
+        )
 
     @property
     def regional_quota_bigtable_app_profile_map(self) -> dict[str, str]:

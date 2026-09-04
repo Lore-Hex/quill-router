@@ -105,6 +105,16 @@ else
   ) PRIMARY KEY (authorization_id)"
 fi
 
+if table_exists tr_stage_d_policy_watermark; then
+  log "tr_stage_d_policy_watermark exists"
+else
+  ddl "CREATE TABLE tr_stage_d_policy_watermark (
+    plane STRING(16) NOT NULL,
+    highest_sequence INT64 NOT NULL,
+    updated_at TIMESTAMP
+  ) PRIMARY KEY (plane)"
+fi
+
 # Existing rows receive NULL. Spanner TTL ignores NULL terminal timestamps.
 ensure_column tr_reservation terminal_at
 ensure_column tr_settle_outbox terminal_at

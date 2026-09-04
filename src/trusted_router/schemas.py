@@ -347,6 +347,7 @@ class GatewayAuthorizeRequest(_Lenient):
     # Compact JWS signed by the admitted lease's attested boot. It is excluded
     # from the logical request fingerprint and is consequential only in Stage C.
     spend_lease_admission: str | None = Field(default=None, min_length=1, max_length=16_384)
+    invocation_nonce: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
     def key_identifier_required(self) -> GatewayAuthorizeRequest:

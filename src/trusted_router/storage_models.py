@@ -737,9 +737,8 @@ class GatewayAuthorization:
     # authorize and settle. Local authorizations keep their pre-existing
     # lifecycle untouched.
     expires_at: str | None = None
-    # Stage D's durable running-usage snapshot. These seven fields mirror the
-    # nullable typed Spanner columns; ineligible authorizations leave all seven
-    # NULL. The three stage_d_* fields below remain payload-only facts needed to
+    # Stage D's durable running-usage snapshot. These fields mirror nullable
+    # typed Spanner columns. The three stage_d_* fields below remain payload-only facts needed to
     # replay the cohort verdict and enforce the authorize-time token ceiling.
     started_at: str | None = None
     heartbeat_seq: int | None = None
@@ -748,6 +747,17 @@ class GatewayAuthorization:
     selected_endpoint_id: str | None = None
     delivered_usage: str | None = None
     pricing_snapshot: str | None = None
+    # Immutable authorization-time binding for Stage D heartbeats. The live
+    # accepted-image policy is never consulted again for this authorization.
+    stage_d_boot_kid: str | None = None
+    # Caller-inaccessible enclave invocation identity. It is deliberately not
+    # part of the idempotency fingerprint: a fresh invocation must recover the
+    # original value so the enclave can refuse a second provider dispatch.
+    invocation_nonce: str | None = None
+    # Public request-log correlation returned by the enclave and written only
+    # when settle/refund finalizes. It is content-free evidence used by the
+    # Stage D cross-repository gate.
+    gateway_request_id: str | None = None
     stage_d_reason: str | None = None
     stage_d_prompt_tokens: int | None = None
     stage_d_max_output_tokens: int | None = None
@@ -806,6 +816,7 @@ class GatewayAuthorization:
         self.finalized_cached_input_tokens = (
             max(0, int(generation.cached_input_tokens)) if generation is not None else 0
         )
+        self.gateway_request_id = generation.gateway_request_id if generation is not None else None
 
 
 @dataclass(frozen=True)

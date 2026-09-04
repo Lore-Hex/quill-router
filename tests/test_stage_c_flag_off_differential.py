@@ -163,7 +163,7 @@ def test_flag_off_authorization_insert_sql_is_byte_exact_origin_main() -> None:
 
 def test_origin_main_golden_commit_and_literal_deploy_default_are_pinned() -> None:
     assert (GOLDENS / "origin_main_commit.txt").read_text() == (
-        "7f4344b03d621748b7c1520e766f5ff61ed0a942"
+        "7d205ace5085dc7d686f725db626e2e4f57e3d24"
     )
     rollout = (Path(__file__).parents[1] / "scripts" / "deploy" / "rollout.sh").read_text()
     assert '"TR_SPEND_LEASE_ADMISSION_ACCEPT=false"' in rollout

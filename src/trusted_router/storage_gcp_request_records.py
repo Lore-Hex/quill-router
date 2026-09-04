@@ -63,7 +63,8 @@ _INSERT_GATEWAY_AUTHORIZATION_SQL = (
     "spend_lease_allocated_micro, spend_lease_token, spend_lease_status, "
     "spend_lease_exp, idempotency_fingerprint, finalization_outcome, "
     "finalized_cost_microdollars, started_at, heartbeat_seq, heartbeat_at, "
-    "heartbeat_hash, selected_endpoint_id, delivered_usage, pricing_snapshot"
+    "heartbeat_hash, selected_endpoint_id, delivered_usage, pricing_snapshot, "
+    "stage_d_boot_kid, invocation_nonce, gateway_request_id"
     ") VALUES ("
     "@authorization_id, @workspace_id, @key_hash, @reservation_id, @model_id, "
     "@provider, @usage_type, @estimated_microdollars, false, @created_at, "
@@ -71,7 +72,8 @@ _INSERT_GATEWAY_AUTHORIZATION_SQL = (
     "@spend_lease_allocated_micro, @spend_lease_token, @spend_lease_status, "
     "@spend_lease_exp, @idempotency_fingerprint, @finalization_outcome, "
     "@finalized_cost_microdollars, @started_at, @heartbeat_seq, @heartbeat_at, "
-    "@heartbeat_hash, @selected_endpoint_id, @delivered_usage, @pricing_snapshot"
+    "@heartbeat_hash, @selected_endpoint_id, @delivered_usage, @pricing_snapshot, "
+    "@stage_d_boot_kid, @invocation_nonce, @gateway_request_id"
     ")"
 )
 
@@ -84,6 +86,7 @@ _INSERT_GATEWAY_AUTHORIZATION_ADMISSION_SQL = (
     "spend_lease_exp, idempotency_fingerprint, finalization_outcome, "
     "finalized_cost_microdollars, started_at, heartbeat_seq, heartbeat_at, "
     "heartbeat_hash, selected_endpoint_id, delivered_usage, pricing_snapshot, "
+    "stage_d_boot_kid, invocation_nonce, gateway_request_id, "
     "spend_lease_admission_receipt, spend_lease_receipt_hash"
     ") VALUES ("
     "@authorization_id, @workspace_id, @key_hash, @reservation_id, @model_id, "
@@ -93,6 +96,7 @@ _INSERT_GATEWAY_AUTHORIZATION_ADMISSION_SQL = (
     "@spend_lease_exp, @idempotency_fingerprint, @finalization_outcome, "
     "@finalized_cost_microdollars, @started_at, @heartbeat_seq, @heartbeat_at, "
     "@heartbeat_hash, @selected_endpoint_id, @delivered_usage, @pricing_snapshot, "
+    "@stage_d_boot_kid, @invocation_nonce, @gateway_request_id, "
     "@spend_lease_admission_receipt, @spend_lease_receipt_hash"
     ")"
 )
@@ -181,7 +185,8 @@ def read_gateway_authorization(
             "spend_lease_allocated_micro, spend_lease_token, spend_lease_status, "
             "spend_lease_exp, idempotency_fingerprint, finalization_outcome, "
             "finalized_cost_microdollars, started_at, heartbeat_seq, heartbeat_at, "
-            "heartbeat_hash, selected_endpoint_id, delivered_usage, pricing_snapshot "
+            "heartbeat_hash, selected_endpoint_id, delivered_usage, pricing_snapshot, "
+            "stage_d_boot_kid, invocation_nonce, gateway_request_id "
             "FROM tr_gateway_authorization "
             "WHERE authorization_id=@authorization_id",
             params={"authorization_id": authorization_id},
@@ -243,6 +248,9 @@ def read_gateway_authorization(
         selected_endpoint_id=merged.get("selected_endpoint_id"),
         delivered_usage=merged.get("delivered_usage"),
         pricing_snapshot=merged.get("pricing_snapshot"),
+        stage_d_boot_kid=merged.get("stage_d_boot_kid"),
+        invocation_nonce=merged.get("invocation_nonce"),
+        gateway_request_id=merged.get("gateway_request_id"),
     )
 
 
@@ -256,21 +264,45 @@ def mark_gateway_authorization_settled(
     return transaction.execute_update(
         "UPDATE tr_gateway_authorization SET settled=true, payload=@payload, "
         "finalization_outcome=@finalization_outcome, "
-        "finalized_cost_microdollars=@finalized_cost_microdollars "
+        "finalized_cost_microdollars=@finalized_cost_microdollars, "
+        "gateway_request_id=@gateway_request_id "
         "WHERE authorization_id=@authorization_id AND settled=false",
         params={
             "authorization_id": authorization.id,
             "payload": json_body(authorization),
             "finalization_outcome": typed["finalization_outcome"],
             "finalized_cost_microdollars": typed["finalized_cost_microdollars"],
+            "gateway_request_id": typed["gateway_request_id"],
         },
         param_types={
             "authorization_id": param_types.STRING,
             "payload": param_types.STRING,
             "finalization_outcome": param_types.STRING,
             "finalized_cost_microdollars": param_types.INT64,
+            "gateway_request_id": param_types.STRING,
         },
     )
+
+
+def read_gateway_authorization_by_gateway_request_id(
+    reader: Any,
+    param_types: Any,
+    gateway_request_id: str,
+) -> GatewayAuthorization | None:
+    """Read one authorization through the request-id secondary index."""
+
+    rows = list(
+        reader.execute_sql(
+            "SELECT authorization_id FROM "
+            "tr_gateway_authorization@{FORCE_INDEX=tr_gateway_authorization_by_gateway_request_id} "
+            "WHERE gateway_request_id=@gateway_request_id",
+            params={"gateway_request_id": gateway_request_id},
+            param_types={"gateway_request_id": param_types.STRING},
+        )
+    )
+    if not rows:
+        return None
+    return read_gateway_authorization(reader, param_types, str(rows[0][0]))
 
 
 def complete_gateway_authorization_retention(

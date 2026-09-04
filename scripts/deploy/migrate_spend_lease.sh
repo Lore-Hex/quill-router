@@ -127,6 +127,21 @@ ensure_column tr_gateway_authorization delivered_usage \
   "STRING(MAX)"
 ensure_column tr_gateway_authorization pricing_snapshot \
   "STRING(MAX)"
+ensure_column tr_gateway_authorization stage_d_boot_kid \
+  "STRING(128)"
+ensure_column tr_gateway_authorization invocation_nonce \
+  "STRING(64)"
+ensure_column tr_gateway_authorization gateway_request_id \
+  "STRING(37)"
+
+if index_exists tr_gateway_authorization_by_gateway_request_id; then
+  log "tr_gateway_authorization_by_gateway_request_id: already present"
+else
+  apply_ddl "CREATE UNIQUE NULL_FILTERED INDEX tr_gateway_authorization_by_gateway_request_id
+    ON tr_gateway_authorization (gateway_request_id)"
+  log "tr_gateway_authorization_by_gateway_request_id: created"
+fi
+wait_index_read_write tr_gateway_authorization_by_gateway_request_id
 
 if table_exists spend_lease_scope_arbitration; then
   log "spend_lease_scope_arbitration: already present"

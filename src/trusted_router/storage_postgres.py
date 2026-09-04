@@ -4670,6 +4670,7 @@ class PostgresStore:
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
         spend_lease: SpendLeaseArtifact | None = None,
+        invocation_nonce: str | None = None,
     ) -> GatewayAuthorization:
         """Record an authorization, deduplicating on the idempotency key.
 
@@ -4737,6 +4738,7 @@ class PostgresStore:
             spend_lease_boot_kid=spend_lease.boot_kid if spend_lease else None,
             spend_lease_catalog_version=(spend_lease.catalog_version if spend_lease else None),
             spend_lease_status=spend_lease.lease_status if spend_lease else None,
+            invocation_nonce=invocation_nonce,
         )
 
         def create(conn: Any) -> GatewayAuthorization:
@@ -4787,6 +4789,25 @@ class PostgresStore:
         return self._read_entity(
             _GATEWAY_AUTHORIZATION_KIND, authorization_id, GatewayAuthorization
         )
+
+    def get_gateway_authorization_by_gateway_request_id(
+        self, gateway_request_id: str
+    ) -> GatewayAuthorization | None:
+        def read(conn: Any) -> GatewayAuthorization | None:
+            row = conn.execute(
+                "SELECT body FROM tr_entities "
+                "WHERE kind = %s AND body ->> 'gateway_request_id' = %s "
+                "ORDER BY id LIMIT 1",
+                (_GATEWAY_AUTHORIZATION_KIND, gateway_request_id),
+            ).fetchone()
+            if row is None:
+                return None
+            raw = row[0]
+            data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+            known = {field.name for field in dataclasses.fields(GatewayAuthorization)}
+            return GatewayAuthorization(**{key: value for key, value in data.items() if key in known})
+
+        return self._run_transaction(read)
 
     def get_gateway_authorization_by_idempotency_key(
         self,

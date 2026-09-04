@@ -256,6 +256,19 @@ read compact rollups exposed at `/status`, `/status.json`, and
 `TrustedRouter Synthetic` app label and are excluded from customer/app
 analytics.
 
+Every monitor invocation also makes a `stream: true` chat completion and fails
+unless it receives an SSE data event, a terminal chunk, and `[DONE]`. The
+recurring Stage D job adds `--expect-stage-d`, then looks up that request's
+typed authorization and requires a bound `stage_d_boot_kid` plus
+`heartbeat_seq > 0`. Its workspace is intentionally separate: provision it
+with `scripts/provision_stage_d_probe_workspace.py`, add its id to
+`TR_STAGE_D_PILOT_WORKSPACE_IDS`, and keep it out of
+`TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS`. The key must be a
+heartbeat-capable local-typed key; the deploy reads it from
+`trustedrouter-stage-d-probe-api-key` and uses `trustedrouter/cheap` so it is
+independent of the ordinary monitor-only key. The normal rollout leaves Stage D
+eligibility disabled, so creating the key alone does not enable Stage D.
+
 Provider measurement uses two independent probe classes:
 
 - Short PONG probes randomly cover the full active catalog and measure uptime,

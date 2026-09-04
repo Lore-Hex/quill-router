@@ -864,8 +864,12 @@ class Store(Protocol):
         expires_at: str | None = ...,
         deferred_cap_microdollars: int | None = ...,
         spend_lease: SpendLeaseArtifact | None = ...,
+        invocation_nonce: str | None = ...,
     ) -> GatewayAuthorization: ...
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None: ...
+    def get_gateway_authorization_by_gateway_request_id(
+        self, gateway_request_id: str
+    ) -> GatewayAuthorization | None: ...
     def get_gateway_authorization_by_idempotency_key(
         self, workspace_id: str, key_hash: str, idempotency_key: str
     ) -> GatewayAuthorization | None: ...
@@ -1075,6 +1079,8 @@ class TypedBillingStore(Protocol):
         spend_lease_receipt_hash: str | None = ...,
         credit_escrowed_by_spend_lease: bool = ...,
         spend_lease_admission_replay_protection: bool = ...,
+        stage_d_boot_kid: str | None = ...,
+        invocation_nonce: str | None = ...,
     ) -> tuple[str, GatewayAuthorization | None]: ...
 
     def typed_finalize_gateway_authorization(

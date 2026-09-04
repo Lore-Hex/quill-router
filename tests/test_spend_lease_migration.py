@@ -36,6 +36,9 @@ AUTHORIZATION_COLUMNS = {
     "selected_endpoint_id": "STRING(128)",
     "delivered_usage": "STRING(MAX)",
     "pricing_snapshot": "STRING(MAX)",
+    "stage_d_boot_kid": "STRING(128)",
+    "invocation_nonce": "STRING(64)",
+    "gateway_request_id": "STRING(37)",
 }
 STAGE_C_NULLABLE_AUTHORIZATION_COLUMNS = (
     "spend_lease_id",
@@ -212,11 +215,11 @@ def test_spend_lease_migration_is_executable_and_unconditional() -> None:
     assert "--apply" not in script
 
 
-def test_authorization_alters_match_manifest_and_stage_d_adds_exactly_seven(
+def test_authorization_alters_match_manifest_and_stage_d_columns_are_complete(
     fresh_ddls: list[str],
 ) -> None:
     _assert_authorization_manifest(fresh_ddls)
-    assert list(AUTHORIZATION_COLUMNS)[-7:] == [
+    assert list(AUTHORIZATION_COLUMNS)[-10:] == [
         "started_at",
         "heartbeat_seq",
         "heartbeat_at",
@@ -224,6 +227,9 @@ def test_authorization_alters_match_manifest_and_stage_d_adds_exactly_seven(
         "selected_endpoint_id",
         "delivered_usage",
         "pricing_snapshot",
+        "stage_d_boot_kid",
+        "invocation_nonce",
+        "gateway_request_id",
     ]
 
 
@@ -241,6 +247,21 @@ def test_arbitration_secondary_index_is_named_sparse_and_non_unique(
     fresh_ddls: list[str],
 ) -> None:
     _assert_arbitration_index_is_non_unique(fresh_ddls)
+
+
+def test_gateway_request_id_index_is_unique_sparse_and_exact(
+    fresh_ddls: list[str],
+) -> None:
+    index = _ddl_starting(
+        fresh_ddls,
+        "CREATE UNIQUE NULL_FILTERED INDEX tr_gateway_authorization_by_gateway_request_id",
+    )
+
+    assert _normalize_sql(index) == (
+        "CREATE UNIQUE NULL_FILTERED INDEX "
+        "tr_gateway_authorization_by_gateway_request_id "
+        "ON tr_gateway_authorization (gateway_request_id)"
+    )
 
 
 def test_open_work_table_matches_frozen_manifest(fresh_ddls: list[str]) -> None:
@@ -269,8 +290,9 @@ def test_done_row_with_null_next_attempt_is_absent_from_due_index(
 def test_indexes_are_waited_until_read_write(fresh_ddls: list[str]) -> None:
     script = (ROOT / SCRIPT).read_text()
 
-    assert len(fresh_ddls) == 22
+    assert len(fresh_ddls) == 26
     for name in (
+        "tr_gateway_authorization_by_gateway_request_id",
         "spend_lease_scope_arbitration_by_authorization",
         "spend_lease_open_due",
     ):
@@ -286,9 +308,10 @@ def test_fresh_apply_reports_every_object_created(
     run = _run(tmp_path, monkeypatch, objects_exist=False)
 
     assert run.returncode == 0, summarise(run)
-    assert len(_ddls(run)) == 22
+    assert len(_ddls(run)) == 26
     for object_name in (
         *(f"tr_gateway_authorization.{name}" for name in AUTHORIZATION_COLUMNS),
+        "tr_gateway_authorization_by_gateway_request_id",
         "spend_lease_scope_arbitration",
         "spend_lease_scope_arbitration_by_authorization",
         "spend_lease_open",
@@ -300,7 +323,7 @@ def test_fresh_apply_reports_every_object_created(
         for call in run.calls
         if any("INDEX_STATE FROM INFORMATION_SCHEMA.INDEXES" in argument for argument in call)
     ]
-    assert len(index_state_reads) == 2
+    assert len(index_state_reads) == 3
 
 
 def test_second_apply_is_idempotent_and_emits_no_ddl(
@@ -313,6 +336,7 @@ def test_second_apply_is_idempotent_and_emits_no_ddl(
     assert _ddls(run) == []
     for object_name in (
         *(f"tr_gateway_authorization.{name}" for name in AUTHORIZATION_COLUMNS),
+        "tr_gateway_authorization_by_gateway_request_id",
         "spend_lease_scope_arbitration",
         "spend_lease_scope_arbitration_by_authorization",
         "spend_lease_open",

@@ -20,7 +20,8 @@ RESERVATION_BY_SCOPE_SQL = (
 )
 AUTHORIZATION_BY_ID_SQL = (
     "SELECT authorization_id, workspace_id, key_hash, reservation_id, model_id, provider, "
-    "usage_type, estimated_microdollars, settled, created_at, terminal_at, payload "
+    "usage_type, estimated_microdollars, settled, created_at, terminal_at, payload, "
+    "stage_d_boot_kid, heartbeat_seq, invocation_nonce "
     "FROM tr_gateway_authorization WHERE authorization_id=@authorization_id"
 )
 RESERVATION_BY_ID_SQL = (
@@ -88,6 +89,9 @@ def _authorization_summary(row: tuple[Any, ...]) -> dict[str, Any]:
         "finalized_model_id": payload.get("finalized_model_id"),
         "finalized_provider": payload.get("finalized_provider"),
         "finalized_region": payload.get("finalized_region"),
+        "stage_d_boot_kid": row[12],
+        "heartbeat_seq": row[13],
+        "invocation_nonce": row[14],
     }
 
 
