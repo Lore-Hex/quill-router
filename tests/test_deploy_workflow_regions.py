@@ -83,6 +83,7 @@ def test_public_snapshot_worker_swap_is_verified_and_rollbackable() -> None:
     assert r"if [ \"\$count\" != 4 ]; then" in script
     assert r"mv \"\$previous_builder\" \"\$builder\"" in script
     assert 'gc compute scp "$archive" "${NAME}:${remote_archive}"' in script
+    assert '--ssh-flag="-n"' in script
     assert '--ssh-flag="-T"' in script
     assert 'tar -xzf \\"\\$archive\\" -C \\"\\$stage\\"' in script
     assert '<"$archive"' not in script
