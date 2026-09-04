@@ -387,6 +387,7 @@ jobs:
       SERVICE: trusted-router
       SHA: ${{ needs.build-image.outputs.sha }}
       IMAGE: ${{ needs.build-image.outputs.image }}
+      TR_DEPLOY_HOLD_REGIONS: ${{ vars.TR_DEPLOY_HOLD_REGIONS }}
       # Keep the workflow value raw. rollout.sh normalizes preserve/false/true
       # only after reading the actual 100%-traffic primary revision.
       TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED: ${{ inputs.regional_quota_lease_issuance }}
@@ -575,7 +576,64 @@ jobs:
           echo "primary_started_at=${primary_started_at}" >> "$GITHUB_OUTPUT"
           echo "us_central1_revision=$(<"${revision_files[0]}")" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve primary ramp baseline
+        id: primary_baseline
+        env:
+          SNAPSHOT_REVISION: ${{ steps.prev.outputs.us_central1_revision }}
+          NEW_REVISION: ${{ steps.warm_all.outputs.us_central1_revision }}
+        run: |
+          set -euo pipefail
+          source scripts/deploy/_deploy_hold.sh
+          if deploy_region_is_held us-central1; then
+            deploy_warn_region_held us-central1
+            echo "action=held" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          service_json="$(gcloud run services describe "${SERVICE}" \
+            --region=us-central1 --project="${PROJECT_ID}" --format=json)"
+          if ! current_revision="$(python3 scripts/deploy/resolve_active_revision.py \
+              <<<"${service_json}")"; then
+            split="$(python3 -c '
+          import json, sys
+          service = json.load(sys.stdin)
+          traffic = service.get("status", {}).get("traffic", [])
+          print(",".join(
+              "%s:%s" % (item.get("revisionName", "<missing>"), item.get("percent"))
+              for item in traffic if int(item.get("percent") or 0) > 0
+          ) or "<none>")
+          ' <<<"${service_json}")"
+            echo "::error::us-central1 has no unambiguous 100%-traffic serving revision; split=${split}"
+            exit 1
+          fi
+          echo "us-central1 ramp baseline: snapshot=${SNAPSHOT_REVISION} current=${current_revision} new=${NEW_REVISION}"
+          revision_ordinal() {
+            if [[ ! "$1" =~ ^trusted-router-([0-9]{5})-[a-z0-9]+$ ]]; then
+              echo "::error::cannot parse Cloud Run revision ordinal from $1" >&2
+              return 1
+            fi
+            printf '%s\n' "$((10#${BASH_REMATCH[1]}))"
+          }
+          current_ordinal="$(revision_ordinal "${current_revision}")"
+          new_ordinal="$(revision_ordinal "${NEW_REVISION}")"
+          if [ "${current_revision}" != "${SNAPSHOT_REVISION}" ] && \
+             [ "${current_revision}" != "${NEW_REVISION}" ]; then
+            echo "::warning::us-central1 operator intervention: snapshot=${SNAPSHOT_REVISION} current=${current_revision} new=${NEW_REVISION}; traffic untouched"
+            echo "action=held" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "${new_ordinal}" -lt "${current_ordinal}" ]; then
+            echo "::error::us-central1 ramp refused: new revision ${NEW_REVISION} is older than current serving revision ${current_revision}"
+            exit 1
+          fi
+          echo "revision=${current_revision}" >> "$GITHUB_OUTPUT"
+          if [ "${current_revision}" = "${NEW_REVISION}" ]; then
+            echo "action=already" >> "$GITHUB_OUTPUT"
+          else
+            echo "action=ramp" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Stage traffic 10/50/100 (us-central1)
+        if: ${{ steps.primary_baseline.outputs.action == 'ramp' }}
         # Ramps the new revision from 10% → 50% → 100% with a 1-min
         # synthetic watch between stages. On any watch trip, traffic
         # is reverted to 100% on the old revision and the workflow
@@ -584,7 +642,16 @@ jobs:
           TR_WATCHDOG_SLO_CLASS: router_core
           TR_STAGED_WATCHDOG_BASELINE_FILE: ${{ runner.temp }}/final-watchdog-baseline-us-central1.json
           TR_STAGED_WATCHDOG_SKIP_BASELINE: ${{ inputs.hotfix == true && '1' || '0' }}
-        run: bash scripts/deploy/staged_traffic.sh us-central1 "${{ steps.warm_all.outputs.us_central1_revision }}" "${{ steps.prev.outputs.us_central1_revision }}"
+        run: bash scripts/deploy/staged_traffic.sh us-central1 "${{ steps.warm_all.outputs.us_central1_revision }}" "${{ steps.primary_baseline.outputs.revision }}"
+
+      - name: Capture primary canary baseline (already on new revision)
+        if: ${{ steps.primary_baseline.outputs.action == 'already' }}
+        run: |
+          args=(--regions us-central1 --duration-min 0 --slo-class router_core --baseline-output "${RUNNER_TEMP}/final-watchdog-baseline-us-central1.json")
+          if [ "${{ inputs.hotfix }}" = "true" ]; then
+            args+=(--skip-baseline --baseline-grace-sec 0)
+          fi
+          python3 scripts/deploy/watchdog.py "${args[@]}"
 
       - name: Canary gate — watch us-central1 only (3 min)
         # Single-region 3-min canary. Down × 2 in a row trips it
@@ -592,29 +659,36 @@ jobs:
         # warm revisions but remain at zero traffic, so the bad change is
         # contained to us-central1.
         id: canary_us
+        if: ${{ steps.primary_baseline.outputs.action != 'held' }}
         continue-on-error: true
         run: python3 scripts/deploy/watchdog.py --regions us-central1 --duration-min 3 --rollback-after 2 --slo-class router_core --baseline-input "${RUNNER_TEMP}/final-watchdog-baseline-us-central1.json" ${{ steps.wd_args.outputs.extra }}
 
       - name: Rollback us-central1 + abort (canary tripped)
         if: ${{ steps.canary_us.outcome == 'failure' && steps.canary_us.outputs.rollback_regions != '' }}
         env:
-          PREV_US: ${{ steps.prev.outputs.us_central1_revision }}
+          RAMP_BASELINE_US: ${{ steps.primary_baseline.outputs.revision }}
         run: |
           set -euo pipefail
-          if [ -z "${PREV_US}" ]; then
+          source scripts/deploy/_deploy_hold.sh
+          if deploy_region_is_held us-central1; then
+            deploy_warn_region_held us-central1
+            exit 0
+          fi
+          if [ -z "${RAMP_BASELINE_US}" ]; then
             echo "no prior us-central1 revision recorded; cannot rollback"
             exit 1
           fi
-          echo "us-central1 canary failed; rolling traffic back to ${PREV_US}"
+          echo "us-central1 canary failed; rolling traffic back to ${RAMP_BASELINE_US}"
           gcloud run services update-traffic "${SERVICE}" \
             --region=us-central1 --project="${PROJECT_ID}" \
-            --to-revisions="${PREV_US}=100" --quiet
+            --to-revisions="${RAMP_BASELINE_US}=100" --quiet
           echo "secondaries remain warm at zero traffic; safe."
           exit 1
 
       - name: Billing-path gate + rollback (us-central1)
+        if: ${{ steps.primary_baseline.outputs.action != 'held' }}
         env:
-          PREV_US: ${{ steps.prev.outputs.us_central1_revision }}
+          RAMP_BASELINE_US: ${{ steps.primary_baseline.outputs.revision }}
           TR_BILLING_5XX_GATE_SKIP: ${{ inputs.hotfix == true && 'true' || 'false' }}
         run: |
           set -euo pipefail
@@ -622,10 +696,15 @@ jobs:
               us-central1 \
               "${{ steps.warm_all.outputs.primary_started_at }}" \
               "${{ steps.warm_all.outputs.us_central1_revision }}"; then
-            echo "us-central1 emitted billing-path 5xx; rolling back to ${PREV_US}"
+            source scripts/deploy/_deploy_hold.sh
+            if deploy_region_is_held us-central1; then
+              deploy_warn_region_held us-central1
+              exit 0
+            fi
+            echo "us-central1 emitted billing-path 5xx; rolling back to ${RAMP_BASELINE_US}"
             gcloud run services update-traffic "${SERVICE}" \
               --region=us-central1 --project="${PROJECT_ID}" \
-              --to-revisions="${PREV_US}=100" --quiet
+              --to-revisions="${RAMP_BASELINE_US}=100" --quiet
             exit 1
           fi
 
@@ -735,7 +814,12 @@ jobs:
         # Removal is idempotent, and a region whose ramp already cleaned up is
         # a no-op.
         run: |
+          source scripts/deploy/_deploy_hold.sh
           for region in us-central1 europe-west4 us-east4 southamerica-east1; do
+            if deploy_region_is_held "$region"; then
+              deploy_warn_region_held "$region"
+              continue
+            fi
             gcloud run services update-traffic "trusted-router" \
               --region "$region" --project "$PROJECT_ID" \
               --remove-tags staged-probe --quiet \
@@ -760,6 +844,7 @@ jobs:
       SERVICE: trusted-router
       SHA: ${{ needs.deploy.outputs.sha }}
       IMAGE: ${{ needs.deploy.outputs.image }}
+      TR_DEPLOY_HOLD_REGIONS: ${{ vars.TR_DEPLOY_HOLD_REGIONS }}
     steps:
       - name: Import production deployment mutex fence
         env:
@@ -813,154 +898,7 @@ jobs:
           TR_WATCHDOG_SLO_CLASS: router_core
           TR_STAGED_WATCHDOG_SKIP_BASELINE: ${{ inputs.hotfix == true && '1' || '0' }}
           TR_BILLING_5XX_GATE_SKIP: ${{ inputs.hotfix == true && 'true' || 'false' }}
-        run: |
-          set -euo pipefail
-
-          watchdog_extra=()
-          if [ -n "${WD_EXTRA}" ]; then
-            read -ra watchdog_extra <<<"${WD_EXTRA}"
-          fi
-
-          previous_revision() {
-            case "$1" in
-              europe-west4) printf '%s\n' "${PREV_EU}" ;;
-              us-east4) printf '%s\n' "${PREV_US_EAST4}" ;;
-              southamerica-east1) printf '%s\n' "${PREV_SOUTHAMERICA_EAST1}" ;;
-              *) return 1 ;;
-            esac
-          }
-
-          rollback_region() {
-            local region="$1"
-            local previous
-            previous="$(previous_revision "${region}")"
-            if [ -z "${previous}" ]; then
-              echo "no prior ${region} revision recorded; cannot rollback"
-              return 1
-            fi
-            echo "${region} canary failed; rolling traffic back to ${previous}"
-            gcloud run services update-traffic "${SERVICE}" \
-              --region="${region}" --project="${PROJECT_ID}" \
-              --to-revisions="${previous}=100" --quiet
-          }
-
-          ramp_secondary() {
-            local region="$1"
-            local revision="$2"
-            local previous
-            local rollout_started_at
-            local watchdog_baseline
-            previous="$(previous_revision "${region}")"
-            # The billing window belongs to this region's traffic ramp, not to
-            # the earlier parallel warmup or a sibling's ramp.
-            rollout_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            watchdog_baseline="${RUNNER_TEMP}/final-watchdog-baseline-${region}.json"
-
-            if ! TR_STAGED_WATCHDOG_BASELINE_FILE="${watchdog_baseline}" \
-              bash scripts/deploy/staged_traffic.sh \
-                "${region}" "${revision}" "${previous}"; then
-              rollback_region "${region}" || true
-              return 1
-            fi
-
-            local active_traffic
-            if ! active_traffic="$(gcloud run services describe "${SERVICE}" \
-                --region="${region}" --project="${PROJECT_ID}" \
-                --format=json | jq -r --arg revision "${revision}" '
-                  [
-                    .status.traffic[]?
-                    | select(.percent == 100 and .revisionName == $revision)
-                  ]
-                  | length
-                ')"; then
-              echo "${region} traffic verification failed"
-              rollback_region "${region}" || true
-              return 1
-            fi
-            if [ "${active_traffic}" != "1" ]; then
-              echo "${region} staged rollout did not put 100% on ${revision}"
-              rollback_region "${region}" || true
-              return 1
-            fi
-
-            # 1 minute, not 3 (Joseph, 2026-08-25): by the time a secondary
-            # reaches 100%, the image has served the primary's full ramp AND
-            # its 3-minute canary, plus this region's own two gated windows.
-            # Measured: the 3-minute version was 9 of 39 total deploy minutes.
-            if ! python3 scripts/deploy/watchdog.py \
-              --regions "${region}" \
-              --duration-min 1 \
-              --rollback-after 2 \
-              --slo-class router_core \
-              --baseline-input "${watchdog_baseline}" \
-              "${watchdog_extra[@]}"; then
-              rollback_region "${region}"
-              return 1
-            fi
-
-            if ! bash scripts/deploy/assert_no_billing_5xx.sh \
-                "${region}" "${rollout_started_at}" "${revision}"; then
-              rollback_region "${region}"
-              return 1
-            fi
-          }
-
-          # Incident containment from #695 (billing 5xx, 2026-08-20): every
-          # secondary no-traffic warm was joined successfully by the deploy job
-          # before this job was scheduled. Keep the three secondary 10/50/100
-          # ramps explicit, serial, and stop-on-failure; no traffic move ever
-          # overlaps a sibling traffic move.
-          reconciler_log="${RUNNER_TEMP}/regional-quota-reconciler.log"
-          bash scripts/deploy/regional_quota_reconciler.sh >"${reconciler_log}" 2>&1 &
-          reconciler_pid=$!
-          spend_lease_reconciler_log="${RUNNER_TEMP}/spend-lease-reconciler.log"
-          bash scripts/deploy/spend_lease_reconciler.sh >"${spend_lease_reconciler_log}" 2>&1 &
-          spend_lease_reconciler_pid=$!
-
-          ramp_status=0
-          if ! ramp_secondary "europe-west4" "${NEW_EU}"; then
-            echo "::error::europe-west4 ramp failed and was rolled back. Later regions remain warm at zero traffic and never received traffic."
-            ramp_status=1
-          fi
-          if [ "${ramp_status}" -eq 0 ] && \
-             ! ramp_secondary "us-east4" "${NEW_US_EAST4}"; then
-            echo "::error::us-east4 ramp failed and was rolled back. Later regions remain warm at zero traffic and never received traffic."
-            ramp_status=1
-          fi
-          if [ "${ramp_status}" -eq 0 ] && \
-             ! ramp_secondary "southamerica-east1" "${NEW_SOUTHAMERICA_EAST1}"; then
-            echo "::error::southamerica-east1 ramp failed and was rolled back."
-            ramp_status=1
-          fi
-
-          reconciler_status=0
-          if wait "${reconciler_pid}"; then
-            reconciler_status=0
-          else
-            reconciler_status=$?
-          fi
-          spend_lease_reconciler_status=0
-          if wait "${spend_lease_reconciler_pid}"; then
-            spend_lease_reconciler_status=0
-          else
-            spend_lease_reconciler_status=$?
-          fi
-          printf '\n=== regional quota reconciler deploy ===\n'
-          cat "${reconciler_log}"
-          printf '\n=== spend lease reconciler deploy ===\n'
-          cat "${spend_lease_reconciler_log}"
-
-          if [ "${ramp_status}" -ne 0 ]; then
-            exit "${ramp_status}"
-          fi
-          if [ "${reconciler_status}" -ne 0 ]; then
-            echo "::error::Regional quota reconciler deploy failed with status ${reconciler_status}."
-            exit "${reconciler_status}"
-          fi
-          if [ "${spend_lease_reconciler_status}" -ne 0 ]; then
-            echo "::error::Spend lease reconciler deploy failed with status ${spend_lease_reconciler_status}."
-            exit "${spend_lease_reconciler_status}"
-          fi
+        run: bash scripts/deploy/ramp_secondaries.sh
 
       - name: Deploy synthetic monitor Cloud Run Job
         # Re-deploys the synthetic monitor Cloud Run Job + Cloud Scheduler

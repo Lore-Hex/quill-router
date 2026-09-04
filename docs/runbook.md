@@ -30,6 +30,7 @@ Index:
 - [One workspace 503s "Workspace billing is paused" (interrupted reshard)](#reshard-interrupted)
 - [DNS-vendor-split symptoms (Cloudflare vs Cloud DNS)](#dns-vendor-split)
 - [Adding a cloud (and when it is allowed to be called done)](#adding-a-cloud)
+- [Spend-lease binding (pilot)](#spend-lease-binding-pilot)
 - [Spend-lease reconciler](#spend-lease-reconciler)
 
 ---
@@ -331,6 +332,33 @@ cloud's rollout cannot interleave in the middle of GCP convergence.
 `verify-cloud-complete` still gates full-cloud convergence after the follow-on;
 the public-surface companion remains outside the mutex and starts only after
 the locked convergence job finishes.
+
+### Holding regional traffic during an incident
+
+`TR_DEPLOY_HOLD_REGIONS` is a repository variable that prevents the deploy
+workflow from targeting selected Cloud Run regions with `update-traffic`.
+No-traffic revision warms may still run, but a held region keeps its current
+serving traffic. Set a comma-separated list (or `all`) before dispatching or
+allowing a queued deploy to start:
+
+```bash
+gh variable set TR_DEPLOY_HOLD_REGIONS \
+  --repo Lore-Hex/quill-router \
+  --body "us-east4,europe-west4"
+```
+
+The variable is read independently at job start by both `deploy` and
+`rollout-secondaries`. Changing it does not alter an already-running job's
+environment: cancel an in-flight workflow if that job has started ramping, then
+re-pin traffic as needed. Held secondary regions are reported in the ramp
+summary; the reconcilers, public-surface companion, and full-cloud verification
+continue to run.
+
+Clear the control after the incident:
+
+```bash
+gh variable delete TR_DEPLOY_HOLD_REGIONS --repo Lore-Hex/quill-router
+```
 
 ---
 
@@ -1376,7 +1404,19 @@ for entry in \
     --format='value(versions[0].instanceTemplate,targetSize,status.isStable)'
 done
 ```
-# Spend-lease reconciler
+## <a id="spend-lease-binding-pilot"></a>Spend-lease binding (pilot)
+
+`TR_SPEND_LEASE_BINDING_ENABLED` makes issued spend leases authoritative for
+allocation, arbitration, the authorize pre-read, and the mint-entry rule.
+Production defaults it on, but only the workspace in
+`TR_SPEND_LEASE_PILOT_WORKSPACE_IDS` is eligible; issuance remains required.
+
+For an emergency hotfix deploy, set
+`TR_SPEND_LEASE_BINDING_ENABLED=false`. Never roll back below spend-lease unit 4
+while binding is on: the rollout fence requires the unit-4 settlement clamp and
+repair/mirror marker before it will deploy a binding-enabled revision.
+
+## <a id="spend-lease-reconciler"></a>Spend-lease reconciler
 
 The versioned `trusted-router-spend-lease-reconciler-*` Cloud Run Job runs once
 per minute with a 50-second task deadline. It is intentionally active while

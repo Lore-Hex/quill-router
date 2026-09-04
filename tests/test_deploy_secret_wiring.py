@@ -76,6 +76,20 @@ def test_deploy_pins_thirty_cent_signup_credit_policy() -> None:
     assert '"TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=300000"' in rollout
 
 
+def test_deploy_enables_spend_lease_binding_with_emergency_override() -> None:
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+
+    assert '"TR_SPEND_LEASE_ISSUANCE_ENABLED=true"' in rollout
+    assert (
+        '"TR_SPEND_LEASE_BINDING_ENABLED='
+        '${TR_SPEND_LEASE_BINDING_ENABLED:-true}"' in rollout
+    )
+    assert (
+        '"TR_SPEND_LEASE_PILOT_WORKSPACE_IDS='
+        '45819281-0ce9-4811-a0cd-c660ab3a116d"' in rollout
+    )
+
+
 def test_deploy_removes_only_explicitly_missing_optional_secrets() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
 
@@ -234,23 +248,28 @@ def test_production_deploy_provisions_and_schedules_regional_quota_reconciliatio
     library = (ROOT / "scripts/deploy/_lib.sh").read_text()
     provisioner = (ROOT / "scripts/deploy/regional_quota_ledger.sh").read_text()
     reconciler = (ROOT / "scripts/deploy/regional_quota_reconciler.sh").read_text()
+    secondary_ramp = (ROOT / "scripts/deploy/ramp_secondaries.sh").read_text()
 
     assert 'deploy/regional_quota_ledger.sh' in orchestrator
     assert 'deploy/regional_quota_reconciler.sh' in orchestrator
     assert "bash scripts/deploy/regional_quota_ledger.sh" in workflow
-    assert "bash scripts/deploy/regional_quota_reconciler.sh" in workflow
+    assert "bash scripts/deploy/ramp_secondaries.sh" in workflow
+    assert 'bash "${SCRIPT_DIR}/regional_quota_reconciler.sh"' in secondary_ramp
     assert workflow.index("bash scripts/deploy/regional_quota_ledger.sh") < workflow.index(
         "bash scripts/deploy/rollout.sh"
     )
-    rollout = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
-        "\n  public-surface-companion:\n", 1
-    )[0]
-    reconciler_start = rollout.index("bash scripts/deploy/regional_quota_reconciler.sh")
-    first_ramp = rollout.index('ramp_secondary "europe-west4"')
-    last_ramp = rollout.index('ramp_secondary "southamerica-east1"')
-    reconciler_wait = rollout.index('wait "${reconciler_pid}"')
-    assert reconciler_start < first_ramp < last_ramp < reconciler_wait
-    assert 'regional_quota_reconciler.sh >"${reconciler_log}" 2>&1 &' in rollout
+    reconciler_start = secondary_ramp.index(
+        'bash "${SCRIPT_DIR}/regional_quota_reconciler.sh"'
+    )
+    ramp_loop = secondary_ramp.index(
+        "for region in europe-west4 us-east4 southamerica-east1"
+    )
+    reconciler_wait = secondary_ramp.index('wait "${reconciler_pid}"')
+    assert reconciler_start < ramp_loop < reconciler_wait
+    assert (
+        'regional_quota_reconciler.sh" >"${reconciler_log}" 2>&1 &'
+        in secondary_ramp
+    )
     assert "--transactional-writes" in provisioner
     assert "trusted-router-logs-c1" in library
     assert "us-central1=tr-quota-us-central1" in library
