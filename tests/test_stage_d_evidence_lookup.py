@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from trusted_router.types import UsageType
 FIXTURE = Path(__file__).parent / "fixtures" / "stage_d" / "evidence-lookup.json"
 GATEWAY_REQUEST_ID = "rlog_00112233445566778899aabbccddeeff"
 INTERNAL_TOKEN = "stage-d-evidence-token"  # noqa: S105 - test placeholder
+AUTHORIZATION_ID_RE = re.compile(r"^gwa-[0-9a-f]{32}$")
 
 
 @pytest.fixture
@@ -98,6 +100,8 @@ def test_evidence_lookup_response_matches_literal_fixture_exactly(
     assert {key: type(value) for key, value in actual["data"].items()} == {
         key: type(value) for key, value in expected["data"].items()
     }
+    assert AUTHORIZATION_ID_RE.fullmatch(actual["data"]["authorization_id"])
+    assert AUTHORIZATION_ID_RE.fullmatch(expected["data"]["authorization_id"])
 
 
 def test_evidence_lookup_unknown_id_has_exact_404_shape(
