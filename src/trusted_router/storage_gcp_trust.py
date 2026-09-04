@@ -75,7 +75,12 @@ def insert_credit_trust_event(
         "@payment_amount_micro, @currency, @credited_micro, @recovered_micro, "
         "@provider_subtype, @lifecycle_status, @cumulative_refunded, "
         "@recovery_target, @debit_status, @unrecovered_micro, "
-        "@provider_ordering_watermark WHERE NOT EXISTS ("
+        # FROM UNNEST([1]) is load-bearing, not decoration: GoogleSQL rejects a
+        # FROM-less SELECT that carries a WHERE clause ("Query without FROM
+        # clause cannot have a WHERE clause"), so the Postgres spelling of this
+        # guarded insert fails EVERY call on Spanner. One row when the guard
+        # finds nothing, zero when it matches -- the contract the caller reads.
+        "@provider_ordering_watermark FROM UNNEST([1]) AS _one WHERE NOT EXISTS ("
         "SELECT 1 FROM tr_trust_event WHERE provider=@provider AND kind=@kind AND ("
         "(@kind='payment' AND @original_payment_ref IS NOT NULL "
         "AND original_payment_ref=@original_payment_ref) OR "
@@ -648,7 +653,9 @@ def insert_trust_inbox_tx(
 ) -> None:
     transaction.execute_update(
         "INSERT INTO tr_trust_inbox (provider, adverse_ref, payload, received_at) "
-        "SELECT @provider, @adverse_ref, @payload, @received_at WHERE NOT EXISTS ("
+        # Same GoogleSQL rule as insert_credit_trust_event above.
+        "SELECT @provider, @adverse_ref, @payload, @received_at "
+        "FROM UNNEST([1]) AS _one WHERE NOT EXISTS ("
         "SELECT 1 FROM tr_trust_inbox WHERE provider=@provider AND adverse_ref=@adverse_ref)",
         params={
             "provider": event.provider,
