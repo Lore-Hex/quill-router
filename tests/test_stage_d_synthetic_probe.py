@@ -86,7 +86,7 @@ async def test_stage_d_probe_uses_authorization_lookup_and_checks_binding() -> N
     gateway_request_id = "rlog_00112233445566778899aabbccddeeff"
     evidence = {
         "data": {
-            "authorization_id": "0123456789abcdef0123456789abcdef",
+            "authorization_id": "gwa-0123456789abcdef0123456789abcdef",
             "gateway_request_id": gateway_request_id,
             "workspace_id": "workspace",
             "authorization_kind": "local_typed",
