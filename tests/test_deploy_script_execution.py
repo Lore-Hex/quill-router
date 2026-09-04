@@ -229,13 +229,17 @@ if "--baseline-output" in sys.argv:
         ("scripts/deploy/regional_quota_reconciler.sh", "regional_quota_reconciler.sh"),
         ("scripts/deploy/spend_lease_reconciler.sh", "spend_lease_reconciler.sh"),
     ):
+        # The reconcilers launch concurrently, so append each invocation with
+        # one printf; separate name/newline writes can merge into one record.
         isolated.write_script(
             relative,
             "#!/usr/bin/env bash\n"
-            "{ printf '%s' '"
+            "record='"
             + command_name
-            + "'; for argument in \"$@\"; do printf '\\t%s' \"$argument\"; done; "
-            "printf '\\n'; } >>\"$HARNESS_ARGV_LOG\"\n",
+            + "'\n"
+            "for argument in \"$@\"; do "
+            "printf -v record '%s\\t%s' \"$record\" \"$argument\"; done\n"
+            "printf '%s\\n' \"$record\" >>\"$HARNESS_ARGV_LOG\"\n",
         )
 
     env = {
