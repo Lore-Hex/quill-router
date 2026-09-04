@@ -333,6 +333,33 @@ cloud's rollout cannot interleave in the middle of GCP convergence.
 the public-surface companion remains outside the mutex and starts only after
 the locked convergence job finishes.
 
+### Holding regional traffic during an incident
+
+`TR_DEPLOY_HOLD_REGIONS` is a repository variable that prevents the deploy
+workflow from targeting selected Cloud Run regions with `update-traffic`.
+No-traffic revision warms may still run, but a held region keeps its current
+serving traffic. Set a comma-separated list (or `all`) before dispatching or
+allowing a queued deploy to start:
+
+```bash
+gh variable set TR_DEPLOY_HOLD_REGIONS \
+  --repo Lore-Hex/quill-router \
+  --body "us-east4,europe-west4"
+```
+
+The variable is read independently at job start by both `deploy` and
+`rollout-secondaries`. Changing it does not alter an already-running job's
+environment: cancel an in-flight workflow if that job has started ramping, then
+re-pin traffic as needed. Held secondary regions are reported in the ramp
+summary; the reconcilers, public-surface companion, and full-cloud verification
+continue to run.
+
+Clear the control after the incident:
+
+```bash
+gh variable delete TR_DEPLOY_HOLD_REGIONS --repo Lore-Hex/quill-router
+```
+
 ---
 
 ## <a id="cloud-bake-ladder"></a>Canary-cloud bake ladder

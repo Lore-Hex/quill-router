@@ -21,6 +21,8 @@ PROJECT_ID="${PROJECT_ID:-quill-cloud-proxy}"
 SERVICE="${SERVICE:-trusted-router}"
 WATCHDOG_SLO_CLASS="${TR_WATCHDOG_SLO_CLASS:-router_core}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/deploy/_deploy_hold.sh
+source "${SCRIPT_DIR}/_deploy_hold.sh"
 # shellcheck source=scripts/deploy/_cloud_run_revision_probe.sh
 source "${SCRIPT_DIR}/_cloud_run_revision_probe.sh"
 # shellcheck source=scripts/deploy/deploy_mutex.sh
@@ -36,6 +38,11 @@ WATCHDOG_GATE_FILE=""
 FINAL_BASELINE_PID=""
 
 log() { echo "[staged-traffic ${REGION}] $*"; }
+
+if deploy_region_is_held "$REGION"; then
+  deploy_warn_region_held "$REGION"
+  exit 0
+fi
 
 configure_probe_tag() {
   local resolved

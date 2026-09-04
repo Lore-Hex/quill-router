@@ -9,8 +9,15 @@ set -euo pipefail
 
 REGION="${1:?usage: $0 <region>}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/deploy/_deploy_hold.sh
+source "${SCRIPT_DIR}/_deploy_hold.sh"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
+
+if deploy_region_is_held "$REGION"; then
+  deploy_warn_region_held "$REGION"
+  exit 0
+fi
 
 service_json="$(
   gc run services describe "$SERVICE" \
