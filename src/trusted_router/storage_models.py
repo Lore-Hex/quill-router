@@ -160,6 +160,9 @@ class User:
     veriff_decision_reason: str | None = None
     veriff_decision_reason_code: int | None = None
     veriff_attempt_count: int = 0
+    # Maintained with tr_owner_workspace. This is an inventory invariant, not
+    # a cached display count: every ownership-changing transaction rewrites it.
+    owner_workspace_count: int = 0
 
     @property
     def identity_verified(self) -> bool:
@@ -227,6 +230,16 @@ class Workspace:
             self.billing_pause_causes = ["migration"]
         self.billing_pause_causes = sorted(set(self.billing_pause_causes))
         self.billing_paused = bool(self.billing_pause_causes)
+
+
+@dataclass(frozen=True, slots=True)
+class TrustOverride:
+    workspace_id: str
+    tier: int
+    identity_bypass: bool
+    operator_identity: str
+    reason: str
+    set_at: dt.datetime
 
 
 def workspace_billing_paused(workspace: object | None) -> bool:

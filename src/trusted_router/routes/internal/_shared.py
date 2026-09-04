@@ -29,6 +29,10 @@ def internal_service_credential(
 ) -> tuple[str, str | None]:
     """Return the credential class and configured secret for an internal path."""
     normalized_path = path[3:] if path.startswith("/v1/internal/") else path
+    from trusted_router.routes.internal.admin import is_operator_route
+
+    if is_operator_route(normalized_path):
+        return "operator", settings.operator_token
     observer_path = normalized_path in _OBSERVER_INTERNAL_EXACT_PATHS or normalized_path.startswith(
         _OBSERVER_INTERNAL_PATH_PREFIXES
     )

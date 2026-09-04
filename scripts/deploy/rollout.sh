@@ -90,6 +90,7 @@ SECRET_ENVS=(
   "TR_STRIPE_SECRET_KEY=trustedrouter-stripe-secret-key:latest"
   "TR_STRIPE_WEBHOOK_SECRET=trustedrouter-stripe-webhook-secret:latest"
   "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest"
+  "TR_OPERATOR_TOKEN=trustedrouter-operator-token:latest"
 )
 # Retired environment bindings remain on Cloud Run until explicitly removed.
 REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")
@@ -532,6 +533,7 @@ fi
 ENV_VARS=(
   "TR_ENVIRONMENT=production"
   "TR_SERVICE_SURFACE=combined"
+  "TR_OPERATOR_IDENTITIES=${TR_OPERATOR_IDENTITIES:-joseph@jperla.com}"
   "TR_ALLOW_DEPLOYED_COMBINED_SURFACE=${ALLOW_DEPLOYED_COMBINED_SURFACE}"
   # The legacy backend does not yet receive a trusted, edge-overwritten client
   # identity. The #714 process-local limiter would collapse all Internet users

@@ -58,6 +58,7 @@ from trusted_router.storage_models import (
     SyntheticProbeSample,
     SyntheticRollup,
     TrustInboxRow,
+    TrustOverride,
     User,
     UserModelPayout,
     UserProvidedModel,
@@ -113,6 +114,18 @@ class Store(Protocol):
         verified_name: str | None = ...,
         increment_attempts: bool = ...,
     ) -> User | None: ...
+    def apply_veriff_identity_decision(
+        self,
+        user_id: str,
+        *,
+        event_id: str,
+        session_id: str,
+        status: str,
+        decision_code: int,
+        decision_reason: str | None = ...,
+        decision_reason_code: int | None = ...,
+        verified_name: str | None = ...,
+    ) -> str: ...
     # Phone ownership proof for notifications. The rules live in
     # phone_verification.py; a backend only reads the user, applies them, and
     # writes it back, so the three stores cannot drift apart on policy.
@@ -212,6 +225,38 @@ class Store(Protocol):
         billing_paused: bool | None = ...,
         billing_pause_reason: str | None = ...,
     ) -> Workspace | None: ...
+    def transfer_workspace_ownership(
+        self, workspace_id: str, new_owner_user_id: str
+    ) -> Workspace: ...
+    def set_workspace_trust_override(
+        self,
+        workspace_id: str,
+        *,
+        tier: int,
+        identity_bypass: bool,
+        operator_identity: str,
+        reason: str,
+    ) -> TrustOverride: ...
+    def record_workspace_abuse_and_demote(
+        self,
+        workspace_id: str,
+        *,
+        abuse_ref: str,
+        operator_identity: str,
+        reason: str,
+    ) -> bool: ...
+    def clear_workspace_abuse_pause(
+        self,
+        workspace_id: str,
+        *,
+        abuse_ref: str,
+        operator_identity: str,
+        reason: str,
+    ) -> bool: ...
+    def backfill_owner_inventory(
+        self, *, source_version: str, environment: str
+    ) -> int: ...
+    def process_trust_demotion_remainders(self, *, limit: int = ...) -> int: ...
     def add_members(
         self, workspace_id: str, emails: list[str], role: str = ...
     ) -> list[Member]: ...

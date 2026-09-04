@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from . import admin as admin
 from . import adyen as adyen
 from . import broadcast_queue as broadcast_queue
 from . import chat_browser_key as chat_browser_key
@@ -44,6 +45,7 @@ def register_gateway_internal_routes(router: APIRouter) -> None:
     fetch_image.register(router)
     reconcile.register(router)
     federation.register(router)
+    admin.register(router)
 
 
 def register_observer_internal_routes(router: APIRouter) -> None:

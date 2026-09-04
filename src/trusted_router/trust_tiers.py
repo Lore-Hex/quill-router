@@ -256,6 +256,7 @@ def compute_trust_tier(
     tier3_min_days: int,
     tier3_min_paid_microdollars: int,
     now: datetime,
+    identity_bypass: bool = False,
 ) -> TrustTierDecision:
     """Compute the converged tier without mutating or clearing a latch."""
 
@@ -286,7 +287,7 @@ def compute_trust_tier(
             computed = 3
 
     override = max(0, min(3, int(trust_override_tier or 0)))
-    identity_ceiling = 3 if approved else 1
+    identity_ceiling = 3 if approved or identity_bypass else 1
     effective = min(identity_ceiling, max(computed, override), 3)
     if trust_latched_at is not None:
         effective = 0

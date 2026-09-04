@@ -71,27 +71,23 @@ def register(router: APIRouter) -> None:
             return {"data": {"ignored": True}}
 
         event_id = f"{session_id}#{provider_status}#{code}"
-        if not STORE.record_webhook_event_once("veriff", event_id):
-            return {"data": {"replayed": True}}
-
-        user = STORE.get_user(vendor_data)
-        if user is None:
-            log.info("veriff_webhook.ignored reason=unknown_user")
-            return {"data": {"ignored": True}}
-        if session_id != user.veriff_session_id:
-            log.info("veriff_webhook.ignored reason=stale_session")
-            return {"data": {"ignored": True}}
-
         approved_name = verified_name(verification) if decision_status == "approved" else None
         reason, reason_code = decision_reason(verification)
-        STORE.set_user_identity_status(
-            user.id,
+        outcome = STORE.apply_veriff_identity_decision(
+            vendor_data,
+            event_id=event_id,
+            session_id=session_id,
             status=decision_status,
             decision_code=code,
             decision_reason=reason,
             decision_reason_code=reason_code,
             verified_name=approved_name,
         )
+        if outcome == "replayed":
+            return {"data": {"replayed": True}}
+        if outcome == "ignored":
+            log.info("veriff_webhook.ignored reason=unknown_user_or_stale_session")
+            return {"data": {"ignored": True}}
         log.info(
             "veriff_webhook.decision status=%s code=%s reason_code=%s",
             decision_status,

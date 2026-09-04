@@ -404,6 +404,7 @@ ENV_VARS=(
   "TR_TRUST_GCP_RELEASE_FALLBACK_URLS=$(legacy_env_required TR_TRUST_GCP_RELEASE_FALLBACK_URLS)"
   "TR_TRUST_AWS_RELEASE_URL=$(legacy_env_required TR_TRUST_AWS_RELEASE_URL)"
   "TR_TRUST_AZURE_RELEASE_URL=$(legacy_env_required TR_TRUST_AZURE_RELEASE_URL)"
+  "TR_OPERATOR_IDENTITIES=$(legacy_env_required TR_OPERATOR_IDENTITIES)"
 )
 
 # Preserve the money-path and federation feature switches exactly. Missing
@@ -442,6 +443,7 @@ done
 SECRET_ENVS=()
 for required_secret_env in \
   TR_INTERNAL_GATEWAY_TOKEN \
+  TR_OPERATOR_TOKEN \
   TR_OBSERVER_INTERNAL_TOKEN \
   TR_SYNTHETIC_MONITOR_API_KEY \
   TR_SENTRY_DSN; do

@@ -122,6 +122,47 @@ CREATE TABLE IF NOT EXISTS tr_trust_inbox (
     PRIMARY KEY (provider, adverse_ref)
 );
 
+CREATE TABLE IF NOT EXISTS tr_owner_workspace (
+    owner_user_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    PRIMARY KEY (owner_user_id, workspace_id)
+);
+
+CREATE TABLE IF NOT EXISTS tr_trust_override (
+    workspace_id TEXT NOT NULL PRIMARY KEY,
+    tier BIGINT NOT NULL CHECK (tier >= 0 AND tier <= 3),
+    identity_bypass BOOLEAN NOT NULL,
+    operator_identity TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    set_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tr_trust_demotion_remainder (
+    owner_user_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    target_identity_ceiling BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    attempts BIGINT NOT NULL DEFAULT 0,
+    last_error TEXT,
+    PRIMARY KEY (owner_user_id, workspace_id)
+);
+
+CREATE TABLE IF NOT EXISTS tr_trust_backfill (
+    provider TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    source TEXT NOT NULL,
+    source_version TEXT NOT NULL,
+    history_start TIMESTAMPTZ NOT NULL,
+    closed_through TIMESTAMPTZ NOT NULL,
+    consistency_delay_seconds BIGINT NOT NULL,
+    unmatched_count BIGINT NOT NULL,
+    semantic_mismatch_count BIGINT NOT NULL,
+    completed_at TIMESTAMPTZ,
+    CHECK (completed_at IS NULL OR (unmatched_count = 0 AND semantic_mismatch_count = 0)),
+    PRIMARY KEY (provider, account_id, environment)
+);
+
 CREATE TABLE IF NOT EXISTS tr_earnings_balance (
     user_id TEXT NOT NULL,
     shard BIGINT NOT NULL DEFAULT 0,

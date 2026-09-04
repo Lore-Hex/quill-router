@@ -729,6 +729,18 @@ def recompute_workspace_trust_tier_tx(
             raise ValueError("workspace_or_credit_account_not_found")
         owner = read_entity_tx(transaction, "user", workspace.owner_user_id, User)
         owner_status = owner.identity_status if owner is not None else "none"
+        override_rows = list(
+            transaction.execute_sql(
+                "SELECT tier, identity_bypass FROM tr_trust_override "
+                "WHERE workspace_id=@pk",
+                params={"pk": workspace_id},
+                param_types={"pk": param_types.STRING},
+            )
+        )
+        if len(override_rows) > 1:
+            raise RuntimeError("trust override primary key invariant violated")
+        override_tier = None if not override_rows else int(override_rows[0][0])
+        identity_bypass = bool(override_rows and override_rows[0][1])
         event_rows = list(
             transaction.execute_sql(
                 "SELECT event_id, kind, provider, amount_micro, original_payment_ref, "
@@ -764,15 +776,18 @@ def recompute_workspace_trust_tier_tx(
         override_values = {row[3] for row in shard_rows}
         if len(latch_values) != 1 or len(override_values) != 1:
             raise RuntimeError("replicated trust columns diverged")
+        if next(iter(override_values)) != override_tier:
+            raise RuntimeError("trust override row and replicated shard value diverged")
         decision = compute_trust_tier(
             events,
             owner_identity_status=owner_status,
             trust_latched_at=shard_rows[0][2],
-            trust_override_tier=shard_rows[0][3],
+            trust_override_tier=override_tier,
             qualifying_providers=qualifying_providers,
             tier3_min_days=tier3_min_days,
             tier3_min_paid_microdollars=tier3_min_paid_microdollars,
             now=now,
+            identity_bypass=identity_bypass,
         )
         updated = transaction.execute_update(
             "UPDATE tr_credit_balance SET trust_tier=@trust_tier, "

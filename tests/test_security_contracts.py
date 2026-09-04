@@ -102,6 +102,8 @@ def test_sentry_test_route_is_disabled_in_production_unless_explicitly_enabled()
         environment="production",
         service_surface="internal",
         internal_gateway_token="internal-prod-sentry-test",  # noqa: S106 - test config.
+        operator_token="operator-prod-sentry-test",  # noqa: S106 - test config.
+        operator_identities="ops@example.com",
         observer_internal_token="observer-prod-sentry-test",  # noqa: S106 - test config.
         sentry_dsn="https://example@example.ingest.sentry.io/1",
         storage_backend="spanner-bigtable",

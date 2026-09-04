@@ -120,6 +120,10 @@ SCHEMA_TABLES = (
     "CREATE UNIQUE INDEX IF NOT EXISTS tr_trust_event_adverse_dedup",
     "CREATE UNIQUE INDEX IF NOT EXISTS tr_trust_event_payment_dedup",
     "CREATE TABLE IF NOT EXISTS tr_trust_inbox",
+    "CREATE TABLE IF NOT EXISTS tr_owner_workspace",
+    "CREATE TABLE IF NOT EXISTS tr_trust_override",
+    "CREATE TABLE IF NOT EXISTS tr_trust_demotion_remainder",
+    "CREATE TABLE IF NOT EXISTS tr_trust_backfill",
     "CREATE TABLE IF NOT EXISTS tr_key_limit",
     # Deferred settlement. The cap's whole claim to being a real bound is the
     # predicate on its UPDATE and the rowcount that reads it, and the outbox's
@@ -172,6 +176,10 @@ def postgres_store_on(conn: SqlitePostgresConn) -> Any:
 
     store = PostgresStore.__new__(PostgresStore)
     store._run_transaction = lambda operation: _run(conn, operation)  # type: ignore[method-assign]
+    store.max_workspaces_per_owner = 25
+    store.trust_qualifying_providers = frozenset({"stripe", "x402"})
+    store.trust_tier3_min_days = 30
+    store.trust_tier3_min_paid_microdollars = 50_000_000
     return store
 
 
