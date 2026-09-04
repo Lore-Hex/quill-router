@@ -36,10 +36,26 @@ tar --exclude='__pycache__' --exclude='*.pyc' -C "$ROOT" -czf "$archive" \
 remote_archive="/tmp/tr-public-snapshots.${GITHUB_RUN_ID:-local}.${RANDOM}.tar.gz"
 
 log "syncing public analytics snapshot worker to ${NAME}"
-gc compute scp "$archive" "${NAME}:${remote_archive}" \
+# Bound the TRANSFER, never the swap below. `gcloud compute scp` generates an
+# SSH key on a fresh runner and pushes it into PROJECT metadata; on
+# 2026-09-04 that write sat behind stuck setCommonInstanceMetadata operations
+# on a 365-entry ssh-keys value and burned 1800s twice before failing, which
+# blocked every control-plane deploy for ~61 minutes. Failing here is safe:
+# `set -e` stops the script before the remote mutation begins, so the node is
+# untouched. A deadline around the swap itself would NOT be safe -- severing
+# SSH between the two `mv`s leaves the live tree absent -- which is why the
+# deadline lives here and the workflow step carries no timeout-minutes.
+if ! timeout -k 30 300 gcloud --project "$PROJECT_ID" compute scp \
+  "$archive" "${NAME}:${remote_archive}" \
   --zone="$ZONE" \
   --tunnel-through-iap \
-  --quiet
+  --quiet; then
+  echo "ERROR: could not upload the snapshot bundle to ${NAME} within 300s;" \
+    "the node was NOT modified. Check for stuck" \
+    "compute.projects.setCommonInstanceMetadata operations and the size of" \
+    "the project ssh-keys metadata value." >&2
+  exit 1
+fi
 gc compute ssh "$NAME" \
   --zone="$ZONE" \
   --tunnel-through-iap \
