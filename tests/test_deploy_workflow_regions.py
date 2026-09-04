@@ -123,17 +123,21 @@ def test_snapshot_sync_prunes_metadata_and_uses_short_lived_access() -> None:
 
 
 def test_scheduled_ssh_hygiene_is_api_only_and_repairs_ci_keys() -> None:
-    workflow = (ROOT / ".github/workflows/clickhouse-ssh-hygiene.yml").read_text(
+    workflow = (ROOT / ".github/workflows/check-archive-freshness.yml").read_text(
         encoding="utf-8"
     )
+    standalone = ROOT / ".github/workflows/clickhouse-ssh-hygiene.yml"
 
     assert "schedule:" in workflow
+    assert "\n  ssh-metadata-hygiene:\n" in workflow
+    hygiene_job = workflow.split("\n  ssh-metadata-hygiene:\n", 1)[1]
     assert "gcp_ssh_metadata_hygiene.py" in workflow
     assert "--apply" in workflow
-    assert "group: deploy-trusted-router" in workflow
-    assert "cancel-in-progress: false" in workflow
-    assert "compute ssh" not in workflow
-    assert "compute scp" not in workflow
+    assert "group: deploy-trusted-router" in hygiene_job
+    assert "cancel-in-progress: false" in hygiene_job
+    assert "compute ssh" not in hygiene_job
+    assert "compute scp" not in hygiene_job
+    assert not standalone.exists()
 
 
 def test_public_snapshot_worker_swap_is_verified_and_rollbackable() -> None:
