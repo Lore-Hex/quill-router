@@ -5953,6 +5953,17 @@ class SpannerBigtableStore:
             updated_at=updated_at,
         )
 
+    def get_stage_d_policy_watermark(self, *, plane: str) -> int | None:
+        from trusted_router.storage_gcp_stage_d_policy import (
+            get_stage_d_policy_watermark,
+        )
+
+        return get_stage_d_policy_watermark(
+            self._database,
+            self._param_types,
+            plane=plane,
+        )
+
     def next_spend_lease_generation(self, key_hash: str, boot_kid: str) -> int:
         entity_id = hashlib.sha256(f"{key_hash}\0{boot_kid}".encode()).hexdigest()
 

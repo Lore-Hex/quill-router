@@ -8,6 +8,25 @@ from typing import Any
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 
 
+def get_stage_d_policy_watermark(
+    database: Any,
+    param_types: Any,
+    *,
+    plane: str,
+) -> int | None:
+    """Return the durable acceptance floor for one plane, if initialized."""
+
+    with database.snapshot() as snapshot:
+        rows = list(
+            snapshot.execute_sql(
+                "SELECT highest_sequence FROM tr_stage_d_policy_watermark WHERE plane=@plane",
+                params={"plane": plane},
+                param_types={"plane": param_types.STRING},
+            )
+        )
+    return int(rows[0][0]) if rows else None
+
+
 def advance_stage_d_policy_watermark(
     database: Any,
     param_types: Any,

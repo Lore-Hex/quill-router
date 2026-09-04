@@ -13,6 +13,7 @@ import pytest
 from tests.fakes.spanner import make_fake_store
 from trusted_router.config import Settings
 from trusted_router.stage_d_policy import (
+    PolicyWatermark,
     SigstoreBundleVerifier,
     StageDPolicyResolver,
     StorePolicyWatermark,
@@ -54,6 +55,10 @@ class FakeWatermark:
         self.highest = sequence
         return True
 
+    def highest_sequence(self, *, plane: str) -> int | None:
+        assert plane == "gcp"
+        return self.highest or None
+
 
 def _client_factory(documents: dict[str, bytes]) -> Any:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -70,7 +75,7 @@ def _client_factory(documents: dict[str, bytes]) -> Any:
 
 def _resolver(
     verifier: FakeVerifier,
-    watermark: FakeWatermark,
+    watermark: PolicyWatermark,
     documents: dict[str, bytes],
 ) -> StageDPolicyResolver:
     return StageDPolicyResolver(
@@ -84,6 +89,12 @@ def _resolver(
         wall_clock=lambda: datetime(2026, 9, 3, 22, tzinfo=UTC),
         client_factory=_client_factory(documents),
     )
+
+
+def _policy_document(sequence: int) -> bytes:
+    value = json.loads(FIXTURE_BYTES)
+    value["sequence"] = sequence
+    return json.dumps(value).encode()
 
 
 def test_literal_cross_repo_fixture_is_verified_before_becoming_live() -> None:
@@ -178,7 +189,7 @@ def test_signature_schema_and_rollback_failures_retain_last_verified_policy() ->
     assert resolver.refresh() is False
     assert resolver.accepted_image_digests() == accepted
 
-    documents[POLICY_URL] = FIXTURE_BYTES
+    documents[POLICY_URL] = _policy_document(1199)
     assert resolver.refresh() is False
     assert resolver.accepted_image_digests() == accepted
 
@@ -216,11 +227,11 @@ def test_sigstore_adapter_verifies_literal_bytes_with_pinned_identity(
             calls["identity"] = (identity, issuer)
 
     sigstore = types.ModuleType("sigstore")
-    sigstore.__path__ = []  # type: ignore[attr-defined]
+    sigstore.__path__ = []
     models = types.ModuleType("sigstore.models")
     models.Bundle = Bundle  # type: ignore[attr-defined]
     verify = types.ModuleType("sigstore.verify")
-    verify.__path__ = []  # type: ignore[attr-defined]
+    verify.__path__ = []
     verify.Verifier = Verifier  # type: ignore[attr-defined]
     policy = types.ModuleType("sigstore.verify.policy")
     policy.Identity = Identity  # type: ignore[attr-defined]
@@ -250,6 +261,9 @@ def test_missing_durable_watermark_fails_closed() -> None:
     class MissingWatermark:
         def advance(self, **_kwargs: Any) -> bool:
             return False
+
+        def highest_sequence(self, **_kwargs: Any) -> int | None:
+            return None
 
     resolver = StageDPolicyResolver(
         Settings(
@@ -310,8 +324,46 @@ def test_spanner_typed_watermark_is_strictly_monotonic() -> None:
     watermark = StorePolicyWatermark(store)
     now = datetime(2026, 9, 3, 22, tzinfo=UTC)
 
+    assert watermark.highest_sequence(plane="gcp") is None
     assert watermark.advance(plane="gcp", sequence=1200, updated_at=now) is True
+    assert watermark.highest_sequence(plane="gcp") == 1200
     assert watermark.advance(plane="gcp", sequence=1200, updated_at=now) is False
     assert watermark.advance(plane="gcp", sequence=1199, updated_at=now) is False
     assert watermark.advance(plane="gcp", sequence=1201, updated_at=now) is True
     assert db.stage_d_policy_watermarks["gcp"]["highest_sequence"] == 1201
+
+
+def test_two_replicas_accept_same_verified_sequence_without_second_advance() -> None:
+    verifier = FakeVerifier()
+    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    documents = {
+        POLICY_URL: _policy_document(852),
+        POLICY_URL + ".bundle": b"bundle",
+    }
+    replica_a = _resolver(verifier, StorePolicyWatermark(store), documents)
+    replica_b = _resolver(verifier, StorePolicyWatermark(store), documents)
+
+    assert replica_a.refresh() is True
+    watermark_version = db.stage_d_policy_watermark_versions["gcp"]
+    assert replica_b.refresh() is True
+    assert replica_a.current_policy().sequence == 852  # type: ignore[union-attr]
+    assert replica_b.current_policy().sequence == 852  # type: ignore[union-attr]
+    assert db.stage_d_policy_watermarks["gcp"]["highest_sequence"] == 852
+    assert db.stage_d_policy_watermark_versions["gcp"] == watermark_version
+
+
+def test_sequence_below_durable_watermark_is_rejected() -> None:
+    verifier = FakeVerifier()
+    watermark = FakeWatermark()
+    documents = {
+        POLICY_URL: _policy_document(852),
+        POLICY_URL + ".bundle": b"bundle",
+    }
+    resolver = _resolver(verifier, watermark, documents)
+    assert resolver.refresh() is True
+    accepted = resolver.current_policy()
+
+    documents[POLICY_URL] = _policy_document(851)
+    assert resolver.refresh() is False
+    assert resolver.current_policy() is accepted
+    assert watermark.highest == 852
