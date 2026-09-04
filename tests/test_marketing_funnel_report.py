@@ -15,6 +15,7 @@ from trusted_router.marketing_funnel import (
     experiment_state,
     microdollars_to_usd,
     parse_axiom_json_lines,
+    parse_cloud_logging_engagements,
     percentage,
     render_markdown,
     render_measurement_markdown,
@@ -411,6 +412,54 @@ def test_parse_axiom_json_lines_is_strict() -> None:
         parse_axiom_json_lines("{not-json}")
     with pytest.raises(ValueError, match="not an object"):
         parse_axiom_json_lines("[]")
+
+
+def test_parse_cloud_logging_engagements_is_metadata_only_and_click_aware() -> None:
+    payload = json.dumps(
+        [
+            {
+                "timestamp": "2026-09-04T12:00:00Z",
+                "jsonPayload": {
+                    "event": "acquisition.landing_engaged",
+                    "anonymous_fingerprint": "a" * 64,
+                    "utm_source": "google",
+                    "utm_medium": "paid_search",
+                    "utm_campaign": "google_search_messages_v3",
+                    "utm_content": "cell-a",
+                    "landing_path": "/openrouter-alternative/test/cell-a",
+                    "experiment_id": "google_search_messages_v3",
+                    "experiment_cell_id": "cell-a",
+                    "has_gclid": True,
+                    "prompt": "must stay out",
+                },
+            },
+            {
+                "timestamp": "2026-09-04T12:01:00Z",
+                "jsonPayload": {"event": "unrelated"},
+            },
+        ]
+    )
+
+    rows = parse_cloud_logging_engagements(payload)
+
+    assert rows == [
+        {
+            "event": "acquisition.landing_engaged",
+            "anonymous_fingerprint": "a" * 64,
+            "utm_source": "google",
+            "utm_medium": "paid_search",
+            "utm_campaign": "google_search_messages_v3",
+            "utm_content": "cell-a",
+            "landing_path": "/openrouter-alternative/test/cell-a",
+            "experiment_id": "google_search_messages_v3",
+            "experiment_cell_id": "cell-a",
+            "first_at": "2026-09-04T12:00:00Z",
+            "events": 1,
+            "revenue_microdollars": 0,
+            "google_ads_click_events": 1,
+            "google_ads_persisted_events": 0,
+        }
+    ]
 
 
 def test_report_rendering_escapes_markdown_and_handles_empty_denominators() -> None:

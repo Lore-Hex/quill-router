@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import queue
 from collections.abc import Iterator
@@ -100,3 +101,36 @@ def test_application_console_configuration_is_idempotent(
 
     captured = capfd.readouterr()
     assert (captured.err + captured.out).count("only once") == 1
+
+
+def test_acquisition_console_log_is_metadata_only_cloud_logging_json(
+    capfd: pytest.CaptureFixture[str],
+    isolated_application_logging: None,
+) -> None:
+    create_app(
+        Settings(environment="test"),
+        configure_store_arg=False,
+        init_observability=False,
+    )
+
+    logging.getLogger("trusted_router.acquisition").info(
+        "acquisition.landing_engaged",
+        extra={
+            "event": "acquisition.landing_engaged",
+            "anonymous_fingerprint": "a" * 64,
+            "utm_source": "google",
+            "experiment_cell_id": "cell-a",
+            "has_gclid": True,
+            "prompt": "must stay out",
+            "email": "private@example.com",
+        },
+    )
+
+    captured = capfd.readouterr()
+    line = (captured.err + captured.out).strip()
+    payload = json.loads(line)
+    assert payload["event"] == "acquisition.landing_engaged"
+    assert payload["anonymous_fingerprint"] == "a" * 64
+    assert payload["has_gclid"] is True
+    assert "prompt" not in payload
+    assert "email" not in payload
