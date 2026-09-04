@@ -497,6 +497,26 @@ SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="${TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGE
   read_primary_regional_quota_env "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS"
 )}"
 
+# Binding makes the unit-4 settlement clamp and repair/mirror path load-bearing.
+# Refuse a source rollback that would build a binding-enabled image without
+# those rules. The emergency rollback path is explicit: deploy with binding
+# disabled, then investigate or roll forward from there.
+SPEND_LEASE_BINDING_TARGET="${TR_SPEND_LEASE_BINDING_ENABLED:-true}"
+case "$SPEND_LEASE_BINDING_TARGET" in
+  true)
+    spend_lease_unit_4_source="${SCRIPT_DIR}/../../src/trusted_router/services/spend_lease_settlement.py"
+    if ! grep -Fq "def clamp_spend_lease_charge(" "$spend_lease_unit_4_source"; then
+      log "refusing rollout: TR_SPEND_LEASE_BINDING_ENABLED=true requires spend-lease unit 4 (missing clamp_spend_lease_charge); rollback only with TR_SPEND_LEASE_BINDING_ENABLED=false"
+      exit 1
+    fi
+    ;;
+  false) ;;
+  *)
+    log "refusing rollout: TR_SPEND_LEASE_BINDING_ENABLED must be true or false"
+    exit 1
+    ;;
+esac
+
 # Prefer the private three-replica ClickHouse load balancer once provisioned.
 # The direct node-1 address remains only as a migration fallback for projects
 # that have not run clickhouse_cluster.sh yet.
@@ -722,8 +742,7 @@ ENV_VARS=(
   # is for operator-set values, and a source default cannot override an existing
   # deployed marker.
   "TR_SPEND_LEASE_ISSUANCE_ENABLED=true"
-  # Unit 2 authorize hooks ship inert; the binding flip is a later rollout.
-  "TR_SPEND_LEASE_BINDING_ENABLED=false"
+  "TR_SPEND_LEASE_BINDING_ENABLED=${TR_SPEND_LEASE_BINDING_ENABLED:-true}"
   # Slice 1a ships the trust guard inert. A later arm-gate slice owns enabling.
   "TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=false"
   "TR_STAGE_D_HEARTBEAT_ENABLED=${TR_STAGE_D_HEARTBEAT_ENABLED:-true}"

@@ -62,9 +62,9 @@ the creator earnings wallet; TrustedRouter keeps 30%.
 
 Owners can transfer any available earnings into a TrustedRouter workspace. At
 $100 or more, an owner with full identity verification and a verified email
-can request a USD cash-out through Routable. Routable's hosted onboarding
-collects bank and tax details. TrustedRouter stores only opaque recipient and
-payable identifiers, status, and exact integer-microdollar ledger movements.
+can request a USD cash-out. A secure hosted payout flow collects bank and tax
+details. TrustedRouter stores only opaque recipient and payable identifiers,
+status, and exact integer-microdollar ledger movements.
 
 ### Legacy migration
 

@@ -226,10 +226,10 @@
   },
   "fireworks": {
     "card_version": 2,
-    "model_count": 18,
+    "model_count": 17,
     "name": "Fireworks AI",
     "privacy": "Policy documented",
-    "route_count": 34,
+    "route_count": 32,
     "route_mode": "Prepaid + BYOK",
     "slug": "fireworks"
   },
@@ -460,10 +460,10 @@
   },
   "neurometric": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 8,
     "name": "Neurometric AI",
     "privacy": "Policy documented",
-    "route_count": 7,
+    "route_count": 8,
     "route_mode": "Prepaid",
     "slug": "neurometric"
   },

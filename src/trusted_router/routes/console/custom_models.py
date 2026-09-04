@@ -72,6 +72,15 @@ def register(app: FastAPI) -> None:
             raise
         return RedirectResponse(url="/console/custom-models?saved=created", status_code=303)
 
+    # Register the action route before the catch-all model path below. Custom
+    # model IDs contain slashes, so the path converter would otherwise consume
+    # the trailing /delete segment and dispatch this POST to the edit handler.
+    @app.post("/console/custom-models/{model_id:path}/delete")
+    def console_delete_custom_model(ctx: ConsoleDep, model_id: str) -> Response:
+        model = _require_owner_model(model_id, ctx.user.id)
+        STORE.delete_custom_model(model.id, owner_user_id=ctx.user.id)
+        return RedirectResponse(url="/console/custom-models?saved=deleted", status_code=303)
+
     @app.post("/console/custom-models/{model_id:path}")
     def console_update_custom_model(
         ctx: ConsoleDep,
@@ -109,13 +118,6 @@ def register(app: FastAPI) -> None:
                 return _custom_model_redirect("error=slug_taken")
             raise
         return RedirectResponse(url="/console/custom-models?saved=updated", status_code=303)
-
-    @app.post("/console/custom-models/{model_id:path}/delete")
-    def console_delete_custom_model(ctx: ConsoleDep, model_id: str) -> Response:
-        model = _require_owner_model(model_id, ctx.user.id)
-        STORE.delete_custom_model(model.id, owner_user_id=ctx.user.id)
-        return RedirectResponse(url="/console/custom-models?saved=deleted", status_code=303)
-
 
 def _render_page(ctx: ConsoleDep, settings: SettingsDep, *, request: Request) -> str:
     models = [_model_view(model) for model in STORE.list_custom_models_for_user(ctx.user.id)]

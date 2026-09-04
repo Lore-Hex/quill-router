@@ -238,8 +238,41 @@
       "supported_parameters": [
         "tool_choice"
       ]
+    },
+    {
+      "display_name": "Document Structured Extraction",
+      "title": "neurometric/document-structured-extraction",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "neurometric/document-structured-extraction",
+      "upstream_id": "neurometric/document-structured-extraction",
+      "context_length": 49152,
+      "max_output_tokens": 24576,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "input_token_price_per_m": 10000,
+      "output_token_price_per_m": 100000
     }
   ],
-  "generated_at": "2026-09-03T17:37:35Z",
-  "model_count": 7
+  "generated_at": "2026-09-03T21:15:09Z",
+  "model_count": 8
 }
