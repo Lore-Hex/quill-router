@@ -31,8 +31,10 @@ before and overstated three separate things.
   (``aws``, ``az``, ``gcloud``, ``docker``, ``curl``, ``ssh``, ``systemctl``,
   ``journalctl``, ``clickhouse-client``, ``sleep``, ...). Each writes its argv
   to a shared ordered log and exits 0;
-* a symlink to **every other entry of /bin and /usr/bin**. Not a curated list of
-  text utilities: all of them, so nothing has to be re-implemented.
+* a symlink to **every other entry of /bin and /usr/bin**, plus ``jq`` from the
+  invoking ``PATH`` on macOS where it is not installed in either directory.
+  This is not a curated reimplementation of text utilities: the real local
+  executables remain available to the script.
 
 So the isolation is *by name*, and its boundary is :data:`STUBBED_COMMANDS`. A
 script that reached the network through some tool nobody listed — ``ftp``,
@@ -250,6 +252,91 @@ if { [ "${0##*/}" = "gcloud" ] || [ "${0##*/}" = "gc" ]; } \
   printf '%s\n' \
     'HARNESS ERROR: gcloud does not support JMESPath filters in resource projections' >&2
   exit 64
+fi
+
+# Model per-region Cloud Run traffic for the secondary-ramp execution tests.
+# The initial table is parsed by DeployScriptHarness.run into a mutable JSON
+# state file; update-traffic changes that state so the script's post-ramp
+# resolver sees the exact split created by its preceding call.
+if [ -n "${HARNESS_CLOUD_RUN_TRAFFIC:-}" ] \
+    && [ "${0##*/}" = "gcloud" ] \
+    && [[ " $* " == *" run services "*" trusted-router "* ]]; then
+  region=""
+  previous=""
+  for argument in "$@"; do
+    case "$argument" in
+      --region=*) region="${argument#--region=}" ;;
+      --region) previous="region"; continue ;;
+    esac
+    if [ "$previous" = "region" ]; then
+      region="$argument"
+    fi
+    previous=""
+  done
+  if [[ " $* " == *" run services update-traffic trusted-router "* ]] \
+      && [[ " $* " == *" --update-tags="* ]]; then
+    tag_assignment=""
+    for argument in "$@"; do
+      case "$argument" in --update-tags=*) tag_assignment="${argument#--update-tags=}" ;; esac
+    done
+    printf '%s\n' "${tag_assignment#*=}" >"${HARNESS_PROBE_TAG_STATE_DIR}/${region}"
+    exit 0
+  fi
+  if [[ " $* " == *" run services update-traffic trusted-router "* ]] \
+      && [[ " $* " == *" --remove-tags="* ]]; then
+    rm -f "${HARNESS_PROBE_TAG_STATE_DIR}/${region}"
+    exit 0
+  fi
+  if [[ " $* " == *" run services update-traffic trusted-router "* ]] \
+      && [[ " $* " == *" --to-revisions="* ]]; then
+    assignments=""
+    for argument in "$@"; do
+      case "$argument" in --to-revisions=*) assignments="${argument#--to-revisions=}" ;; esac
+    done
+    python3 - "$HARNESS_CLOUD_RUN_TRAFFIC_STATE" "$region" "$assignments" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+state = json.loads(path.read_text())
+traffic = []
+for assignment in sys.argv[3].split(","):
+    revision, percent = assignment.rsplit("=", 1)
+    traffic.append({"revisionName": revision, "percent": int(percent)})
+state[sys.argv[2]] = traffic
+path.write_text(json.dumps(state, sort_keys=True) + "\n")
+PY
+    exit 0
+  fi
+  if [[ " $* " == *" run services describe trusted-router "* ]] \
+      && [[ " $* " == *" --format=json "* ]]; then
+    python3 - "$HARNESS_CLOUD_RUN_TRAFFIC_STATE" \
+        "$HARNESS_PROBE_TAG_STATE_DIR" "$region" <<'PY'
+import json
+import pathlib
+import sys
+
+state = json.loads(pathlib.Path(sys.argv[1]).read_text())
+traffic = list(state.get(sys.argv[3], []))
+tag_path = pathlib.Path(sys.argv[2]) / sys.argv[3]
+if tag_path.is_file():
+    traffic.append(
+        {
+            "revisionName": tag_path.read_text().strip(),
+            "percent": 0,
+            "tag": "staged-probe",
+        }
+    )
+print(json.dumps({
+    "metadata": {"annotations": {
+        "run.googleapis.com/ingress": "internal-and-cloud-load-balancing"
+    }},
+    "status": {"traffic": traffic},
+}, separators=(",", ":")))
+PY
+    exit 0
+  fi
 fi
 
 if [ "${HARNESS_PUBLIC_SURFACE_SMOKE:-0}" = "1" ]; then
@@ -1259,6 +1346,24 @@ class ScriptFixture:
 
 
 SCRIPT_FIXTURES: dict[str, ScriptFixture] = {
+    "scripts/deploy/ramp_secondaries.sh": ScriptFixture(
+        env={
+            "PREV_EU": "trusted-router-01300-euold",
+            "PREV_US_EAST4": "trusted-router-01300-useold",
+            "PREV_SOUTHAMERICA_EAST1": "trusted-router-01300-saold",
+            "NEW_EU": "trusted-router-01301-eunew",
+            "NEW_US_EAST4": "trusted-router-01301-usenew",
+            "NEW_SOUTHAMERICA_EAST1": "trusted-router-01301-sanew",
+            "TR_DEPLOY_HOLD_REGIONS": "all",
+            "TR_DEPLOY_MUTEX_OPERATION": "harness-secondary-operation",
+            "TR_DEPLOY_MUTEX_GENERATION": "1",
+            "HARNESS_CLOUD_RUN_TRAFFIC": (
+                "europe-west4=trusted-router-01300-euold:100;"
+                "us-east4=trusted-router-01300-useold:100;"
+                "southamerica-east1=trusted-router-01300-saold:100"
+            ),
+        }
+    ),
     "scripts/deploy/rollout.sh": ScriptFixture(
         env={
             "TR_ALLOW_DEPLOYED_COMBINED_SURFACE": "true",
@@ -1698,6 +1803,12 @@ class DeployScriptHarness:
                     (self.bin / entry.name).symlink_to(entry)
                 except OSError:  # pragma: no cover - unusual filesystems
                     continue
+        # GitHub's Linux image places jq in /usr/bin. Homebrew and Conda do not,
+        # so preserve the same real-local-utility behavior on macOS when jq is
+        # available elsewhere on the invoking PATH.
+        jq = shutil.which("jq")
+        if jq is not None and not (self.bin / "jq").exists():
+            (self.bin / "jq").symlink_to(jq)
 
     def write_script(self, relative: str, text: str) -> str:
         """Add a script to the mirrored checkout, for saboteur cases.
@@ -1807,6 +1918,34 @@ class DeployScriptHarness:
         probe_tag_remove_failures.write_text(
             f"{(extra_env or {}).get('HARNESS_PROBE_TAG_REMOVE_FAILURES', '0')}\n"
         )
+        cloud_run_traffic_state = run_dir / "cloud-run-traffic.json"
+        cloud_run_traffic: dict[str, list[dict[str, object]]] = {}
+        raw_cloud_run_traffic = (extra_env or {}).get(
+            "HARNESS_CLOUD_RUN_TRAFFIC",
+            fixture.env.get("HARNESS_CLOUD_RUN_TRAFFIC", ""),
+        )
+        for region_entry in raw_cloud_run_traffic.split(";"):
+            if not region_entry:
+                continue
+            region, separator, raw_traffic = region_entry.partition("=")
+            if not separator:
+                raise ValueError(
+                    "HARNESS_CLOUD_RUN_TRAFFIC entries must be REGION=REVISION:PERCENT"
+                )
+            traffic: list[dict[str, object]] = []
+            for traffic_entry in raw_traffic.split(","):
+                revision, separator, percent = traffic_entry.rpartition(":")
+                if not separator:
+                    raise ValueError(
+                        "HARNESS_CLOUD_RUN_TRAFFIC splits must be REVISION:PERCENT"
+                    )
+                traffic.append(
+                    {"revisionName": revision, "percent": int(percent)}
+                )
+            cloud_run_traffic[region] = traffic
+        cloud_run_traffic_state.write_text(
+            json.dumps(cloud_run_traffic, sort_keys=True) + "\n"
+        )
 
         trust_fixture = self.root / "trust-release.json"
         if not trust_fixture.exists():
@@ -1848,6 +1987,7 @@ class DeployScriptHarness:
             "HARNESS_PROBE_TAG_REMOVE_FAILURES_STATE": str(
                 probe_tag_remove_failures
             ),
+            "HARNESS_CLOUD_RUN_TRAFFIC_STATE": str(cloud_run_traffic_state),
             "HARNESS_DEPLOY_MUTEX_STATE": str(run_dir / "deploy-mutex.json"),
             "HARNESS_VERIFIER_RC": str(verifier_rc),
             **{k: v for k, v in fixture.env.items() if k not in omit_env},

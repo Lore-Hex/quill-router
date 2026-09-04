@@ -198,6 +198,255 @@ def _gcloud_calls(run: HarnessRun, *command: str) -> list[list[str]]:
     ]
 
 
+_RAMP_SECONDARIES = "scripts/deploy/ramp_secondaries.sh"
+
+
+def _run_secondary_ramp(
+    tmp_path: Path,
+    *,
+    traffic: str,
+    holds: str = "",
+    overrides: dict[str, str] | None = None,
+) -> HarnessRun:
+    isolated = DeployScriptHarness(tmp_path / "secondary-ramp")
+    isolated.write_script(
+        "scripts/deploy/watchdog.py",
+        """#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+
+with open(os.environ["HARNESS_ARGV_LOG"], "a", encoding="utf-8") as log:
+    log.write("watchdog.py\\t" + "\\t".join(sys.argv[1:]) + "\\n")
+if "--baseline-output" in sys.argv:
+    output = pathlib.Path(sys.argv[sys.argv.index("--baseline-output") + 1])
+    output.write_text(json.dumps({"harness": "up"}) + "\\n")
+""",
+    )
+    for relative, command_name in (
+        ("scripts/deploy/assert_no_billing_5xx.sh", "assert_no_billing_5xx.sh"),
+        ("scripts/deploy/regional_quota_reconciler.sh", "regional_quota_reconciler.sh"),
+        ("scripts/deploy/spend_lease_reconciler.sh", "spend_lease_reconciler.sh"),
+    ):
+        isolated.write_script(
+            relative,
+            "#!/usr/bin/env bash\n"
+            "{ printf '%s' '"
+            + command_name
+            + "'; for argument in \"$@\"; do printf '\\t%s' \"$argument\"; done; "
+            "printf '\\n'; } >>\"$HARNESS_ARGV_LOG\"\n",
+        )
+
+    env = {
+        "PREV_EU": "trusted-router-01300-euold",
+        "PREV_US_EAST4": "trusted-router-01300-useold",
+        "PREV_SOUTHAMERICA_EAST1": "trusted-router-01300-saold",
+        "NEW_EU": "trusted-router-01302-eunew",
+        "NEW_US_EAST4": "trusted-router-01302-usenew",
+        "NEW_SOUTHAMERICA_EAST1": "trusted-router-01302-sanew",
+        "TR_DEPLOY_HOLD_REGIONS": holds,
+        "TR_DEPLOY_MUTEX_OPERATION": "harness-secondary-operation",
+        "TR_DEPLOY_MUTEX_GENERATION": "1",
+        "HARNESS_CLOUD_RUN_TRAFFIC": traffic,
+        **(overrides or {}),
+    }
+    return isolated.run(_RAMP_SECONDARIES, extra_env=env, timeout=30)
+
+
+def _regional_traffic_updates(run: HarnessRun, region: str) -> list[str]:
+    updates: list[str] = []
+    for call in run.calls:
+        if call[:5] != [
+            "gcloud",
+            "run",
+            "services",
+            "update-traffic",
+            "trusted-router",
+        ]:
+            continue
+        if f"--region={region}" not in call:
+            continue
+        updates.extend(
+            argument.removeprefix("--to-revisions=")
+            for argument in call
+            if argument.startswith("--to-revisions=")
+        )
+    return updates
+
+
+def _regional_update_traffic_calls(run: HarnessRun, region: str) -> list[list[str]]:
+    return [
+        call
+        for call in run.calls
+        if call[:5]
+        == ["gcloud", "run", "services", "update-traffic", "trusted-router"]
+        and f"--region={region}" in call
+    ]
+
+
+def _default_secondary_traffic() -> str:
+    return (
+        "europe-west4=trusted-router-01300-euold:100;"
+        "us-east4=trusted-router-01300-useold:100;"
+        "southamerica-east1=trusted-router-01300-saold:100"
+    )
+
+
+def test_secondary_hold_never_updates_held_region_while_siblings_ramp(
+    tmp_path: Path,
+) -> None:
+    run = _run_secondary_ramp(
+        tmp_path,
+        traffic=_default_secondary_traffic(),
+        holds="europe-west4",
+    )
+
+    assert run.returncode == 0, summarise(run)
+    assert _regional_update_traffic_calls(run, "europe-west4") == []
+    assert _regional_traffic_updates(run, "us-east4") == [
+        "trusted-router-01302-usenew=10,trusted-router-01300-useold=90",
+        "trusted-router-01302-usenew=50,trusted-router-01300-useold=50",
+        "trusted-router-01302-usenew=100",
+    ]
+    assert _regional_traffic_updates(run, "southamerica-east1") == [
+        "trusted-router-01302-sanew=10,trusted-router-01300-saold=90",
+        "trusted-router-01302-sanew=50,trusted-router-01300-saold=50",
+        "trusted-router-01302-sanew=100",
+    ]
+
+
+def test_secondary_ramp_never_routes_to_job_start_snapshot_after_pin(
+    tmp_path: Path,
+) -> None:
+    traffic = (
+        "europe-west4=trusted-router-01302-eunew:100;"
+        "us-east4=trusted-router-01301-usehot:100;"
+        "southamerica-east1=trusted-router-01301-sahot:100"
+    )
+    run = _run_secondary_ramp(
+        tmp_path,
+        traffic=traffic,
+        overrides={
+            "PREV_US_EAST4": "trusted-router-01301-usehot",
+            "PREV_SOUTHAMERICA_EAST1": "trusted-router-01301-sahot",
+        },
+    )
+
+    assert run.returncode == 0, summarise(run)
+    all_updates = [
+        assignment
+        for region in ("europe-west4", "us-east4", "southamerica-east1")
+        for assignment in _regional_traffic_updates(run, region)
+    ]
+    assert not any("trusted-router-01300-euold" in update for update in all_updates)
+    assert _regional_update_traffic_calls(run, "europe-west4") == []
+    assert _regional_traffic_updates(run, "us-east4") == [
+        "trusted-router-01302-usenew=10,trusted-router-01301-usehot=90",
+        "trusted-router-01302-usenew=50,trusted-router-01301-usehot=50",
+        "trusted-router-01302-usenew=100",
+    ]
+    assert _regional_traffic_updates(run, "southamerica-east1") == [
+        "trusted-router-01302-sanew=10,trusted-router-01301-sahot=90",
+        "trusted-router-01302-sanew=50,trusted-router-01301-sahot=50",
+        "trusted-router-01302-sanew=100",
+    ]
+
+
+def test_secondary_ramp_refuses_older_new_revision_without_traffic_mutation(
+    tmp_path: Path,
+) -> None:
+    run = _run_secondary_ramp(
+        tmp_path,
+        traffic=_default_secondary_traffic(),
+        overrides={"NEW_EU": "trusted-router-01299-eunew"},
+    )
+
+    assert run.returncode != 0
+    assert _regional_update_traffic_calls(run, "europe-west4") == []
+    assert _regional_traffic_updates(run, "us-east4") == []
+    assert _regional_traffic_updates(run, "southamerica-east1") == []
+    assert "held= ramped= refused=europe-west4" in run.stdout
+
+
+def test_secondary_ramp_refuses_ambiguous_serving_split_without_mutation(
+    tmp_path: Path,
+) -> None:
+    traffic = _default_secondary_traffic().replace(
+        "europe-west4=trusted-router-01300-euold:100",
+        "europe-west4=trusted-router-01300-euold:50,"
+        "trusted-router-01301-euhot:50",
+    )
+    run = _run_secondary_ramp(tmp_path, traffic=traffic)
+
+    assert run.returncode != 0
+    assert _regional_update_traffic_calls(run, "europe-west4") == []
+    assert "split=trusted-router-01300-euold:50,trusted-router-01301-euhot:50" in (
+        run.stderr
+    )
+    assert "held= ramped= refused=europe-west4" in run.stdout
+
+
+def test_secondary_operator_intervention_is_held_and_siblings_continue(
+    tmp_path: Path,
+) -> None:
+    traffic = _default_secondary_traffic().replace(
+        "trusted-router-01300-euold", "trusted-router-01301-euhot"
+    )
+    run = _run_secondary_ramp(tmp_path, traffic=traffic)
+
+    assert run.returncode == 0, summarise(run)
+    assert _regional_update_traffic_calls(run, "europe-west4") == []
+    assert _regional_traffic_updates(run, "us-east4")
+    assert _regional_traffic_updates(run, "southamerica-east1")
+    assert "held=europe-west4" in run.stdout
+
+
+def test_secondary_already_on_new_still_runs_watchdog_and_billing_gate(
+    tmp_path: Path,
+) -> None:
+    traffic = _default_secondary_traffic().replace(
+        "trusted-router-01300-euold", "trusted-router-01302-eunew"
+    )
+    run = _run_secondary_ramp(
+        tmp_path,
+        traffic=traffic,
+        holds="us-east4,southamerica-east1",
+    )
+
+    assert run.returncode == 0, summarise(run)
+    assert _regional_update_traffic_calls(run, "europe-west4") == []
+    assert any(
+        call[0] == "watchdog.py" and "europe-west4" in call for call in run.calls
+    )
+    assert any(
+        call[0] == "assert_no_billing_5xx.sh" and call[1] == "europe-west4"
+        for call in run.calls
+    )
+
+
+def test_secondary_reconcilers_launch_when_every_region_is_held(
+    tmp_path: Path,
+) -> None:
+    run = _run_secondary_ramp(
+        tmp_path,
+        traffic=_default_secondary_traffic(),
+        holds="all",
+    )
+
+    assert run.returncode == 0, summarise(run)
+    assert [call for call in run.calls if call[0] == "regional_quota_reconciler.sh"]
+    assert [call for call in run.calls if call[0] == "spend_lease_reconciler.sh"]
+    assert all(
+        not _regional_update_traffic_calls(run, region)
+        for region in ("europe-west4", "us-east4", "southamerica-east1")
+    )
+    assert (
+        "held=europe-west4,us-east4,southamerica-east1 ramped= refused="
+        in run.stdout
+    )
+
+
 def _initialize_bake_harness_repo(harness: DeployScriptHarness) -> str:
     def run_git(*args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
         return subprocess.run(  # noqa: S603 - fixed git operations in a temp repo
