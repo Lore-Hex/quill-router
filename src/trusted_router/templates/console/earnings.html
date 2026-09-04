@@ -6,7 +6,7 @@
 <section class="panel">
   <div class="panel-head"><h2>Your earnings</h2><span class="pill">70% creator share</span></div>
   <div class="panel-body">
-    <p class="earnings-copy">You receive 70% of custom model and registered app markup. Transfer earnings into a TrustedRouter workspace, or cash out at least $100 in USD through Routable.</p>
+    <p class="earnings-copy">You receive 70% of custom model and registered app markup. Transfer earnings into a TrustedRouter workspace, or cash out at least $100 in USD.</p>
     <div class="metrics">
       <div class="metric"><div class="label">Earned</div><div class="value earnings-money">{{ summary.total_earned_display }}</div><div class="sub">lifetime</div></div>
       <div class="metric"><div class="label">Transferred</div><div class="value earnings-money">{{ summary.total_transferred_display }}</div><div class="sub">lifetime</div></div>
@@ -24,9 +24,9 @@
     {% elif not payouts.identity_verified %}
       <p>Complete <a href="/console/account/verification">identity verification</a> before enabling a monetized app or requesting a USD cash-out.</p>
     {% elif not payouts.email_verified %}
-      <p class="empty">Attach and verify an email address before using Routable. Wallet-only accounts can still transfer earnings into TrustedRouter workspaces.</p>
+      <p class="empty">Attach and verify an email address before requesting a USD cash-out. Wallet-only accounts can still transfer earnings into TrustedRouter workspaces.</p>
     {% elif not payouts.profile or payouts.profile.company_status != 'accepted' or not payouts.profile.payment_method_ready %}
-      <p>Routable securely collects your bank and tax details. TrustedRouter stores only opaque account identifiers and payout status.</p>
+      <p>A secure hosted payout flow collects your bank and tax details. TrustedRouter stores only opaque account identifiers and payout status.</p>
       <form class="form" data-routable-onboarding-form>
         <input type="hidden" name="recipient_type" value="personal">
         <input type="hidden" name="country_code" value="US">
@@ -37,7 +37,7 @@
         <button class="btn primary" type="submit">Set up USD cash-outs</button>
       </form>
     {% else %}
-      <p>Your Routable payout account is ready. Cash-outs are submitted to Routable for transfer to your saved bank account.</p>
+      <p>Your payout account is ready. Cash-outs transfer to your saved bank account.</p>
       <form class="form" data-routable-cashout-form>
         <label>Amount (USD)
           <input name="amount" type="number" min="100" max="{{ payout_available_decimal }}" step="0.01" placeholder="100.00" required>

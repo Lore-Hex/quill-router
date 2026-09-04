@@ -174,6 +174,22 @@ def test_signup_grant_amount_is_not_advertised(client: TestClient) -> None:
         assert "ten cents" not in source
 
 
+def test_creator_cashout_copy_is_processor_neutral(client: TestClient) -> None:
+    for path in ("/sign-in-with-trustedrouter", "/docs/custom-models"):
+        response = client.get(path)
+        assert response.status_code == 200, f"{path} returned {response.status_code}"
+        assert "$100" in response.text
+        assert "Routable" not in response.text
+
+    for path in (
+        Path("docs/sign-in-with-trustedrouter.md"),
+        Path("docs/custom-models.md"),
+    ):
+        source = path.read_text(encoding="utf-8")
+        assert "$100" in source
+        assert "Routable" not in source
+
+
 def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
     paths = [
         "/compare/openrouter",
