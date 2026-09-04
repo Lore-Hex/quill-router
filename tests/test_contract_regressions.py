@@ -229,6 +229,8 @@ def _production_app(surface: str):
         values.update(
             {
                 "internal_gateway_token": internal_token,
+                "operator_token": "prod-operator-token",
+                "operator_identities": "ops@example.com",
                 "observer_internal_token": "prod-observer-token",
                 "settle_outbox_enabled": True,
             }

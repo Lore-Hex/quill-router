@@ -67,6 +67,19 @@ _TYPED_DEFAULTS: dict[str, dict[str, Any]] = {
     },
 }
 
+_TYPED_PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
+    "tr_credit_balance": ("workspace_id", "shard"),
+    "tr_earnings_balance": ("user_id", "shard"),
+    "tr_user_lifetime_topup": ("user_id",),
+    "tr_key_limit": ("key_hash", "shard"),
+    "tr_trust_event": ("workspace_id", "event_id"),
+    "tr_trust_inbox": ("provider", "adverse_ref"),
+    "tr_owner_workspace": ("owner_user_id", "workspace_id"),
+    "tr_trust_override": ("workspace_id",),
+    "tr_trust_demotion_remainder": ("owner_user_id", "workspace_id"),
+    "tr_trust_backfill": ("provider", "account_id", "environment"),
+}
+
 
 def _apply_upsert_typed(
     typed: dict, versions: dict, table: str, columns: Any, value_tuple: tuple, version: int
@@ -76,8 +89,13 @@ def _apply_upsert_typed(
     the supplied columns and leave the rest intact. Shared by the transaction
     and batch commit paths so partial typed-row seed/update mutations behave
     identically through either writer."""
-    pk = (value_tuple[0], value_tuple[1])
     incoming = dict(zip(columns, value_tuple, strict=True))
+    key_columns = _TYPED_PRIMARY_KEYS.get(table)
+    pk = (
+        tuple(incoming[column] for column in key_columns)
+        if key_columns is not None
+        else (value_tuple[0], value_tuple[1])
+    )
     table_rows = typed.setdefault(table, {})
     existing = table_rows.get(pk)
     row = dict(existing) if existing is not None else dict(_TYPED_DEFAULTS.get(table, {}))
@@ -933,6 +951,27 @@ class _FakeTransaction:
             )
             self.pending_writes.append(("update_typed", "tr_trust_event", pk, new))
             return 1
+        if sql.startswith("UPDATE tr_credit_balance SET trust_tier=0"):
+            updated = 0
+            for pk in self.db.typed.get("tr_credit_balance", {}):
+                if pk[0] != p["pk"] or not 0 <= int(pk[1]) < int(p["shard_count"]):
+                    continue
+                rec = self._typed_current("tr_credit_balance", pk)
+                if rec is None:
+                    continue
+                new = dict(
+                    rec,
+                    trust_tier=0,
+                    trust_latched_at=rec.get("trust_latched_at") or p["now"],
+                    billing_pause_causes=list(p["causes"]),
+                    pause_epoch=int(rec.get("pause_epoch") or 0) + 1,
+                    updated_at=p["now"],
+                )
+                self.pending_writes.append(
+                    ("update_typed", "tr_credit_balance", pk, new)
+                )
+                updated += 1
+            return updated
         if sql.startswith("UPDATE tr_credit_balance SET trust_latched_at=COALESCE"):
             updated = 0
             for pk in self.db.typed.get("tr_credit_balance", {}):
@@ -1892,7 +1931,7 @@ class _FakeTransaction:
                 kind, entity_id = entry[0], entry[1]
                 self.pending_writes.append(("delete", table, kind, entity_id))
             else:
-                self.pending_writes.append(("delete_typed", table, (entry[0], entry[1])))
+                self.pending_writes.append(("delete_typed", table, tuple(entry)))
 
 
 class _FakeSnapshot:
@@ -1984,7 +2023,7 @@ class _FakeBatch:
                 kind, entity_id = entry[0], entry[1]
                 self.pending_writes.append(("delete", table, kind, entity_id))
             else:
-                self.pending_writes.append(("delete_typed", table, (entry[0], entry[1])))
+                self.pending_writes.append(("delete_typed", table, tuple(entry)))
 
 
 def _require_pred(sql: str, needle: str, what: str) -> None:
@@ -2765,6 +2804,24 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+
+    def _typed_rows(table: str) -> list[dict[str, Any]]:
+        keys = set(db.typed.get(table, {}))
+        if txn is not None:
+            for op in txn.pending_writes:
+                if op[0] == "upsert_typed" and op[1] == table:
+                    incoming = dict(zip(op[2], op[3], strict=True))
+                    key_columns = _TYPED_PRIMARY_KEYS[table]
+                    keys.add(tuple(incoming[column] for column in key_columns))
+                elif op[0] in {"insert_typed_dml", "update_typed", "delete_typed"} and op[1] == table:
+                    keys.add(op[2])
+        rows = [
+            txn._typed_current(table, pk)
+            if txn is not None
+            else db.typed.get(table, {}).get(pk)
+            for pk in keys
+        ]
+        return [row for row in rows if row is not None]
 
     def _claim_bodies() -> list[dict]:
         out = []
@@ -3824,6 +3881,50 @@ def _execute_sql(
                 {str(pk[0]) for pk in db.typed.get("tr_credit_balance", {})}
             )
         ]
+    if "FROM tr_owner_workspace" in sql:
+        rows = _typed_rows("tr_owner_workspace")
+        if "owner" in params:
+            rows = [
+                row for row in rows if row.get("owner_user_id") == params["owner"]
+            ]
+        rows.sort(
+            key=lambda row: (
+                str(row.get("owner_user_id")), str(row.get("workspace_id"))
+            )
+        )
+        columns = [
+            column.strip()
+            for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [[row.get(column) for column in columns] for row in rows]
+    if "FROM tr_trust_override" in sql:
+        rows = [
+            row
+            for row in _typed_rows("tr_trust_override")
+            if row.get("workspace_id") == params["pk"]
+        ]
+        columns = [
+            column.strip()
+            for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [[row.get(column) for column in columns] for row in rows]
+    if "FROM tr_trust_demotion_remainder" in sql:
+        rows = _typed_rows("tr_trust_demotion_remainder")
+        if "owner" in params:
+            rows = [
+                row
+                for row in rows
+                if row.get("owner_user_id") == params["owner"]
+                and row.get("workspace_id") == params["workspace"]
+            ]
+        rows.sort(key=lambda row: row.get("created_at"))
+        if "limit" in params:
+            rows = rows[: int(params["limit"])]
+        columns = [
+            column.strip()
+            for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [[row.get(column) for column in columns] for row in rows]
     if "FROM tr_trust_event" in sql:
         cols = [
             column.strip()
@@ -3944,6 +4045,23 @@ def _execute_sql(
             ]
             recs = [rec for rec in recs if rec is not None]
             return [[rec.get(c) for c in cols] for rec in recs]
+    if "SELECT id, body FROM tr_entities WHERE kind='workspace'" in sql:
+        rows = sorted(
+            (entity_id, row.body)
+            for (row_kind, entity_id), row in db.rows.items()
+            if row_kind == "workspace"
+        )
+        return [[entity_id, body] for entity_id, body in rows]
+    if "kind IN ('spend_lease','regional_quota_lease')" in sql:
+        rows: list[list[str]] = []
+        for (row_kind, entity_id), row in db.rows.items():
+            if row_kind not in {"spend_lease", "regional_quota_lease"}:
+                continue
+            body = json.loads(row.body)
+            if body.get("workspace_id") == params["pk"]:
+                rows.append([row_kind, entity_id, row.body])
+        rows.sort(key=lambda row: (row[0], row[1]))
+        return rows
     if "AND id>@after" in sql:
         # Paged PK-prefix scan of one kind (the credit-transfer recovery
         # queue). Reads committed rows plus this transaction's own pending
@@ -4191,6 +4309,10 @@ def make_fake_store(
     store._database = db
     store._bt_table = bt
     store.request_record_write_mode = request_record_write_mode
+    store.max_workspaces_per_owner = 25
+    store.trust_qualifying_providers = frozenset({"stripe", "x402"})
+    store.trust_tier3_min_days = 30
+    store.trust_tier3_min_paid_microdollars = 50_000_000
     store._generation_records_enabled = generation_records_enabled
     store._bigtable_writes_enabled = bigtable_writes_enabled
     # `object.__new__` skips __init__, so every attribute the real constructor

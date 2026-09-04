@@ -189,6 +189,8 @@ def test_internal_surface_route_inventory_matches_capability_audit() -> None:
         ("POST", "/internal/gateway/video/jobs/{job_id}/update"),
         ("POST", "/internal/gateway/video/jobs/{job_id}/cleaned"),
         ("POST", "/internal/gateway/fetch-image"),
+        ("POST", "/internal/admin/workspaces/{workspace_id}/trust-override"),
+        ("POST", "/internal/admin/workspaces/{workspace_id}/abuse"),
         ("POST", "/internal/reconcile/generation-activity"),
         ("POST", "/internal/federation/resolve-key"),
         ("POST", "/internal/federation/apply-usage"),

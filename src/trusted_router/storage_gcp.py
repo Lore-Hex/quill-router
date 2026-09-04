@@ -92,6 +92,8 @@ from trusted_router.storage import (
     SignupResult,
     SyntheticProbeSample,
     SyntheticRollup,
+    TrustEvent,
+    TrustOverride,
     User,
     UserProvidedModel,
     VerificationToken,
@@ -219,7 +221,13 @@ from trusted_router.storage_models import (
 from trusted_router.storage_operational_analytics import (
     OperationalAnalyticsWriter,
 )
-from trusted_router.trust_tiers import payment_or_grant_event
+from trusted_router.trust_ownership import (
+    TRUST_OWNER_MUTATION_BUDGET,
+    TRUST_REPLICATED_COLUMN_COUNT,
+    WorkspaceOwnerLimitExceeded,
+    require_owner_trust_budget,
+)
+from trusted_router.trust_tiers import compute_trust_tier, payment_or_grant_event
 from trusted_router.types import IdentityVerificationStatus, UsageType
 
 T = TypeVar("T")
@@ -376,6 +384,10 @@ class SpannerBigtableStore:
         regional_quota_ledger_timeout_seconds: float = 4.0,
         spend_lease_bigtable_table: str = "trustedrouter-spend-lease",
         spend_lease_bigtable_app_profiles: dict[str, str] | None = None,
+        max_workspaces_per_owner: int = 25,
+        trust_qualifying_providers: frozenset[str] = frozenset({"stripe", "x402"}),
+        trust_tier3_min_days: int = 30,
+        trust_tier3_min_paid_microdollars: int = 50_000_000,
     ) -> None:
         if not spanner_instance_id or not spanner_database_id:
             raise ValueError("Spanner instance and database IDs are required")
@@ -395,6 +407,12 @@ class SpannerBigtableStore:
         if not bigtable_enabled and analytics_read_mode != "clickhouse-only":
             raise ValueError("Bigtable-free storage requires clickhouse-only reads")
         self.request_record_write_mode = request_record_write_mode
+        self.max_workspaces_per_owner = int(max_workspaces_per_owner)
+        self.trust_qualifying_providers = trust_qualifying_providers
+        self.trust_tier3_min_days = int(trust_tier3_min_days)
+        self.trust_tier3_min_paid_microdollars = int(
+            trust_tier3_min_paid_microdollars
+        )
         self._generation_records_enabled = generation_records_enabled
         self._bigtable_enabled = bigtable_enabled
         self._bigtable_writes_enabled = bigtable_writes_enabled and bigtable_enabled
@@ -808,7 +826,10 @@ class SpannerBigtableStore:
                     return user
 
             new_user = User(
-                id=str(uuid.uuid4()), email=normalized_email, email_verified=email_verified
+                id=str(uuid.uuid4()),
+                email=normalized_email,
+                email_verified=email_verified,
+                owner_workspace_count=1,
             )
             workspace = Workspace(
                 id=str(uuid.uuid4()),
@@ -836,6 +857,7 @@ class SpannerBigtableStore:
                 initial_total,
                 shard_count=credit.shard_count,
             )
+            self._insert_owner_inventory_tx(transaction, new_user.id, workspace.id)
             return new_user
 
         return self._run_in_transaction(txn)
@@ -947,6 +969,57 @@ class SpannerBigtableStore:
                 values=[trust_event_row(event)],
             )
 
+    def _owner_workspace_ids_tx(self, transaction: Any, owner_user_id: str) -> list[str]:
+        return [
+            str(row[0])
+            for row in transaction.execute_sql(
+                "SELECT workspace_id FROM tr_owner_workspace "
+                "WHERE owner_user_id=@owner ORDER BY workspace_id",
+                params={"owner": owner_user_id},
+                param_types={"owner": self._param_types.STRING},
+            )
+        ]
+
+    def _owner_shard_counts_tx(
+        self, transaction: Any, owner_user_id: str
+    ) -> tuple[list[str], list[int]]:
+        workspace_ids = self._owner_workspace_ids_tx(transaction, owner_user_id)
+        counts: list[int] = []
+        for workspace_id in workspace_ids:
+            account = self._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
+            if account is None:
+                raise RuntimeError("owner inventory references a missing credit account")
+            counts.append(credit_shard_count(account))
+        return workspace_ids, counts
+
+    def _require_owner_growth_tx(
+        self,
+        transaction: Any,
+        owner_user_id: str,
+        *,
+        added_shards: int,
+        enforce_count: bool,
+    ) -> tuple[list[str], User | None]:
+        workspace_ids, shard_counts = self._owner_shard_counts_tx(
+            transaction, owner_user_id
+        )
+        if enforce_count and len(workspace_ids) >= self.max_workspaces_per_owner:
+            raise WorkspaceOwnerLimitExceeded(
+                "owner has reached TR_MAX_WORKSPACES_PER_OWNER"
+            )
+        require_owner_trust_budget([*shard_counts, added_shards])
+        owner = self._read_entity_tx(transaction, "user", owner_user_id, User)
+        return workspace_ids, owner
+
+    def _insert_owner_inventory_tx(
+        self, transaction: Any, owner_user_id: str, workspace_id: str
+    ) -> None:
+        transaction.insert_or_update(
+            table="tr_owner_workspace",
+            columns=("owner_user_id", "workspace_id"),
+            values=[(owner_user_id, workspace_id)],
+        )
+
     # Auth sessions delegate to storage_gcp_auth_sessions.SpannerAuthSessions.
     def create_auth_session(
         self,
@@ -1052,19 +1125,31 @@ class SpannerBigtableStore:
             workspace_id=workspace.id,
             shard_count=DEFAULT_NEW_BILLING_SHARDS,
         )
-        with self._database.batch() as batch:
-            self._write_entity_batch(batch, "workspace", workspace.id, workspace)
-            self._write_entity_batch(
-                batch, "member", _member_id(workspace.id, owner_user_id), member
+        def txn(transaction: Any) -> Workspace:
+            owned, owner = self._require_owner_growth_tx(
+                transaction,
+                owner_user_id,
+                added_shards=credit.shard_count,
+                enforce_count=True,
             )
-            self._write_entity_batch(batch, "credit", workspace.id, credit)
+            self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
+            self._write_entity_tx(
+                transaction, "member", _member_id(workspace.id, owner_user_id), member
+            )
+            self._write_entity_tx(transaction, "credit", workspace.id, credit)
             self._seed_credit_balance_on_create(
-                batch,
+                transaction,
                 workspace.id,
                 initial_total,
                 shard_count=credit.shard_count,
             )
-        return workspace
+            self._insert_owner_inventory_tx(transaction, owner_user_id, workspace.id)
+            if owner is not None:
+                owner.owner_workspace_count = len(owned) + 1
+                self._write_entity_tx(transaction, "user", owner.id, owner)
+            return workspace
+
+        return self._run_in_transaction(txn)
 
     def list_workspaces_for_user(self, user_id: str) -> list[Workspace]:
         members = self._list_entities("member", suffix=f"#{user_id}", cls=Member)
@@ -1096,6 +1181,100 @@ class SpannerBigtableStore:
             workspace = self._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
             if workspace is None:
                 return None
+            owner: User | None = None
+            account: CreditAccount | None = None
+            owned: list[str] = []
+            if deleted is not None and deleted != workspace.deleted:
+                account = self._read_entity_tx(
+                    transaction, "credit", workspace_id, CreditAccount
+                )
+                if account is None:
+                    raise RuntimeError("workspace is missing its credit account")
+                if deleted:
+                    owned = self._owner_workspace_ids_tx(
+                        transaction, workspace.owner_user_id
+                    )
+                    owner = self._read_entity_tx(
+                        transaction, "user", workspace.owner_user_id, User
+                    )
+                    transaction.delete(
+                        "tr_owner_workspace",
+                        self._spanner.KeySet(
+                            keys=[(workspace.owner_user_id, workspace_id)]
+                        ),
+                    )
+                    now = dt.datetime.now(dt.UTC)
+                    shard_rows = list(
+                        transaction.execute_sql(
+                            "SELECT shard, trust_latched_at FROM tr_credit_balance "
+                            "WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count "
+                            "ORDER BY shard",
+                            params={
+                                "pk": workspace_id,
+                                "shard_count": credit_shard_count(account),
+                            },
+                            param_types={
+                                "pk": self._param_types.STRING,
+                                "shard_count": self._param_types.INT64,
+                            },
+                        )
+                    )
+                    if len(shard_rows) != credit_shard_count(account):
+                        raise RuntimeError(
+                            "configured tr_credit_balance shard set is incomplete"
+                        )
+                    lease_rows = list(
+                        transaction.execute_sql(
+                            "SELECT kind, id, body FROM tr_entities WHERE "
+                            "kind IN ('spend_lease','regional_quota_lease') "
+                            "AND JSON_VALUE(body, '$.workspace_id')=@pk ORDER BY kind, id",
+                            params={"pk": workspace_id},
+                            param_types={"pk": self._param_types.STRING},
+                        )
+                    )
+                    for lease_kind, lease_id, raw_body in lease_rows:
+                        body = json.loads(str(raw_body))
+                        if lease_kind == "spend_lease" and body.get("state") != "CLOSED":
+                            body["state"] = "TOMBSTONED"
+                            body["closing_at"] = now.isoformat()
+                        elif (
+                            lease_kind == "regional_quota_lease"
+                            and body.get("state") != "closed"
+                        ):
+                            body["state"] = "quarantined"
+                            body["last_error"] = "workspace_archived"
+                            body["updated_at"] = now.isoformat()
+                        else:
+                            continue
+                        self._write_entity_tx(
+                            transaction,
+                            str(lease_kind),
+                            str(lease_id),
+                            body,
+                        )
+                    transaction.insert_or_update(
+                        table=CREDIT_BALANCE_TABLE,
+                        columns=(
+                            "workspace_id",
+                            "shard",
+                            "trust_tier",
+                            "trust_latched_at",
+                        ),
+                        values=[
+                            (workspace_id, int(shard), 0, latched_at or now)
+                            for shard, latched_at in shard_rows
+                        ],
+                    )
+                else:
+                    owned, owner = self._require_owner_growth_tx(
+                        transaction,
+                        workspace.owner_user_id,
+                        added_shards=credit_shard_count(account),
+                        enforce_count=True,
+                    )
+                    self._insert_owner_inventory_tx(
+                        transaction, workspace.owner_user_id, workspace_id
+                    )
             if name is not None:
                 workspace.name = name
             if deleted is not None:
@@ -1110,10 +1289,658 @@ class SpannerBigtableStore:
                 workspace.billing_paused = bool(causes)
             if billing_pause_reason is not None:
                 workspace.billing_pause_reason = billing_pause_reason
+            if owner is not None and deleted is not None:
+                owner.owner_workspace_count = (
+                    max(0, len(owned) - 1) if deleted else len(owned) + 1
+                )
+                self._write_entity_tx(transaction, "user", owner.id, owner)
             self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
             return None if workspace.deleted else workspace
 
         return self._run_in_transaction(txn)
+
+    def transfer_workspace_ownership(
+        self, workspace_id: str, new_owner_user_id: str
+    ) -> Workspace:
+        def txn(transaction: Any) -> Workspace:
+            workspace = self._read_entity_tx(
+                transaction, "workspace", workspace_id, Workspace
+            )
+            account = self._read_entity_tx(
+                transaction, "credit", workspace_id, CreditAccount
+            )
+            if workspace is None or workspace.deleted or account is None:
+                raise ValueError("workspace_not_found")
+            old_owner_user_id = workspace.owner_user_id
+            if old_owner_user_id == new_owner_user_id:
+                return workspace
+            new_owned, new_owner = self._require_owner_growth_tx(
+                transaction,
+                new_owner_user_id,
+                added_shards=credit_shard_count(account),
+                enforce_count=True,
+            )
+            old_owned = self._owner_workspace_ids_tx(transaction, old_owner_user_id)
+            old_owner = self._read_entity_tx(
+                transaction, "user", old_owner_user_id, User
+            )
+            transaction.delete(
+                "tr_owner_workspace",
+                self._spanner.KeySet(keys=[(old_owner_user_id, workspace_id)]),
+            )
+            self._insert_owner_inventory_tx(
+                transaction, new_owner_user_id, workspace_id
+            )
+            workspace.owner_user_id = new_owner_user_id
+            self._write_entity_tx(transaction, "workspace", workspace_id, workspace)
+            old_member = self._read_entity_tx(
+                transaction,
+                "member",
+                _member_id(workspace_id, old_owner_user_id),
+                Member,
+            )
+            if old_member is not None:
+                old_member.role = "admin"
+                self._write_entity_tx(
+                    transaction,
+                    "member",
+                    _member_id(workspace_id, old_owner_user_id),
+                    old_member,
+                )
+            self._write_entity_tx(
+                transaction,
+                "member",
+                _member_id(workspace_id, new_owner_user_id),
+                Member(
+                    workspace_id=workspace_id,
+                    user_id=new_owner_user_id,
+                    role="owner",
+                ),
+            )
+            if old_owner is not None:
+                old_owner.owner_workspace_count = max(0, len(old_owned) - 1)
+                self._write_entity_tx(transaction, "user", old_owner.id, old_owner)
+            if new_owner is not None:
+                new_owner.owner_workspace_count = len(new_owned) + 1
+                self._write_entity_tx(transaction, "user", new_owner.id, new_owner)
+            return workspace
+
+        return self._run_in_transaction(txn)
+
+    def _workspace_trust_events_tx(
+        self, transaction: Any, workspace_id: str
+    ) -> list[TrustEvent]:
+        rows = transaction.execute_sql(
+            "SELECT " + ", ".join(TRUST_EVENT_COLUMNS) + " FROM tr_trust_event "  # noqa: S608
+            "WHERE workspace_id=@pk",
+            params={"pk": workspace_id},
+            param_types={"pk": self._param_types.STRING},
+        )
+        return [TrustEvent(*row) for row in rows]
+
+    def set_workspace_trust_override(
+        self,
+        workspace_id: str,
+        *,
+        tier: int,
+        identity_bypass: bool,
+        operator_identity: str,
+        reason: str,
+    ) -> TrustOverride:
+        if isinstance(tier, bool) or not 0 <= int(tier) <= 3:
+            raise ValueError("trust override tier must be between 0 and 3")
+        if not operator_identity.strip() or not reason.strip():
+            raise ValueError("operator identity and reason are required")
+
+        def txn(transaction: Any) -> TrustOverride:
+            workspace = self._read_entity_tx(
+                transaction, "workspace", workspace_id, Workspace
+            )
+            account = self._read_entity_tx(
+                transaction, "credit", workspace_id, CreditAccount
+            )
+            if workspace is None or workspace.deleted or account is None:
+                raise ValueError("workspace_not_found")
+            owner = self._read_entity_tx(
+                transaction, "user", workspace.owner_user_id, User
+            )
+            shard_count = credit_shard_count(account)
+            shard_rows = list(
+                transaction.execute_sql(
+                    "SELECT shard, trust_latched_at FROM tr_credit_balance "
+                    "WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count "
+                    "ORDER BY shard",
+                    params={"pk": workspace_id, "shard_count": shard_count},
+                    param_types={
+                        "pk": self._param_types.STRING,
+                        "shard_count": self._param_types.INT64,
+                    },
+                )
+            )
+            if [int(row[0]) for row in shard_rows] != list(range(shard_count)):
+                raise RuntimeError("configured tr_credit_balance shard set is incomplete")
+            latches = {row[1] for row in shard_rows}
+            if len(latches) != 1:
+                raise RuntimeError("replicated trust latch diverged")
+            now = dt.datetime.now(dt.UTC)
+            decision = compute_trust_tier(
+                self._workspace_trust_events_tx(transaction, workspace_id),
+                owner_identity_status=owner.identity_status if owner else "none",
+                trust_latched_at=shard_rows[0][1],
+                trust_override_tier=int(tier),
+                qualifying_providers=self.trust_qualifying_providers,
+                tier3_min_days=self.trust_tier3_min_days,
+                tier3_min_paid_microdollars=self.trust_tier3_min_paid_microdollars,
+                now=now,
+                identity_bypass=bool(identity_bypass),
+            )
+            record = TrustOverride(
+                workspace_id=workspace_id,
+                tier=int(tier),
+                identity_bypass=bool(identity_bypass),
+                operator_identity=operator_identity.strip(),
+                reason=reason.strip(),
+                set_at=now,
+            )
+            transaction.insert_or_update(
+                table="tr_trust_override",
+                columns=(
+                    "workspace_id",
+                    "tier",
+                    "identity_bypass",
+                    "operator_identity",
+                    "reason",
+                    "set_at",
+                ),
+                values=[(
+                    record.workspace_id,
+                    record.tier,
+                    record.identity_bypass,
+                    record.operator_identity,
+                    record.reason,
+                    record.set_at,
+                )],
+            )
+            transaction.insert_or_update(
+                table=CREDIT_BALANCE_TABLE,
+                columns=(
+                    "workspace_id",
+                    "shard",
+                    "trust_tier",
+                    "trust_computed_at",
+                    "trust_override_tier",
+                ),
+                values=[
+                    (
+                        workspace_id,
+                        int(shard),
+                        decision.effective_tier,
+                        now,
+                        int(tier),
+                    )
+                    for shard, _latch in shard_rows
+                ],
+            )
+            return record
+
+        return self._run_in_transaction(txn)
+
+    def _existing_operator_abuse(self, abuse_ref: str) -> tuple[str, str] | None:
+        with self._database.snapshot() as snapshot:
+            rows = list(
+                snapshot.execute_sql(
+                    "SELECT workspace_id, kind FROM tr_trust_event "
+                    "WHERE provider=@provider AND adverse_ref=@adverse_ref",
+                    params={"provider": "operator", "adverse_ref": abuse_ref},
+                    param_types={
+                        "provider": self._param_types.STRING,
+                        "adverse_ref": self._param_types.STRING,
+                    },
+                )
+            )
+        if len(rows) > 1:
+            raise RuntimeError("operator abuse reference dedup invariant violated")
+        return None if not rows else (str(rows[0][0]), str(rows[0][1]))
+
+    def record_workspace_abuse_and_demote(
+        self,
+        workspace_id: str,
+        *,
+        abuse_ref: str,
+        operator_identity: str,
+        reason: str,
+    ) -> bool:
+        abuse_ref = abuse_ref.strip()
+        operator_identity = operator_identity.strip()
+        reason = reason.strip()
+        if not abuse_ref or not operator_identity or not reason:
+            raise ValueError("abuse_ref, operator identity and reason are required")
+
+        def txn(transaction: Any) -> bool:
+            existing = list(
+                transaction.execute_sql(
+                    "SELECT workspace_id, kind FROM tr_trust_event "
+                    "WHERE provider=@provider AND adverse_ref=@adverse_ref",
+                    params={"provider": "operator", "adverse_ref": abuse_ref},
+                    param_types={
+                        "provider": self._param_types.STRING,
+                        "adverse_ref": self._param_types.STRING,
+                    },
+                )
+            )
+            if existing:
+                if str(existing[0][0]) != workspace_id or str(existing[0][1]) != "abuse":
+                    raise ValueError("abuse_ref_conflict")
+                return False
+            workspace = self._read_entity_tx(
+                transaction, "workspace", workspace_id, Workspace
+            )
+            account = self._read_entity_tx(
+                transaction, "credit", workspace_id, CreditAccount
+            )
+            if workspace is None or workspace.deleted or account is None:
+                raise ValueError("workspace_not_found")
+            shard_count = credit_shard_count(account)
+            shard_rows = list(
+                transaction.execute_sql(
+                    "SELECT shard, trust_latched_at, billing_pause_causes, pause_epoch "
+                    "FROM tr_credit_balance WHERE workspace_id=@pk AND shard>=0 "
+                    "AND shard<@shard_count ORDER BY shard",
+                    params={"pk": workspace_id, "shard_count": shard_count},
+                    param_types={
+                        "pk": self._param_types.STRING,
+                        "shard_count": self._param_types.INT64,
+                    },
+                )
+            )
+            if [int(row[0]) for row in shard_rows] != list(range(shard_count)):
+                raise RuntimeError("configured tr_credit_balance shard set is incomplete")
+            replicated = {
+                (row[1], tuple(sorted(row[2] or ())), int(row[3] or 0))
+                for row in shard_rows
+            }
+            if len(replicated) != 1:
+                raise RuntimeError("replicated trust controls diverged")
+            latched_at, old_causes, _pause_epoch = next(iter(replicated))
+            now = dt.datetime.now(dt.UTC)
+            event = TrustEvent(
+                workspace_id=workspace_id,
+                event_id=f"abuse:{abuse_ref}",
+                kind="abuse",
+                provider="operator",
+                amount_micro=0,
+                original_payment_ref=None,
+                adverse_ref=abuse_ref,
+                occurred_at=now,
+                recorded_at=now,
+                payment_amount_micro=None,
+                currency=None,
+                credited_micro=None,
+                recovered_micro=None,
+                provider_subtype="operator",
+                lifecycle_status="succeeded",
+                cumulative_refunded=None,
+                recovery_target=0,
+                debit_status="debited",
+                unrecovered_micro=0,
+                provider_ordering_watermark=None,
+            )
+            if not insert_credit_trust_event(
+                transaction, self._param_types, event
+            ):
+                return False
+            insert_entity_dml_at(
+                transaction,
+                self._param_types,
+                "trust_abuse",
+                f"{workspace_id}#{abuse_ref}",
+                _json_body(
+                    {
+                        "workspace_id": workspace_id,
+                        "abuse_ref": abuse_ref,
+                        "operator_identity": operator_identity,
+                        "reason": reason,
+                        "recorded_at": now.isoformat(),
+                    }
+                ),
+                now,
+            )
+            causes = sorted({*old_causes, "abuse"})
+            updated = transaction.execute_update(
+                "UPDATE tr_credit_balance SET trust_tier=0, "
+                "trust_latched_at=COALESCE(trust_latched_at,@now), "
+                "billing_pause_causes=@causes, pause_epoch=COALESCE(pause_epoch,0)+1, "
+                "updated_at=@now WHERE workspace_id=@pk AND shard>=0 "
+                "AND shard<@shard_count",
+                params={
+                    "now": now,
+                    "causes": causes,
+                    "pk": workspace_id,
+                    "shard_count": shard_count,
+                },
+                param_types={
+                    "now": self._param_types.TIMESTAMP,
+                    "causes": self._param_types.Array(self._param_types.STRING),
+                    "pk": self._param_types.STRING,
+                    "shard_count": self._param_types.INT64,
+                },
+            )
+            if int(updated) != shard_count:
+                raise RuntimeError("abuse latch did not cover every active shard")
+            workspace.billing_pause_causes = causes
+            workspace.billing_paused = True
+            workspace.billing_pause_reason = reason
+            if update_entity_body_dml(
+                transaction,
+                self._param_types,
+                "workspace",
+                workspace_id,
+                _json_body(workspace),
+                now,
+            ) != 1:
+                raise RuntimeError("workspace disappeared during abuse latch")
+            return True
+
+        try:
+            return self._run_in_transaction(txn)
+        except Exception as exc:
+            if not is_duplicate_key_error(exc):
+                raise
+            existing = self._existing_operator_abuse(abuse_ref)
+            if existing == (workspace_id, "abuse"):
+                return False
+            raise ValueError("abuse_ref_conflict") from exc
+
+    def clear_workspace_abuse_pause(
+        self,
+        workspace_id: str,
+        *,
+        abuse_ref: str,
+        operator_identity: str,
+        reason: str,
+    ) -> bool:
+        abuse_ref = abuse_ref.strip()
+        operator_identity = operator_identity.strip()
+        reason = reason.strip()
+        if not abuse_ref or not operator_identity or not reason:
+            raise ValueError("abuse_ref, operator identity and reason are required")
+        audit_id = f"{workspace_id}#{abuse_ref}"
+
+        def txn(transaction: Any) -> bool:
+            if self._read_entity_tx(
+                transaction, "trust_abuse_clear", audit_id, dict
+            ) is not None:
+                return False
+            workspace = self._read_entity_tx(
+                transaction, "workspace", workspace_id, Workspace
+            )
+            account = self._read_entity_tx(
+                transaction, "credit", workspace_id, CreditAccount
+            )
+            if workspace is None or workspace.deleted or account is None:
+                raise ValueError("workspace_not_found")
+            shard_count = credit_shard_count(account)
+            shard_rows = list(
+                transaction.execute_sql(
+                    "SELECT shard, billing_pause_causes, pause_epoch "
+                    "FROM tr_credit_balance WHERE workspace_id=@pk AND shard>=0 "
+                    "AND shard<@shard_count ORDER BY shard",
+                    params={"pk": workspace_id, "shard_count": shard_count},
+                    param_types={
+                        "pk": self._param_types.STRING,
+                        "shard_count": self._param_types.INT64,
+                    },
+                )
+            )
+            if [int(row[0]) for row in shard_rows] != list(range(shard_count)):
+                raise RuntimeError("configured tr_credit_balance shard set is incomplete")
+            controls = {
+                (tuple(sorted(row[1] or ())), int(row[2] or 0))
+                for row in shard_rows
+            }
+            if len(controls) != 1:
+                raise RuntimeError("replicated pause controls diverged")
+            old_causes, _pause_epoch = next(iter(controls))
+            causes = sorted(set(old_causes) - {"abuse"})
+            now = dt.datetime.now(dt.UTC)
+            insert_entity_dml_at(
+                transaction,
+                self._param_types,
+                "trust_abuse_clear",
+                audit_id,
+                _json_body(
+                    {
+                        "workspace_id": workspace_id,
+                        "abuse_ref": abuse_ref,
+                        "operator_identity": operator_identity,
+                        "reason": reason,
+                        "cleared_at": now.isoformat(),
+                    }
+                ),
+                now,
+            )
+            updated = transaction.execute_update(
+                "UPDATE tr_credit_balance SET billing_pause_causes=@causes, "
+                "pause_epoch=COALESCE(pause_epoch,0)+1, updated_at=@now "
+                "WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count",
+                params={
+                    "causes": causes,
+                    "now": now,
+                    "pk": workspace_id,
+                    "shard_count": shard_count,
+                },
+                param_types={
+                    "causes": self._param_types.Array(self._param_types.STRING),
+                    "now": self._param_types.TIMESTAMP,
+                    "pk": self._param_types.STRING,
+                    "shard_count": self._param_types.INT64,
+                },
+            )
+            if int(updated) != shard_count:
+                raise RuntimeError("abuse clear did not cover every active shard")
+            workspace.billing_pause_causes = causes
+            workspace.billing_paused = bool(causes)
+            workspace.billing_pause_reason = reason
+            if update_entity_body_dml(
+                transaction,
+                self._param_types,
+                "workspace",
+                workspace_id,
+                _json_body(workspace),
+                now,
+            ) != 1:
+                raise RuntimeError("workspace disappeared during abuse clear")
+            return True
+
+        try:
+            return self._run_in_transaction(txn)
+        except Exception as exc:
+            if is_duplicate_key_error(exc):
+                return False
+            raise
+
+    def backfill_owner_inventory(self, *, source_version: str, environment: str) -> int:
+        source_version = source_version.strip()
+        environment = environment.strip()
+        if not source_version or not environment:
+            raise ValueError("source_version and environment are required")
+
+        def txn(transaction: Any) -> int:
+            workspace_rows = list(
+                transaction.execute_sql(
+                    "SELECT id, body FROM tr_entities WHERE kind='workspace' ORDER BY id"
+                )
+            )
+            expected: set[tuple[str, str]] = set()
+            for workspace_id, raw in workspace_rows:
+                workspace = _auth_record(str(raw), Workspace)
+                if not workspace.deleted and not workspace.federated_home:
+                    expected.add((workspace.owner_user_id, str(workspace_id)))
+            actual = {
+                (str(owner), str(workspace_id))
+                for owner, workspace_id in transaction.execute_sql(
+                    "SELECT owner_user_id, workspace_id FROM tr_owner_workspace "
+                    "ORDER BY owner_user_id, workspace_id"
+                )
+            }
+            for owner_user_id, workspace_id in sorted(expected - actual):
+                self._insert_owner_inventory_tx(
+                    transaction, owner_user_id, workspace_id
+                )
+            extra = sorted(actual - expected)
+            if extra:
+                transaction.delete(
+                    "tr_owner_workspace", self._spanner.KeySet(keys=extra)
+                )
+            owners = {owner for owner, _workspace_id in expected | actual}
+            for owner_user_id in sorted(owners):
+                user = self._read_entity_tx(
+                    transaction, "user", owner_user_id, User
+                )
+                if user is not None:
+                    user.owner_workspace_count = sum(
+                        owner == owner_user_id for owner, _workspace_id in expected
+                    )
+                    self._write_entity_tx(transaction, "user", user.id, user)
+            now = dt.datetime.now(dt.UTC)
+            transaction.insert_or_update(
+                table="tr_trust_backfill",
+                columns=(
+                    "provider",
+                    "account_id",
+                    "environment",
+                    "source",
+                    "source_version",
+                    "history_start",
+                    "closed_through",
+                    "consistency_delay_seconds",
+                    "unmatched_count",
+                    "semantic_mismatch_count",
+                    "completed_at",
+                ),
+                values=[(
+                    "owner_inventory",
+                    "local",
+                    environment,
+                    "tr_entities.workspace",
+                    source_version,
+                    now,
+                    now,
+                    0,
+                    0,
+                    0,
+                    now,
+                )],
+            )
+            return len(expected ^ actual)
+
+        return self._run_in_transaction(txn)
+
+    def process_trust_demotion_remainders(self, *, limit: int = 25) -> int:
+        if limit <= 0:
+            return 0
+        with self._database.snapshot() as snapshot:
+            rows = list(
+                snapshot.execute_sql(
+                    "SELECT owner_user_id, workspace_id, target_identity_ceiling "
+                    "FROM tr_trust_demotion_remainder ORDER BY created_at LIMIT @limit",
+                    params={"limit": int(limit)},
+                    param_types={"limit": self._param_types.INT64},
+                )
+            )
+        completed = 0
+        for owner_user_id, workspace_id, ceiling in rows:
+            owner_id = str(owner_user_id)
+            remainder_workspace_id = str(workspace_id)
+            target_ceiling = int(ceiling)
+
+            def txn(
+                transaction: Any,
+                *,
+                owner_id: str = owner_id,
+                remainder_workspace_id: str = remainder_workspace_id,
+                target_ceiling: int = target_ceiling,
+            ) -> bool:
+                current = list(
+                    transaction.execute_sql(
+                        "SELECT target_identity_ceiling FROM tr_trust_demotion_remainder "
+                        "WHERE owner_user_id=@owner AND workspace_id=@workspace",
+                        params={
+                            "owner": owner_id,
+                            "workspace": remainder_workspace_id,
+                        },
+                        param_types={
+                            "owner": self._param_types.STRING,
+                            "workspace": self._param_types.STRING,
+                        },
+                    )
+                )
+                if not current:
+                    return False
+                override_rows = list(
+                    transaction.execute_sql(
+                        "SELECT identity_bypass FROM tr_trust_override "
+                        "WHERE workspace_id=@pk",
+                        params={"pk": remainder_workspace_id},
+                        param_types={"pk": self._param_types.STRING},
+                    )
+                )
+                identity_bypass = bool(override_rows and override_rows[0][0])
+                account = self._read_entity_tx(
+                    transaction, "credit", remainder_workspace_id, CreditAccount
+                )
+                if account is None:
+                    raise RuntimeError("demotion remainder references missing credit")
+                shard_count = credit_shard_count(account)
+                shard_rows = list(
+                    transaction.execute_sql(
+                        "SELECT shard, trust_tier FROM tr_credit_balance "
+                        "WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count "
+                        "ORDER BY shard",
+                        params={
+                            "pk": remainder_workspace_id,
+                            "shard_count": shard_count,
+                        },
+                        param_types={
+                            "pk": self._param_types.STRING,
+                            "shard_count": self._param_types.INT64,
+                        },
+                    )
+                )
+                if [int(row[0]) for row in shard_rows] != list(range(shard_count)):
+                    raise RuntimeError(
+                        "configured tr_credit_balance shard set is incomplete"
+                    )
+                now = dt.datetime.now(dt.UTC)
+                if not identity_bypass:
+                    transaction.insert_or_update(
+                        table=CREDIT_BALANCE_TABLE,
+                        columns=(
+                            "workspace_id",
+                            "shard",
+                            "trust_tier",
+                            "trust_computed_at",
+                        ),
+                        values=[
+                            (
+                                remainder_workspace_id,
+                                int(shard),
+                                min(int(tier or 0), target_ceiling),
+                                now,
+                            )
+                            for shard, tier in shard_rows
+                        ],
+                    )
+                transaction.delete(
+                    "tr_trust_demotion_remainder",
+                    self._spanner.KeySet(
+                        keys=[(owner_id, remainder_workspace_id)]
+                    ),
+                )
+                return True
+
+            completed += int(self._run_in_transaction(txn))
+        return completed
 
     def get_credit_account(self, workspace_id: str) -> CreditAccount | None:
         return self._read_entity("credit", workspace_id, CreditAccount)
@@ -1269,7 +2096,12 @@ class SpannerBigtableStore:
                 user = self._read_entity_tx(transaction, "user", existing_record["user_id"], User)
                 if user is not None:
                     return user
-            new_user = User(id=str(uuid.uuid4()), email=None, wallet_address=normalized)
+            new_user = User(
+                id=str(uuid.uuid4()),
+                email=None,
+                wallet_address=normalized,
+                owner_workspace_count=1,
+            )
             workspace = Workspace(
                 id=str(uuid.uuid4()),
                 name="Personal Workspace",
@@ -1293,6 +2125,7 @@ class SpannerBigtableStore:
                 0,
                 shard_count=credit.shard_count,
             )
+            self._insert_owner_inventory_tx(transaction, new_user.id, workspace.id)
             return new_user
 
         return self._run_in_transaction(txn)
@@ -1333,6 +2166,80 @@ class SpannerBigtableStore:
 
         return self._run_in_transaction(txn)
 
+    def _demote_owner_trust_tx(
+        self, transaction: Any, owner_user_id: str, *, now: dt.datetime
+    ) -> None:
+        workspace_ids, shard_counts = self._owner_shard_counts_tx(
+            transaction, owner_user_id
+        )
+        total_cost = sum(shard_counts) * TRUST_REPLICATED_COLUMN_COUNT
+        remaining_budget = TRUST_OWNER_MUTATION_BUDGET
+        for workspace_id, shard_count in zip(
+            workspace_ids, shard_counts, strict=True
+        ):
+            cost = shard_count * TRUST_REPLICATED_COLUMN_COUNT
+            if total_cost > TRUST_OWNER_MUTATION_BUDGET and cost > remaining_budget:
+                transaction.insert_or_update(
+                    table="tr_trust_demotion_remainder",
+                    columns=(
+                        "owner_user_id",
+                        "workspace_id",
+                        "target_identity_ceiling",
+                        "created_at",
+                        "attempts",
+                        "last_error",
+                    ),
+                    values=[(owner_user_id, workspace_id, 1, now, 0, None)],
+                )
+                log.error(
+                    "trust.identity_demotion_remainder owner=%s workspace=%s",
+                    owner_user_id,
+                    workspace_id,
+                )
+                continue
+            remaining_budget -= cost
+            bypass_rows = list(
+                transaction.execute_sql(
+                    "SELECT identity_bypass FROM tr_trust_override "
+                    "WHERE workspace_id=@pk",
+                    params={"pk": workspace_id},
+                    param_types={"pk": self._param_types.STRING},
+                )
+            )
+            identity_bypass = bool(bypass_rows and bypass_rows[0][0])
+            rows = list(
+                transaction.execute_sql(
+                    "SELECT shard, trust_tier FROM tr_credit_balance "
+                    "WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count "
+                    "ORDER BY shard",
+                    params={"pk": workspace_id, "shard_count": shard_count},
+                    param_types={
+                        "pk": self._param_types.STRING,
+                        "shard_count": self._param_types.INT64,
+                    },
+                )
+            )
+            if [int(row[0]) for row in rows] != list(range(shard_count)):
+                raise RuntimeError("configured tr_credit_balance shard set is incomplete")
+            transaction.insert_or_update(
+                table=CREDIT_BALANCE_TABLE,
+                columns=(
+                    "workspace_id",
+                    "shard",
+                    "trust_tier",
+                    "trust_computed_at",
+                ),
+                values=[
+                    (
+                        workspace_id,
+                        int(shard),
+                        int(tier or 0) if identity_bypass else min(int(tier or 0), 1),
+                        now,
+                    )
+                    for shard, tier in rows
+                ],
+            )
+
     def set_user_identity_status(
         self,
         user_id: str,
@@ -1350,6 +2257,7 @@ class SpannerBigtableStore:
             user = self._read_entity_tx(transaction, "user", user_id, User)
             if user is None:
                 return None
+            was_approved = user.identity_status == "approved"
             normalized = IdentityVerificationStatus.coerce(status)
             if normalized is IdentityVerificationStatus.APPROVED and not user.identity_verified_at:
                 user.identity_verified_at = iso_now()
@@ -1371,7 +2279,54 @@ class SpannerBigtableStore:
             if increment_attempts:
                 user.veriff_attempt_count += 1
             self._write_entity_tx(transaction, "user", user.id, user)
+            if was_approved and normalized is not IdentityVerificationStatus.APPROVED:
+                self._demote_owner_trust_tx(
+                    transaction, user_id, now=dt.datetime.now(dt.UTC)
+                )
             return user
+
+        return self._run_in_transaction(txn)
+
+    def apply_veriff_identity_decision(
+        self,
+        user_id: str,
+        *,
+        event_id: str,
+        session_id: str,
+        status: str,
+        decision_code: int,
+        decision_reason: str | None = None,
+        decision_reason_code: int | None = None,
+        verified_name: str | None = None,
+    ) -> str:
+        marker_id = f"veriff#{event_id}"
+
+        def txn(transaction: Any) -> str:
+            if self._read_entity_tx(transaction, "webhook_event", marker_id, dict):
+                return "replayed"
+            now = dt.datetime.now(dt.UTC)
+            self._write_entity_tx(
+                transaction, "webhook_event", marker_id, {"created_at": iso_now()}
+            )
+            user = self._read_entity_tx(transaction, "user", user_id, User)
+            if user is None or user.veriff_session_id != session_id:
+                return "ignored"
+            was_approved = user.identity_status == "approved"
+            normalized = IdentityVerificationStatus.coerce(status)
+            if normalized is IdentityVerificationStatus.APPROVED and not user.identity_verified_at:
+                user.identity_verified_at = iso_now()
+            user.identity_status = normalized.value
+            user.veriff_decision_code = decision_code
+            if decision_reason is not None:
+                user.veriff_decision_reason = decision_reason
+            if decision_reason_code is not None:
+                user.veriff_decision_reason_code = decision_reason_code
+            if verified_name is not None:
+                user.identity_verified_name = verified_name
+            self._write_entity_tx(transaction, "user", user.id, user)
+            if was_approved and normalized is not IdentityVerificationStatus.APPROVED:
+                self._demote_owner_trust_tx(transaction, user_id, now=now)
+            return "applied"
 
         return self._run_in_transaction(txn)
 

@@ -17,9 +17,11 @@ from trusted_router.storage_gcp_legacy_reservations import (
 )
 from trusted_router.storage_models import (
     CreditAccount,
+    User,
     Workspace,
     workspace_billing_paused,
 )
+from trusted_router.trust_ownership import require_owner_trust_budget
 
 _RESHARD_COLUMNS = (
     "workspace_id",
@@ -256,6 +258,34 @@ def reshard_credit_account(
         if workspace is None or not workspace_billing_paused(workspace) or account is None:
             return None
         current_count = credit_shard_count(account)
+        owned_workspace_ids, owned_shard_counts = store._owner_shard_counts_tx(
+            transaction, workspace.owner_user_id
+        )
+        if workspace_id not in owned_workspace_ids:
+            # A slice-1a/1b' workspace can legitimately predate the inventory
+            # backfill. Repair that legacy gap on touch so reshard remains
+            # available while the fleet-wide backfill drains, and so the
+            # resulting fan-out is represented before this transaction commits.
+            store._insert_owner_inventory_tx(
+                transaction, workspace.owner_user_id, workspace_id
+            )
+            owner = store._read_entity_tx(
+                transaction, "user", workspace.owner_user_id, User
+            )
+            if owner is not None:
+                owner.owner_workspace_count = len(owned_workspace_ids) + 1
+                store._write_entity_tx(transaction, "user", owner.id, owner)
+            owned_workspace_ids.append(workspace_id)
+            owned_shard_counts.append(current_count)
+        if target_count > current_count:
+            require_owner_trust_budget(
+                [
+                    target_count if owned_id == workspace_id else shard_count
+                    for owned_id, shard_count in zip(
+                        owned_workspace_ids, owned_shard_counts, strict=True
+                    )
+                ]
+            )
         rows = list(
             transaction.execute_sql(
                 "SELECT shard, total_credits, total_usage, reserved, "

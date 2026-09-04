@@ -93,6 +93,7 @@ from trusted_router.storage_models import (
     SyntheticRollup,
     TrustEvent,
     TrustInboxRow,
+    TrustOverride,
     User,
     UserProvidedModel,
     VerificationToken,
@@ -114,10 +115,17 @@ from trusted_router.storage_user_models import InMemoryUserProvidedModels
 from trusted_router.storage_verification_tokens import InMemoryVerificationTokens
 from trusted_router.storage_video_jobs import InMemoryVideoJobs
 from trusted_router.storage_wallet_challenges import InMemoryWalletChallenges
+from trusted_router.trust_ownership import (
+    TRUST_OWNER_MUTATION_BUDGET,
+    TRUST_REPLICATED_COLUMN_COUNT,
+    WorkspaceOwnerLimitExceeded,
+    require_owner_trust_budget,
+)
 from trusted_router.trust_tiers import (
     adverse_event_from_payload,
     adverse_event_payload,
     adverse_transition_outcome,
+    compute_trust_tier,
     payment_or_grant_event,
     payment_recovery_target,
     validate_adverse_event,
@@ -133,8 +141,21 @@ class InMemoryStore:
     - Bigtable-like append/query metadata for generation usage.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        max_workspaces_per_owner: int = 25,
+        trust_qualifying_providers: frozenset[str] = frozenset({"stripe", "x402"}),
+        trust_tier3_min_days: int = 30,
+        trust_tier3_min_paid_microdollars: int = 50_000_000,
+    ) -> None:
         self._lock = threading.RLock()
+        self.max_workspaces_per_owner = int(max_workspaces_per_owner)
+        self.trust_qualifying_providers = trust_qualifying_providers
+        self.trust_tier3_min_days = int(trust_tier3_min_days)
+        self.trust_tier3_min_paid_microdollars = int(
+            trust_tier3_min_paid_microdollars
+        )
         self.users: dict[str, User] = {}
         self.user_ids_by_email: dict[str, str] = {}
         self.user_ids_by_wallet: dict[str, str] = {}
@@ -147,6 +168,13 @@ class InMemoryStore:
         self.stripe_events: set[str] = set()
         self.trust_events: dict[tuple[str, str], TrustEvent] = {}
         self.trust_inbox: dict[tuple[str, str], TrustInboxRow] = {}
+        self.owner_workspaces: set[tuple[str, str]] = set()
+        self.trust_overrides: dict[str, TrustOverride] = {}
+        self.trust_abuse_audits: dict[tuple[str, str], dict[str, Any]] = {}
+        self.trust_demotion_remainders: set[tuple[str, str]] = set()
+        self.trust_backfills: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self.credit_trust_shards: dict[tuple[str, int], dict[str, Any]] = {}
+        self.abuse_pause_clears: set[tuple[str, str]] = set()
         self.webhook_events: set[tuple[str, str]] = set()
         self.earnings_money: dict[str, tuple[int, int]] = {}
         self.credit_movements: dict[tuple[str, str], CreditMovement] = {}
@@ -217,6 +245,15 @@ class InMemoryStore:
             self.credits.clear()
             self.credit_money.clear()
             self.stripe_events.clear()
+            self.trust_events.clear()
+            self.trust_inbox.clear()
+            self.owner_workspaces.clear()
+            self.trust_overrides.clear()
+            self.trust_abuse_audits.clear()
+            self.trust_demotion_remainders.clear()
+            self.trust_backfills.clear()
+            self.credit_trust_shards.clear()
+            self.abuse_pause_clears.clear()
             self.webhook_events.clear()
             self.earnings_money.clear()
             self.credit_movements.clear()
@@ -626,6 +663,19 @@ class InMemoryStore:
         trial_credit_microdollars: int | None = None,
     ) -> Workspace:
         with self._lock:
+            owned = sorted(
+                workspace_id
+                for owner_id, workspace_id in self.owner_workspaces
+                if owner_id == owner_user_id
+            )
+            if len(owned) >= self.max_workspaces_per_owner:
+                raise WorkspaceOwnerLimitExceeded(
+                    "owner has reached TR_MAX_WORKSPACES_PER_OWNER"
+                )
+            require_owner_trust_budget(
+                [self.credits[workspace_id].shard_count for workspace_id in owned]
+                + [1]
+            )
             workspace = Workspace(id=str(uuid.uuid4()), name=name, owner_user_id=owner_user_id)
             self.workspaces[workspace.id] = workspace
             self.members[(workspace.id, owner_user_id)] = Member(
@@ -636,6 +686,19 @@ class InMemoryStore:
             initial_total = 0 if trial_credit_microdollars is None else trial_credit_microdollars
             self.credits[workspace.id] = CreditAccount(workspace_id=workspace.id)
             self.credit_money[workspace.id] = CreditMoney(total_credits_microdollars=initial_total)
+            self.owner_workspaces.add((owner_user_id, workspace.id))
+            owner = self.users.get(owner_user_id)
+            if owner is not None:
+                owner.owner_workspace_count = len(owned) + 1
+            self.credit_trust_shards[(workspace.id, 0)] = {
+                "trust_tier": 0,
+                "trust_computed_at": None,
+                "trust_latched_at": None,
+                "trust_override_tier": None,
+                "billing_pause_causes": [],
+                "pause_epoch": 0,
+                "trust_reconciled_through": None,
+            }
             if initial_total > 0:
                 recorded_at = dt.datetime.now(dt.UTC)
                 event_id = f"provisioning:{workspace.id}"
@@ -678,6 +741,43 @@ class InMemoryStore:
             if name is not None:
                 workspace.name = name
             if deleted is not None:
+                inventory_key = (workspace.owner_user_id, workspace.id)
+                if workspace.deleted and not deleted:
+                    owned = [
+                        wid
+                        for owner_id, wid in self.owner_workspaces
+                        if owner_id == workspace.owner_user_id
+                    ]
+                    if len(owned) >= self.max_workspaces_per_owner:
+                        raise WorkspaceOwnerLimitExceeded(
+                            "owner has reached TR_MAX_WORKSPACES_PER_OWNER"
+                        )
+                    require_owner_trust_budget(
+                        [self.credits[wid].shard_count for wid in owned]
+                        + [self.credits[workspace.id].shard_count]
+                    )
+                    self.owner_workspaces.add(inventory_key)
+                    owner = self.users.get(workspace.owner_user_id)
+                    if owner is not None:
+                        owner.owner_workspace_count = len(owned) + 1
+                elif not workspace.deleted and deleted:
+                    self.owner_workspaces.discard(inventory_key)
+                    owner = self.users.get(workspace.owner_user_id)
+                    if owner is not None:
+                        owner.owner_workspace_count = max(0, owner.owner_workspace_count - 1)
+                    now = dt.datetime.now(dt.UTC)
+                    for (candidate_workspace_id, _), row in self.credit_trust_shards.items():
+                        if candidate_workspace_id == workspace.id:
+                            row["trust_tier"] = 0
+                            row["trust_latched_at"] = row["trust_latched_at"] or now
+                    self.active_spend_leases = {
+                        key: lease
+                        for key, lease in self.active_spend_leases.items()
+                        if (
+                            (api_key := self.api_keys.get_by_hash(key[0])) is None
+                            or api_key.workspace_id != workspace.id
+                        )
+                    }
                 workspace.deleted = deleted
             if billing_paused is not None:
                 causes = set(workspace.billing_pause_causes)
@@ -690,6 +790,235 @@ class InMemoryStore:
             if billing_pause_reason is not None:
                 workspace.billing_pause_reason = billing_pause_reason
             return workspace
+
+    def transfer_workspace_ownership(
+        self, workspace_id: str, new_owner_user_id: str
+    ) -> Workspace:
+        with self._lock:
+            workspace = self.workspaces.get(workspace_id)
+            if workspace is None or workspace.deleted:
+                raise ValueError("workspace_not_found")
+            if new_owner_user_id == workspace.owner_user_id:
+                return workspace
+            owned = [
+                wid
+                for owner_id, wid in self.owner_workspaces
+                if owner_id == new_owner_user_id
+            ]
+            if len(owned) >= self.max_workspaces_per_owner:
+                raise WorkspaceOwnerLimitExceeded(
+                    "owner has reached TR_MAX_WORKSPACES_PER_OWNER"
+                )
+            require_owner_trust_budget(
+                [self.credits[wid].shard_count for wid in owned]
+                + [self.credits[workspace_id].shard_count]
+            )
+            old_owner_id = workspace.owner_user_id
+            self.owner_workspaces.discard((old_owner_id, workspace_id))
+            self.owner_workspaces.add((new_owner_user_id, workspace_id))
+            old_member = self.members.pop((workspace_id, old_owner_id), None)
+            if old_member is not None:
+                self.members[(workspace_id, old_owner_id)] = Member(
+                    workspace_id=workspace_id,
+                    user_id=old_owner_id,
+                    role="admin",
+                    created_at=old_member.created_at,
+                )
+            self.members[(workspace_id, new_owner_user_id)] = Member(
+                workspace_id=workspace_id,
+                user_id=new_owner_user_id,
+                role="owner",
+            )
+            workspace.owner_user_id = new_owner_user_id
+            old_owner = self.users.get(old_owner_id)
+            if old_owner is not None:
+                old_owner.owner_workspace_count = max(0, old_owner.owner_workspace_count - 1)
+            new_owner = self.users.get(new_owner_user_id)
+            if new_owner is not None:
+                new_owner.owner_workspace_count = len(owned) + 1
+            return workspace
+
+    def set_workspace_trust_override(
+        self,
+        workspace_id: str,
+        *,
+        tier: int,
+        identity_bypass: bool,
+        operator_identity: str,
+        reason: str,
+    ) -> TrustOverride:
+        if not 0 <= int(tier) <= 3:
+            raise ValueError("trust override tier must be between 0 and 3")
+        if not operator_identity.strip() or not reason.strip():
+            raise ValueError("operator identity and reason are required")
+        with self._lock:
+            workspace = self.workspaces.get(workspace_id)
+            account = self.credits.get(workspace_id)
+            if workspace is None or workspace.deleted or account is None:
+                raise ValueError("workspace_not_found")
+            now = dt.datetime.now(dt.UTC)
+            record = TrustOverride(
+                workspace_id=workspace_id,
+                tier=int(tier),
+                identity_bypass=bool(identity_bypass),
+                operator_identity=operator_identity.strip(),
+                reason=reason.strip(),
+                set_at=now,
+            )
+            owner = self.users.get(workspace.owner_user_id)
+            events = [
+                event
+                for (candidate_workspace_id, _), event in self.trust_events.items()
+                if candidate_workspace_id == workspace_id
+            ]
+            for shard in range(account.shard_count):
+                row = self.credit_trust_shards[(workspace_id, shard)]
+                decision = compute_trust_tier(
+                    events,
+                    owner_identity_status=(owner.identity_status if owner else "none"),
+                    trust_latched_at=row["trust_latched_at"],
+                    trust_override_tier=tier,
+                    qualifying_providers=self.trust_qualifying_providers,
+                    tier3_min_days=self.trust_tier3_min_days,
+                    tier3_min_paid_microdollars=self.trust_tier3_min_paid_microdollars,
+                    now=now,
+                    identity_bypass=identity_bypass,
+                )
+                row["trust_override_tier"] = int(tier)
+                row["trust_tier"] = decision.effective_tier
+                row["trust_computed_at"] = now
+            self.trust_overrides[workspace_id] = record
+            return record
+
+    def record_workspace_abuse_and_demote(
+        self,
+        workspace_id: str,
+        *,
+        abuse_ref: str,
+        operator_identity: str,
+        reason: str,
+    ) -> bool:
+        if not abuse_ref.strip() or not operator_identity.strip() or not reason.strip():
+            raise ValueError("abuse_ref, operator identity and reason are required")
+        with self._lock:
+            for event in self.trust_events.values():
+                if event.provider == "operator" and event.adverse_ref == abuse_ref:
+                    if event.workspace_id != workspace_id or event.kind != "abuse":
+                        raise ValueError("abuse_ref_conflict")
+                    return False
+            workspace = self.workspaces.get(workspace_id)
+            account = self.credits.get(workspace_id)
+            if workspace is None or workspace.deleted or account is None:
+                raise ValueError("workspace_not_found")
+            now = dt.datetime.now(dt.UTC)
+            event_id = f"abuse:{abuse_ref}"
+            self.trust_events[(workspace_id, event_id)] = TrustEvent(
+                workspace_id=workspace_id,
+                event_id=event_id,
+                kind="abuse",
+                provider="operator",
+                amount_micro=0,
+                original_payment_ref=None,
+                adverse_ref=abuse_ref,
+                occurred_at=now,
+                recorded_at=now,
+                payment_amount_micro=None,
+                currency=None,
+                credited_micro=None,
+                recovered_micro=None,
+                provider_subtype="operator",
+                lifecycle_status="succeeded",
+                cumulative_refunded=None,
+                recovery_target=0,
+                debit_status="debited",
+                unrecovered_micro=0,
+                provider_ordering_watermark=None,
+            )
+            self.trust_abuse_audits[(workspace_id, abuse_ref)] = {
+                "workspace_id": workspace_id,
+                "abuse_ref": abuse_ref,
+                "operator_identity": operator_identity.strip(),
+                "reason": reason.strip(),
+                "recorded_at": now.isoformat(),
+            }
+            workspace.billing_pause_causes = sorted(
+                {*workspace.billing_pause_causes, "abuse"}
+            )
+            workspace.billing_paused = True
+            workspace.billing_pause_reason = reason.strip()
+            for shard in range(account.shard_count):
+                row = self.credit_trust_shards[(workspace_id, shard)]
+                causes = sorted({*row["billing_pause_causes"], "abuse"})
+                row.update(
+                    trust_tier=0,
+                    trust_latched_at=row["trust_latched_at"] or now,
+                    billing_pause_causes=causes,
+                    pause_epoch=int(row["pause_epoch"] or 0) + 1,
+                )
+            return True
+
+    def clear_workspace_abuse_pause(
+        self,
+        workspace_id: str,
+        *,
+        abuse_ref: str,
+        operator_identity: str,
+        reason: str,
+    ) -> bool:
+        if not abuse_ref.strip() or not operator_identity.strip() or not reason.strip():
+            raise ValueError("abuse_ref, operator identity and reason are required")
+        with self._lock:
+            audit_key = (workspace_id, abuse_ref)
+            if audit_key in self.abuse_pause_clears:
+                return False
+            workspace = self.workspaces.get(workspace_id)
+            account = self.credits.get(workspace_id)
+            if workspace is None or workspace.deleted or account is None:
+                raise ValueError("workspace_not_found")
+            self.abuse_pause_clears.add(audit_key)
+            workspace.billing_pause_causes = sorted(
+                set(workspace.billing_pause_causes) - {"abuse"}
+            )
+            workspace.billing_paused = bool(workspace.billing_pause_causes)
+            workspace.billing_pause_reason = reason.strip()
+            for shard in range(account.shard_count):
+                row = self.credit_trust_shards[(workspace_id, shard)]
+                causes = sorted(set(row["billing_pause_causes"]) - {"abuse"})
+                if causes != row["billing_pause_causes"]:
+                    row["pause_epoch"] = int(row["pause_epoch"] or 0) + 1
+                row["billing_pause_causes"] = causes
+            return True
+
+    def backfill_owner_inventory(self, *, source_version: str, environment: str) -> int:
+        if not source_version.strip() or not environment.strip():
+            raise ValueError("source_version and environment are required")
+        with self._lock:
+            expected = {
+                (workspace.owner_user_id, workspace.id)
+                for workspace in self.workspaces.values()
+                if not workspace.deleted and not workspace.federated_home
+            }
+            changed = len(self.owner_workspaces ^ expected)
+            self.owner_workspaces = expected
+            for user in self.users.values():
+                user.owner_workspace_count = sum(
+                    owner_id == user.id for owner_id, _ in expected
+                )
+            now = dt.datetime.now(dt.UTC)
+            self.trust_backfills[("owner_inventory", "local", environment)] = {
+                "provider": "owner_inventory",
+                "account_id": "local",
+                "environment": environment,
+                "source": "tr_entities.workspace",
+                "source_version": source_version,
+                "history_start": now,
+                "closed_through": now,
+                "consistency_delay_seconds": 0,
+                "unmatched_count": 0,
+                "semantic_mismatch_count": 0,
+                "completed_at": now,
+            }
+            return changed
 
     def get_credit_account(self, workspace_id: str) -> CreditAccount | None:
         with self._lock:
@@ -827,6 +1156,28 @@ class InMemoryStore:
             user.email_verified = True
             return user
 
+    def _demote_owner_locked(self, owner_user_id: str, *, now: dt.datetime) -> None:
+        workspace_ids = sorted(
+            workspace_id
+            for candidate_owner, workspace_id in self.owner_workspaces
+            if candidate_owner == owner_user_id
+        )
+        shard_counts = [self.credits[workspace_id].shard_count for workspace_id in workspace_ids]
+        mutations = sum(shard_counts) * TRUST_REPLICATED_COLUMN_COUNT
+        remaining_budget = TRUST_OWNER_MUTATION_BUDGET
+        for workspace_id, shard_count in zip(workspace_ids, shard_counts, strict=True):
+            cost = shard_count * TRUST_REPLICATED_COLUMN_COUNT
+            if mutations > TRUST_OWNER_MUTATION_BUDGET and cost > remaining_budget:
+                self.trust_demotion_remainders.add((owner_user_id, workspace_id))
+                continue
+            remaining_budget -= cost
+            override = self.trust_overrides.get(workspace_id)
+            for shard in range(shard_count):
+                row = self.credit_trust_shards[(workspace_id, shard)]
+                if not (override and override.identity_bypass):
+                    row["trust_tier"] = min(int(row["trust_tier"] or 0), 1)
+                row["trust_computed_at"] = now
+
     def set_user_identity_status(
         self,
         user_id: str,
@@ -844,6 +1195,7 @@ class InMemoryStore:
             user = self.users.get(user_id)
             if user is None:
                 return None
+            was_approved = user.identity_status == "approved"
             normalized = IdentityVerificationStatus.coerce(status)
             if normalized is IdentityVerificationStatus.APPROVED and not user.identity_verified_at:
                 user.identity_verified_at = iso_now()
@@ -864,7 +1216,55 @@ class InMemoryStore:
                 user.identity_verified_name = verified_name
             if increment_attempts:
                 user.veriff_attempt_count += 1
+            if was_approved and normalized is not IdentityVerificationStatus.APPROVED:
+                self._demote_owner_locked(user_id, now=dt.datetime.now(dt.UTC))
             return user
+
+    def apply_veriff_identity_decision(
+        self,
+        user_id: str,
+        *,
+        event_id: str,
+        session_id: str,
+        status: str,
+        decision_code: int,
+        decision_reason: str | None = None,
+        decision_reason_code: int | None = None,
+        verified_name: str | None = None,
+    ) -> str:
+        with self._lock:
+            marker = ("veriff", event_id)
+            if marker in self.webhook_events:
+                return "replayed"
+            self.webhook_events.add(marker)
+            user = self.users.get(user_id)
+            if user is None or user.veriff_session_id != session_id:
+                return "ignored"
+            self.set_user_identity_status(
+                user_id,
+                status=status,
+                decision_code=decision_code,
+                decision_reason=decision_reason,
+                decision_reason_code=decision_reason_code,
+                verified_name=verified_name,
+            )
+            return "applied"
+
+    def process_trust_demotion_remainders(self, *, limit: int = 25) -> int:
+        with self._lock:
+            completed = 0
+            for owner_user_id, workspace_id in sorted(self.trust_demotion_remainders)[:limit]:
+                account = self.credits.get(workspace_id)
+                if account is not None:
+                    override = self.trust_overrides.get(workspace_id)
+                    for shard in range(account.shard_count):
+                        row = self.credit_trust_shards[(workspace_id, shard)]
+                        if not (override and override.identity_bypass):
+                            row["trust_tier"] = min(int(row["trust_tier"] or 0), 1)
+                        row["trust_computed_at"] = dt.datetime.now(dt.UTC)
+                self.trust_demotion_remainders.discard((owner_user_id, workspace_id))
+                completed += 1
+            return completed
 
     def begin_phone_verification(
         self, user_id: str, phone: str, channel: str | None = None
@@ -3181,7 +3581,18 @@ def configure_analytics_sink(sink: AnalyticsSink) -> None:
 def create_store(settings: Any) -> Store:
     backend = str(getattr(settings, "storage_backend", "memory")).lower()
     if backend == "memory":
-        return InMemoryStore()
+        return InMemoryStore(
+            max_workspaces_per_owner=int(
+                getattr(settings, "max_workspaces_per_owner", 25)
+            ),
+            trust_qualifying_providers=frozenset(
+                getattr(settings, "trust_qualifying_provider_set", {"stripe", "x402"})
+            ),
+            trust_tier3_min_days=int(getattr(settings, "trust_tier3_min_days", 30)),
+            trust_tier3_min_paid_microdollars=int(
+                getattr(settings, "trust_tier3_min_paid_microdollars", 50_000_000)
+            ),
+        )
     if backend == "postgres":
         # Postgres-wire system of record for the non-GCP deployments. The same
         # implementation runs on Azure Flexible Server / Citus, AWS Aurora DSQL,
@@ -3201,6 +3612,16 @@ def create_store(settings: Any) -> Store:
             postgres_iam_region=str(getattr(settings, "postgres_iam_region", "") or ""),
             operational_analytics_outbox_enabled=bool(
                 getattr(settings, "operational_analytics_outbox_enabled", False)
+            ),
+            max_workspaces_per_owner=int(
+                getattr(settings, "max_workspaces_per_owner", 25)
+            ),
+            trust_qualifying_providers=frozenset(
+                getattr(settings, "trust_qualifying_provider_set", {"stripe", "x402"})
+            ),
+            trust_tier3_min_days=int(getattr(settings, "trust_tier3_min_days", 30)),
+            trust_tier3_min_paid_microdollars=int(
+                getattr(settings, "trust_tier3_min_paid_microdollars", 50_000_000)
             ),
         )
         store.apply_schema()
@@ -3279,6 +3700,16 @@ def create_store(settings: Any) -> Store:
             ),
             spend_lease_bigtable_app_profiles=getattr(
                 settings, "spend_lease_bigtable_app_profile_map", {}
+            ),
+            max_workspaces_per_owner=int(
+                getattr(settings, "max_workspaces_per_owner", 25)
+            ),
+            trust_qualifying_providers=frozenset(
+                getattr(settings, "trust_qualifying_provider_set", {"stripe", "x402"})
+            ),
+            trust_tier3_min_days=int(getattr(settings, "trust_tier3_min_days", 30)),
+            trust_tier3_min_paid_microdollars=int(
+                getattr(settings, "trust_tier3_min_paid_microdollars", 50_000_000)
             ),
         )
     raise ValueError(f"unsupported storage backend: {backend}")
