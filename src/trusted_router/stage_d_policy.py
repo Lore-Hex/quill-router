@@ -51,6 +51,8 @@ class PolicyWatermark(Protocol):
 
     def advance(self, *, plane: str, sequence: int, updated_at: datetime) -> bool: ...
 
+    def highest_sequence(self, *, plane: str) -> int | None: ...
+
 
 class SigstoreBundleVerifier:
     """Verify a cosign ``sign-blob --bundle`` bundle with pinned identity."""
@@ -86,6 +88,13 @@ class StorePolicyWatermark:
         if not callable(advance):
             return False
         return bool(advance(plane=plane, sequence=sequence, updated_at=updated_at))
+
+    def highest_sequence(self, *, plane: str) -> int | None:
+        read = getattr(self._store, "get_stage_d_policy_watermark", None)
+        if not callable(read):
+            return None
+        value = read(plane=plane)
+        return int(value) if value is not None else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,8 +256,12 @@ class StageDPolicyResolver:
                     sequence=policy.sequence,
                     updated_at=self._wall_clock(),
                 )
-                if not advanced:
-                    raise ValueError("Stage D policy sequence did not advance the watermark")
+                if (
+                    not advanced
+                    and self._watermark.highest_sequence(plane=policy.plane)
+                    != policy.sequence
+                ):
+                    raise ValueError("Stage D policy sequence is below the watermark")
                 with self._state_lock:
                     self._policy = policy
                 logger.info(
