@@ -122,6 +122,25 @@ CREATE TABLE IF NOT EXISTS tr_trust_inbox (
     PRIMARY KEY (provider, adverse_ref)
 );
 
+CREATE TABLE IF NOT EXISTS tr_trust_backfill (
+    provider TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    source TEXT NOT NULL,
+    source_version TEXT NOT NULL,
+    history_start TIMESTAMPTZ NOT NULL,
+    closed_through TIMESTAMPTZ NOT NULL,
+    consistency_delay_seconds BIGINT NOT NULL CHECK (consistency_delay_seconds >= 0),
+    unmatched_count BIGINT NOT NULL CHECK (unmatched_count >= 0),
+    semantic_mismatch_count BIGINT NOT NULL CHECK (semantic_mismatch_count >= 0),
+    completed_at TIMESTAMPTZ,
+    CHECK (
+        completed_at IS NULL
+        OR (unmatched_count = 0 AND semantic_mismatch_count = 0)
+    ),
+    PRIMARY KEY (provider, account_id, environment, source, source_version)
+);
+
 CREATE TABLE IF NOT EXISTS tr_earnings_balance (
     user_id TEXT NOT NULL,
     shard BIGINT NOT NULL DEFAULT 0,
