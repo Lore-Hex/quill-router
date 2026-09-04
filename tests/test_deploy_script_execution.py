@@ -263,6 +263,52 @@ def test_gcp_no_traffic_warm_preprovisions_and_validates_private_candidate(
     )
 
 
+def test_rollout_binding_unit_4_fence_passes_with_settle_clamp(
+    harness: DeployScriptHarness,
+) -> None:
+    run = harness.run("scripts/deploy/rollout.sh")
+    assert run.returncode == 0, summarise(run)
+
+    deploy = next(
+        call
+        for call in run.calls
+        if call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+        and call[4:6] == ["deploy", "trusted-router"]
+    )
+    serialized_env = deploy[deploy.index("--set-env-vars") + 1]
+    assert "TR_SPEND_LEASE_BINDING_ENABLED=true" in serialized_env.split("|")
+
+
+def test_rollout_binding_unit_4_fence_refuses_missing_settle_clamp(
+    tmp_path: Path,
+) -> None:
+    isolated = DeployScriptHarness(tmp_path / "spend-lease-unit-4-missing")
+    settlement = (
+        isolated.mirror
+        / "src/trusted_router/services/spend_lease_settlement.py"
+    )
+    settlement.write_text(
+        settlement.read_text().replace(
+            "def clamp_spend_lease_charge(",
+            "def removed_spend_lease_charge_clamp(",
+            1,
+        )
+    )
+
+    run = isolated.run("scripts/deploy/rollout.sh")
+
+    assert run.returncode != 0
+    assert (
+        "TR_SPEND_LEASE_BINDING_ENABLED=true requires spend-lease unit 4 "
+        "(missing clamp_spend_lease_charge)" in run.stderr
+    )
+    assert not any(
+        call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+        and call[4:6] == ["deploy", "trusted-router"]
+        for call in run.calls
+    )
+
+
 def test_rollout_lists_optional_secrets_once_without_missing_secret_probes(
     harness: DeployScriptHarness,
 ) -> None:
