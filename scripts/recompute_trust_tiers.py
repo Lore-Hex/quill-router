@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 
 from trusted_router.config import get_settings
+from trusted_router.services.trust_recovery import alert_stale_trust_inbox
 from trusted_router.storage import create_store
 
 log = logging.getLogger(__name__)
@@ -29,6 +30,8 @@ class _TrustTierStore(Protocol):
 
 def run(store: _TrustTierStore, settings: Any, *, now: datetime | None = None) -> int:
     computed_at = now or datetime.now(UTC)
+    if hasattr(store, "list_stale_trust_inbox"):
+        alert_stale_trust_inbox(store, now=computed_at)
     workspace_ids = store.list_trust_tier_workspace_ids()
     for workspace_id in workspace_ids:
         tier = store.recompute_workspace_trust_tier(

@@ -612,6 +612,8 @@ class _FakeTransaction:
         DML can't see mutations; mixing is rejected in execute_update). Records
         the read version on first read for conflict detection."""
         for op in reversed(self.pending_writes):
+            if op[0] == "delete_typed" and op[1] == table and op[2] == pk:
+                return None
             if op[0] in ("insert_typed_dml", "update_typed") and op[1] == table and op[2] == pk:
                 return dict(op[3])
         return self._pinned_read(
@@ -853,6 +855,152 @@ class _FakeTransaction:
                 raise FakeAlreadyExists(f"tr_trust_event/{pk}")
             record = dict(p)
             self.pending_writes.append(("insert_typed_dml", "tr_trust_event", pk, record))
+            return 1
+        if sql.startswith("INSERT INTO tr_trust_inbox"):
+            pk = (p["provider"], p["adverse_ref"])
+            if self._typed_current("tr_trust_inbox", pk) is not None:
+                return 0
+            self.pending_writes.append(
+                ("insert_typed_dml", "tr_trust_inbox", pk, dict(p))
+            )
+            return 1
+        if sql.startswith("DELETE FROM tr_trust_inbox"):
+            pk = (p["provider"], p["adverse_ref"])
+            if self._typed_current("tr_trust_inbox", pk) is None:
+                return 0
+            self.pending_writes.append(("delete_typed", "tr_trust_inbox", pk))
+            return 1
+        if sql.startswith("UPDATE tr_trust_event SET amount_micro=@amount_micro"):
+            pk = (p["workspace_id"], p["event_id"])
+            rec = self._typed_current("tr_trust_event", pk)
+            if (
+                rec is None
+                or rec.get("provider") != p["provider"]
+                or rec.get("adverse_ref") != p["adverse_ref"]
+            ):
+                return 0
+            new = dict(
+                rec,
+                amount_micro=p["amount_micro"],
+                occurred_at=p["occurred_at"],
+                recorded_at=p["recorded_at"],
+                provider_subtype=p["provider_subtype"],
+                lifecycle_status=p["lifecycle_status"],
+                provider_ordering_watermark=p["provider_ordering_watermark"],
+            )
+            self.pending_writes.append(("update_typed", "tr_trust_event", pk, new))
+            return 1
+        if sql.startswith("UPDATE tr_trust_event SET recovered_micro=recovered_micro+"):
+            pk = (p["workspace_id"], p["event_id"])
+            rec = self._typed_current("tr_trust_event", pk)
+            if rec is None or int(rec.get("unrecovered_micro") or 0) < p["amount"]:
+                return 0
+            remaining = int(rec.get("unrecovered_micro") or 0) - p["amount"]
+            new = dict(
+                rec,
+                recovered_micro=int(rec.get("recovered_micro") or 0) + p["amount"],
+                unrecovered_micro=remaining,
+                debit_status="debited" if remaining == 0 else "partial",
+            )
+            self.pending_writes.append(("update_typed", "tr_trust_event", pk, new))
+            return 1
+        if sql.startswith("UPDATE tr_trust_event SET recovered_micro=@recovered_micro"):
+            pk = (p["workspace_id"], p["event_id"])
+            rec = self._typed_current("tr_trust_event", pk)
+            if rec is None or rec.get("kind") != "payment":
+                return 0
+            new = dict(
+                rec,
+                recovered_micro=p["recovered_micro"],
+                unrecovered_micro=p["unrecovered_micro"],
+                recovery_target=p["recovery_target"],
+                cumulative_refunded=p["cumulative_refunded"],
+                debit_status=p["debit_status"],
+            )
+            self.pending_writes.append(("update_typed", "tr_trust_event", pk, new))
+            return 1
+        if sql.startswith("UPDATE tr_trust_event SET recovery_target=@recovery_target"):
+            pk = (p["workspace_id"], p["event_id"])
+            rec = self._typed_current("tr_trust_event", pk)
+            if rec is None or rec.get("kind") != p["kind"]:
+                return 0
+            new = dict(
+                rec,
+                recovery_target=p["recovery_target"],
+                cumulative_refunded=p["cumulative_refunded"],
+                debit_status=p["debit_status"],
+                unrecovered_micro=p["unrecovered_micro"],
+            )
+            self.pending_writes.append(("update_typed", "tr_trust_event", pk, new))
+            return 1
+        if sql.startswith("UPDATE tr_credit_balance SET trust_latched_at=COALESCE"):
+            updated = 0
+            for pk in self.db.typed.get("tr_credit_balance", {}):
+                if pk[0] != p["pk"] or not 0 <= int(pk[1]) < int(p["shard_count"]):
+                    continue
+                rec = self._typed_current("tr_credit_balance", pk)
+                if rec is None:
+                    continue
+                new = dict(
+                    rec,
+                    trust_latched_at=rec.get("trust_latched_at") or p["now"],
+                    updated_at=p["now"],
+                )
+                self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+                updated += 1
+            return updated
+        if sql.startswith("UPDATE tr_credit_balance SET billing_pause_causes=@causes"):
+            updated = 0
+            for pk in self.db.typed.get("tr_credit_balance", {}):
+                if pk[0] != p["pk"] or not 0 <= int(pk[1]) < int(p["shard_count"]):
+                    continue
+                rec = self._typed_current("tr_credit_balance", pk)
+                if rec is None:
+                    continue
+                new = dict(
+                    rec,
+                    billing_pause_causes=list(p["causes"]),
+                    pause_epoch=int(rec.get("pause_epoch") or 0) + 1,
+                    updated_at=p["now"],
+                )
+                self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+                updated += 1
+            return updated
+        if sql.startswith("UPDATE tr_credit_balance SET total_credits=total_credits-@amount"):
+            pk = (p["ws"], p["shard"])
+            rec = self._typed_current("tr_credit_balance", pk)
+            available = (
+                int(rec["total_credits"]) - int(rec["total_usage"]) - int(rec["reserved"])
+                if rec is not None
+                else -1
+            )
+            if rec is None or available < p["amount"]:
+                return 0
+            new = dict(rec, total_credits=rec["total_credits"] - p["amount"])
+            if "now" in p:
+                new["updated_at"] = p["now"]
+            self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+            return 1
+        if (
+            sql.startswith("UPDATE tr_entities SET body=TO_JSON_STRING(JSON_SET")
+            and "'$.billing_paused'" in sql
+        ):
+            rec = self._entity_current("workspace", p["workspace_id"])
+            if rec is None:
+                return 0
+            body = json.loads(rec["body"])
+            body["billing_paused"] = p["paused"]
+            body["billing_pause_causes"] = json.loads(p["causes_json"])
+            body["billing_pause_reason"] = p["reason"]
+            self.pending_writes.append(
+                (
+                    "update_entity_dml",
+                    "workspace",
+                    p["workspace_id"],
+                    json.dumps(body, separators=(",", ":"), sort_keys=True),
+                    p["now"],
+                )
+            )
             return 1
         if "UPDATE tr_credit_balance SET reserved = reserved - @hold" in sql:
             _require_pred(
@@ -3681,9 +3829,81 @@ def _execute_sql(
             column.strip()
             for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
         ]
-        rows = db.typed.get("tr_trust_event", {}).values()
+        keys = set(db.typed.get("tr_trust_event", {}))
+        if txn is not None:
+            keys.update(
+                op[2]
+                for op in txn.pending_writes
+                if op[0] in {"insert_typed_dml", "update_typed"}
+                and op[1] == "tr_trust_event"
+            )
+        rows = [
+            txn._typed_current("tr_trust_event", pk)
+            if txn is not None
+            else db.typed.get("tr_trust_event", {}).get(pk)
+            for pk in keys
+        ]
+        rows = [row for row in rows if row is not None]
         if "pk" in params:
             rows = [row for row in rows if row.get("workspace_id") == params["pk"]]
+        if "workspace_id" in params:
+            rows = [
+                row for row in rows if row.get("workspace_id") == params["workspace_id"]
+            ]
+        if "provider" in params:
+            rows = [row for row in rows if row.get("provider") == params["provider"]]
+        if "original_payment_ref" in params:
+            rows = [
+                row
+                for row in rows
+                if row.get("original_payment_ref") == params["original_payment_ref"]
+            ]
+        if "adverse_ref" in params:
+            rows = [
+                row for row in rows if row.get("adverse_ref") == params["adverse_ref"]
+            ]
+        if "kind='payment'" in sql:
+            rows = [row for row in rows if row.get("kind") == "payment"]
+        if "kind!='payment'" in sql:
+            rows = [row for row in rows if row.get("kind") != "payment"]
+        if "unrecovered_micro>0" in sql:
+            rows = [row for row in rows if int(row.get("unrecovered_micro") or 0) > 0]
+        if "ORDER BY occurred_at, event_id" in sql:
+            rows.sort(key=lambda row: (row.get("occurred_at"), row.get("event_id")))
+        if cols == ["COALESCE(SUM(unrecovered_micro)", "0)"]:
+            return [[sum(int(row.get("unrecovered_micro") or 0) for row in rows)]]
+        return [[row.get(column) for column in cols] for row in rows]
+    if "FROM tr_trust_inbox" in sql:
+        keys = set(db.typed.get("tr_trust_inbox", {}))
+        if txn is not None:
+            keys.update(
+                op[2]
+                for op in txn.pending_writes
+                if op[0] in {"insert_typed_dml", "update_typed", "delete_typed"}
+                and op[1] == "tr_trust_inbox"
+            )
+        rows = [
+            txn._typed_current("tr_trust_inbox", pk)
+            if txn is not None
+            else db.typed.get("tr_trust_inbox", {}).get(pk)
+            for pk in keys
+        ]
+        rows = [row for row in rows if row is not None]
+        if "provider" in params:
+            rows = [row for row in rows if row.get("provider") == params["provider"]]
+        if "older_than" in params:
+            rows = [row for row in rows if row.get("received_at") < params["older_than"]]
+        rows.sort(
+            key=lambda row: (
+                row.get("received_at"),
+                row.get("provider"),
+                row.get("adverse_ref"),
+            )
+        )
+        cols = [
+            column.strip()
+            for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
         return [[row.get(column) for column in cols] for row in rows]
     # Typed counter tables: full scan (Step 2 reconcile) OR a single-row read by
     # pk (the typed_balance overlay uses WHERE <pk_col>=@pk AND shard=0).

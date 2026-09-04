@@ -114,6 +114,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS tr_trust_event_adverse_dedup
 CREATE UNIQUE INDEX IF NOT EXISTS tr_trust_event_payment_dedup
     ON tr_trust_event (provider, original_payment_ref, kind);
 
+CREATE TABLE IF NOT EXISTS tr_trust_inbox (
+    provider TEXT NOT NULL,
+    adverse_ref TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (provider, adverse_ref)
+);
+
 CREATE TABLE IF NOT EXISTS tr_earnings_balance (
     user_id TEXT NOT NULL,
     shard BIGINT NOT NULL DEFAULT 0,

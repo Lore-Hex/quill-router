@@ -15,7 +15,11 @@ from trusted_router.storage_gcp_counters import (
 from trusted_router.storage_gcp_legacy_reservations import (
     legacy_reservation_snapshot,
 )
-from trusted_router.storage_models import CreditAccount, Workspace
+from trusted_router.storage_models import (
+    CreditAccount,
+    Workspace,
+    workspace_billing_paused,
+)
 
 _RESHARD_COLUMNS = (
     "workspace_id",
@@ -163,7 +167,7 @@ def inspect_credit_reshard(
     account = store.get_credit_account(workspace_id)
     if workspace is None:
         result.reasons.append("workspace not found")
-    elif not workspace.billing_paused:
+    elif not workspace_billing_paused(workspace):
         result.reasons.append("workspace not billing-paused")
     if account is None:
         result.reasons.append("credit account not found")
@@ -249,7 +253,7 @@ def reshard_credit_account(
     def txn(transaction: Any) -> dict[str, int] | None:
         workspace = store._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
         account = store._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
-        if workspace is None or not workspace.billing_paused or account is None:
+        if workspace is None or not workspace_billing_paused(workspace) or account is None:
             return None
         current_count = credit_shard_count(account)
         rows = list(

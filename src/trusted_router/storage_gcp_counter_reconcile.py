@@ -7,7 +7,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from trusted_router.storage_gcp_counters import credit_shard_count, key_usage_shard_count
-from trusted_router.storage_models import ApiKey, CreditAccount, Workspace
+from trusted_router.storage_models import (
+    ApiKey,
+    CreditAccount,
+    Workspace,
+    workspace_billing_paused,
+)
 
 # ── Standing typed-side invariant auditor ───────────────────────────────────
 # This auditor is the standing typed-side tripwire: for every typed counter row,
@@ -629,7 +634,7 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
             param_types={"ws": pt.STRING},
         ))[0][0]
 
-    if workspace is None or not getattr(workspace, "billing_paused", False):
+    if workspace is None or not workspace_billing_paused(workspace):
         res.reasons.append("workspace not billing-paused — pause it before repair")
     if credit_account is not None and credit_shard_count(credit_account) != 1:
         res.reasons.append("credit ledger is sharded — consolidate before shard-zero repair")
@@ -657,7 +662,7 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
         # any write. A missing typed row (a key deleted mid-repair, or never
         # created) must ABORT — never be re-created as a partial (uncapped) row.
         ws = store._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
-        if ws is None or not ws.billing_paused:
+        if ws is None or not workspace_billing_paused(ws):
             return None
         credit = store._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
         if credit is not None and credit_shard_count(credit) != 1:
@@ -813,7 +818,7 @@ def repair_typed_usage(
     elif baseline_row and baseline_row[0][0] is not None:
         baseline = int(baseline_row[0][0])
 
-    if workspace is None or not getattr(workspace, "billing_paused", False):
+    if workspace is None or not workspace_billing_paused(workspace):
         res.reasons.append("workspace not billing-paused — pause it before repair")
     if credit_account is not None and credit_shard_count(credit_account) != 1:
         res.reasons.append("credit ledger is sharded — consolidate before shard-zero repair")
@@ -880,7 +885,7 @@ def repair_typed_usage(
         # as repair_typed_reserved: a workspace unpaused, a hold opened, or the
         # baseline cleaned up between the snapshot and here must abort.
         ws = store._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
-        if ws is None or not ws.billing_paused:
+        if ws is None or not workspace_billing_paused(ws):
             return None
         credit = store._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
         if credit is not None and credit_shard_count(credit) != 1:

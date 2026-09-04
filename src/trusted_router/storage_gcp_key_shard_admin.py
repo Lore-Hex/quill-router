@@ -21,7 +21,12 @@ from trusted_router.storage_gcp_counters import (
 from trusted_router.storage_gcp_legacy_reservations import (
     legacy_reservation_snapshot,
 )
-from trusted_router.storage_models import ApiKey, Workspace, iso_now
+from trusted_router.storage_models import (
+    ApiKey,
+    Workspace,
+    iso_now,
+    workspace_billing_paused,
+)
 
 _KEY_RESHARD_COLUMNS = (
     "key_hash",
@@ -151,7 +156,7 @@ def inspect_key_usage_reshard(
     workspace = store.get_workspace(key.workspace_id)
     if workspace is None:
         result.reasons.append("workspace not found")
-    elif not workspace.billing_paused:
+    elif not workspace_billing_paused(workspace):
         result.reasons.append("workspace not billing-paused")
     try:
         current_count = key_usage_shard_count(key)
@@ -232,7 +237,7 @@ def reshard_key_usage(
             key.workspace_id,
             Workspace,
         )
-        if workspace is None or not workspace.billing_paused:
+        if workspace is None or not workspace_billing_paused(workspace):
             return None
         current_count = key_usage_shard_count(key)
         rows = list(

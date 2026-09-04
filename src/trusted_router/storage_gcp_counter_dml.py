@@ -310,7 +310,7 @@ def release_credit(
         "SET reserved = reserved - @hold, total_usage = total_usage + @actual "
         "WHERE workspace_id=@ws AND shard=@shard AND reserved >= @hold"
     )
-    return transaction.execute_update(
+    count = transaction.execute_update(
         sql,
         params={"hold": int(hold), "actual": int(actual), "ws": workspace_id, "shard": shard},
         param_types={
@@ -320,6 +320,55 @@ def release_credit(
             "shard": param_types.INT64,
         },
     )
+    free = int(hold) - int(actual)
+    if count == 1 and free > 0:
+        from trusted_router.storage_gcp_trust import absorb_unrecovered_recovery_tx
+
+        absorbed = absorb_unrecovered_recovery_tx(
+            transaction,
+            param_types,
+            workspace_id=workspace_id,
+            amount_micro=free,
+            shard_count=_credit_shard_count_from_rows(transaction, param_types, workspace_id),
+            now=datetime.now(UTC),
+            read_entity_tx=None,
+            write_entity_tx=None,
+        )
+        if absorbed:
+            debited = transaction.execute_update(
+                "UPDATE tr_credit_balance SET total_credits=total_credits-@amount "
+                "WHERE workspace_id=@ws AND shard=@shard "
+                "AND (total_credits-total_usage-reserved)>=@amount",
+                params={
+                    "amount": absorbed,
+                    "ws": workspace_id,
+                    "shard": shard,
+                },
+                param_types={
+                    "amount": param_types.INT64,
+                    "ws": param_types.STRING,
+                    "shard": param_types.INT64,
+                },
+            )
+            if int(debited) != 1:
+                raise RuntimeError("released credit could not satisfy recovery debt")
+    return count
+
+
+def _credit_shard_count_from_rows(
+    transaction: Any, param_types: Any, workspace_id: str
+) -> int:
+    rows = list(
+        transaction.execute_sql(
+            "SELECT shard FROM tr_credit_balance WHERE workspace_id=@pk ORDER BY shard",
+            params={"pk": workspace_id},
+            param_types={"pk": param_types.STRING},
+        )
+    )
+    observed = [int(row[0]) for row in rows]
+    if observed != list(range(len(observed))) or not observed:
+        raise RuntimeError("configured tr_credit_balance shard set is incomplete")
+    return len(observed)
 
 
 def reserve_key(

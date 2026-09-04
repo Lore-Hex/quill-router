@@ -15,6 +15,7 @@ here, not in __init__.py.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -33,7 +34,7 @@ from trusted_router.money import MICRODOLLARS_PER_CENT
 from trusted_router.routes.helpers import json_body
 from trusted_router.services.x402_billing import X402_PAYMENT_METHOD, credit_x402_payment_intent
 from trusted_router.storage import STORE
-from trusted_router.storage_models import CreditProvenance
+from trusted_router.storage_models import AdverseTrustEvent, CreditProvenance
 from trusted_router.types import ErrorType
 
 log = logging.getLogger(__name__)
@@ -92,6 +93,25 @@ def register(router: APIRouter) -> None:
             )
         event_id = str(event.get("id") or uuid.uuid4())
         event_type = event.get("type")
+
+        adverse_events = _stripe_adverse_events(event, event_id=event_id)
+        if adverse_events:
+            results = []
+            for adverse in adverse_events:
+                adverse_result = STORE.record_adverse_trust_event(adverse)
+                results.append(
+                    {
+                        "adverse_ref": adverse.adverse_ref,
+                        "provider": adverse_result.provider or adverse.provider,
+                        "kind": adverse.kind,
+                        "status": adverse.lifecycle_status,
+                        "outcome": adverse_result.outcome,
+                        "workspace_id": adverse_result.workspace_id,
+                        "recovery_target": adverse_result.recovery_target,
+                        "unrecovered_micro": adverse_result.unrecovered_micro,
+                    }
+                )
+            return {"data": {"event_id": event_id, "adverse": results}}
 
         if event_type in {
             "checkout.session.completed",
@@ -355,7 +375,11 @@ def register(router: APIRouter) -> None:
                 STORE.record_auto_refill_outcome(workspace_id, status=f"failed:{code}")
                 return {"data": {"event_id": event_id, "auto_refill_failed": True, "code": code}}
 
-        if event_type in {"charge.refunded", "charge.refund.updated"}:
+        # A charge.refunded delivery without any refund objects cannot provide
+        # the per-refund dedup key required for order-independent partials.
+        # Preserve the existing visible fallback instead of inventing one from
+        # the charge id; canonical Stripe deliveries are handled above.
+        if event_type == "charge.refunded":
             obj = event.get("data", {}).get("object", {})
             metadata = obj.get("metadata") or {}
             if metadata.get("payment_method") == X402_PAYMENT_METHOD:
@@ -364,7 +388,6 @@ def register(router: APIRouter) -> None:
                     extra={
                         "event_id": event_id,
                         "payment_intent_id": obj.get("payment_intent"),
-                        "refund_id": obj.get("id"),
                     },
                 )
                 return {
@@ -377,6 +400,138 @@ def register(router: APIRouter) -> None:
                 }
 
         return {"data": {"ignored": True, "event_id": event_id}}
+
+
+def _object_id(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return str(value.get("id") or "")
+    return ""
+
+
+def _stripe_adverse_events(
+    event: dict[str, Any], *, event_id: str
+) -> tuple[AdverseTrustEvent, ...]:
+    event_type = str(event.get("type") or "")
+    obj = event.get("data", {}).get("object", {})
+    if not isinstance(obj, dict):
+        return ()
+    created = int(event.get("created") or obj.get("created") or 0)
+    occurred_at = datetime.fromtimestamp(created, tz=UTC)
+    watermark = f"{created:020d}:{event_id}"
+    raw_payload = json.dumps(event, separators=(",", ":"), sort_keys=True, default=str)
+
+    refund_objects: list[dict[str, Any]] = []
+    if event_type == "charge.refunded":
+        refunds = obj.get("refunds") or {}
+        data = refunds.get("data") if isinstance(refunds, dict) else None
+        if isinstance(data, list):
+            refund_objects = [row for row in data if isinstance(row, dict)]
+    elif event_type in {
+        "charge.refund.updated",
+        "refund.created",
+        "refund.updated",
+        "refund.failed",
+    }:
+        refund_objects = [obj]
+    if refund_objects:
+        parsed: list[AdverseTrustEvent] = []
+        for refund in refund_objects:
+            adverse_ref = str(refund.get("id") or "")
+            payment_intent = _object_id(
+                refund.get("payment_intent") or obj.get("payment_intent")
+            )
+            if not adverse_ref or not payment_intent:
+                continue
+            metadata = refund.get("metadata") or obj.get("metadata") or {}
+            provider = (
+                "x402"
+                if isinstance(metadata, dict)
+                and metadata.get("payment_method") == X402_PAYMENT_METHOD
+                else "stripe"
+            )
+            raw_status = str(refund.get("status") or "succeeded").lower()
+            status = {
+                "pending": "pending",
+                "requires_action": "pending",
+                "succeeded": "succeeded",
+                "failed": "failed",
+                "canceled": "failed",
+                "cancelled": "failed",
+                "reversed": "reversed",
+            }.get(raw_status, "pending")
+            parsed.append(
+                AdverseTrustEvent(
+                    event_id=f"{event_id}:{adverse_ref}",
+                    provider=provider,
+                    kind="refund",
+                    adverse_ref=adverse_ref,
+                    original_payment_ref=payment_intent,
+                    amount_micro=int(refund.get("amount") or 0)
+                    * MICRODOLLARS_PER_CENT,
+                    provider_subtype=event_type,
+                    lifecycle_status=status,
+                    occurred_at=occurred_at,
+                    provider_ordering_watermark=watermark,
+                    payload=raw_payload,
+                )
+            )
+        return tuple(parsed)
+
+    if event_type in {
+        "charge.dispute.created",
+        "charge.dispute.updated",
+        "charge.dispute.closed",
+        "charge.dispute.funds_withdrawn",
+        "charge.dispute.funds_reinstated",
+    }:
+        adverse_ref = str(obj.get("id") or "")
+        charge = obj.get("charge") or {}
+        payment_intent = _object_id(
+            obj.get("payment_intent")
+            or (charge.get("payment_intent") if isinstance(charge, dict) else None)
+        )
+        if not adverse_ref or not payment_intent:
+            return ()
+        metadata = obj.get("metadata") or (
+            charge.get("metadata") if isinstance(charge, dict) else {}
+        )
+        provider = (
+            "x402"
+            if isinstance(metadata, dict)
+            and metadata.get("payment_method") == X402_PAYMENT_METHOD
+            else "stripe"
+        )
+        raw_status = str(obj.get("status") or "").lower()
+        if event_type == "charge.dispute.funds_reinstated" or raw_status == "won":
+            status = "won"
+        elif raw_status == "lost":
+            status = "lost"
+        elif raw_status in {"closed", "warning_closed"}:
+            status = "closed"
+        elif raw_status in {"warning_needs_response", "warning_under_review"}:
+            status = "pending"
+        else:
+            # A real dispute removes the funds immediately, before Stripe has
+            # adjudicated it; that active state claims all credited principal.
+            status = "succeeded"
+        return (
+            AdverseTrustEvent(
+                event_id=f"{event_id}:{adverse_ref}",
+                provider=provider,
+                kind="dispute",
+                adverse_ref=adverse_ref,
+                original_payment_ref=payment_intent,
+                amount_micro=int(obj.get("amount") or 0) * MICRODOLLARS_PER_CENT,
+                provider_subtype=event_type,
+                lifecycle_status=status,
+                occurred_at=occurred_at,
+                provider_ordering_watermark=watermark,
+                payload=raw_payload,
+            ),
+        )
+    return ()
 
 
 def _lifetime_topup_user_id(workspace_id: str, metadata: dict[str, Any]) -> str | None:

@@ -18,6 +18,8 @@ from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage_models import (
     AcquisitionAttribution,
     ActivationReminderTask,
+    AdverseTrustEvent,
+    AdverseTrustResult,
     ApiKey,
     ApiKeyAuthContext,
     ApiKeyUsageSnapshot,
@@ -55,6 +57,7 @@ from trusted_router.storage_models import (
     SignupResult,
     SyntheticProbeSample,
     SyntheticRollup,
+    TrustInboxRow,
     User,
     UserModelPayout,
     UserProvidedModel,
@@ -673,6 +676,12 @@ class Store(Protocol):
     def credit_workspace_once(
         self, workspace_id: str, amount_microdollars: int, event_id: str
     ) -> bool: ...
+    def record_adverse_trust_event(
+        self, event: AdverseTrustEvent
+    ) -> AdverseTrustResult: ...
+    def list_stale_trust_inbox(
+        self, *, older_than: Any
+    ) -> tuple[TrustInboxRow, ...]: ...
 
     # Earnings & movement primitives -----------------------------------------
     def debit_workspace_guarded(

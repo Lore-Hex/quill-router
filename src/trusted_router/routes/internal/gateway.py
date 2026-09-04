@@ -229,6 +229,7 @@ from trusted_router.storage_models import (
     UserModelPayout,
     UserProvidedModel,
     iso_now,
+    workspace_billing_paused,
 )
 from trusted_router.synthetic.fleet import record_heartbeat
 from trusted_router.synthetic.funding import ensure_monitor_funding, monitor_lookup_hash
@@ -870,7 +871,7 @@ def _authorize_gateway_sync_impl(
     workspace = STORE.get_workspace(api_key.workspace_id)
     if workspace is None:
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
-    if workspace.billing_paused:
+    if workspace_billing_paused(workspace):
         # Keep tenant attribution in the rendered message because Cloud Run's
         # stderr collector does not preserve arbitrary LogRecord extras. This
         # is billing metadata only: never include the raw key, body, or content.

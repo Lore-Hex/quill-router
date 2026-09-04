@@ -266,6 +266,15 @@ else
     ON tr_trust_event (provider, original_payment_ref, kind)"
 fi
 
+if table_exists tr_trust_inbox; then log "tr_trust_inbox exists, skip"; else
+  apply_ddl "CREATE TABLE tr_trust_inbox (
+    provider STRING(16) NOT NULL,
+    adverse_ref STRING(255) NOT NULL,
+    payload STRING(MAX) NOT NULL,
+    received_at TIMESTAMP NOT NULL,
+  ) PRIMARY KEY (provider, adverse_ref)"
+fi
+
 # Historical trust-column backfill statement. It is intentionally a separate,
 # operator-run artifact rather than an automatic deploy-time DML rewrite.
 log "historical trust-column backfill: scripts/deploy/backfill_credit_balance_trust.sql"

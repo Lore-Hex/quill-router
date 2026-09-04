@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from trusted_router.storage_models import CreditProvenance, TrustEvent
+from trusted_router.storage_models import AdverseTrustEvent, CreditProvenance, TrustEvent
 
 TRUST_EVENT_KINDS = frozenset({"payment", "refund", "dispute", "abuse", "grant"})
 TRUST_EVENT_PROVIDERS = frozenset(
@@ -31,6 +32,132 @@ _PAYMENT_SOURCES = {
     "adyen": frozenset({"authorisation"}),
     "x402": frozenset({"x402"}),
 }
+
+TRUST_PAUSE_CAUSES = frozenset(
+    {"abuse", "principal_recovery", "resharding", "federation", "migration"}
+)
+
+_REFUND_TRANSITIONS = {
+    None: frozenset({"pending", "succeeded", "failed", "reversed"}),
+    "pending": frozenset({"pending", "succeeded", "failed", "reversed"}),
+    "succeeded": frozenset({"succeeded", "reversed"}),
+    "failed": frozenset({"failed"}),
+    "reversed": frozenset({"reversed"}),
+    "terminal_by_horizon": frozenset({"terminal_by_horizon"}),
+}
+_DISPUTE_TRANSITIONS = {
+    None: frozenset({"pending", "succeeded", "won", "lost", "closed"}),
+    "pending": frozenset({"pending", "succeeded", "won", "lost", "closed"}),
+    "succeeded": frozenset({"succeeded", "won", "lost", "closed"}),
+    "won": frozenset({"won"}),
+    "lost": frozenset({"lost", "closed"}),
+    "closed": frozenset({"closed"}),
+    "terminal_by_horizon": frozenset({"terminal_by_horizon"}),
+}
+
+
+def validate_adverse_event(event: AdverseTrustEvent) -> None:
+    if event.provider not in {"stripe", "x402"}:
+        raise ValueError("slice 1b adverse provider must be stripe or x402")
+    if event.kind not in {"refund", "dispute"}:
+        raise ValueError("adverse trust event must be a refund or dispute")
+    if not event.adverse_ref or not event.original_payment_ref:
+        raise ValueError("adverse and original payment references are required")
+    if not event.original_payment_ref.startswith("pi_"):
+        raise ValueError("Stripe/x402 adverse event requires a PaymentIntent id")
+    if event.amount_micro < 0:
+        raise ValueError("adverse amount must not be negative")
+    if event.lifecycle_status not in TRUST_EVENT_LIFECYCLE_STATUSES:
+        raise ValueError("unsupported adverse lifecycle status")
+    if event.occurred_at.tzinfo is None or event.occurred_at.utcoffset() is None:
+        raise ValueError("adverse occurred_at must be timezone-aware")
+    if not event.provider_ordering_watermark:
+        raise ValueError("provider ordering watermark is required")
+
+
+def adverse_event_payload(event: AdverseTrustEvent) -> str:
+    """Serialize the canonical observation used by transactional inbox drain."""
+
+    return json.dumps(
+        {
+            "event_id": event.event_id,
+            "provider": event.provider,
+            "kind": event.kind,
+            "adverse_ref": event.adverse_ref,
+            "original_payment_ref": event.original_payment_ref,
+            "amount_micro": event.amount_micro,
+            "provider_subtype": event.provider_subtype,
+            "lifecycle_status": event.lifecycle_status,
+            "occurred_at": event.occurred_at.isoformat(),
+            "provider_ordering_watermark": event.provider_ordering_watermark,
+            "payload": event.payload,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def adverse_event_from_payload(payload: str) -> AdverseTrustEvent:
+    body = json.loads(payload)
+    event = AdverseTrustEvent(
+        event_id=str(body["event_id"]),
+        provider=str(body["provider"]),
+        kind=str(body["kind"]),
+        adverse_ref=str(body["adverse_ref"]),
+        original_payment_ref=str(body["original_payment_ref"]),
+        amount_micro=int(body["amount_micro"]),
+        provider_subtype=str(body["provider_subtype"]),
+        lifecycle_status=str(body["lifecycle_status"]),
+        occurred_at=datetime.fromisoformat(str(body["occurred_at"])),
+        provider_ordering_watermark=str(body["provider_ordering_watermark"]),
+        payload=str(body.get("payload") or ""),
+    )
+    validate_adverse_event(event)
+    return event
+
+
+def adverse_transition_outcome(
+    *,
+    kind: str,
+    old_status: str | None,
+    old_watermark: str | None,
+    new_status: str,
+    new_watermark: str,
+) -> str:
+    """Classify one lifecycle observation without applying money."""
+
+    if old_status == new_status:
+        return "replay"
+    if old_watermark is not None and new_watermark <= old_watermark:
+        return "stale"
+    graph = _REFUND_TRANSITIONS if kind == "refund" else _DISPUTE_TRANSITIONS
+    if new_status not in graph.get(old_status, frozenset()):
+        return "illegal"
+    return "applied"
+
+
+def payment_recovery_target(payment: TrustEvent, adverse: Iterable[TrustEvent]) -> tuple[int, int]:
+    """Return (target, net_refunded) from aggregate current adverse state."""
+
+    credited = int(payment.credited_micro or 0)
+    payment_amount = int(payment.payment_amount_micro or 0)
+    if payment_amount <= 0:
+        raise ValueError("payment fact has no positive payment amount")
+    rows = list(adverse)
+    net_refunded = min(
+        payment_amount,
+        sum(
+            int(row.amount_micro or 0)
+            for row in rows
+            if row.kind == "refund" and row.lifecycle_status == "succeeded"
+        ),
+    )
+    refund_target = credited * net_refunded // payment_amount
+    dispute_claims_all = any(
+        row.kind == "dispute" and row.lifecycle_status in {"succeeded", "lost", "closed"}
+        for row in rows
+    )
+    return (credited if dispute_claims_all else refund_target), net_refunded
 
 
 @dataclass(frozen=True, slots=True)
