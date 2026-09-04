@@ -12,8 +12,12 @@ See docs/design/billing-typed-counters.md.
 
 from __future__ import annotations
 
+import copy
+import datetime as dt
 import logging
+import re
 import threading
+from typing import Any
 
 import pytest
 
@@ -204,6 +208,190 @@ def _make_key(store, ws: str, *, limit, include_byok=True):
     return key
 
 
+_RELEASE_WINDOWS = (
+    ("day", "daily"),
+    ("week", "weekly"),
+    ("month", "monthly"),
+)
+_EXPECTED_RELEASE_PARAM_TYPES = {
+    "hold": "INT64",
+    "actual": "INT64",
+    "kh": "STRING",
+    "shard": "INT64",
+    "day_floor": "TIMESTAMP",
+    "week_floor": "TIMESTAMP",
+    "month_floor": "TIMESTAMP",
+}
+_ReleaseCall = tuple[str, dict[str, Any], dict[str, Any]]
+
+
+class _RecordingTransaction:
+    """Record release DML while delegating its effects to the Spanner fake."""
+
+    def __init__(
+        self,
+        transaction: Any,
+        calls: list[_ReleaseCall],
+        *,
+        force_first_miss: bool,
+    ) -> None:
+        self._transaction = transaction
+        self._calls = calls
+        self._force_first_miss = force_first_miss
+
+    def execute_update(
+        self,
+        sql: str,
+        *,
+        params: dict[str, Any] | None = None,
+        param_types: dict[str, Any] | None = None,
+    ) -> int:
+        call = (sql, dict(params or {}), dict(param_types or {}))
+        self._calls.append(call)
+        if self._force_first_miss and len(self._calls) == 1:
+            return 0
+        return self._transaction.execute_update(
+            sql,
+            params=params,
+            param_types=param_types,
+        )
+
+
+def _release_floors() -> dict[str, dt.datetime]:
+    return {
+        "daily": dt.datetime(2026, 9, 4, tzinfo=dt.UTC),
+        "weekly": dt.datetime(2026, 8, 31, tzinfo=dt.UTC),
+        "monthly": dt.datetime(2026, 9, 1, tzinfo=dt.UTC),
+    }
+
+
+def _seed_release_row(
+    *,
+    include_byok: bool = True,
+) -> tuple[Any, Any, Any, dict[str, dt.datetime]]:
+    store, db, _ = make_fake_store()
+    key = _make_key(store, "ws_release_path", limit=2_000_000, include_byok=include_byok)
+    floors = _release_floors()
+    db.typed[KEY_LIMIT_TABLE][(key.hash, 0)].update(
+        reserved=100,
+        usage=101,
+        byok_usage=37,
+        day_usage=11,
+        day_start=floors["daily"],
+        week_usage=23,
+        week_start=floors["weekly"],
+        month_usage=47,
+        month_start=floors["monthly"],
+    )
+    return store, db, key, floors
+
+
+def _record_release(
+    store: Any,
+    key_hash: str,
+    *,
+    hold: int,
+    actual: int,
+    floors: dict[str, dt.datetime],
+    book_to_byok: bool = False,
+    force_first_miss: bool = False,
+) -> tuple[int, list[_ReleaseCall]]:
+    calls: list[_ReleaseCall] = []
+
+    def run(transaction: Any) -> int:
+        recording_transaction = _RecordingTransaction(
+            transaction,
+            calls,
+            force_first_miss=force_first_miss,
+        )
+        return release_key(
+            recording_transaction,
+            store._param_types,
+            key_hash,
+            hold,
+            actual,
+            window_floors=floors,
+            book_to_byok=book_to_byok,
+        )
+
+    return store._database.run_in_transaction(run), calls
+
+
+def _normalized_sql(sql: str) -> str:
+    return " ".join(sql.split())
+
+
+def _assert_one_lifetime_usage_assignment(set_clause: str) -> None:
+    assignments = (
+        "usage = usage + @actual",
+        "byok_usage = byok_usage + @actual",
+    )
+    assert sum(assignment in set_clause for assignment in assignments) == 1, set_clause
+
+
+def _assert_fast_release_sql(sql: str) -> None:
+    normalized = _normalized_sql(sql)
+    set_clause, separator, where_clause = normalized.partition(" WHERE ")
+    assert separator, normalized
+    _assert_one_lifetime_usage_assignment(set_clause)
+    for column, _floor_name in _RELEASE_WINDOWS:
+        assert not re.search(rf"\b{column}_start\s*=", set_clause), set_clause
+        assert (
+            f"{column}_usage = COALESCE({column}_usage, 0) +" in set_clause
+        ), set_clause
+        assert (
+            f"{column}_start IS NOT NULL AND "
+            f"{column}_start >= @{column}_floor" in where_clause
+        ), where_clause
+
+
+def _assert_fallback_release_sql(sql: str) -> None:
+    normalized = _normalized_sql(sql)
+    set_clause, separator, _where_clause = normalized.partition(" WHERE ")
+    assert separator, normalized
+    _assert_one_lifetime_usage_assignment(set_clause)
+    for column, _floor_name in _RELEASE_WINDOWS:
+        assert re.search(rf"\b{column}_start\s*=", set_clause), set_clause
+        assert f"{column}_usage = IF(" in set_clause, set_clause
+
+
+def _assert_release_path(calls: list[_ReleaseCall], *, fallback: bool) -> None:
+    assert len(calls) == (2 if fallback else 1), [call[0] for call in calls]
+    _assert_fast_release_sql(calls[0][0])
+    if fallback:
+        _assert_fallback_release_sql(calls[1][0])
+    first_params = calls[0][1]
+    first_param_types = calls[0][2]
+    assert first_param_types == _EXPECTED_RELEASE_PARAM_TYPES
+    assert all(params == first_params for _sql, params, _types in calls)
+    assert all(types == first_param_types for _sql, _params, types in calls)
+
+
+def _expected_release_row(
+    before: dict[str, Any],
+    floors: dict[str, dt.datetime],
+    *,
+    hold: int,
+    actual: int,
+    usage_column: str = "usage",
+    window_amount: int | None = None,
+    rolled: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    expected = copy.deepcopy(before)
+    expected["reserved"] -= hold
+    expected[usage_column] += actual
+    amount = actual if window_amount is None else window_amount
+    for column, floor_name in _RELEASE_WINDOWS:
+        if column in rolled:
+            expected[f"{column}_usage"] = amount
+            expected[f"{column}_start"] = floors[floor_name]
+        else:
+            expected[f"{column}_usage"] = (
+                expected.get(f"{column}_usage") or 0
+            ) + amount
+    return expected
+
+
 def test_reserve_key_capped_no_overcap_under_concurrency() -> None:
     ws = "ws_keyhot"
     n = 8
@@ -348,6 +536,211 @@ def test_release_key_book_to_byok_and_underflow() -> None:
         == 0
     )
     assert db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]["reserved"] == 0
+
+
+def test_release_key_fast_path_set_does_not_assign_window_starts() -> None:
+    store, _db, key, floors = _seed_release_row()
+
+    count, calls = _record_release(
+        store,
+        key.hash,
+        hold=20,
+        actual=13,
+        floors=floors,
+    )
+
+    assert count == 1
+    _assert_release_path(calls, fallback=False)
+
+
+def test_release_key_no_roll_fast_path_matches_fallback_full_row() -> None:
+    store, db, key, floors = _seed_release_row()
+    row_key = (key.hash, 0)
+    # Existing rows can read NULL after ADD COLUMN. Both statements promise the
+    # same COALESCE behavior without rolling an otherwise-current boundary.
+    db.typed[KEY_LIMIT_TABLE][row_key]["week_usage"] = None
+    before = copy.deepcopy(db.typed[KEY_LIMIT_TABLE][row_key])
+
+    fast_count, fast_calls = _record_release(
+        store,
+        key.hash,
+        hold=20,
+        actual=13,
+        floors=floors,
+    )
+    fast_row = copy.deepcopy(db.typed[KEY_LIMIT_TABLE][row_key])
+
+    # Force only the conditional UPDATE to report a miss. The real fallback then
+    # executes against the same fresh row, proving its effect is identical.
+    db.typed[KEY_LIMIT_TABLE][row_key] = copy.deepcopy(before)
+    fallback_count, fallback_calls = _record_release(
+        store,
+        key.hash,
+        hold=20,
+        actual=13,
+        floors=floors,
+        force_first_miss=True,
+    )
+    fallback_row = copy.deepcopy(db.typed[KEY_LIMIT_TABLE][row_key])
+
+    assert fast_count == fallback_count == 1
+    _assert_release_path(fast_calls, fallback=False)
+    _assert_release_path(fallback_calls, fallback=True)
+    assert fast_calls[0][1:] == fallback_calls[0][1:] == fallback_calls[1][1:]
+    assert fast_row == fallback_row
+    assert fast_row == _expected_release_row(before, floors, hold=20, actual=13)
+
+
+@pytest.mark.parametrize(
+    "stale_windows",
+    [
+        pytest.param(frozenset({"day"}), id="day"),
+        pytest.param(frozenset({"week"}), id="week"),
+        pytest.param(frozenset({"month"}), id="month"),
+        pytest.param(frozenset({"day", "week"}), id="day-week"),
+        pytest.param(frozenset({"day", "month"}), id="day-month"),
+        pytest.param(frozenset({"week", "month"}), id="week-month"),
+        pytest.param(frozenset({"day", "week", "month"}), id="day-week-month"),
+    ],
+)
+def test_release_key_stale_windows_roll_independently(
+    stale_windows: frozenset[str],
+) -> None:
+    store, db, key, floors = _seed_release_row()
+    row_key = (key.hash, 0)
+    row = db.typed[KEY_LIMIT_TABLE][row_key]
+    for column, floor_name in _RELEASE_WINDOWS:
+        if column in stale_windows:
+            row[f"{column}_start"] = floors[floor_name] - dt.timedelta(days=40)
+    before = copy.deepcopy(row)
+
+    count, calls = _record_release(
+        store,
+        key.hash,
+        hold=20,
+        actual=13,
+        floors=floors,
+    )
+
+    assert count == 1
+    _assert_release_path(calls, fallback=True)
+    assert db.typed[KEY_LIMIT_TABLE][row_key] == _expected_release_row(
+        before,
+        floors,
+        hold=20,
+        actual=13,
+        rolled=stale_windows,
+    )
+
+
+@pytest.mark.parametrize("null_window", ["day", "week", "month"])
+def test_release_key_null_window_start_forces_fallback_and_rolls(
+    null_window: str,
+) -> None:
+    store, db, key, floors = _seed_release_row()
+    row_key = (key.hash, 0)
+    row = db.typed[KEY_LIMIT_TABLE][row_key]
+    row[f"{null_window}_start"] = None
+    before = copy.deepcopy(row)
+
+    count, calls = _record_release(
+        store,
+        key.hash,
+        hold=20,
+        actual=13,
+        floors=floors,
+    )
+
+    assert count == 1
+    _assert_release_path(calls, fallback=True)
+    assert db.typed[KEY_LIMIT_TABLE][row_key] == _expected_release_row(
+        before,
+        floors,
+        hold=20,
+        actual=13,
+        rolled=frozenset({null_window}),
+    )
+
+
+def test_release_key_duplicate_underflow_runs_fallback_without_booking() -> None:
+    store, db, key, floors = _seed_release_row()
+    row_key = (key.hash, 0)
+    db.typed[KEY_LIMIT_TABLE][row_key]["reserved"] = 5
+    before = copy.deepcopy(db.typed[KEY_LIMIT_TABLE][row_key])
+
+    count, calls = _record_release(
+        store,
+        key.hash,
+        hold=20,
+        actual=13,
+        floors=floors,
+    )
+
+    assert count == 0
+    _assert_release_path(calls, fallback=True)
+    assert db.typed[KEY_LIMIT_TABLE][row_key] == before
+
+
+@pytest.mark.parametrize("stale_day", [False, True], ids=["fast", "fallback"])
+def test_release_key_byok_excluded_gates_windows_on_both_paths(
+    stale_day: bool,
+) -> None:
+    store, db, key, floors = _seed_release_row(include_byok=False)
+    row_key = (key.hash, 0)
+    row = db.typed[KEY_LIMIT_TABLE][row_key]
+    rolled: frozenset[str] = frozenset()
+    if stale_day:
+        row["day_start"] = floors["daily"] - dt.timedelta(days=1)
+        rolled = frozenset({"day"})
+    before = copy.deepcopy(row)
+
+    count, calls = _record_release(
+        store,
+        key.hash,
+        hold=20,
+        actual=13,
+        floors=floors,
+        book_to_byok=True,
+    )
+
+    assert count == 1
+    _assert_release_path(calls, fallback=stale_day)
+    assert all(
+        "IF(include_byok, @actual, 0)" in _normalized_sql(sql)
+        for sql, _params, _types in calls
+    )
+    assert db.typed[KEY_LIMIT_TABLE][row_key] == _expected_release_row(
+        before,
+        floors,
+        hold=20,
+        actual=13,
+        usage_column="byok_usage",
+        window_amount=0,
+        rolled=rolled,
+    )
+
+
+def test_release_key_refund_uses_fast_path_without_booking_usage() -> None:
+    store, db, key, floors = _seed_release_row()
+    row_key = (key.hash, 0)
+    before = copy.deepcopy(db.typed[KEY_LIMIT_TABLE][row_key])
+
+    count, calls = _record_release(
+        store,
+        key.hash,
+        hold=20,
+        actual=0,
+        floors=floors,
+    )
+
+    assert count == 1
+    _assert_release_path(calls, fallback=False)
+    assert db.typed[KEY_LIMIT_TABLE][row_key] == _expected_release_row(
+        before,
+        floors,
+        hold=20,
+        actual=0,
+    )
 
 
 def test_reserve_key_uncapped_concurrent_no_aborts() -> None:

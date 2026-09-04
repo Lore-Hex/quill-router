@@ -1197,33 +1197,91 @@ class _FakeTransaction:
             return 1
         if "UPDATE tr_key_limit " in sql and "reserved = reserved - @hold" in sql:
             _require_pred(sql, "key_hash=@kh AND shard=@shard AND reserved >= @hold", "key-release")
-            pk = (p["kh"], p["shard"])
-            rec = self._typed_current("tr_key_limit", pk)
-            if rec is None or rec["reserved"] < p["hold"]:
-                return 0
+            usage_settle = "usage = usage + @actual" in sql
             byok_settle = "byok_usage = byok_usage + @actual" in sql
-            col = "byok_usage" if byok_settle else "usage"
-            new = dict(rec, reserved=rec["reserved"] - p["hold"])
-            new[col] = rec[col] + p["actual"]
-            # Lazy window bump, mirroring release_key's IF() SQL: a stale window
-            # (start < floor) is replaced, a fresh one accumulates. BYOK settles
-            # count only when the row's include_byok says so (wamt gate).
-            if "day_usage = IF(" in sql:
-                wamt = p["actual"]
-                if byok_settle and not rec.get("include_byok", True):
-                    wamt = 0
+            if usage_settle == byok_settle:
+                raise AssertionError(
+                    "key-release SQL must update exactly one lifetime usage column"
+                )
+            wamt_sql = "IF(include_byok, @actual, 0)" if byok_settle else "@actual"
+            fast_window_bump = (
+                "day_usage = COALESCE(day_usage, 0) +" in sql
+                or "day_start IS NOT NULL" in sql
+            )
+            if fast_window_bump:
                 for window, floor_param in (
                     ("day", "day_floor"),
                     ("week", "week_floor"),
                     ("month", "month_floor"),
                 ):
+                    _require_pred(
+                        sql,
+                        f"{window}_usage = COALESCE({window}_usage, 0) + {wamt_sql}",
+                        f"key-release-current-{window}-usage",
+                    )
+                    _require_pred(
+                        sql,
+                        f"AND {window}_start IS NOT NULL "
+                        f"AND {window}_start >= @{floor_param}",
+                        f"key-release-current-{window}",
+                    )
+            pk = (p["kh"], p["shard"])
+            rec = self._typed_current("tr_key_limit", pk)
+            if rec is None or rec["reserved"] < p["hold"]:
+                return 0
+            if fast_window_bump and any(
+                rec.get(f"{window}_start") is None
+                or rec[f"{window}_start"] < p[floor_param]
+                for window, floor_param in (
+                    ("day", "day_floor"),
+                    ("week", "week_floor"),
+                    ("month", "month_floor"),
+                )
+            ):
+                return 0
+            col = "byok_usage" if byok_settle else "usage"
+            new = dict(rec, reserved=rec["reserved"] - p["hold"])
+            new[col] = rec[col] + p["actual"]
+            wamt = p["actual"]
+            if byok_settle and not rec.get("include_byok", True):
+                wamt = 0
+            # Lazy window bump, mirroring release_key's IF() SQL: a stale window
+            # (start < floor) is replaced, a fresh one accumulates. BYOK settles
+            # count only when the row's include_byok says so (wamt gate).
+            if fast_window_bump:
+                for window in ("day", "week", "month"):
+                    new[f"{window}_usage"] = (
+                        rec.get(f"{window}_usage") or 0
+                    ) + wamt
+            elif "day_usage = IF(" in sql:
+                for window, floor_param in (
+                    ("day", "day_floor"),
+                    ("week", "week_floor"),
+                    ("month", "month_floor"),
+                ):
+                    _require_pred(
+                        sql,
+                        f"{window}_usage = IF({window}_start IS NULL OR "
+                        f"{window}_start < @{floor_param}, {wamt_sql}, "
+                        f"COALESCE({window}_usage, 0) + {wamt_sql})",
+                        f"key-release-roll-{window}-usage",
+                    )
+                    _require_pred(
+                        sql,
+                        f"{window}_start = IF({window}_start IS NULL OR "
+                        f"{window}_start < @{floor_param}, @{floor_param}, "
+                        f"{window}_start)",
+                        f"key-release-roll-{window}-start",
+                    )
                     floor = p[floor_param]
                     start = rec.get(f"{window}_start")
                     if start is None or start < floor:
                         new[f"{window}_usage"] = wamt
                         new[f"{window}_start"] = floor
                     else:
-                        new[f"{window}_usage"] = rec.get(f"{window}_usage", 0) + wamt
+                        new[f"{window}_usage"] = (
+                            rec.get(f"{window}_usage") or 0
+                        ) + wamt
             self.pending_writes.append(("update_typed", "tr_key_limit", pk, new))
             return 1
         if sql.startswith("INSERT INTO tr_reservation"):
