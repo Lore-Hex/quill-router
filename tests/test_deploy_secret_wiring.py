@@ -94,6 +94,21 @@ def test_deploy_enables_spend_lease_binding_with_emergency_override() -> None:
         '"TR_SPEND_LEASE_PILOT_WORKSPACE_IDS='
         '45819281-0ce9-4811-a0cd-c660ab3a116d"' in rollout
     )
+    assert (
+        'read_primary_regional_quota_env "TR_SPEND_LEASE_BIGTABLE_TABLE" '
+        '"trustedrouter-spend-lease"' in rollout
+    )
+    assert (
+        '"TR_SPEND_LEASE_BIGTABLE_APP_PROFILES" \\\n'
+        '    "us-central1=tr-spend-us-central1"' in rollout
+    )
+    assert (
+        '"TR_SPEND_LEASE_BIGTABLE_TABLE=${SPEND_LEASE_BIGTABLE_TABLE}"' in rollout
+    )
+    assert (
+        '"TR_SPEND_LEASE_BIGTABLE_APP_PROFILES='
+        '${SPEND_LEASE_BIGTABLE_APP_PROFILES}"' in rollout
+    )
 
 
 def test_deploy_removes_only_explicitly_missing_optional_secrets() -> None:

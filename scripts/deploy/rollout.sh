@@ -463,6 +463,14 @@ REGIONAL_QUOTA_BIGTABLE_TABLE="${TR_REGIONAL_QUOTA_BIGTABLE_TABLE:-$(
 REGIONAL_QUOTA_BIGTABLE_APP_PROFILES="${TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES:-$(
   read_primary_regional_quota_env "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES"
 )}"
+SPEND_LEASE_BIGTABLE_TABLE="${TR_SPEND_LEASE_BIGTABLE_TABLE:-$(
+  read_primary_regional_quota_env "TR_SPEND_LEASE_BIGTABLE_TABLE" "trustedrouter-spend-lease"
+)}"
+SPEND_LEASE_BIGTABLE_APP_PROFILES="${TR_SPEND_LEASE_BIGTABLE_APP_PROFILES:-$(
+  read_primary_regional_quota_env \
+    "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES" \
+    "us-central1=tr-spend-us-central1"
+)}"
 REGIONAL_QUOTA_LEASE_TTL_SECONDS="${TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS:-$(
   read_primary_regional_quota_env "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS" "60"
 )}"
@@ -501,6 +509,11 @@ fi
 # those rules. The emergency rollback path is explicit: deploy with binding
 # disabled, then investigate or roll forward from there.
 SPEND_LEASE_BINDING_TARGET="${TR_SPEND_LEASE_BINDING_ENABLED:-true}"
+if [ "$SPEND_LEASE_BINDING_TARGET" = "true" ] &&
+   [ -z "$SPEND_LEASE_BIGTABLE_APP_PROFILES" ]; then
+  log "refusing rollout: TR_SPEND_LEASE_BINDING_ENABLED=true requires non-empty TR_SPEND_LEASE_BIGTABLE_APP_PROFILES"
+  exit 1
+fi
 case "$SPEND_LEASE_BINDING_TARGET" in
   true)
     spend_lease_unit_4_source="${SCRIPT_DIR}/../../src/trusted_router/services/spend_lease_settlement.py"
@@ -731,6 +744,8 @@ ENV_VARS=(
   "TR_REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS=${REGIONAL_QUOTA_LEDGER_TIMEOUT_SECONDS}"
   "TR_REGIONAL_QUOTA_BIGTABLE_TABLE=${REGIONAL_QUOTA_BIGTABLE_TABLE}"
   "TR_REGIONAL_QUOTA_BIGTABLE_APP_PROFILES=${REGIONAL_QUOTA_BIGTABLE_APP_PROFILES}"
+  "TR_SPEND_LEASE_BIGTABLE_TABLE=${SPEND_LEASE_BIGTABLE_TABLE}"
+  "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES=${SPEND_LEASE_BIGTABLE_APP_PROFILES}"
   # 2026-08-30 pilot: Joseph's own Personal Workspace (first-party, his account,
   # at his direction). The previous pilot, TrustedRouter Synthetic Monitoring
   # (d385c399-b245-4147-a528-0a4f6f170c71), was structurally ineligible because
