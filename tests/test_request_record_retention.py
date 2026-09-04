@@ -114,6 +114,7 @@ def _authorize(
 def _settle_body(authorization_id: str) -> dict[str, Any]:
     return {
         "authorization_id": authorization_id,
+        "gateway_request_id": "rlog_00112233445566778899aabbccddeeff",
         "actual_input_tokens": 14,
         "actual_output_tokens": 7,
         "request_id": "req-retention-test",
@@ -218,6 +219,9 @@ def test_typed_settle_starts_bounded_replay_window_after_activity_commit(
     reservation = database.reservations[authorization.credit_reservation_id]
     outbox = database.settle_outbox[(authorization.id, "settle")]
     assert auth_row["settled"] is True
+    assert auth_row["gateway_request_id"] == (
+        "rlog_00112233445566778899aabbccddeeff"
+    )
     assert auth_row["payload"] is not None
     assert auth_row["terminal_at"] is not None
     assert reservation["settled"] is True
@@ -821,6 +825,16 @@ def test_retention_migration_is_additive_and_dry_run_by_default() -> None:
     assert not any("delete from" in line for line in executable_lines)
     assert not any("drop table" in line for line in executable_lines)
     assert not any("update tr_" in line and "terminal_at" in line for line in executable_lines)
+    watermark_ddl = script.split(
+        'ddl "CREATE TABLE tr_stage_d_policy_watermark (', 1
+    )[1].split(') PRIMARY KEY (plane)"', 1)[0]
+    assert [
+        line.strip().removesuffix(",") for line in watermark_ddl.splitlines() if line.strip()
+    ] == [
+        "plane STRING(16) NOT NULL",
+        "highest_sequence INT64 NOT NULL",
+        "updated_at TIMESTAMP",
+    ]
 
 
 def test_dead_outbox_row_disarms_claim_armed_retention(

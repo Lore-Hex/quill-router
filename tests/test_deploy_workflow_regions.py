@@ -23,16 +23,14 @@ def _assert_rollout_secondaries_requires_successful_deploy(workflow: str) -> Non
 def test_every_load_balanced_control_plane_region_is_staged() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     deploy = workflow.split("\n  deploy:\n", 1)[1].split("\n  rollout-secondaries:\n", 1)[0]
-    rollout = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
-        "\n  public-surface-companion:\n", 1
-    )[0]
+    ramp = (ROOT / "scripts/deploy/ramp_secondaries.sh").read_text(encoding="utf-8")
 
     assert "deploy_cold_regions:" not in workflow
     assert "steps.optional.outputs.deploy_cold_regions" not in workflow
     assert "regions=(us-central1 europe-west4 us-east4 southamerica-east1)" in deploy
     assert 'TR_DEPLOY_TARGET_REGIONS="${region}"' in deploy
     for region in ("europe-west4", "us-east4", "southamerica-east1"):
-        assert f'ramp_secondary "{region}"' in rollout
+        assert region in ramp
 
 
 def test_prod_smoke_checks_public_origins_and_converges_private_regions() -> None:
@@ -167,26 +165,25 @@ def test_secondaries_ramp_serially_while_reconciler_deploys() -> None:
 
     ramp_step = rollout.index("- name: Ramp secondaries serially while reconciler deploys")
     ramp = rollout[ramp_step : rollout.index("- name: Deploy synthetic monitor", ramp_step)]
-    staged_call = ramp.index("bash scripts/deploy/staged_traffic.sh")
-    staged_line = ramp[staged_call : ramp.index("\n", staged_call)]
-    assert "&" not in staged_line
-    stamp = ramp.index('rollout_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"')
-    billing_gate = ramp.index("assert_no_billing_5xx.sh")
+    assert "run: bash scripts/deploy/ramp_secondaries.sh" in ramp
+    assert "run: |" not in ramp
+
+    script = (ROOT / "scripts/deploy/ramp_secondaries.sh").read_text(encoding="utf-8")
+    staged_call = script.index('bash "${SCRIPT_DIR}/staged_traffic.sh"')
+    stamp = script.index('rollout_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"')
+    billing_gate = script.index("assert_no_billing_5xx.sh")
     assert stamp < staged_call < billing_gate
 
-    reconciler = ramp.index("regional_quota_reconciler.sh")
-    ramp_eu = ramp.index('ramp_secondary "europe-west4"')
-    ramp_us = ramp.index('ramp_secondary "us-east4"')
-    ramp_sa = ramp.index('ramp_secondary "southamerica-east1"')
-    wait = ramp.index('wait "${reconciler_pid}"')
-    assert reconciler < ramp_eu < ramp_us < ramp_sa < wait
-    assert 'regional_quota_reconciler.sh >"${reconciler_log}" 2>&1 &' in ramp
-    assert "printf '\\n=== regional quota reconciler deploy ===\\n'" in ramp
-    assert '[ "${ramp_status}" -eq 0 ]' in ramp
-    assert "Later regions remain warm at zero traffic and never received traffic" in ramp
-    assert "#695 (billing 5xx, 2026-08-20)" in ramp
-    assert "--slo-class router_core" in ramp
-    assert "secondary-started-" not in ramp
+    reconciler = script.index("regional_quota_reconciler.sh")
+    ramp_loop = script.index("for region in europe-west4 us-east4 southamerica-east1")
+    wait = script.index('wait "${reconciler_pid}"')
+    assert reconciler < ramp_loop < wait
+    assert 'regional_quota_reconciler.sh" >"${reconciler_log}" 2>&1 &' in script
+    assert "printf '\\n=== regional quota reconciler deploy ===\\n'" in script
+    assert "Later regions remain warm at zero traffic and never received traffic" in script
+    assert "#695 (billing 5xx, 2026-08-20)" in script
+    assert "--slo-class router_core" in script
+    assert "secondary-started-" not in script
 
     release = rollout.index("- name: Release production deployment mutex")
     assert "if: always()" in rollout[release : release + 180]
@@ -218,6 +215,22 @@ def test_full_convergence_jobs_need_rollout_secondaries() -> None:
     assert "needs.rollout-secondaries.result != 'skipped'" in verify
 
 
+def test_regional_hold_is_read_by_both_traffic_jobs() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    deploy = workflow.split("\n  deploy:\n", 1)[1].split(
+        "\n  rollout-secondaries:\n", 1
+    )[0]
+    rollout = workflow.split("\n  rollout-secondaries:\n", 1)[1].split(
+        "\n  public-surface-companion:\n", 1
+    )[0]
+
+    binding = "TR_DEPLOY_HOLD_REGIONS: ${{ vars.TR_DEPLOY_HOLD_REGIONS }}"
+    assert binding in deploy
+    assert binding in rollout
+    assert "deploy_region_is_held us-central1" in deploy
+    assert "deploy_region_is_held \"$region\"" in deploy
+
+
 def test_primary_rollout_gates_on_router_core_and_billing_path_errors() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     primary = workflow.index("- name: Warm all four regions in parallel (no traffic)")
@@ -229,16 +242,30 @@ def test_primary_rollout_gates_on_router_core_and_billing_path_errors() -> None:
     assert "- name: Billing-path gate + rollback (us-central1)" in rollout
     assert "scripts/deploy/assert_no_billing_5xx.sh" in rollout
     assert '"${{ steps.warm_all.outputs.us_central1_revision }}"' in rollout
-    assert '--to-revisions="${PREV_US}=100"' in rollout
+    assert '--to-revisions="${RAMP_BASELINE_US}=100"' in rollout
+    assert '--to-revisions="${PREV_US}=100"' not in rollout
+
+
+def test_primary_ramp_resolves_current_baseline_and_only_logs_snapshot() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    start = workflow.index("- name: Resolve primary ramp baseline")
+    end = workflow.index("- name: Canary gate — watch us-central1 only", start)
+    primary = workflow[start:end]
+
+    assert "scripts/deploy/resolve_active_revision.py" in primary
+    assert "snapshot=${SNAPSHOT_REVISION} current=${current_revision}" in primary
+    assert "outputs.us_central1_revision }}\" \"${{ steps.primary_baseline.outputs.revision" in primary
+    assert "new revision ${NEW_REVISION} is older than current serving revision" in primary
+    assert "operator intervention:" in primary
 
 
 def test_billing_path_gate_only_attributes_errors_to_candidate_revision() -> None:
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     script = (ROOT / "scripts/deploy/assert_no_billing_5xx.sh").read_text(encoding="utf-8")
 
     assert 'REVISION="${3:?usage:' in script
     assert 'resource.labels.revision_name=\\"${REVISION}\\"' in script
-    assert '"${region}" "${rollout_started_at}" "${revision}"' in workflow
+    ramp = (ROOT / "scripts/deploy/ramp_secondaries.sh").read_text(encoding="utf-8")
+    assert '"${region}" "${rollout_started_at}" "${revision}"' in ramp
 
 
 def test_superseded_push_stops_before_production_mutation() -> None:
@@ -319,7 +346,8 @@ def test_probe_tag_is_hoisted_and_watchdog_baseline_overlaps_traffic_shift() -> 
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     assert "final-watchdog-baseline-us-central1.json" in workflow
     assert '--baseline-input "${RUNNER_TEMP}/final-watchdog-baseline-us-central1.json"' in workflow
-    assert '--baseline-input "${watchdog_baseline}"' in workflow
+    ramp = (ROOT / "scripts/deploy/ramp_secondaries.sh").read_text(encoding="utf-8")
+    assert 'watchdog_args+=(--baseline-input "$watchdog_baseline")' in ramp
 
 
 def test_full_convergence_metrics_are_reported_before_mutex_release() -> None:

@@ -175,6 +175,9 @@ class FakeSpannerDatabase:
         # catch accidental fallback writes after the typed cutover.
         self.gateway_authorizations: dict[str, dict] = {}
         self.gateway_authorization_versions: dict[str, int] = {}
+        # Singleton-per-plane rollback watermark for the signed Stage D policy.
+        self.stage_d_policy_watermarks: dict[str, dict] = {}
+        self.stage_d_policy_watermark_versions: dict[str, int] = {}
         # Unit-2 spend-lease tables. Arbitration is keyed by its salted
         # two-column primary key; open work is keyed by lease_id. Both keep
         # per-row versions so INSERT OR IGNORE and guarded phase transitions
@@ -292,6 +295,11 @@ class FakeSpannerDatabase:
                         key[1],
                         0,
                     )
+                elif isinstance(key, tuple) and len(key) == 2 and key[0] == "stage_d_policy":
+                    current_version = self.stage_d_policy_watermark_versions.get(
+                        key[1],
+                        0,
+                    )
                 elif isinstance(key, tuple) and len(key) == 3 and key[0] == "spend_arb":
                     current_version = self.spend_lease_arbitration_versions.get(
                         (key[1], key[2]), 0
@@ -360,6 +368,13 @@ class FakeSpannerDatabase:
                     _, authorization_id, record = op
                     self.gateway_authorizations[authorization_id] = record
                     self.gateway_authorization_versions[authorization_id] = new_version
+                elif op[0] in (
+                    "insert_stage_d_policy_watermark",
+                    "update_stage_d_policy_watermark",
+                ):
+                    _, plane, record = op
+                    self.stage_d_policy_watermarks[plane] = record
+                    self.stage_d_policy_watermark_versions[plane] = new_version
                 elif op[0] in ("insert_spend_arbitration", "update_spend_arbitration"):
                     _, pk, record = op
                     commit_timestamp = self.current_timestamp()
@@ -556,6 +571,19 @@ class _FakeTransaction:
             ("gateway_auth", authorization_id),
             self.db.gateway_authorization_versions.get(authorization_id, 0),
             self.db.gateway_authorizations.get(authorization_id),
+        )
+
+    def _stage_d_policy_watermark_current(self, plane: str) -> dict | None:
+        for op in reversed(self.pending_writes):
+            if op[0] in (
+                "insert_stage_d_policy_watermark",
+                "update_stage_d_policy_watermark",
+            ) and op[1] == plane:
+                return dict(op[2])
+        return self._pinned_read(
+            ("stage_d_policy", plane),
+            self.db.stage_d_policy_watermark_versions.get(plane, 0),
+            self.db.stage_d_policy_watermarks.get(plane),
         )
 
     def _spend_arbitration_current(self, pk: tuple[str, str]) -> dict | None:
@@ -1222,6 +1250,38 @@ class _FakeTransaction:
             record["terminal_at"] = None
             self.pending_writes.append(("insert_gateway_authorization", authorization_id, record))
             return 1
+        if sql.startswith("INSERT INTO tr_stage_d_policy_watermark"):
+            plane = str(p["plane"])
+            if self._stage_d_policy_watermark_current(plane) is not None:
+                raise FakeAlreadyExists(plane)
+            record = dict(p)
+            record["highest_sequence"] = int(p["sequence"])
+            self.pending_writes.append(
+                ("insert_stage_d_policy_watermark", plane, record)
+            )
+            return 1
+        if sql.startswith("UPDATE tr_stage_d_policy_watermark"):
+            _require_pred(
+                sql,
+                "WHERE plane=@plane AND highest_sequence<@sequence",
+                "stage-d-policy-watermark-guard",
+            )
+            plane = str(p["plane"])
+            rec = self._stage_d_policy_watermark_current(plane)
+            if rec is None or int(rec["highest_sequence"]) >= int(p["sequence"]):
+                return 0
+            self.pending_writes.append(
+                (
+                    "update_stage_d_policy_watermark",
+                    plane,
+                    dict(
+                        rec,
+                        highest_sequence=int(p["sequence"]),
+                        updated_at=p["updated_at"],
+                    ),
+                )
+            )
+            return 1
         if sql.startswith("UPDATE tr_gateway_authorization SET heartbeat_seq=@seq"):
             _require_pred(
                 sql,
@@ -1298,6 +1358,7 @@ class _FakeTransaction:
                 payload=p["payload"],
                 finalization_outcome=p.get("finalization_outcome"),
                 finalized_cost_microdollars=p.get("finalized_cost_microdollars"),
+                gateway_request_id=p.get("gateway_request_id"),
             )
             self.pending_writes.append(("update_gateway_authorization", authorization_id, new))
             return 1
@@ -3354,7 +3415,27 @@ def _execute_sql(
     # generic branch (the substring-collision hazard the design flags).
     if "tr_settle_outbox" in sql:
         return _execute_settle_outbox_sql(db, txn, sql, params)
+    if "FROM tr_stage_d_policy_watermark" in sql:
+        plane = str(params["plane"])
+        rec = (
+            txn._stage_d_policy_watermark_current(plane)
+            if txn is not None
+            else db.stage_d_policy_watermarks.get(plane)
+        )
+        return [] if rec is None else [[rec.get("highest_sequence")]]
     if "FROM tr_gateway_authorization" in sql:
+        if "gateway_request_id=@gateway_request_id" in sql:
+            gateway_request_id = params["gateway_request_id"]
+            matches = [
+                rec
+                for rec in db.gateway_authorizations.values()
+                if rec.get("gateway_request_id") == gateway_request_id
+            ]
+            cols = [
+                col.strip()
+                for col in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+            ]
+            return [[rec.get(col) for col in cols] for rec in matches]
         authorization_id = params["authorization_id"]
         rec = (
             txn._gateway_authorization_current(authorization_id)

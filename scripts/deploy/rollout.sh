@@ -16,6 +16,8 @@ if [ "$ALLOW_DEPLOYED_COMBINED_SURFACE" != "true" ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/deploy/_deploy_hold.sh
+source "${SCRIPT_DIR}/_deploy_hold.sh"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
 # shellcheck source=scripts/deploy/deploy_mutex.sh
@@ -493,10 +495,6 @@ if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ]; then
   regional_quota_preflight_issuance_fleet
 fi
 
-SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="${TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS:-$(
-  read_primary_regional_quota_env "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS"
-)}"
-
 # Binding makes the unit-4 settlement clamp and repair/mirror path load-bearing.
 # Refuse a source rollback that would build a binding-enabled image without
 # those rules. The emergency rollback path is explicit: deploy with binding
@@ -743,14 +741,15 @@ ENV_VARS=(
   # deployed marker.
   "TR_SPEND_LEASE_ISSUANCE_ENABLED=true"
   "TR_SPEND_LEASE_BINDING_ENABLED=${TR_SPEND_LEASE_BINDING_ENABLED:-true}"
+  "TR_STAGE_D_HEARTBEAT_ENABLED=true"
+  "TR_STAGE_D_ELIGIBILITY_ENABLED=false"
+  "TR_STAGE_D_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d"
   # Slice 1a ships the trust guard inert. A later arm-gate slice owns enabling.
   "TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=false"
-  "TR_STAGE_D_HEARTBEAT_ENABLED=${TR_STAGE_D_HEARTBEAT_ENABLED:-true}"
-  "TR_STAGE_D_ELIGIBILITY_ENABLED=${TR_STAGE_D_ELIGIBILITY_ENABLED:-false}"
   "TR_HEARTBEAT_GRACE_SECONDS=${TR_HEARTBEAT_GRACE_SECONDS:-300}"
   "TR_SPEND_LEASE_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d"
   "TR_SPEND_LEASE_SIGNING_SECRET_NAME=trustedrouter-spend-lease-signing-seed"
-  "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS=${SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS}"
+  "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 
@@ -1053,10 +1052,14 @@ if [ "${TR_DEPLOY_NO_TRAFFIC:-0}" = "1" ]; then
       echo "ERROR: could not find warmed Ready revision for ${warm_target}" >&2
       exit 1
     fi
-    warm_service_min_instances="$(cloud_run_service_min_instances_for_region "$warm_target")"
-    warm_min_instances="$(cloud_run_candidate_min_instances "$warm_service_min_instances")"
-    warm_no_traffic_candidate \
-      "$warm_target" "$warm_revision" "$warm_min_instances"
+    if deploy_region_is_held "$warm_target"; then
+      deploy_warn_region_held "$warm_target"
+    else
+      warm_service_min_instances="$(cloud_run_service_min_instances_for_region "$warm_target")"
+      warm_min_instances="$(cloud_run_candidate_min_instances "$warm_service_min_instances")"
+      warm_no_traffic_candidate \
+        "$warm_target" "$warm_revision" "$warm_min_instances"
+    fi
   done
 fi
 

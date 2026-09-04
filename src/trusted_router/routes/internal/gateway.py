@@ -26,6 +26,7 @@ from typing import Any, cast
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Request
+from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from trusted_router.acquisition import (
@@ -291,6 +292,8 @@ _BROADCAST_EMPTY_CACHE: OrderedDict[str, float] = OrderedDict()
 _BROADCAST_EMPTY_CACHE_LOCK = threading.Lock()
 _SPEND_LEASE_SIGNERS: dict[tuple[str, str], SpendLeaseSigner] = {}
 _SPEND_LEASE_SIGNERS_LOCK = threading.Lock()
+_STAGE_D_OVERRIDE_LOG_LOCK = threading.Lock()
+_STAGE_D_OVERRIDE_LOGGED = False
 _SPEND_LEASE_WIRE_ATTESTATION_KINDS = {
     "aws": AWS_ATTESTATION_KIND,
     "azure": AZURE_ATTESTATION_KIND,
@@ -387,6 +390,33 @@ def _spend_lease_signer(settings: Settings) -> SpendLeaseSigner:
         return signer
 
 
+def _stage_d_accepted_image_digests(
+    request: Request,
+    settings: Settings,
+) -> frozenset[str]:
+    """Current signed set plus the explicit, audited break-glass override."""
+
+    accepted: frozenset[str] = frozenset()
+    app = request.scope.get("app")
+    resolver = getattr(getattr(app, "state", None), "stage_d_policy_resolver", None)
+    if resolver is not None:
+        resolver.kick()
+        accepted = resolver.accepted_image_digests()
+
+    override = settings.spend_lease_accepted_gcp_digests
+    if override:
+        global _STAGE_D_OVERRIDE_LOGGED
+        with _STAGE_D_OVERRIDE_LOG_LOCK:
+            if not _STAGE_D_OVERRIDE_LOGGED:
+                logger.warning(
+                    "stage_d.policy_emergency_override digest_count=%s",
+                    len(override),
+                )
+                _STAGE_D_OVERRIDE_LOGGED = True
+        accepted = accepted | override
+    return accepted
+
+
 def _register_spend_lease_boot_sync(
     request: Request,
     body: SpendLeaseBootRegistrationRequest,
@@ -415,7 +445,10 @@ def _register_spend_lease_boot_sync(
             verify_gcp_attestation_chain(body.attestation_evidence)
             image_digest = gcp_attestation_image_digest(body.attestation_evidence)
             verified = True
-            approved_at_registration = image_digest in settings.spend_lease_accepted_gcp_digests
+            approved_at_registration = image_digest in _stage_d_accepted_image_digests(
+                request,
+                settings,
+            )
         record = SpendLeaseBoot(
             kid=kid,
             jwk=jwk,
@@ -531,7 +564,10 @@ def _heartbeat_gateway_sync(
     raw_body: bytes,
 ) -> dict[str, Any]:
     require_internal_gateway(request, settings)
-    if not _gateway_boot_auth_accepted(request, settings, raw_body):
+    authorization = STORE.get_gateway_authorization(body.authorization_id)
+    if authorization is None:
+        raise _heartbeat_rejection("unknown_authorization")
+    if not _gateway_boot_auth_accepted(request, authorization, raw_body):
         raise _heartbeat_rejection("boot_not_accepted")
     typed_store = typed_billing_store(STORE)
     heartbeat = getattr(typed_store, "heartbeat_gateway_typed", None)
@@ -573,12 +609,14 @@ def _heartbeat_gateway_sync(
 
 def _gateway_boot_auth_accepted(
     request: Request,
-    settings: Settings,
+    authorization: GatewayAuthorization,
     exact_body_bytes: bytes,
 ) -> bool:
     headers = request.headers.getlist("X-TR-Boot-Auth")
     boot_auth = parse_boot_auth_header(headers[0]) if len(headers) == 1 else None
     if boot_auth is None:
+        return False
+    if not authorization.stage_d_boot_kid or boot_auth.kid != authorization.stage_d_boot_kid:
         return False
     boot = STORE.get_spend_lease_boot(boot_auth.kid)
     return verify_boot_auth(
@@ -593,7 +631,9 @@ def _gateway_boot_auth_accepted(
         # exact body bytes.
         signed_lookup_hash="",
         resolved_lookup_hash="",
-        accepted_image_digests=settings.spend_lease_accepted_gcp_digests,
+        # The authorization-time kid is immutable. Membership in the live set
+        # is intentionally not re-applied to an in-flight stream.
+        accepted_image_digests=({boot.image_digest} if boot is not None else frozenset()),
     )
 
 
@@ -621,17 +661,80 @@ def _gateway_authorization_disposition_sync(
     raw_body: bytes,
 ) -> dict[str, Any]:
     require_internal_gateway(request, settings)
-    if not _gateway_boot_auth_accepted(request, settings, raw_body):
-        raise api_error(401, "Gateway boot was not accepted", ErrorType.UNAUTHORIZED)
     authorization = STORE.get_gateway_authorization(authorization_id)
     if authorization is None:
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
+    if not _gateway_boot_auth_accepted(request, authorization, raw_body):
+        raise api_error(401, "Gateway boot was not accepted", ErrorType.UNAUTHORIZED)
     return {
         "data": {
             "authorization_id": authorization.id,
             "disposition": _current_disposition(authorization),
         }
     }
+
+
+async def gateway_authorization_by_gateway_request_id(
+    request: Request,
+    gateway_request_id: str,
+    settings: Settings,
+) -> JSONResponse:
+    # This evidence read uses the same internal-gateway bearer credential as
+    # the disposition route. It intentionally does not require a boot
+    # signature: the post-stream pipeline and synthetic gate are the callers.
+    require_internal_gateway(request, settings)
+    return await run_in_threadpool(
+        _gateway_authorization_by_gateway_request_id_sync,
+        request,
+        gateway_request_id,
+        settings,
+    )
+
+
+@spanner_rpc_budget(_BILLING_PATH_SPANNER_BUDGET_SECONDS)
+def _gateway_authorization_by_gateway_request_id_sync(
+    request: Request,
+    gateway_request_id: str,
+    settings: Settings,
+) -> JSONResponse:
+    require_internal_gateway(request, settings)
+    if parse_gateway_request_id(gateway_request_id) is None:
+        raise api_error(
+            400,
+            "gateway request id must be rlog_ followed by 32 lowercase hex characters",
+            ErrorType.BAD_REQUEST,
+        )
+    authorization = STORE.get_gateway_authorization_by_gateway_request_id(
+        gateway_request_id
+    )
+    if authorization is None:
+        return JSONResponse(
+            {
+                "error": {
+                    "type": "not_found",
+                    "message": "unknown gateway request id",
+                }
+            },
+            status_code=404,
+        )
+    return JSONResponse(
+        {
+            "data": {
+                "authorization_id": authorization.id,
+                "gateway_request_id": authorization.gateway_request_id,
+                "workspace_id": authorization.workspace_id,
+                "authorization_kind": _gateway_authorization_kind(authorization),
+                "settled": bool(authorization.settled),
+                "disposition": _gateway_evidence_disposition(authorization),
+                "stage_d_boot_kid": authorization.stage_d_boot_kid,
+                "heartbeat_seq": (
+                    int(authorization.heartbeat_seq)
+                    if authorization.heartbeat_seq is not None
+                    else None
+                ),
+            }
+        }
+    )
 
 
 def _heartbeat_rejection(reason: str) -> Exception:
@@ -740,9 +843,9 @@ def _authorize_gateway_sync_impl(
     spend_context["workspace_id"] = api_key.workspace_id
     spend_context["key_hash"] = api_key.hash
     boot_auth = cast(BootAuthHeader | None, spend_context["boot_auth"])
-    if settings.spend_lease_issuance_enabled and boot_auth is not None:
+    if boot_auth is not None:
         boot = STORE.get_spend_lease_boot(boot_auth.kid)
-        accepted_image_digests = settings.spend_lease_accepted_gcp_digests
+        accepted_image_digests = _stage_d_accepted_image_digests(request, settings)
         spend_context["boot_verified"] = verify_boot_auth(
             boot=boot,
             auth=boot_auth,
@@ -789,6 +892,10 @@ def _authorize_gateway_sync_impl(
     if is_monitor_request:
         ensure_monitor_funding(STORE, settings, workspace.id)
     body_dict = body.model_dump(exclude_none=True)
+    # The invocation nonce distinguishes enclave invocations, not logical
+    # idempotency. A fresh invocation with the same public idempotency key must
+    # replay the original nonce rather than mismatch the stored fingerprint.
+    body_dict.pop("invocation_nonce", None)
     # Preserve pre-web-search idempotency fingerprints byte-for-byte for every
     # ordinary request. A nonzero hosted-tool reservation remains fingerprinted.
     if not body.additional_cost_reservation_microdollars:
@@ -1133,11 +1240,7 @@ def _authorize_gateway_sync_impl(
             endpoint_candidates=existing_candidates,
             idempotent_replay=True,
             custom_model=custom_model,
-            stage_d_reason_override=(
-                None
-                if settings.stage_d_eligibility_enabled
-                else "stage_d_disabled"
-            ),
+            stage_d_reason_override="replayed",
         )
 
     _typed_store = typed_billing_store(STORE)
@@ -1212,6 +1315,10 @@ def _authorize_gateway_sync_impl(
     )
     stage_d_reason = _stage_d_eligibility_reason(
         eligibility_enabled=settings.stage_d_eligibility_enabled,
+        workspace_id=workspace.id,
+        pilot_workspace_ids=settings.stage_d_pilot_workspaces,
+        heartbeat_enabled=settings.stage_d_heartbeat_enabled,
+        boot_accepted=bool(spend_context["boot_verified"]),
         stream=body.stream,
         route_type=body.route_type,
         endpoint_candidates=endpoint_candidates,
@@ -1463,6 +1570,7 @@ def _authorize_gateway_sync_impl(
                         settings.regional_quota_lease_max_available_basis_points
                     ),
                     lease_shard_count=settings.regional_quota_lease_shard_count,
+                    invocation_nonce=body.invocation_nonce,
                 )
             if outcome == "unavailable":
                 outcome, authorization = _typed_store.authorize_gateway_typed(
@@ -1516,6 +1624,12 @@ def _authorize_gateway_sync_impl(
                     stage_d_reason=stage_d_reason,
                     stage_d_prompt_tokens=input_tokens,
                     stage_d_max_output_tokens=output_tokens,
+                    stage_d_boot_kid=(
+                        boot_auth.kid
+                        if spend_context["boot_verified"] and boot_auth is not None
+                        else None
+                    ),
+                    invocation_nonce=body.invocation_nonce,
                 )
         except conflict_store_error_types() as exc:
             release_user_model_slot_after_error()
@@ -1741,6 +1855,7 @@ def _authorize_gateway_sync_impl(
                 else None
             ),
             spend_lease=spend_lease,
+            invocation_nonce=body.invocation_nonce,
         )
         try:
             authorization = create_authorization()
@@ -2009,6 +2124,20 @@ def register(router: APIRouter) -> None:
         return await gateway_authorization_disposition(
             request,
             authorization_id,
+            settings,
+        )
+
+    @router.get(
+        "/internal/gateway/authorizations/by-gateway-request-id/{gateway_request_id}"
+    )
+    async def gateway_evidence_lookup(
+        request: Request,
+        gateway_request_id: str,
+        settings: SettingsDep,
+    ) -> JSONResponse:
+        return await gateway_authorization_by_gateway_request_id(
+            request,
+            gateway_request_id,
             settings,
         )
 
@@ -2323,6 +2452,11 @@ def _gateway_authorize_response(
             "regions": region_payload(settings),
             "broadcast_destinations": broadcast_destinations,
             "idempotent_replay": idempotent_replay,
+            **(
+                {"invocation_nonce": authorization.invocation_nonce}
+                if idempotent_replay
+                else {}
+            ),
             "additional_cost_reservation_microdollars": (
                 authorization.additional_cost_reservation_microdollars
             ),
@@ -2354,6 +2488,10 @@ def _gateway_authorize_response(
 def _stage_d_eligibility_reason(
     *,
     eligibility_enabled: bool = False,
+    workspace_id: str = "",
+    pilot_workspace_ids: frozenset[str] = frozenset(),
+    heartbeat_enabled: bool = True,
+    boot_accepted: bool = False,
     stream: bool | None,
     route_type: str | None,
     endpoint_candidates: list[tuple[Model, ModelEndpoint]],
@@ -2366,6 +2504,12 @@ def _stage_d_eligibility_reason(
     # takes the synchronous path exactly as before Stage D.
     if not eligibility_enabled:
         return "stage_d_disabled"
+    if pilot_workspace_ids and workspace_id not in pilot_workspace_ids:
+        return "workspace_not_pilot"
+    if not heartbeat_enabled:
+        return "heartbeats_disabled"
+    if not boot_accepted:
+        return "boot_not_accepted"
     if stream is not True:
         return "not_streaming"
     if route_type not in {"chat.completions", "responses"}:
@@ -3901,6 +4045,25 @@ def _current_disposition(authorization: Any) -> str:
     if authorization.settled:
         return "already_finalized"
     return "intent_durable"
+
+
+def _gateway_authorization_kind(authorization: GatewayAuthorization) -> str:
+    if authorization.settlement in {"regional_lease", "spend_lease", "deferred_home"}:
+        return "regional_lease"
+    if authorization.settlement == "local" and typed_billing_store(STORE) is not None:
+        return "local_typed"
+    return "legacy"
+
+
+def _gateway_evidence_disposition(authorization: GatewayAuthorization) -> str | None:
+    outcome = str(authorization.finalization_outcome or "").strip().lower()
+    if outcome in {"settled", "refunded"}:
+        return "finalized"
+    if outcome == "reaped_snapshot":
+        return "reaped_snapshot"
+    if authorization.settled:
+        return "already_finalized"
+    return None
 
 
 def _intent_durable_gateway_data(authorization: Any) -> dict[str, Any]:

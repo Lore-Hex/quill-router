@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import datetime as dt
+import json
 import os
 import random
 import sys
 import time
+import uuid
 from dataclasses import asdict
 from typing import Any
 
 import httpx
 
+from trusted_router.client_context import parse_gateway_request_id
 from trusted_router.config import Settings, get_settings
 from trusted_router.provider_reliability import model_deadlines
 from trusted_router.storage_models import ProviderBenchmarkSample, SyntheticProbeSample
@@ -56,6 +60,145 @@ _DEFAULT_THROUGHPUT_TIMEOUT_CEILING_SECONDS = 210.0
 _DEFAULT_THROUGHPUT_INTERVAL_SECONDS = THROUGHPUT_INTERVAL_SECONDS
 _DEFAULT_REMEDIATOR_TIMEOUT_SECONDS = 90.0
 _REMEDIATOR_OVERLAP_MESSAGE = "Synthetic operation is already in progress"
+_STAGE_D_PROBE_MODEL = "trustedrouter/cheap"
+
+
+async def streaming_chat_completion_probe(
+    client: httpx.AsyncClient,
+    *,
+    api_base_url: str,
+    api_key: str,
+    model: str,
+    idempotency_key: str,
+) -> str:
+    """Require a real SSE first event, terminal chunk, and ``[DONE]`` marker."""
+
+    url = f"{api_base_url.rstrip('/')}/chat/completions"
+    saw_data = False
+    saw_terminal = False
+    saw_done = False
+    gateway_request_id: str | None = None
+    async with client.stream(
+        "POST",
+        url,
+        headers={
+            "authorization": f"Bearer {api_key}",
+            "idempotency-key": idempotency_key,
+            "accept": "text/event-stream",
+        },
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": "Reply with OK."}],
+            "max_tokens": 8,
+            "stream": True,
+        },
+    ) as response:
+        response.raise_for_status()
+        gateway_request_id = parse_gateway_request_id(response.headers.get("x-request-id"))
+        if gateway_request_id is None:
+            raise RuntimeError("streaming probe returned an invalid x-request-id")
+        if "text/event-stream" not in response.headers.get("content-type", "").lower():
+            raise RuntimeError("streaming probe did not return text/event-stream")
+        async for line in response.aiter_lines():
+            if not line:
+                continue
+            if not line.startswith("data:"):
+                if not saw_data:
+                    raise RuntimeError("streaming probe first SSE field was not data")
+                continue
+            payload = line.removeprefix("data:").strip()
+            if not payload:
+                continue
+            saw_data = True
+            if payload == "[DONE]":
+                saw_done = True
+                break
+            try:
+                chunk = json.loads(payload)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("streaming probe returned invalid SSE JSON") from exc
+            choices = chunk.get("choices") if isinstance(chunk, dict) else None
+            if isinstance(choices, list) and any(
+                isinstance(choice, dict) and choice.get("finish_reason") is not None
+                for choice in choices
+            ):
+                saw_terminal = True
+    if not saw_data:
+        raise RuntimeError("streaming probe returned no SSE data")
+    if not saw_terminal or not saw_done:
+        raise RuntimeError("streaming probe did not return a valid terminal")
+    assert gateway_request_id is not None
+    return gateway_request_id
+
+
+async def assert_stage_d_authorization(
+    client: httpx.AsyncClient,
+    *,
+    control_plane_base_url: str,
+    internal_gateway_token: str,
+    gateway_request_id: str,
+    expected_boot_kid: str | None = None,
+    timeout_seconds: float = 15.0,
+) -> None:
+    """Poll the router's cross-repository evidence contract after a stream."""
+
+    expected_keys = {
+        "authorization_id",
+        "gateway_request_id",
+        "workspace_id",
+        "authorization_kind",
+        "settled",
+        "disposition",
+        "stage_d_boot_kid",
+        "heartbeat_seq",
+    }
+    url = (
+        f"{control_plane_base_url.rstrip('/')}/v1/internal/gateway/authorizations/"
+        f"by-gateway-request-id/{gateway_request_id}"
+    )
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        response = await client.get(
+            url,
+            headers={"authorization": f"Bearer {internal_gateway_token}"},
+        )
+        if response.status_code != 404:
+            response.raise_for_status()
+            payload = response.json()
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(data, dict) or set(data) != expected_keys:
+                raise RuntimeError("Stage D evidence response has an invalid key set")
+            if data["gateway_request_id"] != gateway_request_id:
+                raise RuntimeError("Stage D evidence response used another gateway request id")
+            if type(data["settled"]) is not bool:  # noqa: E721 - bool must exclude int
+                raise RuntimeError("Stage D evidence settled field is not boolean")
+            if data["settled"]:
+                if not isinstance(data["authorization_id"], str):
+                    raise RuntimeError("Stage D evidence authorization id is not a string")
+                if not isinstance(data["workspace_id"], str):
+                    raise RuntimeError("Stage D evidence workspace id is not a string")
+                if data["authorization_kind"] != "local_typed":
+                    raise RuntimeError("Stage D probe authorization was not local_typed")
+                disposition = data["disposition"]
+                if disposition is not None and not isinstance(disposition, str):
+                    raise RuntimeError("Stage D evidence disposition has an invalid type")
+                if not isinstance(data["stage_d_boot_kid"], str):
+                    raise RuntimeError("Stage D probe authorization has no stage_d_boot_kid")
+                heartbeat_seq = data["heartbeat_seq"]
+                if type(heartbeat_seq) is not int or heartbeat_seq <= 0:
+                    raise RuntimeError("Stage D probe authorization has no durable heartbeat")
+                if expected_boot_kid is not None and data["stage_d_boot_kid"] != expected_boot_kid:
+                    raise RuntimeError(
+                        "Stage D probe authorization used an unexpected boot kid"
+                    )
+                return
+            if data["stage_d_boot_kid"] is not None and not isinstance(
+                data["stage_d_boot_kid"], str
+            ):
+                raise RuntimeError("Stage D probe authorization has no stage_d_boot_kid")
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Stage D probe authorization did not settle with durable evidence")
+        await asyncio.sleep(0.25)
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:
@@ -445,7 +588,7 @@ async def _run_scheduled_remediator(
         )
 
 
-async def run() -> int:
+async def run(*, expect_stage_d: bool = False) -> int:
     settings = get_settings()
     monitor_region = (
         os.environ.get("TR_SYNTHETIC_MONITOR_REGION")
@@ -455,7 +598,11 @@ async def run() -> int:
     control_plane = os.environ.get("TR_SYNTHETIC_CONTROL_PLANE_URL", "https://trustedrouter.com")
     observer_token = synthetic_observer_token(settings)
     transaction_token = synthetic_transaction_token(settings)
-    api_key = settings.synthetic_monitor_api_key
+    api_key = (
+        os.environ.get("TR_STAGE_D_PROBE_API_KEY")
+        if expect_stage_d
+        else settings.synthetic_monitor_api_key
+    )
     timeout = httpx.Timeout(settings.synthetic_monitor_timeout_seconds)
     remediator_url = os.environ.get("TR_SYNTHETIC_REMEDIATOR_URL")
     remediator_timeout_seconds = max(
@@ -557,6 +704,64 @@ async def run() -> int:
     benchmark_samples: list[ProviderBenchmarkSample] = []
     if start_delay_seconds:
         await asyncio.sleep(start_delay_seconds)
+    stream_probe_ok = True
+    if not throughput_only:
+        if not api_key:
+            if expect_stage_d:
+                print(
+                    "TR_STAGE_D_PROBE_API_KEY is required for the Stage D probe",
+                    file=sys.stderr,
+                )
+                return 2
+        else:
+            if expect_stage_d and not settings.internal_gateway_token:
+                print(
+                    "TR_INTERNAL_GATEWAY_TOKEN is required for the Stage D evidence lookup",
+                    file=sys.stderr,
+                )
+                return 2
+            idempotency_key = f"stage-d-stream-probe-{uuid.uuid4()}"
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    gateway_request_id = await streaming_chat_completion_probe(
+                        client,
+                        api_base_url=settings.api_base_url,
+                        api_key=api_key,
+                        model=(
+                            _STAGE_D_PROBE_MODEL
+                            if expect_stage_d
+                            else settings.synthetic_monitor_model
+                        ),
+                        idempotency_key=idempotency_key,
+                    )
+                    if expect_stage_d:
+                        assert settings.internal_gateway_token is not None
+                        await assert_stage_d_authorization(
+                            client,
+                            control_plane_base_url=control_plane,
+                            internal_gateway_token=settings.internal_gateway_token,
+                            gateway_request_id=gateway_request_id,
+                            expected_boot_kid=(
+                                os.environ.get("TR_STAGE_D_PROBE_BOOT_KID") or None
+                            ),
+                            timeout_seconds=float(
+                                os.environ.get(
+                                    "TR_STAGE_D_PROBE_LOOKUP_TIMEOUT_SECONDS", "60"
+                                )
+                            ),
+                        )
+            except Exception as exc:  # noqa: BLE001 - a failed probe fails the job
+                print(
+                    f"streaming probe failed: {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+                stream_probe_ok = False
+    if expect_stage_d:
+        # The dedicated key belongs to a separate local-typed workspace and
+        # cannot use the ordinary monitor-only model or run the monitor key's
+        # billing probes. This job's sole contract is the real stream plus its
+        # durable Stage D evidence.
+        return 0 if stream_probe_ok else 1
     remediator_task = (
         asyncio.create_task(
             _run_scheduled_remediator(
@@ -652,7 +857,7 @@ async def run() -> int:
         print("TR_OBSERVER_INTERNAL_TOKEN is required to ingest samples", file=sys.stderr)
         return 2
     async with httpx.AsyncClient(timeout=timeout) as client:
-        ok = True
+        ok = stream_probe_ok
         if all_samples:
             response = await client.post(
                 ingest_url,
@@ -688,8 +893,25 @@ async def run() -> int:
     return 0 if ok else 1
 
 
-def main() -> int:
-    return asyncio.run(run())
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run recurring synthetic checks, including a streaming SSE completion. "
+            "--expect-stage-d requires a heartbeat-capable local-typed key whose "
+            "workspace is in TR_STAGE_D_PILOT_WORKSPACE_IDS and outside the "
+            "regional-quota pilot path."
+        )
+    )
+    parser.add_argument(
+        "--expect-stage-d",
+        action="store_true",
+        help=(
+            "also require the durable authorization to have stage_d_boot_kid and "
+            "heartbeat_seq > 0"
+        ),
+    )
+    args = parser.parse_args(argv)
+    return asyncio.run(run(expect_stage_d=args.expect_stage_d))
 
 
 if __name__ == "__main__":

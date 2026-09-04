@@ -34,10 +34,19 @@ def _credit_candidate() -> tuple[Model, ModelEndpoint]:
     return MODELS[endpoint.model_id], endpoint
 
 
+def test_invocation_nonce_is_limited_to_64_characters() -> None:
+    GatewayAuthorizeRequest(api_key_hash="hash", model="model", invocation_nonce="n" * 64)
+    with pytest.raises(ValueError):
+        GatewayAuthorizeRequest(api_key_hash="hash", model="model", invocation_nonce="n" * 65)
+
+
 @pytest.mark.parametrize(
     ("overrides", "reason"),
     [
         ({}, "ok"),
+        ({"pilot_workspace_ids": frozenset({"other"})}, "workspace_not_pilot"),
+        ({"heartbeat_enabled": False}, "heartbeats_disabled"),
+        ({"boot_accepted": False}, "boot_not_accepted"),
         ({"stream": None}, "not_streaming"),
         ({"route_type": "embeddings"}, "route"),
         ({"mixed": True}, "mixed_usage_type"),
@@ -62,6 +71,7 @@ def test_stage_d_eligibility_has_each_closed_reason(
         "standard_endpoint_pricing": True,
         "service_tier": None,
         "settlement_backend": True,
+        "boot_accepted": True,
         **overrides,
     }
     eligibility_enabled = bool(kwargs.pop("eligibility_enabled", True))
@@ -111,6 +121,8 @@ def test_typed_authorize_inserts_cohort_sequence_zero_and_snapshot() -> None:
         stage_d_reason="ok",
         stage_d_prompt_tokens=100,
         stage_d_max_output_tokens=100,
+        stage_d_boot_kid="boot-stage-d",
+        invocation_nonce="invocation-original",
     )
 
     assert outcome == AuthorizeOutcome.ACCEPTED
@@ -118,6 +130,8 @@ def test_typed_authorize_inserts_cohort_sequence_zero_and_snapshot() -> None:
     row = db.gateway_authorizations[authorization.id]
     assert row["heartbeat_seq"] == 0
     assert row["pricing_snapshot"] == snapshot
+    assert row["stage_d_boot_kid"] == "boot-stage-d"
+    assert row["invocation_nonce"] == "invocation-original"
     assert [
         row["started_at"],
         row["heartbeat_at"],
@@ -223,6 +237,7 @@ def test_app_markup_and_receipt_fee_remain_in_stage_d_cohort(
         limit_microdollars=1_000_000,
     )
     configure_store(store)
+    monkeypatch.setattr(gateway, "verify_boot_auth", lambda **_kwargs: True)
     monkeypatch.setattr(
         gateway,
         "_oauth_app_terms_for_key",
@@ -240,9 +255,20 @@ def test_app_markup_and_receipt_fee_remain_in_stage_d_cohort(
     )
 
     response = gateway._authorize_gateway_sync(
-        Request({"type": "http", "method": "POST", "path": "/", "headers": []}),
+        Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/",
+                "headers": [(b"x-tr-boot-auth", b"kid=boot-fees,sig=x")],
+            }
+        ),
         body,
-        Settings(environment="test", stage_d_eligibility_enabled=True),
+        Settings(
+            environment="test",
+            stage_d_eligibility_enabled=True,
+            stage_d_pilot_workspace_ids=workspace.id,
+        ),
     )["data"]
 
     stored = db.gateway_authorizations[response["authorization_id"]]
@@ -259,7 +285,14 @@ def test_stage_d_eligibility_kill_switch_declares_nothing_eligible() -> None:
 
     assert Settings(environment="test").stage_d_eligibility_enabled is False
     rollout = (Path(__file__).parents[1] / "scripts" / "deploy" / "rollout.sh").read_text()
-    assert '"TR_STAGE_D_ELIGIBILITY_ENABLED=${TR_STAGE_D_ELIGIBILITY_ENABLED:-false}"' in rollout
+    for literal in (
+        '"TR_STAGE_D_ELIGIBILITY_ENABLED=false"',
+        '"TR_STAGE_D_HEARTBEAT_ENABLED=true"',
+        '"TR_STAGE_D_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d"',
+        '"TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="',
+        '"TR_REAP_SNAPSHOT_BOOKING_ENABLED=false"',
+    ):
+        assert literal in rollout
     reason = _stage_d_eligibility_reason(
         eligibility_enabled=False,
         stream=True,
@@ -272,7 +305,9 @@ def test_stage_d_eligibility_kill_switch_declares_nothing_eligible() -> None:
     assert reason == "stage_d_disabled"
 
 
-def test_stage_d_replay_applies_current_kill_switch() -> None:
+def test_stage_d_replay_is_always_ineligible_and_echoes_stored_nonce(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     store, db, _table = make_fake_store(request_record_write_mode="typed")
     workspace = Workspace(id="stage-d-replay", name="Stage D replay", owner_user_id="user-1")
     store._write_entity("workspace", workspace.id, workspace)
@@ -293,6 +328,7 @@ def test_stage_d_replay_applies_current_kill_switch() -> None:
         limit_microdollars=1_000_000,
     )
     configure_store(store)
+    monkeypatch.setattr(gateway, "verify_boot_auth", lambda **_kwargs: True)
     body = GatewayAuthorizeRequest(
         api_key_hash=key.hash,
         idempotency_key="stage-d-replay",
@@ -301,28 +337,49 @@ def test_stage_d_replay_applies_current_kill_switch() -> None:
         max_output_tokens=100,
         stream=True,
         route_type="chat.completions",
+        invocation_nonce="original-invocation",
     )
-    request = Request({"type": "http", "method": "POST", "path": "/", "headers": []})
-    enabled = Settings(environment="test", stage_d_eligibility_enabled=True)
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [(b"x-tr-boot-auth", b"kid=boot-replay,sig=x")],
+        }
+    )
+    enabled = Settings(
+        environment="test",
+        stage_d_eligibility_enabled=True,
+        stage_d_pilot_workspace_ids=workspace.id,
+    )
 
     first = gateway._authorize_gateway_sync(request, body, enabled)["data"]
     assert first["stage_d"] == {"eligible": True, "reason": "ok"}
+    assert "invocation_nonce" not in first
+    stored = store.get_gateway_authorization(first["authorization_id"])
+    assert stored is not None
+    assert stored.invocation_nonce == "original-invocation"
+    assert stored.stage_d_boot_kid == "boot-replay"
+
+    replay_body = body.model_copy(update={"invocation_nonce": "different-invocation"})
 
     disabled_replay = gateway._authorize_gateway_sync(
         request,
-        body,
+        replay_body,
         Settings(environment="test", stage_d_eligibility_enabled=False),
     )["data"]
     assert disabled_replay["idempotent_replay"] is True
     assert disabled_replay["stage_d"] == {
         "eligible": False,
-        "reason": "stage_d_disabled",
+        "reason": "replayed",
     }
+    assert disabled_replay["invocation_nonce"] == "original-invocation"
     assert "candidate_prices" not in disabled_replay
     assert "cap_micro" not in disabled_replay
 
-    enabled_replay = gateway._authorize_gateway_sync(request, body, enabled)["data"]
+    enabled_replay = gateway._authorize_gateway_sync(request, replay_body, enabled)["data"]
     assert enabled_replay["idempotent_replay"] is True
-    assert enabled_replay["stage_d"] == first["stage_d"]
-    assert enabled_replay["candidate_prices"] == first["candidate_prices"]
-    assert enabled_replay["cap_micro"] == first["cap_micro"]
+    assert enabled_replay["stage_d"] == {"eligible": False, "reason": "replayed"}
+    assert enabled_replay["invocation_nonce"] == "original-invocation"
+    assert "candidate_prices" not in enabled_replay
+    assert "cap_micro" not in enabled_replay

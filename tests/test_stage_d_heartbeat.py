@@ -78,6 +78,8 @@ def _seed(
     delivered_usage: dict[str, int] | None = None,
     app_markup_basis_points: int = 0,
     receipt_fee_basis_points: int = 0,
+    stage_d_boot_kid: str | None = None,
+    database: FakeSpannerDatabase | None = None,
 ) -> tuple[FakeSpannerDatabase, GatewayAuthorization]:
     authorization = GatewayAuthorization(
         id="gwa-stage-d-fixture",
@@ -103,12 +105,13 @@ def _seed(
         stage_d_reason="ok" if cohort else "not_streaming",
         stage_d_prompt_tokens=100,
         stage_d_max_output_tokens=100,
+        stage_d_boot_kid=stage_d_boot_kid,
         app_id="app-stage-d" if app_markup_basis_points else "",
         app_markup_basis_points=app_markup_basis_points,
         app_owner_user_id="owner-stage-d" if app_markup_basis_points else "",
         receipt_fee_basis_points=receipt_fee_basis_points,
     )
-    db = FakeSpannerDatabase(now=NOW)
+    db = database or FakeSpannerDatabase(now=NOW)
 
     def seed(transaction: Any) -> None:
         insert_reservation(
@@ -458,6 +461,53 @@ def _request(
     )
 
 
+def _boot(kid: str, image_digest: str) -> tuple[Ed25519PrivateKey, SpendLeaseBoot]:
+    private = Ed25519PrivateKey.generate()
+    return private, SpendLeaseBoot(
+        kid=kid,
+        jwk={
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": b64url_encode(private.public_key().public_bytes_raw()),
+        },
+        approved=True,
+        verified=True,
+        image_digest=image_digest,
+        attestation_kind="gcp-cs-jwt",
+        registered_at="2026-09-02T00:00:00Z",
+    )
+
+
+def _boot_auth_header(
+    private: Ed25519PrivateKey,
+    boot: SpendLeaseBoot,
+    raw_body: bytes,
+) -> str:
+    signature = private.sign(
+        boot_auth_digest("POST", "/v1/internal/gateway/heartbeat", raw_body)
+    )
+    return f"kid={boot.kid},sig={b64url_encode(signature)}"
+
+
+def _gateway_heartbeat_store(
+    stage_d_boot_kid: str | None,
+    *boots: SpendLeaseBoot,
+) -> FakeSpannerDatabase:
+    store, db, _table = make_fake_store(request_record_write_mode="typed")
+    db.now = NOW
+    configure_store(store)
+    _seed(stage_d_boot_kid=stage_d_boot_kid, database=db)
+    for boot in boots:
+        store.observe_spend_lease_boot(boot)
+    return db
+
+
+def _assert_heartbeat_state_unchanged(db: FakeSpannerDatabase) -> None:
+    stored = db.gateway_authorizations["gwa-stage-d-fixture"]
+    assert stored["heartbeat_seq"] == 0
+    assert stored["delivered_usage"] is None
+
+
 def test_heartbeat_boot_auth_uses_exact_literal_bytes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -479,6 +529,21 @@ def test_heartbeat_boot_auth_uses_exact_literal_bytes(
         "get_spend_lease_boot",
         lambda _self, _kid: boot,
     )
+    authorization = GatewayAuthorization(
+        id="gwa-stage-d-fixture",
+        workspace_id="workspace",
+        key_hash="key",
+        model_id="model",
+        provider="anthropic",
+        usage_type=UsageType.CREDITS,
+        estimated_microdollars=300,
+        stage_d_boot_kid=boot.kid,
+    )
+    monkeypatch.setattr(
+        SpannerBigtableStore,
+        "get_gateway_authorization",
+        lambda _self, _authorization_id: authorization,
+    )
     monkeypatch.setattr(
         SpannerBigtableStore,
         "heartbeat_gateway_typed",
@@ -496,17 +561,85 @@ def test_heartbeat_boot_auth_uses_exact_literal_bytes(
         boot_auth_digest("POST", "/v1/internal/gateway/heartbeat", raw)
     )
     header = f"kid={boot.kid},sig={b64url_encode(signature)}"
-    settings = Settings(
-        environment="test",
-        spend_lease_accepted_gcp_image_digests=boot.image_digest,
-    )
+    # Authorization binds the immutable kid. The now-live set is deliberately
+    # absent and must not be consulted for an in-flight request.
+    settings = Settings(environment="test")
 
     accepted = gateway._heartbeat_gateway_sync(_request(header), body, settings, raw)
     assert accepted == _json("heartbeat_response_accepted.json")
 
+    wrong_kid_header = f"kid=other-boot,sig={b64url_encode(signature)}"
+    with pytest.raises(HTTPException) as wrong_kid:
+        gateway._heartbeat_gateway_sync(
+            _request(wrong_kid_header), body, settings, raw
+        )
+    assert wrong_kid.value.detail == _json("rejection_boot_not_accepted.json")
+
     with pytest.raises(HTTPException) as raised:
         gateway._heartbeat_gateway_sync(_request(header), body, settings, raw + b" ")
     assert raised.value.detail == _json("rejection_boot_not_accepted.json")
+
+
+def test_heartbeat_rejects_valid_current_boot_when_persisted_kid_differs() -> None:
+    _private_a, boot_a = _boot("boot-a", "sha256:" + "aa" * 32)
+    private_b, boot_b = _boot("boot-b", "sha256:" + "bb" * 32)
+    db = _gateway_heartbeat_store(boot_a.kid, boot_a, boot_b)
+    raw = _literal("heartbeat_request.json")
+    body = GatewayHeartbeatRequest.model_validate_json(raw)
+    settings = Settings(
+        environment="test",
+        spend_lease_accepted_gcp_image_digests=boot_b.image_digest,
+    )
+    assert boot_b.image_digest in settings.spend_lease_accepted_gcp_digests
+
+    with pytest.raises(HTTPException) as raised:
+        gateway._heartbeat_gateway_sync(
+            _request(_boot_auth_header(private_b, boot_b, raw)), body, settings, raw
+        )
+
+    assert raised.value.detail == _json("rejection_boot_not_accepted.json")
+    _assert_heartbeat_state_unchanged(db)
+
+
+def test_heartbeat_rejects_pre_stage_d_authorization_without_boot_kid() -> None:
+    private_a, boot_a = _boot("boot-a", "sha256:" + "aa" * 32)
+    db = _gateway_heartbeat_store(None, boot_a)
+    raw = _literal("heartbeat_request.json")
+    body = GatewayHeartbeatRequest.model_validate_json(raw)
+    settings = Settings(
+        environment="test",
+        spend_lease_accepted_gcp_image_digests=boot_a.image_digest,
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        gateway._heartbeat_gateway_sync(
+            _request(_boot_auth_header(private_a, boot_a, raw)), body, settings, raw
+        )
+
+    assert raised.value.detail == _json("rejection_boot_not_accepted.json")
+    _assert_heartbeat_state_unchanged(db)
+
+
+def test_heartbeat_accepts_persisted_boot_kid_after_live_set_rotates() -> None:
+    private_a, boot_a = _boot("boot-a", "sha256:" + "aa" * 32)
+    _private_b, boot_b = _boot("boot-b", "sha256:" + "bb" * 32)
+    db = _gateway_heartbeat_store(boot_a.kid, boot_a, boot_b)
+    raw = _literal("heartbeat_request.json")
+    body = GatewayHeartbeatRequest.model_validate_json(raw)
+    settings = Settings(
+        environment="test",
+        spend_lease_accepted_gcp_image_digests=boot_b.image_digest,
+    )
+    assert boot_a.image_digest not in settings.spend_lease_accepted_gcp_digests
+
+    response = gateway._heartbeat_gateway_sync(
+        _request(_boot_auth_header(private_a, boot_a, raw)), body, settings, raw
+    )
+
+    assert response["accepted"] is True
+    stored = db.gateway_authorizations["gwa-stage-d-fixture"]
+    assert stored["heartbeat_seq"] == 1
+    assert json.loads(stored["delivered_usage"]) == _usage()
 
 
 def test_heartbeat_flag_defaults_on_and_can_disable_endpoint() -> None:
@@ -545,6 +678,7 @@ def test_disposition_lookup_uses_heartbeat_boot_verifier_and_literal_response(
         settled=True,
         finalization_outcome="reaped_snapshot",
         finalized_cost_microdollars=120,
+        stage_d_boot_kid=boot.kid,
     )
     monkeypatch.setattr(
         SpannerBigtableStore,
@@ -559,10 +693,7 @@ def test_disposition_lookup_uses_heartbeat_boot_verifier_and_literal_response(
     path = "/v1/internal/gateway/authorizations/gwa-stage-d-fixture/disposition"
     signature = private.sign(boot_auth_digest("GET", path, b""))
     header = f"kid={boot.kid},sig={b64url_encode(signature)}"
-    settings = Settings(
-        environment="test",
-        spend_lease_accepted_gcp_image_digests=boot.image_digest,
-    )
+    settings = Settings(environment="test")
 
     response = gateway._gateway_authorization_disposition_sync(
         _request(header, method="GET", path=path),

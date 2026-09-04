@@ -2326,6 +2326,7 @@ class InMemoryStore:
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
         spend_lease: SpendLeaseArtifact | None = None,
+        invocation_nonce: str | None = None,
     ) -> GatewayAuthorization:
         return self.api_keys.create_gateway_authorization(
             workspace_id=workspace_id,
@@ -2365,10 +2366,24 @@ class InMemoryStore:
             expires_at=expires_at,
             deferred_cap_microdollars=deferred_cap_microdollars,
             spend_lease=spend_lease,
+            invocation_nonce=invocation_nonce,
         )
 
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:
         return self.api_keys.get_gateway_authorization(authorization_id)
+
+    def get_gateway_authorization_by_gateway_request_id(
+        self, gateway_request_id: str
+    ) -> GatewayAuthorization | None:
+        with self._lock:
+            return next(
+                (
+                    authorization
+                    for authorization in self.api_keys.gateway_authorizations.values()
+                    if authorization.gateway_request_id == gateway_request_id
+                ),
+                None,
+            )
 
     def get_gateway_authorization_by_idempotency_key(
         self, workspace_id: str, key_hash: str, idempotency_key: str

@@ -23,6 +23,7 @@ dependencies = [
   "pydantic-settings>=2.6.0",
   "python-multipart>=0.0.20",
   "sentry-sdk[fastapi]>=2.20.0",
+  "sigstore==4.5.0",
   "stripe>=11.0.0",
   # The synthetic monitor runs its inference probes through the official
   # Python SDK so every pass exercises the SDK client-telemetry path
