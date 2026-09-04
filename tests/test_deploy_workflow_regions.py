@@ -87,9 +87,24 @@ def test_snapshot_sync_cannot_gate_the_control_plane_deploy() -> None:
     assert "continue-on-error: true" in step, (
         "the snapshot sync must not fail the deploy job"
     )
-    assert "timeout-minutes:" in step, "the snapshot sync must be time-bounded"
-    minutes = int(step.split("timeout-minutes:", 1)[1].split("\n", 1)[0].strip())
-    assert 0 < minutes <= 15, f"snapshot sync deadline is {minutes}m; keep it short"
+    # The deadline belongs on the upload, not the step: a step-level timeout
+    # can sever SSH between the two `mv`s of the remote swap and leave the
+    # node with no live source tree, and the next run deletes the backup.
+    assert "timeout-minutes:" not in step, (
+        "a step deadline can interrupt the remote swap; bound the upload instead"
+    )
+    script = (ROOT / "scripts/deploy/sync_public_analytics_snapshots.sh").read_text(
+        encoding="utf-8"
+    )
+    upload = script.split("compute scp", 1)[0].rsplit("\n", 3)[-1] + script.split(
+        "compute scp", 1
+    )[0][-80:]
+    assert "timeout -k 30 300" in script, "the snapshot upload must be time-bounded"
+    assert "timeout" in upload or "timeout -k 30 300 gcloud" in script, upload
+    swap = script.split("compute ssh", 1)[1]
+    assert "timeout" not in swap.split("--command", 1)[0], (
+        "the remote swap must not carry a deadline that can interrupt it"
+    )
 
 
 def test_public_snapshot_worker_swap_is_verified_and_rollbackable() -> None:
@@ -103,7 +118,11 @@ def test_public_snapshot_worker_swap_is_verified_and_rollbackable() -> None:
     assert "rollback()" in script
     assert r"if [ \"\$count\" != 4 ]; then" in script
     assert r"mv \"\$previous_builder\" \"\$builder\"" in script
-    assert 'gc compute scp "$archive" "${NAME}:${remote_archive}"' in script
+    # Upload first, then swap (#1080): the archive must not be streamed over
+    # SSH stdin. Asserted by behaviour rather than by one exact spelling, so
+    # the line can carry a deadline without breaking this.
+    assert "compute scp" in script
+    assert '"$archive" "${NAME}:${remote_archive}"' in script
     assert '--ssh-flag="-n"' in script
     assert '--ssh-flag="-T"' in script
     assert 'tar -xzf \\"\\$archive\\" -C \\"\\$stage\\"' in script

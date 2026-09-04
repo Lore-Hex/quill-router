@@ -286,9 +286,13 @@ jobs:
         # backlog of stuck setCommonInstanceMetadata operations on a 212KB,
         # 365-entry ssh-keys value that every CI run appends to. A stale
         # analytics snapshot is a reporting defect; a control plane that
-        # cannot ship is an outage. Bound it and let the deploy continue --
-        # the step still goes red in the run, so the failure stays visible.
-        timeout-minutes: 8
+        # cannot ship is an outage. So the deploy continues past a failure --
+        # the step still goes red in the run, so it stays visible.
+        #
+        # Deliberately NO timeout-minutes here: the script bounds the upload,
+        # which is the part that hangs, and a deadline on the step could
+        # instead sever SSH midway through the remote swap and leave the node
+        # with no live source tree. Bound the transfer, never the swap.
         continue-on-error: true
         run: scripts/deploy/sync_public_analytics_snapshots.sh --apply
 
