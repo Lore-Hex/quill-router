@@ -150,15 +150,23 @@ class FleetAnalyticsEndpoint:
 ANALYTICS_FRESHNESS_FLEET: tuple[FleetAnalyticsEndpoint, ...] = (
     FleetAnalyticsEndpoint(
         cloud="aws",
-        status_url="https://gchircrcif.eu-west-3.awsapprunner.com/status.json",
+        status_url="https://aws-euw3.trustedrouter.com/status.json",
         expected_backend=BACKEND_POSTGRES,
         note=(
-            "The tr-eu App Runner control plane -- the deployment that holds the "
-            "Aurora DSQL connection this signal is read through, and the one whose "
-            "drain was missing for fifteen days. Deliberately NOT "
-            "aws.trustedrouter.com: that vanity name fronts the Fargate control "
-            "plane through Global Accelerator, and pointing the check at the wrong "
-            "AWS front end would answer a question nobody asked."
+            "The eu-west-3 Fargate control plane, REGION-PINNED. It holds the "
+            "Aurora DSQL connection this signal is read through, and it is the "
+            "deployment whose drain was missing for fifteen days. This was the "
+            "tr-eu App Runner hostname until that service was retired on "
+            "2026-09-03, at which point the check simply failed DNS. "
+            "Deliberately NOT aws.trustedrouter.com, and the reason is now "
+            "sharper than 'wrong front end': that vanity name is Global "
+            "Accelerator anycast across BOTH EU regions, and the two are not "
+            "interchangeable for this question. eu-west-3 runs the outbox; "
+            "eu-west-1 has TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=false and "
+            "correctly publishes not_configured. Pointed at the anycast name, "
+            "the check reads whichever region GA happens to pick, so a healthy "
+            "drain reports 'not configured' on roughly half of all runs -- an "
+            "alert that fires on routing rather than on the drain."
         ),
     ),
     FleetAnalyticsEndpoint(
