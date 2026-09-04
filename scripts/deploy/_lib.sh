@@ -15,7 +15,7 @@ REGION="${REGION:-us-central1}"
 # /v1/regions which the SDK's region= shortcut resolves against. Adding
 # a region without a backing gateway VM gives callers a TLS-broken
 # `api-<region>.quillrouter.com` and weakens the trust story.
-TR_REGIONS="${TR_REGIONS:-us-central1,us-east4,europe-west4,southamerica-east1}"
+TR_REGIONS="${TR_REGIONS:-us-central1,us-east4,europe-west4}"
 TR_PRIMARY_REGION="${TR_PRIMARY_REGION:-us-central1}"
 # Cloud Run control-plane regions behind trustedrouter.com. This is broader
 # than TR_REGIONS because cold control-plane regions can serve cached public
@@ -24,11 +24,11 @@ TR_CONTROL_PLANE_REGIONS="${TR_CONTROL_PLANE_REGIONS:-us-central1,us-east4,europ
 # Comma-separated subset of TR_REGIONS that should run with always-on warm
 # capacity. Anything outside TR_WARM_REGIONS gets min_scale=0 unless the
 # per-region map below says otherwise.
-TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4,southamerica-east1}"
+TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4}"
 # Service-level minimums stay allocated across staged revision traffic shifts.
 # US East is deliberately larger: a 2026-08-22 customer burst exhausted the
 # old one-instance / concurrency-two ceiling before Cloud Run could scale.
-TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION="${TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION:-us-central1=2,us-east4=8,europe-west4=2,southamerica-east1=2}"
+TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION="${TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION:-us-central1=2,us-east4=8,europe-west4=2}"
 # Billing handlers are small, synchronous Spanner operations dispatched to a
 # worker thread. Eight concurrent requests fit comfortably in 2 GiB and avoid
 # cold-starting dozens of instances for a short burst.
