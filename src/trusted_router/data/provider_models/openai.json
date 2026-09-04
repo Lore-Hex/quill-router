@@ -840,10 +840,54 @@
       "routable_reason": "provider-canary-failed",
       "input_token_price_per_m": 20000000,
       "output_token_price_per_m": 80000000
+    },
+    {
+      "display_name": "gpt-6-astra",
+      "title": "gpt-6-astra",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-6-astra",
+      "upstream_id": "gpt-6-astra",
+      "created": 1787853604,
+      "routable": true,
+      "input_token_price_per_m": 10000000,
+      "output_token_price_per_m": 50000000,
+      "cached_input_token_price_per_m": 1000000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 272000,
+          "input_token_price_per_m": 10000000,
+          "output_token_price_per_m": 50000000,
+          "cached_input_token_price_per_m": 1000000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 20000000,
+          "output_token_price_per_m": 75000000,
+          "cached_input_token_price_per_m": 2000000
+        }
+      ],
+      "context_length": 1050000,
+      "max_output_tokens": 128000,
+      "supported_features": [
+        "function-calling",
+        "reasoning-effort",
+        "structured-output"
+      ]
     }
   ],
   "source": "https://api.openai.com/v1/models",
-  "generated_at": "2026-09-03T17:37:35Z",
+  "generated_at": "2026-09-04T23:19:10Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 34
+  "model_count": 35
 }

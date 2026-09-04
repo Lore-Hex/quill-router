@@ -17,6 +17,7 @@ _NEW_AUTOMATIC_FEED_MODELS = {
     "aion-labs/aion-3.0",
     "arcee-ai/trinity-large-thinking",
     "openai/gpt-5.6-sol",
+    "openai/gpt-6-astra",
     "openai/gpt-oss-120b",
     "upstage/solar-pro4",
     "reka/reka-edge-2603",
@@ -34,6 +35,7 @@ _NEW_AUTOMATIC_FEED_ALIASES = {
     "deepseek-v4-flash",
     "glm-5.2",
     "gpt-5.6-sol",
+    "gpt-6-astra",
     "grok-4.6",
     "mistral-small-2603",
 }
@@ -42,7 +44,7 @@ _NEW_AUTOMATIC_FEED_ROWS = _NEW_AUTOMATIC_FEED_MODELS | _NEW_AUTOMATIC_FEED_ALIA
 
 def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict:
     if "api.openai.com" in url:
-        return {"data": [{"id": "gpt-5.6-sol"}]}
+        return {"data": [{"id": "gpt-5.6-sol"}, {"id": "gpt-6-astra"}]}
     if "api.x.ai" in url:
         return {"models": [{"id": "grok-4.6"}]}
     if "api.deepseek.com" in url:

@@ -505,10 +505,10 @@
   },
   "openai": {
     "card_version": 2,
-    "model_count": 44,
+    "model_count": 45,
     "name": "OpenAI",
     "privacy": "Zero retention",
-    "route_count": 74,
+    "route_count": 76,
     "route_mode": "Prepaid + BYOK",
     "slug": "openai"
   },
