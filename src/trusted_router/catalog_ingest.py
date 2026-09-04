@@ -28,6 +28,7 @@ from trusted_router.catalog_data import (
     META_MODEL_IDS,
     PROVIDERS,
     Model,
+    ModelDocumentation,
     ModelEndpoint,
     _EmbeddingSpec,
 )
@@ -46,6 +47,10 @@ from trusted_router.pricing import (
     _provider_manifest_price_tiers,
     _read_pricing_tiers,
     customer_fixed_price_microdollars,
+)
+from trusted_router.provider_contract import (
+    PROVIDER_MODEL_DOCUMENTATION_FIELDS,
+    PROVIDER_MODEL_DOCUMENTATION_MAX_LENGTHS,
 )
 from trusted_router.provider_contracts import (
     provider_model_operator_held,
@@ -89,6 +94,26 @@ def _modalities(value: object, *, default: tuple[str, ...]) -> tuple[str, ...]:
         )
     )
     return normalized or default
+
+
+def _model_documentation(value: object) -> ModelDocumentation | None:
+    if not isinstance(value, dict) or set(value) != set(PROVIDER_MODEL_DOCUMENTATION_FIELDS):
+        return None
+    fields = {field: value.get(field) for field in PROVIDER_MODEL_DOCUMENTATION_FIELDS}
+    if any(
+        not isinstance(item, str)
+        or not item
+        or len(item) > PROVIDER_MODEL_DOCUMENTATION_MAX_LENGTHS[field]
+        for field, item in fields.items()
+    ):
+        return None
+    return ModelDocumentation(
+        description=str(fields["description"]),
+        input_format=str(fields["input_format"]),
+        output_format=str(fields["output_format"]),
+        example_input=str(fields["example_input"]),
+        example_output=str(fields["example_output"]),
+    )
 
 
 def _endpoint(
@@ -1059,6 +1084,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 request_price_microdollars=request_price,
                 price_tiers=tiers,
                 published_price_tiers=tiers,
+                documentation=_model_documentation(raw_model.get("documentation")),
             )
             existing = models.get(model_id)
             if existing is None:
@@ -1072,6 +1098,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                     output_modalities=tuple(
                         dict.fromkeys((*existing.output_modalities, *model.output_modalities))
                     ),
+                    documentation=existing.documentation or model.documentation,
                 )
 
             if provider_slug in GATEWAY_PREPAID_PROVIDER_SLUGS:

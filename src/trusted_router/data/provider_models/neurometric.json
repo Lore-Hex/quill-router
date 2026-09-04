@@ -270,9 +270,136 @@
       "replacement_model_id": null,
       "routable": true,
       "input_token_price_per_m": 10000,
+      "output_token_price_per_m": 100000,
+      "documentation": {
+        "description": "Extract named fields from document text into structured JSON.",
+        "input_format": "Send document text and explicitly name the fields to extract. Use response_format with a JSON Schema when a fixed contract is required.",
+        "output_format": "A JSON object containing the requested fields; with response_format, it follows the supplied schema.",
+        "example_input": "Invoice #A-1042. Total due: $87.25",
+        "example_output": "{\"invoice_number\":\"A-1042\",\"total_usd\":87.25}"
+      }
+    },
+    {
+      "display_name": "Classification Router",
+      "title": "neurometric/classification-router",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "neurometric/classification-router",
+      "upstream_id": "neurometric/classification-router",
+      "context_length": 32768,
+      "max_output_tokens": 16384,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "documentation": {
+        "description": "Classify one or more requests into caller-provided route labels.",
+        "input_format": "Provide the allowed labels and the request or requests to classify.",
+        "output_format": "A JSON object mapping each request identifier to one allowed label.",
+        "example_input": "Classify this request as exactly one of billing, technical, or sales: My invoice contains the wrong tax amount.",
+        "example_output": "{\"request_1\":\"billing\"}"
+      },
+      "input_token_price_per_m": 10000,
+      "output_token_price_per_m": 100000
+    },
+    {
+      "display_name": "Conversation Summary",
+      "title": "neurometric/conversation-summary",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "neurometric/conversation-summary",
+      "upstream_id": "neurometric/conversation-summary",
+      "context_length": 49152,
+      "max_output_tokens": 24576,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "documentation": {
+        "description": "Turn a conversation transcript into a structured operational summary.",
+        "input_format": "Send a transcript with speakers clearly labeled. Include dates and owners in the transcript when they should be retained.",
+        "output_format": "A JSON object with decision, current_status, open_items, and risks; open items include action, owner, and due_date.",
+        "example_input": "Summarize this conversation:\nAlice: The launch moves to Friday.\nBob: I will update the release calendar.\nAlice: Please notify support.",
+        "example_output": "{\n  \"decision\": \"The launch is moved to Friday.\",\n  \"current_status\": \"Launch date updated to Friday.\",\n  \"open_items\": [\n    {\"action\": \"Update the release calendar\", \"owner\": \"Bob\", \"due_date\": null},\n    {\"action\": \"Notify support\", \"owner\": \"Alice\", \"due_date\": null}\n  ],\n  \"risks\": []\n}"
+      },
+      "input_token_price_per_m": 10000,
+      "output_token_price_per_m": 100000
+    },
+    {
+      "display_name": "Grounded Document QA",
+      "title": "neurometric/grounded-document-qa",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "neurometric/grounded-document-qa",
+      "upstream_id": "neurometric/grounded-document-qa",
+      "context_length": 49152,
+      "max_output_tokens": 24576,
+      "supported_features": [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "documentation": {
+        "description": "Answer questions from supplied document text and return citations grounded in that text.",
+        "input_format": "Send the source document and question in the user message. Number passages when stable citation identifiers matter.",
+        "output_format": "A JSON object with answer and citations fields; citations identify the supporting source passages.",
+        "example_input": "Document:\n[1] The Acme renewal date is October 15, 2026.\n\nQuestion: What is the Acme renewal date? Answer only from the document.",
+        "example_output": "{\n  \"answer\": \"October 15, 2026\",\n  \"citations\": [\"1\"]\n}"
+      },
+      "input_token_price_per_m": 10000,
       "output_token_price_per_m": 100000
     }
   ],
-  "generated_at": "2026-09-03T21:15:09Z",
-  "model_count": 8
+  "generated_at": "2026-09-04T17:02:58Z",
+  "model_count": 11
 }

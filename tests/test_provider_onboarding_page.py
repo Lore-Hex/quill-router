@@ -56,6 +56,9 @@ def test_provider_onboarding_page_has_machine_readable_requirements(
     assert 'href="/providers/marketplace/catalog.schema.json"' in response.text
     assert 'href="/providers/marketplace/catalog.v2.schema.json"' in response.text
     assert "Always send <code>Retry-After</code>" in response.text
+    assert "Document task-specific endpoints." in response.text
+    assert "Tell callers exactly what to send." in response.text
+    assert "&#34;example_input&#34;" in response.text
     assert "Provider sign in" in response.text
     assert "Exclude account administration, billing, user management" in response.text
     assert (
@@ -108,6 +111,17 @@ def test_provider_catalog_schema_is_public_and_matches_documented_example(
     assert isinstance(pricing_example["output"], str)
     assert model_schema["properties"]["type"]["const"] == "chat"
     assert "embeddings" not in model_schema["properties"]["endpoints"]["items"]["enum"]
+    documentation_schema = model_schema["properties"]["documentation"]
+    assert "documentation" not in model_schema["required"]
+    assert documentation_schema["additionalProperties"] is False
+    assert set(documentation_schema["required"]) == {
+        "description",
+        "input_format",
+        "output_format",
+        "example_input",
+        "example_output",
+    }
+    assert documentation_schema["properties"]["example_input"]["maxLength"] == 8192
 
 
 def test_provider_reliability_contract_v2_is_public_and_complete(
