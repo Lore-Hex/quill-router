@@ -14,7 +14,6 @@ import hashlib
 import uuid
 from typing import Any
 
-from trusted_router.money import dollars_to_microdollars
 from trusted_router.scopes import validate_api_key_scopes
 from trusted_router.security import (
     hash_api_key,
@@ -35,13 +34,13 @@ from trusted_router.storage_gcp_counters import (
     key_usage_shard_count,
 )
 from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
+from trusted_router.storage_key_patch import TYPED_LIMIT_PATCH_FIELDS, apply_key_patch
 from trusted_router.storage_key_usage import api_key_from_json, api_key_usage_snapshot
 from trusted_router.storage_models import (
     ApiKey,
     ApiKeyUsageSnapshot,
     GatewayAuthorization,
     _is_byok,
-    iso_now,
 )
 from trusted_router.types import UsageType
 
@@ -79,50 +78,6 @@ _CONSOLE_API_KEYS_SQL = """
              key_record.id,
              key_limit.shard
 """
-
-_TYPED_LIMIT_PATCH_FIELDS = frozenset(
-    {
-        "limit",
-        "limit_microdollars",
-        "limit_daily_microdollars",
-        "limit_weekly_microdollars",
-        "limit_monthly_microdollars",
-        "include_byok_in_limit",
-    }
-)
-
-
-def _apply_key_patch(key: ApiKey, patch: dict[str, Any]) -> None:
-    if "name" in patch and patch["name"]:
-        key.name = str(patch["name"])
-    if "disabled" in patch:
-        key.disabled = bool(patch["disabled"])
-    if "limit" in patch:
-        value = patch["limit"]
-        key.limit_microdollars = None if value is None else dollars_to_microdollars(value)
-    if "limit_microdollars" in patch:
-        key.limit_microdollars = patch["limit_microdollars"]
-    if "limit_reset" in patch:
-        key.limit_reset = patch["limit_reset"]
-    for window in ("daily", "weekly", "monthly"):
-        field = f"limit_{window}_microdollars"
-        if field in patch:
-            setattr(key, field, patch[field])
-    if "include_byok_in_limit" in patch:
-        key.include_byok_in_limit = bool(patch["include_byok_in_limit"])
-    if patch.get("budget_alert_only") is not None:
-        key.budget_alert_only = bool(patch["budget_alert_only"])
-    if "budget_alerted" in patch:
-        key.budget_alerted = dict(patch["budget_alerted"] or {})
-    if "tags" in patch:
-        key.tags = dict(patch["tags"] or {})
-    if "scopes" in patch:
-        key.scopes = validate_api_key_scopes(
-            patch["scopes"],
-            management=key.management,
-        )
-    key.updated_at = iso_now()
-
 
 class SpannerApiKeys:
     def __init__(self, io: SpannerIO) -> None:
@@ -280,11 +235,11 @@ class SpannerApiKeys:
         key = self.get_by_hash(key_hash)
         if key is None:
             return None
-        if not (_TYPED_LIMIT_PATCH_FIELDS & patch.keys()):
+        if not (TYPED_LIMIT_PATCH_FIELDS & patch.keys()):
             # Metadata edits do not touch typed counter configuration. Besides
             # avoiding unnecessary hot-row writes, this preserves an existing
             # escrow partition exactly.
-            _apply_key_patch(key, patch)
+            apply_key_patch(key, patch)
             self._io.write_entity("api_key", key.hash, key)
             return key
 
@@ -302,7 +257,7 @@ class SpannerApiKeys:
             )
             if current is None:
                 return None
-            _apply_key_patch(current, patch)
+            apply_key_patch(current, patch)
             shard_count = key_usage_shard_count(current)
             usage_rows = list(
                 transaction.execute_sql(

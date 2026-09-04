@@ -106,6 +106,7 @@ from trusted_router.storage_gcp_codec import (
     workspace_key_id,
 )
 from trusted_router.storage_gcp_counters import credit_shard_count, distribute_credit_amount
+from trusted_router.storage_key_patch import TYPED_LIMIT_PATCH_FIELDS, apply_key_patch
 from trusted_router.storage_key_usage import api_key_from_json, api_key_usage_snapshot
 from trusted_router.storage_models import (
     FUTURE_SAMPLE_SKEW_SECONDS,
@@ -3462,14 +3463,66 @@ class PostgresStore:
         _ = limit_micro  # read for the BYOK/uncapped guard above only.
 
     def supports_key_writes(self) -> bool:
-        return False
+        return True
 
     def update_key(
         self,
         key_hash: str,
         patch: dict[str, Any],
     ) -> ApiKey | None:
-        self._not_implemented("update_key")
+        def update(conn: Any) -> ApiKey | None:
+            key = self._read_entity_tx(
+                conn,
+                "api_key",
+                key_hash,
+                ApiKey,
+                for_update=True,
+            )
+            if key is None:
+                return None
+            apply_key_patch(key, patch)
+            typed_limit_patch = bool(TYPED_LIMIT_PATCH_FIELDS & patch.keys())
+            if typed_limit_patch:
+                shard_count = int(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM tr_key_limit WHERE key_hash = %s",
+                        (key.hash,),
+                        prepare=False,
+                    ).fetchone()[0]
+                )
+                if shard_count > 1:
+                    raise RuntimeError(
+                        f"cannot update caps for key_hash={key.hash}: "
+                        f"shard_count={shard_count}; distributing a cap across shards "
+                        "is not implemented on this backend"
+                    )
+            self._write_entity_tx(conn, "api_key", key.hash, key)
+            if typed_limit_patch:
+                # Postgres creates exactly one typed row, shard 0. The count
+                # above makes that assumption fail closed if multiple shards
+                # ever appear. For a legacy/orphaned entity with zero typed
+                # rows, this remains a no-op while the entity update succeeds.
+                conn.execute(
+                    "UPDATE tr_key_limit SET"
+                    " limit_micro = %s::bigint, include_byok = %s,"
+                    " day_limit_micro = %s::bigint,"
+                    " week_limit_micro = %s::bigint,"
+                    " month_limit_micro = %s::bigint,"
+                    " updated_at = CURRENT_TIMESTAMP"
+                    " WHERE key_hash = %s AND shard = 0",
+                    (
+                        _int8_param(key.limit_microdollars),
+                        key.include_byok_in_limit,
+                        _int8_param(key.limit_daily_microdollars),
+                        _int8_param(key.limit_weekly_microdollars),
+                        _int8_param(key.limit_monthly_microdollars),
+                        key.hash,
+                    ),
+                    prepare=False,
+                )
+            return key
+
+        return self._run_transaction(update)
 
     # BYOK -------------------------------------------------------------------
 
