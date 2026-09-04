@@ -895,6 +895,20 @@ class Settings(BaseSettings):
     spend_lease_skew_seconds: int = 10
     spend_lease_max_microdollars: int = 1_000_000
     spend_lease_max_available_basis_points: int = 1_000
+    # Converged trust-tier policy. The eligibility flag is intentionally
+    # independent and defaults off; the other values can ship inertly first.
+    spend_lease_trust_eligibility_enabled: bool = False
+    trust_qualifying_providers: str = "stripe,x402"
+    trust_tier3_min_days: int = 30
+    trust_tier3_min_paid_microdollars: int = 50_000_000
+    max_workspaces_per_owner: int = 25
+    operator_token: str = ""
+    operator_identities: str = ""
+    trust_reconcile_interval_seconds: int = 900
+    trust_reconcile_max_age_seconds: int = 3_600
+    spend_lease_tier1_cap_microdollars: int = 5_000_000
+    spend_lease_tier2_cap_microdollars: int = 25_000_000
+    spend_lease_tier3_cap_microdollars: int = 100_000_000
     # Stage D is inert until an attested enclave calls the new endpoint. Keep a
     # runtime kill switch so heartbeat writes can be stopped independently of a
     # code rollout while authorize continues to expose cohort metadata.
@@ -1389,6 +1403,45 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TR_SPEND_LEASE_MAX_AVAILABLE_BASIS_POINTS must be between 1 and 5000"
             )
+        if not self.trust_qualifying_provider_set:
+            raise ValueError("TR_TRUST_QUALIFYING_PROVIDERS must not be empty")
+        if not self.trust_qualifying_provider_set <= {"stripe", "paypal", "adyen", "x402"}:
+            raise ValueError("TR_TRUST_QUALIFYING_PROVIDERS contains an unsupported provider")
+        if self.trust_tier3_min_days < 0:
+            raise ValueError("TR_TRUST_TIER3_MIN_DAYS must not be negative")
+        if self.trust_tier3_min_paid_microdollars <= 0:
+            raise ValueError("TR_TRUST_TIER3_MIN_PAID_MICRODOLLARS must be positive")
+        if self.max_workspaces_per_owner <= 0:
+            raise ValueError("TR_MAX_WORKSPACES_PER_OWNER must be positive")
+        if self.trust_reconcile_interval_seconds <= 0:
+            raise ValueError("TR_TRUST_RECONCILE_INTERVAL_SECONDS must be positive")
+        # The scope pins 15 minutes for Stripe/x402 and three hours for PayPal.
+        # Adyen's report source has no additional provider-side delay here.
+        consistency_delays = {
+            "stripe": 900,
+            "x402": 900,
+            "paypal": 10_800,
+            "adyen": 0,
+        }
+        enabled_consistency_delay = max(
+            consistency_delays[provider]
+            for provider in self.trust_qualifying_provider_set
+        )
+        minimum_reconcile_age = (
+            enabled_consistency_delay + 2 * self.trust_reconcile_interval_seconds
+        )
+        if self.trust_reconcile_max_age_seconds < minimum_reconcile_age:
+            raise ValueError(
+                "TR_TRUST_RECONCILE_MAX_AGE_SECONDS must cover the provider "
+                "consistency delay plus two reconciliation cadences"
+            )
+        trust_caps = (
+            self.spend_lease_tier1_cap_microdollars,
+            self.spend_lease_tier2_cap_microdollars,
+            self.spend_lease_tier3_cap_microdollars,
+        )
+        if any(cap <= 0 for cap in trust_caps) or trust_caps != tuple(sorted(trust_caps)):
+            raise ValueError("TR_SPEND_LEASE_TIER*_CAP_MICRODOLLARS must be positive and ordered")
         configured_spend_digests = self.spend_lease_accepted_gcp_image_digests.split(",")
         for digest in configured_spend_digests:
             digest = digest.strip()
@@ -2023,6 +2076,14 @@ class Settings(BaseSettings):
             workspace_id.strip()
             for workspace_id in self.spend_lease_pilot_workspace_ids.split(",")
             if workspace_id.strip()
+        )
+
+    @property
+    def trust_qualifying_provider_set(self) -> frozenset[str]:
+        return frozenset(
+            provider.strip().lower()
+            for provider in self.trust_qualifying_providers.split(",")
+            if provider.strip()
         )
 
     @property

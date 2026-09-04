@@ -10,6 +10,7 @@ from trusted_router.main import create_app
 from trusted_router.services.paypal_billing import credit_paypal_capture
 from trusted_router.services.x402_billing import credit_x402_payment_intent
 from trusted_router.storage import STORE
+from trusted_router.storage_models import CreditProvenance
 
 
 def _user_and_workspace(client: TestClient, headers: dict[str, str]) -> tuple[Any, Any]:
@@ -63,6 +64,7 @@ def test_stripe_checkout_stamps_initiator_and_replay_accrues_once(
             "data": {
                 "object": {
                     "mode": "payment",
+                    "payment_intent": "pi_lifetime_card",
                     "payment_status": "paid",
                     "amount_total": int(metadata["charge_amount_cents"]),
                     "metadata": metadata,
@@ -289,6 +291,7 @@ def test_identity_checkout_nudge_is_present_only_for_that_purpose(
         workspace.id,
         5_000_000,
         "evt_nudge_existing_topup",
+        provenance=CreditProvenance.system_grant(),
         lifetime_topup_user_id=user.id,
     )
     progressed = client.post(

@@ -96,6 +96,48 @@ def test_split_is_atomic_even_partitioned_and_invalidates_cached_count() -> None
     assert store._credit_shard_count("ws-reshard") == 4
 
 
+def test_reshard_copies_all_replicated_trust_columns_to_every_new_shard() -> None:
+    store, database = _seed(shard_credits=[101], shard_usage=[37])
+    expected = {
+        "trust_tier": 2,
+        "trust_computed_at": dt.datetime(2026, 9, 1, tzinfo=dt.UTC),
+        "trust_latched_at": None,
+        "trust_override_tier": None,
+        "billing_pause_causes": ["operator"],
+        "pause_epoch": 3,
+        "trust_reconciled_through": dt.datetime(2026, 9, 2, tzinfo=dt.UTC),
+    }
+    database.typed[CREDIT_BALANCE_TABLE][("ws-reshard", 0)].update(expected)
+
+    result = reshard_credit_account(store, "ws-reshard", 4, apply=True)
+
+    assert result.ready and result.applied
+    assert all(
+        {column: row[column] for column in expected} == expected
+        for row in _rows(database)
+    )
+
+
+def test_reshard_validation_rejects_any_replicated_trust_divergence() -> None:
+    store, database = _seed(shard_credits=[50, 50], shard_usage=[10, 10])
+    for row in _rows(database):
+        row.update(
+            trust_tier=1,
+            trust_computed_at=None,
+            trust_latched_at=None,
+            trust_override_tier=None,
+            billing_pause_causes=[],
+            pause_epoch=0,
+            trust_reconciled_through=None,
+        )
+    database.typed[CREDIT_BALANCE_TABLE][("ws-reshard", 1)]["pause_epoch"] = 1
+
+    result = inspect_credit_reshard(store, "ws-reshard", 4)
+
+    assert not result.ready
+    assert "typed credit shards have divergent replicated trust columns" in result.reasons
+
+
 def test_split_then_unshard_round_trip_preserves_every_global_counter() -> None:
     store, database = _seed(shard_credits=[101], shard_usage=[37])
     split = reshard_credit_account(store, "ws-reshard", 16, apply=True)
@@ -111,8 +153,15 @@ def test_split_then_unshard_round_trip_preserves_every_global_counter() -> None:
             "shard": 0,
             "total_credits": 101,
             "total_usage": 37,
-            "reserved": 0,
-            "source_updated_at": store._spanner.COMMIT_TIMESTAMP,
+                "reserved": 0,
+                "trust_tier": None,
+                "trust_computed_at": None,
+                "trust_latched_at": None,
+                "trust_override_tier": None,
+                "billing_pause_causes": None,
+                "pause_epoch": None,
+                "trust_reconciled_through": None,
+                "source_updated_at": store._spanner.COMMIT_TIMESTAMP,
             "updated_at": store._spanner.COMMIT_TIMESTAMP,
         }
     ]

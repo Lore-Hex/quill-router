@@ -1354,6 +1354,16 @@ def _authorize_gateway_sync_impl(
         receipt_fee_basis_points=receipt_fee_basis_points,
         regional_lease_authorization=bool(regional_eligible),
     )
+    effective_trust_tier: int | None = None
+    if settings.spend_lease_trust_eligibility_enabled and no_lease_reason is None:
+        trust_reader = getattr(STORE, "typed_credit_trust_snapshot", None)
+        trust_snapshot = trust_reader(workspace.id) if callable(trust_reader) else None
+        if trust_snapshot is None:
+            no_lease_reason = "unpaid_workspace"
+        else:
+            effective_trust_tier, trust_latched_at = trust_snapshot
+            if effective_trust_tier < 1 or trust_latched_at is not None:
+                no_lease_reason = "unpaid_workspace"
     spend_context["no_lease_reason"] = no_lease_reason or spend_context.get("boot_failure_reason")
     if (
         settings.spend_lease_issuance_enabled
@@ -1411,6 +1421,7 @@ def _authorize_gateway_sync_impl(
                             gen=generation,
                             catalog=catalog,
                             ttl_seconds=settings.spend_lease_ttl_seconds,
+                            trust_tier=effective_trust_tier,
                         )
                         spend_lease = STORE.retain_spend_lease(
                             api_key.hash,
@@ -1468,6 +1479,9 @@ def _authorize_gateway_sync_impl(
                 ),
                 echo_lease_id=echo.lease_id if echo is not None else None,
                 echo_state=echo.state if echo is not None else None,
+                trust_eligibility_enabled=(
+                    settings.spend_lease_trust_eligibility_enabled
+                ),
             )
             if binding_reason is not None:
                 spend_context["no_lease_reason"] = binding_reason

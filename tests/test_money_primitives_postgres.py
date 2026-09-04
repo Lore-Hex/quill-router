@@ -4,7 +4,7 @@ import pytest
 from psycopg.types.numeric import Int8
 
 from tests.fakes.postgres import postgres_store_on, sqlite_postgres_conn
-from trusted_router.storage_models import CreditAccount, CreditMovement
+from trusted_router.storage_models import CreditAccount, CreditMovement, CreditProvenance
 
 
 def _seed_workspace(store: object, conn: object, workspace_id: str) -> None:
@@ -58,7 +58,12 @@ def test_postgres_guarded_debit_runs_real_conditional_sql_once() -> None:
     store = postgres_store_on(conn)
     workspace_id = "ws-pg-debit"
     _seed_workspace(store, conn, workspace_id)
-    assert store.credit_workspace_typed_direct(workspace_id, 100, "evt-pg-fund")
+    assert store.credit_workspace_typed_direct(
+        workspace_id,
+        100,
+        "evt-pg-fund",
+        provenance=CreditProvenance.system_grant(),
+    )
 
     assert (
         store.debit_workspace_guarded(
@@ -176,12 +181,14 @@ def test_postgres_lifetime_topup_is_atomic_with_grant_claim() -> None:
         workspace_id,
         25,
         "evt-pg-topup",
+        provenance=CreditProvenance.system_grant(),
         lifetime_topup_user_id=user_id,
     )
     assert not store.credit_workspace_typed_direct(
         workspace_id,
         25,
         "evt-pg-topup",
+        provenance=CreditProvenance.system_grant(),
         lifetime_topup_user_id=user_id,
     )
     assert store.get_lifetime_topup_microdollars(user_id) == 25

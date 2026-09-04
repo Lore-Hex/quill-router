@@ -570,6 +570,49 @@ class CreditAccount:
     last_auto_refill_status: str | None = None  # "succeeded" | "failed:<code>" | "pending"
 
 
+@dataclass(frozen=True, slots=True)
+class CreditProvenance:
+    """Provider-stable origin of one workspace credit operation.
+
+    ``external_ref`` is the payment object that later refunds/disputes name;
+    webhook delivery IDs and merchant references are deliberately not valid
+    substitutes. Non-payment grants have no external reference.
+    """
+
+    source: str
+    provider: str
+    external_ref: str | None
+    occurred_at: dt.datetime
+
+    @classmethod
+    def system_grant(cls) -> CreditProvenance:
+        return cls("grant", "system", None, dt.datetime.now(dt.UTC))
+
+
+@dataclass(frozen=True, slots=True)
+class TrustEvent:
+    workspace_id: str
+    event_id: str
+    kind: str
+    provider: str
+    amount_micro: int | None
+    original_payment_ref: str | None
+    adverse_ref: str | None
+    occurred_at: dt.datetime
+    recorded_at: dt.datetime
+    payment_amount_micro: int | None
+    currency: str | None
+    credited_micro: int | None
+    recovered_micro: int | None
+    provider_subtype: str | None
+    lifecycle_status: str | None
+    cumulative_refunded: int | None
+    recovery_target: int | None
+    debit_status: str | None
+    unrecovered_micro: int | None
+    provider_ordering_watermark: str | None
+
+
 @dataclass
 class CreditMoney:
     """In-memory single-book credit money for one workspace. The Spanner

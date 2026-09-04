@@ -18,7 +18,7 @@ from trusted_router.storage_gcp_counters import (
     credit_shard_count,
     distribute_credit_amount,
 )
-from trusted_router.storage_models import CreditAccount
+from trusted_router.storage_models import CreditAccount, CreditProvenance
 from trusted_router.typed_balance import live_credit_summary
 
 
@@ -216,8 +216,12 @@ def test_typed_direct_grant_distributes_delta_and_is_idempotent() -> None:
     workspace_id = "ws-grant-shards"
     _seed_sharded_credit(store, database, workspace_id, [40, 30, 30])
 
-    assert store.credit_workspace_typed_direct(workspace_id, 10, "evt-sharded") is True
-    assert store.credit_workspace_typed_direct(workspace_id, 10, "evt-sharded") is False
+    assert store.credit_workspace_typed_direct(
+        workspace_id, 10, "evt-sharded", provenance=CreditProvenance.system_grant()
+    ) is True
+    assert store.credit_workspace_typed_direct(
+        workspace_id, 10, "evt-sharded", provenance=CreditProvenance.system_grant()
+    ) is False
 
     rows = database.typed[CREDIT_BALANCE_TABLE]
     assert [rows[(workspace_id, shard)]["total_credits"] for shard in range(3)] == [44, 33, 33]
@@ -232,7 +236,9 @@ def test_typed_direct_grant_rolls_back_when_active_shard_is_missing() -> None:
     del database.typed[CREDIT_BALANCE_TABLE][(workspace_id, 1)]
 
     with pytest.raises(RuntimeError, match="missing authoritative tr_credit_balance shard 1"):
-        store.credit_workspace_typed_direct(workspace_id, 10, "evt-missing")
+        store.credit_workspace_typed_direct(
+            workspace_id, 10, "evt-missing", provenance=CreditProvenance.system_grant()
+        )
 
     assert database.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)]["total_credits"] == 50
     assert store.get_credit_account(workspace_id).shard_count == 2

@@ -33,7 +33,18 @@ class _ParamTypes:
 # writing only the create-owned columns — still yields a complete row whose
 # typed-DML-owned counters start at 0.
 _TYPED_DEFAULTS: dict[str, dict[str, Any]] = {
-    "tr_credit_balance": {"total_credits": 0, "total_usage": 0, "reserved": 0},
+    "tr_credit_balance": {
+        "total_credits": 0,
+        "total_usage": 0,
+        "reserved": 0,
+        "trust_tier": 0,
+        "trust_computed_at": None,
+        "trust_latched_at": None,
+        "trust_override_tier": None,
+        "billing_pause_causes": [],
+        "pause_epoch": 0,
+        "trust_reconciled_through": None,
+    },
     "tr_earnings_balance": {"total_earned": 0, "total_transferred": 0},
     "tr_user_lifetime_topup": {"total_microdollars": 0},
     "tr_key_limit": {
@@ -784,11 +795,65 @@ class _FakeTransaction:
             rec = self._typed_current("tr_credit_balance", pk)
             if rec is None:
                 return 0
-            if (rec["total_credits"] - rec["total_usage"] - rec["reserved"]) >= p["est"]:
+            trust_matches = (
+                "expected_trust_tier" not in p
+                or (
+                    int(rec.get("trust_tier") or 0) == int(p["expected_trust_tier"])
+                    and int(rec.get("trust_tier") or 0) >= 1
+                    and rec.get("trust_latched_at") is None
+                )
+            )
+            if (
+                (rec["total_credits"] - rec["total_usage"] - rec["reserved"])
+                >= p["est"]
+                and trust_matches
+            ):
                 new = dict(rec, reserved=rec["reserved"] + p["est"])
                 self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
                 return 1
             return 0
+        if sql.startswith("UPDATE tr_credit_balance SET trust_tier=@trust_tier"):
+            updated = 0
+            for pk, committed in self.db.typed.get("tr_credit_balance", {}).items():
+                if pk[0] != p["pk"] or not 0 <= int(pk[1]) < int(p["shard_count"]):
+                    continue
+                rec = self._typed_current("tr_credit_balance", pk) or committed
+                new = dict(
+                    rec,
+                    trust_tier=p["trust_tier"],
+                    trust_computed_at=p["trust_computed_at"],
+                )
+                self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+                updated += 1
+            return updated
+        if sql.startswith("INSERT INTO tr_trust_event"):
+            pk = (p["workspace_id"], p["event_id"])
+            existing_rows = self.db.typed.get("tr_trust_event", {}).values()
+            duplicate_reference = any(
+                row.get("provider") == p["provider"]
+                and row.get("kind") == p["kind"]
+                and (
+                    (
+                        p["kind"] == "payment"
+                        and p.get("original_payment_ref") is not None
+                        and row.get("original_payment_ref")
+                        == p["original_payment_ref"]
+                    )
+                    or (
+                        p["kind"] != "payment"
+                        and p.get("adverse_ref") is not None
+                        and row.get("adverse_ref") == p["adverse_ref"]
+                    )
+                )
+                for row in existing_rows
+            )
+            if duplicate_reference:
+                return 0
+            if pk in self.db.typed.get("tr_trust_event", {}):
+                raise FakeAlreadyExists(f"tr_trust_event/{pk}")
+            record = dict(p)
+            self.pending_writes.append(("insert_typed_dml", "tr_trust_event", pk, record))
+            return 1
         if "UPDATE tr_credit_balance SET reserved = reserved - @hold" in sql:
             _require_pred(
                 sql, "workspace_id=@ws AND shard=@shard AND reserved >= @hold", "credit-release"
@@ -3604,6 +3669,22 @@ def _execute_sql(
             return []
         cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
         return [[rec.get(c) for c in cols]]
+    if "SELECT DISTINCT workspace_id FROM tr_credit_balance" in sql:
+        return [
+            [workspace_id]
+            for workspace_id in sorted(
+                {str(pk[0]) for pk in db.typed.get("tr_credit_balance", {})}
+            )
+        ]
+    if "FROM tr_trust_event" in sql:
+        cols = [
+            column.strip()
+            for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        rows = db.typed.get("tr_trust_event", {}).values()
+        if "pk" in params:
+            rows = [row for row in rows if row.get("workspace_id") == params["pk"]]
+        return [[row.get(column) for column in cols] for row in rows]
     # Typed counter tables: full scan (Step 2 reconcile) OR a single-row read by
     # pk (the typed_balance overlay uses WHERE <pk_col>=@pk AND shard=0).
     for typed_table in ("tr_credit_balance", "tr_key_limit"):

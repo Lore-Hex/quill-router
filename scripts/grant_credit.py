@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from datetime import UTC, datetime
 from typing import Any
 
 os.environ.setdefault("TR_STORAGE_BACKEND", "spanner-bigtable")
@@ -26,6 +27,7 @@ os.environ.setdefault("TR_BIGTABLE_GENERATION_TABLE", "trustedrouter-generations
 from trusted_router.config import Settings
 from trusted_router.money import dollars_to_microdollars, format_money_precise
 from trusted_router.storage import create_store
+from trusted_router.storage_models import CreditProvenance
 from trusted_router.typed_balance import LiveCreditSummary, live_credit_summary
 
 
@@ -93,6 +95,12 @@ def main(argv: list[str] | None = None, *, store: Any | None = None) -> int:
         workspace.id,
         amount,
         args.event_id,
+        provenance=CreditProvenance(
+            source="grant",
+            provider="operator",
+            external_ref=None,
+            occurred_at=datetime.now(UTC),
+        ),
         lifetime_topup_user_id=(user.id if args.count_toward_lifetime_topup else None),
     )
     after = live_credit_summary(workspace.id, store=active_store)

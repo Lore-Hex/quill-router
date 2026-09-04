@@ -69,7 +69,9 @@ from trusted_router.storage_gcp_counters import (
     distribute_credit_amount,
 )
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
-from trusted_router.storage_models import CreditAccount, CreditTransfer, iso_now
+from trusted_router.storage_gcp_trust import insert_credit_trust_event
+from trusted_router.storage_models import CreditAccount, CreditProvenance, CreditTransfer, iso_now
+from trusted_router.trust_tiers import payment_or_grant_event
 
 # Entity kinds. Deliberately identical to the Postgres backend's so an operator
 # reading either plane's `tr_entities` sees one vocabulary.
@@ -674,6 +676,22 @@ def claim_credit_transfer(
             shard_count=claim_shards,
             now=now,
             missing=not_on_this_plane,
+        )
+        insert_credit_trust_event(
+            transaction,
+            param_types,
+            payment_or_grant_event(
+                workspace_id,
+                transfer_id,
+                amount,
+                CreditProvenance(
+                    source="grant",
+                    provider="system",
+                    external_ref=None,
+                    occurred_at=now,
+                ),
+                recorded_at=now,
+            ),
         )
         return credit_transfer.ACCEPTED
 

@@ -116,6 +116,9 @@ SCHEMA_TABLES = (
     "CREATE TABLE IF NOT EXISTS tr_earnings_balance",
     "CREATE TABLE IF NOT EXISTS tr_credit_movement",
     "CREATE TABLE IF NOT EXISTS tr_user_lifetime_topup",
+    "CREATE TABLE IF NOT EXISTS tr_trust_event",
+    "CREATE UNIQUE INDEX IF NOT EXISTS tr_trust_event_adverse_dedup",
+    "CREATE UNIQUE INDEX IF NOT EXISTS tr_trust_event_payment_dedup",
     "CREATE TABLE IF NOT EXISTS tr_key_limit",
     # Deferred settlement. The cap's whole claim to being a real bound is the
     # predicate on its UPDATE and the rowcount that reads it, and the outbox's

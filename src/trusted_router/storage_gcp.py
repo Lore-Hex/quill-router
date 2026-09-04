@@ -71,6 +71,7 @@ from trusted_router.storage import (
     ByokProviderConfig,
     ConsentRequest,
     CreditAccount,
+    CreditProvenance,
     CreditTransfer,
     CustomModel,
     EmailSendBlock,
@@ -182,6 +183,12 @@ from trusted_router.storage_gcp_synthetic_index import (
 from trusted_router.storage_gcp_synthetic_rollups import (
     synthetic_rollups as _bt_synthetic_rollups,
 )
+from trusted_router.storage_gcp_trust import (
+    TRUST_EVENT_COLUMNS,
+    insert_credit_trust_event,
+    recompute_workspace_trust_tier_tx,
+    trust_event_row,
+)
 from trusted_router.storage_gcp_user_models import SpannerUserProvidedModels
 from trusted_router.storage_gcp_verification_tokens import SpannerVerificationTokens
 from trusted_router.storage_gcp_video_jobs import SpannerVideoJobs
@@ -205,6 +212,7 @@ from trusted_router.storage_models import (
 from trusted_router.storage_operational_analytics import (
     OperationalAnalyticsWriter,
 )
+from trusted_router.trust_tiers import payment_or_grant_event
 from trusted_router.types import IdentityVerificationStatus, UsageType
 
 T = TypeVar("T")
@@ -917,6 +925,20 @@ class SpannerBigtableStore:
                 shard_count=shard_count,
             ),
         )
+        if initial_total_micro > 0:
+            recorded_at = dt.datetime.now(dt.UTC)
+            event = payment_or_grant_event(
+                workspace_id,
+                f"provisioning:{workspace_id}",
+                initial_total_micro,
+                CreditProvenance("provisioning", "system", None, recorded_at),
+                recorded_at=recorded_at,
+            )
+            writer.insert_or_update(
+                table="tr_trust_event",
+                columns=TRUST_EVENT_COLUMNS,
+                values=[trust_event_row(event)],
+            )
 
     # Auth sessions delegate to storage_gcp_auth_sessions.SpannerAuthSessions.
     def create_auth_session(
@@ -2082,6 +2104,9 @@ class SpannerBigtableStore:
         amount_microdollars: int,
         event_id: str,
         *,
+        provenance: CreditProvenance,
+        payment_amount_microdollars: int | None = None,
+        currency: str | None = None,
         lifetime_topup_user_id: str | None = None,
     ) -> bool:
         def txn(transaction: Any) -> bool:
@@ -2093,6 +2118,21 @@ class SpannerBigtableStore:
                 raise ValueError("credit account not found")
             now = dt.datetime.now(dt.UTC).replace(microsecond=0)
             created_at = now.isoformat().replace("+00:00", "Z")
+            trust_event_inserted = insert_credit_trust_event(
+                transaction,
+                self._param_types,
+                payment_or_grant_event(
+                    workspace_id,
+                    event_id,
+                    amount,
+                    provenance,
+                    recorded_at=now,
+                    payment_amount_microdollars=payment_amount_microdollars,
+                    currency=currency,
+                ),
+            )
+            if not trust_event_inserted:
+                return False
             self._credit_workspace_balance_tx(
                 transaction,
                 workspace_id,
@@ -2123,7 +2163,17 @@ class SpannerBigtableStore:
     def credit_workspace_once(
         self, workspace_id: str, amount_microdollars: int, event_id: str
     ) -> bool:
-        return self.credit_workspace_typed_direct(workspace_id, amount_microdollars, event_id)
+        return self.credit_workspace_typed_direct(
+            workspace_id,
+            amount_microdollars,
+            event_id,
+            provenance=CreditProvenance(
+                source="grant",
+                provider="system",
+                external_ref=None,
+                occurred_at=dt.datetime.now(dt.UTC),
+            ),
+        )
 
     # Earnings & movement primitives -----------------------------------------
 
@@ -2414,6 +2464,22 @@ class SpannerBigtableStore:
                 workspace_id,
                 amount,
                 now=now,
+            )
+            insert_credit_trust_event(
+                transaction,
+                pt,
+                payment_or_grant_event(
+                    workspace_id,
+                    event_id,
+                    amount,
+                    CreditProvenance(
+                        source="grant",
+                        provider="system",
+                        external_ref=None,
+                        occurred_at=now,
+                    ),
+                    recorded_at=now,
+                ),
             )
             self._insert_credit_movement_tx(
                 transaction,
@@ -4604,6 +4670,7 @@ class SpannerBigtableStore:
         max_available_basis_points: int,
         echo_lease_id: str | None,
         echo_state: str | None,
+        trust_eligibility_enabled: bool = False,
     ) -> tuple[Any | None, str | None]:
         """Decision 31/46 preparation, called only behind the binding flag."""
         from trusted_router.spend_lease_ledger import SpendLeaseLedgerError
@@ -4629,6 +4696,14 @@ class SpannerBigtableStore:
         )
         if reservation_exists(self._database, self._param_types, scope):
             return None, None
+        expected_trust_tier: int | None = None
+        if trust_eligibility_enabled:
+            trust_snapshot = self.typed_credit_trust_snapshot(workspace_id)
+            if trust_snapshot is None:
+                return None, "ledger_unavailable"
+            expected_trust_tier, trust_latched_at = trust_snapshot
+            if expected_trust_tier < 1 or trust_latched_at is not None:
+                return None, "unpaid_workspace"
         ledger = self._spend_lease_ledger
         if ledger is None or not ledger.supports_region(region):
             return None, "ledger_unavailable"
@@ -4728,6 +4803,8 @@ class SpannerBigtableStore:
                             incumbent_lease_id=active.lease_id,
                             incumbent_window_closed=False,
                             authoritative_exhaustion=False,
+                            trust_eligibility_enabled=trust_eligibility_enabled,
+                            expected_trust_tier=expected_trust_tier,
                         ),
                         None,
                     )
@@ -4779,6 +4856,8 @@ class SpannerBigtableStore:
                 incumbent_lease_id=active.lease_id if active is not None else None,
                 incumbent_window_closed=window_closed,
                 authoritative_exhaustion=authoritative_exhaustion,
+                trust_eligibility_enabled=trust_eligibility_enabled,
+                expected_trust_tier=expected_trust_tier,
             ),
             None,
         )
@@ -4914,6 +4993,56 @@ class SpannerBigtableStore:
             sum(int(row[1]) for row in rows),
             sum(int(row[2]) for row in rows),
             sum(int(row[3]) for row in rows),
+        )
+
+    def typed_credit_trust_snapshot(
+        self, workspace_id: str
+    ) -> tuple[int, dt.datetime | None] | None:
+        account = self.get_credit_account(workspace_id)
+        if account is None:
+            return None
+        expected = credit_shard_count(account)
+        with self._database.snapshot() as snapshot:
+            rows = list(
+                snapshot.execute_sql(
+                    "SELECT shard, trust_tier, trust_latched_at FROM tr_credit_balance "
+                    "WHERE workspace_id=@pk ORDER BY shard",
+                    params={"pk": workspace_id},
+                    param_types={"pk": self._param_types.STRING},
+                )
+            )
+        if [int(row[0]) for row in rows] != list(range(expected)):
+            return None
+        values = {(int(row[1] or 0), row[2]) for row in rows}
+        if len(values) != 1:
+            return None
+        return values.pop()
+
+    def list_trust_tier_workspace_ids(self) -> tuple[str, ...]:
+        with self._database.snapshot() as snapshot:
+            rows = snapshot.execute_sql(
+                "SELECT DISTINCT workspace_id FROM tr_credit_balance ORDER BY workspace_id"
+            )
+            return tuple(str(row[0]) for row in rows)
+
+    def recompute_workspace_trust_tier(
+        self,
+        workspace_id: str,
+        *,
+        qualifying_providers: frozenset[str],
+        tier3_min_days: int,
+        tier3_min_paid_microdollars: int,
+        now: dt.datetime,
+    ) -> int:
+        return recompute_workspace_trust_tier_tx(
+            run_in_transaction=self._run_in_transaction,
+            param_types=self._param_types,
+            read_entity_tx=self._read_entity_tx,
+            workspace_id=workspace_id,
+            qualifying_providers=qualifying_providers,
+            tier3_min_days=tier3_min_days,
+            tier3_min_paid_microdollars=tier3_min_paid_microdollars,
+            now=now,
         )
 
     def read_typed_reservation(self, reservation_id: str) -> dict[str, Any] | None:

@@ -11,6 +11,7 @@ from trusted_router.money import VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS
 from trusted_router.services import notify as notify_module
 from trusted_router.services.telephony import TelephonyResult
 from trusted_router.storage import STORE
+from trusted_router.storage_models import CreditProvenance
 
 
 class _Telephony:
@@ -48,6 +49,7 @@ def _fund_user(
         workspace.id,
         amount,
         event_id,
+        provenance=CreditProvenance.system_grant(),
         lifetime_topup_user_id=user.id,
     )
 
