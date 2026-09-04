@@ -1,0 +1,35 @@
+name: ClickHouse SSH metadata hygiene
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  # Serialize with deploy.yml so cleanup cannot remove the current runner key
+  # while SCP or the atomic remote swap is in flight.
+  group: deploy-trusted-router
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    if: github.repository == 'Lore-Hex/quill-router'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Reconcile metadata SSH hygiene
+        run: >-
+          python3 scripts/deploy/gcp_ssh_metadata_hygiene.py
+          --project quill-cloud-proxy
+          --apply

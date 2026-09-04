@@ -107,6 +107,35 @@ def test_snapshot_sync_cannot_gate_the_control_plane_deploy() -> None:
     )
 
 
+def test_snapshot_sync_prunes_metadata_and_uses_short_lived_access() -> None:
+    """A fresh CI runner must never leave an unbounded project SSH key."""
+    script = (ROOT / "scripts/deploy/sync_public_analytics_snapshots.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "gcp_ssh_metadata_hygiene.py" in script
+    assert "--apply" in script
+    assert "timeout -k 10 60 python3" in script
+    assert "trap cleanup EXIT" in script
+    assert "the daily reconciler will retry" in script
+    assert script.count("--ssh-key-expire-after=10m") == 2
+    assert script.count("--tunnel-through-iap") == 2
+
+
+def test_scheduled_ssh_hygiene_is_api_only_and_repairs_ci_keys() -> None:
+    workflow = (ROOT / ".github/workflows/clickhouse-ssh-hygiene.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "schedule:" in workflow
+    assert "gcp_ssh_metadata_hygiene.py" in workflow
+    assert "--apply" in workflow
+    assert "group: deploy-trusted-router" in workflow
+    assert "cancel-in-progress: false" in workflow
+    assert "compute ssh" not in workflow
+    assert "compute scp" not in workflow
+
+
 def test_public_snapshot_worker_swap_is_verified_and_rollbackable() -> None:
     script = (ROOT / "scripts/deploy/sync_public_analytics_snapshots.sh").read_text(
         encoding="utf-8"
