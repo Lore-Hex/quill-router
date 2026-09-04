@@ -5,6 +5,21 @@ from __future__ import annotations
 import copy
 from typing import Final
 
+PROVIDER_MODEL_DOCUMENTATION_FIELDS: Final[tuple[str, ...]] = (
+    "description",
+    "input_format",
+    "output_format",
+    "example_input",
+    "example_output",
+)
+PROVIDER_MODEL_DOCUMENTATION_MAX_LENGTHS: Final[dict[str, int]] = {
+    "description": 1_000,
+    "input_format": 2_000,
+    "output_format": 2_000,
+    "example_input": 8_192,
+    "example_output": 8_192,
+}
+
 PROVIDER_CATALOG_SCHEMA_URL: Final = (
     "https://trustedrouter.com/providers/marketplace/catalog.schema.json"
 )
@@ -47,6 +62,20 @@ PROVIDER_CATALOG_EXAMPLE: Final[dict[str, object]] = {
             },
         }
     ],
+}
+
+PROVIDER_MODEL_DOCUMENTATION_EXAMPLE: Final[dict[str, str]] = {
+    "description": "Extract named fields from document text into structured JSON.",
+    "input_format": (
+        "Send document text and explicitly name the fields to extract. "
+        "Use response_format with a JSON Schema when a fixed contract is required."
+    ),
+    "output_format": (
+        "A JSON object containing the requested fields; with response_format, "
+        "it follows the supplied schema."
+    ),
+    "example_input": "Invoice #A-1042. Total due: $87.25",
+    "example_output": '{"invoice_number":"A-1042","total_usd":87.25}',
 }
 
 _DECIMAL_PATTERN = r"^(0|[1-9][0-9]*)(\.[0-9]+)?$"
@@ -204,6 +233,19 @@ PROVIDER_CATALOG_SCHEMA: Final[dict[str, object]] = {
                         "deprecation_at": _NULLABLE_TIMESTAMP,
                         "retirement_at": _NULLABLE_TIMESTAMP,
                         "replacement_model_id": _NULLABLE_MODEL_ID,
+                    },
+                },
+                "documentation": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": list(PROVIDER_MODEL_DOCUMENTATION_FIELDS),
+                    "properties": {
+                        field: {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": PROVIDER_MODEL_DOCUMENTATION_MAX_LENGTHS[field],
+                        }
+                        for field in PROVIDER_MODEL_DOCUMENTATION_FIELDS
                     },
                 },
             },

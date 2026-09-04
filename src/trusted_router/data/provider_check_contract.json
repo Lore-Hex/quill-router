@@ -122,6 +122,9 @@
         "pricing",
         "type"
       ],
+      "_MODEL_OPTIONAL_FIELDS": [
+        "documentation"
+      ],
       "_MODEL_V2_FIELDS": [
         "capabilities",
         "context_length",
@@ -226,7 +229,7 @@
     "model_id_pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$",
     "owner_pattern": "^[a-z0-9][a-z0-9._-]*$"
   },
-  "contract_version": "daf822353b83ddbf6a23eaa2deb449d42bc441a53d345c94278040be989a4371",
+  "contract_version": "c045dbaea94b324b61e345a5e240e69c89e9552c78d2d13574d64596d3855f19",
   "decision_tables": [
     {
       "max_tokens": 512,

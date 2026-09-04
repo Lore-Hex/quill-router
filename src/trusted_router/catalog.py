@@ -137,6 +137,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     ZEUS_CODE_MODEL_ID,
     ZEUS_MODEL_ID,
     Model,
+    ModelDocumentation,
     ModelEndpoint,
     ModelProviderPrivacyOverride,
     Provider,
@@ -634,6 +635,12 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     if model.hidden_public_metadata:
         route_kind = "private_proxy" if model.id in PRIVATE_PROXY_MODEL_TARGETS else "private_orchestration"
 
+    documentation = (
+        model.documentation.to_dict()
+        if model.documentation is not None
+        else None
+    )
+
     tr_block: dict[str, object] = {
         "provider": model.provider,
         "prepaid_available": prepaid_available,
@@ -725,6 +732,8 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
             for endpoint in endpoints
         ],
     }
+    if documentation is not None:
+        tr_block["documentation"] = documentation
     if is_meta:
         tr_block["prompt_price_max_microdollars_per_million_tokens"] = prompt_max
         tr_block["completion_price_max_microdollars_per_million_tokens"] = completion_max
@@ -756,7 +765,11 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "id": model.id,
         "name": model.name,
         "created": 0,
-        "description": f"{model.name} via TrustedRouter",
+        "description": (
+            model.documentation.description
+            if model.documentation is not None
+            else f"{model.name} via TrustedRouter"
+        ),
         "context_length": model.context_length,
         "architecture": {
             "modality": (

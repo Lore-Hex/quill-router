@@ -13,7 +13,10 @@ from scripts.pricing.provider_contract_catalog import (
 )
 from scripts.pricing.providers import neurometric
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS, model_open_weights
-from trusted_router.provider_contract import PROVIDER_CATALOG_V2_EXAMPLE
+from trusted_router.provider_contract import (
+    PROVIDER_CATALOG_V2_EXAMPLE,
+    PROVIDER_MODEL_DOCUMENTATION_EXAMPLE,
+)
 
 
 def _model_row(
@@ -85,6 +88,20 @@ def test_canonical_contract_parser_preserves_exact_price_and_capabilities() -> N
     ]
 
 
+def test_canonical_contract_parser_preserves_task_documentation() -> None:
+    source = _model_row("neurometric/task-model")
+    source["documentation"] = copy.deepcopy(PROVIDER_MODEL_DOCUMENTATION_EXAMPLE)
+
+    _prices, discovered = discover_provider_contract_catalog(
+        _payload(source),
+        upstream_id_map={},
+    )
+
+    assert discovered["neurometric/task-model"]["documentation"] == (
+        PROVIDER_MODEL_DOCUMENTATION_EXAMPLE
+    )
+
+
 def test_reliability_contract_v2_preserves_deadlines_and_error_contract() -> None:
     payload = copy.deepcopy(PROVIDER_CATALOG_V2_EXAMPLE)
 
@@ -118,6 +135,26 @@ def test_reliability_contract_v2_preserves_deadlines_and_error_contract() -> Non
             lambda row: row["capabilities"].__setitem__("prompt_caching", True),
             "must match pricing.cached_input",
         ),
+        (
+            lambda row: row.__setitem__(
+                "documentation",
+                {
+                    **PROVIDER_MODEL_DOCUMENTATION_EXAMPLE,
+                    "unexpected": "not allowed",
+                },
+            ),
+            "fields invalid",
+        ),
+        (
+            lambda row: row.__setitem__(
+                "documentation",
+                {
+                    **PROVIDER_MODEL_DOCUMENTATION_EXAMPLE,
+                    "description": "x" * 1_001,
+                },
+            ),
+            "must be at most 1000 characters",
+        ),
     ],
 )
 def test_canonical_contract_parser_fails_closed(
@@ -145,6 +182,7 @@ def test_canonical_contract_parser_excludes_retired_models() -> None:
 
 
 def test_neurometric_fetch_discovers_new_models_and_runs_canary(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     document_extraction = _model_row(neurometric.DOCUMENT_STRUCTURED_EXTRACTION_MODEL)
@@ -156,9 +194,17 @@ def test_neurometric_fetch_discovers_new_models_and_runs_canary(
         }
     )
     document_extraction["pricing"].update({"input": "0.010000", "output": "0.100000"})
+    task_rows = [
+        _model_row(neurometric.GROUNDED_DOCUMENT_QA_MODEL),
+        _model_row(neurometric.CONVERSATION_SUMMARY_MODEL),
+        _model_row(neurometric.CLASSIFICATION_ROUTER_MODEL),
+    ]
+    for row in task_rows:
+        row["pricing"].update({"input": "0.010000", "output": "0.100000"})
     rows = [
         _model_row(),
         document_extraction,
+        *task_rows,
         _model_row("neurometric/tool-choice"),
         _model_row("qwen/qwen3-vl-8b-instruct"),
     ]
@@ -184,17 +230,28 @@ def test_neurometric_fetch_discovers_new_models_and_runs_canary(
             return FakeResponse()
 
     monkeypatch.setenv("NEUROMETRIC_API_KEY", "test-key")
+    monkeypatch.setattr(neurometric, "MANIFEST_PATH", tmp_path / "neurometric.json")
     monkeypatch.setattr(neurometric.httpx, "Client", FakeClient)
-    monkeypatch.setattr(neurometric, "probe_openai_chat", lambda **_kwargs: True)
+    canaried: list[str] = []
+
+    def fake_probe(**kwargs: Any) -> bool:
+        canaried.append(str(kwargs["model"]))
+        return True
+
+    monkeypatch.setattr(neurometric, "probe_openai_chat", fake_probe)
 
     result = neurometric.fetch()
 
     assert set(result.prices) == {
         "ibm-granite/granite-4.1-8b",
         neurometric.DOCUMENT_STRUCTURED_EXTRACTION_MODEL,
+        neurometric.GROUNDED_DOCUMENT_QA_MODEL,
+        neurometric.CONVERSATION_SUMMARY_MODEL,
+        neurometric.CLASSIFICATION_ROUTER_MODEL,
         "neurometric/tool-choice",
         "qwen/qwen3-vl-8b-instruct",
     }
+    assert set(canaried) == set(result.prices)
     assert set(neurometric._DISCOVERED_MANIFEST_ROWS) == set(result.prices)
     assert neurometric._DISCOVERED_MANIFEST_ROWS["neurometric/tool-choice"][
         "supported_parameters"
@@ -214,6 +271,10 @@ def test_neurometric_fetch_discovers_new_models_and_runs_canary(
     extraction_price = result.prices[neurometric.DOCUMENT_STRUCTURED_EXTRACTION_MODEL]
     assert extraction_price.prompt_micro_per_m == 10_000
     assert extraction_price.completion_micro_per_m == 100_000
+    for model_id in neurometric.TASK_DOCUMENTATION:
+        assert neurometric._DISCOVERED_MANIFEST_ROWS[model_id]["documentation"] == (
+            neurometric.TASK_DOCUMENTATION[model_id]
+        )
     assert neurometric._LIVE_CANARY_OK is True
 
 
@@ -302,6 +363,9 @@ def test_neurometric_catalog_routes_are_prepaid_only_and_no_store() -> None:
     } >= {
         "ibm-granite/granite-4.1-8b",
         neurometric.DOCUMENT_STRUCTURED_EXTRACTION_MODEL,
+        neurometric.GROUNDED_DOCUMENT_QA_MODEL,
+        neurometric.CONVERSATION_SUMMARY_MODEL,
+        neurometric.CLASSIFICATION_ROUTER_MODEL,
         "neurometric/tool-choice",
         "qwen/qwen3-vl-8b-instruct",
         "qwen/qwen3-vl-8b-thinking",
@@ -365,6 +429,36 @@ def test_neurometric_public_api_exposes_provider_and_exact_endpoint(client: Any)
     assert extraction["pricing"]["completion"] == "0.0000001055"
     assert "tools" in extraction["supported_parameters"]
     assert "response_format" in extraction["supported_parameters"]
+
+    models = {
+        row["id"]: row for row in client.get("/v1/models").json()["data"]
+    }
+    for model_id, documentation in neurometric.TASK_DOCUMENTATION.items():
+        published = models[model_id]
+        assert published["description"] == documentation["description"]
+        assert published["trustedrouter"]["documentation"] == documentation
+        task_endpoint = client.get(f"/v1/models/{model_id}/endpoints")
+        assert task_endpoint.status_code == 200
+        route = next(
+            endpoint
+            for endpoint in task_endpoint.json()["data"]
+            if endpoint["provider_name"] == "Neurometric AI"
+        )
+        assert route["usage_type"] == "Credits"
+        assert route["upstream_id"] == model_id
+        assert route["pricing"]["prompt"] == "0.00000001055"
+        assert route["pricing"]["completion"] == "0.0000001055"
+
+
+def test_neurometric_task_model_page_shows_usage_guidance(client: Any) -> None:
+    response = client.get("/models/neurometric/grounded-document-qa")
+
+    assert response.status_code == 200
+    assert "How to use Grounded Document QA" in response.text
+    assert "Answer questions from supplied document text" in response.text
+    assert "Example input" in response.text
+    assert "The Acme renewal date is October 15, 2026." in response.text
+    assert "&#34;citations&#34;" in response.text
 
 
 def test_neurometric_hourly_refresh_and_secret_wiring_are_complete() -> None:

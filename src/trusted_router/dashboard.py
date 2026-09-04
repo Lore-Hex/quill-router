@@ -94,6 +94,7 @@ from trusted_router.provider_branding import (
 from trusted_router.provider_contract import (
     PROVIDER_CATALOG_EXAMPLE,
     PROVIDER_CATALOG_V2_EXAMPLE,
+    PROVIDER_MODEL_DOCUMENTATION_EXAMPLE,
 )
 from trusted_router.provider_lifecycle import provider_pricing_schedule
 from trusted_router.seo_catalog import seo_catalog_evidence
@@ -2912,6 +2913,10 @@ def _render_public_page(
                 PROVIDER_CATALOG_V2_EXAMPLE,
                 indent=2,
             ),
+            provider_model_documentation_example_json=json.dumps(
+                PROVIDER_MODEL_DOCUMENTATION_EXAMPLE,
+                indent=2,
+            ),
             **dict(extra_context or {}),
         )
     )
@@ -5253,6 +5258,11 @@ def _model_detail_view(
         "ai_iq": ai_iq,
         "is_meta": is_meta,
         "configuration_hidden": model.hidden_public_metadata,
+        "documentation": (
+            model.documentation.to_dict()
+            if model.documentation is not None
+            else None
+        ),
         "open_weights": model_open_weights(model),
         "us_provider_available": model_us_provider_available(model),
         "eu_focused_provider_available": model_eu_focused_provider_available(model),
