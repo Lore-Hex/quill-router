@@ -6,6 +6,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from fastapi.testclient import TestClient
 
 from tests.route_inventory import effective_route_objects, route_paths
 from trusted_router.config import SERVICE_SURFACE_SECRET_OWNERS, Settings
@@ -189,8 +190,6 @@ def test_internal_surface_route_inventory_matches_capability_audit() -> None:
         ("POST", "/internal/gateway/video/jobs/{job_id}/update"),
         ("POST", "/internal/gateway/video/jobs/{job_id}/cleaned"),
         ("POST", "/internal/gateway/fetch-image"),
-        ("POST", "/internal/admin/workspaces/{workspace_id}/trust-override"),
-        ("POST", "/internal/admin/workspaces/{workspace_id}/abuse"),
         ("POST", "/internal/reconcile/generation-activity"),
         ("POST", "/internal/federation/resolve-key"),
         ("POST", "/internal/federation/apply-usage"),
@@ -219,6 +218,42 @@ def test_internal_surface_route_inventory_matches_capability_audit() -> None:
         if route.path.startswith("/v1")
         for method in (route.methods or set())
     } == expected
+
+
+@pytest.mark.parametrize("surface", ["combined", "internal"])
+@pytest.mark.parametrize("prefix", ["", "/v1"])
+def test_operator_routes_are_mounted_only_with_a_configured_token(
+    surface: str, prefix: str
+) -> None:
+    path = f"{prefix}/internal/admin/workspaces/missing/abuse"
+    without_token = TestClient(
+        create_app(
+            Settings(
+                environment="test",
+                service_surface=surface,
+                # Production pins the non-secret identity allowlist even when
+                # the optional token secret does not exist.
+                operator_identities="ops@example.com",
+            ),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+    assert without_token.post(path, json={}).status_code == 404
+
+    with_token = TestClient(
+        create_app(
+            Settings(
+                environment="test",
+                service_surface=surface,
+                operator_token="operator-secret",  # noqa: S106 - test credential.
+                operator_identities="ops@example.com",
+            ),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+    assert with_token.post(path, json={}).status_code == 401
 
 
 def test_byok_decrypt_credentials_are_control_owned_only() -> None:

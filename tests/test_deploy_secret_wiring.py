@@ -115,6 +115,11 @@ def test_deploy_removes_only_explicitly_missing_optional_secrets() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
 
     mandatory_block = rollout.split("SECRET_ENVS=(", 1)[1].split(")", 1)[0]
+    assert "TR_OPERATOR_TOKEN=trustedrouter-operator-token:latest" not in mandatory_block
+    assert (
+        'add_secret_env_if_exists "TR_OPERATOR_TOKEN" '
+        '"trustedrouter-operator-token"' in rollout
+    )
     assert "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD" not in mandatory_block
     assert (
         'REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")' in rollout
