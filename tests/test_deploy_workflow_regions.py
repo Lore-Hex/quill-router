@@ -71,6 +71,27 @@ def test_deploy_syncs_the_shared_public_snapshot_worker() -> None:
     assert "scripts/deploy/sync_public_analytics_snapshots.sh --apply" in workflow
 
 
+def test_snapshot_sync_cannot_gate_the_control_plane_deploy() -> None:
+    """A public-analytics sync must never hold the control plane hostage.
+
+    It did on 2026-09-04: `gcloud compute scp` pushes a generated SSH key into
+    project metadata, that write timed out twice at 1800s behind a backlog of
+    stuck setCommonInstanceMetadata operations, and the whole deploy failed
+    ~61 minutes in -- with a Stripe-credit fix sitting in the image it was
+    carrying. Bounded and non-fatal, so a snapshot problem degrades snapshots.
+    """
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    step = workflow.split("- name: Sync shared public analytics snapshots", 1)[1].split(
+        "- name:", 1
+    )[0]
+    assert "continue-on-error: true" in step, (
+        "the snapshot sync must not fail the deploy job"
+    )
+    assert "timeout-minutes:" in step, "the snapshot sync must be time-bounded"
+    minutes = int(step.split("timeout-minutes:", 1)[1].split("\n", 1)[0].strip())
+    assert 0 < minutes <= 15, f"snapshot sync deadline is {minutes}m; keep it short"
+
+
 def test_public_snapshot_worker_swap_is_verified_and_rollbackable() -> None:
     script = (ROOT / "scripts/deploy/sync_public_analytics_snapshots.sh").read_text(
         encoding="utf-8"
