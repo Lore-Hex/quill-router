@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from tests.fakes.spanner import make_fake_store
 from trusted_router.storage import STORE, CreditAccount, InMemoryStore
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
+from trusted_router.storage_models import CreditProvenance
 
 
 def _seed_credit(store, workspace_id: str, total: int) -> None:
@@ -49,7 +50,9 @@ def test_credit_workspace_typed_direct_applies_once_in_one_transaction() -> None
     event_id = "evt_b2_apply"
     _seed_credit(store, ws, 1_000_000)
 
-    assert store.credit_workspace_typed_direct(ws, 500_000, event_id) is True
+    assert store.credit_workspace_typed_direct(
+        ws, 500_000, event_id, provenance=CreditProvenance.system_grant()
+    ) is True
 
     assert "total_credits_microdollars" not in _json_credit(db, ws)
     assert _typed_credit(db, ws)["total_credits"] == 1_500_000
@@ -57,7 +60,9 @@ def test_credit_workspace_typed_direct_applies_once_in_one_transaction() -> None
     commit_version = db.rows[("stripe_event", event_id)].version
     assert db.typed_versions[(CREDIT_BALANCE_TABLE, (ws, 0))] == commit_version
 
-    assert store.credit_workspace_typed_direct(ws, 500_000, event_id) is False
+    assert store.credit_workspace_typed_direct(
+        ws, 500_000, event_id, provenance=CreditProvenance.system_grant()
+    ) is False
     assert "total_credits_microdollars" not in _json_credit(db, ws)
     assert _typed_credit(db, ws)["total_credits"] == 1_500_000
 
@@ -73,7 +78,9 @@ def test_credit_workspace_typed_direct_refuses_missing_typed_row() -> None:
     assert (ws, 0) not in db.typed.get(CREDIT_BALANCE_TABLE, {})
 
     with pytest.raises(RuntimeError, match="missing authoritative tr_credit_balance"):
-        store.credit_workspace_typed_direct(ws, 750_000, "evt_b2_seed")
+        store.credit_workspace_typed_direct(
+            ws, 750_000, "evt_b2_seed", provenance=CreditProvenance.system_grant()
+        )
 
     assert _json_credit(db, ws)["total_credits_microdollars"] == 2_000_000
     assert (ws, 0) not in db.typed.get(CREDIT_BALANCE_TABLE, {})
@@ -85,14 +92,18 @@ def test_credit_workspace_once_wrapper_cross_path_idempotency() -> None:
     ws = "ws_b2_wrapper"
     _seed_credit(store, ws, 1_000_000)
 
-    assert store.credit_workspace_typed_direct(ws, 400_000, "evt_new_path") is True
+    assert store.credit_workspace_typed_direct(
+        ws, 400_000, "evt_new_path", provenance=CreditProvenance.system_grant()
+    ) is True
     assert store.credit_workspace_once(ws, 400_000, "evt_new_path") is False
     assert "total_credits_microdollars" not in _json_credit(db, ws)
     assert _typed_credit(db, ws)["total_credits"] == 1_400_000
 
     store._write_entity("stripe_event", "evt_old_marker", {"created_at": "2026-07-10T00:00:00Z"})
     assert store.credit_workspace_once(ws, 900_000, "evt_old_marker") is False
-    assert store.credit_workspace_typed_direct(ws, 900_000, "evt_old_marker") is False
+    assert store.credit_workspace_typed_direct(
+        ws, 900_000, "evt_old_marker", provenance=CreditProvenance.system_grant()
+    ) is False
     assert "total_credits_microdollars" not in _json_credit(db, ws)
     assert _typed_credit(db, ws)["total_credits"] == 1_400_000
 
@@ -133,8 +144,15 @@ def test_stripe_checkout_webhook_routes_topup_through_typed_direct(
         amount: int,
         event_id: str,
         *,
+        provenance: CreditProvenance,
+        payment_amount_microdollars: int | None = None,
+        currency: str | None = None,
         lifetime_topup_user_id: str | None = None,
     ) -> bool:
+        assert provenance.provider == "stripe"
+        assert provenance.external_ref == "pi_checkout_typed_direct"
+        assert payment_amount_microdollars == 1_230_000
+        assert currency == "usd"
         calls.append((workspace_id_arg, amount, event_id, lifetime_topup_user_id))
         return True
 
@@ -155,6 +173,7 @@ def test_stripe_checkout_webhook_routes_topup_through_typed_direct(
                     "mode": "payment",
                     "amount_total": 123,
                     "payment_status": "paid",
+                    "payment_intent": "pi_checkout_typed_direct",
                     "customer": "cus_test",
                     "metadata": {"workspace_id": workspace_id},
                 }
@@ -184,8 +203,15 @@ def test_stripe_auto_refill_webhook_routes_topup_through_typed_direct(
         amount: int,
         event_id: str,
         *,
+        provenance: CreditProvenance,
+        payment_amount_microdollars: int | None = None,
+        currency: str | None = None,
         lifetime_topup_user_id: str | None = None,
     ) -> bool:
+        assert provenance.provider == "stripe"
+        assert provenance.external_ref == "pi_auto_refill_typed_direct"
+        assert payment_amount_microdollars == 2_000_000
+        assert currency == "usd"
         calls.append((workspace_id_arg, amount, event_id, lifetime_topup_user_id))
         return True
 
@@ -202,6 +228,7 @@ def test_stripe_auto_refill_webhook_routes_topup_through_typed_direct(
             "type": "payment_intent.succeeded",
             "data": {
                 "object": {
+                    "id": "pi_auto_refill_typed_direct",
                     "customer": "cus_test",
                     "payment_method": "pm_test",
                     "metadata": {

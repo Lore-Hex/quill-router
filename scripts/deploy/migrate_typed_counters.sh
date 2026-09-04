@@ -79,6 +79,13 @@ if table_exists tr_credit_balance; then log "tr_credit_balance exists, skip"; el
     total_credits INT64 NOT NULL DEFAULT (0),
     total_usage INT64 NOT NULL DEFAULT (0),
     reserved INT64 NOT NULL DEFAULT (0),
+    trust_tier INT64 DEFAULT (0),
+    trust_computed_at TIMESTAMP,
+    trust_latched_at TIMESTAMP,
+    trust_override_tier INT64,
+    billing_pause_causes ARRAY<STRING(32)>,
+    pause_epoch INT64 DEFAULT (0),
+    trust_reconciled_through TIMESTAMP,
     source_updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
     updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
   ) PRIMARY KEY (workspace_id, shard)"
@@ -205,6 +212,63 @@ wait_index_read_write() {
   log "timed out waiting for ${name} to become read-write"
   return 1
 }
+
+# Converged trust-tier facts. These additions are nullable/defaulted so the DDL
+# does not rewrite existing balance rows. The explicit backfill below is safe
+# to run separately after trust-unaware revisions have drained.
+ensure_column tr_credit_balance trust_tier "INT64 DEFAULT (0)"
+ensure_column tr_credit_balance trust_computed_at "TIMESTAMP"
+ensure_column tr_credit_balance trust_latched_at "TIMESTAMP"
+ensure_column tr_credit_balance trust_override_tier "INT64"
+ensure_column tr_credit_balance billing_pause_causes "ARRAY<STRING(32)>"
+ensure_column tr_credit_balance pause_epoch "INT64 DEFAULT (0)"
+ensure_column tr_credit_balance trust_reconciled_through "TIMESTAMP"
+
+if table_exists tr_trust_event; then log "tr_trust_event exists, skip"; else
+  apply_ddl "CREATE TABLE tr_trust_event (
+    workspace_id STRING(64) NOT NULL,
+    event_id STRING(255) NOT NULL,
+    kind STRING(16) NOT NULL,
+    provider STRING(16) NOT NULL,
+    amount_micro INT64,
+    original_payment_ref STRING(255),
+    adverse_ref STRING(255),
+    occurred_at TIMESTAMP NOT NULL,
+    recorded_at TIMESTAMP NOT NULL,
+    payment_amount_micro INT64,
+    currency STRING(8),
+    credited_micro INT64,
+    recovered_micro INT64,
+    provider_subtype STRING(64),
+    lifecycle_status STRING(32),
+    cumulative_refunded INT64,
+    recovery_target INT64,
+    debit_status STRING(16),
+    unrecovered_micro INT64,
+    provider_ordering_watermark STRING(255),
+    CONSTRAINT tr_trust_event_kind CHECK (kind IN ('payment','refund','dispute','abuse','grant')),
+    CONSTRAINT tr_trust_event_provider CHECK (provider IN ('stripe','paypal','adyen','x402','operator','system')),
+    CONSTRAINT tr_trust_event_lifecycle CHECK (lifecycle_status IS NULL OR lifecycle_status IN ('pending','succeeded','failed','reversed','won','lost','closed','terminal_by_horizon')),
+    CONSTRAINT tr_trust_event_debit CHECK (debit_status IS NULL OR debit_status IN ('debited','partial','unrecovered')),
+  ) PRIMARY KEY (workspace_id, event_id)"
+fi
+
+if index_exists tr_trust_event_adverse_dedup; then
+  log "tr_trust_event_adverse_dedup exists, skip"
+else
+  apply_ddl "CREATE UNIQUE NULL_FILTERED INDEX tr_trust_event_adverse_dedup
+    ON tr_trust_event (provider, adverse_ref, kind)"
+fi
+if index_exists tr_trust_event_payment_dedup; then
+  log "tr_trust_event_payment_dedup exists, skip"
+else
+  apply_ddl "CREATE UNIQUE NULL_FILTERED INDEX tr_trust_event_payment_dedup
+    ON tr_trust_event (provider, original_payment_ref, kind)"
+fi
+
+# Historical trust-column backfill statement. It is intentionally a separate,
+# operator-run artifact rather than an automatic deploy-time DML rewrite.
+log "historical trust-column backfill: scripts/deploy/backfill_credit_balance_trust.sql"
 
 # NOTE: Spanner forbids ADD COLUMN ... NOT NULL on an existing table, so the
 # usage columns are added NULLABLE with DEFAULT (0) (future writes default; old

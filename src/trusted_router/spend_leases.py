@@ -51,6 +51,7 @@ ShadowVerdict = Literal["accepted", "declined_funds", "declined_other"]
 ShadowDivergence = Literal["none", "admit_diverged", "estimate_low", "echo_invalid"]
 SpendLeaseEligibilityFailure = Literal[
     "boot_digest_not_accepted",
+    "unpaid_workspace",
     "not_pilot",
     "route_type",
     "no_candidates",
@@ -679,6 +680,7 @@ def mint_shadow_spend_lease(
     catalog: Mapping[str, Any],
     ttl_seconds: int,
     now: int | None = None,
+    trust_tier: int | None = None,
 ) -> SpendLeaseArtifact:
     issued_at = int(time.time()) if now is None else int(now)
     lease_id = str(uuid.uuid4())
@@ -697,6 +699,8 @@ def mint_shadow_spend_lease(
         "boot_kid": boot_kid,
         "catalog": dict(catalog),
     }
+    if trust_tier is not None:
+        claims["trust_tier"] = int(trust_tier)
     token = signer.sign(claims)
     return SpendLeaseArtifact(
         token=token,

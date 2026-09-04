@@ -40,6 +40,7 @@ def test_stripe_webhook_route_is_idempotent(user_headers: dict[str, str], client
         "data": {
             "object": {
                 "amount_total": 1200,
+                "payment_intent": "pi_checkout_1",
                 "payment_status": "paid",
                 "metadata": {"workspace_id": workspace_id},
             }
@@ -1059,6 +1060,7 @@ def test_stripe_webhook_handles_stripe_object_from_construct_event(
                 "id": "cs_test_1",
                 "object": "checkout.session",
                 "amount_total": 100,  # $1.00 == 100_000 microdollars
+                "payment_intent": "pi_stripeobj_regression_1",
                 "customer": "cus_regression",
                 "mode": "payment",
                 "payment_status": "paid",

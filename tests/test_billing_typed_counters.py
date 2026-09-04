@@ -9,6 +9,7 @@ from trusted_router.storage_gcp_counters import (
     DEFAULT_NEW_BILLING_SHARDS,
     KEY_LIMIT_TABLE,
 )
+from trusted_router.storage_models import CreditProvenance
 
 
 def _json_credit(db, workspace_id: str) -> dict:
@@ -140,7 +141,15 @@ def test_brand_new_workspace_authorizes_immediately_after_topup() -> None:
         row["total_credits"] for row in _typed_credit_rows(db, workspace.id)
     ) == 0
     assert _typed_key(db, key.hash)["limit_micro"] is None
-    assert store.credit_workspace_typed_direct(workspace.id, 10_000_000, "evt-new") is True
+    assert (
+        store.credit_workspace_typed_direct(
+            workspace.id,
+            10_000_000,
+            "evt-new",
+            provenance=CreditProvenance.system_grant(),
+        )
+        is True
+    )
 
     outcome, authorization = store.authorize_gateway_typed(
         workspace_id=workspace.id,

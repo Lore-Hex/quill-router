@@ -439,11 +439,13 @@ def authorize_atomic(
         if spend_lease_hook is not None:
             lease_result = spend_lease_hook(transaction, selected_credit_shard)
         if spend_lease_receipt_hash is not None and not lease_result.get("bound"):
-            reason = (
-                "scope_conflict"
-                if lease_result.get("no_lease_reason") == "scope_arbitrated"
-                else "reuse_lost"
-            )
+            no_lease_reason = lease_result.get("no_lease_reason")
+            if no_lease_reason == "scope_arbitrated":
+                reason = "scope_conflict"
+            elif no_lease_reason == "unpaid_workspace":
+                reason = "hold_refused"
+            else:
+                reason = "reuse_lost"
             raise _Reject(f"admission_rejected:{reason}")
 
         insert_reservation(

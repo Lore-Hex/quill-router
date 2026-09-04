@@ -22,6 +22,7 @@ from typing import Any
 from trusted_router.config import Settings
 from trusted_router.money import dollars_to_microdollars
 from trusted_router.security import lookup_hash_api_key
+from trusted_router.storage_models import CreditProvenance
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,15 @@ def ensure_monitor_funding(
     event_id = f"synthetic-monitor-grant-{month}"
     granted = bool(
         store.credit_workspace_typed_direct(
-            workspace_id, dollars_to_microdollars(dollars), event_id
+            workspace_id,
+            dollars_to_microdollars(dollars),
+            event_id,
+            provenance=CreditProvenance(
+                source="provisioning",
+                provider="system",
+                external_ref=None,
+                occurred_at=now or datetime.now(UTC),
+            ),
         )
     )
     _ENSURED.add(marker)

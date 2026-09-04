@@ -15,6 +15,7 @@ import re
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -26,6 +27,7 @@ from trusted_router.money import dollars_to_cents, money_pair
 from trusted_router.schemas import CheckoutRequest
 from trusted_router.services.stripe_fees import ProcessingFee, processing_fee
 from trusted_router.storage import STORE
+from trusted_router.storage_models import CreditProvenance
 from trusted_router.types import ErrorType
 
 log = logging.getLogger(__name__)
@@ -79,6 +81,7 @@ class PreparedAdyenNotification:
     result: AdyenCreditResult
     merchant_reference: str | None = None
     reference: AdyenCheckoutReference | None = None
+    occurred_at: datetime | None = None
 
 
 def create_adyen_checkout_session(
@@ -311,6 +314,9 @@ def prepare_adyen_notification(
         ),
         merchant_reference=merchant_reference,
         reference=reference,
+        occurred_at=datetime.fromisoformat(
+            str(item.get("eventDate") or datetime.now(UTC).isoformat()).replace("Z", "+00:00")
+        ),
     )
 
 
@@ -341,6 +347,14 @@ def apply_adyen_notification(
         prepared.reference.workspace_id,
         result.amount_microdollars,
         f"adyen_checkout:{prepared.merchant_reference}",
+        provenance=CreditProvenance(
+            source="authorisation",
+            provider="adyen",
+            external_ref=result.psp_reference,
+            occurred_at=prepared.occurred_at or datetime.now(UTC),
+        ),
+        payment_amount_microdollars=(prepared.reference.charge_amount_cents * 10_000),
+        currency="USD",
         lifetime_topup_user_id=(workspace.owner_user_id if workspace is not None else None),
     )
     if credited:

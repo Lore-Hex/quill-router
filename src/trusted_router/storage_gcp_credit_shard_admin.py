@@ -8,6 +8,7 @@ from typing import Any
 from trusted_router.storage_gcp_codec import json_body
 from trusted_router.storage_gcp_counters import (
     CREDIT_BALANCE_TABLE,
+    CREDIT_BALANCE_TRUST_COLUMNS,
     credit_shard_count,
     distribute_credit_amount,
 )
@@ -22,6 +23,7 @@ _RESHARD_COLUMNS = (
     "total_credits",
     "total_usage",
     "reserved",
+    *CREDIT_BALANCE_TRUST_COLUMNS,
     "source_updated_at",
     "updated_at",
 )
@@ -69,7 +71,9 @@ def _typed_state(
     with store._database.snapshot(multi_use=True) as snapshot:
         rows = list(
             snapshot.execute_sql(
-                "SELECT shard, total_credits, total_usage, reserved "
+                "SELECT shard, total_credits, total_usage, reserved, "
+                + ", ".join(CREDIT_BALANCE_TRUST_COLUMNS)
+                + " "
                 "FROM tr_credit_balance WHERE workspace_id=@pk "
                 "AND shard>=0 AND shard<@shard_count ORDER BY shard",
                 params={"pk": workspace_id, "shard_count": shard_count},
@@ -114,6 +118,27 @@ def _validate_open_holds(
                 f"but open holds={held}"
             )
     return reasons
+
+
+def _trust_values(row: list[Any]) -> tuple[Any, ...]:
+    return tuple(row[4 : 4 + len(CREDIT_BALANCE_TRUST_COLUMNS)])
+
+
+def _normalized_trust_values(row: list[Any]) -> tuple[Any, ...]:
+    values = list(_trust_values(row))
+    causes_index = CREDIT_BALANCE_TRUST_COLUMNS.index("billing_pause_causes")
+    if values[causes_index] is not None:
+        values[causes_index] = tuple(values[causes_index])
+    return tuple(values)
+
+
+def _validate_trust_replication(rows: list[list[Any]]) -> list[str]:
+    if not rows:
+        return []
+    expected = _normalized_trust_values(rows[0])
+    if any(_normalized_trust_values(row) != expected for row in rows[1:]):
+        return ["typed credit shards have divergent replicated trust columns"]
+    return []
 
 
 def inspect_credit_reshard(
@@ -167,6 +192,7 @@ def inspect_credit_reshard(
     result.total_usage_micro = total_usage
     result.reserved_micro = reserved
     result.reasons.extend(_validate_open_holds(rows, reserved_by_shard))
+    result.reasons.extend(_validate_trust_replication(rows))
     if any(int(row[2]) < 0 or int(row[3]) < 0 for row in rows):
         result.reasons.append("typed credit shard has a negative counter")
     if any(int(row[2]) + int(row[3]) > int(row[1]) for row in rows):
@@ -228,7 +254,9 @@ def reshard_credit_account(
         current_count = credit_shard_count(account)
         rows = list(
             transaction.execute_sql(
-                "SELECT shard, total_credits, total_usage, reserved "
+                "SELECT shard, total_credits, total_usage, reserved, "
+                + ", ".join(CREDIT_BALANCE_TRUST_COLUMNS)
+                + " "
                 "FROM tr_credit_balance WHERE workspace_id=@pk "
                 "AND shard>=0 AND shard<@shard_count ORDER BY shard",
                 params={"pk": workspace_id, "shard_count": current_count},
@@ -247,6 +275,9 @@ def reshard_credit_account(
         )
         if invalid_counters:
             return None
+        if _validate_trust_replication(rows):
+            return None
+        trust_values = _trust_values(rows[0])
 
         if preserve_open_holds:
             if target_count < current_count:
@@ -301,6 +332,7 @@ def reshard_credit_account(
                     credit_parts[shard],
                     usage_parts[shard],
                     reserved_parts[shard],
+                    *trust_values,
                     commit_timestamp,
                     commit_timestamp,
                 )

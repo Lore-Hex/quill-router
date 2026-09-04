@@ -124,6 +124,7 @@ from trusted_router.storage_models import (
     ConsentRequest,
     CreditAccount,
     CreditMovement,
+    CreditProvenance,
     CreditTransfer,
     CustomModel,
     EarningsCashout,
@@ -187,6 +188,7 @@ from trusted_router.synthetic.rollups import (
     new_rollup_for_sample,
     sample_rollup_ids,
 )
+from trusted_router.trust_tiers import payment_or_grant_event
 from trusted_router.types import IdentityVerificationStatus, UsageType
 
 T = TypeVar("T")
@@ -1001,6 +1003,18 @@ class PostgresStore:
             "VALUES (%s, 0, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
             (workspace.id, initial_total),
         )
+        if initial_total > 0:
+            recorded_at = dt.datetime.now(dt.UTC)
+            self._insert_credit_trust_event_tx(
+                conn,
+                workspace_id=workspace.id,
+                event_id=f"provisioning:{workspace.id}",
+                amount_microdollars=initial_total,
+                provenance=CreditProvenance(
+                    "provisioning", "system", None, recorded_at
+                ),
+                recorded_at=recorded_at,
+            )
         return workspace
 
     def _consume_secret(
@@ -2117,7 +2131,8 @@ class PostgresStore:
           with an ownerless shadow, so this raises loudly instead. Refusing to
           federate one key is recoverable; silently destroying a workspace is
           not.
-        * The credit-balance row is inserted ON CONFLICT DO NOTHING, at ZERO.
+        * The credit-balance row is inserted with
+          ``ON CONFLICT (workspace_id, shard) DO NOTHING``, at ZERO.
           Re-federating a key must never reset a balance that a completed
           credit transfer already funded. An upsert here would silently delete
           transferred money on the next cache miss.
@@ -3281,12 +3296,57 @@ class PostgresStore:
     def get_credit_account(self, workspace_id: str) -> CreditAccount | None:
         self._not_implemented("get_credit_account")
 
+    @staticmethod
+    def _insert_credit_trust_event_tx(
+        conn: Any,
+        *,
+        workspace_id: str,
+        event_id: str,
+        amount_microdollars: int,
+        provenance: CreditProvenance,
+        recorded_at: dt.datetime,
+        payment_amount_microdollars: int | None = None,
+        currency: str | None = None,
+    ) -> bool:
+        event = payment_or_grant_event(
+            workspace_id,
+            event_id,
+            amount_microdollars,
+            provenance,
+            recorded_at=recorded_at,
+            payment_amount_microdollars=payment_amount_microdollars,
+            currency=currency,
+        )
+        conflict_clause = (
+            "ON CONFLICT (provider, original_payment_ref, kind) DO NOTHING"
+            if event.kind == "payment"
+            else "ON CONFLICT (workspace_id, event_id) DO NOTHING"
+        )
+        # The only interpolated fragment is selected from the two fixed conflict
+        # clauses above; every event value remains bound as a parameter.
+        cursor = conn.execute(
+            "INSERT INTO tr_trust_event "  # noqa: S608 - fixed conflict clauses.
+            "(workspace_id, event_id, kind, provider, "
+            "amount_micro, original_payment_ref, adverse_ref, occurred_at, recorded_at, "
+            "payment_amount_micro, currency, credited_micro, recovered_micro, "
+            "provider_subtype, lifecycle_status, cumulative_refunded, recovery_target, "
+            "debit_status, unrecovered_micro, provider_ordering_watermark) VALUES ("
+            "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+            "%s, %s, %s, %s) "
+            + conflict_clause,
+            dataclasses.astuple(event),
+        )
+        return cursor.rowcount == 1
+
     def credit_workspace_typed_direct(
         self,
         workspace_id: str,
         amount_microdollars: int,
         event_id: str,
         *,
+        provenance: CreditProvenance,
+        payment_amount_microdollars: int | None = None,
+        currency: str | None = None,
         lifetime_topup_user_id: str | None = None,
     ) -> bool:
         def credit(conn: Any) -> bool:
@@ -3300,6 +3360,18 @@ class PostgresStore:
                 },
             )
             if not won:
+                return False
+            trust_event_inserted = self._insert_credit_trust_event_tx(
+                conn,
+                workspace_id=workspace_id,
+                event_id=event_id,
+                amount_microdollars=amount_microdollars,
+                provenance=provenance,
+                recorded_at=dt.datetime.now(dt.UTC),
+                payment_amount_microdollars=payment_amount_microdollars,
+                currency=currency,
+            )
+            if not trust_event_inserted:
                 return False
             self._credit_workspace_balance_tx(
                 conn,
@@ -3331,6 +3403,12 @@ class PostgresStore:
             workspace_id,
             amount_microdollars,
             event_id,
+            provenance=CreditProvenance(
+                source="grant",
+                provider="system",
+                external_ref=None,
+                occurred_at=dt.datetime.now(dt.UTC),
+            ),
         )
 
     # Earnings & movement primitives -----------------------------------------
@@ -3584,6 +3662,15 @@ class PostgresStore:
                 self._delete_entity_tx(conn, "stripe_event", event_id)
                 return "insufficient"
             self._credit_workspace_balance_tx(conn, workspace_id, amount)
+            recorded_at = dt.datetime.now(dt.UTC)
+            self._insert_credit_trust_event_tx(
+                conn,
+                workspace_id=workspace_id,
+                event_id=event_id,
+                amount_microdollars=amount,
+                provenance=CreditProvenance("grant", "system", None, recorded_at),
+                recorded_at=recorded_at,
+            )
             created_at = iso_now()
             self._insert_credit_movement_tx(
                 conn,
@@ -4596,6 +4683,15 @@ class PostgresStore:
                 # workspace has been federated rather than being told the
                 # transfer was accepted by a plane that never credited it.
                 raise ValueError(f"no credit balance for workspace {workspace_id} on this plane")
+            recorded_at = dt.datetime.now(dt.UTC)
+            self._insert_credit_trust_event_tx(
+                conn,
+                workspace_id=workspace_id,
+                event_id=transfer_id,
+                amount_microdollars=amount,
+                provenance=CreditProvenance("grant", "system", None, recorded_at),
+                recorded_at=recorded_at,
+            )
             return credit_transfer.ACCEPTED
 
         return self._run_transaction(claim)

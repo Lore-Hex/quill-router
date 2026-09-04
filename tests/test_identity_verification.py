@@ -17,6 +17,7 @@ from trusted_router.money import (
 from trusted_router.routes import identity_verify as identity_route
 from trusted_router.services.veriff import VeriffSession
 from trusted_router.storage import STORE, InMemoryStore
+from trusted_router.storage_models import CreditProvenance
 
 HEADERS = {"x-trustedrouter-user": "identity-user@example.com"}
 
@@ -41,6 +42,7 @@ def _fund(user: Any, amount: int = VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS)
         workspace.id,
         amount,
         f"identity-topup:{user.id}:{amount}",
+        provenance=CreditProvenance.system_grant(),
         lifetime_topup_user_id=user.id,
     )
 

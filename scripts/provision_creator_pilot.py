@@ -36,6 +36,7 @@ from trusted_router.config import Settings
 from trusted_router.money import format_money_precise
 from trusted_router.security import new_api_key
 from trusted_router.storage import create_store
+from trusted_router.storage_models import CreditProvenance
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = (
@@ -182,6 +183,12 @@ def provision_creator(
         workspace.id,
         creator.creator_credit_microdollars,
         event_id,
+        provenance=CreditProvenance(
+            source="provisioning",
+            provider="system",
+            external_ref=None,
+            occurred_at=dt.datetime.now(dt.UTC),
+        ),
     )
 
     keys = store.list_keys(workspace.id)

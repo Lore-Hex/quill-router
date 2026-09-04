@@ -584,6 +584,7 @@ def test_checkout_webhook_credits_only_requested_principal_when_total_includes_f
             "object": {
                 "mode": "payment",
                 "amount_total": 2_606,
+                "payment_intent": "pi_checkout_with_processing_fee",
                 "payment_status": "paid",
                 "customer": "cus_fee",
                 "metadata": {

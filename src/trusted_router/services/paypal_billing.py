@@ -7,6 +7,7 @@ import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlparse
@@ -30,6 +31,7 @@ from trusted_router.services.stripe_fees import (
     stripe_processing_fee,
 )
 from trusted_router.storage import STORE
+from trusted_router.storage_models import CreditProvenance
 from trusted_router.storage_rate_limits import InMemoryRateLimits
 from trusted_router.types import ErrorType
 
@@ -219,6 +221,18 @@ def credit_paypal_capture(
         workspace_id,
         amount_microdollars,
         f"paypal_capture:{capture_id}",
+        provenance=CreditProvenance(
+            source="capture",
+            provider="paypal",
+            external_ref=capture_id,
+            occurred_at=datetime.fromisoformat(
+                str(parsed.get("occurred_at") or datetime.now(UTC).isoformat()).replace(
+                    "Z", "+00:00"
+                )
+            ),
+        ),
+        payment_amount_microdollars=charge_amount_microdollars,
+        currency="USD",
         lifetime_topup_user_id=(
             parsed["initiating_user_id"]
             or (workspace.owner_user_id if workspace is not None else None)
@@ -569,6 +583,7 @@ def _paypal_capture_payload(
         "processing_fee_microdollars": processing_fee_microdollars,
         "charge_amount_microdollars": charge_amount_microdollars,
         "status": str(capture.get("status") or ""),
+        "occurred_at": capture.get("create_time"),
     }
 
 

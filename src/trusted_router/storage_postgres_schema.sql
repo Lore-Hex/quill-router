@@ -65,10 +65,54 @@ CREATE TABLE IF NOT EXISTS tr_credit_balance (
     total_credits BIGINT NOT NULL DEFAULT 0,
     total_usage BIGINT NOT NULL DEFAULT 0,
     reserved BIGINT NOT NULL DEFAULT 0,
+    trust_tier BIGINT DEFAULT 0,
+    trust_computed_at TIMESTAMPTZ,
+    trust_latched_at TIMESTAMPTZ,
+    trust_override_tier BIGINT,
+    billing_pause_causes JSONB,
+    pause_epoch BIGINT DEFAULT 0,
+    trust_reconciled_through TIMESTAMPTZ,
     source_updated_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (workspace_id, shard)
 );
+
+ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS trust_tier BIGINT DEFAULT 0;
+ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS trust_computed_at TIMESTAMPTZ;
+ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS trust_latched_at TIMESTAMPTZ;
+ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS trust_override_tier BIGINT;
+ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS billing_pause_causes JSONB;
+ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS pause_epoch BIGINT DEFAULT 0;
+ALTER TABLE tr_credit_balance ADD COLUMN IF NOT EXISTS trust_reconciled_through TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS tr_trust_event (
+    workspace_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('payment', 'refund', 'dispute', 'abuse', 'grant')),
+    provider TEXT NOT NULL CHECK (provider IN ('stripe', 'paypal', 'adyen', 'x402', 'operator', 'system')),
+    amount_micro BIGINT,
+    original_payment_ref TEXT,
+    adverse_ref TEXT,
+    occurred_at TIMESTAMPTZ NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    payment_amount_micro BIGINT,
+    currency TEXT,
+    credited_micro BIGINT,
+    recovered_micro BIGINT,
+    provider_subtype TEXT,
+    lifecycle_status TEXT CHECK (lifecycle_status IS NULL OR lifecycle_status IN ('pending', 'succeeded', 'failed', 'reversed', 'won', 'lost', 'closed', 'terminal_by_horizon')),
+    cumulative_refunded BIGINT,
+    recovery_target BIGINT,
+    debit_status TEXT CHECK (debit_status IS NULL OR debit_status IN ('debited', 'partial', 'unrecovered')),
+    unrecovered_micro BIGINT,
+    provider_ordering_watermark TEXT,
+    PRIMARY KEY (workspace_id, event_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS tr_trust_event_adverse_dedup
+    ON tr_trust_event (provider, adverse_ref, kind);
+CREATE UNIQUE INDEX IF NOT EXISTS tr_trust_event_payment_dedup
+    ON tr_trust_event (provider, original_payment_ref, kind);
 
 CREATE TABLE IF NOT EXISTS tr_earnings_balance (
     user_id TEXT NOT NULL,

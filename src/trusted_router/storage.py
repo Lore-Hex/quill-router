@@ -67,6 +67,7 @@ from trusted_router.storage_models import (
     CreditAccount,
     CreditMoney,
     CreditMovement,
+    CreditProvenance,
     CreditTransfer,
     CustomModel,
     EarningsCashout,
@@ -88,6 +89,7 @@ from trusted_router.storage_models import (
     SignupResult,
     SyntheticProbeSample,
     SyntheticRollup,
+    TrustEvent,
     User,
     UserProvidedModel,
     VerificationToken,
@@ -109,6 +111,7 @@ from trusted_router.storage_user_models import InMemoryUserProvidedModels
 from trusted_router.storage_verification_tokens import InMemoryVerificationTokens
 from trusted_router.storage_video_jobs import InMemoryVideoJobs
 from trusted_router.storage_wallet_challenges import InMemoryWalletChallenges
+from trusted_router.trust_tiers import payment_or_grant_event
 from trusted_router.types import IdentityVerificationStatus, UsageType
 
 
@@ -132,6 +135,7 @@ class InMemoryStore:
         self.credits: dict[str, CreditAccount] = {}
         self.credit_money: dict[str, CreditMoney] = {}
         self.stripe_events: set[str] = set()
+        self.trust_events: dict[tuple[str, str], TrustEvent] = {}
         self.webhook_events: set[tuple[str, str]] = set()
         self.earnings_money: dict[str, tuple[int, int]] = {}
         self.credit_movements: dict[tuple[str, str], CreditMovement] = {}
@@ -621,6 +625,16 @@ class InMemoryStore:
             initial_total = 0 if trial_credit_microdollars is None else trial_credit_microdollars
             self.credits[workspace.id] = CreditAccount(workspace_id=workspace.id)
             self.credit_money[workspace.id] = CreditMoney(total_credits_microdollars=initial_total)
+            if initial_total > 0:
+                recorded_at = dt.datetime.now(dt.UTC)
+                event_id = f"provisioning:{workspace.id}"
+                self.trust_events[(workspace.id, event_id)] = payment_or_grant_event(
+                    workspace.id,
+                    event_id,
+                    initial_total,
+                    CreditProvenance("provisioning", "system", None, recorded_at),
+                    recorded_at=recorded_at,
+                )
             return workspace
 
     def list_workspaces_for_user(self, user_id: str) -> list[Workspace]:
@@ -1493,15 +1507,17 @@ class InMemoryStore:
     def credit_workspace_once(
         self, workspace_id: str, amount_microdollars: int, event_id: str
     ) -> bool:
-        with self._lock:
-            if event_id in self.stripe_events:
-                return False
-            money = self.credit_money.get(workspace_id)
-            if money is None:
-                raise ValueError("credit_account_not_found")
-            self.stripe_events.add(event_id)
-            money.total_credits_microdollars += amount_microdollars
-            return True
+        return self.credit_workspace_typed_direct(
+            workspace_id,
+            amount_microdollars,
+            event_id,
+            provenance=CreditProvenance(
+                source="grant",
+                provider="system",
+                external_ref=None,
+                occurred_at=dt.datetime.now(dt.UTC),
+            ),
+        )
 
     def credit_workspace_typed_direct(
         self,
@@ -1509,13 +1525,37 @@ class InMemoryStore:
         amount_microdollars: int,
         event_id: str,
         *,
+        provenance: CreditProvenance,
+        payment_amount_microdollars: int | None = None,
+        currency: str | None = None,
         lifetime_topup_user_id: str | None = None,
     ) -> bool:
         with self._lock:
             if event_id in self.stripe_events:
                 return False
+            money = self.credit_money.get(workspace_id)
+            if money is None:
+                raise ValueError("credit_account_not_found")
+            trust_event = payment_or_grant_event(
+                workspace_id,
+                event_id,
+                amount_microdollars,
+                provenance,
+                recorded_at=dt.datetime.now(dt.UTC),
+                payment_amount_microdollars=payment_amount_microdollars,
+                currency=currency,
+            )
+            if trust_event.kind == "payment" and any(
+                existing.kind == "payment"
+                and existing.provider == trust_event.provider
+                and existing.original_payment_ref == trust_event.original_payment_ref
+                for existing in self.trust_events.values()
+            ):
+                self.stripe_events.add(event_id)
+                return False
             self.stripe_events.add(event_id)
-            self.credit_money[workspace_id].total_credits_microdollars += amount_microdollars
+            money.total_credits_microdollars += amount_microdollars
+            self.trust_events[(workspace_id, event_id)] = trust_event
             if lifetime_topup_user_id is not None:
                 self.lifetime_topups[lifetime_topup_user_id] = self.lifetime_topups.get(
                     lifetime_topup_user_id, 0
@@ -1633,6 +1673,14 @@ class InMemoryStore:
             money.total_credits_microdollars += amount
             self.stripe_events.add(event_id)
             created_at = iso_now()
+            recorded_at = dt.datetime.now(dt.UTC)
+            self.trust_events[(workspace_id, event_id)] = payment_or_grant_event(
+                workspace_id,
+                event_id,
+                amount,
+                CreditProvenance("grant", "system", None, recorded_at),
+                recorded_at=recorded_at,
+            )
             self.credit_movements[(user_account_id, event_id)] = CreditMovement(
                 account_id=user_account_id,
                 movement_id=event_id,
@@ -2223,6 +2271,14 @@ class InMemoryStore:
                         f"no credit balance for workspace {workspace_id} on this plane"
                     )
                 money.total_credits_microdollars += amount
+                recorded_at = dt.datetime.now(dt.UTC)
+                self.trust_events[(workspace_id, transfer_id)] = payment_or_grant_event(
+                    workspace_id,
+                    transfer_id,
+                    amount,
+                    CreditProvenance("grant", "system", None, recorded_at),
+                    recorded_at=recorded_at,
+                )
             self.credit_transfer_claims[transfer_id] = {
                 "outcome": requested,
                 "workspace_id": workspace_id,

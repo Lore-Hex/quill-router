@@ -43,7 +43,7 @@ from trusted_router.storage_gcp_counter_dml import (
     insert_entity_dml,
     read_reservation_by_idempotency,
     release_credit,
-    reserve_credit,
+    reserve_credit_for_spend_lease,
 )
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 from trusted_router.storage_gcp_spend_lease import (
@@ -88,10 +88,17 @@ class BindingPlan:
     incumbent_window_closed: bool
     authoritative_exhaustion: bool
     remaining_micro: int | None = None
+    trust_eligibility_enabled: bool = False
+    expected_trust_tier: int | None = None
 
     def transaction_hook(self, transaction: Any, param_types: Any, workspace_id: str, shard: int) -> dict[str, Any]:
         if self.mode == "reuse":
-            return self._reuse_hook(transaction, param_types)
+            return self._reuse_hook(
+                transaction,
+                param_types,
+                workspace_id,
+                shard,
+            )
         return self._mint_hook(transaction, param_types, workspace_id, shard)
 
     def _register(self, transaction: Any, param_types: Any) -> bool:
@@ -115,7 +122,30 @@ class BindingPlan:
             raise SpendLeaseArbitrationConflict("foreign BOUND won scope arbitration")
         return True
 
-    def _reuse_hook(self, transaction: Any, param_types: Any) -> dict[str, Any]:
+    def _reuse_hook(
+        self,
+        transaction: Any,
+        param_types: Any,
+        workspace_id: str,
+        shard: int,
+    ) -> dict[str, Any]:
+        if self.trust_eligibility_enabled:
+            if self.expected_trust_tier is None:
+                raise ValueError(
+                    "expected_trust_tier is required while trust eligibility is armed"
+                )
+            tier, latched_at = _read_shard_trust(
+                transaction,
+                param_types,
+                workspace_id,
+                shard,
+            )
+            if (
+                tier != self.expected_trust_tier
+                or tier < 1
+                or latched_at is not None
+            ):
+                return _unbound("unpaid_workspace", "escrow_refused")
         if not self._register(transaction, param_types):
             return _unbound("scope_arbitrated", "scope_claimed")
         fence = _read_fence(transaction, param_types, self.fence_id, self.artifact.lease_id)
@@ -127,7 +157,21 @@ class BindingPlan:
         return _bound("reuse_bound")
 
     def _mint_hook(self, transaction: Any, param_types: Any, workspace_id: str, shard: int) -> dict[str, Any]:
-        if not reserve_credit(transaction, param_types, workspace_id, self.artifact.cap_micro, shard=shard):
+        if not reserve_credit_for_spend_lease(
+            transaction,
+            param_types,
+            workspace_id,
+            self.artifact.cap_micro,
+            shard=shard,
+            trust_eligibility_enabled=self.trust_eligibility_enabled,
+            expected_trust_tier=self.expected_trust_tier,
+        ):
+            if self.trust_eligibility_enabled:
+                tier, latched_at = _read_shard_trust(
+                    transaction, param_types, workspace_id, shard
+                )
+                if tier < 1 or latched_at is not None:
+                    return _unbound("unpaid_workspace", "escrow_refused")
             return _unbound("escrow_headroom", "escrow_refused")
         if not self._register(transaction, param_types):
             _require_one(
@@ -337,6 +381,8 @@ def prepare_candidate(
     authoritative_exhaustion: bool,
     local_admission_allowed: bool = False,
     routing_policy_hash: str | None = None,
+    trust_eligibility_enabled: bool = False,
+    expected_trust_tier: int | None = None,
 ) -> BindingPlan:
     now = datetime.now(UTC)
     lease_id = derive_candidate_lease_id(key_hash, boot_kid, gen, provisional_id)
@@ -355,6 +401,10 @@ def prepare_candidate(
             local_admission_allowed=True,
             routing_policy_hash=routing_policy_hash,
         )
+    if trust_eligibility_enabled:
+        if expected_trust_tier is None:
+            raise ValueError("expected_trust_tier is required while trust eligibility is armed")
+        claims["trust_tier"] = int(expected_trust_tier)
     artifact = SpendLeaseArtifact(
         token=signer.sign(claims), lease_id=lease_id, cap_micro=cap_micro, gen=gen,
         iat=int(now.timestamp()), exp=int(expires_at.timestamp()), issuer_kid=signer.kid,
@@ -397,9 +447,22 @@ def prepare_candidate(
     if not isinstance(result, Created):
         raise SpendLeaseContractError(f"unexpected new-candidate result: {type(result).__name__}")
     return BindingPlan(
-        ledger, scope, fence_id, region, provisional_id, artifact, allocation_micro,
-        expires_at + timedelta(seconds=skew_seconds), "mint", identity,
-        observed_gen, incumbent_lease_id, incumbent_window_closed, authoritative_exhaustion,
+        ledger=ledger,
+        scope=scope,
+        fence_id=fence_id,
+        region=region,
+        provisional_id=provisional_id,
+        artifact=artifact,
+        allocation_micro=allocation_micro,
+        admission_deadline=expires_at + timedelta(seconds=skew_seconds),
+        mode="mint",
+        candidate=identity,
+        observed_gen=observed_gen,
+        incumbent_lease_id=incumbent_lease_id,
+        incumbent_window_closed=incumbent_window_closed,
+        authoritative_exhaustion=authoritative_exhaustion,
+        trust_eligibility_enabled=trust_eligibility_enabled,
+        expected_trust_tier=expected_trust_tier,
     )
 
 
@@ -414,6 +477,25 @@ def _unbound(reason: str, outcome: str) -> dict[str, Any]:
 def _require_one(count: int, inverse: str) -> None:
     if count != 1:
         raise SpendLeaseContractError(f"{inverse} modified {count} rows")
+
+
+def _read_shard_trust(
+    transaction: Any,
+    param_types: Any,
+    workspace_id: str,
+    shard: int,
+) -> tuple[int, datetime | None]:
+    rows = list(
+        transaction.execute_sql(
+            "SELECT trust_tier, trust_latched_at FROM tr_credit_balance "
+            "WHERE workspace_id=@ws AND shard=@shard",
+            params={"ws": workspace_id, "shard": shard},
+            param_types={"ws": param_types.STRING, "shard": param_types.INT64},
+        )
+    )
+    if len(rows) != 1:
+        raise SpendLeaseContractError("selected credit shard disappeared")
+    return int(rows[0][0] or 0), rows[0][1]
 
 
 def _read_fence(

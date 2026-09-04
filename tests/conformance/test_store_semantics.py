@@ -42,6 +42,7 @@ from trusted_router.storage_key_usage import api_key_from_json
 from trusted_router.storage_models import (
     ApiKey,
     ConsentRequest,
+    CreditProvenance,
     EarningsCashout,
     Generation,
     OAuthApp,
@@ -654,18 +655,21 @@ def test_lifetime_topup_is_part_of_the_grant_claim(
         workspace_id,
         25,
         event_id,
+        provenance=CreditProvenance.system_grant(),
         lifetime_topup_user_id=user_id,
     )
     assert not store.credit_workspace_typed_direct(
         workspace_id,
         25,
         event_id,
+        provenance=CreditProvenance.system_grant(),
         lifetime_topup_user_id=user_id,
     )
     assert store.credit_workspace_typed_direct(
         workspace_id,
         10,
         f"{event_id}-second",
+        provenance=CreditProvenance.system_grant(),
         lifetime_topup_user_id=user_id,
     )
     assert store.get_lifetime_topup_microdollars(user_id) == 35

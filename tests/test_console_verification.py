@@ -11,6 +11,7 @@ from trusted_router.money import (
     VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS,
 )
 from trusted_router.storage import STORE
+from trusted_router.storage_models import CreditProvenance
 
 
 def _console(settings: Settings | None = None) -> tuple[TestClient, Any, Any]:
@@ -35,6 +36,7 @@ def _fund_and_verify_phone(user: Any, workspace: Any) -> None:
         workspace.id,
         VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS,
         f"console-verification-funding:{user.id}",
+        provenance=CreditProvenance.system_grant(),
         lifetime_topup_user_id=user.id,
     )
     started = STORE.begin_phone_verification(user.id, "+13059511381", "voice")

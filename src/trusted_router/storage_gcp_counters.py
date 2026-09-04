@@ -20,6 +20,16 @@ MAX_CREDIT_SHARDS = 64
 MAX_KEY_USAGE_SHARDS = 64
 DEFAULT_NEW_BILLING_SHARDS = 16
 
+CREDIT_BALANCE_TRUST_COLUMNS = (
+    "trust_tier",
+    "trust_computed_at",
+    "trust_latched_at",
+    "trust_override_tier",
+    "billing_pause_causes",
+    "pause_epoch",
+    "trust_reconciled_through",
+)
+
 # Creation-time credit seed columns. `reserved` + `total_usage` are deliberately
 # omitted so a new row gets the Spanner defaults (0) and later typed DML owns
 # those counters exclusively.
@@ -27,6 +37,7 @@ CREDIT_BALANCE_COLUMNS = (
     "workspace_id",
     "shard",
     "total_credits",
+    *CREDIT_BALANCE_TRUST_COLUMNS,
     "source_updated_at",
     "updated_at",
 )
@@ -185,6 +196,13 @@ def credit_balance_mirror_row(workspace_id: str, total_micro: int, commit_ts: An
         workspace_id,
         UNSHARDED,
         int(total_micro),
+        0,
+        None,
+        None,
+        None,
+        [],
+        0,
+        None,
         commit_ts,  # source_updated_at — the JSON row's updated_at, same commit
         commit_ts,  # this mirror's updated_at
     )
@@ -206,6 +224,13 @@ def credit_balance_seed_rows(
             workspace_id,
             shard,
             parts[shard],
+            0,
+            None,
+            None,
+            None,
+            [],
+            0,
+            None,
             commit_ts,
             commit_ts,
         )
