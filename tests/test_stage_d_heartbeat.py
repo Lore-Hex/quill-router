@@ -479,6 +479,21 @@ def test_heartbeat_boot_auth_uses_exact_literal_bytes(
         "get_spend_lease_boot",
         lambda _self, _kid: boot,
     )
+    authorization = GatewayAuthorization(
+        id="gwa-stage-d-fixture",
+        workspace_id="workspace",
+        key_hash="key",
+        model_id="model",
+        provider="anthropic",
+        usage_type=UsageType.CREDITS,
+        estimated_microdollars=300,
+        stage_d_boot_kid=boot.kid,
+    )
+    monkeypatch.setattr(
+        SpannerBigtableStore,
+        "get_gateway_authorization",
+        lambda _self, _authorization_id: authorization,
+    )
     monkeypatch.setattr(
         SpannerBigtableStore,
         "heartbeat_gateway_typed",
@@ -496,13 +511,19 @@ def test_heartbeat_boot_auth_uses_exact_literal_bytes(
         boot_auth_digest("POST", "/v1/internal/gateway/heartbeat", raw)
     )
     header = f"kid={boot.kid},sig={b64url_encode(signature)}"
-    settings = Settings(
-        environment="test",
-        spend_lease_accepted_gcp_image_digests=boot.image_digest,
-    )
+    # Authorization binds the immutable kid. The now-live set is deliberately
+    # absent and must not be consulted for an in-flight request.
+    settings = Settings(environment="test")
 
     accepted = gateway._heartbeat_gateway_sync(_request(header), body, settings, raw)
     assert accepted == _json("heartbeat_response_accepted.json")
+
+    wrong_kid_header = f"kid=other-boot,sig={b64url_encode(signature)}"
+    with pytest.raises(HTTPException) as wrong_kid:
+        gateway._heartbeat_gateway_sync(
+            _request(wrong_kid_header), body, settings, raw
+        )
+    assert wrong_kid.value.detail == _json("rejection_boot_not_accepted.json")
 
     with pytest.raises(HTTPException) as raised:
         gateway._heartbeat_gateway_sync(_request(header), body, settings, raw + b" ")
@@ -545,6 +566,7 @@ def test_disposition_lookup_uses_heartbeat_boot_verifier_and_literal_response(
         settled=True,
         finalization_outcome="reaped_snapshot",
         finalized_cost_microdollars=120,
+        stage_d_boot_kid=boot.kid,
     )
     monkeypatch.setattr(
         SpannerBigtableStore,
@@ -559,10 +581,7 @@ def test_disposition_lookup_uses_heartbeat_boot_verifier_and_literal_response(
     path = "/v1/internal/gateway/authorizations/gwa-stage-d-fixture/disposition"
     signature = private.sign(boot_auth_digest("GET", path, b""))
     header = f"kid={boot.kid},sig={b64url_encode(signature)}"
-    settings = Settings(
-        environment="test",
-        spend_lease_accepted_gcp_image_digests=boot.image_digest,
-    )
+    settings = Settings(environment="test")
 
     response = gateway._gateway_authorization_disposition_sync(
         _request(header, method="GET", path=path),

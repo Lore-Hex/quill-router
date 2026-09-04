@@ -3154,6 +3154,9 @@ async def test_synthetic_job_ingests_with_observer_token_and_never_runs_ledger_p
     async def forbidden_ledger_probe(*_args: Any, **_kwargs: Any) -> list[Any]:
         raise AssertionError("synthetic job attempted a billing gateway probe")
 
+    async def streaming_ok(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/internal/synthetic/samples"
         assert request.headers["x-trustedrouter-internal-token"] == "observer-only"
@@ -3178,6 +3181,7 @@ async def test_synthetic_job_ingests_with_observer_token_and_never_runs_ledger_p
     monkeypatch.setattr(cli_module, "client_telemetry_canary_probe", fake_canary)
     monkeypatch.setattr(cli_module, "gateway_billing_probe", forbidden_ledger_probe)
     monkeypatch.setattr(cli_module, "gateway_fallback_probe", forbidden_ledger_probe)
+    monkeypatch.setattr(cli_module, "streaming_chat_completion_probe", streaming_ok)
     monkeypatch.setattr(cli_module.httpx, "AsyncClient", client_factory)
     monkeypatch.setenv(
         "TR_SYNTHETIC_INGEST_URL",

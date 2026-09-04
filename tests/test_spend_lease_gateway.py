@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -58,6 +60,62 @@ def _registration_settings(digest: str) -> Settings:
         environment="test",
         spend_lease_accepted_gcp_image_digests=digest,
     )
+
+
+def test_emergency_digest_override_logs_once_and_rollout_never_inherits_it(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    digest = "sha256:" + "ab" * 32
+    settings = Settings(
+        environment="test",
+        spend_lease_accepted_gcp_image_digests=digest,
+    )
+    monkeypatch.setattr(gateway, "_STAGE_D_OVERRIDE_LOGGED", False)
+    request = _request()
+
+    with caplog.at_level("WARNING"):
+        assert gateway._stage_d_accepted_image_digests(request, settings) == {digest}
+        assert gateway._stage_d_accepted_image_digests(request, settings) == {digest}
+
+    assert caplog.messages.count("stage_d.policy_emergency_override digest_count=1") == 1
+    rollout = (
+        Path(__file__).parents[1] / "scripts" / "deploy" / "rollout.sh"
+    ).read_text()
+    assert '"TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="' in rollout
+    assignment_prefix = "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="
+    assert rollout.count(assignment_prefix) == 1
+
+
+def test_authorize_acceptance_reads_signed_resolver_and_kicks_refresh() -> None:
+    digest = "sha256:" + "cd" * 32
+
+    class Resolver:
+        kicked = False
+
+        def kick(self) -> None:
+            self.kicked = True
+
+        def accepted_image_digests(self) -> frozenset[str]:
+            return frozenset({digest})
+
+    resolver = Resolver()
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [],
+            "app": SimpleNamespace(
+                state=SimpleNamespace(stage_d_policy_resolver=resolver)
+            ),
+        }
+    )
+    assert gateway._stage_d_accepted_image_digests(  # noqa: SLF001
+        request,
+        Settings(environment="test"),
+    ) == {digest}
+    assert resolver.kicked is True
 
 
 def test_boot_registration_accepts_verified_gcp_approved_digest(
@@ -238,7 +296,7 @@ def _signed_authorize_body(
     return body, raw_body, header
 
 
-def test_authorize_mutation_guard_uses_current_digest_not_persisted_approval(
+def test_authorize_does_not_fall_back_to_trust_release_image_digest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     STORE.reset()
@@ -295,9 +353,10 @@ def test_authorize_mutation_guard_uses_current_digest_not_persisted_approval(
         raw_body,
     )
 
-    assert "spend_lease" in authorized["data"]
+    assert "spend_lease" not in authorized["data"]
     assert STORE.get_spend_lease_boot(boot.kid) is boot
     assert boot.approved is False
+    assert current_settings.spend_lease_accepted_gcp_digests == frozenset()
 
 
 def test_authorize_mints_shadow_grant_and_replay_returns_byte_identical_token(

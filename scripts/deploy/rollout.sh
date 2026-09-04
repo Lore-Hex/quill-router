@@ -493,10 +493,6 @@ if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ]; then
   regional_quota_preflight_issuance_fleet
 fi
 
-SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="${TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS:-$(
-  read_primary_regional_quota_env "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS"
-)}"
-
 # Prefer the private three-replica ClickHouse load balancer once provisioned.
 # The direct node-1 address remains only as a migration fallback for projects
 # that have not run clickhouse_cluster.sh yet.
@@ -724,12 +720,13 @@ ENV_VARS=(
   "TR_SPEND_LEASE_ISSUANCE_ENABLED=true"
   # Unit 2 authorize hooks ship inert; the binding flip is a later rollout.
   "TR_SPEND_LEASE_BINDING_ENABLED=false"
-  "TR_STAGE_D_HEARTBEAT_ENABLED=${TR_STAGE_D_HEARTBEAT_ENABLED:-true}"
-  "TR_STAGE_D_ELIGIBILITY_ENABLED=${TR_STAGE_D_ELIGIBILITY_ENABLED:-false}"
+  "TR_STAGE_D_HEARTBEAT_ENABLED=true"
+  "TR_STAGE_D_ELIGIBILITY_ENABLED=false"
+  "TR_STAGE_D_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d"
   "TR_HEARTBEAT_GRACE_SECONDS=${TR_HEARTBEAT_GRACE_SECONDS:-300}"
   "TR_SPEND_LEASE_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d"
   "TR_SPEND_LEASE_SIGNING_SECRET_NAME=trustedrouter-spend-lease-signing-seed"
-  "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS=${SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS}"
+  "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 

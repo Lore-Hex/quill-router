@@ -88,6 +88,7 @@ from trusted_router.routes.verification_status import register_verification_stat
 from trusted_router.routes.wallet_oauth import register_wallet_oauth_routes
 from trusted_router.routes.workspaces import register_workspace_routes
 from trusted_router.sentry_config import init_sentry
+from trusted_router.stage_d_policy import StageDPolicyResolver, StorePolicyWatermark
 from trusted_router.storage import (
     STORE,
     configure_analytics_sink,
@@ -201,6 +202,23 @@ def create_app(
         openapi_url="/openapi.json" if surface == "combined" else None,
     )
     app.state.settings = settings
+    stage_d_policy_resolver = StageDPolicyResolver(
+        settings,
+        StorePolicyWatermark(STORE),
+    )
+    app.state.stage_d_policy_resolver = stage_d_policy_resolver
+
+    # Test apps use httpx transport mocks that are scoped to individual tests;
+    # letting a daemon outlive one test would make its trust-page GET leak into
+    # the next test. Resolver behavior and kick wiring are covered directly,
+    # while every deployed environment still receives the startup warm.
+    if surface in {"combined", "internal"} and settings.environment != "test":
+
+        @app.on_event("startup")
+        async def _warm_stage_d_policy() -> None:  # pragma: no cover - thread wiring
+            # The request path also kicks due refreshes. Startup merely removes
+            # the cold-instance delay; it never waits on trust-page or Spanner IO.
+            stage_d_policy_resolver.kick()
 
     # Deferred settlement's forwarder + reaper. In-process, gated on the peer
     # config actually being set — no external scheduler is a hard dependency
