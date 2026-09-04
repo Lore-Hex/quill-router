@@ -147,8 +147,18 @@ def test_canonical_contract_parser_excludes_retired_models() -> None:
 def test_neurometric_fetch_discovers_new_models_and_runs_canary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    document_extraction = _model_row(neurometric.DOCUMENT_STRUCTURED_EXTRACTION_MODEL)
+    document_extraction.update(
+        {
+            "name": "Document Structured Extraction",
+            "context_length": 49152,
+            "max_output_tokens": 24576,
+        }
+    )
+    document_extraction["pricing"].update({"input": "0.010000", "output": "0.100000"})
     rows = [
         _model_row(),
+        document_extraction,
         _model_row("neurometric/tool-choice"),
         _model_row("qwen/qwen3-vl-8b-instruct"),
     ]
@@ -181,6 +191,7 @@ def test_neurometric_fetch_discovers_new_models_and_runs_canary(
 
     assert set(result.prices) == {
         "ibm-granite/granite-4.1-8b",
+        neurometric.DOCUMENT_STRUCTURED_EXTRACTION_MODEL,
         "neurometric/tool-choice",
         "qwen/qwen3-vl-8b-instruct",
     }
@@ -188,6 +199,21 @@ def test_neurometric_fetch_discovers_new_models_and_runs_canary(
     assert neurometric._DISCOVERED_MANIFEST_ROWS["neurometric/tool-choice"][
         "supported_parameters"
     ] == ["tool_choice"]
+    extraction = neurometric._DISCOVERED_MANIFEST_ROWS[
+        neurometric.DOCUMENT_STRUCTURED_EXTRACTION_MODEL
+    ]
+    assert extraction["context_length"] == 49152
+    assert extraction["max_output_tokens"] == 24576
+    assert extraction["supported_features"] == [
+        "chat",
+        "completion",
+        "tools",
+        "json_mode",
+        "structured_outputs",
+    ]
+    extraction_price = result.prices[neurometric.DOCUMENT_STRUCTURED_EXTRACTION_MODEL]
+    assert extraction_price.prompt_micro_per_m == 10_000
+    assert extraction_price.completion_micro_per_m == 100_000
     assert neurometric._LIVE_CANARY_OK is True
 
 
@@ -275,6 +301,7 @@ def test_neurometric_catalog_routes_are_prepaid_only_and_no_store() -> None:
         for endpoint in endpoints
     } >= {
         "ibm-granite/granite-4.1-8b",
+        neurometric.DOCUMENT_STRUCTURED_EXTRACTION_MODEL,
         "neurometric/tool-choice",
         "qwen/qwen3-vl-8b-instruct",
         "qwen/qwen3-vl-8b-thinking",
@@ -304,12 +331,12 @@ def test_neurometric_public_api_exposes_provider_and_exact_endpoint(client: Any)
     )
     assert response.status_code == 200
     endpoints = response.json()["data"]
-    neurometric = next(
+    neurometric_endpoint = next(
         endpoint for endpoint in endpoints if endpoint["provider_name"] == "Neurometric AI"
     )
-    assert neurometric["upstream_id"] == "ibm-granite/granite-4.1-8b"
-    assert neurometric["pricing"]["prompt"] == "0.00000005275"
-    assert neurometric["pricing"]["completion"] == "0.0000001055"
+    assert neurometric_endpoint["upstream_id"] == "ibm-granite/granite-4.1-8b"
+    assert neurometric_endpoint["pricing"]["prompt"] == "0.00000005275"
+    assert neurometric_endpoint["pricing"]["completion"] == "0.0000001055"
 
     response = client.get("/v1/models/neurometric/tool-choice/endpoints")
     assert response.status_code == 200
@@ -320,6 +347,24 @@ def test_neurometric_public_api_exposes_provider_and_exact_endpoint(client: Any)
     assert tool_choice["upstream_id"] == "neurometric/tool-choice"
     assert tool_choice["pricing"]["prompt"] == "0.00000001055"
     assert tool_choice["pricing"]["completion"] == "0.0000001055"
+
+    response = client.get(
+        "/v1/models/neurometric/document-structured-extraction/endpoints"
+    )
+    assert response.status_code == 200
+    endpoints = response.json()["data"]
+    extraction = next(
+        endpoint for endpoint in endpoints if endpoint["provider_name"] == "Neurometric AI"
+    )
+    assert extraction["usage_type"] == "Credits"
+    assert extraction["upstream_id"] == (
+        neurometric.DOCUMENT_STRUCTURED_EXTRACTION_MODEL
+    )
+    assert extraction["context_length"] == 49152
+    assert extraction["pricing"]["prompt"] == "0.00000001055"
+    assert extraction["pricing"]["completion"] == "0.0000001055"
+    assert "tools" in extraction["supported_parameters"]
+    assert "response_format" in extraction["supported_parameters"]
 
 
 def test_neurometric_hourly_refresh_and_secret_wiring_are_complete() -> None:

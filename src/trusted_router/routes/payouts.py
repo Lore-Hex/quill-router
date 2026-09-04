@@ -201,7 +201,7 @@ def register_payout_routes(router: APIRouter) -> None:
         if profile.company_status != "accepted" or not profile.payment_method_id:
             raise api_error(
                 409,
-                "Complete Routable payout onboarding before requesting a cash-out",
+                "Complete payout onboarding before requesting a cash-out",
                 ErrorType.CONFLICT,
             )
         payout_id = new_payout_id()
@@ -364,7 +364,7 @@ async def _refresh_profile(
     if existing is None:
         raise api_error(
             409,
-            "Start Routable payout onboarding before requesting a cash-out",
+            "Start payout onboarding before requesting a cash-out",
             ErrorType.CONFLICT,
         )
     company = await client.retrieve_company(existing.routable_company_id)

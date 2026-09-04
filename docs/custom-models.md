@@ -33,14 +33,14 @@ authorization-scoped idempotency event.
 Custom-model and registered-app markup enter the same creator earnings wallet.
 Creators may transfer any available amount into a TrustedRouter workspace. At
 $100 or more, an identity-verified creator with a verified email may request a
-USD cash-out through Routable. Routable's hosted onboarding collects bank and
-tax details; TrustedRouter stores only opaque Routable identifiers, payout
-status, and the exact integer-microdollar ledger movement.
+USD cash-out. A secure hosted payout flow collects bank and tax details;
+TrustedRouter stores only opaque payout identifiers, payout status, and the
+exact integer-microdollar ledger movement.
 
 Cash-out requests require an idempotency key. TrustedRouter reserves earnings
-before contacting Routable, reconciles ambiguous retries by external ID, and
-keeps restartable failure states reserved. A final Routable cancellation
-releases the reservation exactly once.
+before contacting the payout processor, reconciles ambiguous retries by
+external ID, and keeps restartable failure states reserved. A final processor
+cancellation releases the reservation exactly once.
 
 ## Create
 
@@ -49,8 +49,8 @@ curl https://trustedrouter.com/v1/custom-models \
   -H "Authorization: Bearer $TRUSTEDROUTER_MANAGEMENT_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "Contract reviewer",
-    "slug": "contract-reviewer",
+    "name": "Custom model name",
+    "slug": "custom-model-name",
     "base_model_id": "anthropic/claude-sonnet-4.6",
     "hidden_prompt": "Review the contract and cite each material clause.",
     "markup_basis_points": 1500,
