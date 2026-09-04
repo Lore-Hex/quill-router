@@ -890,7 +890,7 @@ jobs:
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
 
       - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@v3
 
       - name: Compute watchdog args (hotfix vs normal)
         id: wd_args
