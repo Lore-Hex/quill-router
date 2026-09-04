@@ -340,6 +340,7 @@ def test_store_regional_authorize_settle_replay_and_reconcile_end_to_end() -> No
         "lease_max_microdollars": 10_000_000,
         "lease_max_available_basis_points": 1_000,
         "lease_shard_count": 16,
+        "invocation_nonce": "regional-original",
     }
 
     outcome, authorization = store.authorize_gateway_regional(
@@ -348,7 +349,7 @@ def test_store_regional_authorize_settle_replay_and_reconcile_end_to_end() -> No
     )
     replay_outcome, replay = store.authorize_gateway_regional(
         authorization_id="gwa-concurrent-loser",
-        **common,
+        **{**common, "invocation_nonce": "regional-replay"},
     )
 
     assert outcome == "accepted"
@@ -356,6 +357,8 @@ def test_store_regional_authorize_settle_replay_and_reconcile_end_to_end() -> No
     assert authorization.settlement == "regional_lease"
     assert replay_outcome == "replay"
     assert replay is not None and replay.id == authorization.id
+    assert authorization.invocation_nonce == "regional-original"
+    assert replay.invocation_nonce == "regional-original"
     local = ledger.get(
         str(authorization.regional_lease_id),
         region="us-central1",

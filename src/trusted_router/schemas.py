@@ -314,6 +314,7 @@ class GatewayAuthorizeRequest(_Lenient):
     # accepted only for enclave-owned hosted tools and asynchronous media.
     additional_cost_reservation_microdollars: int = Field(default=0, ge=0, le=100_000_000)
     spend_lease_echo: SpendLeaseEcho | None = None
+    invocation_nonce: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
     def key_identifier_required(self) -> GatewayAuthorizeRequest:

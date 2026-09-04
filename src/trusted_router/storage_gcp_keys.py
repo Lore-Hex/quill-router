@@ -451,6 +451,7 @@ class SpannerApiKeys:
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
         spend_lease: SpendLeaseArtifact | None = None,
+        invocation_nonce: str | None = None,
     ) -> GatewayAuthorization:
         if deferred_cap_microdollars is not None:
             # Deferred settlement is a PEER-plane mechanism: a plane spending
@@ -516,6 +517,7 @@ class SpannerApiKeys:
             spend_lease_boot_kid=spend_lease.boot_kid if spend_lease else None,
             spend_lease_catalog_version=(spend_lease.catalog_version if spend_lease else None),
             spend_lease_status=spend_lease.lease_status if spend_lease else None,
+            invocation_nonce=invocation_nonce,
         )
         if idempotency_key is None:
             self._io.write_entity("gateway_authorization", auth.id, auth)

@@ -1,0 +1,11 @@
+{
+  "schema": "tr.stage-d-accepted/1",
+  "plane": "gcp",
+  "sequence": 1200,
+  "kind": "transitional",
+  "issued_at": "2026-09-03T21:30:00Z",
+  "image_digests": [
+    "sha256:8ce7f0f3000000000000000000000000000000000000000000000000000000aa",
+    "sha256:b1c0f84d000000000000000000000000000000000000000000000000000000bb"
+  ]
+}

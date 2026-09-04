@@ -2099,7 +2099,7 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
         if call[:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
         and call[4:6] == ["jobs", "deploy"]
     ]
-    assert len(deploys) == 6
+    assert len(deploys) == 7
     subnet_updates = [
         (index, call)
         for index, call in enumerate(run.calls)
@@ -2114,7 +2114,7 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
             "update",
         ]
     ]
-    assert len(subnet_updates) == 6
+    assert len(subnet_updates) == 7
     service_contract_reads = [
         (index, call)
         for index, call in enumerate(run.calls)
@@ -2129,7 +2129,7 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
         ]
         and call[6] == "trusted-router-billing"
     ]
-    assert len(service_contract_reads) == 6
+    assert len(service_contract_reads) == 7
     previous_deploy_index = -1
     for deploy_index, deploy in deploys:
         region = deploy[deploy.index("--region") + 1]
@@ -2141,7 +2141,14 @@ def test_synthetic_jobs_execute_private_ingress_preflight_in_their_own_region(
         assert (
             "TR_OBSERVER_INTERNAL_TOKEN=trustedrouter-observer-internal-token:latest" in deploy_text
         )
-        assert "TR_INTERNAL_GATEWAY_TOKEN" not in deploy_text
+        job_name = deploy[6]
+        if job_name.startswith("trusted-router-stage-d-probe-"):
+            assert (
+                "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest"
+                in deploy_text
+            )
+        else:
+            assert "TR_INTERNAL_GATEWAY_TOKEN" not in deploy_text
         assert "--set-secrets" in deploy
         assert "--update-secrets" not in deploy
         assert deploy[deploy.index("--network") + 1] == "default"
@@ -2343,6 +2350,7 @@ def test_synthetic_combined_bridge_restores_legacy_job_deploys(
     assert [(call[6], call[call.index("--region") + 1]) for call in deploys] == [
         ("trusted-router-synthetic-us-central1", "us-central1"),
         ("trusted-router-synthetic-europe-west4", "europe-west4"),
+        ("trusted-router-stage-d-probe-us-central1", "us-central1"),
         ("trusted-router-throughput-us-central1", "us-central1"),
         ("trusted-router-spend-lease-soak-us-central1", "us-central1"),
         ("trusted-router-image-generation-us-central1", "us-central1"),
@@ -2426,7 +2434,7 @@ def test_synthetic_combined_bridge_job_environment_constructs_settings(
         if call[:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
         and call[4:6] == ["jobs", "deploy"]
     ]
-    assert len(deploys) == 6
+    assert len(deploys) == 7
     for deploy in deploys:
         settings_kwargs = _settings_kwargs_from_cloud_run_job(deploy)
         settings = Settings(**settings_kwargs)

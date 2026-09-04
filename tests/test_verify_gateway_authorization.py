@@ -51,6 +51,9 @@ class FakeSnapshot:
                     '"finalized_generation_id":"gen-1",'
                     '"finalized_model_id":"openai/gpt-5-mini",'
                     '"finalized_provider":"azure"}',
+                    "boot-stage-d",
+                    2,
+                    "invocation-original",
                 )
             ]
         if sql == verify.RESERVATION_BY_ID_SQL:
@@ -101,6 +104,9 @@ def test_idempotency_verification_uses_index_then_primary_keys() -> None:
     )
 
     assert result["authorization"]["authorization_id"] == "gwa-1"
+    assert result["authorization"]["stage_d_boot_kid"] == "boot-stage-d"
+    assert result["authorization"]["heartbeat_seq"] == 2
+    assert result["authorization"]["invocation_nonce"] == "invocation-original"
     assert result["reservation"]["actual_microdollars"] == 42
     assert result["outbox"][0]["status"] == "done"
     assert result["generation"]["generation_id"] == "gen-1"

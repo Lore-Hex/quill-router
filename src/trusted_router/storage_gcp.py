@@ -168,7 +168,10 @@ from trusted_router.storage_gcp_operational_analytics_outbox import (
     analytics_surrogate,
 )
 from trusted_router.storage_gcp_rate_limits import SpannerRateLimits
-from trusted_router.storage_gcp_request_records import read_gateway_authorization
+from trusted_router.storage_gcp_request_records import (
+    read_gateway_authorization,
+    read_gateway_authorization_by_gateway_request_id,
+)
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
 from trusted_router.storage_gcp_synthetic_index import (
     synthetic_probe_samples as _bt_synthetic_probe_samples,
@@ -3194,6 +3197,7 @@ class SpannerBigtableStore:
         expires_at: str | None = None,
         deferred_cap_microdollars: int | None = None,
         spend_lease: SpendLeaseArtifact | None = None,
+        invocation_nonce: str | None = None,
     ) -> GatewayAuthorization:
         return self.api_keys.create_gateway_authorization(
             workspace_id=workspace_id,
@@ -3233,6 +3237,7 @@ class SpannerBigtableStore:
             expires_at=expires_at,
             deferred_cap_microdollars=deferred_cap_microdollars,
             spend_lease=spend_lease,
+            invocation_nonce=invocation_nonce,
         )
 
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:
@@ -3247,6 +3252,19 @@ class SpannerBigtableStore:
         if typed is not None:
             return typed
         return self.api_keys.get_gateway_authorization(authorization_id)
+
+    def get_gateway_authorization_by_gateway_request_id(
+        self, gateway_request_id: str
+    ) -> GatewayAuthorization | None:
+        # The evidence endpoint is deliberately a strong indexed read. A stale
+        # 404 after settlement would make the cross-repository gate report a
+        # false failure, while scanning one row per request is not viable.
+        with self._database.snapshot(multi_use=True) as snapshot:
+            return read_gateway_authorization_by_gateway_request_id(
+                snapshot,
+                self._param_types,
+                gateway_request_id,
+            )
 
     def heartbeat_gateway_typed(self, **kwargs: Any) -> Any:
         from trusted_router.storage_gcp_stage_d import heartbeat_gateway_atomic
@@ -3513,6 +3531,7 @@ class SpannerBigtableStore:
         app_markup_basis_points: int = 0,
         receipt_fee_basis_points: int = 0,
         app_owner_user_id: str = "",
+        invocation_nonce: str | None = None,
     ) -> tuple[str, GatewayAuthorization | None]:
         """Authorize from bounded regional escrow without touching hot counters."""
 
@@ -3715,6 +3734,7 @@ class SpannerBigtableStore:
             regional_fencing_token=selected_global.fencing_token,
             regional_hold_id=authorization_id,
             stage_d_reason="pricing_kind",
+            invocation_nonce=invocation_nonce,
         )
         try:
             result = record_regional_gateway_authorization(
@@ -4073,6 +4093,8 @@ class SpannerBigtableStore:
         stage_d_reason: str | None = None,
         stage_d_prompt_tokens: int | None = None,
         stage_d_max_output_tokens: int | None = None,
+        stage_d_boot_kid: str | None = None,
+        invocation_nonce: str | None = None,
     ) -> tuple[str, GatewayAuthorization | None]:
         """Route-facing typed authorize. Runs the atomic conditional-DML authorize
         (holds + reservation + gateway_authorization DML-insert) and returns
@@ -4167,6 +4189,8 @@ class SpannerBigtableStore:
                 stage_d_reason=stage_d_reason,
                 stage_d_prompt_tokens=stage_d_prompt_tokens,
                 stage_d_max_output_tokens=stage_d_max_output_tokens,
+                stage_d_boot_kid=stage_d_boot_kid,
+                invocation_nonce=invocation_nonce,
             )
             built_authorizations[authorization_id] = built
             base_authorizations[authorization_id] = built
@@ -5780,6 +5804,25 @@ class SpannerBigtableStore:
 
     def get_spend_lease_boot(self, kid: str) -> SpendLeaseBoot | None:
         return self._read_entity(SPEND_LEASE_BOOT_KIND, kid, SpendLeaseBoot)
+
+    def advance_stage_d_policy_watermark(
+        self,
+        *,
+        plane: str,
+        sequence: int,
+        updated_at: dt.datetime,
+    ) -> bool:
+        from trusted_router.storage_gcp_stage_d_policy import (
+            advance_stage_d_policy_watermark,
+        )
+
+        return advance_stage_d_policy_watermark(
+            self._database,
+            self._param_types,
+            plane=plane,
+            sequence=sequence,
+            updated_at=updated_at,
+        )
 
     def next_spend_lease_generation(self, key_hash: str, boot_kid: str) -> int:
         entity_id = hashlib.sha256(f"{key_hash}\0{boot_kid}".encode()).hexdigest()

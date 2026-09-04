@@ -37,6 +37,9 @@ AUTHORIZATION_TYPED_COLUMNS = (
     "selected_endpoint_id",
     "delivered_usage",
     "pricing_snapshot",
+    "stage_d_boot_kid",
+    "invocation_nonce",
+    "gateway_request_id",
 )
 
 ARBITRATION_COLUMNS = (
@@ -769,6 +772,9 @@ def authorization_typed_param_types(param_types: Any) -> dict[str, Any]:
         "selected_endpoint_id": param_types.STRING,
         "delivered_usage": param_types.STRING,
         "pricing_snapshot": param_types.STRING,
+        "stage_d_boot_kid": param_types.STRING,
+        "invocation_nonce": param_types.STRING,
+        "gateway_request_id": param_types.STRING,
     }
 
 

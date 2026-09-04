@@ -495,10 +495,6 @@ if [ "$REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED" = "true" ]; then
   regional_quota_preflight_issuance_fleet
 fi
 
-SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="${TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS:-$(
-  read_primary_regional_quota_env "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS"
-)}"
-
 # Binding makes the unit-4 settlement clamp and repair/mirror path load-bearing.
 # Refuse a source rollback that would build a binding-enabled image without
 # those rules. The emergency rollback path is explicit: deploy with binding
@@ -745,12 +741,13 @@ ENV_VARS=(
   # deployed marker.
   "TR_SPEND_LEASE_ISSUANCE_ENABLED=true"
   "TR_SPEND_LEASE_BINDING_ENABLED=${TR_SPEND_LEASE_BINDING_ENABLED:-true}"
-  "TR_STAGE_D_HEARTBEAT_ENABLED=${TR_STAGE_D_HEARTBEAT_ENABLED:-true}"
-  "TR_STAGE_D_ELIGIBILITY_ENABLED=${TR_STAGE_D_ELIGIBILITY_ENABLED:-false}"
+  "TR_STAGE_D_HEARTBEAT_ENABLED=true"
+  "TR_STAGE_D_ELIGIBILITY_ENABLED=false"
+  "TR_STAGE_D_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d"
   "TR_HEARTBEAT_GRACE_SECONDS=${TR_HEARTBEAT_GRACE_SECONDS:-300}"
   "TR_SPEND_LEASE_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d"
   "TR_SPEND_LEASE_SIGNING_SECRET_NAME=trustedrouter-spend-lease-signing-seed"
-  "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS=${SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS}"
+  "TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 

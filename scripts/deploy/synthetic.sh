@@ -343,6 +343,62 @@ for monitor_region in "${_REGION_LIST[@]}"; do
   monitor_index=$((monitor_index + 1))
 done
 
+# Stage D recurring proof. The dedicated key is provisioned by
+# provision_stage_d_probe_workspace.py and must remain outside the regional
+# quota pilot; the Stage D pilot list is its only cohort selector.
+if gc secrets describe trustedrouter-stage-d-probe-api-key >/dev/null 2>&1; then
+  stage_d_probe_region="${TR_STAGE_D_PROBE_REGION:-us-central1}"
+  stage_d_probe_ingest_base="$(synthetic_ingest_base_for_region "$stage_d_probe_region")"
+  stage_d_probe_job="trusted-router-stage-d-probe-${stage_d_probe_region}"
+  stage_d_probe_scheduler="${stage_d_probe_job}-every-three-minutes"
+  stage_d_secret_envs=(
+    "${SECRET_ENVS[@]}"
+    "TR_STAGE_D_PROBE_API_KEY=trustedrouter-stage-d-probe-api-key:latest"
+  )
+  if [ "$DEPLOYED_COMBINED_BRIDGE" != "true" ]; then
+    stage_d_secret_envs+=(
+      "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest"
+    )
+  fi
+  stage_d_job_secrets="$(IFS=,; echo "${stage_d_secret_envs[*]}")"
+  stage_d_probe_env_vars=(
+    "${BASE_ENV_VARS[@]}"
+    "TR_SYNTHETIC_MONITOR_REGION=${stage_d_probe_region}"
+    "TR_SYNTHETIC_INGEST_URL=${stage_d_probe_ingest_base}/v1/internal/synthetic/samples"
+    "TR_SYNTHETIC_BENCHMARK_INGEST_URL=${stage_d_probe_ingest_base}/v1/internal/synthetic/benchmark"
+    "TR_SYNTHETIC_ROUTE_HEALTH_URL=${stage_d_probe_ingest_base}/v1/internal/synthetic/route-health"
+    "TR_SYNTHETIC_RUNS_PER_INVOCATION=1"
+    "TR_SYNTHETIC_RUN_SPACING_SECONDS=0"
+    "TR_SYNTHETIC_ROTATION_ENABLED=false"
+    "TR_SYNTHETIC_THROUGHPUT_ENABLED=false"
+    "TR_SYNTHETIC_THROUGHPUT_ONLY=false"
+  )
+  stage_d_probe_set_env_vars="$(IFS='|'; echo "^|^${stage_d_probe_env_vars[*]}")"
+  prepare_synthetic_ingest_target "$stage_d_probe_region"
+  log "deploying recurring Stage D probe ${stage_d_probe_job}"
+  gc run jobs deploy "$stage_d_probe_job" \
+    --region "$stage_d_probe_region" \
+    --image "$IMAGE" \
+    --command="/app/.venv/bin/python" \
+    --args="-m,trusted_router.synthetic.cli,--expect-stage-d" \
+    --service-account "$RUN_SERVICE_ACCOUNT" \
+    "${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]+"${PRIVATE_RUN_APP_JOB_NETWORK_ARGS[@]}"}" \
+    --set-env-vars "$stage_d_probe_set_env_vars" \
+    "$JOB_SECRET_FLAG" "$stage_d_job_secrets" \
+    --max-retries 0 \
+    --task-timeout 300s \
+    --cpu 2 \
+    --memory 1Gi \
+    --quiet >/dev/null
+  upsert_scheduler \
+    "$stage_d_probe_scheduler" \
+    "$stage_d_probe_job" \
+    "$stage_d_probe_region" \
+    "*/3 * * * *"
+else
+  log "Stage D probe key secret is missing; skipping recurring Stage D probe"
+fi
+
 # Sustained-output benchmark: one deterministic top-200 route per tick. This
 # has a separate Cloud Run Job so a slow 512-token stream cannot delay or
 # overlap TLS, attestation, billing, fallback, or short provider probes.
