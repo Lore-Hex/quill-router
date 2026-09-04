@@ -728,6 +728,10 @@ class GatewayAuthorization:
     # Per-request amount bound inside the lease.  Distinct from cap_micro,
     # which is the lease-wide escrow ceiling.
     spend_lease_allocated_micro: int | None = None
+    # Stage C wire evidence. The compact receipt is preserved byte-for-byte;
+    # its lowercase SHA-256 is the transactional replay discriminator.
+    spend_lease_admission_receipt: str | None = None
+    spend_lease_receipt_hash: str | None = None
     # Only deferred authorizations carry an expiry: it is what lets the reaper
     # reclaim the outstanding-counter estimate when the enclave dies between
     # authorize and settle. Local authorizations keep their pre-existing

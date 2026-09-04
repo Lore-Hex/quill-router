@@ -276,6 +276,36 @@ class SpendLeaseBootRegistrationRequest(_Strict):
     attestation_kind: str = Field(min_length=1, max_length=64)
 
 
+class SpendLeaseAdmissionMarker(_Strict):
+    accepted: Literal[True]
+    receipt_hash: str = Field(pattern="^[0-9a-f]{64}$")
+
+
+class SpendLeaseAdmissionRejectedError(_Strict):
+    code: Literal[409]
+    message: Literal["Spend-lease admission was rejected"]
+    type: Literal["admission_rejected"]
+    source: Literal["router"]
+    reason: Literal[
+        "receipt_invalid",
+        "boot_not_accepted",
+        "boot_mismatch",
+        "lease_not_open",
+        "window",
+        "policy_mismatch",
+        "estimate_mismatch",
+        "capacity",
+        "hold_refused",
+        "scope_conflict",
+        "reuse_lost",
+        "not_accepting",
+    ]
+
+
+class SpendLeaseAdmissionRejected(_Strict):
+    error: SpendLeaseAdmissionRejectedError
+
+
 class GatewayAuthorizeRequest(_Lenient):
     api_key_hash: str | None = Field(default=None, min_length=1)
     api_key_lookup_hash: str | None = Field(default=None, min_length=1)
@@ -314,6 +344,9 @@ class GatewayAuthorizeRequest(_Lenient):
     # accepted only for enclave-owned hosted tools and asynchronous media.
     additional_cost_reservation_microdollars: int = Field(default=0, ge=0, le=100_000_000)
     spend_lease_echo: SpendLeaseEcho | None = None
+    # Compact JWS signed by the admitted lease's attested boot. It is excluded
+    # from the logical request fingerprint and is consequential only in Stage C.
+    spend_lease_admission: str | None = Field(default=None, min_length=1, max_length=16_384)
 
     @model_validator(mode="after")
     def key_identifier_required(self) -> GatewayAuthorizeRequest:

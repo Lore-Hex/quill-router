@@ -14,7 +14,7 @@ import time
 import uuid
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import asdict, dataclass
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
@@ -26,6 +26,7 @@ from trusted_router.catalog import (
     ModelEndpoint,
     cache_token_prices_microdollars,
     effective_endpoint,
+    endpoint_zero_data_retention,
 )
 from trusted_router.money import token_cost_microdollars
 from trusted_router.openai_service_tiers import (
@@ -45,7 +46,7 @@ SPEND_LEASE_BOOT_KIND = "spend_lease_boot"
 SPEND_LEASE_GENERATION_KIND = "spend_lease_generation"
 SPEND_LEASE_ACTIVE_GRANT_KIND = "spend_lease_active_grant"
 
-LeaseStatus = Literal["active", "terminal", "expired"]
+LeaseStatus = Literal["active", "draining", "terminal", "expired"]
 ShadowVerdict = Literal["accepted", "declined_funds", "declined_other"]
 ShadowDivergence = Literal["none", "admit_diverged", "estimate_low", "echo_invalid"]
 SpendLeaseEligibilityFailure = Literal[
@@ -63,6 +64,12 @@ SpendLeaseEligibilityFailure = Literal[
     "receipt_fee",
     "regional_lease",
     "key_window_limit",
+]
+
+
+FrozenSpendLeaseCatalog: TypeAlias = Mapping[
+    str,
+    str | list[dict[str, str | int | bool | None]],
 ]
 SpendLeaseBindingFailure = Literal[
     "no_idempotency_key",
@@ -143,6 +150,9 @@ class SpendLeaseArtifact:
     catalog_version: str
     lease_status: LeaseStatus = "active"
     open_predecessor_count: int = 0
+    local_admission_allowed: bool = False
+    routing_policy_hash: str | None = None
+    catalog: FrozenSpendLeaseCatalog | None = None
 
 
 @dataclass(frozen=True)
@@ -159,6 +169,9 @@ class FrozenSpendLeaseCandidate:
     request_price_micro: int
     cache_read_micro_per_mtok: int
     cache_write_micro_per_mtok: int
+    upstream_model: str | None = None
+    usage_type: str | None = None
+    wafer_zdr_required: bool = False
 
 
 @dataclass(frozen=True)
@@ -318,7 +331,8 @@ def freeze_spend_lease_catalog(
     region: str,
     route_type: str,
     service_tier: str | None,
-) -> dict[str, Any]:
+    stage_c: bool = False,
+) -> FrozenSpendLeaseCatalog:
     """Freeze complete applicability keys, retaining server tier order."""
     frozen: list[FrozenSpendLeaseCandidate] = []
     for model, endpoint in endpoint_candidates:
@@ -349,6 +363,12 @@ def freeze_spend_lease_catalog(
                     cache_write_micro_per_mtok=(
                         priority.cache_write_microdollars_per_million_tokens
                     ),
+                    upstream_model=endpoint.upstream_id or model.id,
+                    usage_type=UsageType.for_endpoint(endpoint).value,
+                    wafer_zdr_required=(
+                        endpoint.provider == "wafer"
+                        and endpoint_zero_data_retention(endpoint) is True
+                    ),
                 )
             )
             continue
@@ -375,9 +395,22 @@ def freeze_spend_lease_catalog(
                     request_price_micro=endpoint.request_price_microdollars,
                     cache_read_micro_per_mtok=cache_read,
                     cache_write_micro_per_mtok=cache_write,
+                    upstream_model=endpoint.upstream_id or model.id,
+                    usage_type=UsageType.for_endpoint(endpoint).value,
+                    wafer_zdr_required=(
+                        endpoint.provider == "wafer"
+                        and endpoint_zero_data_retention(endpoint) is True
+                    ),
                 )
             )
     candidates = [asdict(candidate) for candidate in frozen]
+    if not stage_c:
+        # Preserve Stage A/B token bytes until the Stage C acceptance flag is
+        # enabled. These dispatch fields are consequential only to local
+        # admission and therefore must not perturb flag-off leases.
+        for candidate in candidates:
+            for field in ("upstream_model", "usage_type", "wafer_zdr_required"):
+                candidate.pop(field)
     canonical = json.dumps(candidates, separators=(",", ":"), sort_keys=True).encode()
     version = SPEND_LEASE_CATALOG_VERSION_PREFIX + hashlib.sha256(canonical).hexdigest()
     return {"version": version, "candidates": candidates}
@@ -395,10 +428,53 @@ def spend_lease_catalog_estimate(
     max_tokens: int | None,
 ) -> int | None:
     """Decision-5 estimator over a frozen catalog."""
+    selected = spend_lease_catalog_candidates(
+        catalog,
+        model=model,
+        provider=provider,
+        route_type=route_type,
+        region=region,
+        service_tier=service_tier,
+        estimated_input_tokens=estimated_input_tokens,
+    )
+    if selected is None:
+        return None
+    applicable: list[int] = []
+    for raw in selected:
+        request_price = int(raw["request_price_micro"])
+        input_price = int(raw["input_price_micro_per_mtok"])
+        output_price = int(raw["output_price_micro_per_mtok"])
+        output_tokens = max_tokens if max_tokens is not None else 512
+        cost = (
+            request_price
+            + token_cost_microdollars(estimated_input_tokens, input_price)
+            + token_cost_microdollars(output_tokens, output_price)
+        )
+        positive = (
+            request_price > 0
+            or (estimated_input_tokens > 0 and input_price > 0)
+            or (output_tokens > 0 and output_price > 0)
+        )
+        applicable.append(max(cost, 1) if positive else 0)
+    return max(applicable) if applicable else None
+
+
+def spend_lease_catalog_candidates(
+    catalog: Mapping[str, Any],
+    *,
+    model: str,
+    provider: str | None,
+    route_type: str,
+    region: str,
+    service_tier: str | None,
+    estimated_input_tokens: int,
+) -> tuple[dict[str, Any], ...] | None:
+    """Select one frozen price tier per endpoint, preserving snapshot order."""
+
     candidates = catalog.get("candidates")
     if not isinstance(candidates, list):
         return None
-    applicable: list[int] = []
+    applicable: list[dict[str, Any]] = []
     seen_endpoints: set[str] = set()
     for raw in candidates:
         if not isinstance(raw, dict):
@@ -420,22 +496,8 @@ def spend_lease_catalog_estimate(
         if bound is not None and estimated_input_tokens > int(bound):
             continue
         seen_endpoints.add(endpoint_id)
-        request_price = int(raw["request_price_micro"])
-        input_price = int(raw["input_price_micro_per_mtok"])
-        output_price = int(raw["output_price_micro_per_mtok"])
-        output_tokens = max_tokens if max_tokens is not None else 512
-        cost = (
-            request_price
-            + token_cost_microdollars(estimated_input_tokens, input_price)
-            + token_cost_microdollars(output_tokens, output_price)
-        )
-        positive = (
-            request_price > 0
-            or (estimated_input_tokens > 0 and input_price > 0)
-            or (output_tokens > 0 and output_price > 0)
-        )
-        applicable.append(max(cost, 1) if positive else 0)
-    return max(applicable) if applicable else None
+        applicable.append({str(key): value for key, value in raw.items()})
+    return tuple(applicable) or None
 
 
 def parse_boot_auth_header(value: str | None) -> BootAuthHeader | None:

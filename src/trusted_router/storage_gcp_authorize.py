@@ -42,6 +42,7 @@ from trusted_router.custom_model_markup_billing import (
     custom_model_markup_payout_event_id,
 )
 from trusted_router.services.spend_lease_settlement import clamp_spend_lease_charge
+from trusted_router.spend_lease_admission import classify_receipt_replay
 from trusted_router.spend_windows import (
     KeyWindowLimitDecision,
     decide_key_window_limits,
@@ -68,6 +69,7 @@ from trusted_router.storage_gcp_request_records import (
     insert_gateway_authorization,
     mark_gateway_authorization_settled,
     read_gateway_authorization,
+    read_gateway_authorization_admission_columns,
 )
 from trusted_router.storage_gcp_settle_outbox import (
     _GUARD_STATUS_SQL,
@@ -114,6 +116,7 @@ class AuthorizeOutcome:
     KEY_LIMIT_EXCEEDED = "key_limit_exceeded"
     KEY_MISSING = "key_missing"  # typed key row absent -> fail closed
     IDEMPOTENCY_MISMATCH = "idempotency_mismatch"  # same key, different request body
+    ADMISSION_SCOPE_CONFLICT = "admission_scope_conflict"
     KEY_WINDOW_LIMIT_EXCEEDED = "key_window_limit_exceeded"  # a daily/weekly/monthly cap
 
 
@@ -278,6 +281,9 @@ def authorize_atomic(
         Callable[[str, str, bool], GatewayAuthorization] | None
     ) = None,
     also_retry: tuple[type[BaseException], ...] = (),
+    spend_lease_receipt_hash: str | None = None,
+    credit_escrowed_by_spend_lease: bool = False,
+    spend_lease_admission_replay_protection: bool = False,
 ) -> dict:
     """Run the atomic authorize. Returns {outcome, reservation_id?, authorization_id?}.
 
@@ -323,6 +329,10 @@ def authorize_atomic(
         raise ValueError("credit_shard_candidates exceeds the hot-path transaction limit")
     if not has_credit_candidate and shard_candidates != (UNSHARDED,):
         raise ValueError("BYOK-only authorization must use credit shard zero")
+    if credit_escrowed_by_spend_lease and (
+        not has_credit_candidate or spend_lease_hook is None
+    ):
+        raise ValueError("lease-escrowed credit requires a Credits route and spend-lease hook")
     key_candidates = tuple(key_shard_candidates)
     if not key_candidates:
         raise ValueError("key_shard_candidates must not be empty")
@@ -346,7 +356,30 @@ def authorize_atomic(
         build_auth_body(authorization_id, reservation_id) if build_auth_body is not None else None
     )
 
-    def _replay(existing: dict) -> dict:
+    def _replay(transaction: Any, existing: dict) -> dict:
+        receipt_verdict = "ordinary"
+        if spend_lease_admission_replay_protection:
+            admission = read_gateway_authorization_admission_columns(
+                transaction,
+                pt,
+                str(existing["authorization_id"]),
+            )
+            stored_receipt_hash = (
+                str(admission["spend_lease_receipt_hash"])
+                if admission is not None
+                and admission["spend_lease_receipt_hash"] is not None
+                else None
+            )
+            receipt_verdict = classify_receipt_replay(
+                spend_lease_receipt_hash,
+                stored_receipt_hash,
+            )
+        if receipt_verdict == "scope_conflict":
+            raise _Reject(AuthorizeOutcome.ADMISSION_SCOPE_CONFLICT)
+        if receipt_verdict == "ordinary" and (
+            existing["idempotency_fingerprint"] != idempotency_fingerprint
+        ):
+            raise _Reject(AuthorizeOutcome.IDEMPOTENCY_MISMATCH)
         return {
             "outcome": AuthorizeOutcome.REPLAY,
             "reservation_id": existing["reservation_id"],
@@ -359,9 +392,7 @@ def authorize_atomic(
         if idempotency_scope is not None:
             existing = read_reservation_by_idempotency(transaction, pt, idempotency_scope)
             if existing is not None:
-                if existing["idempotency_fingerprint"] != idempotency_fingerprint:
-                    raise _Reject(AuthorizeOutcome.IDEMPOTENCY_MISMATCH)
-                return _replay(existing)
+                return _replay(transaction, existing)
 
         key_result = KEY_MISSING
         selected_key_shard = UNSHARDED
@@ -391,7 +422,7 @@ def authorize_atomic(
 
         credit_hold = 0
         selected_credit_shard = UNSHARDED
-        if has_credit_candidate:
+        if has_credit_candidate and not credit_escrowed_by_spend_lease:
             for candidate in shard_candidates:
                 if reserve_credit(transaction, pt, workspace_id, estimate, shard=candidate):
                     selected_credit_shard = candidate
@@ -407,6 +438,13 @@ def authorize_atomic(
         }
         if spend_lease_hook is not None:
             lease_result = spend_lease_hook(transaction, selected_credit_shard)
+        if spend_lease_receipt_hash is not None and not lease_result.get("bound"):
+            reason = (
+                "scope_conflict"
+                if lease_result.get("no_lease_reason") == "scope_arbitrated"
+                else "reuse_lost"
+            )
+            raise _Reject(f"admission_rejected:{reason}")
 
         insert_reservation(
             transaction,
@@ -482,12 +520,7 @@ def authorize_atomic(
             existing = read_reservation_by_idempotency(transaction, pt, conflict_scope)
             if existing is None:  # pragma: no cover - winner must exist post-conflict
                 raise _Reject(AuthorizeOutcome.IDEMPOTENCY_MISMATCH)
-            # Same fingerprint check as the normal replay path (codex keystone
-            # review): a concurrent same-scope but DIFFERENT-body loser must get
-            # IDEMPOTENCY_MISMATCH, not the winner's authorization as a replay.
-            if existing["idempotency_fingerprint"] != idempotency_fingerprint:
-                raise _Reject(AuthorizeOutcome.IDEMPOTENCY_MISMATCH)
-            return _replay(existing)
+            return _replay(transaction, existing)
 
         try:
             return run_in_transaction_with_retry(

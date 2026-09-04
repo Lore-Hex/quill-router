@@ -27,6 +27,8 @@ AUTHORIZATION_COLUMNS = {
     "idempotency_fingerprint": "STRING(64)",
     "finalization_outcome": "STRING(32)",
     "finalized_cost_microdollars": "INT64",
+    "spend_lease_admission_receipt": "STRING(MAX)",
+    "spend_lease_receipt_hash": "STRING(64)",
     "started_at": "TIMESTAMP",
     "heartbeat_seq": "INT64",
     "heartbeat_at": "TIMESTAMP",
@@ -35,6 +37,19 @@ AUTHORIZATION_COLUMNS = {
     "delivered_usage": "STRING(MAX)",
     "pricing_snapshot": "STRING(MAX)",
 }
+STAGE_C_NULLABLE_AUTHORIZATION_COLUMNS = (
+    "spend_lease_id",
+    "spend_lease_gen",
+    "spend_lease_allocated_micro",
+    "spend_lease_token",
+    "spend_lease_status",
+    "spend_lease_exp",
+    "idempotency_fingerprint",
+    "finalization_outcome",
+    "finalized_cost_microdollars",
+    "spend_lease_admission_receipt",
+    "spend_lease_receipt_hash",
+)
 
 ARBITRATION_COLUMNS = {
     "scope_salt": "STRING(4) NOT NULL",
@@ -254,7 +269,7 @@ def test_done_row_with_null_next_attempt_is_absent_from_due_index(
 def test_indexes_are_waited_until_read_write(fresh_ddls: list[str]) -> None:
     script = (ROOT / SCRIPT).read_text()
 
-    assert len(fresh_ddls) == 20
+    assert len(fresh_ddls) == 22
     for name in (
         "spend_lease_scope_arbitration_by_authorization",
         "spend_lease_open_due",
@@ -271,7 +286,7 @@ def test_fresh_apply_reports_every_object_created(
     run = _run(tmp_path, monkeypatch, objects_exist=False)
 
     assert run.returncode == 0, summarise(run)
-    assert len(_ddls(run)) == 20
+    assert len(_ddls(run)) == 22
     for object_name in (
         *(f"tr_gateway_authorization.{name}" for name in AUTHORIZATION_COLUMNS),
         "spend_lease_scope_arbitration",
@@ -370,3 +385,17 @@ def test_mutation_guard_rejects_allocated_money_default(fresh_ddls: list[str]) -
 
     with pytest.raises(AssertionError):
         _assert_authorization_manifest(mutated)
+
+
+def test_stage_c_manifest_has_exactly_eleven_nullable_authorization_columns() -> None:
+    script = (ROOT / SCRIPT).read_text()
+
+    assert len(STAGE_C_NULLABLE_AUTHORIZATION_COLUMNS) == 11
+    assert set(STAGE_C_NULLABLE_AUTHORIZATION_COLUMNS) <= set(AUTHORIZATION_COLUMNS)
+    for name in STAGE_C_NULLABLE_AUTHORIZATION_COLUMNS:
+        declaration = re.search(
+            rf"ensure_column tr_gateway_authorization {name} \\\n+  \"([^\"]+)\"",
+            script,
+        )
+        assert declaration is not None, name
+        assert "NOT NULL" not in declaration.group(1)

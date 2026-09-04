@@ -24,7 +24,10 @@ from typing import Any
 
 from trusted_router.storage_gcp_codec import json_body
 from trusted_router.storage_gcp_spend_lease import (
+    AUTHORIZATION_ADMISSION_TYPED_COLUMNS,
     AUTHORIZATION_TYPED_COLUMNS,
+    authorization_admission_typed_columns,
+    authorization_admission_typed_param_types,
     authorization_typed_columns,
     authorization_typed_param_types,
     merge_authorization_typed_columns,
@@ -52,6 +55,48 @@ _COMPLETE_GATEWAY_AUTHORIZATION_RETENTION_GUARDED_SQL = (
     f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL}))"
 )
 
+_INSERT_GATEWAY_AUTHORIZATION_SQL = (
+    "INSERT INTO tr_gateway_authorization ("
+    "authorization_id, workspace_id, key_hash, reservation_id, model_id, "
+    "provider, usage_type, estimated_microdollars, settled, created_at, "
+    "terminal_at, payload, spend_lease_id, spend_lease_gen, "
+    "spend_lease_allocated_micro, spend_lease_token, spend_lease_status, "
+    "spend_lease_exp, idempotency_fingerprint, finalization_outcome, "
+    "finalized_cost_microdollars, started_at, heartbeat_seq, heartbeat_at, "
+    "heartbeat_hash, selected_endpoint_id, delivered_usage, pricing_snapshot"
+    ") VALUES ("
+    "@authorization_id, @workspace_id, @key_hash, @reservation_id, @model_id, "
+    "@provider, @usage_type, @estimated_microdollars, false, @created_at, "
+    "NULL, @payload, @spend_lease_id, @spend_lease_gen, "
+    "@spend_lease_allocated_micro, @spend_lease_token, @spend_lease_status, "
+    "@spend_lease_exp, @idempotency_fingerprint, @finalization_outcome, "
+    "@finalized_cost_microdollars, @started_at, @heartbeat_seq, @heartbeat_at, "
+    "@heartbeat_hash, @selected_endpoint_id, @delivered_usage, @pricing_snapshot"
+    ")"
+)
+
+_INSERT_GATEWAY_AUTHORIZATION_ADMISSION_SQL = (
+    "INSERT INTO tr_gateway_authorization ("
+    "authorization_id, workspace_id, key_hash, reservation_id, model_id, "
+    "provider, usage_type, estimated_microdollars, settled, created_at, "
+    "terminal_at, payload, spend_lease_id, spend_lease_gen, "
+    "spend_lease_allocated_micro, spend_lease_token, spend_lease_status, "
+    "spend_lease_exp, idempotency_fingerprint, finalization_outcome, "
+    "finalized_cost_microdollars, started_at, heartbeat_seq, heartbeat_at, "
+    "heartbeat_hash, selected_endpoint_id, delivered_usage, pricing_snapshot, "
+    "spend_lease_admission_receipt, spend_lease_receipt_hash"
+    ") VALUES ("
+    "@authorization_id, @workspace_id, @key_hash, @reservation_id, @model_id, "
+    "@provider, @usage_type, @estimated_microdollars, false, @created_at, "
+    "NULL, @payload, @spend_lease_id, @spend_lease_gen, "
+    "@spend_lease_allocated_micro, @spend_lease_token, @spend_lease_status, "
+    "@spend_lease_exp, @idempotency_fingerprint, @finalization_outcome, "
+    "@finalized_cost_microdollars, @started_at, @heartbeat_seq, @heartbeat_at, "
+    "@heartbeat_hash, @selected_endpoint_id, @delivered_usage, @pricing_snapshot, "
+    "@spend_lease_admission_receipt, @spend_lease_receipt_hash"
+    ")"
+)
+
 
 def insert_gateway_authorization(
     transaction: Any,
@@ -63,24 +108,15 @@ def insert_gateway_authorization(
     """Insert active authorization state in the caller's billing transaction."""
     payload = dataclasses.asdict(authorization)
     typed = authorization_typed_columns(payload)
+    admission_typed = authorization_admission_typed_columns(payload)
+    has_admission = admission_typed["spend_lease_admission_receipt"] is not None
+    insert_sql = (
+        _INSERT_GATEWAY_AUTHORIZATION_ADMISSION_SQL
+        if has_admission
+        else _INSERT_GATEWAY_AUTHORIZATION_SQL
+    )
     transaction.execute_update(
-        "INSERT INTO tr_gateway_authorization ("
-        "authorization_id, workspace_id, key_hash, reservation_id, model_id, "
-        "provider, usage_type, estimated_microdollars, settled, created_at, "
-        "terminal_at, payload, spend_lease_id, spend_lease_gen, "
-        "spend_lease_allocated_micro, spend_lease_token, spend_lease_status, "
-        "spend_lease_exp, idempotency_fingerprint, finalization_outcome, "
-        "finalized_cost_microdollars, started_at, heartbeat_seq, heartbeat_at, "
-        "heartbeat_hash, selected_endpoint_id, delivered_usage, pricing_snapshot"
-        ") VALUES ("
-        "@authorization_id, @workspace_id, @key_hash, @reservation_id, @model_id, "
-        "@provider, @usage_type, @estimated_microdollars, false, @created_at, "
-        "NULL, @payload, @spend_lease_id, @spend_lease_gen, "
-        "@spend_lease_allocated_micro, @spend_lease_token, @spend_lease_status, "
-        "@spend_lease_exp, @idempotency_fingerprint, @finalization_outcome, "
-        "@finalized_cost_microdollars, @started_at, @heartbeat_seq, @heartbeat_at, "
-        "@heartbeat_hash, @selected_endpoint_id, @delivered_usage, @pricing_snapshot"
-        ")",
+        insert_sql,
         params={
             "authorization_id": authorization.id,
             "workspace_id": authorization.workspace_id,
@@ -93,6 +129,7 @@ def insert_gateway_authorization(
             "created_at": created_at,
             "payload": json_body(authorization),
             **typed,
+            **(admission_typed if has_admission else {}),
         },
         param_types={
             "authorization_id": param_types.STRING,
@@ -106,8 +143,29 @@ def insert_gateway_authorization(
             "created_at": param_types.TIMESTAMP,
             "payload": param_types.STRING,
             **authorization_typed_param_types(param_types),
+            **(authorization_admission_typed_param_types(param_types) if has_admission else {}),
         },
     )
+
+
+def read_gateway_authorization_admission_columns(
+    reader: Any,
+    param_types: Any,
+    authorization_id: str,
+) -> dict[str, str | None] | None:
+    """Strong-read only the Stage C replay columns for one authorization."""
+
+    rows = list(
+        reader.execute_sql(
+            "SELECT spend_lease_admission_receipt, spend_lease_receipt_hash "
+            "FROM tr_gateway_authorization WHERE authorization_id=@authorization_id",
+            params={"authorization_id": authorization_id},
+            param_types={"authorization_id": param_types.STRING},
+        )
+    )
+    if not rows:
+        return None
+    return dict(zip(AUTHORIZATION_ADMISSION_TYPED_COLUMNS, rows[0], strict=True))
 
 
 def read_gateway_authorization(

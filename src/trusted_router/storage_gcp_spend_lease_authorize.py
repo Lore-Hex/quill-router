@@ -12,7 +12,7 @@ import dataclasses
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from trusted_router.spend_lease_authorize import (
     FenceView,
@@ -33,7 +33,11 @@ from trusted_router.spend_lease_state import (
     Mismatch,
     SpendLease,
 )
-from trusted_router.spend_leases import SpendLeaseArtifact, SpendLeaseSigner
+from trusted_router.spend_leases import (
+    FrozenSpendLeaseCatalog,
+    SpendLeaseArtifact,
+    SpendLeaseSigner,
+)
 from trusted_router.storage_gcp_counter_dml import (
     insert_entity_dml,
     read_reservation_by_idempotency,
@@ -82,6 +86,7 @@ class BindingPlan:
     incumbent_lease_id: str | None
     incumbent_window_closed: bool
     authoritative_exhaustion: bool
+    remaining_micro: int | None = None
 
     def transaction_hook(self, transaction: Any, param_types: Any, workspace_id: str, shard: int) -> dict[str, Any]:
         if self.mode == "reuse":
@@ -188,32 +193,40 @@ class BindingPlan:
             return _unbound(decision.reason, outcomes[decision.reason])
 
         assert self.candidate is not None
+        global_lease = {
+            "state": "ACTIVE",
+            "lease_id": self.artifact.lease_id,
+            "gen": self.artifact.gen,
+            "key_hash": self.candidate.key_hash,
+            "boot_kid": self.candidate.boot_kid,
+            "workspace_id": self.candidate.workspace_id,
+            "region": self.candidate.region,
+            "cap_micro": self.artifact.cap_micro,
+            "expires_at": self.candidate.expires_at.isoformat(),
+            "skew_seconds": self.candidate.skew_seconds,
+            "credit_shard": shard,
+            "frozen_local_version": None,
+            "holds_predecessor_slot": False,
+            "closing_at": None,
+            "last_error": None,
+        }
+        if self.artifact.local_admission_allowed:
+            global_lease.update(
+                token=self.artifact.token,
+                iat=self.artifact.iat,
+                exp=self.artifact.exp,
+                issuer_kid=self.artifact.issuer_kid,
+                catalog_version=self.artifact.catalog_version,
+                routing_policy_hash=self.artifact.routing_policy_hash,
+                catalog=self.artifact.catalog,
+                local_admission_allowed=True,
+            )
         insert_entity_dml(
             transaction,
             param_types,
             SPEND_LEASE_KIND,
             self.artifact.lease_id,
-            json.dumps(
-                {
-                    "state": "ACTIVE",
-                    "lease_id": self.artifact.lease_id,
-                    "gen": self.artifact.gen,
-                    "key_hash": self.candidate.key_hash,
-                    "boot_kid": self.candidate.boot_kid,
-                    "workspace_id": self.candidate.workspace_id,
-                    "region": self.candidate.region,
-                    "cap_micro": self.artifact.cap_micro,
-                    "expires_at": self.candidate.expires_at.isoformat(),
-                    "skew_seconds": self.candidate.skew_seconds,
-                    "credit_shard": shard,
-                    "frozen_local_version": None,
-                    "holds_predecessor_slot": False,
-                    "closing_at": None,
-                    "last_error": None,
-                },
-                separators=(",", ":"),
-                sort_keys=True,
-            ),
+            json.dumps(global_lease, separators=(",", ":"), sort_keys=True),
         )
         if upgrade_candidate_to_open(
             transaction,
@@ -321,6 +334,8 @@ def prepare_candidate(
     incumbent_lease_id: str | None,
     incumbent_window_closed: bool,
     authoritative_exhaustion: bool,
+    local_admission_allowed: bool = False,
+    routing_policy_hash: str | None = None,
 ) -> BindingPlan:
     now = datetime.now(UTC)
     lease_id = derive_candidate_lease_id(key_hash, boot_kid, gen, provisional_id)
@@ -331,11 +346,25 @@ def prepare_candidate(
         "cap_micro": cap_micro, "gen": gen, "iat": int(now.timestamp()),
         "exp": int(expires_at.timestamp()), "boot_kid": boot_kid, "catalog": catalog,
     }
+    if local_admission_allowed:
+        if routing_policy_hash is None:
+            raise SpendLeaseContractError("local admission requires a routing policy hash")
+        claims.update(
+            local_admission_allowed=True,
+            routing_policy_hash=routing_policy_hash,
+        )
     artifact = SpendLeaseArtifact(
         token=signer.sign(claims), lease_id=lease_id, cap_micro=cap_micro, gen=gen,
         iat=int(now.timestamp()), exp=int(expires_at.timestamp()), issuer_kid=signer.kid,
         boot_kid=boot_kid, catalog_version=str(catalog["version"]),
         open_predecessor_count=observed_predecessor_count,
+        local_admission_allowed=local_admission_allowed,
+        routing_policy_hash=routing_policy_hash,
+        catalog=(
+            cast(FrozenSpendLeaseCatalog, dict(catalog))
+            if local_admission_allowed
+            else None
+        ),
     )
     identity = CandidateIdentity(
         lease_id, gen, key_hash, boot_kid, cap_micro, skew_seconds, workspace_id,

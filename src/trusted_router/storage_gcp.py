@@ -56,6 +56,7 @@ from trusted_router.spend_leases import (
     SPEND_LEASE_ACTIVE_GRANT_KIND,
     SPEND_LEASE_BOOT_KIND,
     SPEND_LEASE_GENERATION_KIND,
+    FrozenSpendLeaseCatalog,
     SpendLeaseArtifact,
     SpendLeaseBoot,
 )
@@ -4073,6 +4074,10 @@ class SpannerBigtableStore:
         stage_d_reason: str | None = None,
         stage_d_prompt_tokens: int | None = None,
         stage_d_max_output_tokens: int | None = None,
+        spend_lease_admission_receipt: str | None = None,
+        spend_lease_receipt_hash: str | None = None,
+        credit_escrowed_by_spend_lease: bool = False,
+        spend_lease_admission_replay_protection: bool = False,
     ) -> tuple[str, GatewayAuthorization | None]:
         """Route-facing typed authorize. Runs the atomic conditional-DML authorize
         (holds + reservation + gateway_authorization DML-insert) and returns
@@ -4167,6 +4172,8 @@ class SpannerBigtableStore:
                 stage_d_reason=stage_d_reason,
                 stage_d_prompt_tokens=stage_d_prompt_tokens,
                 stage_d_max_output_tokens=stage_d_max_output_tokens,
+                spend_lease_admission_receipt=spend_lease_admission_receipt,
+                spend_lease_receipt_hash=spend_lease_receipt_hash,
             )
             built_authorizations[authorization_id] = built
             base_authorizations[authorization_id] = built
@@ -4211,6 +4218,8 @@ class SpannerBigtableStore:
                     spend_lease_catalog_version=artifact.catalog_version,
                     spend_lease_status=artifact.lease_status,
                     spend_lease_allocated_micro=spend_lease_binding_plan.allocation_micro,
+                    spend_lease_admission_receipt=spend_lease_admission_receipt,
+                    spend_lease_receipt_hash=spend_lease_receipt_hash,
                 )
             built_authorizations[authorization_id] = selected
             return selected
@@ -4300,6 +4309,11 @@ class SpannerBigtableStore:
                         else None
                     ),
                     also_retry=retry_types,
+                    spend_lease_receipt_hash=spend_lease_receipt_hash,
+                    credit_escrowed_by_spend_lease=credit_escrowed_by_spend_lease,
+                    spend_lease_admission_replay_protection=(
+                        spend_lease_admission_replay_protection
+                    ),
                 )
 
             try:
@@ -4334,6 +4348,11 @@ class SpannerBigtableStore:
                     )
                     return result
                 if isinstance(exc, SpendLeaseReuseLost):
+                    if spend_lease_receipt_hash is not None:
+                        return {
+                            "outcome": "admission_rejected:reuse_lost",
+                            "bound": False,
+                        }
                     built_authorizations.pop(
                         spend_lease_binding_plan.provisional_id, None
                     )
@@ -4580,6 +4599,8 @@ class SpannerBigtableStore:
         max_available_basis_points: int,
         echo_lease_id: str | None,
         echo_state: str | None,
+        local_admission_allowed: bool = False,
+        routing_policy_hash: str | None = None,
     ) -> tuple[Any | None, str | None]:
         """Decision 31/46 preparation, called only behind the binding flag."""
         from trusted_router.spend_lease_ledger import SpendLeaseLedgerError
@@ -4755,9 +4776,189 @@ class SpannerBigtableStore:
                 incumbent_lease_id=active.lease_id if active is not None else None,
                 incumbent_window_closed=window_closed,
                 authoritative_exhaustion=authoritative_exhaustion,
+                local_admission_allowed=local_admission_allowed,
+                routing_policy_hash=routing_policy_hash,
             ),
             None,
         )
+
+    def get_spend_lease_for_admission(
+        self,
+        lease_id: str,
+        workspace_id: str,
+        key_hash: str,
+    ) -> SpendLeaseArtifact | None:
+        """Return the immutable Stage C lease token while ACTIVE or DRAINING."""
+
+        payload = self._read_entity("spend_lease", lease_id, dict)
+        if payload is None or payload.get("state") not in {"ACTIVE", "DRAINING"}:
+            return None
+        required = {
+            "token",
+            "lease_id",
+            "cap_micro",
+            "gen",
+            "iat",
+            "exp",
+            "issuer_kid",
+            "boot_kid",
+            "key_hash",
+            "workspace_id",
+            "catalog_version",
+            "routing_policy_hash",
+            "catalog",
+        }
+        if (
+            not required.issubset(payload)
+            or payload.get("local_admission_allowed") is not True
+            or payload.get("workspace_id") != workspace_id
+            or payload.get("key_hash") != key_hash
+        ):
+            return None
+        try:
+            return SpendLeaseArtifact(
+                token=str(payload["token"]),
+                lease_id=str(payload["lease_id"]),
+                cap_micro=int(payload["cap_micro"]),
+                gen=int(payload["gen"]),
+                iat=int(payload["iat"]),
+                exp=int(payload["exp"]),
+                issuer_kid=str(payload["issuer_kid"]),
+                boot_kid=str(payload["boot_kid"]),
+                catalog_version=str(payload["catalog_version"]),
+                lease_status=cast(Any, str(payload["state"]).lower()),
+                local_admission_allowed=True,
+                routing_policy_hash=str(payload["routing_policy_hash"]),
+                catalog=cast(FrozenSpendLeaseCatalog, dict(payload["catalog"])),
+            )
+        except (TypeError, ValueError):
+            return None
+
+    def prepare_gateway_spend_lease_admission(
+        self,
+        *,
+        artifact: SpendLeaseArtifact,
+        workspace_id: str,
+        key_hash: str,
+        authorization_id: str,
+        idempotency_key: str,
+        idempotency_fingerprint: str,
+        estimate: int,
+        region: str,
+        receipt_hash: str,
+        skew_seconds: int,
+    ) -> tuple[Any | None, str | None, GatewayAuthorization | None]:
+        """Prepare only direct reuse of the exact presented Stage C lease."""
+
+        from trusted_router.spend_lease_admission import classify_receipt_replay
+        from trusted_router.spend_lease_ledger import SpendLeaseLedgerError
+        from trusted_router.spend_lease_state import (
+            Created,
+            ExistingLocal,
+            SpendLeaseExhaustedError,
+            SpendLeaseUnavailableError,
+        )
+        from trusted_router.storage_gcp_counter_dml import read_reservation_by_idempotency
+        from trusted_router.storage_gcp_keys import _gateway_authorization_idempotency_index_id
+        from trusted_router.storage_gcp_request_records import (
+            read_gateway_authorization,
+            read_gateway_authorization_admission_columns,
+        )
+        from trusted_router.storage_gcp_spend_lease_authorize import BindingPlan
+
+        scope = _gateway_authorization_idempotency_index_id(
+            workspace_id,
+            key_hash,
+            idempotency_key,
+        )
+        # Replay site one: authorization id and receipt hash share one strong
+        # snapshot. This prevents a local allocation before replay truth is known.
+        with self._database.snapshot(multi_use=True) as snapshot:
+            existing = read_reservation_by_idempotency(snapshot, self._param_types, scope)
+            if existing is not None:
+                existing_id = str(existing["authorization_id"])
+                admission = read_gateway_authorization_admission_columns(
+                    snapshot,
+                    self._param_types,
+                    existing_id,
+                )
+                stored_hash = (
+                    str(admission["spend_lease_receipt_hash"])
+                    if admission is not None
+                    and admission["spend_lease_receipt_hash"] is not None
+                    else None
+                )
+                replay = classify_receipt_replay(receipt_hash, stored_hash)
+                if replay != "replay":
+                    return None, "scope_conflict", None
+                authorization = read_gateway_authorization(
+                    snapshot,
+                    self._param_types,
+                    existing_id,
+                )
+                return None, None, authorization
+
+        ledger = self._spend_lease_ledger
+        if ledger is None or not ledger.supports_region(region):
+            return None, "reuse_lost", None
+        now = dt.datetime.now(dt.UTC)
+        try:
+            result = ledger.allocate(
+                None,
+                artifact.lease_id,
+                region=region,
+                idempotency_scope=scope,
+                provisional_authorization_id=authorization_id,
+                request_fingerprint=idempotency_fingerprint,
+                allocated_micro=estimate,
+                abandon_after=dt.datetime.fromtimestamp(
+                    artifact.exp + skew_seconds,
+                    tz=dt.UTC,
+                ),
+                now=now,
+                admission_receipt=True,
+            )
+        except SpendLeaseExhaustedError:
+            return None, "capacity", None
+        except SpendLeaseUnavailableError:
+            return None, "lease_not_open", None
+        except SpendLeaseLedgerError:
+            return None, "reuse_lost", None
+        if isinstance(result, ExistingLocal):
+            return None, "reuse_lost", None
+        if not isinstance(result, Created):
+            return None, "scope_conflict", None
+        return (
+            BindingPlan(
+                ledger=ledger,
+                scope=scope,
+                fence_id=self._spend_lease_pair_id(key_hash, artifact.boot_kid),
+                region=region,
+                provisional_id=authorization_id,
+                artifact=artifact,
+                allocation_micro=estimate,
+                admission_deadline=dt.datetime.fromtimestamp(
+                    artifact.exp + skew_seconds,
+                    tz=dt.UTC,
+                ),
+                mode="reuse",
+                candidate=None,
+                observed_gen=artifact.gen,
+                incumbent_lease_id=artifact.lease_id,
+                incumbent_window_closed=False,
+                authoritative_exhaustion=False,
+                remaining_micro=result.lease.available_micro,
+            ),
+            None,
+            None,
+        )
+
+    def spend_lease_remaining_micro(self, lease_id: str, region: str) -> int | None:
+        ledger = self._spend_lease_ledger
+        if ledger is None or not ledger.supports_region(region):
+            return None
+        lease = ledger.get(lease_id, region=region)
+        return lease.available_micro if lease is not None else None
 
     def reap_expired_reservations(self, *, now: Any, limit: int = 100) -> int:
         from trusted_router.storage_gcp_authorize import (

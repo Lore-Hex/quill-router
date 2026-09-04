@@ -76,6 +76,12 @@ def test_deploy_pins_thirty_cent_signup_credit_policy() -> None:
     assert '"TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=300000"' in rollout
 
 
+def test_deploy_pins_stage_c_admission_acceptance_off() -> None:
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+
+    assert '"TR_SPEND_LEASE_ADMISSION_ACCEPT=false"' in rollout
+
+
 def test_deploy_removes_only_explicitly_missing_optional_secrets() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
 
