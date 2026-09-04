@@ -131,6 +131,7 @@ class SpendLeaseLedger(Protocol):
         allocated_micro: int,
         abandon_after: datetime,
         now: datetime,
+        admission_receipt: bool = False,
     ) -> AllocateResult: ...
 
     def bind(
@@ -339,6 +340,7 @@ class BigtableSpendLeaseLedger:
         allocated_micro: int,
         abandon_after: datetime,
         now: datetime,
+        admission_receipt: bool = False,
     ) -> AllocateResult:
         # The strong authorization view is deliberately supplied before the
         # lease ID. This adapter performs no local-first convenience read.
@@ -353,6 +355,7 @@ class BigtableSpendLeaseLedger:
                 allocated_micro=allocated_micro,
                 abandon_after=abandon_after,
                 now=now,
+                admission_receipt=admission_receipt,
             ),
             should_write=lambda result: isinstance(result, Created) and not result.replayed,
         )

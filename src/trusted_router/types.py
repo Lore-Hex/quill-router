@@ -121,5 +121,6 @@ class ErrorType(StrEnum):
     HTTP_ERROR = "http_error"
     SERVICE_UNAVAILABLE = "service_unavailable"
     HEARTBEAT_REJECTED = "heartbeat_rejected"
+    ADMISSION_REJECTED = "admission_rejected"
     INVALID_TAGS = "invalid_tags"
     INVALID_REQUEST_METADATA = "invalid_request_metadata"

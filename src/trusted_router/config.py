@@ -886,6 +886,11 @@ class Settings(BaseSettings):
     # Stage B traffic mutation.  Keep independent from Stage A issuance so a
     # deployed revision can continue shadowing while binding remains inert.
     spend_lease_binding_enabled: bool = False
+    # Stage C router-side acceptance. Receipt verification remains available
+    # while this is off, but every new admission reserve is refused with the
+    # closed ``not_accepting`` reason and newly minted leases do not advertise
+    # local admission.
+    spend_lease_admission_accept: bool = False
     spend_lease_pilot_workspace_ids: str = ""
     spend_lease_signing_secret_name: str = ""
     # Audited break-glass addition to the signed Stage D runtime policy. This
@@ -1477,6 +1482,10 @@ class Settings(BaseSettings):
         if self.spend_lease_binding_enabled and not self.spend_lease_issuance_enabled:
             raise ValueError(
                 "TR_SPEND_LEASE_BINDING_ENABLED requires TR_SPEND_LEASE_ISSUANCE_ENABLED"
+            )
+        if self.spend_lease_admission_accept and not self.spend_lease_binding_enabled:
+            raise ValueError(
+                "TR_SPEND_LEASE_ADMISSION_ACCEPT requires TR_SPEND_LEASE_BINDING_ENABLED"
             )
         if self.spend_lease_soak_probe_enabled and not self.spend_lease_probe_key_secret.strip():
             raise ValueError(

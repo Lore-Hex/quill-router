@@ -109,6 +109,10 @@ ensure_column tr_gateway_authorization finalization_outcome \
   "STRING(32)"
 ensure_column tr_gateway_authorization finalized_cost_microdollars \
   "INT64"
+ensure_column tr_gateway_authorization spend_lease_admission_receipt \
+  "STRING(MAX)"
+ensure_column tr_gateway_authorization spend_lease_receipt_hash \
+  "STRING(64)"
 ensure_column tr_gateway_authorization started_at \
   "TIMESTAMP"
 ensure_column tr_gateway_authorization heartbeat_seq \

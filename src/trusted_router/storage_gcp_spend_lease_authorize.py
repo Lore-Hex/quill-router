@@ -12,7 +12,7 @@ import dataclasses
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from trusted_router.spend_lease_authorize import (
     FenceView,
@@ -33,7 +33,12 @@ from trusted_router.spend_lease_state import (
     Mismatch,
     SpendLease,
 )
-from trusted_router.spend_leases import SpendLeaseArtifact, SpendLeaseSigner
+from trusted_router.spend_leases import (
+    SPEND_LEASE_COHORT,
+    FrozenSpendLeaseCatalog,
+    SpendLeaseArtifact,
+    SpendLeaseSigner,
+)
 from trusted_router.storage_gcp_counter_dml import (
     insert_entity_dml,
     read_reservation_by_idempotency,
@@ -82,12 +87,18 @@ class BindingPlan:
     incumbent_lease_id: str | None
     incumbent_window_closed: bool
     authoritative_exhaustion: bool
+    remaining_micro: int | None = None
     trust_eligibility_enabled: bool = False
     expected_trust_tier: int | None = None
 
     def transaction_hook(self, transaction: Any, param_types: Any, workspace_id: str, shard: int) -> dict[str, Any]:
         if self.mode == "reuse":
-            return self._reuse_hook(transaction, param_types)
+            return self._reuse_hook(
+                transaction,
+                param_types,
+                workspace_id,
+                shard,
+            )
         return self._mint_hook(transaction, param_types, workspace_id, shard)
 
     def _register(self, transaction: Any, param_types: Any) -> bool:
@@ -111,7 +122,30 @@ class BindingPlan:
             raise SpendLeaseArbitrationConflict("foreign BOUND won scope arbitration")
         return True
 
-    def _reuse_hook(self, transaction: Any, param_types: Any) -> dict[str, Any]:
+    def _reuse_hook(
+        self,
+        transaction: Any,
+        param_types: Any,
+        workspace_id: str,
+        shard: int,
+    ) -> dict[str, Any]:
+        if self.trust_eligibility_enabled:
+            if self.expected_trust_tier is None:
+                raise ValueError(
+                    "expected_trust_tier is required while trust eligibility is armed"
+                )
+            tier, latched_at = _read_shard_trust(
+                transaction,
+                param_types,
+                workspace_id,
+                shard,
+            )
+            if (
+                tier != self.expected_trust_tier
+                or tier < 1
+                or latched_at is not None
+            ):
+                return _unbound("unpaid_workspace", "escrow_refused")
         if not self._register(transaction, param_types):
             return _unbound("scope_arbitrated", "scope_claimed")
         fence = _read_fence(transaction, param_types, self.fence_id, self.artifact.lease_id)
@@ -204,32 +238,40 @@ class BindingPlan:
             return _unbound(decision.reason, outcomes[decision.reason])
 
         assert self.candidate is not None
+        global_lease = {
+            "state": "ACTIVE",
+            "lease_id": self.artifact.lease_id,
+            "gen": self.artifact.gen,
+            "key_hash": self.candidate.key_hash,
+            "boot_kid": self.candidate.boot_kid,
+            "workspace_id": self.candidate.workspace_id,
+            "region": self.candidate.region,
+            "cap_micro": self.artifact.cap_micro,
+            "expires_at": self.candidate.expires_at.isoformat(),
+            "skew_seconds": self.candidate.skew_seconds,
+            "credit_shard": shard,
+            "frozen_local_version": None,
+            "holds_predecessor_slot": False,
+            "closing_at": None,
+            "last_error": None,
+        }
+        if self.artifact.local_admission_allowed:
+            global_lease.update(
+                token=self.artifact.token,
+                iat=self.artifact.iat,
+                exp=self.artifact.exp,
+                issuer_kid=self.artifact.issuer_kid,
+                catalog_version=self.artifact.catalog_version,
+                routing_policy_hash=self.artifact.routing_policy_hash,
+                catalog=self.artifact.catalog,
+                local_admission_allowed=True,
+            )
         insert_entity_dml(
             transaction,
             param_types,
             SPEND_LEASE_KIND,
             self.artifact.lease_id,
-            json.dumps(
-                {
-                    "state": "ACTIVE",
-                    "lease_id": self.artifact.lease_id,
-                    "gen": self.artifact.gen,
-                    "key_hash": self.candidate.key_hash,
-                    "boot_kid": self.candidate.boot_kid,
-                    "workspace_id": self.candidate.workspace_id,
-                    "region": self.candidate.region,
-                    "cap_micro": self.artifact.cap_micro,
-                    "expires_at": self.candidate.expires_at.isoformat(),
-                    "skew_seconds": self.candidate.skew_seconds,
-                    "credit_shard": shard,
-                    "frozen_local_version": None,
-                    "holds_predecessor_slot": False,
-                    "closing_at": None,
-                    "last_error": None,
-                },
-                separators=(",", ":"),
-                sort_keys=True,
-            ),
+            json.dumps(global_lease, separators=(",", ":"), sort_keys=True),
         )
         if upgrade_candidate_to_open(
             transaction,
@@ -337,6 +379,8 @@ def prepare_candidate(
     incumbent_lease_id: str | None,
     incumbent_window_closed: bool,
     authoritative_exhaustion: bool,
+    local_admission_allowed: bool = False,
+    routing_policy_hash: str | None = None,
     trust_eligibility_enabled: bool = False,
     expected_trust_tier: int | None = None,
 ) -> BindingPlan:
@@ -346,9 +390,17 @@ def prepare_candidate(
     claims = {
         "v": 1, "typ": "spend-lease+jws", "authoritative": True,
         "lease_id": lease_id, "key_hash": key_hash, "workspace_id": workspace_id,
+        "cohort": SPEND_LEASE_COHORT,
         "cap_micro": cap_micro, "gen": gen, "iat": int(now.timestamp()),
         "exp": int(expires_at.timestamp()), "boot_kid": boot_kid, "catalog": catalog,
     }
+    if local_admission_allowed:
+        if routing_policy_hash is None:
+            raise SpendLeaseContractError("local admission requires a routing policy hash")
+        claims.update(
+            local_admission_allowed=True,
+            routing_policy_hash=routing_policy_hash,
+        )
     if trust_eligibility_enabled:
         if expected_trust_tier is None:
             raise ValueError("expected_trust_tier is required while trust eligibility is armed")
@@ -358,6 +410,13 @@ def prepare_candidate(
         iat=int(now.timestamp()), exp=int(expires_at.timestamp()), issuer_kid=signer.kid,
         boot_kid=boot_kid, catalog_version=str(catalog["version"]),
         open_predecessor_count=observed_predecessor_count,
+        local_admission_allowed=local_admission_allowed,
+        routing_policy_hash=routing_policy_hash,
+        catalog=(
+            cast(FrozenSpendLeaseCatalog, dict(catalog))
+            if local_admission_allowed
+            else None
+        ),
     )
     identity = CandidateIdentity(
         lease_id, gen, key_hash, boot_kid, cap_micro, skew_seconds, workspace_id,
@@ -388,10 +447,22 @@ def prepare_candidate(
     if not isinstance(result, Created):
         raise SpendLeaseContractError(f"unexpected new-candidate result: {type(result).__name__}")
     return BindingPlan(
-        ledger, scope, fence_id, region, provisional_id, artifact, allocation_micro,
-        expires_at + timedelta(seconds=skew_seconds), "mint", identity,
-        observed_gen, incumbent_lease_id, incumbent_window_closed, authoritative_exhaustion,
-        trust_eligibility_enabled, expected_trust_tier,
+        ledger=ledger,
+        scope=scope,
+        fence_id=fence_id,
+        region=region,
+        provisional_id=provisional_id,
+        artifact=artifact,
+        allocation_micro=allocation_micro,
+        admission_deadline=expires_at + timedelta(seconds=skew_seconds),
+        mode="mint",
+        candidate=identity,
+        observed_gen=observed_gen,
+        incumbent_lease_id=incumbent_lease_id,
+        incumbent_window_closed=incumbent_window_closed,
+        authoritative_exhaustion=authoritative_exhaustion,
+        trust_eligibility_enabled=trust_eligibility_enabled,
+        expected_trust_tier=expected_trust_tier,
     )
 
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -39,6 +41,7 @@ from trusted_router.catalog import (
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.image_generation import IMAGE_MODEL_ID_SET
+from trusted_router.openai_service_tiers import OPENAI_PRIORITY_MAX_PROMPT_TOKENS
 from trusted_router.types import ErrorType
 
 
@@ -64,6 +67,78 @@ class RoutePreferences:
     requested_parameters: frozenset[str] = frozenset()
     max_prompt_price_microdollars_per_million_tokens: int | None = None
     max_completion_price_microdollars_per_million_tokens: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedRoutingInputs:
+    """The sole normalized input consumed by route selection and Stage C hashing."""
+
+    model_ids: tuple[str, ...]
+    preferences: RoutePreferences
+    route_type: str | None
+    region: str | None
+    service_tier: str | None
+    usage_type: str | None
+    fallback_policy: bool
+    priority_eligibility_bucket: str
+    models_fallback_present: bool
+
+    def canonical_document(self) -> dict[str, Any]:
+        value = dataclasses.asdict(self)
+
+        def normalize(item: Any) -> Any:
+            if isinstance(item, dict):
+                return {str(key): normalize(child) for key, child in sorted(item.items())}
+            if isinstance(item, (set, frozenset, tuple)):
+                children = [normalize(child) for child in item]
+                return sorted(children) if isinstance(item, (set, frozenset)) else children
+            return item
+
+        return normalize(value)
+
+    def canonical_json(self) -> bytes:
+        return json.dumps(
+            self.canonical_document(),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+    @property
+    def routing_policy_hash(self) -> str:
+        return hashlib.sha256(self.canonical_json()).hexdigest()
+
+    @property
+    def local_admission_eligible(self) -> bool:
+        return (
+            len(self.model_ids) == 1
+            and not self.models_fallback_present
+            and self.preferences.sort is None
+            and self.priority_eligibility_bucket == "eligible"
+        )
+
+
+# Every accepted raw provider key is either consumed into RoutePreferences or
+# explicitly makes Stage C local admission ineligible. Tests compare these maps
+# structurally to _PROVIDER_ROUTING_FIELDS.
+NORMALIZED_PROVIDER_FIELD_MAP = {
+    "allow_fallbacks": "fallback_policy",
+    "billing": "usage_type",
+    "country": "provider_jurisdiction",
+    "data_collection": "data_collection",
+    "headquarters_country": "provider_jurisdiction",
+    "ignore": "ignore",
+    "jurisdiction": "provider_jurisdiction",
+    "max_price": "maximum_price",
+    "min_privacy": "privacy_requirements",
+    "only": "only",
+    "order": "order",
+    "provider_country": "provider_jurisdiction",
+    "require_parameters": "requested_parameter_support",
+    "usage": "usage_type",
+    "usage_type": "usage_type",
+    "zdr": "privacy_requirements",
+}
+LOCAL_ADMISSION_INELIGIBLE_PROVIDER_FIELDS = frozenset({"sort"})
 
 
 _PROVIDER_ALIASES = {
@@ -214,8 +289,23 @@ _MODEL_PROVIDER_PREFERENCE: dict[str, dict[str, int]] = {
 _CandidateT = TypeVar("_CandidateT")
 
 
-def chat_route_candidates(body: dict[str, Any], settings: Settings) -> list[Model]:
-    raw_ids, prefs = _routing_for_body(body, settings)
+def _coerce_routing_inputs(
+    value: NormalizedRoutingInputs | dict[str, Any],
+    settings: Settings | None,
+) -> NormalizedRoutingInputs:
+    if isinstance(value, NormalizedRoutingInputs):
+        return value
+    if settings is None:
+        raise TypeError("raw routing bodies require Settings")
+    return normalize_routing_inputs(value, settings)
+
+
+def chat_route_candidates(
+    inputs: NormalizedRoutingInputs | dict[str, Any],
+    settings: Settings | None = None,
+) -> list[Model]:
+    inputs = _coerce_routing_inputs(inputs, settings)
+    raw_ids, prefs = list(inputs.model_ids), inputs.preferences
     candidates: list[Model] = []
     seen: set[str] = set()
     for model_id in raw_ids:
@@ -244,12 +334,13 @@ def chat_route_candidates(body: dict[str, Any], settings: Settings) -> list[Mode
 
 
 def chat_route_endpoint_candidates(
-    body: dict[str, Any],
-    settings: Settings,
+    inputs: NormalizedRoutingInputs | dict[str, Any],
+    settings: Settings | None = None,
     *,
     defer_no_fallback_selection: bool = False,
 ) -> list[tuple[Model, ModelEndpoint]]:
-    raw_ids, prefs = _routing_for_body(body, settings)
+    inputs = _coerce_routing_inputs(inputs, settings)
+    raw_ids, prefs = list(inputs.model_ids), inputs.preferences
     candidates: list[tuple[Model, ModelEndpoint]] = []
     seen: set[str] = set()
     for model_id in raw_ids:
@@ -282,14 +373,15 @@ def chat_route_endpoint_candidates(
 
 
 def image_route_endpoint_candidates(
-    body: dict[str, Any],
-    settings: Settings,
+    inputs: NormalizedRoutingInputs | dict[str, Any],
+    settings: Settings | None = None,
     *,
     defer_no_fallback_selection: bool = False,
 ) -> list[tuple[Model, ModelEndpoint]]:
     """Resolve only models whose normalized image contract is implemented."""
 
-    raw_ids, prefs = _routing_for_body(body, settings)
+    inputs = _coerce_routing_inputs(inputs, settings)
+    raw_ids, prefs = list(inputs.model_ids), inputs.preferences
     candidates: list[tuple[Model, ModelEndpoint]] = []
     seen: set[str] = set()
     for model_id in raw_ids:
@@ -342,8 +434,8 @@ def catalog_endpoint_candidates(
 
 
 def embeddings_route_endpoint_candidates(
-    body: dict[str, Any],
-    settings: Settings,
+    inputs: NormalizedRoutingInputs | dict[str, Any],
+    settings: Settings | None = None,
     *,
     defer_no_fallback_selection: bool = False,
 ) -> list[tuple[Model, ModelEndpoint]]:
@@ -352,7 +444,8 @@ def embeddings_route_endpoint_candidates(
     `supports_embeddings` models. Cost falls out of the per-endpoint prompt
     price (completion price is 0 on embedding endpoints), so the enclave can
     authorize + bill an embeddings route exactly like a chat one."""
-    raw_ids, prefs = _routing_for_body(body, settings)
+    inputs = _coerce_routing_inputs(inputs, settings)
+    raw_ids, prefs = list(inputs.model_ids), inputs.preferences
     candidates: list[tuple[Model, ModelEndpoint]] = []
     seen: set[str] = set()
     for model_id in raw_ids:
@@ -385,13 +478,14 @@ def embeddings_route_endpoint_candidates(
 
 
 def video_route_endpoint_candidates(
-    body: dict[str, Any],
-    settings: Settings,
+    inputs: NormalizedRoutingInputs | dict[str, Any],
+    settings: Settings | None = None,
     *,
     defer_no_fallback_selection: bool = False,
 ) -> list[tuple[Model, ModelEndpoint]]:
     """Resolve only provider endpoints backed by the attested video worker."""
-    raw_ids, prefs = _routing_for_body(body, settings)
+    inputs = _coerce_routing_inputs(inputs, settings)
+    raw_ids, prefs = list(inputs.model_ids), inputs.preferences
     candidates: list[tuple[Model, ModelEndpoint]] = []
     seen: set[str] = set()
     for model_id in raw_ids:
@@ -671,14 +765,44 @@ def _routing_for_body(
     return ids, prefs
 
 
+def normalize_routing_inputs(
+    body: dict[str, Any],
+    settings: Settings,
+    *,
+    resolved_region: str | None = None,
+) -> NormalizedRoutingInputs:
+    """Build the one routing object selectors and Stage C are allowed to read."""
+
+    model_ids, preferences = _routing_for_body(body, settings)
+    estimated_input_tokens = int(body.get("estimated_input_tokens") or 0)
+    return NormalizedRoutingInputs(
+        model_ids=tuple(model_ids),
+        preferences=preferences,
+        route_type=str(body["route_type"]) if body.get("route_type") is not None else None,
+        region=resolved_region if resolved_region is not None else body.get("region"),
+        service_tier=(
+            str(body["service_tier"]).strip().lower()
+            if body.get("service_tier") is not None
+            else None
+        ),
+        usage_type=preferences.usage_type,
+        fallback_policy=preferences.allow_fallbacks,
+        priority_eligibility_bucket=(
+            "eligible"
+            if estimated_input_tokens <= OPENAI_PRIORITY_MAX_PROMPT_TOKENS
+            else "above_threshold"
+        ),
+        models_fallback_present=body.get("models") is not None,
+    )
+
+
 def resolved_route_preferences(body: dict[str, Any], settings: Settings) -> RoutePreferences:
     """Return the authoritative preferences after aliases and suffixes resolve.
 
     Cross-cutting policy gates must use this instead of reparsing raw provider
     fields, otherwise shorthand such as ``:zdr`` can diverge from routing.
     """
-    _, preferences = _routing_for_body(body, settings)
-    return preferences
+    return normalize_routing_inputs(body, settings).preferences
 
 
 # OpenAI-style dated snapshot suffix, e.g. the "-2025-04-14" in

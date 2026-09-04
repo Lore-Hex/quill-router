@@ -741,6 +741,9 @@ ENV_VARS=(
   # deployed marker.
   "TR_SPEND_LEASE_ISSUANCE_ENABLED=true"
   "TR_SPEND_LEASE_BINDING_ENABLED=${TR_SPEND_LEASE_BINDING_ENABLED:-true}"
+  # Stage C ships inert. This literal source-controlled default is the router
+  # kill switch; verification stays deployed so in-flight receipts fail closed.
+  "TR_SPEND_LEASE_ADMISSION_ACCEPT=false"
   "TR_STAGE_D_HEARTBEAT_ENABLED=true"
   "TR_STAGE_D_ELIGIBILITY_ENABLED=false"
   "TR_STAGE_D_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d"

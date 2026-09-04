@@ -13,12 +13,15 @@ from trusted_router import spend_leases
 from trusted_router.storage_gcp_request_records import (
     insert_gateway_authorization,
     read_gateway_authorization,
+    read_gateway_authorization_admission_columns,
 )
 from trusted_router.storage_gcp_spend_lease import (
+    AUTHORIZATION_ADMISSION_TYPED_COLUMNS,
     AUTHORIZATION_TYPED_COLUMNS,
     CandidateIdentity,
     SpendLeaseDataError,
     arm_bound_retention,
+    authorization_admission_typed_columns,
     authorization_typed_columns,
     complete_candidate,
     due_candidates,
@@ -391,6 +394,72 @@ def test_authorization_typed_columns_round_trip_merge_and_reject_zero_allocation
             {"spend_lease_allocated_micro": 0},
             {},
         )
+
+
+def test_stage_c_authorization_columns_validate_and_round_trip_typed_storage() -> None:
+    assert len(AUTHORIZATION_TYPED_COLUMNS[:9] + AUTHORIZATION_ADMISSION_TYPED_COLUMNS) == 11
+    assert AUTHORIZATION_ADMISSION_TYPED_COLUMNS == (
+        "spend_lease_admission_receipt",
+        "spend_lease_receipt_hash",
+    )
+    receipt = "header.payload.signature"
+    receipt_hash = "a" * 64
+    assert authorization_admission_typed_columns(
+        {
+            "spend_lease_admission_receipt": receipt,
+            "spend_lease_receipt_hash": receipt_hash,
+        }
+    ) == {
+        "spend_lease_admission_receipt": receipt,
+        "spend_lease_receipt_hash": receipt_hash,
+    }
+    with pytest.raises(SpendLeaseDataError, match="NULL together"):
+        authorization_admission_typed_columns(
+            {
+                "spend_lease_admission_receipt": receipt,
+                "spend_lease_receipt_hash": None,
+            }
+        )
+    with pytest.raises(SpendLeaseDataError, match="lowercase SHA-256"):
+        authorization_admission_typed_columns(
+            {
+                "spend_lease_admission_receipt": receipt,
+                "spend_lease_receipt_hash": "A" * 64,
+            }
+        )
+
+    db = FakeSpannerDatabase()
+    authorization = GatewayAuthorization(
+        id="authorization-stage-c",
+        workspace_id="workspace-stage-c",
+        key_hash="k" * 64,
+        model_id="model-stage-c",
+        provider="provider-stage-c",
+        usage_type=UsageType.CREDITS,
+        estimated_microdollars=100,
+        credit_reservation_id="reservation-stage-c",
+        spend_lease_admission_receipt=receipt,
+        spend_lease_receipt_hash=receipt_hash,
+    )
+    _txn(
+        db,
+        lambda transaction: insert_gateway_authorization(
+            transaction,
+            PT,
+            authorization,
+            created_at=NOW,
+        ),
+    )
+    with db.snapshot() as snapshot:
+        stored = read_gateway_authorization_admission_columns(
+            snapshot,
+            PT,
+            authorization.id,
+        )
+    assert stored == {
+        "spend_lease_admission_receipt": receipt,
+        "spend_lease_receipt_hash": receipt_hash,
+    }
 
 
 def _insert_bound_authorization(

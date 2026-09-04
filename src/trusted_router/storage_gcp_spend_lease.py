@@ -42,6 +42,11 @@ AUTHORIZATION_TYPED_COLUMNS = (
     "gateway_request_id",
 )
 
+AUTHORIZATION_ADMISSION_TYPED_COLUMNS = (
+    "spend_lease_admission_receipt",
+    "spend_lease_receipt_hash",
+)
+
 ARBITRATION_COLUMNS = (
     "registration_kind",
     "authorization_id",
@@ -726,6 +731,27 @@ def authorization_typed_columns(payload: Mapping[str, Any]) -> dict[str, Any]:
     return values
 
 
+def authorization_admission_typed_columns(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the two nullable Stage C columns, validating their wire shape."""
+
+    receipt = payload.get("spend_lease_admission_receipt")
+    receipt_digest = payload.get("spend_lease_receipt_hash")
+    if (receipt is None) != (receipt_digest is None):
+        raise SpendLeaseDataError("Stage C receipt and hash must be NULL together")
+    if receipt is not None and (not isinstance(receipt, str) or not receipt):
+        raise SpendLeaseDataError("spend_lease_admission_receipt must be NULL or non-empty")
+    if receipt_digest is not None and (
+        not isinstance(receipt_digest, str)
+        or len(receipt_digest) != 64
+        or any(character not in "0123456789abcdef" for character in receipt_digest)
+    ):
+        raise SpendLeaseDataError("spend_lease_receipt_hash must be NULL or lowercase SHA-256")
+    return {
+        "spend_lease_admission_receipt": receipt,
+        "spend_lease_receipt_hash": receipt_digest,
+    }
+
+
 def merge_authorization_typed_columns(
     payload: Mapping[str, Any] | None,
     typed_columns: Mapping[str, Any],
@@ -776,6 +802,10 @@ def authorization_typed_param_types(param_types: Any) -> dict[str, Any]:
         "invocation_nonce": param_types.STRING,
         "gateway_request_id": param_types.STRING,
     }
+
+
+def authorization_admission_typed_param_types(param_types: Any) -> dict[str, Any]:
+    return {column: param_types.STRING for column in AUTHORIZATION_ADMISSION_TYPED_COLUMNS}
 
 
 def _due_rows(

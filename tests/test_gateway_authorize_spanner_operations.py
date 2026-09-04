@@ -214,7 +214,10 @@ def test_typed_replay_has_exact_sequential_spanner_operation_count() -> None:
     )
     operation_count = sum(end - start for start, end in zip(before, after, strict=True))
     assert replay["data"]["idempotent_replay"] is True
-    assert operation_count == 6
+    # Stage C adds one same-transaction read of the nullable receipt columns.
+    # It is unconditional on replay so rollback cannot let a receipt-less
+    # request reuse a historical locally admitted authorization.
+    assert operation_count == 7
 
 
 def test_typed_accepted_authorization_is_returned_without_post_commit_read(

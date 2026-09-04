@@ -916,6 +916,7 @@ class SpendLease:
         allocated_micro: int,
         abandon_after: datetime,
         now: datetime,
+        admission_receipt: bool = False,
     ) -> AllocateResult:
         # Decision 13 and carve-out viii: the durable authorization view is classified first.
         _require_aware(now, "now")
@@ -954,7 +955,9 @@ class SpendLease:
             return ExistingLocal(self, existing, True)
 
         # Decisions 15, 16, 18: only NEW reaches lifecycle and capacity checks.
-        if self.state != SpendLeaseState.ACTIVE:
+        if self.state != SpendLeaseState.ACTIVE and not (
+            admission_receipt and self.state == SpendLeaseState.DRAINING
+        ):
             refusal_reason = {
                 SpendLeaseState.DRAINING: SpendLeaseRefusalReason.FROZEN_DRAINING,
                 SpendLeaseState.TOMBSTONED: SpendLeaseRefusalReason.FROZEN_TOMBSTONED,

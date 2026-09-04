@@ -795,6 +795,51 @@ def test_armed_zero_row_rereads_selected_shard_and_classifies_reason(
     assert params["expected_trust_tier"] == 1
 
 
+@pytest.mark.parametrize(
+    ("tier", "latch"),
+    [(0, None), (1, NOW), (2, None)],
+)
+def test_armed_admission_reuse_rechecks_trust_before_registration(
+    tier: int,
+    latch: dt.datetime | None,
+) -> None:
+    transaction = _RecordingTransaction(tier=tier, latch=latch)
+    plan = BindingPlan(
+        ledger=SimpleNamespace(),
+        scope="scope",
+        fence_id="fence",
+        region="region",
+        provisional_id="authorization",
+        artifact=SpendLeaseArtifact(
+            "token", "lease", 123, 1, 1, 2, "issuer", "boot", "catalog"
+        ),
+        allocation_micro=1,
+        admission_deadline=NOW,
+        mode="reuse",
+        candidate=None,
+        observed_gen=1,
+        incumbent_lease_id="lease",
+        incumbent_window_closed=False,
+        authoritative_exhaustion=False,
+        trust_eligibility_enabled=True,
+        expected_trust_tier=1,
+    )
+
+    result = plan.transaction_hook(
+        transaction,
+        _ParamTypes,
+        "workspace",
+        7,
+    )
+
+    assert result == {
+        "bound": False,
+        "no_lease_reason": "unpaid_workspace",
+        "spend_lease_outcome": "escrow_refused",
+    }
+    assert transaction.calls == []
+
+
 class _CapturingSigner:
     kid = "issuer"
 
@@ -911,6 +956,7 @@ def test_arm_off_authoritative_claim_has_origin_main_fields_only(
         "lease_id": signer.claims[0]["lease_id"],
         "key_hash": "key",
         "workspace_id": "workspace",
+        "cohort": "credits-chat-v1",
         "cap_micro": 123,
         "gen": 1,
         "iat": int(NOW.timestamp()),
