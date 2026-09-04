@@ -23,7 +23,7 @@ jobs:
       github.repository == 'Lore-Hex/quill-router'
       && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
       - uses: astral-sh/setup-uv@v7

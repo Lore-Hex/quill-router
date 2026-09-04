@@ -125,7 +125,7 @@ jobs:
       REPO: trusted-router
       SERVICE: trusted-router
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set image ref from commit SHA
         id: set-vars
@@ -221,7 +221,7 @@ jobs:
     if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Authenticate to GCP via WIF
         uses: google-github-actions/auth@v3
         with:
@@ -313,7 +313,7 @@ jobs:
     if: github.repository == 'Lore-Hex/quill-router'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Authenticate to GCP via WIF
         uses: google-github-actions/auth@v3
         with:
@@ -411,7 +411,7 @@ jobs:
       # with the six-service production cutover in #712.
       TR_ALLOW_DEPLOYED_COMBINED_SURFACE: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 2
 
@@ -879,7 +879,7 @@ jobs:
           echo "TR_DEPLOY_MUTEX_GENERATION=${DEPLOY_MUTEX_GENERATION}" >> "$GITHUB_ENV"
           echo "TR_DEPLOY_MUTEX_CREATED_AT=${DEPLOY_MUTEX_CREATED_AT}" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 2
 
@@ -1223,7 +1223,7 @@ jobs:
       REGION: us-central1
       SERVICE: trusted-router
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Authenticate to GCP via WIF
         uses: google-github-actions/auth@v3
@@ -1329,7 +1329,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
