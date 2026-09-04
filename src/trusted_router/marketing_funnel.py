@@ -291,6 +291,59 @@ def parse_axiom_json_lines(payload: str) -> list[dict[str, object]]:
     return rows
 
 
+def parse_cloud_logging_engagements(payload: str) -> list[dict[str, object]]:
+    """Convert structured public-service log entries into cohort event rows."""
+    try:
+        entries = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Invalid Cloud Logging JSON") from exc
+    if not isinstance(entries, list):
+        raise ValueError("Cloud Logging payload is not a list")
+
+    rows: list[dict[str, object]] = []
+    for index, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            raise ValueError(f"Cloud Logging entry {index} is not an object")
+        body = entry.get("jsonPayload")
+        if not isinstance(body, dict):
+            continue
+        if body.get("event") != "acquisition.landing_engaged":
+            continue
+        timestamp = entry.get("timestamp")
+        if not isinstance(timestamp, str) or not timestamp:
+            raise ValueError(f"Cloud Logging entry {index} has no timestamp")
+        row = {
+            field: body.get(field)
+            for field in (
+                "event",
+                "anonymous_fingerprint",
+                "utm_source",
+                "utm_medium",
+                "utm_campaign",
+                "utm_content",
+                "landing_path",
+                "experiment_id",
+                "experiment_cell_id",
+            )
+        }
+        row.update(
+            {
+                "first_at": timestamp,
+                "events": 1,
+                "revenue_microdollars": 0,
+                "google_ads_click_events": int(
+                    any(
+                        body.get(field) is True
+                        for field in ("has_gclid", "has_gbraid", "has_wbraid")
+                    )
+                ),
+                "google_ads_persisted_events": 0,
+            }
+        )
+        rows.append(row)
+    return rows
+
+
 def aggregate_funnel_rows(
     records: Iterable[dict[str, object]],
     *,

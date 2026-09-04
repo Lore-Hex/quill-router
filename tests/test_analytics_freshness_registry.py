@@ -475,7 +475,7 @@ def test_two_clouds_sharing_one_status_url_is_a_defect() -> None:
     Postgres, so whichever plane answers publishes the backend BOTH entries
     expect, and the run reports two clouds checked after reading one.
     """
-    url = "https://gchircrcif.eu-west-3.awsapprunner.com/status.json"
+    url = "https://aws-euw3.trustedrouter.com/status.json"
     defects = registry_defects(
         ["aws", "azure"],
         registry=[
@@ -691,11 +691,24 @@ def test_registry_points_at_control_planes_not_the_inference_plane() -> None:
 
 
 def test_aws_entry_is_the_deployment_that_holds_the_dsql_connection() -> None:
-    """Not aws.trustedrouter.com: that vanity name fronts the other AWS plane."""
+    """Region-pinned, because the AWS EU regions differ on exactly this signal.
+
+    aws.trustedrouter.com is Global Accelerator anycast over eu-west-3 and
+    eu-west-1. Only eu-west-3 runs the operational-analytics outbox; eu-west-1
+    has it disabled and correctly publishes ``not_configured``. A check on the
+    anycast name therefore reads a different deployment run to run and reports
+    a healthy drain as unconfigured whenever GA picks Ireland.
+    """
     entry = fleet_endpoint("aws")
 
     assert entry is not None
-    assert entry.status_url == "https://gchircrcif.eu-west-3.awsapprunner.com/status.json"
+    assert entry.status_url == "https://aws-euw3.trustedrouter.com/status.json"
+    # The region that holds the drain has to be named in the URL, not resolved
+    # to at request time by something outside this repo's control.
+    assert "euw3" in entry.status_url
+    # The retired App Runner host: pinning this again would fail DNS, which is
+    # how this check broke on 2026-09-03.
+    assert "awsapprunner.com" not in entry.status_url
 
 
 # ---------------------------------------------------------------------------

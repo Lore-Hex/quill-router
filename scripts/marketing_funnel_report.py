@@ -29,6 +29,7 @@ from trusted_router.marketing_funnel import (  # noqa: E402
     aggregate_cohort_funnel_rows,
     build_axiom_cohort_query,
     parse_axiom_json_lines,
+    parse_cloud_logging_engagements,
     render_markdown,
     render_measurement_markdown,
     summarize_measurement,
@@ -73,6 +74,15 @@ def parse_args() -> argparse.Namespace:
             "'required' fails instead of withholding CAC/ROAS."
         ),
     )
+    parser.add_argument(
+        "--public-engagements",
+        choices=("auto", "required", "off"),
+        default="auto",
+        help=(
+            "Merge metadata-only landing engagements from structured Cloud Logging. "
+            "'required' fails if they cannot be read."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -106,8 +116,15 @@ def main() -> int:
         detail = completed.stderr.strip() or "Axiom query failed"
         raise SystemExit(detail)
     observed_through = dt.datetime.now(dt.UTC)
+    cohort_records = parse_axiom_json_lines(completed.stdout)
+    cloud_engagements, engagement_error = _public_engagements(
+        args,
+        start_at=cohort_start,
+        end_at=observed_through,
+    )
+    cohort_records.extend(cloud_engagements)
     rows = aggregate_cohort_funnel_rows(
-        parse_axiom_json_lines(completed.stdout),
+        cohort_records,
         cohort_start=cohort_start,
         cohort_end=cohort_end,
         observed_through=observed_through,
@@ -140,6 +157,11 @@ def main() -> int:
                         if spend
                         else {"status": "unavailable", "reason": spend_error}
                     ),
+                    "public_engagements": {
+                        "status": "available" if engagement_error is None else "unavailable",
+                        "events": len(cloud_engagements),
+                        "reason": engagement_error,
+                    },
                     "funnel": [row.as_dict() for row in rows],
                 },
                 indent=2,
@@ -204,6 +226,55 @@ def _google_ads_spend(
             raise SystemExit(str(exc)) from exc
         return None, "native_spend_fetch_failed", start_at, end_at
     return spend, None, start_at, end_at
+
+
+def _public_engagements(
+    args: argparse.Namespace,
+    *,
+    start_at: dt.datetime,
+    end_at: dt.datetime,
+) -> tuple[list[dict[str, object]], str | None]:
+    if args.public_engagements == "off":
+        return [], "cloud_logging_disabled"
+    gcloud = shutil.which("gcloud")
+    if gcloud is None:
+        if args.public_engagements == "required":
+            raise SystemExit("gcloud CLI is required for public engagement telemetry")
+        return [], "gcloud_not_available"
+    start = start_at.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
+    end = end_at.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
+    log_filter = (
+        'resource.type="cloud_run_revision" '
+        'AND resource.labels.service_name="trusted-router-public" '
+        'AND jsonPayload.event="acquisition.landing_engaged" '
+        f'AND timestamp>="{start}" AND timestamp<="{end}"'
+    )
+    completed = subprocess.run(  # noqa: S603 - executable is resolved by shutil.which.
+        [
+            gcloud,
+            "logging",
+            "read",
+            log_filter,
+            "--project",
+            "quill-cloud-proxy",
+            "--format=json",
+            "--limit=100000",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        if args.public_engagements == "required":
+            detail = completed.stderr.strip() or "Cloud Logging query failed"
+            raise SystemExit(detail)
+        return [], "cloud_logging_fetch_failed"
+    try:
+        return parse_cloud_logging_engagements(completed.stdout), None
+    except ValueError as exc:
+        if args.public_engagements == "required":
+            raise SystemExit(str(exc)) from exc
+        return [], "cloud_logging_parse_failed"
 
 
 if __name__ == "__main__":
