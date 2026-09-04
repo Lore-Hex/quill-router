@@ -32,6 +32,7 @@ MANIFEST_PATH = (
 )
 
 EXPECTED_MODELS = [
+    "openai/gpt-6-astra",
     "openai/gpt-5.6-sol",
     "openai/gpt-5.6-terra",
     "openai/gpt-5.6-luna",
@@ -39,6 +40,20 @@ EXPECTED_MODELS = [
     "openai/gpt-5.4",
     "openai/gpt-5.4-mini",
 ]
+
+_MODEL_METADATA_OVERRIDES: dict[str, dict[str, Any]] = {
+    "openai/gpt-6-astra": {
+        "context_length": 1_050_000,
+        "max_output_tokens": 128_000,
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"],
+        "supported_features": [
+            "function-calling",
+            "reasoning-effort",
+            "structured-output",
+        ],
+    },
+}
 
 _NON_CHAT_MARKERS = (
     "audio",
@@ -102,11 +117,14 @@ def fetch() -> ProviderPricingResult:
     )
     if not discovered:
         raise RuntimeError("openai: no priced chat models found in authenticated catalog")
+    for model_id, metadata in _MODEL_METADATA_OVERRIDES.items():
+        if row := discovered.get(model_id):
+            row.update(metadata)
 
     checked = models_requiring_canary(MANIFEST_PATH, discovered)
     healthy = {
         model_id
-        for model_id in checked
+        for model_id in sorted(checked)
         if probe_openai_chat(
             base_url=BASE_URL,
             api_key=api_key,
