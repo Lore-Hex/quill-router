@@ -30,13 +30,25 @@ tar --exclude='__pycache__' --exclude='*.pyc' -C "$ROOT" -czf "$archive" \
   clickhouse/build_public_snapshots.py \
   src/trusted_router
 
+# Streaming the archive over gcloud's SSH stdin can leave the IAP transport
+# alive after the remote shell exits. Upload first so the deployment command
+# has no open stdin channel to keep the GitHub runner stuck.
+remote_archive="/tmp/tr-public-snapshots.${GITHUB_RUN_ID:-local}.${RANDOM}.tar.gz"
+
 log "syncing public analytics snapshot worker to ${NAME}"
+gc compute scp "$archive" "${NAME}:${remote_archive}" \
+  --zone="$ZONE" \
+  --tunnel-through-iap \
+  --quiet
 gc compute ssh "$NAME" \
   --zone="$ZONE" \
   --tunnel-through-iap \
   --quiet \
+  --ssh-flag="-T" \
   --command="sudo sh -c '
     set -eu
+    archive=${remote_archive}
+    trap \"rm -f ${remote_archive}\" EXIT
     stage=/opt/tr-clickhouse-public-snapshots-next
     previous=/opt/tr-clickhouse/src.previous-public-snapshots
     builder=/opt/tr-clickhouse/clickhouse/build_public_snapshots.py
@@ -51,7 +63,7 @@ gc compute ssh "$NAME" \
     }
     rm -rf \"\$stage\" \"\$previous\" \"\$previous_builder\"
     mkdir -p \"\$stage\"
-    tar -xzf - -C \"\$stage\"
+    tar -xzf \"\$archive\" -C \"\$stage\"
     PYTHONPATH=\"\$stage/src\" /opt/tr-clickhouse/venv/bin/python \
       -m py_compile \"\$stage/clickhouse/build_public_snapshots.py\"
     systemctl stop tr-clickhouse-public-snapshots.timer \
@@ -76,6 +88,6 @@ gc compute ssh "$NAME" \
       exit 1
     fi
     rm -rf \"\$previous\" \"\$previous_builder\" \"\$stage\"
-  '" <"$archive"
+  '"
 
 log "public analytics snapshot worker is current and publishing all four products"
