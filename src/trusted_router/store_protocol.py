@@ -32,6 +32,7 @@ from trusted_router.storage_models import (
     ConsentRequest,
     CreditAccount,
     CreditMovement,
+    CreditProvenance,
     CreditTransfer,
     CustomModel,
     CustomModelMarkupPayout,
@@ -664,6 +665,9 @@ class Store(Protocol):
         amount_microdollars: int,
         event_id: str,
         *,
+        provenance: CreditProvenance,
+        payment_amount_microdollars: int | None = ...,
+        currency: str | None = ...,
         lifetime_topup_user_id: str | None = ...,
     ) -> bool: ...
     def credit_workspace_once(

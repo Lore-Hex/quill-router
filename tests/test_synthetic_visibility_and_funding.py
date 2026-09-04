@@ -22,7 +22,12 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage import STORE
-from trusted_router.storage_models import SyntheticProbeSample, iso_now, utcnow
+from trusted_router.storage_models import (
+    CreditProvenance,
+    SyntheticProbeSample,
+    iso_now,
+    utcnow,
+)
 from trusted_router.synthetic import funding
 from trusted_router.synthetic.alerts import alert_on_failure_streak
 from trusted_router.synthetic.funding import ensure_monitor_funding
@@ -262,8 +267,18 @@ def test_zero_grant_setting_disables_funding() -> None:
 
     class _Store:
         def credit_workspace_typed_direct(
-            self, workspace_id: str, amount: int, event_id: str
+            self,
+            workspace_id: str,
+            amount: int,
+            event_id: str,
+            *,
+            provenance: CreditProvenance,
         ) -> bool:
+            assert (provenance.source, provenance.provider, provenance.external_ref) == (
+                "provisioning",
+                "system",
+                None,
+            )
             calls.append((workspace_id, amount, event_id))
             return True
 

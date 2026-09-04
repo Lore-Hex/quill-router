@@ -88,6 +88,49 @@ def reserve_credit(
     return count == 1
 
 
+def reserve_credit_for_spend_lease(
+    transaction: Any,
+    param_types: Any,
+    workspace_id: str,
+    amount: int,
+    *,
+    shard: int,
+    trust_eligibility_enabled: bool,
+    expected_trust_tier: int | None,
+) -> bool:
+    """Apply the selected-shard trust guard only after the arm flag flips."""
+
+    if not trust_eligibility_enabled:
+        return reserve_credit(
+            transaction, param_types, workspace_id, amount, shard=shard
+        )
+    if expected_trust_tier is None:
+        raise ValueError("expected_trust_tier is required while trust eligibility is armed")
+    sql = (
+        "UPDATE tr_credit_balance SET reserved = reserved + @est "
+        "WHERE workspace_id=@ws AND shard=@shard "
+        "AND (total_credits - total_usage - reserved) >= @est "
+        "AND trust_tier = @expected_trust_tier AND trust_tier >= 1 "
+        "AND trust_latched_at IS NULL"
+    )
+    count = transaction.execute_update(
+        sql,
+        params={
+            "est": int(amount),
+            "ws": workspace_id,
+            "shard": shard,
+            "expected_trust_tier": int(expected_trust_tier),
+        },
+        param_types={
+            "est": param_types.INT64,
+            "ws": param_types.STRING,
+            "shard": param_types.INT64,
+            "expected_trust_tier": param_types.INT64,
+        },
+    )
+    return count == 1
+
+
 def debit_workspace_credit(
     transaction: Any,
     param_types: Any,

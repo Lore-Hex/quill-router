@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ from trusted_router.config import Settings
 from trusted_router.money import dollars_to_microdollars
 from trusted_router.security import new_api_key
 from trusted_router.storage import create_store
+from trusted_router.storage_models import CreditProvenance
 
 DEFAULT_EMAIL = "synthetic-monitor@trustedrouter.internal"
 DEFAULT_WORKSPACE_NAME = "TrustedRouter Synthetic Monitoring"
@@ -227,6 +229,12 @@ def provision(
         workspace.id,
         funding_microdollars,
         funding_event_id,
+        provenance=CreditProvenance(
+            source="provisioning",
+            provider="system",
+            external_ref=None,
+            occurred_at=datetime.now(UTC),
+        ),
     )
 
     if not existing_keys:

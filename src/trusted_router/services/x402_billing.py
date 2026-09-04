@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, cast
 
@@ -19,6 +20,7 @@ from trusted_router.money import (
 )
 from trusted_router.schemas import X402FundingRequest
 from trusted_router.storage import STORE
+from trusted_router.storage_models import CreditProvenance
 from trusted_router.types import ErrorType
 
 X402_HEADER = "payment-required"
@@ -170,6 +172,14 @@ def credit_x402_payment_intent(
         workspace_id,
         amount_microdollars,
         x402_event_id(payment_intent_id),
+        provenance=CreditProvenance(
+            source="x402",
+            provider="x402",
+            external_ref=payment_intent_id,
+            occurred_at=datetime.fromtimestamp(int(payment_intent.get("created") or 0), tz=UTC),
+        ),
+        payment_amount_microdollars=settled_microdollars,
+        currency="USD",
         lifetime_topup_user_id=_lifetime_topup_user_id(workspace_id, metadata),
     )
     if credited:

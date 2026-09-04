@@ -185,6 +185,7 @@ def test_stripe_webhook_signature_is_required_when_secret_configured(monkeypatch
         "data": {
             "object": {
                 "amount_total": 321,
+                "payment_intent": "pi_signed",
                 "payment_status": "paid",
                 "metadata": {"workspace_id": workspace_id},
             }

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import stripe
@@ -32,6 +33,7 @@ from trusted_router.money import MICRODOLLARS_PER_CENT
 from trusted_router.routes.helpers import json_body
 from trusted_router.services.x402_billing import X402_PAYMENT_METHOD, credit_x402_payment_intent
 from trusted_router.storage import STORE
+from trusted_router.storage_models import CreditProvenance
 from trusted_router.types import ErrorType
 
 log = logging.getLogger(__name__)
@@ -148,6 +150,18 @@ def register(router: APIRouter) -> None:
                     workspace_id,
                     amount_microdollars,
                     credit_event_id,
+                    provenance=CreditProvenance(
+                        source="checkout",
+                        provider="stripe",
+                        external_ref=str(obj.get("payment_intent") or ""),
+                        occurred_at=datetime.fromtimestamp(
+                            int(obj.get("created") or event.get("created") or 0), tz=UTC
+                        ),
+                    ),
+                    payment_amount_microdollars=(
+                        amount_total * MICRODOLLARS_PER_CENT
+                    ),
+                    currency=str(obj.get("currency") or "usd"),
                     lifetime_topup_user_id=_lifetime_topup_user_id(workspace_id, metadata),
                 )
                 if credited:
@@ -250,6 +264,19 @@ def register(router: APIRouter) -> None:
                     workspace_id,
                     amount_microdollars,
                     event_id,
+                    provenance=CreditProvenance(
+                        source="auto_refill",
+                        provider="stripe",
+                        external_ref=str(obj.get("id") or ""),
+                        occurred_at=datetime.fromtimestamp(
+                            int(obj.get("created") or event.get("created") or 0), tz=UTC
+                        ),
+                    ),
+                    payment_amount_microdollars=(
+                        int(obj.get("amount") or amount_microdollars // MICRODOLLARS_PER_CENT)
+                        * MICRODOLLARS_PER_CENT
+                    ),
+                    currency=str(obj.get("currency") or "usd"),
                     lifetime_topup_user_id=_lifetime_topup_user_id(workspace_id, metadata),
                 )
                 if credited:

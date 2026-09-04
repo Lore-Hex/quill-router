@@ -724,6 +724,8 @@ ENV_VARS=(
   "TR_SPEND_LEASE_ISSUANCE_ENABLED=true"
   # Unit 2 authorize hooks ship inert; the binding flip is a later rollout.
   "TR_SPEND_LEASE_BINDING_ENABLED=false"
+  # Slice 1a ships the trust guard inert. A later arm-gate slice owns enabling.
+  "TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=false"
   "TR_STAGE_D_HEARTBEAT_ENABLED=${TR_STAGE_D_HEARTBEAT_ENABLED:-true}"
   "TR_STAGE_D_ELIGIBILITY_ENABLED=${TR_STAGE_D_ELIGIBILITY_ENABLED:-false}"
   "TR_HEARTBEAT_GRACE_SECONDS=${TR_HEARTBEAT_GRACE_SECONDS:-300}"
