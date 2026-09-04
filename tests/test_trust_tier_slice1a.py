@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import datetime as dt
 import re
 import uuid
@@ -151,6 +152,28 @@ def test_trust_event_schemas_have_exact_columns_statuses_and_dedup_keys() -> Non
         "CREATE UNIQUE NULL_FILTERED INDEX tr_trust_event_payment_dedup\n"
         "    ON tr_trust_event (provider, original_payment_ref, kind)"
     ) in ddl
+
+
+def test_postgres_sql_has_no_targetless_on_conflict_do_nothing() -> None:
+    postgres_source = (ROOT / "src/trusted_router/storage_postgres.py").read_text()
+    targetless = re.compile(
+        r"\bON\s+CONFLICT\s+DO\s+NOTHING\b",
+        flags=re.IGNORECASE,
+    )
+    violations = [
+        node.lineno
+        for node in ast.walk(ast.parse(postgres_source))
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and targetless.search(node.value)
+    ]
+
+    assert violations == []
+    assert "ON CONFLICT (workspace_id, event_id) DO NOTHING" in postgres_source
+    assert (
+        "ON CONFLICT (provider, original_payment_ref, kind) DO NOTHING"
+        in postgres_source
+    )
 
 
 def test_every_balance_schema_copy_and_validation_site_uses_same_seven_columns() -> None:
@@ -354,6 +377,24 @@ def test_postgres_payment_reference_dedup_is_atomic_with_credit() -> None:
     ).fetchone()
     assert total is not None and int(total[0]) == 100
     assert count is not None and int(count[0]) == 1
+
+
+def test_postgres_starter_credit_uses_primary_key_dedup_target() -> None:
+    conn = sqlite_postgres_conn()
+    store = postgres_store_on(conn)
+
+    workspace = store.create_workspace(
+        "owner",
+        "starter credit",
+        trial_credit_microdollars=123,
+    )
+
+    row = conn.execute(
+        "SELECT kind, provider, credited_micro FROM tr_trust_event "
+        "WHERE workspace_id = %s AND event_id = %s",
+        (workspace.id, f"provisioning:{workspace.id}"),
+    ).fetchone()
+    assert row == ("grant", "system", 123)
 
 
 def test_every_credit_ingress_pins_the_provider_object_reference_kind() -> None:

@@ -2131,7 +2131,8 @@ class PostgresStore:
           with an ownerless shadow, so this raises loudly instead. Refusing to
           federate one key is recoverable; silently destroying a workspace is
           not.
-        * The credit-balance row is inserted ON CONFLICT DO NOTHING, at ZERO.
+        * The credit-balance row is inserted with
+          ``ON CONFLICT (workspace_id, shard) DO NOTHING``, at ZERO.
           Re-federating a key must never reset a balance that a completed
           credit transfer already funded. An upsert here would silently delete
           transferred money on the next cache miss.
@@ -3316,14 +3317,23 @@ class PostgresStore:
             payment_amount_microdollars=payment_amount_microdollars,
             currency=currency,
         )
+        conflict_clause = (
+            "ON CONFLICT (provider, original_payment_ref, kind) DO NOTHING"
+            if event.kind == "payment"
+            else "ON CONFLICT (workspace_id, event_id) DO NOTHING"
+        )
+        # The only interpolated fragment is selected from the two fixed conflict
+        # clauses above; every event value remains bound as a parameter.
         cursor = conn.execute(
-            "INSERT INTO tr_trust_event (workspace_id, event_id, kind, provider, "
+            "INSERT INTO tr_trust_event "  # noqa: S608 - fixed conflict clauses.
+            "(workspace_id, event_id, kind, provider, "
             "amount_micro, original_payment_ref, adverse_ref, occurred_at, recorded_at, "
             "payment_amount_micro, currency, credited_micro, recovered_micro, "
             "provider_subtype, lifecycle_status, cumulative_refunded, recovery_target, "
             "debit_status, unrecovered_micro, provider_ordering_watermark) VALUES ("
             "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-            "%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+            "%s, %s, %s, %s) "
+            + conflict_clause,
             dataclasses.astuple(event),
         )
         return cursor.rowcount == 1
