@@ -34,6 +34,7 @@ from trusted_router.spend_lease_state import (
     SpendLease,
 )
 from trusted_router.spend_leases import (
+    SPEND_LEASE_COHORT,
     FrozenSpendLeaseCatalog,
     SpendLeaseArtifact,
     SpendLeaseSigner,
@@ -343,6 +344,7 @@ def prepare_candidate(
     claims = {
         "v": 1, "typ": "spend-lease+jws", "authoritative": True,
         "lease_id": lease_id, "key_hash": key_hash, "workspace_id": workspace_id,
+        "cohort": SPEND_LEASE_COHORT,
         "cap_micro": cap_micro, "gen": gen, "iat": int(now.timestamp()),
         "exp": int(expires_at.timestamp()), "boot_kid": boot_kid, "catalog": catalog,
     }

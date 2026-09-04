@@ -6,13 +6,15 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from trusted_router.receipt_keys import b64url_decode, b64url_encode
+from trusted_router.receipt_keys import b64url_decode, b64url_encode, receipt_kid
+from trusted_router.routes.internal import gateway
 from trusted_router.schemas import (
     SpendLeaseAdmissionMarker,
     SpendLeaseAdmissionRejected,
 )
 from trusted_router.spend_lease_admission import ADMISSION_REFUSAL_REASONS
-from trusted_router.spend_leases import boot_auth_digest, parse_boot_auth_header
+from trusted_router.spend_leases import SpendLeaseBoot, parse_boot_auth_header
+from trusted_router.storage import InMemoryStore
 
 FIXTURES = Path(__file__).parent / "fixtures" / "stage_c"
 
@@ -83,6 +85,29 @@ def test_authoritative_lease_fixture_segments_and_signature_are_exact() -> None:
     }
 
 
+def test_authoritative_lease_fixture_has_every_enclave_required_claim() -> None:
+    claims = _json("authoritative_lease_payload.json")
+
+    assert {
+        "authoritative",
+        "boot_kid",
+        "cap_micro",
+        "catalog",
+        "cohort",
+        "exp",
+        "gen",
+        "iat",
+        "key_hash",
+        "lease_id",
+        "local_admission_allowed",
+        "routing_policy_hash",
+        "typ",
+        "v",
+        "workspace_id",
+    } <= set(claims)
+    assert claims["cohort"] == "credits-chat-v1"
+
+
 def test_normalized_routing_fixture_hash_is_exact() -> None:
     normalized = _bytes("normalized_routing_inputs.json")
 
@@ -124,9 +149,35 @@ def test_receipt_bearing_request_and_boot_auth_are_exact_bytes() -> None:
         "admission_receipt_compact.jws"
     )
     seed = bytes.fromhex(_bytes("admission_receipt_ed25519_seed.hex").decode())
-    Ed25519PrivateKey.from_private_bytes(seed).public_key().verify(
-        b64url_decode(auth.signature),
-        boot_auth_digest("POST", "/v1/internal/gateway/authorize", raw),
+    private = Ed25519PrivateKey.from_private_bytes(seed)
+    jwk = {
+        "crv": "Ed25519",
+        "kty": "OKP",
+        "x": b64url_encode(private.public_key().public_bytes_raw()),
+    }
+    assert auth.kid == receipt_kid(jwk)
+    image_digest = "sha256:" + "67" * 32
+    store = InMemoryStore()
+    store.observe_spend_lease_boot(
+        SpendLeaseBoot(
+            kid=auth.kid,
+            jwk=jwk,
+            approved=True,
+            verified=True,
+            image_digest=image_digest,
+            attestation_kind="gcp-cs-jwt",
+            registered_at="2026-09-03T00:00:00Z",
+        )
+    )
+    assert gateway.verify_boot_auth(
+        boot=store.get_spend_lease_boot(auth.kid),
+        auth=auth,
+        method="POST",
+        path="/internal/gateway/authorize",
+        exact_body_bytes=raw,
+        signed_lookup_hash=request["api_key_hash"],
+        resolved_lookup_hash=request["api_key_hash"],
+        accepted_image_digests={image_digest},
     )
 
 

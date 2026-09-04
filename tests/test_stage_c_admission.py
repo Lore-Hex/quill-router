@@ -31,6 +31,7 @@ from trusted_router.spend_lease_admission import (
 from trusted_router.spend_lease_ledger import BigtableSpendLeaseLedger
 from trusted_router.spend_lease_state import SpendLease
 from trusted_router.spend_leases import (
+    SPEND_LEASE_COHORT,
     BootAuthHeader,
     SpendLeaseBoot,
     SpendLeaseSigner,
@@ -92,14 +93,14 @@ def _receipt_with_kid(
 
 def _request(raw: bytes, private: Ed25519PrivateKey, kid: str) -> Request:
     signature = private.sign(
-        boot_auth_digest("POST", "/v1/internal/gateway/authorize", raw)
+        boot_auth_digest("POST", "/internal/gateway/authorize", raw)
     )
     header = f"kid={kid},sig={b64url_encode(signature)}".encode()
     return Request(
         {
             "type": "http",
             "method": "POST",
-            "path": "/v1/internal/gateway/authorize",
+            "path": "/internal/gateway/authorize",
             "headers": [(b"x-tr-boot-auth", header)],
         }
     )
@@ -219,6 +220,7 @@ def _verification_harness() -> dict[str, Any]:
         "boot_kid": boot.kid,
         "cap_micro": 10_000,
         "catalog": catalog,
+        "cohort": SPEND_LEASE_COHORT,
         "exp": now + 60,
         "gen": 3,
         "iat": now - 1,
@@ -628,6 +630,7 @@ def test_stage_c_mint_and_direct_presented_lease_reuse_end_to_end(
     assert "spend_lease" in minted["data"], minted
     lease_token = minted["data"]["spend_lease"]["token"]
     lease_claims = json.loads(b64url_decode(lease_token.split(".")[1]))
+    assert lease_claims["cohort"] == SPEND_LEASE_COHORT
     assert lease_claims["local_admission_allowed"] is True
     assert lease_claims["routing_policy_hash"]
     assert set(lease_claims["catalog"]["candidates"][0]) >= {

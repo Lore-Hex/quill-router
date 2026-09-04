@@ -4,6 +4,7 @@ import json
 import uuid
 from pathlib import Path
 
+import pytest
 from starlette.requests import Request
 
 from tests.fakes.spanner import _ParamTypes, make_fake_store
@@ -14,6 +15,7 @@ from trusted_router.receipt_keys import b64url_decode
 from trusted_router.routes.internal import gateway
 from trusted_router.schemas import GatewayAuthorizeRequest
 from trusted_router.spend_leases import (
+    SPEND_LEASE_COHORT,
     SpendLeaseSigner,
     freeze_spend_lease_catalog,
     mint_shadow_spend_lease,
@@ -32,7 +34,7 @@ def _canonical(value: object) -> bytes:
 
 
 def test_flag_off_authorize_response_is_byte_exact_origin_main(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store, database, _ = make_fake_store(request_record_write_mode="typed")
     workspace = Workspace(
@@ -88,7 +90,9 @@ def test_flag_off_authorize_response_is_byte_exact_origin_main(
     assert _canonical(response) == (GOLDENS / "authorize_response.json").read_bytes()
 
 
-def test_flag_off_lease_claims_are_byte_exact_origin_main(monkeypatch) -> None:
+def test_flag_off_lease_claims_are_byte_exact_origin_main(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     model = MODELS["anthropic/claude-haiku-4.5"]
     endpoint = next(
         candidate
@@ -119,8 +123,10 @@ def test_flag_off_lease_claims_are_byte_exact_origin_main(monkeypatch) -> None:
         now=2_000_000_000,
     )
     claims = b64url_decode(artifact.token.split(".")[1])
+    origin_main_claims = (GOLDENS / "lease_claims.json").read_bytes()
 
-    assert claims == (GOLDENS / "lease_claims.json").read_bytes()
+    assert claims == origin_main_claims
+    assert json.loads(claims)["cohort"] == SPEND_LEASE_COHORT
 
 
 def test_flag_off_authorization_insert_sql_is_byte_exact_origin_main() -> None:
