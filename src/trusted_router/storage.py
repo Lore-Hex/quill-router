@@ -53,6 +53,8 @@ from trusted_router.storage_keys import InMemoryApiKeys
 from trusted_router.storage_models import (
     AcquisitionAttribution,
     ActivationReminderTask,
+    AdverseTrustEvent,
+    AdverseTrustResult,
     ApiKey,
     ApiKeyAuthContext,
     ApiKeyUsageSnapshot,
@@ -90,6 +92,7 @@ from trusted_router.storage_models import (
     SyntheticProbeSample,
     SyntheticRollup,
     TrustEvent,
+    TrustInboxRow,
     User,
     UserProvidedModel,
     VerificationToken,
@@ -111,7 +114,14 @@ from trusted_router.storage_user_models import InMemoryUserProvidedModels
 from trusted_router.storage_verification_tokens import InMemoryVerificationTokens
 from trusted_router.storage_video_jobs import InMemoryVideoJobs
 from trusted_router.storage_wallet_challenges import InMemoryWalletChallenges
-from trusted_router.trust_tiers import payment_or_grant_event
+from trusted_router.trust_tiers import (
+    adverse_event_from_payload,
+    adverse_event_payload,
+    adverse_transition_outcome,
+    payment_or_grant_event,
+    payment_recovery_target,
+    validate_adverse_event,
+)
 from trusted_router.types import IdentityVerificationStatus, UsageType
 
 
@@ -136,6 +146,7 @@ class InMemoryStore:
         self.credit_money: dict[str, CreditMoney] = {}
         self.stripe_events: set[str] = set()
         self.trust_events: dict[tuple[str, str], TrustEvent] = {}
+        self.trust_inbox: dict[tuple[str, str], TrustInboxRow] = {}
         self.webhook_events: set[tuple[str, str]] = set()
         self.earnings_money: dict[str, tuple[int, int]] = {}
         self.credit_movements: dict[tuple[str, str], CreditMovement] = {}
@@ -669,7 +680,13 @@ class InMemoryStore:
             if deleted is not None:
                 workspace.deleted = deleted
             if billing_paused is not None:
-                workspace.billing_paused = billing_paused
+                causes = set(workspace.billing_pause_causes)
+                if billing_paused:
+                    causes.add("migration")
+                else:
+                    causes.discard("migration")
+                workspace.billing_pause_causes = sorted(causes)
+                workspace.billing_paused = bool(causes)
             if billing_pause_reason is not None:
                 workspace.billing_pause_reason = billing_pause_reason
             return workspace
@@ -1554,13 +1571,239 @@ class InMemoryStore:
                 self.stripe_events.add(event_id)
                 return False
             self.stripe_events.add(event_id)
-            money.total_credits_microdollars += amount_microdollars
             self.trust_events[(workspace_id, event_id)] = trust_event
+            available = int(amount_microdollars)
+            for payment in sorted(
+                (
+                    row
+                    for row in self.trust_events.values()
+                    if row.workspace_id == workspace_id
+                    and row.kind == "payment"
+                    and int(row.unrecovered_micro or 0) > 0
+                ),
+                key=lambda row: (row.occurred_at, row.event_id),
+            ):
+                take = min(available, int(payment.unrecovered_micro or 0))
+                if take == 0:
+                    break
+                payment.recovered_micro = int(payment.recovered_micro or 0) + take
+                payment.unrecovered_micro = int(payment.unrecovered_micro or 0) - take
+                payment.debit_status = (
+                    "debited" if payment.unrecovered_micro == 0 else "partial"
+                )
+                available -= take
+            money.total_credits_microdollars += available
+            self._sync_principal_recovery_pause_locked(workspace_id)
+            for key, inbox in sorted(
+                tuple(self.trust_inbox.items()),
+                key=lambda item: (item[1].received_at, item[1].adverse_ref),
+            ):
+                pending = adverse_event_from_payload(inbox.payload)
+                if (
+                    pending.provider == provenance.provider
+                    and pending.original_payment_ref == provenance.external_ref
+                ):
+                    self._apply_adverse_trust_event_locked(pending)
+                    del self.trust_inbox[key]
             if lifetime_topup_user_id is not None:
                 self.lifetime_topups[lifetime_topup_user_id] = self.lifetime_topups.get(
                     lifetime_topup_user_id, 0
                 ) + int(amount_microdollars)
             return True
+
+    def _sync_principal_recovery_pause_locked(self, workspace_id: str) -> None:
+        workspace = self.workspaces.get(workspace_id)
+        if workspace is None:
+            return
+        debt = any(
+            row.workspace_id == workspace_id
+            and row.kind == "payment"
+            and int(row.unrecovered_micro or 0) > 0
+            for row in self.trust_events.values()
+        )
+        causes = set(workspace.billing_pause_causes)
+        if debt:
+            causes.add("principal_recovery")
+        else:
+            causes.discard("principal_recovery")
+        workspace.billing_pause_causes = sorted(causes)
+        workspace.billing_paused = bool(causes)
+        if debt:
+            workspace.billing_pause_reason = "principal_recovery"
+        elif not causes and workspace.billing_pause_reason == "principal_recovery":
+            workspace.billing_pause_reason = ""
+
+    def _apply_adverse_trust_event_locked(
+        self, event: AdverseTrustEvent
+    ) -> AdverseTrustResult | None:
+        payment = next(
+            (
+                row
+                for row in self.trust_events.values()
+                if row.kind == "payment"
+                and row.provider == event.provider
+                and row.original_payment_ref == event.original_payment_ref
+            ),
+            None,
+        )
+        if payment is None:
+            return None
+        existing = next(
+            (
+                row
+                for row in self.trust_events.values()
+                if row.provider == event.provider and row.adverse_ref == event.adverse_ref
+            ),
+            None,
+        )
+        if existing is not None and existing.kind != event.kind:
+            return AdverseTrustResult(
+                "illegal", workspace_id=payment.workspace_id, provider=event.provider
+            )
+        transition = adverse_transition_outcome(
+            kind=event.kind,
+            old_status=existing.lifecycle_status if existing else None,
+            old_watermark=existing.provider_ordering_watermark if existing else None,
+            new_status=event.lifecycle_status,
+            new_watermark=event.provider_ordering_watermark,
+        )
+        if transition != "applied":
+            return AdverseTrustResult(
+                transition,
+                payment.workspace_id,
+                int(payment.recovery_target or 0),
+                int(payment.recovered_micro or 0),
+                int(payment.unrecovered_micro or 0),
+                event.provider,
+            )
+        now = dt.datetime.now(dt.UTC)
+        if existing is None:
+            existing = TrustEvent(
+                payment.workspace_id,
+                event.event_id,
+                event.kind,
+                event.provider,
+                event.amount_micro,
+                event.original_payment_ref,
+                event.adverse_ref,
+                event.occurred_at,
+                now,
+                payment.payment_amount_micro,
+                payment.currency,
+                payment.credited_micro,
+                None,
+                event.provider_subtype,
+                event.lifecycle_status,
+                None,
+                None,
+                None,
+                None,
+                event.provider_ordering_watermark,
+            )
+            self.trust_events[(payment.workspace_id, event.event_id)] = existing
+        else:
+            existing.amount_micro = event.amount_micro
+            existing.occurred_at = event.occurred_at
+            existing.recorded_at = now
+            existing.provider_subtype = event.provider_subtype
+            existing.lifecycle_status = event.lifecycle_status
+            existing.provider_ordering_watermark = event.provider_ordering_watermark
+        adverse = [
+            row
+            for row in self.trust_events.values()
+            if row.workspace_id == payment.workspace_id
+            and row.provider == payment.provider
+            and row.original_payment_ref == payment.original_payment_ref
+            and row.kind != "payment"
+        ]
+        target, net_refunded = payment_recovery_target(payment, adverse)
+        recovered = int(payment.recovered_micro or 0)
+        unrecovered = int(payment.unrecovered_micro or 0)
+        if int(payment.recovery_target or 0) != recovered + unrecovered:
+            raise RuntimeError("payment recovery invariant violated")
+        delta = target - int(payment.recovery_target or 0)
+        money = self.credit_money[payment.workspace_id]
+        if delta > 0:
+            safe = max(
+                0,
+                money.total_credits_microdollars
+                - money.total_usage_microdollars
+                - money.reserved_microdollars,
+            )
+            debit = min(delta, safe)
+            money.total_credits_microdollars -= debit
+            recovered += debit
+            unrecovered += delta - debit
+        elif delta < 0:
+            decrease = -delta
+            canceled = min(decrease, unrecovered)
+            unrecovered -= canceled
+            restore = min(decrease - canceled, recovered)
+            recovered -= restore
+            money.total_credits_microdollars += restore
+        payment.recovery_target = target
+        payment.recovered_micro = recovered
+        payment.unrecovered_micro = unrecovered
+        payment.cumulative_refunded = net_refunded
+        payment.debit_status = (
+            "debited" if unrecovered == 0 else ("unrecovered" if recovered == 0 else "partial")
+        )
+        existing.recovery_target = target
+        existing.cumulative_refunded = net_refunded
+        existing.unrecovered_micro = unrecovered
+        existing.debit_status = payment.debit_status
+        self._sync_principal_recovery_pause_locked(payment.workspace_id)
+        return AdverseTrustResult(
+            "applied",
+            payment.workspace_id,
+            target,
+            recovered,
+            unrecovered,
+            event.provider,
+        )
+
+    def record_adverse_trust_event(self, event: AdverseTrustEvent) -> AdverseTrustResult:
+        validate_adverse_event(event)
+        with self._lock:
+            resolved_event = event
+            result = self._apply_adverse_trust_event_locked(resolved_event)
+            if result is None and event.provider == "stripe":
+                x402_event = dataclasses.replace(event, provider="x402")
+                x402_result = self._apply_adverse_trust_event_locked(x402_event)
+                if x402_result is not None:
+                    resolved_event = x402_event
+                    result = x402_result
+            if result is not None:
+                resolved = result
+            else:
+                self.trust_inbox.setdefault(
+                    (resolved_event.provider, resolved_event.adverse_ref),
+                    TrustInboxRow(
+                        resolved_event.provider,
+                        resolved_event.adverse_ref,
+                        adverse_event_payload(resolved_event),
+                        dt.datetime.now(dt.UTC),
+                    ),
+                )
+                resolved = AdverseTrustResult("inbox", provider=resolved_event.provider)
+        if resolved.unrecovered_micro > 0 and resolved.workspace_id is not None:
+            from trusted_router.services.trust_recovery import (
+                alert_unrecovered_principal,
+            )
+
+            alert_unrecovered_principal(resolved)
+        return resolved
+
+    def list_stale_trust_inbox(
+        self, *, older_than: dt.datetime
+    ) -> tuple[TrustInboxRow, ...]:
+        with self._lock:
+            return tuple(
+                sorted(
+                    (row for row in self.trust_inbox.values() if row.received_at < older_than),
+                    key=lambda row: (row.received_at, row.provider, row.adverse_ref),
+                )
+            )
 
     # Earnings & movement primitives -----------------------------------------
 

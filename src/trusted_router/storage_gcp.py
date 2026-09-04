@@ -64,6 +64,8 @@ from trusted_router.spend_windows import KeyWindowLimitDecision
 from trusted_router.storage import (
     AcquisitionAttribution,
     ActivationReminderTask,
+    AdverseTrustEvent,
+    AdverseTrustResult,
     ApiKey,
     ApiKeyUsageSnapshot,
     AuthSession,
@@ -186,7 +188,11 @@ from trusted_router.storage_gcp_synthetic_rollups import (
 )
 from trusted_router.storage_gcp_trust import (
     TRUST_EVENT_COLUMNS,
+    absorb_unrecovered_recovery_tx,
+    apply_adverse_trust_event_tx,
+    drain_matching_trust_inbox_tx,
     insert_credit_trust_event,
+    insert_trust_inbox_tx,
     recompute_workspace_trust_tier_tx,
     trust_event_row,
 )
@@ -1095,7 +1101,13 @@ class SpannerBigtableStore:
             if deleted is not None:
                 workspace.deleted = deleted
             if billing_paused is not None:
-                workspace.billing_paused = billing_paused
+                causes = set(workspace.billing_pause_causes)
+                if billing_paused:
+                    causes.add("migration")
+                else:
+                    causes.discard("migration")
+                workspace.billing_pause_causes = sorted(causes)
+                workspace.billing_paused = bool(causes)
             if billing_pause_reason is not None:
                 workspace.billing_pause_reason = billing_pause_reason
             self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
@@ -2110,9 +2122,9 @@ class SpannerBigtableStore:
         currency: str | None = None,
         lifetime_topup_user_id: str | None = None,
     ) -> bool:
-        def txn(transaction: Any) -> bool:
+        def txn(transaction: Any) -> tuple[bool, tuple[AdverseTrustResult, ...]]:
             if self._read_entity_tx(transaction, "stripe_event", event_id, dict) is not None:
-                return False
+                return False, ()
             amount = int(amount_microdollars)
             account = self._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
             if account is None:
@@ -2133,7 +2145,7 @@ class SpannerBigtableStore:
                 ),
             )
             if not trust_event_inserted:
-                return False
+                return False, ()
             self._credit_workspace_balance_tx(
                 transaction,
                 workspace_id,
@@ -2157,9 +2169,92 @@ class SpannerBigtableStore:
                 _json_body({"created_at": created_at}),
                 now,
             )
-            return True
+            drained: tuple[AdverseTrustResult, ...] = ()
+            if provenance.external_ref is not None:
+                drained = drain_matching_trust_inbox_tx(
+                    transaction,
+                    self._param_types,
+                    provider=provenance.provider,
+                    original_payment_ref=provenance.external_ref,
+                    now=now,
+                    read_entity_tx=self._read_entity_tx,
+                    write_entity_tx=self._write_entity_trust_dml_tx,
+                )
+            return True, drained
 
-        return self._run_in_transaction(txn)
+        credited, drained = self._run_in_transaction(txn)
+        for result in drained:
+            self._alert_unrecovered_principal(result)
+        return credited
+
+    @staticmethod
+    def _alert_unrecovered_principal(result: AdverseTrustResult) -> None:
+        from trusted_router.services.trust_recovery import alert_unrecovered_principal
+
+        alert_unrecovered_principal(result)
+
+    def record_adverse_trust_event(self, event: AdverseTrustEvent) -> AdverseTrustResult:
+        now = dt.datetime.now(dt.UTC).replace(microsecond=0)
+
+        def txn(transaction: Any) -> AdverseTrustResult:
+            resolved_event = event
+            result = apply_adverse_trust_event_tx(
+                transaction,
+                self._param_types,
+                event,
+                now=now,
+                read_entity_tx=self._read_entity_tx,
+                write_entity_tx=self._write_entity_trust_dml_tx,
+            )
+            if result is None and event.provider == "stripe":
+                x402_event = dataclasses.replace(event, provider="x402")
+                x402_result = apply_adverse_trust_event_tx(
+                    transaction,
+                    self._param_types,
+                    x402_event,
+                    now=now,
+                    read_entity_tx=self._read_entity_tx,
+                    write_entity_tx=self._write_entity_trust_dml_tx,
+                )
+                if x402_result is not None:
+                    resolved_event = x402_event
+                    result = x402_result
+            if result is not None:
+                return result
+            insert_trust_inbox_tx(
+                transaction,
+                self._param_types,
+                resolved_event,
+                received_at=now,
+            )
+            return AdverseTrustResult("inbox", provider=resolved_event.provider)
+
+        result = self._run_in_transaction(txn)
+        if result.outcome in {"stale", "illegal"}:
+            log.warning(
+                "trust.adverse_transition_%s provider=%s adverse_ref=%s status=%s",
+                result.outcome,
+                event.provider,
+                event.adverse_ref,
+                event.lifecycle_status,
+            )
+        self._alert_unrecovered_principal(result)
+        return result
+
+    def list_stale_trust_inbox(
+        self, *, older_than: dt.datetime
+    ) -> tuple[Any, ...]:
+        from trusted_router.storage_models import TrustInboxRow
+
+        with self._database.snapshot() as snapshot:
+            rows = snapshot.execute_sql(
+                "SELECT provider, adverse_ref, payload, received_at "
+                "FROM tr_trust_inbox WHERE received_at<@older_than "
+                "ORDER BY received_at, provider, adverse_ref",
+                params={"older_than": older_than},
+                param_types={"older_than": self._param_types.TIMESTAMP},
+            )
+            return tuple(TrustInboxRow(*row) for row in rows)
 
     def credit_workspace_once(
         self, workspace_id: str, amount_microdollars: int, event_id: str
@@ -2198,9 +2293,21 @@ class SpannerBigtableStore:
             account = self._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
         if account is None:
             raise ValueError("credit_account_not_found")
+        amount = int(amount_microdollars)
+        shard_count = credit_shard_count(account)
+        absorbed = absorb_unrecovered_recovery_tx(
+            transaction,
+            self._param_types,
+            workspace_id=workspace_id,
+            amount_micro=amount,
+            shard_count=shard_count,
+            now=now,
+            read_entity_tx=self._read_entity_tx,
+            write_entity_tx=self._write_entity_trust_dml_tx,
+        )
         deltas = distribute_credit_amount(
-            int(amount_microdollars),
-            credit_shard_count(account),
+            amount - absorbed,
+            shard_count,
         )
         for shard, delta in enumerate(deltas):
             updated = credit_credit_shard(
@@ -2216,6 +2323,24 @@ class SpannerBigtableStore:
                     "missing authoritative tr_credit_balance shard "
                     f"{shard} for workspace {workspace_id}"
                 )
+
+    def _write_entity_trust_dml_tx(
+        self,
+        transaction: Any,
+        kind: str,
+        entity_id: str,
+        value: Any,
+    ) -> None:
+        updated = update_entity_body_dml(
+            transaction,
+            self._param_types,
+            kind,
+            entity_id,
+            _json_body(value),
+            dt.datetime.now(dt.UTC),
+        )
+        if int(updated) != 1:
+            raise RuntimeError("trust transaction lost its workspace compatibility row")
 
     def _increment_lifetime_topup_tx(
         self,

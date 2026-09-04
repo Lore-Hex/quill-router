@@ -111,6 +111,8 @@ from trusted_router.storage_models import (
     FUTURE_SAMPLE_SKEW_SECONDS,
     AcquisitionAttribution,
     ActivationReminderTask,
+    AdverseTrustEvent,
+    AdverseTrustResult,
     ApiKey,
     ApiKeyAuthContext,
     ApiKeyUsageSnapshot,
@@ -146,6 +148,8 @@ from trusted_router.storage_models import (
     SignupResult,
     SyntheticProbeSample,
     SyntheticRollup,
+    TrustEvent,
+    TrustInboxRow,
     User,
     UserProvidedModel,
     VerificationToken,
@@ -188,7 +192,13 @@ from trusted_router.synthetic.rollups import (
     new_rollup_for_sample,
     sample_rollup_ids,
 )
-from trusted_router.trust_tiers import payment_or_grant_event
+from trusted_router.trust_tiers import (
+    adverse_event_payload,
+    adverse_transition_outcome,
+    payment_or_grant_event,
+    payment_recovery_target,
+    validate_adverse_event,
+)
 from trusted_router.types import IdentityVerificationStatus, UsageType
 
 T = TypeVar("T")
@@ -3409,6 +3419,281 @@ class PostgresStore:
                 external_ref=None,
                 occurred_at=dt.datetime.now(dt.UTC),
             ),
+        )
+
+    @staticmethod
+    def _trust_event_from_row(row: Any) -> TrustEvent:
+        values = list(row)
+        for index in (7, 8):
+            if isinstance(values[index], str):
+                values[index] = dt.datetime.fromisoformat(values[index].replace("Z", "+00:00"))
+        return TrustEvent(*values)
+
+    @staticmethod
+    def _trust_event_select() -> str:
+        return (
+            "workspace_id, event_id, kind, provider, amount_micro, "
+            "original_payment_ref, adverse_ref, occurred_at, recorded_at, "
+            "payment_amount_micro, currency, credited_micro, recovered_micro, "
+            "provider_subtype, lifecycle_status, cumulative_refunded, "
+            "recovery_target, debit_status, unrecovered_micro, "
+            "provider_ordering_watermark"
+        )
+
+    def record_adverse_trust_event(self, event: AdverseTrustEvent) -> AdverseTrustResult:
+        validate_adverse_event(event)
+
+        def apply(conn: Any) -> AdverseTrustResult:
+            payment_row = conn.execute(
+                "SELECT " + self._trust_event_select() + " FROM tr_trust_event "  # noqa: S608 - fixed columns.
+                "WHERE provider = %s AND kind = 'payment' "
+                "AND original_payment_ref = %s FOR UPDATE",
+                (event.provider, event.original_payment_ref),
+                prepare=False,
+            ).fetchone()
+            if payment_row is None:
+                conn.execute(
+                    "INSERT INTO tr_trust_inbox "
+                    "(provider, adverse_ref, payload, received_at) "
+                    "VALUES (%s, %s, %s, CURRENT_TIMESTAMP) "
+                    "ON CONFLICT (provider, adverse_ref) DO NOTHING",
+                    (event.provider, event.adverse_ref, adverse_event_payload(event)),
+                    prepare=False,
+                )
+                return AdverseTrustResult("inbox", provider=event.provider)
+            payment = self._trust_event_from_row(payment_row)
+            existing_row = conn.execute(
+                "SELECT " + self._trust_event_select() + " FROM tr_trust_event "  # noqa: S608 - fixed columns.
+                "WHERE provider = %s AND adverse_ref = %s FOR UPDATE",
+                (event.provider, event.adverse_ref),
+                prepare=False,
+            ).fetchone()
+            existing = self._trust_event_from_row(existing_row) if existing_row else None
+            if existing is not None and existing.kind != event.kind:
+                return AdverseTrustResult(
+                    "illegal", workspace_id=payment.workspace_id, provider=event.provider
+                )
+            outcome = adverse_transition_outcome(
+                kind=event.kind,
+                old_status=existing.lifecycle_status if existing else None,
+                old_watermark=existing.provider_ordering_watermark if existing else None,
+                new_status=event.lifecycle_status,
+                new_watermark=event.provider_ordering_watermark,
+            )
+            if outcome != "applied":
+                return AdverseTrustResult(
+                    outcome,
+                    payment.workspace_id,
+                    int(payment.recovery_target or 0),
+                    int(payment.recovered_micro or 0),
+                    int(payment.unrecovered_micro or 0),
+                    event.provider,
+                )
+            if existing is None:
+                conn.execute(
+                    "INSERT INTO tr_trust_event "
+                    "(workspace_id, event_id, kind, provider, amount_micro, "
+                    "original_payment_ref, adverse_ref, occurred_at, recorded_at, "
+                    "payment_amount_micro, currency, credited_micro, provider_subtype, "
+                    "lifecycle_status, provider_ordering_watermark) VALUES ("
+                    "%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, "
+                    "%s, %s, %s, %s) ON CONFLICT (provider, adverse_ref, kind) DO NOTHING",
+                    (
+                        payment.workspace_id,
+                        event.event_id,
+                        event.kind,
+                        event.provider,
+                        event.amount_micro,
+                        event.original_payment_ref,
+                        event.adverse_ref,
+                        event.occurred_at,
+                        payment.payment_amount_micro,
+                        payment.currency,
+                        payment.credited_micro,
+                        event.provider_subtype,
+                        event.lifecycle_status,
+                        event.provider_ordering_watermark,
+                    ),
+                    prepare=False,
+                )
+                adverse_event_id = event.event_id
+            else:
+                conn.execute(
+                    "UPDATE tr_trust_event SET amount_micro = %s, occurred_at = %s, "
+                    "recorded_at = CURRENT_TIMESTAMP, provider_subtype = %s, "
+                    "lifecycle_status = %s, provider_ordering_watermark = %s "
+                    "WHERE workspace_id = %s AND event_id = %s",
+                    (
+                        event.amount_micro,
+                        event.occurred_at,
+                        event.provider_subtype,
+                        event.lifecycle_status,
+                        event.provider_ordering_watermark,
+                        payment.workspace_id,
+                        existing.event_id,
+                    ),
+                )
+                adverse_event_id = existing.event_id
+            balance_rows = conn.execute(
+                "SELECT shard, total_credits, total_usage, reserved, "
+                "billing_pause_causes FROM tr_credit_balance "
+                "WHERE workspace_id = %s ORDER BY shard FOR UPDATE",
+                (payment.workspace_id,),
+                prepare=False,
+            ).fetchall()
+            conn.execute(
+                "UPDATE tr_credit_balance SET trust_latched_at = "
+                "COALESCE(trust_latched_at, CURRENT_TIMESTAMP), "
+                "updated_at = CURRENT_TIMESTAMP WHERE workspace_id = %s",
+                (payment.workspace_id,),
+            )
+            adverse_rows = conn.execute(
+                "SELECT " + self._trust_event_select() + " FROM tr_trust_event "  # noqa: S608 - fixed columns.
+                "WHERE workspace_id = %s AND provider = %s "
+                "AND original_payment_ref = %s AND kind != 'payment'",
+                (payment.workspace_id, payment.provider, payment.original_payment_ref),
+                prepare=False,
+            ).fetchall()
+            target, net_refunded = payment_recovery_target(
+                payment, (self._trust_event_from_row(row) for row in adverse_rows)
+            )
+            recovered = int(payment.recovered_micro or 0)
+            unrecovered = int(payment.unrecovered_micro or 0)
+            old_target = int(payment.recovery_target or 0)
+            if old_target != recovered + unrecovered:
+                raise RuntimeError("payment recovery invariant violated")
+            delta = target - old_target
+            if delta > 0:
+                remaining = delta
+                for shard, credits, usage, reserved, _causes in balance_rows:
+                    take = min(remaining, max(0, int(credits) - int(usage) - int(reserved)))
+                    if take:
+                        changed = conn.execute(
+                            "UPDATE tr_credit_balance SET total_credits = total_credits - %s "
+                            "WHERE workspace_id = %s AND shard = %s "
+                            "AND total_credits - total_usage - reserved >= %s",
+                            (take, payment.workspace_id, shard, take),
+                        )
+                        if changed.rowcount != 1:
+                            raise RuntimeError("principal recovery debit guard lost")
+                        recovered += take
+                        remaining -= take
+                    if remaining == 0:
+                        break
+                unrecovered += remaining
+            elif delta < 0:
+                decrease = -delta
+                canceled = min(decrease, unrecovered)
+                unrecovered -= canceled
+                restore = min(decrease - canceled, recovered)
+                recovered -= restore
+                for shard, amount in enumerate(distribute_credit_amount(restore, len(balance_rows))):
+                    if amount:
+                        conn.execute(
+                            "UPDATE tr_credit_balance SET total_credits = total_credits + %s "
+                            "WHERE workspace_id = %s AND shard = %s",
+                            (amount, payment.workspace_id, shard),
+                        )
+            debit_status = (
+                "debited"
+                if unrecovered == 0
+                else ("unrecovered" if recovered == 0 else "partial")
+            )
+            conn.execute(
+                "UPDATE tr_trust_event SET recovered_micro = %s, unrecovered_micro = %s, "
+                "recovery_target = %s, cumulative_refunded = %s, debit_status = %s "
+                "WHERE workspace_id = %s AND event_id = %s",
+                (
+                    recovered,
+                    unrecovered,
+                    target,
+                    net_refunded,
+                    debit_status,
+                    payment.workspace_id,
+                    payment.event_id,
+                ),
+            )
+            conn.execute(
+                "UPDATE tr_trust_event SET recovery_target = %s, cumulative_refunded = %s, "
+                "debit_status = %s, unrecovered_micro = %s "
+                "WHERE workspace_id = %s AND event_id = %s",
+                (
+                    target,
+                    net_refunded,
+                    debit_status,
+                    unrecovered,
+                    payment.workspace_id,
+                    adverse_event_id,
+                ),
+            )
+            causes = set()
+            if balance_rows:
+                raw_causes = balance_rows[0][4]
+                if isinstance(raw_causes, str):
+                    causes = set(json.loads(raw_causes or "[]"))
+                elif raw_causes:
+                    causes = set(raw_causes)
+            before = set(causes)
+            if unrecovered:
+                causes.add("principal_recovery")
+            else:
+                causes.discard("principal_recovery")
+            if causes != before:
+                conn.execute(
+                    "UPDATE tr_credit_balance SET billing_pause_causes = %s::jsonb, "
+                    "pause_epoch = COALESCE(pause_epoch, 0) + 1 "
+                    "WHERE workspace_id = %s",
+                    (json.dumps(sorted(causes)), payment.workspace_id),
+                )
+                workspace = self._read_entity_tx(
+                    conn, "workspace", payment.workspace_id, Workspace, for_update=True
+                )
+                if workspace is not None:
+                    workspace.billing_pause_causes = sorted(causes)
+                    workspace.billing_paused = bool(causes)
+                    workspace.billing_pause_reason = (
+                        "principal_recovery" if unrecovered else ""
+                    )
+                    self._write_entity_tx(conn, "workspace", workspace.id, workspace)
+            return AdverseTrustResult(
+                "applied",
+                payment.workspace_id,
+                target,
+                recovered,
+                unrecovered,
+                event.provider,
+            )
+
+        result = self._run_transaction(apply)
+        if result.unrecovered_micro > 0 and result.workspace_id is not None:
+            from trusted_router.services.trust_recovery import (
+                alert_unrecovered_principal,
+            )
+
+            alert_unrecovered_principal(result)
+        return result
+
+    def list_stale_trust_inbox(
+        self, *, older_than: dt.datetime
+    ) -> tuple[TrustInboxRow, ...]:
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                "SELECT provider, adverse_ref, payload, received_at "
+                "FROM tr_trust_inbox WHERE received_at < %s "
+                "ORDER BY received_at, provider, adverse_ref",
+                (older_than,),
+                prepare=False,
+            ).fetchall()
+        return tuple(
+            TrustInboxRow(
+                str(row[0]),
+                str(row[1]),
+                str(row[2]),
+                row[3]
+                if isinstance(row[3], dt.datetime)
+                else dt.datetime.fromisoformat(str(row[3]).replace("Z", "+00:00")),
+            )
+            for row in rows
         )
 
     # Earnings & movement primitives -----------------------------------------

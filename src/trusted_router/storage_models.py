@@ -207,6 +207,10 @@ class Workspace:
     # already-authorized requests is NOT blocked — only new work is.
     billing_paused: bool = False
     billing_pause_reason: str = ""
+    # The replicated balance-shard set is authoritative for new pause owners.
+    # This copy keeps the legacy workspace document useful to old revisions and
+    # lets every scalar reader derive the compatibility boolean from the set.
+    billing_pause_causes: list[str] = field(default_factory=list)
     # Non-empty marks a SHADOW of a home-plane workspace, materialized locally
     # so a federated key can resolve (see federated_workspace_from_record). It
     # is not a workspace anyone created here: it has no owner, no member row,
@@ -214,6 +218,24 @@ class Workspace:
     # later reconciliation needs to tell shadows from locally-issued
     # workspaces, and a boolean would not say WHICH home to reconcile against.
     federated_home: str = ""
+
+    def __post_init__(self) -> None:
+        # A pre-cause workspace document can still carry the old migration
+        # quiesce bit. Preserve that pause as the legacy migration owner; new
+        # code subsequently clears only that owner.
+        if self.billing_paused and not self.billing_pause_causes:
+            self.billing_pause_causes = ["migration"]
+        self.billing_pause_causes = sorted(set(self.billing_pause_causes))
+        self.billing_paused = bool(self.billing_pause_causes)
+
+
+def workspace_billing_paused(workspace: object | None) -> bool:
+    """Derive the compatibility scalar from the composable cause set."""
+
+    return bool(
+        workspace is not None
+        and getattr(workspace, "billing_pause_causes", ())
+    )
 
 
 @dataclass
@@ -589,7 +611,7 @@ class CreditProvenance:
         return cls("grant", "system", None, dt.datetime.now(dt.UTC))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class TrustEvent:
     workspace_id: str
     event_id: str
@@ -611,6 +633,41 @@ class TrustEvent:
     debit_status: str | None
     unrecovered_micro: int | None
     provider_ordering_watermark: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class AdverseTrustEvent:
+    """One provider adverse-object observation, independent of delivery ID."""
+
+    event_id: str
+    provider: str
+    kind: str
+    adverse_ref: str
+    original_payment_ref: str
+    amount_micro: int
+    provider_subtype: str
+    lifecycle_status: str
+    occurred_at: dt.datetime
+    provider_ordering_watermark: str
+    payload: str
+
+
+@dataclass(frozen=True, slots=True)
+class AdverseTrustResult:
+    outcome: str
+    workspace_id: str | None = None
+    recovery_target: int = 0
+    recovered_micro: int = 0
+    unrecovered_micro: int = 0
+    provider: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TrustInboxRow:
+    provider: str
+    adverse_ref: str
+    payload: str
+    received_at: dt.datetime
 
 
 @dataclass

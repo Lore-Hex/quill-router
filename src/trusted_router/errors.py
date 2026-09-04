@@ -5,6 +5,8 @@ from typing import Any
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
+from trusted_router.storage_models import workspace_billing_paused
+
 PROVIDER_ERROR_TYPES = frozenset(
     {
         "provider_auth_error",
@@ -61,7 +63,7 @@ def assert_workspace_billing_active(workspace: Any) -> None:
     code exchange, chat-browser key issuance) — so a paused workspace truly drains
     to zero holds before a flip. Settle is intentionally NOT guarded (it routes by
     reservation origin and must still finalize in-flight work)."""
-    if workspace is not None and getattr(workspace, "billing_paused", False):
+    if workspace_billing_paused(workspace):
         from trusted_router.types import ErrorType
 
         raise api_error(

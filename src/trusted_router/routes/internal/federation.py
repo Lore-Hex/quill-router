@@ -51,6 +51,7 @@ from trusted_router.services.credit_transfer import (
     recover_credit_transfers,
 )
 from trusted_router.storage import STORE
+from trusted_router.storage_models import workspace_billing_paused
 from trusted_router.types import ErrorType
 
 
@@ -195,9 +196,7 @@ def register(router: APIRouter) -> None:
                 getattr(api_key, "include_byok_in_limit", True)
             ),
             "budget_alert_only": bool(getattr(api_key, "budget_alert_only", False)),
-            "workspace_billing_paused": bool(
-                getattr(workspace, "billing_paused", False)
-            ),
+            "workspace_billing_paused": workspace_billing_paused(workspace),
             # Lets the peer detect a changed record without diffing every
             # field, and lets a future revocation feed say "anything older
             # than X is stale".
