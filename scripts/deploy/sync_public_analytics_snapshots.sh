@@ -44,6 +44,7 @@ gc compute ssh "$NAME" \
   --zone="$ZONE" \
   --tunnel-through-iap \
   --quiet \
+  --ssh-flag="-n" \
   --ssh-flag="-T" \
   --command="sudo sh -c '
     set -eu
