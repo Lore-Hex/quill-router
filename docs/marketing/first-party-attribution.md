@@ -149,6 +149,12 @@ does not request search text, user identifiers, or audience data. Spend and
 revenue remain integer microdollars. Use `--google-ads-spend required` in a
 decision report so missing credentials or permissions fail closed.
 
+Landing engagements from the isolated public service are written as native
+Cloud Logging JSON with an explicit metadata allowlist. The report merges those
+rows with conversion events from Axiom. The public service receives no Axiom
+credential, and Google Ads reporting remains read-only: no TrustedRouter user,
+signup, activation, or purchase data is uploaded to Google.
+
 One `utm_content` value is one measurable creative cell. Multiple headlines
 inside one responsive search ad share that cell, so create separately tagged
 ads when headline-level downstream measurement is required.
