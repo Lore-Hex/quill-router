@@ -9,6 +9,10 @@ from typing import Any
 
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.model_ids import remember_upstream_id
+from trusted_router.provider_contract import (
+    PROVIDER_MODEL_DOCUMENTATION_FIELDS,
+    PROVIDER_MODEL_DOCUMENTATION_MAX_LENGTHS,
+)
 
 _MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$")
 _OWNER_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
@@ -32,6 +36,7 @@ _MODEL_FIELDS = frozenset(
     }
 )
 _MODEL_V2_FIELDS = _MODEL_FIELDS | {"reliability"}
+_MODEL_OPTIONAL_FIELDS = frozenset({"documentation"})
 _CAPABILITY_FIELDS = frozenset(
     {"streaming", "tools", "structured_output", "reasoning", "prompt_caching"}
 )
@@ -110,6 +115,13 @@ def _require_string(value: object, *, label: str) -> str:
     if not isinstance(value, str) or not value:
         raise RuntimeError(f"{label} must be a non-empty string")
     return value
+
+
+def _require_bounded_string(value: object, *, label: str, maximum: int) -> str:
+    text = _require_string(value, label=label)
+    if len(text) > maximum:
+        raise RuntimeError(f"{label} must be at most {maximum} characters")
+    return text
 
 
 def _require_positive_int(value: object, *, label: str) -> int:
@@ -271,6 +283,7 @@ def discover_provider_contract_catalog(
             source,
             _MODEL_V2_FIELDS if is_v2 else _MODEL_FIELDS,
             label=label,
+            optional=_MODEL_OPTIONAL_FIELDS,
         )
         model_id = _require_string(row["id"], label=f"{label}.id")
         if _MODEL_ID_RE.fullmatch(model_id) is None:
@@ -394,6 +407,22 @@ def discover_provider_contract_catalog(
         if "chat/completions" not in endpoints or "text" not in output_modalities:
             continue
 
+        documentation: dict[str, str] | None = None
+        if "documentation" in row:
+            raw_documentation = _require_exact_fields(
+                row["documentation"],
+                frozenset(PROVIDER_MODEL_DOCUMENTATION_FIELDS),
+                label=f"{label}.documentation",
+            )
+            documentation = {
+                field: _require_bounded_string(
+                    raw_documentation[field],
+                    label=f"{label}.documentation.{field}",
+                    maximum=PROVIDER_MODEL_DOCUMENTATION_MAX_LENGTHS[field],
+                )
+                for field in PROVIDER_MODEL_DOCUMENTATION_FIELDS
+            }
+
         supported_features = ["chat", "completion"]
         if parsed_capabilities["tools"]:
             supported_features.append("tools")
@@ -450,6 +479,7 @@ def discover_provider_contract_catalog(
             "retirement_at": retirement_at,
             "replacement_model_id": replacement,
             "routable": True,
+            **({"documentation": documentation} if documentation is not None else {}),
             **(
                 {
                     "reliability": model_reliability,

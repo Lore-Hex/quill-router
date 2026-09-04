@@ -332,6 +332,24 @@ _MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOve
 
 
 @dataclass(frozen=True)
+class ModelDocumentation:
+    description: str
+    input_format: str
+    output_format: str
+    example_input: str
+    example_output: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "description": self.description,
+            "input_format": self.input_format,
+            "output_format": self.output_format,
+            "example_input": self.example_input,
+            "example_output": self.example_output,
+        }
+
+
+@dataclass(frozen=True)
 class Model:
     id: str
     name: str
@@ -362,6 +380,7 @@ class Model:
     price_tiers: tuple[PriceTier, ...] = ()
     published_price_tiers: tuple[PriceTier, ...] = ()
     hidden_public_metadata: bool = False
+    documentation: ModelDocumentation | None = None
 
 
 @dataclass(frozen=True)
@@ -3479,6 +3498,19 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "The official API documentation identifies Aion Labs as the model "
             "publisher but does not name a legal entity or country. It is not "
             "treated as the unrelated pharma venture studio at aionlabs.com."
+        ),
+    ),
+    "neurometric": ModelOrigin(
+        country=None,
+        lab_name="Neurometric AI",
+        source_url=(
+            "https://blog.neurometric.ai/p/"
+            "introducing-the-neurometric-slm-marketplace"
+        ),
+        note=(
+            "Neurometric publishes the task-specific endpoints under this namespace. "
+            "Its public model materials do not identify a legal entity or headquarters, "
+            "so no creator country is inferred from the provider's serving region."
         ),
     ),
     "thedrummer": ModelOrigin(
