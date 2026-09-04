@@ -45,6 +45,10 @@ def register_gateway_internal_routes(router: APIRouter) -> None:
     fetch_image.register(router)
     reconcile.register(router)
     federation.register(router)
+
+
+def register_operator_internal_routes(router: APIRouter) -> None:
+    """Register operator controls only when their dedicated token is configured."""
     admin.register(router)
 
 
@@ -71,4 +75,5 @@ __all__ = [
     "register_gateway_internal_routes",
     "register_internal_routes",
     "register_observer_internal_routes",
+    "register_operator_internal_routes",
 ]

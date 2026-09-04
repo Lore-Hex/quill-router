@@ -90,7 +90,6 @@ SECRET_ENVS=(
   "TR_STRIPE_SECRET_KEY=trustedrouter-stripe-secret-key:latest"
   "TR_STRIPE_WEBHOOK_SECRET=trustedrouter-stripe-webhook-secret:latest"
   "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest"
-  "TR_OPERATOR_TOKEN=trustedrouter-operator-token:latest"
 )
 # Retired environment bindings remain on Cloud Run until explicitly removed.
 REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")
@@ -166,6 +165,7 @@ add_secret_env_if_exists "TR_SYNTHETIC_MONITOR_API_KEY" "trustedrouter-synthetic
 # credits and never key material. Setting it is what turns federation
 # serving ON for this plane (unset = 403 for every peer).
 add_secret_env_if_exists "TR_FEDERATION_PEER_TOKEN" "trustedrouter-federation-peer-token"
+add_secret_env_if_exists "TR_OPERATOR_TOKEN" "trustedrouter-operator-token"
 # HOME side of deferred settlement: the per-peer token map
 # ("plane=token,plane=token"). Which token authenticated IS the source
 # plane's identity; the request body never carries it. Setting this is what

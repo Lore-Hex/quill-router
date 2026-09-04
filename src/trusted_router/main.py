@@ -70,6 +70,7 @@ from trusted_router.routes.internal import (
     register_gateway_internal_routes,
     register_internal_routes,
     register_observer_internal_routes,
+    register_operator_internal_routes,
 )
 from trusted_router.routes.keys import register_key_routes
 from trusted_router.routes.mcp import register_mcp_routes
@@ -776,6 +777,8 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         register_observer_internal_routes(router)
     elif surface == "observer":
         register_observer_internal_routes(router)
+    if surface in {"combined", "internal"} and settings.operator_token:
+        register_operator_internal_routes(router)
     return router
 
 

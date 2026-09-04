@@ -1453,9 +1453,9 @@ class Settings(BaseSettings):
                 "TR_MAX_WORKSPACES_PER_OWNER × TR_CREDIT_SHARDS_MAX × 7 "
                 "must not exceed the pinned 20000-mutation trust budget"
             )
-        if bool(self.operator_token) != bool(self.operator_identities.strip()):
+        if self.operator_token and not self.operator_identities.strip():
             raise ValueError(
-                "TR_OPERATOR_TOKEN and TR_OPERATOR_IDENTITIES must both be set or both unset"
+                "TR_OPERATOR_IDENTITIES must be set when TR_OPERATOR_TOKEN is set"
             )
         if self.trust_reconcile_interval_seconds <= 0:
             raise ValueError("TR_TRUST_RECONCILE_INTERVAL_SECONDS must be positive")
@@ -1846,12 +1846,6 @@ class Settings(BaseSettings):
             self.internal_gateway_token
         ):
             missing.append("TR_INTERNAL_GATEWAY_TOKEN")
-        if (surface == "internal" or deployed_combined_bridge) and not self.operator_token:
-            missing.append("TR_OPERATOR_TOKEN")
-        if (surface == "internal" or deployed_combined_bridge) and not (
-            self.operator_identities.strip()
-        ):
-            missing.append("TR_OPERATOR_IDENTITIES")
         if surface in {"internal", "observer"} and not self.observer_internal_token:
             missing.append("TR_OBSERVER_INTERNAL_TOKEN")
         if (surface == "control" or deployed_combined_bridge) and environment != "worker":
