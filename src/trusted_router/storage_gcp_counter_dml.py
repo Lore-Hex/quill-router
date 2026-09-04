@@ -445,6 +445,21 @@ _WINDOW_BUMP_SQL = (
     ", month_start = IF(month_start IS NULL OR month_start < @month_floor, @month_floor, month_start)"
 )
 
+# The common settle path has already-current window boundaries. Keep those
+# boundary columns out of its SET list so Spanner does not take exclusive cell
+# locks on values that did not change. The guarded UPDATE below falls back to
+# _WINDOW_BUMP_SQL whenever any boundary needs its lazy roll.
+_CURRENT_WINDOW_BUMP_SQL = (
+    ", day_usage = COALESCE(day_usage, 0) + @wamt"
+    ", week_usage = COALESCE(week_usage, 0) + @wamt"
+    ", month_usage = COALESCE(month_usage, 0) + @wamt"
+)
+_CURRENT_WINDOW_PREDICATE_SQL = (
+    " AND day_start IS NOT NULL AND day_start >= @day_floor"
+    " AND week_start IS NOT NULL AND week_start >= @week_floor"
+    " AND month_start IS NOT NULL AND month_start >= @month_floor"
+)
+
 
 def release_key(
     transaction: Any,
@@ -474,6 +489,40 @@ def release_key(
     # excluded settle the bump is +0, but a stale window still rolls forward.
     wamt = "IF(include_byok, @actual, 0)" if book_to_byok else "@actual"
     # usage_col/wamt are compile-time constants picked by a bool; values bind as params.
+    params = {
+        "hold": int(hold),
+        "actual": int(actual),
+        "kh": key_hash,
+        "shard": shard,
+        "day_floor": window_floors["daily"],
+        "week_floor": window_floors["weekly"],
+        "month_floor": window_floors["monthly"],
+    }
+    bound_param_types = {
+        "hold": param_types.INT64,
+        "actual": param_types.INT64,
+        "kh": param_types.STRING,
+        "shard": param_types.INT64,
+        "day_floor": param_types.TIMESTAMP,
+        "week_floor": param_types.TIMESTAMP,
+        "month_floor": param_types.TIMESTAMP,
+    }
+    fast_sql = (
+        "UPDATE tr_key_limit "  # noqa: S608
+        f"SET reserved = reserved - @hold, {usage_col} = {usage_col} + @actual"
+        + _CURRENT_WINDOW_BUMP_SQL.replace("@wamt", wamt)
+        + " WHERE key_hash=@kh AND shard=@shard AND reserved >= @hold"
+        + _CURRENT_WINDOW_PREDICATE_SQL
+    )
+    fast_count = transaction.execute_update(
+        fast_sql,
+        params=params,
+        param_types=bound_param_types,
+    )
+    if fast_count == 1:
+        return 1
+
+    # Keep this fallback statement identical to the original release UPDATE.
     sql = (
         "UPDATE tr_key_limit "  # noqa: S608
         f"SET reserved = reserved - @hold, {usage_col} = {usage_col} + @actual"
@@ -482,24 +531,8 @@ def release_key(
     )
     return transaction.execute_update(
         sql,
-        params={
-            "hold": int(hold),
-            "actual": int(actual),
-            "kh": key_hash,
-            "shard": shard,
-            "day_floor": window_floors["daily"],
-            "week_floor": window_floors["weekly"],
-            "month_floor": window_floors["monthly"],
-        },
-        param_types={
-            "hold": param_types.INT64,
-            "actual": param_types.INT64,
-            "kh": param_types.STRING,
-            "shard": param_types.INT64,
-            "day_floor": param_types.TIMESTAMP,
-            "week_floor": param_types.TIMESTAMP,
-            "month_floor": param_types.TIMESTAMP,
-        },
+        params=params,
+        param_types=bound_param_types,
     )
 
 
