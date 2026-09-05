@@ -44,7 +44,7 @@
   {% block head_extra %}{% endblock %}
   {% if json_ld_blob %}<script type="application/ld+json" nonce="{{ csp_nonce() }}">{{ json_ld_blob|safe }}</script>{% endif %}
 </head>
-<body>
+<body {% block body_attributes %}{% endblock %}>
   {% include "public/_nav.html" %}
   <main class="wrap public-wrap">
     {% block hero %}
@@ -81,7 +81,7 @@
     </section>
     {% endif %}
   </main>
-  {% include "public/_footer.html" %}
+  {% block footer %}{% include "public/_footer.html" %}{% endblock %}
   {% include "public/_signin.html" %}
   <script nonce="{{ csp_nonce() }}">window.__TR__ = {"apiBaseUrl": "{{ api_base_url }}"};</script>
   <script src="/static/dashboard.js?v={{ static_version|default('local') }}"></script>
