@@ -129,7 +129,7 @@ class SpannerOutboxSource:
                 for row in values:
                     oldest = _utc(row[0])
                     floor = self._floors.get(shard)
-                    if floor is not None and oldest <= floor:
+                    if floor is not None and oldest < floor:
                         log.warning(
                             "analytics_outbox.floor_violation shard=%d commit_ts=%s floor=%s",
                             shard,
