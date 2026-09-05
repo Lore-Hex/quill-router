@@ -258,7 +258,7 @@ def test_backend_without_key_writes_reports_why_not_a_phantom_repair_failure(
     user_headers: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """PostgresStore.update_key is still increment-1 unimplemented.
+    """A backend without key writes reports an explicit capability gap.
 
     Without this branch the NotImplementedError falls into the repair path,
     which calls update_key again, raises again, and escalates a critical

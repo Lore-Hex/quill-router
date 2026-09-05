@@ -52,7 +52,10 @@ class SqlitePostgresConn:
         # WITHOUT the lock — which is the point, since row-lock behaviour is
         # what differs most between plain Postgres and Aurora DSQL.
         translated = (
-            sql.replace("%s", "?").replace("::jsonb", "").replace(" FOR UPDATE", "")
+            sql.replace("%s", "?")
+            .replace("::jsonb", "")
+            .replace("::bigint", "")
+            .replace(" FOR UPDATE", "")
             # SQLite's scalar max is multi-arg MAX(); it has no GREATEST.
             # GREATEST always takes >=2 args here, so the mapping is exact —
             # single-arg MAX (the aggregate) can never be produced by it.
