@@ -15,6 +15,7 @@ unchanged.  What stays is the Spanner-specific writer.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Mapping
 from typing import Any
 
 from trusted_router.storage_gcp_codec import json_body
@@ -116,7 +117,12 @@ class SpannerOperationalAnalyticsOutbox:
             payload=payload,
         )
 
-    def oldest_enqueued_at(self, *, timeout: float | None = None) -> dt.datetime | None:
+    def oldest_enqueued_at(
+        self,
+        *,
+        timeout: float | None = None,
+        floors: Mapping[int, dt.datetime] | None = None,
+    ) -> dt.datetime | None:
         """Commit timestamp of the oldest undelivered row, or ``None`` if empty.
 
         Spanner's column is ``commit_ts``, not ``enqueued_at`` -- the method is
@@ -141,6 +147,13 @@ class SpannerOperationalAnalyticsOutbox:
         raises rather than returning a partial answer: a minimum over the
         shards that happened to reply before the clock expired is not the
         oldest row, it is a smaller number that would publish as better health.
+
+        ``floors`` may contain only in-memory commit timestamps proved by a
+        drain's committed deletes. Each bound is inclusive to retain ties;
+        unknown shards still read from the beginning. Callers without a drain
+        (the control plane) must not infer a floor from a previous lag reading.
+        The owner must discard floors on restart or any drain/probe error;
+        deletion of acknowledged rows remains the sole durable cursor.
         """
         # ONE round trip, not 32. Each arm is still a seek on the key prefix
         # (the primary key leads with `shard`), so this keeps the cost the
@@ -157,9 +170,12 @@ class SpannerOperationalAnalyticsOutbox:
         # `MIN(commit_ts)` over the whole table would be one round trip too and
         # is the wrong fix: no shard predicate means a scan, which gets slower
         # exactly as the backlog it measures grows.
+        known_floors = {} if floors is None else dict(floors)
         arms = " UNION ALL ".join(
             "SELECT (SELECT commit_ts FROM tr_operational_analytics_outbox "  # noqa: S608
-            f"WHERE shard={shard} ORDER BY commit_ts LIMIT 1) AS commit_ts"
+            f"WHERE shard={shard}"
+            + (f" AND commit_ts >= @floor_{shard}" if shard in known_floors else "")
+            + " ORDER BY commit_ts LIMIT 1) AS commit_ts"
             for shard in range(self._shard_count)
         )
         # Interpolation is safe and unavoidable here: shard numbers come from
@@ -167,6 +183,14 @@ class SpannerOperationalAnalyticsOutbox:
         # cannot stand in for the literal each arm seeks on.
         sql = f"SELECT MIN(commit_ts) FROM ({arms})"  # noqa: S608
         kwargs: dict[str, Any] = {} if timeout is None else {"timeout": timeout}
+        params = {
+            f"floor_{shard}": known_floors[shard]
+            for shard in range(self._shard_count)
+            if shard in known_floors
+        }
+        if params:
+            kwargs["params"] = params
+            kwargs["param_types"] = {name: self._pt.TIMESTAMP for name in params}
         with self._database.snapshot() as snapshot:
             rows = list(snapshot.execute_sql(sql, **kwargs))
         if not rows or rows[0][0] is None:

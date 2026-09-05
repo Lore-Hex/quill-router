@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import datetime as dt
+import hashlib
 import inspect
 import json
 import re
@@ -1271,6 +1272,7 @@ class _SnapshotDatabase:
         self.queries: list[tuple[str, dict[str, Any]]] = []
         self.multi_use: list[bool] = []
         self.timeouts: list[float | None] = []
+        self.query_types: list[dict[str, Any]] = []
 
     def snapshot(self, **kwargs: Any) -> Any:
         self.multi_use.append(bool(kwargs.get("multi_use")))
@@ -1286,9 +1288,15 @@ class _SnapshotDatabase:
             def execute_sql(self, sql: str, **kwargs: Any) -> list[list[Any]]:
                 outer.timeouts.append(kwargs.get("timeout"))
                 outer.queries.append((sql, kwargs.get("params") or {}))
-                shards = [int(value) for value in re.findall(r"WHERE shard=(\d+)", sql)]
+                params = kwargs.get("params") or {}
+                outer.query_types.append(kwargs.get("param_types") or {})
+                arms = re.findall(r"WHERE shard=(\d+)(?: AND commit_ts (>=|>) @(floor_\d+))?", sql)
                 stamps = sorted(
-                    stamp for shard in shards for stamp in outer._rows_by_shard.get(shard, [])
+                    stamp
+                    for shard, operator, name in arms
+                    for stamp in outer._rows_by_shard.get(int(shard), [])
+                    if not name
+                    or (stamp >= params[name] if operator == ">=" else stamp > params[name])
                 )
                 return [[stamps[0]]] if stamps else [[None]]
 
@@ -1408,3 +1416,164 @@ def test_activity_allowlist_carries_workspace_id_to_clickhouse() -> None:
     # Order stability: appended after tenant_id's group, never before
     # generation_id -- the archive row hash is computed over this tuple.
     assert ACTIVITY_COLUMNS.index("workspace_id") > ACTIVITY_COLUMNS.index("tenant_id")
+
+
+@pytest.mark.parametrize("floors", [None, {}])
+def test_spanner_lag_no_floor_sql_golden(floors: dict[int, dt.datetime] | None) -> None:
+    database = _SnapshotDatabase({})
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes())
+    outbox.oldest_enqueued_at(floors=floors)
+    [(sql, params)] = database.queries
+    # SHA256 of the complete pre-change 32-arm statement, including whitespace.
+    assert hashlib.sha256(sql.encode()).hexdigest() == (
+        "07b0982cd926e7a767e3b29d742a4bfd8aa2605da6c4179c46240186bf1a0cdb"
+    )
+    assert params == {}
+    assert database.query_types == [{}]
+
+
+def test_spanner_lag_floor_is_inclusive_and_specific_to_each_shard() -> None:
+    floor = dt.datetime(2026, 9, 5, tzinfo=dt.UTC)
+    later = floor + dt.timedelta(seconds=10)
+    earlier = floor - dt.timedelta(seconds=10)
+    database = _SnapshotDatabase({0: [earlier, floor, later], 1: [later]})
+    outbox = SpannerOperationalAnalyticsOutbox(database, _ParamTypes(), shard_count=3)
+    floors = {0: floor, 1: later}
+    assert outbox.oldest_enqueued_at(floors=floors, timeout=3.0) == floor
+    [(sql, params)] = database.queries
+    assert params == {"floor_0": floor, "floor_1": later}
+    assert database.query_types == [{"floor_0": "TIMESTAMP", "floor_1": "TIMESTAMP"}]
+    assert "WHERE shard=2 ORDER BY commit_ts LIMIT 1" in sql
+    assert database.timeouts == [3.0]
+    # An unknown shard's backlog must not inherit another shard's floor.
+    database._rows_by_shard[2] = [earlier]
+    assert outbox.oldest_enqueued_at(floors=floors) == earlier
+    assert floors == {0: floor, 1: later}
+
+
+class _LiveOutboxDatabase:
+    """Strong reads and staged deletes: rows disappear only on batch commit."""
+
+    def __init__(self, rows: list[OperationalOutboxRow]) -> None:
+        self.rows = list(rows)
+        self.failure = ""
+        self.queries: list[tuple[str, dict[str, Any]]] = []
+        self.before_commit: Any = lambda: None
+
+    def snapshot(self, **_kwargs: Any) -> Any:
+        database = self
+
+        class Snapshot:
+            def __enter__(self) -> Any:
+                return self
+
+            def __exit__(self, *_args: Any) -> None:
+                pass
+
+            def execute_sql(self, sql: str, *, params: Any, param_types: Any) -> Any:
+                database.queries.append((sql, dict(params)))
+                if database.failure == "read":
+                    raise RuntimeError("read failed")
+                floor_name = "after" if "after" in params else "floor"
+                floor = params.get(floor_name, _WATERMARK_EPOCH)
+                inclusive = f"commit_ts >= @{floor_name}" in sql
+                shards = params.get("shards", [params.get("shard")])
+                rows = sorted(
+                    (row for row in database.rows if row.shard in shards
+                     and (row.commit_ts >= floor if inclusive else row.commit_ts > floor)),
+                    key=lambda row: row.commit_ts,
+                )
+                if sql.startswith("SELECT commit_ts"):
+                    return [(row.commit_ts,) for row in rows[:1]]
+                return [(row.shard, row.commit_ts, row.event_kind, row.event_id, row.payload)
+                        for row in rows[:params["limit"]]]
+
+        return Snapshot()
+
+    def batch(self) -> Any:
+        database = self
+
+        class Batch:
+            def __init__(self) -> None:
+                self.keys: list[Any] = []
+
+            def __enter__(self) -> Any:
+                return self
+
+            def delete(self, _table: str, key_set: Any) -> None:
+                self.keys = key_set.keys
+
+            def __exit__(self, *_args: Any) -> None:
+                database.before_commit()
+                if database.failure == "commit":
+                    raise RuntimeError("delete commit failed")
+                database.rows = [row for row in database.rows if list(row.key) not in self.keys]
+
+        return Batch()
+
+
+def _live_spanner_source(
+    monkeypatch: pytest.MonkeyPatch, database: _LiveOutboxDatabase,
+) -> SpannerOperationalOutboxSource:
+    from types import SimpleNamespace
+
+    from google.cloud import spanner
+
+    monkeypatch.setattr(spanner, "Client", lambda **_kwargs: SimpleNamespace(
+        instance=lambda _name: SimpleNamespace(database=lambda _name: database),
+    ))
+    return SpannerOperationalOutboxSource(project="fake", instance="fake", database="fake")
+
+
+def test_spanner_floor_keeps_ties_across_shards_and_restart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _outbox_row()
+    tied = dataclasses.replace(first, shard=31, event_id="tie")
+    later = dataclasses.replace(first, commit_ts=first.commit_ts + dt.timedelta(seconds=1))
+    database = _LiveOutboxDatabase([first, tied, later])
+    source = _live_spanner_source(monkeypatch, database)
+
+    def before_commit() -> None:
+        assert source._after is None, "floor advanced before delete commit"
+        assert first in database.rows
+
+    database.before_commit = before_commit
+    drain_once(source, _Writer(), batch_size=1)
+    assert source._after == first.commit_ts
+    assert source.fetch(limit=1) == [tied]
+    assert source.oldest_commit_ts() == tied.commit_ts
+    # Construct through __init__, not a test-only reset of the attribute.
+    restarted = _live_spanner_source(monkeypatch, database)
+    assert restarted._after is None
+    assert restarted.fetch(limit=1) == [tied]
+    assert database.queries[-1][1]["after"] == _WATERMARK_EPOCH
+
+
+@pytest.mark.parametrize("failure", ["fetch", "insert", "delete", "probe"])
+def test_spanner_warm_floor_clears_on_every_error(
+    monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    first = _outbox_row()
+    next_row = dataclasses.replace(first, event_id="next")
+    database = _LiveOutboxDatabase([first, next_row])
+    source = _live_spanner_source(monkeypatch, database)
+    drain_once(source, _Writer(), batch_size=1)
+    assert source._after == first.commit_ts
+    with pytest.raises(RuntimeError):
+        if failure == "insert":
+            drain_once(source, _Writer(failures=1), batch_size=1)
+        elif failure == "delete":
+            database.failure = "commit"
+            source.delete(source.fetch(limit=1))
+        else:
+            database.failure = "read"
+            if failure == "probe":
+                source.oldest_commit_ts()
+            else:
+                source.fetch(limit=1)
+    assert source._after is None
+    assert database.rows == [next_row]
+    database.failure = ""
+    assert source.fetch(limit=1) == [next_row]
+    assert database.queries[-1][1]["after"] == _WATERMARK_EPOCH
