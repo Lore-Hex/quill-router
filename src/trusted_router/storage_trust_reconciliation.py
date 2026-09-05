@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from trusted_router.storage_codec import json_body
+from trusted_router.storage_gcp_counter_dml import insert_entity_dml_at
 from trusted_router.storage_gcp_trust import (
     TRUST_EVENT_COLUMNS,
+    _read_payment_tx,
     drain_matching_trust_inbox_tx,
     insert_credit_trust_event,
 )
@@ -49,7 +52,30 @@ class TrustReconciliationRepository(Protocol):
     ) -> BackfillMarker | None: ...
 
     def save_marker(self, marker: BackfillMarker) -> None: ...
-    def write_payment_fact(self, event: TrustEvent) -> bool: ...
+
+    def write_payment_fact(
+        self, event: TrustEvent, *, evidence_ids: tuple[str, ...] = ()
+    ) -> str:
+        """Insert a payment fact only with local credit evidence in the transaction.
+
+        Returns ``"inserted"``, ``"duplicate"`` (a fact for this provider and
+        PaymentIntent already exists; nothing written) or ``"uncredited"`` (no
+        ``stripe_event`` marker under any of ``evidence_ids``; nothing written).
+        A fact written before the crediting webhook is processed makes that
+        webhook answer ``credited:false`` and Stripe stops retrying, so the
+        evidence check and the insert share one transaction.
+
+        The insert also writes a ``stripe_event`` marker under the fact's own
+        ``event_id`` with ``credited_by_event_id`` naming the evidence that
+        matched -- the convention ``credit_workspace_typed_direct`` uses when
+        it credits a scan-written fact. Without it the typed credit path's
+        second layer reads every backfilled fact as "written by a scan and
+        never credited" and credits it again on the next distinct Stripe
+        event for the same PaymentIntent.
+        """
+        ...
+
+    def has_credit_evidence(self, evidence_ids: tuple[str, ...]) -> bool: ...
     def write_adverse_fact(self, event: AdverseTrustEvent) -> str: ...
     def list_provider_events(self, provider: str) -> tuple[TrustEvent, ...]: ...
     def list_outstanding(self, provider: str) -> tuple[OutstandingAdverse, ...]: ...
@@ -60,6 +86,13 @@ class TrustReconciliationRepository(Protocol):
         *,
         environment: str = "production",
     ) -> datetime | None: ...
+
+
+def credited_fact_marker_body(recorded_at: datetime, credited_by_event_id: str) -> dict[str, str]:
+    """``stripe_event`` body for a payment fact whose credit evidence was ``credited_by_event_id``."""
+
+    created_at = recorded_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return {"created_at": created_at, "credited_by_event_id": credited_by_event_id}
 
 
 def _event_from_row(row: Any) -> TrustEvent:
@@ -151,6 +184,15 @@ class SpannerTrustReconciliationRepository:
             params = dataclasses.asdict(marker)
             params["completed_at"] = completed_at
             types = self.store._param_types
+            param_types = {
+                **{key: types.STRING for key in MARKER_KEY_COLUMNS},
+                "history_start": types.TIMESTAMP,
+                "closed_through": types.TIMESTAMP,
+                "consistency_delay_seconds": types.INT64,
+                "unmatched_count": types.INT64,
+                "semantic_mismatch_count": types.INT64,
+                "completed_at": types.TIMESTAMP,
+            }
             updated = transaction.execute_update(
                 "UPDATE tr_trust_backfill SET history_start=@history_start, "
                 "closed_through=@closed_through, "
@@ -161,49 +203,100 @@ class SpannerTrustReconciliationRepository:
                 "AND account_id=@account_id AND environment=@environment "
                 "AND source=@source AND source_version=@source_version",
                 params=params,
-                param_types={
-                    **{key: types.STRING for key in MARKER_KEY_COLUMNS},
-                    "history_start": types.TIMESTAMP,
-                    "closed_through": types.TIMESTAMP,
-                    "consistency_delay_seconds": types.INT64,
-                    "unmatched_count": types.INT64,
-                    "semantic_mismatch_count": types.INT64,
-                    "completed_at": types.TIMESTAMP,
-                },
+                param_types=param_types,
             )
             if int(updated) == 0:
-                transaction.insert(
-                    table="tr_trust_backfill",
-                    columns=MARKER_COLUMNS,
-                    values=[tuple(params[column] for column in MARKER_COLUMNS)],
+                # DML, not a mutation: this transaction already issued DML and
+                # Spanner-side policy (docs §5) forbids mixing the two.
+                inserted = transaction.execute_update(
+                    "INSERT INTO tr_trust_backfill ("  # noqa: S608 - fixed columns.
+                    + ", ".join(MARKER_COLUMNS)
+                    + ") VALUES ("
+                    + ", ".join(f"@{column}" for column in MARKER_COLUMNS)
+                    + ")",
+                    params=params,
+                    param_types=param_types,
                 )
+                if int(inserted) != 1:
+                    raise RuntimeError("trust backfill marker insert did not write one row")
             elif int(updated) != 1:
                 raise RuntimeError("trust backfill marker update was not unique")
 
         self.store._run_in_transaction(txn)
 
-    def write_payment_fact(self, event: TrustEvent) -> bool:
-        def txn(transaction: Any) -> tuple[bool, tuple[Any, ...]]:
-            inserted = insert_credit_trust_event(
-                transaction, self.store._param_types, event
+    def _credit_evidence_tx(
+        self, transaction: Any, evidence_ids: tuple[str, ...]
+    ) -> str | None:
+        """Return the first evidence id whose ``stripe_event`` marker exists."""
+
+        for evidence_id in evidence_ids:
+            if evidence_id and (
+                self.store._read_entity_tx(transaction, "stripe_event", evidence_id, dict)
+                is not None
+            ):
+                return evidence_id
+        return None
+
+    def has_credit_evidence(self, evidence_ids: tuple[str, ...]) -> bool:
+        if not any(evidence_ids):
+            return False
+        # One entity read per candidate id: a single-use snapshot permits one.
+        with self.store._database.snapshot(multi_use=True) as snapshot:
+            return self._credit_evidence_tx(snapshot, evidence_ids) is not None
+
+    def write_payment_fact(
+        self, event: TrustEvent, *, evidence_ids: tuple[str, ...] = ()
+    ) -> str:
+        if event.kind != "payment" or not event.original_payment_ref:
+            raise ValueError("write_payment_fact accepts payment facts only")
+        original_payment_ref = event.original_payment_ref
+
+        def txn(transaction: Any) -> tuple[str, tuple[Any, ...]]:
+            existing = _read_payment_tx(
+                transaction,
+                self.store._param_types,
+                provider=event.provider,
+                original_payment_ref=original_payment_ref,
             )
-            drained: tuple[Any, ...] = ()
-            if event.original_payment_ref is not None:
-                drained = drain_matching_trust_inbox_tx(
+            if existing is not None:
+                return "duplicate", ()
+            credited_by = self._credit_evidence_tx(transaction, evidence_ids)
+            if credited_by is None:
+                return "uncredited", ()
+            if not insert_credit_trust_event(transaction, self.store._param_types, event):
+                raise RuntimeError("payment fact insert lost its dedup guard in-transaction")
+            # The fact's own id is marked credited in the same transaction so
+            # the typed credit path treats every later Stripe event for this
+            # PaymentIntent as a replay (see the protocol docstring). A marker
+            # left behind by a withdrawn fact (runbook rollback deletes
+            # tr_trust_event rows only) is kept as it is.
+            if (
+                self.store._read_entity_tx(transaction, "stripe_event", event.event_id, dict)
+                is None
+            ):
+                insert_entity_dml_at(
                     transaction,
                     self.store._param_types,
-                    provider=event.provider,
-                    original_payment_ref=event.original_payment_ref,
-                    now=event.recorded_at,
-                    read_entity_tx=self.store._read_entity_tx,
-                    write_entity_tx=self.store._write_entity_trust_dml_tx,
+                    "stripe_event",
+                    event.event_id,
+                    json_body(credited_fact_marker_body(event.recorded_at, credited_by)),
+                    event.recorded_at,
                 )
-            return inserted, drained
+            drained = drain_matching_trust_inbox_tx(
+                transaction,
+                self.store._param_types,
+                provider=event.provider,
+                original_payment_ref=original_payment_ref,
+                now=event.recorded_at,
+                read_entity_tx=self.store._read_entity_tx,
+                write_entity_tx=self.store._write_entity_trust_dml_tx,
+            )
+            return "inserted", tuple(drained)
 
-        inserted, drained = self.store._run_in_transaction(txn)
+        outcome, drained = self.store._run_in_transaction(txn)
         for result in drained:
             self.store._alert_unrecovered_principal(result)
-        return bool(inserted)
+        return str(outcome)
 
     def write_adverse_fact(self, event: AdverseTrustEvent) -> str:
         return str(self.store.record_adverse_trust_event(event).outcome)
@@ -336,7 +429,31 @@ class PostgresTrustReconciliationRepository:
 
         self.store._run_transaction(write)
 
-    def write_payment_fact(self, event: TrustEvent) -> bool:
+    def _credit_evidence_tx(self, conn: Any, evidence_ids: tuple[str, ...]) -> str | None:
+        """Return the first evidence id whose ``stripe_event`` marker exists."""
+
+        for evidence_id in evidence_ids:
+            if evidence_id and (
+                self.store._read_entity_tx(conn, "stripe_event", evidence_id, dict) is not None
+            ):
+                return evidence_id
+        return None
+
+    def has_credit_evidence(self, evidence_ids: tuple[str, ...]) -> bool:
+        if not any(evidence_ids):
+            return False
+        return (
+            self.store._run_transaction(
+                lambda conn: self._credit_evidence_tx(conn, evidence_ids)
+            )
+            is not None
+        )
+
+    def write_payment_fact(
+        self, event: TrustEvent, *, evidence_ids: tuple[str, ...] = ()
+    ) -> str:
+        if event.kind != "payment" or not event.original_payment_ref:
+            raise ValueError("write_payment_fact accepts payment facts only")
         provenance = CreditProvenance(
             source=str(event.provider_subtype),
             provider=event.provider,
@@ -344,7 +461,17 @@ class PostgresTrustReconciliationRepository:
             occurred_at=event.occurred_at,
         )
 
-        def write(conn: Any) -> bool:
+        def write(conn: Any) -> str:
+            existing = conn.execute(
+                "SELECT 1 FROM tr_trust_event WHERE provider=%s AND kind='payment' "
+                "AND original_payment_ref=%s",
+                (event.provider, event.original_payment_ref),
+            ).fetchone()
+            if existing is not None:
+                return "duplicate"
+            credited_by = self._credit_evidence_tx(conn, evidence_ids)
+            if credited_by is None:
+                return "uncredited"
             inserted = self.store._insert_credit_trust_event_tx(
                 conn,
                 workspace_id=event.workspace_id,
@@ -355,19 +482,31 @@ class PostgresTrustReconciliationRepository:
                 payment_amount_microdollars=event.payment_amount_micro,
                 currency=event.currency,
             )
-            if inserted:
-                conn.execute(
-                    "UPDATE tr_trust_event SET provider_ordering_watermark=%s "
-                    "WHERE workspace_id=%s AND event_id=%s AND kind='payment'",
-                    (
-                        event.provider_ordering_watermark,
-                        event.workspace_id,
-                        event.event_id,
-                    ),
-                )
-            return bool(inserted)
+            if not inserted:
+                raise RuntimeError("payment fact insert lost its dedup guard in-transaction")
+            # Same convention as the Spanner writer and the typed credit path:
+            # the fact id carries a marker naming the evidence that credited it.
+            self.store._insert_entity_once_tx(
+                conn,
+                "stripe_event",
+                event.event_id,
+                {
+                    **credited_fact_marker_body(event.recorded_at, credited_by),
+                    "workspace_id": event.workspace_id,
+                },
+            )
+            conn.execute(
+                "UPDATE tr_trust_event SET provider_ordering_watermark=%s "
+                "WHERE workspace_id=%s AND event_id=%s AND kind='payment'",
+                (
+                    event.provider_ordering_watermark,
+                    event.workspace_id,
+                    event.event_id,
+                ),
+            )
+            return "inserted"
 
-        return bool(self.store._run_transaction(write))
+        return str(self.store._run_transaction(write))
 
     def write_adverse_fact(self, event: AdverseTrustEvent) -> str:
         return str(self.store.record_adverse_trust_event(event).outcome)

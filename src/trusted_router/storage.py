@@ -122,9 +122,15 @@ from trusted_router.trust_ownership import (
     WorkspaceOwnerLimitExceeded,
     require_owner_trust_budget,
 )
+from trusted_router.trust_reconciliation import (
+    OWNER_INVENTORY_ACCOUNT_ID,
+    OWNER_INVENTORY_PROVIDER,
+    OWNER_INVENTORY_SOURCE,
+)
 from trusted_router.trust_tiers import (
     adverse_event_from_payload,
     adverse_event_payload,
+    adverse_restamp_wins,
     adverse_transition_outcome,
     compute_trust_tier,
     payment_or_grant_event,
@@ -1009,12 +1015,16 @@ class InMemoryStore:
                 )
             now = dt.datetime.now(dt.UTC)
             self.trust_backfills[(
-                "owner_inventory", "local", environment, "tr_entities.workspace", source_version
+                OWNER_INVENTORY_PROVIDER,
+                OWNER_INVENTORY_ACCOUNT_ID,
+                environment,
+                OWNER_INVENTORY_SOURCE,
+                source_version,
             )] = {
-                "provider": "owner_inventory",
-                "account_id": "local",
+                "provider": OWNER_INVENTORY_PROVIDER,
+                "account_id": OWNER_INVENTORY_ACCOUNT_ID,
                 "environment": environment,
-                "source": "tr_entities.workspace",
+                "source": OWNER_INVENTORY_SOURCE,
                 "source_version": source_version,
                 "history_start": now,
                 "closed_through": now,
@@ -2072,6 +2082,15 @@ class InMemoryStore:
             new_status=event.lifecycle_status,
             new_watermark=event.provider_ordering_watermark,
         )
+        if (
+            transition == "replay"
+            and existing is not None
+            and adverse_restamp_wins(existing.provider_ordering_watermark, event)
+        ):
+            # Same status, later Stripe Event: restamp without moving money.
+            existing.occurred_at = event.occurred_at
+            existing.provider_subtype = event.provider_subtype
+            existing.provider_ordering_watermark = event.provider_ordering_watermark
         if transition != "applied":
             return AdverseTrustResult(
                 transition,

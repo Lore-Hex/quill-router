@@ -10,7 +10,6 @@ from typing import Any
 
 import pytest
 
-from scripts.recompute_trust_tiers import run as run_trust_tier_job
 from tests.fakes.postgres import postgres_store_on, sqlite_postgres_conn
 from tests.fakes.spanner import FakeSpannerDatabase, _ParamTypes, make_fake_store
 from trusted_router.config import Settings
@@ -33,6 +32,7 @@ from trusted_router.storage_models import (
     User,
     Workspace,
 )
+from trusted_router.trust_tier_cli import run as run_trust_tier_job
 from trusted_router.trust_tiers import (
     TRUST_EVENT_DEBIT_STATUSES,
     TRUST_EVENT_KINDS,
@@ -633,7 +633,7 @@ def test_cloud_run_tier_job_enumerates_every_workspace_with_pinned_policy() -> N
         trust_tier3_min_paid_microdollars=50_000_000,
     )
 
-    assert run_trust_tier_job(Store(), settings, now=NOW) == 2
+    assert run_trust_tier_job(Store(), settings, now=NOW).attempted == 2
     assert [workspace_id for workspace_id, _ in calls] == [
         "workspace-a",
         "workspace-b",
