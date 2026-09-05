@@ -7,14 +7,13 @@ import time
 from collections import Counter
 from typing import Any, cast
 
-from google.api_core.exceptions import AlreadyExists, FailedPrecondition, InvalidArgument
-
 from trusted_router.services.settle_outbox_apply import (
     _ACTIVITY_PARK_NOTE,
     ApplyOutcome,
     apply_frozen_settle,
 )
 from trusted_router.storage import STORE
+from trusted_router.storage_errors import is_deterministic_store_error
 from trusted_router.storage_gcp_authorize import ReapPassResult
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
 from trusted_router.storage_models import SettleOutboxRow, generation_id_for_authorization
@@ -42,11 +41,6 @@ _DRAIN_LEASE_SECONDS = 300
 # GUARD_STATUSES member, so the reaper keeps the reservation frozen), does not
 # burn attempts toward dead, and retries after a fix lands without operator
 # SQL. Transient errors keep the attempts-counted exponential backoff.
-_DETERMINISTIC_APPLY_ERRORS: tuple[type[Exception], ...] = (
-    AlreadyExists,
-    FailedPrecondition,
-    InvalidArgument,
-)
 _DETERMINISTIC_PARK_SECONDS = 3600
 
 _monotonic = time.monotonic
@@ -320,8 +314,7 @@ def _resolve_row(
         outbox.mark(row.authorization_id, row.intent_kind, done=True, lease_owner=lease_owner)
         telemetry = "settle_lost" if row.intent_kind == "settle" else "refund_lost"
         logger.warning(
-            "gateway.%s authorization_id=%s disposition=reaped_snapshot "
-            "late_actual_cost_micro=%s",
+            "gateway.%s authorization_id=%s disposition=reaped_snapshot late_actual_cost_micro=%s",
             telemetry,
             row.authorization_id,
             row.actual_cost_micro,
@@ -454,7 +447,7 @@ def _resolve_row(
         return
 
     if outcome == ApplyOutcome.ERROR:
-        if apply_error is not None and isinstance(apply_error, _DETERMINISTIC_APPLY_ERRORS):
+        if apply_error is not None and is_deterministic_store_error(apply_error):
             # Replaying a transaction that Spanner rejects deterministically
             # burns the drain's budget (each replay re-takes and re-orphans
             # the same locks) and walks the row toward dead in 8 ticks. Park
