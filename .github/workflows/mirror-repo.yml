@@ -38,7 +38,7 @@ jobs:
       # local branch and `git bundle --all` over it produced a bundle that
       # restored 3 refs out of 46 -- every object present, 42 branches
       # unreachable by name. Only the script is needed from this checkout.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Authenticate to GCP via WIF
         uses: google-github-actions/auth@v3
         with:
