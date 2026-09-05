@@ -231,6 +231,9 @@ def test_a_failed_read_never_republishes_the_last_good_number(monkeypatch) -> No
     )
 
     healthy = _snapshot(monkeypatch)[ANALYTICS_STATUS_KEY]
+    time_before = time.monotonic()
+    # A new observation happens only after the freshness window expires.
+    monkeypatch.setattr(public_routes.time, "monotonic", lambda: time_before + 60)
     broken = _snapshot(monkeypatch)[ANALYTICS_STATUS_KEY]
 
     assert isinstance(healthy, dict) and healthy["available"] is True
@@ -614,3 +617,56 @@ def test_the_spanner_lag_read_bounds_the_whole_shard_sweep() -> None:
     outbox.oldest_enqueued_at(timeout=0.1)
 
     assert calls == [0.1]
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_analytics_probe_is_capped_at_the_60_second_freshness_cadence(
+    monkeypatch: pytest.MonkeyPatch, fallback: bool,
+) -> None:
+    clock = [1000.0]
+    calls: list[float] = []
+    monkeypatch.setattr(public_routes.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(public_routes, "_precomputed_public_analytics_snapshot", lambda _name: None)
+    monkeypatch.setattr(public_routes, "_status_samples", lambda **_kwargs: [])
+    monkeypatch.setattr(public_routes, "_status_rollups", lambda _window: [])
+    monkeypatch.setattr(public_routes, "_STATUS_CACHE", None)
+    settings = Settings(environment="local")
+
+    class FakeOutbox:
+        def oldest_enqueued_at(self, *, timeout: float) -> dt.datetime:
+            assert timeout > 0
+            calls.append(clock[0])
+            if len(calls) > 1:
+                raise RuntimeError("Spanner unavailable")
+            return dt.datetime.now(dt.UTC) - dt.timedelta(seconds=90)
+
+    store = object.__new__(SpannerBigtableStore)
+    store._operational_analytics_outbox = FakeOutbox()  # type: ignore[assignment]
+    monkeypatch.setattr(public_routes, "STORE", store)
+    first = public_routes._status_snapshot(settings)[ANALYTICS_STATUS_KEY]
+    assert first["available"] is True
+    assert 89 <= first["drain_lag_seconds"] <= 91
+
+    if fallback:
+        def boom(**_kwargs: object) -> list[object]:
+            raise RuntimeError("status inputs unavailable")
+
+        monkeypatch.setattr(public_routes, "_status_samples", boom)
+
+    for elapsed in (15, 30, 45, 59.999):
+        clock[0] = 1000.0 + elapsed
+        observed = public_routes._status_snapshot(settings)[ANALYTICS_STATUS_KEY]
+        # Neither the lag nor its generated_at may be re-stamped from cache.
+        assert observed == first
+    assert calls == [1000.0]
+
+    clock[0] = 1060.0
+    failed = public_routes._status_snapshot(settings)[ANALYTICS_STATUS_KEY]
+    assert failed == {"available": False, "reason": REASON_UNREACHABLE}
+    for elapsed in (75, 90, 105, 119.999):
+        clock[0] = 1000.0 + elapsed
+        assert public_routes._status_snapshot(settings)[ANALYTICS_STATUS_KEY] == failed
+    assert calls == [1000.0, 1060.0]
+    clock[0] = 1120.0
+    public_routes._status_snapshot(settings)
+    assert calls == [1000.0, 1060.0, 1120.0]

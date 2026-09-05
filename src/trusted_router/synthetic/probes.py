@@ -25,6 +25,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from trustedrouter import AsyncTrustedRouter
 
 from trusted_router.config import Settings, parse_gateway_region_targets
+from trusted_router.enclave_regions import ENCLAVE_REGIONS
 from trusted_router.provider_reliability import model_deadlines
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.security import lookup_hash_api_key
@@ -198,6 +199,7 @@ def _gateway_region_targets(
             paid_probes=False,
         )
         for entry in parse_gateway_region_targets(settings.synthetic_gateway_region_targets)
+        if not settings.synthetic_regional_probes_enabled or entry.name in ENCLAVE_REGIONS
     ]
 
 
@@ -248,6 +250,10 @@ def configured_targets(settings: Settings) -> list[SyntheticTarget]:
         return targets
     for region in region_payload(settings):
         name = str(region["id"])
+        # Old job environments can still advertise control-plane-only regions.
+        # Only the live enclave inventory may produce regional gateway probes.
+        if name not in ENCLAVE_REGIONS:
+            continue
         api_base_url = str(region["api_base_url"])
         control_plane_url = region.get("control_plane_url") or None
         if name == choose_region(settings):

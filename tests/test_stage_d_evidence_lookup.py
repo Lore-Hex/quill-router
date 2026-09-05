@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from tests.fakes.spanner import make_fake_store
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.storage import InMemoryStore, configure_store
+from trusted_router.storage import STORE, InMemoryStore, configure_store
 from trusted_router.storage_gcp_codec import json_body
 from trusted_router.storage_gcp_spend_lease import authorization_typed_columns
 from trusted_router.storage_models import GatewayAuthorization
@@ -128,6 +128,21 @@ def test_evidence_lookup_requires_internal_gateway_token(
 
     assert response.status_code == 401
     assert response.json()["error"]["type"] == "unauthorized"
+
+
+def test_evidence_lookup_rejects_shared_parent_trace_instead_of_picking_a_call(
+    evidence_client: TestClient,
+) -> None:
+    database = STORE._database
+    first = next(iter(database.gateway_authorizations.values()))
+    second = dict(first, authorization_id="gwa-ffffffffffffffffffffffffffffffff")
+    database.gateway_authorizations[second["authorization_id"]] = second
+
+    response = evidence_client.get(_path(), headers=_headers())
+
+    assert response.status_code == 409
+    assert response.json()["error"]["type"] == "ambiguous_gateway_request_id"
+    assert "workspace_id" not in response.text
 
 
 @pytest.mark.parametrize(

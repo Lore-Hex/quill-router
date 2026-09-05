@@ -114,6 +114,7 @@ from trusted_router.storage_models import (
     ActivationReminderTask,
     AdverseTrustEvent,
     AdverseTrustResult,
+    AmbiguousGatewayRequestId,
     ApiKey,
     ApiKeyAuthContext,
     ApiKeyUsageSnapshot,
@@ -6017,15 +6018,19 @@ class PostgresStore:
         self, gateway_request_id: str
     ) -> GatewayAuthorization | None:
         def read(conn: Any) -> GatewayAuthorization | None:
-            row = conn.execute(
+            rows = conn.execute(
                 "SELECT body FROM tr_entities "
                 "WHERE kind = %s AND body ->> 'gateway_request_id' = %s "
-                "ORDER BY id LIMIT 1",
+                "ORDER BY id LIMIT 2",
                 (_GATEWAY_AUTHORIZATION_KIND, gateway_request_id),
-            ).fetchone()
-            if row is None:
+            ).fetchall()
+            if not rows:
                 return None
-            raw = row[0]
+            if len(rows) > 1:
+                raise AmbiguousGatewayRequestId(
+                    "multiple authorizations share the gateway request id"
+                )
+            raw = rows[0][0]
             data = json.loads(raw) if isinstance(raw, str) else dict(raw)
             known = {field.name for field in dataclasses.fields(GatewayAuthorization)}
             return GatewayAuthorization(**{key: value for key, value in data.items() if key in known})

@@ -134,14 +134,17 @@ ensure_column tr_gateway_authorization invocation_nonce \
 ensure_column tr_gateway_authorization gateway_request_id \
   "STRING(37)"
 
-if index_exists tr_gateway_authorization_by_gateway_request_id; then
-  log "tr_gateway_authorization_by_gateway_request_id: already present"
+# A trace is not an idempotency key: web search and fusion bill multiple
+# authorizations under one trace. Keep any legacy unique index until every
+# reader is deployed, then retire it with migrate_gateway_request_index.sh.
+if index_exists tr_gateway_authorization_by_trace_id; then
+  log "tr_gateway_authorization_by_trace_id: already present"
 else
-  apply_ddl "CREATE UNIQUE NULL_FILTERED INDEX tr_gateway_authorization_by_gateway_request_id
+  apply_ddl "CREATE NULL_FILTERED INDEX tr_gateway_authorization_by_trace_id
     ON tr_gateway_authorization (gateway_request_id)"
-  log "tr_gateway_authorization_by_gateway_request_id: created"
+  log "tr_gateway_authorization_by_trace_id: created"
 fi
-wait_index_read_write tr_gateway_authorization_by_gateway_request_id
+wait_index_read_write tr_gateway_authorization_by_trace_id
 
 if table_exists spend_lease_scope_arbitration; then
   log "spend_lease_scope_arbitration: already present"

@@ -25,6 +25,13 @@ def reset_store() -> None:
 
 
 @pytest.fixture(autouse=True)
+def reset_analytics_status_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router.routes import public
+
+    monkeypatch.setattr(public, "_STATUS_ANALYTICS_CACHE", None)
+
+
+@pytest.fixture(autouse=True)
 def auto_credit_test_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pre-credit every workspace created during a test with starter credit.
 

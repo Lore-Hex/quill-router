@@ -308,9 +308,12 @@ class SpannerOperationalOutboxSource:
         )
         self._pt = param_types
         self._shard_count = shard_count
-        # Commit-timestamp watermark: every row committed at or before it has
-        # already been drained and deleted. See fetch() for why it is safe.
+        # In-memory only: rows strictly below this timestamp have been deleted.
+        # Ties may remain live. See fetch() for why a global floor is safe.
         self._after: dt.datetime | None = None
+
+    def reset_scan_floors(self) -> None:
+        self._after = None
 
     def fetch(self, *, limit: int) -> list[OperationalOutboxRow]:
         if limit < 1:
@@ -350,34 +353,38 @@ class SpannerOperationalOutboxSource:
         # largest query load (measured 2026-08-25); this keeps one statement.
         rows: list[OperationalOutboxRow] = []
         after = self._after or _WATERMARK_EPOCH
-        with self._database.snapshot() as snapshot:
-            values = snapshot.execute_sql(
-                # OUTBOX_TABLE is a module constant, not caller input.
-                "SELECT shard, commit_ts, event_kind, event_id, payload "  # noqa: S608
-                f"FROM {OUTBOX_TABLE} "
-                "WHERE shard IN UNNEST(@shards) AND commit_ts >= @after "
-                "ORDER BY commit_ts LIMIT @limit",
-                params={
-                    "shards": list(range(self._shard_count)),
-                    "after": after,
-                    "limit": limit,
-                },
-                param_types={
-                    "shards": self._pt.Array(self._pt.INT64),
-                    "after": self._pt.TIMESTAMP,
-                    "limit": self._pt.INT64,
-                },
-            )
-            rows.extend(
-                OperationalOutboxRow(
-                    shard=int(row[0]),
-                    commit_ts=_utc(row[1]),
-                    event_kind=str(row[2]),
-                    event_id=str(row[3]),
-                    payload=str(row[4]),
+        try:
+            with self._database.snapshot() as snapshot:
+                values = snapshot.execute_sql(
+                    # OUTBOX_TABLE is a module constant, not caller input.
+                    "SELECT shard, commit_ts, event_kind, event_id, payload "  # noqa: S608
+                    f"FROM {OUTBOX_TABLE} "
+                    "WHERE shard IN UNNEST(@shards) AND commit_ts >= @after "
+                    "ORDER BY commit_ts LIMIT @limit",
+                    params={
+                        "shards": list(range(self._shard_count)),
+                        "after": after,
+                        "limit": limit,
+                    },
+                    param_types={
+                        "shards": self._pt.Array(self._pt.INT64),
+                        "after": self._pt.TIMESTAMP,
+                        "limit": self._pt.INT64,
+                    },
                 )
-                for row in values
-            )
+                rows.extend(
+                    OperationalOutboxRow(
+                        shard=int(row[0]),
+                        commit_ts=_utc(row[1]),
+                        event_kind=str(row[2]),
+                        event_id=str(row[3]),
+                        payload=str(row[4]),
+                    )
+                    for row in values
+                )
+        except Exception:
+            self.reset_scan_floors()
+            raise
         return rows
 
     def delete(self, rows: list[OperationalOutboxRow]) -> None:
@@ -385,8 +392,12 @@ class SpannerOperationalOutboxSource:
             return
         from google.cloud.spanner_v1 import KeySet
 
-        with self._database.batch() as batch:
-            batch.delete(OUTBOX_TABLE, KeySet(keys=[list(row.key) for row in rows]))
+        try:
+            with self._database.batch() as batch:
+                batch.delete(OUTBOX_TABLE, KeySet(keys=[list(row.key) for row in rows]))
+        except Exception:
+            self.reset_scan_floors()
+            raise
         # Advance only after the delete committed: a failed insert never
         # reaches here, so a row that was fetched but not acknowledged stays
         # above the watermark and is fetched again.
@@ -396,19 +407,32 @@ class SpannerOperationalOutboxSource:
 
     def oldest_commit_ts(self) -> dt.datetime | None:
         oldest: dt.datetime | None = None
-        with self._database.snapshot(multi_use=True) as snapshot:
-            for shard in range(self._shard_count):
-                values = list(
-                    snapshot.execute_sql(
-                        "SELECT commit_ts FROM tr_operational_analytics_outbox "
-                        "WHERE shard=@shard ORDER BY commit_ts LIMIT 1",
-                        params={"shard": shard},
-                        param_types={"shard": self._pt.INT64},
+        try:
+            with self._database.snapshot(multi_use=True) as snapshot:
+                for shard in range(self._shard_count):
+                    params: dict[str, Any] = {"shard": shard}
+                    param_types = {"shard": self._pt.INT64}
+                    predicate = "WHERE shard=@shard"
+                    if self._after is not None:
+                        # fetch() returns global commit_ts order, so this
+                        # committed-delete floor is valid for every shard.
+                        predicate += " AND commit_ts >= @floor"
+                        params["floor"] = self._after
+                        param_types["floor"] = self._pt.TIMESTAMP
+                    values = list(
+                        snapshot.execute_sql(
+                            "SELECT commit_ts FROM tr_operational_analytics_outbox "  # noqa: S608
+                            f"{predicate} ORDER BY commit_ts LIMIT 1",
+                            params=params,
+                            param_types=param_types,
+                        )
                     )
-                )
-                if values:
-                    candidate = _utc(values[0][0])
-                    oldest = candidate if oldest is None else min(oldest, candidate)
+                    if values:
+                        candidate = _utc(values[0][0])
+                        oldest = candidate if oldest is None else min(oldest, candidate)
+        except Exception:
+            self.reset_scan_floors()
+            raise
         return oldest
 
 
@@ -777,29 +801,34 @@ def drain_once(
     *,
     batch_size: int,
 ) -> DrainResult:
-    rows = source.fetch(limit=batch_size)
-    if not rows:
-        return DrainResult(fetched=0, inserted=0, rows_per_second=0.0)
-    lag_seconds = _lag_seconds(min(row.commit_ts for row in rows))
-    events: list[CanonicalOperationalEvent] = []
-    quarantined = 0
-    for row in rows:
-        try:
-            events.extend(normalise_operational_event(row))
-        except ValueError as exc:
-            events.append(quarantine_event(row, exc))
-            quarantined += 1
-    started = time.monotonic()
-    writer.insert(events)
-    source.delete(rows)
-    elapsed = max(time.monotonic() - started, 0.000_001)
-    return DrainResult(
-        fetched=len(rows),
-        inserted=len(events) - quarantined,
-        rows_per_second=len(events) / elapsed,
-        quarantined=quarantined,
-        lag_seconds=lag_seconds,
-    )
+    try:
+        rows = source.fetch(limit=batch_size)
+        if not rows:
+            return DrainResult(fetched=0, inserted=0, rows_per_second=0.0)
+        lag_seconds = _lag_seconds(min(row.commit_ts for row in rows))
+        events: list[CanonicalOperationalEvent] = []
+        quarantined = 0
+        for row in rows:
+            try:
+                events.extend(normalise_operational_event(row))
+            except ValueError as exc:
+                events.append(quarantine_event(row, exc))
+                quarantined += 1
+        started = time.monotonic()
+        writer.insert(events)
+        source.delete(rows)
+        elapsed = max(time.monotonic() - started, 0.000_001)
+        return DrainResult(
+            fetched=len(rows),
+            inserted=len(events) - quarantined,
+            rows_per_second=len(events) / elapsed,
+            quarantined=quarantined,
+            lag_seconds=lag_seconds,
+        )
+    except Exception:
+        if isinstance(source, SpannerOperationalOutboxSource):
+            source.reset_scan_floors()
+        raise
 
 
 def _lag_seconds(oldest: dt.datetime | None) -> float:
@@ -866,6 +895,10 @@ def main() -> int:
             idle_delay = min(idle_delay * 2, 30.0)
         else:
             idle_delay = max(0.1, args.poll_seconds)
+            # A steady trickle must not turn partial batches into a busy loop.
+            # Full batches still drain immediately to catch up with a backlog.
+            if result.fetched < max(1, args.batch_size):
+                time.sleep(idle_delay)
 
 
 if __name__ == "__main__":
