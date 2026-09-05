@@ -14,9 +14,10 @@ floors and restores full scans.
 Empty passes back off from ``--poll-seconds`` (minimum 0.1 s), doubling to
 ``TR_OUTBOX_IDLE_MAX_SECONDS`` (default 5 s). The cap must be at least the base
 interval. Backoff adds at most that cap of waiting to delivery latency, excluding
-query/insert time and retries. Reading rows resets the interval; active batches
-drain immediately. Lag metrics use the oldest row from the pass's fetch snapshot,
-before deletion, without a separate probe.
+query/insert time and retries. Reading rows resets the interval; partial batches
+wait the poll interval and full batches drain immediately. Lag metrics use the
+oldest row from the pass's fetch snapshot, before deletion. An unfiltered probe
+on the metrics timer (default 60 s) warns if any shard has a row below its floor.
 """
 
 from __future__ import annotations
@@ -114,6 +115,27 @@ class SpannerOutboxSource:
 
     def reset_scan_floors(self) -> None:
         self._floors.clear()
+
+    def check_scan_floors(self) -> None:
+        """Canary: read each shard's oldest row without the scan optimisation."""
+        with self._database.snapshot(multi_use=True) as snapshot:
+            for shard in range(self._shard_count):
+                values = snapshot.execute_sql(
+                    "SELECT commit_ts FROM tr_analytics_outbox "
+                    "WHERE shard=@shard ORDER BY commit_ts LIMIT 1",
+                    params={"shard": shard},
+                    param_types={"shard": self._pt.INT64},
+                )
+                for row in values:
+                    oldest = _utc(row[0])
+                    floor = self._floors.get(shard)
+                    if floor is not None and oldest <= floor:
+                        log.warning(
+                            "analytics_outbox.floor_violation shard=%d commit_ts=%s floor=%s",
+                            shard,
+                            oldest.isoformat(),
+                            floor.isoformat(),
+                        )
 
     def fetch(self, *, limit: int) -> list[OutboxRow]:
         if limit < 1:
@@ -347,13 +369,22 @@ def main() -> int:
                 metrics.clickhouse_insert_errors_total,
             )
         now = time.monotonic()
-        if result.inserted or now - last_metrics >= args.metrics_seconds:
+        metrics_due = now - last_metrics >= args.metrics_seconds
+        if result.inserted or metrics_due:
             _log_metrics(metrics, result=result, oldest=result.oldest_commit_ts)
+        if metrics_due:
+            # Per-batch logs must not postpone this check under steady traffic.
+            try:
+                source.check_scan_floors()
+            except Exception:
+                log.exception("analytics_outbox.floor_canary_failed")
             last_metrics = now
         if args.once:
             return 0
         if result.fetched:
             idle_seconds = poll_seconds
+            if result.fetched < args.batch_size:
+                time.sleep(poll_seconds)
         else:
             time.sleep(idle_seconds)
             if not failed:

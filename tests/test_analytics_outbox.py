@@ -250,6 +250,9 @@ class _ReadSnapshot:
         else:
             assert "@floor" not in sql
         rows.sort(key=lambda row: (row.commit_ts, row.event_id))
+        if sql.startswith("SELECT commit_ts "):
+            assert "ORDER BY commit_ts LIMIT 1" in sql
+            return [(row.commit_ts,) for row in rows[:1]]
         return [(*row.key, row.payload) for row in rows[:params["limit"]]]
 
 
@@ -406,20 +409,129 @@ def test_restart_restores_full_scan(
 
 
 @pytest.mark.parametrize("busy", [False, True])
-def test_main_pass_executes_one_statement_per_shard_even_when_logging(
+@pytest.mark.parametrize("metrics_due", [False, True])
+def test_main_pass_only_adds_probe_statements_when_metrics_due(
     monkeypatch: pytest.MonkeyPatch,
     spanner_source: tuple[_ReadDatabase, Callable[[], SpannerOutboxSource]],
     busy: bool,
+    metrics_due: bool,
 ) -> None:
     database, _ = spanner_source
     database.rows = [_outbox_row()] if busy else []
-    monkeypatch.setattr("sys.argv", ["ingest_outbox", "--once", "--shards", "4", "--metrics-seconds", "0"])
+    monkeypatch.setattr("sys.argv", ["ingest_outbox", "--once"])
+    monkeypatch.setattr(ingest_outbox.time, "monotonic", lambda: 60.0 if metrics_due else 0.0)
     monkeypatch.setenv("CH_PASSWORD", "fake")
     monkeypatch.delenv("TR_OUTBOX_IDLE_MAX_SECONDS", raising=False)
     monkeypatch.setattr(ingest_outbox, "ClickHouseWriter", lambda **_kwargs: _Writer())
     assert ingest_outbox.main() == 0
-    assert len(database.calls) == 4
+    assert len(database.calls) == 16 * (2 if metrics_due else 1)
     assert database.rows == []
+
+
+@pytest.mark.parametrize("fetched", [1, 2])
+def test_nonempty_pass_pacing(
+    monkeypatch: pytest.MonkeyPatch,
+    spanner_source: tuple[_ReadDatabase, Callable[[], SpannerOutboxSource]],
+    fetched: int,
+) -> None:
+    monkeypatch.setattr("sys.argv", ["ingest_outbox", "--batch-size", "2"])
+    monkeypatch.setenv("CH_PASSWORD", "fake")
+    monkeypatch.delenv("TR_OUTBOX_IDLE_MAX_SECONDS", raising=False)
+    monkeypatch.setattr(ingest_outbox, "ClickHouseWriter", lambda **_kwargs: _Writer())
+    monkeypatch.setattr(ingest_outbox.time, "monotonic", lambda: 0.0)
+    sleeps: list[float] = []
+    monkeypatch.setattr(ingest_outbox.time, "sleep", sleeps.append)
+    passes = 0
+
+    class StopLoop(BaseException):
+        pass
+
+    def drain(*_args: Any, **_kwargs: Any) -> ingest_outbox.DrainResult:
+        nonlocal passes
+        if passes == 3:
+            raise StopLoop
+        passes += 1
+        return ingest_outbox.DrainResult(fetched, fetched, 1.0)
+
+    monkeypatch.setattr(ingest_outbox, "drain_once", drain)
+    with pytest.raises(StopLoop):
+        ingest_outbox.main()
+    assert sleeps == ([5.0] * 3 if fetched < 2 else [])
+
+
+@pytest.mark.parametrize("offset", [-1, 0, 1])
+def test_floor_canary_warns_only_for_rows_below_their_shard_floor(
+    spanner_source: tuple[_ReadDatabase, Callable[[], SpannerOutboxSource]],
+    caplog: pytest.LogCaptureFixture,
+    offset: int,
+) -> None:
+    database, create = spanner_source
+    source = create()
+    source._shard_count = 16
+    row = _outbox_row()
+    source._floors = {3: row.commit_ts, 2: row.commit_ts - dt.timedelta(seconds=5)}
+    database.rows = [
+        dataclasses.replace(row, commit_ts=row.commit_ts + dt.timedelta(seconds=offset)),
+        dataclasses.replace(row, shard=2, commit_ts=row.commit_ts - dt.timedelta(seconds=2)),
+        dataclasses.replace(row, shard=1, commit_ts=row.commit_ts - dt.timedelta(seconds=10)),
+    ]
+    before = dict(source._floors), list(database.rows)
+    source.check_scan_floors()
+    assert (source._floors, database.rows) == before
+    assert len(database.calls) == 16
+    assert {params["shard"] for _, params, _ in database.calls} == set(range(16))
+    assert all("floor" not in sql and "floor" not in params for sql, params, _ in database.calls)
+    warnings = [record for record in caplog.records if "floor_violation" in record.message]
+    if offset < 0:
+        assert len(warnings) == 1
+        assert warnings[0].levelname == "WARNING"
+        assert "shard=3" in warnings[0].message
+        assert f"commit_ts={database.rows[0].commit_ts.isoformat()}" in warnings[0].message
+        assert f"floor={row.commit_ts.isoformat()}" in warnings[0].message
+    else:
+        assert warnings == []
+
+
+@pytest.mark.parametrize("busy", [False, True])
+@pytest.mark.parametrize("probe_failure", [False, True])
+def test_floor_canary_runs_on_timer_despite_per_batch_logs(
+    monkeypatch: pytest.MonkeyPatch,
+    spanner_source: tuple[_ReadDatabase, Callable[[], SpannerOutboxSource]],
+    caplog: pytest.LogCaptureFixture,
+    busy: bool,
+    probe_failure: bool,
+) -> None:
+    database, _ = spanner_source
+    database.fail_fetch = probe_failure
+    monkeypatch.setattr("sys.argv", ["ingest_outbox"])
+    monkeypatch.setenv("CH_PASSWORD", "fake")
+    monkeypatch.delenv("TR_OUTBOX_IDLE_MAX_SECONDS", raising=False)
+    monkeypatch.setattr(ingest_outbox, "ClickHouseWriter", lambda **_kwargs: _Writer())
+    monkeypatch.setattr(ingest_outbox.time, "sleep", lambda _seconds: None)
+    now = 0.0
+    monkeypatch.setattr(ingest_outbox.time, "monotonic", lambda: now)
+    times = iter([0.0, 30.0, 59.0, 60.0, 90.0, 120.0])
+    calls_after_pass: list[int] = []
+
+    class StopLoop(BaseException):
+        pass
+
+    def drain(*_args: Any, **_kwargs: Any) -> ingest_outbox.DrainResult:
+        nonlocal now
+        calls_after_pass.append(len(database.calls))
+        try:
+            now = next(times)
+        except StopIteration:
+            raise StopLoop from None
+        return ingest_outbox.DrainResult(int(busy), int(busy), 1.0)
+
+    monkeypatch.setattr(ingest_outbox, "drain_once", drain)
+    with pytest.raises(StopLoop):
+        ingest_outbox.main()
+    statements_per_probe = 1 if probe_failure else 16
+    assert calls_after_pass == [n * statements_per_probe for n in [0, 0, 0, 0, 1, 1, 2]]
+    failures = [record for record in caplog.records if "floor_canary_failed" in record.message]
+    assert len(failures) == (2 if probe_failure else 0)
 
 
 @pytest.mark.parametrize("cap", [None, "2"])
@@ -439,6 +551,7 @@ def test_idle_backoff_progression_cap_and_reset(
         monkeypatch.setenv("TR_OUTBOX_IDLE_MAX_SECONDS", cap)
     writer = _Writer(failures=int(insert_failure))
     monkeypatch.setattr(ingest_outbox, "ClickHouseWriter", lambda **_kwargs: writer)
+    monkeypatch.setattr(ingest_outbox.time, "monotonic", lambda: 0.0)
     sleeps: list[float] = []
 
     class StopLoop(Exception):
@@ -448,7 +561,7 @@ def test_idle_backoff_progression_cap_and_reset(
         sleeps.append(seconds)
         if len(sleeps) == 6:
             database.rows = [_outbox_row()]
-        if len(sleeps) == 8:
+        if len(sleeps) == 9:
             raise StopLoop
 
     monkeypatch.setattr(ingest_outbox.time, "sleep", sleep)
@@ -456,7 +569,7 @@ def test_idle_backoff_progression_cap_and_reset(
         ingest_outbox.main()
     expected = [0.5, 1, 2, 4, 5, 5] if cap is None else [0.5, 1, 2, 2, 2, 2]
     # A failed insert resets immediately, then the successful retry resets again.
-    assert sleeps == expected + [0.5, 0.5 if insert_failure else 1]
+    assert sleeps == expected + [0.5, 0.5, 0.5 if insert_failure else 1]
     assert len(writer.batches) == 1 + int(insert_failure)
     assert len(database.calls) == 9 * 4  # Nine passes, including the failed pass if any.
 
