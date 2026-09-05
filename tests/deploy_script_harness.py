@@ -948,6 +948,19 @@ _SYNTHETIC_INGEST_SERVICE_JSON = json.dumps(
                                         }
                                     },
                                 },
+                                {
+                                    "name": "TR_OPERATOR_TOKEN",
+                                    "valueFrom": {
+                                        "secretKeyRef": {
+                                            "name": "trustedrouter-operator-token",
+                                            "key": "latest",
+                                        }
+                                    },
+                                },
+                                {
+                                    "name": "TR_OPERATOR_IDENTITIES",
+                                    "value": "joseph@jperla.com",
+                                },
                             ]
                         }
                     ]
@@ -991,6 +1004,19 @@ _SYNTHETIC_COMBINED_JOB_JSON = json.dumps(
                                                     "key": "latest",
                                                 }
                                             },
+                                        },
+                                        {
+                                            "name": "TR_OPERATOR_TOKEN",
+                                            "valueFrom": {
+                                                "secretKeyRef": {
+                                                    "name": "trustedrouter-operator-token",
+                                                    "key": "latest",
+                                                }
+                                            },
+                                        },
+                                        {
+                                            "name": "TR_OPERATOR_IDENTITIES",
+                                            "value": "joseph@jperla.com",
                                         },
                                     ],
                                 }
@@ -1166,6 +1192,7 @@ _PUBLIC_EDGE_ROUTED_SERVICE_JSON = json.dumps(
 
 _INTERNAL_SURFACE_LEGACY_ENV = {
     **_PUBLIC_SURFACE_LEGACY_ENV,
+    "TR_OPERATOR_IDENTITIES": "joseph@jperla.com",
     "TR_GENERATION_RECORDS_ENABLED": "true",
     "TR_REQUEST_RECORD_WRITE_MODE": "typed",
     "TR_SETTLE_OUTBOX_ENABLED": "true",
@@ -1189,6 +1216,7 @@ _INTERNAL_SURFACE_LEGACY_ENV = {
 }
 _INTERNAL_SECRET_BINDINGS = (
     ("TR_INTERNAL_GATEWAY_TOKEN", "trustedrouter-internal-gateway-token"),
+    ("TR_OPERATOR_TOKEN", "trustedrouter-operator-token"),
     ("TR_OBSERVER_INTERNAL_TOKEN", "trustedrouter-observer-internal-token"),
     ("TR_SYNTHETIC_MONITOR_API_KEY", "trustedrouter-synthetic-monitor-api-key"),
     ("TR_SENTRY_DSN", "trustedrouter-sentry-dsn"),

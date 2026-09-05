@@ -67,6 +67,21 @@ _TYPED_DEFAULTS: dict[str, dict[str, Any]] = {
     },
 }
 
+_TYPED_PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
+    "tr_credit_balance": ("workspace_id", "shard"),
+    "tr_earnings_balance": ("user_id", "shard"),
+    "tr_user_lifetime_topup": ("user_id",),
+    "tr_key_limit": ("key_hash", "shard"),
+    "tr_trust_event": ("workspace_id", "event_id"),
+    "tr_trust_inbox": ("provider", "adverse_ref"),
+    "tr_owner_workspace": ("owner_user_id", "workspace_id"),
+    "tr_trust_override": ("workspace_id",),
+    "tr_trust_demotion_remainder": ("owner_user_id", "workspace_id"),
+    "tr_trust_backfill": (
+        "provider", "account_id", "environment", "source", "source_version"
+    ),
+}
+
 
 def _apply_upsert_typed(
     typed: dict, versions: dict, table: str, columns: Any, value_tuple: tuple, version: int
@@ -76,8 +91,13 @@ def _apply_upsert_typed(
     the supplied columns and leave the rest intact. Shared by the transaction
     and batch commit paths so partial typed-row seed/update mutations behave
     identically through either writer."""
-    pk = (value_tuple[0], value_tuple[1])
     incoming = dict(zip(columns, value_tuple, strict=True))
+    key_columns = _TYPED_PRIMARY_KEYS.get(table)
+    pk = (
+        tuple(incoming[column] for column in key_columns)
+        if key_columns is not None
+        else (value_tuple[0], value_tuple[1])
+    )
     table_rows = typed.setdefault(table, {})
     existing = table_rows.get(pk)
     row = dict(existing) if existing is not None else dict(_TYPED_DEFAULTS.get(table, {}))
@@ -933,6 +953,27 @@ class _FakeTransaction:
             )
             self.pending_writes.append(("update_typed", "tr_trust_event", pk, new))
             return 1
+        if sql.startswith("UPDATE tr_credit_balance SET trust_tier=0"):
+            updated = 0
+            for pk in self.db.typed.get("tr_credit_balance", {}):
+                if pk[0] != p["pk"] or not 0 <= int(pk[1]) < int(p["shard_count"]):
+                    continue
+                rec = self._typed_current("tr_credit_balance", pk)
+                if rec is None:
+                    continue
+                new = dict(
+                    rec,
+                    trust_tier=0,
+                    trust_latched_at=rec.get("trust_latched_at") or p["now"],
+                    billing_pause_causes=list(p["causes"]),
+                    pause_epoch=int(rec.get("pause_epoch") or 0) + 1,
+                    updated_at=p["now"],
+                )
+                self.pending_writes.append(
+                    ("update_typed", "tr_credit_balance", pk, new)
+                )
+                updated += 1
+            return updated
         if sql.startswith("UPDATE tr_credit_balance SET trust_latched_at=COALESCE"):
             updated = 0
             for pk in self.db.typed.get("tr_credit_balance", {}):
@@ -1158,33 +1199,91 @@ class _FakeTransaction:
             return 1
         if "UPDATE tr_key_limit " in sql and "reserved = reserved - @hold" in sql:
             _require_pred(sql, "key_hash=@kh AND shard=@shard AND reserved >= @hold", "key-release")
-            pk = (p["kh"], p["shard"])
-            rec = self._typed_current("tr_key_limit", pk)
-            if rec is None or rec["reserved"] < p["hold"]:
-                return 0
+            usage_settle = "usage = usage + @actual" in sql
             byok_settle = "byok_usage = byok_usage + @actual" in sql
-            col = "byok_usage" if byok_settle else "usage"
-            new = dict(rec, reserved=rec["reserved"] - p["hold"])
-            new[col] = rec[col] + p["actual"]
-            # Lazy window bump, mirroring release_key's IF() SQL: a stale window
-            # (start < floor) is replaced, a fresh one accumulates. BYOK settles
-            # count only when the row's include_byok says so (wamt gate).
-            if "day_usage = IF(" in sql:
-                wamt = p["actual"]
-                if byok_settle and not rec.get("include_byok", True):
-                    wamt = 0
+            if usage_settle == byok_settle:
+                raise AssertionError(
+                    "key-release SQL must update exactly one lifetime usage column"
+                )
+            wamt_sql = "IF(include_byok, @actual, 0)" if byok_settle else "@actual"
+            fast_window_bump = (
+                "day_usage = COALESCE(day_usage, 0) +" in sql
+                or "day_start IS NOT NULL" in sql
+            )
+            if fast_window_bump:
                 for window, floor_param in (
                     ("day", "day_floor"),
                     ("week", "week_floor"),
                     ("month", "month_floor"),
                 ):
+                    _require_pred(
+                        sql,
+                        f"{window}_usage = COALESCE({window}_usage, 0) + {wamt_sql}",
+                        f"key-release-current-{window}-usage",
+                    )
+                    _require_pred(
+                        sql,
+                        f"AND {window}_start IS NOT NULL "
+                        f"AND {window}_start >= @{floor_param}",
+                        f"key-release-current-{window}",
+                    )
+            pk = (p["kh"], p["shard"])
+            rec = self._typed_current("tr_key_limit", pk)
+            if rec is None or rec["reserved"] < p["hold"]:
+                return 0
+            if fast_window_bump and any(
+                rec.get(f"{window}_start") is None
+                or rec[f"{window}_start"] < p[floor_param]
+                for window, floor_param in (
+                    ("day", "day_floor"),
+                    ("week", "week_floor"),
+                    ("month", "month_floor"),
+                )
+            ):
+                return 0
+            col = "byok_usage" if byok_settle else "usage"
+            new = dict(rec, reserved=rec["reserved"] - p["hold"])
+            new[col] = rec[col] + p["actual"]
+            wamt = p["actual"]
+            if byok_settle and not rec.get("include_byok", True):
+                wamt = 0
+            # Lazy window bump, mirroring release_key's IF() SQL: a stale window
+            # (start < floor) is replaced, a fresh one accumulates. BYOK settles
+            # count only when the row's include_byok says so (wamt gate).
+            if fast_window_bump:
+                for window in ("day", "week", "month"):
+                    new[f"{window}_usage"] = (
+                        rec.get(f"{window}_usage") or 0
+                    ) + wamt
+            elif "day_usage = IF(" in sql:
+                for window, floor_param in (
+                    ("day", "day_floor"),
+                    ("week", "week_floor"),
+                    ("month", "month_floor"),
+                ):
+                    _require_pred(
+                        sql,
+                        f"{window}_usage = IF({window}_start IS NULL OR "
+                        f"{window}_start < @{floor_param}, {wamt_sql}, "
+                        f"COALESCE({window}_usage, 0) + {wamt_sql})",
+                        f"key-release-roll-{window}-usage",
+                    )
+                    _require_pred(
+                        sql,
+                        f"{window}_start = IF({window}_start IS NULL OR "
+                        f"{window}_start < @{floor_param}, @{floor_param}, "
+                        f"{window}_start)",
+                        f"key-release-roll-{window}-start",
+                    )
                     floor = p[floor_param]
                     start = rec.get(f"{window}_start")
                     if start is None or start < floor:
                         new[f"{window}_usage"] = wamt
                         new[f"{window}_start"] = floor
                     else:
-                        new[f"{window}_usage"] = rec.get(f"{window}_usage", 0) + wamt
+                        new[f"{window}_usage"] = (
+                            rec.get(f"{window}_usage") or 0
+                        ) + wamt
             self.pending_writes.append(("update_typed", "tr_key_limit", pk, new))
             return 1
         if sql.startswith("INSERT INTO tr_reservation"):
@@ -1892,7 +1991,7 @@ class _FakeTransaction:
                 kind, entity_id = entry[0], entry[1]
                 self.pending_writes.append(("delete", table, kind, entity_id))
             else:
-                self.pending_writes.append(("delete_typed", table, (entry[0], entry[1])))
+                self.pending_writes.append(("delete_typed", table, tuple(entry)))
 
 
 class _FakeSnapshot:
@@ -1984,7 +2083,7 @@ class _FakeBatch:
                 kind, entity_id = entry[0], entry[1]
                 self.pending_writes.append(("delete", table, kind, entity_id))
             else:
-                self.pending_writes.append(("delete_typed", table, (entry[0], entry[1])))
+                self.pending_writes.append(("delete_typed", table, tuple(entry)))
 
 
 def _require_pred(sql: str, needle: str, what: str) -> None:
@@ -2362,7 +2461,7 @@ def _execute_spend_lease_entity_update(
         path_sql, value_sql = json_set.groups()
         path = str(_evaluate_spanner_expression(path_sql, params, now))
         body = json.loads(str(record["body"]))
-        if path in {"$.holds_predecessor_slot", "$.closing_at"}:
+        if path in {"$.holds_predecessor_slot", "$.closing_at", "$.state"}:
             body[path[2:]] = _evaluate_spanner_expression(value_sql, params, now)
         elif path == "$.open_predecessor_count":
             decrement = re.fullmatch(
@@ -2765,6 +2864,24 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+
+    def _typed_rows(table: str) -> list[dict[str, Any]]:
+        keys = set(db.typed.get(table, {}))
+        if txn is not None:
+            for op in txn.pending_writes:
+                if op[0] == "upsert_typed" and op[1] == table:
+                    incoming = dict(zip(op[2], op[3], strict=True))
+                    key_columns = _TYPED_PRIMARY_KEYS[table]
+                    keys.add(tuple(incoming[column] for column in key_columns))
+                elif op[0] in {"insert_typed_dml", "update_typed", "delete_typed"} and op[1] == table:
+                    keys.add(op[2])
+        rows = [
+            txn._typed_current(table, pk)
+            if txn is not None
+            else db.typed.get(table, {}).get(pk)
+            for pk in keys
+        ]
+        return [row for row in rows if row is not None]
 
     def _claim_bodies() -> list[dict]:
         out = []
@@ -3824,6 +3941,71 @@ def _execute_sql(
                 {str(pk[0]) for pk in db.typed.get("tr_credit_balance", {})}
             )
         ]
+    if "FROM tr_trust_backfill" in sql:
+        rows = [
+            row for row in _typed_rows("tr_trust_backfill")
+            if all(
+                row.get(column) == params[column]
+                for column in _TYPED_PRIMARY_KEYS["tr_trust_backfill"]
+                if column in params
+            )
+        ]
+        if "completed_at IS NOT NULL" in sql:
+            rows = [
+                row for row in rows
+                if row.get("completed_at") is not None
+                and row.get("unmatched_count") == 0
+                and row.get("semantic_mismatch_count") == 0
+            ]
+        columns = [
+            column.strip()
+            for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [[row.get(column) for column in columns] for row in rows]
+    if "FROM tr_owner_workspace" in sql:
+        rows = _typed_rows("tr_owner_workspace")
+        if "owner" in params:
+            rows = [
+                row for row in rows if row.get("owner_user_id") == params["owner"]
+            ]
+        rows.sort(
+            key=lambda row: (
+                str(row.get("owner_user_id")), str(row.get("workspace_id"))
+            )
+        )
+        columns = [
+            column.strip()
+            for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [[row.get(column) for column in columns] for row in rows]
+    if "FROM tr_trust_override" in sql:
+        rows = [
+            row
+            for row in _typed_rows("tr_trust_override")
+            if row.get("workspace_id") == params["pk"]
+        ]
+        columns = [
+            column.strip()
+            for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [[row.get(column) for column in columns] for row in rows]
+    if "FROM tr_trust_demotion_remainder" in sql:
+        rows = _typed_rows("tr_trust_demotion_remainder")
+        if "owner" in params:
+            rows = [
+                row
+                for row in rows
+                if row.get("owner_user_id") == params["owner"]
+                and row.get("workspace_id") == params["workspace"]
+            ]
+        rows.sort(key=lambda row: row.get("created_at"))
+        if "limit" in params:
+            rows = rows[: int(params["limit"])]
+        columns = [
+            column.strip()
+            for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [[row.get(column) for column in columns] for row in rows]
     if "FROM tr_trust_event" in sql:
         cols = [
             column.strip()
@@ -3944,6 +4126,23 @@ def _execute_sql(
             ]
             recs = [rec for rec in recs if rec is not None]
             return [[rec.get(c) for c in cols] for rec in recs]
+    if "SELECT id, body FROM tr_entities WHERE kind='workspace'" in sql:
+        rows = sorted(
+            (entity_id, row.body)
+            for (row_kind, entity_id), row in db.rows.items()
+            if row_kind == "workspace"
+        )
+        return [[entity_id, body] for entity_id, body in rows]
+    if "kind IN ('spend_lease','regional_quota_lease')" in sql:
+        rows: list[list[str]] = []
+        for (row_kind, entity_id), row in db.rows.items():
+            if row_kind not in {"spend_lease", "regional_quota_lease"}:
+                continue
+            body = json.loads(row.body)
+            if body.get("workspace_id") == params["pk"]:
+                rows.append([row_kind, entity_id, row.body])
+        rows.sort(key=lambda row: (row[0], row[1]))
+        return rows
     if "AND id>@after" in sql:
         # Paged PK-prefix scan of one kind (the credit-transfer recovery
         # queue). Reads committed rows plus this transaction's own pending
@@ -4191,6 +4390,10 @@ def make_fake_store(
     store._database = db
     store._bt_table = bt
     store.request_record_write_mode = request_record_write_mode
+    store.max_workspaces_per_owner = 25
+    store.trust_qualifying_providers = frozenset({"stripe", "x402"})
+    store.trust_tier3_min_days = 30
+    store.trust_tier3_min_paid_microdollars = 50_000_000
     store._generation_records_enabled = generation_records_enabled
     store._bigtable_writes_enabled = bigtable_writes_enabled
     # `object.__new__` skips __init__, so every attribute the real constructor

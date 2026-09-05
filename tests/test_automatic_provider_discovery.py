@@ -44,6 +44,12 @@ def test_openai_discovers_only_live_priced_stable_chat_models(
         lambda **_kwargs: ProviderPricingResult(
             slug="openai",
             prices={
+                "openai/gpt-6-astra": ModelPrice(
+                    tiers=[
+                        PriceTier(272_000, 10_000_000, 50_000_000, 1_000_000),
+                        PriceTier(None, 20_000_000, 75_000_000, 2_000_000),
+                    ]
+                ),
                 "openai/gpt-5.6-sol": ModelPrice(800_000, 4_000_000),
                 "openai/gpt-image-2": ModelPrice(1_000_000, 2_000_000),
             },
@@ -56,6 +62,7 @@ def test_openai_discovers_only_live_priced_stable_chat_models(
         "fetch_json",
         lambda *_args, **_kwargs: {
             "data": [
+                {"id": "gpt-6-astra", "created": 456},
                 {"id": "gpt-5.6-sol", "created": 123},
                 {"id": "gpt-5.6-sol-2026-07-09"},
                 {"id": "gpt-image-2"},
@@ -74,20 +81,51 @@ def test_openai_discovers_only_live_priced_stable_chat_models(
     notes = openai.write_provider_manifest(result)
 
     raw = json.loads(manifest.read_text(encoding="utf-8"))
-    assert [row["id"] for row in raw["models"]] == ["openai/gpt-5.6-sol"]
-    assert raw["models"][0]["upstream_id"] == "gpt-5.6-sol"
-    assert raw["models"][0]["input_token_price_per_m"] == 800_000
+    assert [row["id"] for row in raw["models"]] == [
+        "openai/gpt-5.6-sol",
+        "openai/gpt-6-astra",
+    ]
+    astra = raw["models"][1]
+    assert astra["upstream_id"] == "gpt-6-astra"
+    assert astra["context_length"] == 1_050_000
+    assert astra["max_output_tokens"] == 128_000
+    assert astra["input_modalities"] == ["text", "image"]
+    assert astra["supported_features"] == [
+        "function-calling",
+        "reasoning-effort",
+        "structured-output",
+    ]
+    assert astra["price_tiers"] == [
+        {
+            "max_prompt_tokens": 272_000,
+            "input_token_price_per_m": 10_000_000,
+            "output_token_price_per_m": 50_000_000,
+            "cached_input_token_price_per_m": 1_000_000,
+        },
+        {
+            "max_prompt_tokens": None,
+            "input_token_price_per_m": 20_000_000,
+            "output_token_price_per_m": 75_000_000,
+            "cached_input_token_price_per_m": 2_000_000,
+        },
+    ]
     assert probes == [
         {
             "base_url": openai.BASE_URL,
             "api_key": "test-key",
             "model": "gpt-5.6-sol",
             "max_tokens_field": "max_completion_tokens",
-        }
+        },
+        {
+            "base_url": openai.BASE_URL,
+            "api_key": "test-key",
+            "model": "gpt-6-astra",
+            "max_tokens_field": "max_completion_tokens",
+        },
     ]
     assert notes == [
         "openai: refreshed provider_models/openai.json "
-        "(1 priced rows, appended 1)"
+        "(2 priced rows, appended 2)"
     ]
 
 
@@ -160,6 +198,30 @@ def test_openai_parser_reads_models_hidden_behind_all_models_control() -> None:
         "prompt_micro_per_m": 1_750_000,
         "completion_micro_per_m": 14_000_000,
         "prompt_cached_micro_per_m": 175_000,
+    }
+
+
+def test_openai_parser_discovers_astra_without_a_handwritten_price_mapping() -> None:
+    parsed = openai_parser.parse(
+        "| gpt-6-astra | $10.00 | $1.00 | $12.50 | $50.00 | "
+        "$20.00 | $2.00 | $25.00 | $75.00 |"
+    )
+
+    assert parsed["openai/gpt-6-astra"] == {
+        "tiers": [
+            {
+                "max_prompt_tokens": 272_000,
+                "prompt_micro_per_m": 10_000_000,
+                "completion_micro_per_m": 50_000_000,
+                "prompt_cached_micro_per_m": 1_000_000,
+            },
+            {
+                "max_prompt_tokens": None,
+                "prompt_micro_per_m": 20_000_000,
+                "completion_micro_per_m": 75_000_000,
+                "prompt_cached_micro_per_m": 2_000_000,
+            },
+        ]
     }
 
 

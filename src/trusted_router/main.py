@@ -13,6 +13,7 @@ Heavy logic lives elsewhere:
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 from typing import Any
@@ -69,6 +70,7 @@ from trusted_router.routes.internal import (
     register_gateway_internal_routes,
     register_internal_routes,
     register_observer_internal_routes,
+    register_operator_internal_routes,
 )
 from trusted_router.routes.keys import register_key_routes
 from trusted_router.routes.mcp import register_mcp_routes
@@ -105,6 +107,46 @@ from trusted_router.types import ErrorType
 _storage_error_logger = logging.getLogger(__name__)
 
 _APP_CONSOLE_HANDLER_MARKER = "_trusted_router_app_console"
+_ACQUISITION_CLOUD_FIELDS = (
+    "anonymous_fingerprint",
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_content",
+    "creative_id",
+    "first_creative_id",
+    "landing_path",
+    "experiment_id",
+    "experiment_cell_id",
+    "has_gclid",
+    "has_gbraid",
+    "has_wbraid",
+    "has_twclid",
+)
+
+
+class _ApplicationConsoleFormatter(logging.Formatter):
+    """Emit acquisition metadata as Cloud Logging JSON, and other logs as text."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        event = getattr(record, "event", "")
+        if (
+            record.name == "trusted_router.acquisition"
+            and isinstance(event, str)
+            and event.startswith("acquisition.")
+        ):
+            payload: dict[str, object] = {
+                "severity": record.levelname,
+                "logger": record.name,
+                "message": record.getMessage(),
+                "event": event,
+            }
+            for field in _ACQUISITION_CLOUD_FIELDS:
+                value = getattr(record, field, None)
+                if value is not None:
+                    payload[field] = value
+            return json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        return super().format(record)
 
 
 def _configure_application_logging() -> None:
@@ -133,7 +175,9 @@ def _configure_application_logging() -> None:
 
     handler = logging.StreamHandler(sys.stderr)
     handler.setLevel(logging.INFO)
-    handler.setFormatter(logging.Formatter("%(levelname)s %(name)s %(message)s"))
+    handler.setFormatter(
+        _ApplicationConsoleFormatter("%(levelname)s %(name)s %(message)s")
+    )
     setattr(handler, _APP_CONSOLE_HANDLER_MARKER, True)
     app_logger.addHandler(handler)
 
@@ -735,6 +779,8 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         register_observer_internal_routes(router)
     elif surface == "observer":
         register_observer_internal_routes(router)
+    if surface in {"combined", "internal"} and settings.operator_token:
+        register_operator_internal_routes(router)
     return router
 
 

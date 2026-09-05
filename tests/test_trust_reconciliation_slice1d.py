@@ -351,10 +351,11 @@ def test_recorded_x402_payment_and_refund_use_the_same_canonical_pipeline() -> N
     assert payment_record.recovery_target == 600_000
 
 
-def test_completion_rule_and_exact_arm_marker_predicate() -> None:
-    requirement = MarkerRequirement(
-        "stripe", "acct_1", "production", "stripe-created-lists", "v1"
-    )
+@pytest.mark.parametrize("requirement", [
+    MarkerRequirement("stripe", "acct_1", "production", "stripe-created-lists", "v1"),
+    MarkerRequirement("owner_inventory", "local", "production", "tr_entities.workspace", "rev-1"),
+])
+def test_completion_rule_and_exact_arm_marker_predicate(requirement: MarkerRequirement) -> None:
     complete = BackfillMarker(
         provider=requirement.provider,
         account_id=requirement.account_id,
@@ -369,6 +370,11 @@ def test_completion_rule_and_exact_arm_marker_predicate() -> None:
         completed_at=NOW,
     )
     assert completed_marker_satisfies(complete, requirement)
+    assert not completed_marker_satisfies(None, requirement)
+    for column in ("provider", "account_id", "environment", "source", "source_version"):
+        assert not completed_marker_satisfies(
+            dataclasses.replace(complete, **{column: "other"}), requirement
+        )
     assert not completed_marker_satisfies(
         dataclasses.replace(complete, source_version="v2"), requirement
     )
@@ -719,8 +725,13 @@ def _create_columns(ddl: str, table: str) -> tuple[str, ...]:
     )
 
 
-def test_marker_ddl_exact_columns_completion_check_and_explicit_conflict_target() -> None:
-    spanner = (ROOT / "scripts/deploy/migrate_trust_reconciliation.sh").read_text()
+@pytest.mark.parametrize("migration", [
+    "migrate_trust_reconciliation.sh", "migrate_typed_counters.sh",
+])
+def test_marker_ddl_exact_columns_completion_check_and_explicit_conflict_target(
+    migration: str,
+) -> None:
+    spanner = (ROOT / "scripts/deploy" / migration).read_text()
     postgres = (ROOT / "src/trusted_router/storage_postgres_schema.sql").read_text()
     storage = (ROOT / "src/trusted_router/storage_trust_reconciliation.py").read_text()
     assert _create_columns(spanner, "tr_trust_backfill") == MARKER_COLUMNS
@@ -728,6 +739,11 @@ def test_marker_ddl_exact_columns_completion_check_and_explicit_conflict_target(
     completion = "completed_at IS NULL OR (unmatched_count = 0 AND semantic_mismatch_count = 0)"
     assert completion in " ".join(spanner.split())
     assert completion in " ".join(postgres.split())
+    for ddl in (spanner, postgres):
+        assert len(re.findall(r"CREATE TABLE(?: IF NOT EXISTS)? tr_trust_backfill \(", ddl)) == 1
+        assert "PRIMARY KEY (provider, account_id, environment, source, source_version)" in ddl
+        for column in ("consistency_delay_seconds", "unmatched_count", "semantic_mismatch_count"):
+            assert f"{column} >= 0" in ddl
     target = "ON CONFLICT (provider, account_id, environment, source, source_version)"
     assert target in storage
     targetless = re.compile(r"\bON\s+CONFLICT\s+DO\s+NOTHING\b", re.IGNORECASE)

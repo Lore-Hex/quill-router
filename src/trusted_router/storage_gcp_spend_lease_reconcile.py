@@ -392,6 +392,8 @@ def _reconcile_open(
         raise _Contradiction("close eligibility was followed by an open allocation or state")
     if not eligible and row.global_closed_at is None:
         return _defer(store, row, now=now)
+    if now < cutoff:
+        return _defer(store, row, now=now)
     if row.close_eligible_since is None:
         run_in_transaction_with_retry(
             store._database,
@@ -402,7 +404,7 @@ def _reconcile_open(
         )
 
     if row.global_closed_at is None:
-        _close_global(store, row, local, global_body, now=now)
+        _close_global(store, row, local, now=now)
     else:
         frozen_version = global_body.get("frozen_local_version")
         expected = local.version - int(local.state == SpendLeaseState.CLOSED)
@@ -649,23 +651,55 @@ def _close_global(
     store: Any,
     row: OpenRow,
     local: SpendLease,
-    global_body: dict[str, Any],
     *,
     now: datetime,
 ) -> None:
-    credit_shard = int(global_body["credit_shard"])
-    holds_slot = bool(global_body.get("holds_predecessor_slot"))
+    if (
+        local.state not in {SpendLeaseState.DRAINING, SpendLeaseState.TOMBSTONED}
+        or local.open_allocations
+        or now < _aware(row.expires_at) + timedelta(seconds=row.skew_seconds)
+    ):
+        raise _Contradiction("global close requires an expired frozen local lease")
     fence_id = store._spend_lease_pair_id(row.key_hash, row.boot_kid)
-    closed_body = dict(global_body)
-    closed_body.update(
-        {
-            "state": "CLOSED",
-            "frozen_local_version": local.version,
-            "closing_at": closed_body.get("closing_at") or now.isoformat(),
-        }
-    )
 
     def txn(transaction: Any) -> None:
+        # A successor can claim the predecessor slot after the outer snapshot.
+        # Freeze, inspect ownership, and release escrow in one serializable txn.
+        records = list(transaction.execute_sql(
+            "SELECT body FROM tr_entities WHERE kind=@kind AND id=@id",
+            params={"kind": SPEND_LEASE_KIND, "id": row.lease_id},
+            param_types={"kind": store._param_types.STRING, "id": store._param_types.STRING},
+        ))
+        if not records:
+            raise _Contradiction("global spend lease disappeared before close")
+        body = dict(json.loads(records[0][0]))
+        _validate_global_identity(row, body)
+        work = read_open_row(transaction, store._param_types, row.lease_id)
+        if work is None:
+            raise _Contradiction("spend lease close work row disappeared")
+        if work.global_closed_at is not None:
+            if body.get("state") != "CLOSED" or body.get("frozen_local_version") != local.version:
+                raise _Contradiction("global close replay disagrees with frozen local snapshot")
+            return
+        if body.get("state") == "ACTIVE":
+            _require_one(int(transaction.execute_update(
+                "UPDATE tr_entities SET body=TO_JSON_STRING(JSON_SET(PARSE_JSON(body), "
+                "'$.state', @state)) WHERE kind=@kind AND id=@id "
+                "AND JSON_VALUE(body, '$.state')='ACTIVE'",
+                params={"kind": SPEND_LEASE_KIND, "id": row.lease_id, "state": local.state.value.upper()},
+                param_types={"kind": store._param_types.STRING, "id": store._param_types.STRING,
+                             "state": store._param_types.STRING},
+            )), "spend lease freeze guard")
+        elif body.get("state") not in {"DRAINING", "TOMBSTONED"}:
+            raise _Contradiction("global spend lease is not closeable")
+        credit_shard = int(body["credit_shard"])
+        holds_slot = bool(body.get("holds_predecessor_slot"))
+        closed_body = dict(body)
+        closed_body.update({
+            "state": "CLOSED",
+            "frozen_local_version": local.version,
+            "closing_at": body.get("closing_at") or now.isoformat(),
+        })
         _require_one(
             release_credit(
                 transaction,

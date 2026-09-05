@@ -530,6 +530,77 @@ def test_rollout_binding_unit_4_fence_passes_with_settle_clamp(
     )
     serialized_env = deploy[deploy.index("--set-env-vars") + 1]
     assert "TR_SPEND_LEASE_BINDING_ENABLED=true" in serialized_env.split("|")
+    assert "TR_SPEND_LEASE_BIGTABLE_TABLE=trustedrouter-spend-lease" in serialized_env.split(
+        "|"
+    )
+    assert (
+        "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES=us-central1=tr-spend-us-central1"
+        in serialized_env.split("|")
+    )
+
+
+def test_rollout_binding_refuses_empty_spend_lease_app_profiles(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = "scripts/deploy/rollout.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    active_revision = json.dumps(
+        {
+            "spec": {
+                "containers": [
+                    {
+                        "env": [
+                            {
+                                "name": "TR_REGIONAL_QUOTA_LEASES_ENABLED",
+                                "value": "false",
+                            },
+                            {
+                                "name": "TR_REGIONAL_QUOTA_LEASE_ISSUANCE_ENABLED",
+                                "value": "false",
+                            },
+                            {
+                                "name": "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES",
+                                "value": "",
+                            },
+                        ]
+                    }
+                ]
+            }
+        },
+        separators=(",", ":"),
+    )
+    responses = (
+        (
+            r"run revisions describe trusted-router-active .*--format=json",
+            active_revision,
+        ),
+        *(
+            response
+            for response in fixture.responses
+            if "run revisions describe trusted-router-active" not in response[0]
+        ),
+    )
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        script,
+        replace(fixture, responses=responses),
+    )
+    isolated = DeployScriptHarness(tmp_path / "spend-lease-profiles-empty")
+
+    run = isolated.run(script)
+
+    assert run.returncode != 0
+    assert (
+        "TR_SPEND_LEASE_BINDING_ENABLED=true requires non-empty "
+        "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES"
+        in run.stderr
+    )
+    assert not any(
+        call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
+        and call[4:6] == ["deploy", "trusted-router"]
+        for call in run.calls
+    )
 
 
 def test_rollout_binding_unit_4_fence_refuses_missing_settle_clamp(
@@ -2253,6 +2324,10 @@ def test_combined_synthetic_refresh_preserves_security_boundaries(tmp_path: Path
         assert "--image" in update
         assert "--update-env-vars" in update
         assert "TR_RELEASE=1234567" in update_text
+        env_update = update[update.index("--update-env-vars") + 1]
+        assert env_update.startswith("^|^")
+        assert "TR_REGIONS=us-central1,us-east4,europe-west4" in env_update.split("|")
+        assert "southamerica-east1" not in env_update
         assert "--set-secrets" not in update
         assert "--update-secrets" not in update
         assert "--service-account" not in update

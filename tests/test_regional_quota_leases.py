@@ -368,6 +368,8 @@ def test_regional_lease_production_config_requires_fixed_profiles_and_outbox() -
         "environment": "staging",
         "service_surface": "internal",
         "internal_gateway_token": "staging-gateway-" + "g" * 32,
+        "operator_token": "staging-operator-" + "p" * 32,
+        "operator_identities": "ops@example.com",
         "observer_internal_token": "staging-observer-" + "o" * 32,
         "storage_backend": "spanner-bigtable",
         "bigtable_instance_id": "trusted-router-logs",

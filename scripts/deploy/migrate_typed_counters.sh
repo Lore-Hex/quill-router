@@ -275,6 +275,59 @@ if table_exists tr_trust_inbox; then log "tr_trust_inbox exists, skip"; else
   ) PRIMARY KEY (provider, adverse_ref)"
 fi
 
+if table_exists tr_owner_workspace; then log "tr_owner_workspace exists, skip"; else
+  apply_ddl "CREATE TABLE tr_owner_workspace (
+    owner_user_id STRING(64) NOT NULL,
+    workspace_id STRING(64) NOT NULL,
+  ) PRIMARY KEY (owner_user_id, workspace_id)"
+fi
+
+if table_exists tr_trust_override; then log "tr_trust_override exists, skip"; else
+  apply_ddl "CREATE TABLE tr_trust_override (
+    workspace_id STRING(64) NOT NULL,
+    tier INT64 NOT NULL,
+    identity_bypass BOOL NOT NULL,
+    operator_identity STRING(255) NOT NULL,
+    reason STRING(500) NOT NULL,
+    set_at TIMESTAMP NOT NULL,
+    CONSTRAINT tr_trust_override_tier CHECK (tier >= 0 AND tier <= 3),
+  ) PRIMARY KEY (workspace_id)"
+fi
+
+if table_exists tr_trust_demotion_remainder; then log "tr_trust_demotion_remainder exists, skip"; else
+  apply_ddl "CREATE TABLE tr_trust_demotion_remainder (
+    owner_user_id STRING(64) NOT NULL,
+    workspace_id STRING(64) NOT NULL,
+    target_identity_ceiling INT64 NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    attempts INT64 NOT NULL DEFAULT (0),
+    last_error STRING(MAX),
+  ) PRIMARY KEY (owner_user_id, workspace_id)"
+fi
+
+if table_exists tr_trust_backfill; then log "tr_trust_backfill exists, skip"; else
+  apply_ddl "CREATE TABLE tr_trust_backfill (
+    provider STRING(16) NOT NULL,
+    account_id STRING(255) NOT NULL,
+    environment STRING(32) NOT NULL,
+    source STRING(64) NOT NULL,
+    source_version STRING(64) NOT NULL,
+    history_start TIMESTAMP NOT NULL,
+    closed_through TIMESTAMP NOT NULL,
+    consistency_delay_seconds INT64 NOT NULL,
+    unmatched_count INT64 NOT NULL,
+    semantic_mismatch_count INT64 NOT NULL,
+    completed_at TIMESTAMP,
+    CONSTRAINT tr_trust_backfill_counts CHECK (
+      consistency_delay_seconds >= 0 AND unmatched_count >= 0
+      AND semantic_mismatch_count >= 0
+    ),
+    CONSTRAINT tr_trust_backfill_completion CHECK (
+      completed_at IS NULL OR (unmatched_count = 0 AND semantic_mismatch_count = 0)
+    ),
+  ) PRIMARY KEY (provider, account_id, environment, source, source_version)"
+fi
+
 # Historical trust-column backfill statement. It is intentionally a separate,
 # operator-run artifact rather than an automatic deploy-time DML rewrite.
 log "historical trust-column backfill: scripts/deploy/backfill_credit_balance_trust.sql"

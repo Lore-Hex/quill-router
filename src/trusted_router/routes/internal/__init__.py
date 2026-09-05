@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from . import admin as admin
 from . import adyen as adyen
 from . import broadcast_queue as broadcast_queue
 from . import chat_browser_key as chat_browser_key
@@ -46,6 +47,11 @@ def register_gateway_internal_routes(router: APIRouter) -> None:
     federation.register(router)
 
 
+def register_operator_internal_routes(router: APIRouter) -> None:
+    """Register operator controls only when their dedicated token is configured."""
+    admin.register(router)
+
+
 def register_observer_internal_routes(router: APIRouter) -> None:
     """Register synthetic-monitor and observability-only internal routes."""
     synthetic.register(router)
@@ -69,4 +75,5 @@ __all__ = [
     "register_gateway_internal_routes",
     "register_internal_routes",
     "register_observer_internal_routes",
+    "register_operator_internal_routes",
 ]

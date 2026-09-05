@@ -157,20 +157,26 @@ def test_the_cloud_list_is_the_fleet_module_s_and_not_a_second_copy() -> None:
 
 
 def test_the_gate_asks_the_front_end_that_holds_the_dsql_connection() -> None:
-    """The AWS URL is the App Runner plane, not the vanity hostname.
+    """The AWS URL names one region, not the anycast hostname.
 
     This is the concrete reason stage (a) reads the fleet registry instead of
-    anything else. `aws.trustedrouter.com` fronts the Fargate control plane
-    through Global Accelerator; the deployment that holds the Aurora DSQL
-    connection — and whose drain was missing for fifteen days — is the tr-eu App
-    Runner service. A gate pointed at the wrong AWS front end would have been
-    green throughout the outage.
+    anything else. The deployment that holds the Aurora DSQL connection — and
+    whose drain was missing for fifteen days — is the eu-west-3 control plane.
+    `aws.trustedrouter.com` is Global Accelerator anycast over eu-west-3 and
+    eu-west-1, and only eu-west-3 runs the operational-analytics outbox, so a
+    gate pointed at the vanity name reads a different deployment run to run
+    and calls a healthy drain unconfigured whenever GA picks Ireland.
+
+    It was the tr-eu App Runner hostname until that service was retired on
+    2026-09-03; the gate then failed DNS rather than reading anything at all.
     """
     aws = crc.freshness_registry()["aws"]
     entry = fleet.fleet_endpoint("aws")
     assert entry is not None and entry.status_url == aws
+    # The bare vanity name is anycast across both EU regions and only one of
+    # them runs the outbox, so the URL must name its region.
     assert "aws.trustedrouter.com" not in aws
-    assert "awsapprunner.com" in aws
+    assert "aws-euw3.trustedrouter.com" in aws
 
 
 def test_a_new_cloud_fails_ci_until_it_is_checkable(monkeypatch: pytest.MonkeyPatch) -> None:

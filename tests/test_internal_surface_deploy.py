@@ -19,6 +19,7 @@ REGIONS = {
 }
 EXPECTED_SECRETS = {
     "TR_INTERNAL_GATEWAY_TOKEN": "trustedrouter-internal-gateway-token:latest",
+    "TR_OPERATOR_TOKEN": "trustedrouter-operator-token:latest",
     "TR_OBSERVER_INTERNAL_TOKEN": "trustedrouter-observer-internal-token:latest",
     "TR_SYNTHETIC_MONITOR_API_KEY": (
         "trustedrouter-synthetic-monitor-api-key:latest"
@@ -44,6 +45,7 @@ EXPECTED_SECRETS = {
 }
 SECRET_VALUES = {
     "TR_INTERNAL_GATEWAY_TOKEN": "gateway-" + "g" * 40,
+    "TR_OPERATOR_TOKEN": "operator-" + "p" * 40,
     "TR_OBSERVER_INTERNAL_TOKEN": "observer-" + "o" * 40,
     "TR_SYNTHETIC_MONITOR_API_KEY": "monitor-" + "m" * 40,
     "TR_SENTRY_DSN": "https://example@example.ingest.sentry.io/1",
@@ -58,6 +60,7 @@ SECRET_VALUES = {
 EXPECTED_ENV_NAMES = {
     "TR_ENVIRONMENT",
     "TR_SERVICE_SURFACE",
+    "TR_OPERATOR_IDENTITIES",
     "TR_RELEASE",
     "TR_TRUSTED_DOMAIN",
     "TR_TRUSTED_DOMAIN_ALIASES",

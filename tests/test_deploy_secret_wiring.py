@@ -94,12 +94,32 @@ def test_deploy_enables_spend_lease_binding_with_emergency_override() -> None:
         '"TR_SPEND_LEASE_PILOT_WORKSPACE_IDS='
         '45819281-0ce9-4811-a0cd-c660ab3a116d"' in rollout
     )
+    assert (
+        'read_primary_regional_quota_env "TR_SPEND_LEASE_BIGTABLE_TABLE" '
+        '"trustedrouter-spend-lease"' in rollout
+    )
+    assert (
+        '"TR_SPEND_LEASE_BIGTABLE_APP_PROFILES" \\\n'
+        '    "us-central1=tr-spend-us-central1"' in rollout
+    )
+    assert (
+        '"TR_SPEND_LEASE_BIGTABLE_TABLE=${SPEND_LEASE_BIGTABLE_TABLE}"' in rollout
+    )
+    assert (
+        '"TR_SPEND_LEASE_BIGTABLE_APP_PROFILES='
+        '${SPEND_LEASE_BIGTABLE_APP_PROFILES}"' in rollout
+    )
 
 
 def test_deploy_removes_only_explicitly_missing_optional_secrets() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
 
     mandatory_block = rollout.split("SECRET_ENVS=(", 1)[1].split(")", 1)[0]
+    assert "TR_OPERATOR_TOKEN=trustedrouter-operator-token:latest" not in mandatory_block
+    assert (
+        'add_secret_env_if_exists "TR_OPERATOR_TOKEN" '
+        '"trustedrouter-operator-token"' in rollout
+    )
     assert "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD" not in mandatory_block
     assert (
         'REMOVE_SECRET_ENVS=("TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD")' in rollout
@@ -174,20 +194,36 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
     library = (ROOT / "scripts/deploy/_lib.sh").read_text()
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
 
-    assert (
-        'TR_REGIONS="${TR_REGIONS:-us-central1,us-east4,europe-west4,'
-        'southamerica-east1}"' in library
+    # The invariant, not a frozen list. This asserted the exact three region
+    # strings until 2026-09-04, so retiring southamerica-east1 failed the test
+    # for naming a different set rather than for leaving a region cold -- which
+    # is the only thing the test is named for. A golden string also passes
+    # happily when a region is added to TR_REGIONS alone, which is the actual
+    # defect: an attested region advertised at api-<region>.quillrouter.com
+    # with min_scale=0 behind it.
+    def _default(name: str) -> str:
+        match = re.search(rf'^{name}="\$\{{{name}:-([^}}]*)\}}"', library, re.M)
+        assert match is not None, f"{name} default not found in _lib.sh"
+        return match.group(1)
+
+    attested = [r for r in _default("TR_REGIONS").split(",") if r]
+    warm = [r for r in _default("TR_WARM_REGIONS").split(",") if r]
+    minimums = dict(
+        entry.split("=", 1)
+        for entry in _default("TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION").split(",")
+        if entry
     )
-    assert (
-        'TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4,'
-        'southamerica-east1}"'
-        in library
-    )
-    assert (
-        'TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION="${TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION:-'
-        'us-central1=2,us-east4=8,europe-west4=2,southamerica-east1=2}"'
-        in library
-    )
+
+    assert attested, "TR_REGIONS must name at least one attested region"
+    for region in attested:
+        assert region in warm, f"attested region {region} is not in TR_WARM_REGIONS"
+        assert region in minimums, f"attested region {region} has no min-instances entry"
+        assert int(minimums[region]) >= 1, f"attested region {region} is allowed to scale to zero"
+    # And nothing is kept warm that we no longer serve.
+    for region in warm:
+        assert region in attested, f"{region} is warmed but is not an attested region"
+    for region in minimums:
+        assert region in attested, f"{region} has a min-instances entry but is not attested"
     assert 'TR_CLOUD_RUN_CONCURRENCY="${TR_CLOUD_RUN_CONCURRENCY:-8}"' in library
     assert 'TR_SPANNER_POOL_SIZE="${TR_SPANNER_POOL_SIZE:-8}"' in library
     assert '--concurrency "$TR_CLOUD_RUN_CONCURRENCY"' in rollout

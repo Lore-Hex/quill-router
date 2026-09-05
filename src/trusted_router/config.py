@@ -18,6 +18,11 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
+from trusted_router.trust_ownership import (
+    TRUST_OWNER_MUTATION_BUDGET,
+    TRUST_REPLICATED_COLUMN_COUNT,
+)
+
 # Target names the synthetic monitor already assigns itself. A configured
 # entry reusing one would quietly merge two different measurements into one
 # status component, so it is rejected instead.
@@ -243,6 +248,7 @@ SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     "attribution_cookie_key": frozenset({"public", "control"}),
     "attribution_cookie_secret": frozenset({"public", "control"}),
     "internal_gateway_token": frozenset({"internal"}),
+    "operator_token": frozenset({"internal"}),
     # Internal owns this only for synthetic/Sentry routes; its billing routes
     # still select internal_gateway_token by path.
     "observer_internal_token": frozenset({"internal", "observer"}),
@@ -289,6 +295,28 @@ SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     "federation_settlement_inbound_tokens": frozenset({"internal"}),
     "federation_settlement_home_token": frozenset({"internal"}),
 }
+
+_OPERATOR_CREDENTIAL_PREFIXES = (
+    "internal_",
+    "observer_",
+    "synthetic_",
+    "federation_",
+)
+_OPERATOR_CREDENTIAL_SUFFIXES = ("_token", "_tokens", "_api_key")
+
+
+def operator_credential_setting_names(settings_type: type[BaseSettings]) -> frozenset[str]:
+    """Fields whose values must never share the operator credential."""
+
+    discovered = set(SERVICE_SURFACE_SECRET_OWNERS)
+    discovered.update(
+        name
+        for name in settings_type.model_fields
+        if name.startswith(_OPERATOR_CREDENTIAL_PREFIXES)
+        and name.endswith(_OPERATOR_CREDENTIAL_SUFFIXES)
+    )
+    discovered.discard("operator_token")
+    return frozenset(discovered)
 
 
 def _sensitive_setting_is_configured(field_name: str, value: object) -> bool:
@@ -980,11 +1008,10 @@ class Settings(BaseSettings):
     # regions where we've actually deployed a VM. Adding a region here
     # without an actual VM in that region is dishonest — the cert SAN
     # mismatch breaks TLS and the attestation page lies.
-    regions: str = "us-central1,us-east4,europe-west4,southamerica-east1"
+    regions: str = "us-central1,us-east4,europe-west4"
     marketing_regions: str = (
         "us-central1,europe-west4,us-east4,"
         "asia-northeast1,asia-east2,asia-southeast1,"
-        "southamerica-east1,"
         # Standalone deployments on other clouds (multi-cloud-separation.md).
         "aws-eu-west-1,aws-eu-west-3,aws-eu-north-1,azure-australiaeast"
     )
@@ -1418,6 +1445,18 @@ class Settings(BaseSettings):
             raise ValueError("TR_TRUST_TIER3_MIN_PAID_MICRODOLLARS must be positive")
         if self.max_workspaces_per_owner <= 0:
             raise ValueError("TR_MAX_WORKSPACES_PER_OWNER must be positive")
+        if (
+            self.max_workspaces_per_owner * 64 * TRUST_REPLICATED_COLUMN_COUNT
+            > TRUST_OWNER_MUTATION_BUDGET
+        ):
+            raise ValueError(
+                "TR_MAX_WORKSPACES_PER_OWNER × TR_CREDIT_SHARDS_MAX × 7 "
+                "must not exceed the pinned 20000-mutation trust budget"
+            )
+        if self.operator_token and not self.operator_identities.strip():
+            raise ValueError(
+                "TR_OPERATOR_IDENTITIES must be set when TR_OPERATOR_TOKEN is set"
+            )
         if self.trust_reconcile_interval_seconds <= 0:
             raise ValueError("TR_TRUST_RECONCILE_INTERVAL_SECONDS must be positive")
         # The scope pins 15 minutes for Stripe/x402 and three hours for PayPal.
@@ -1525,6 +1564,21 @@ class Settings(BaseSettings):
         settlement_tokens = parse_settlement_inbound_tokens(
             self.federation_settlement_inbound_tokens
         )
+        if self.operator_token:
+            for field_name in sorted(operator_credential_setting_names(type(self))):
+                raw_value = getattr(self, field_name)
+                values: tuple[str, ...]
+                if field_name == "federation_settlement_inbound_tokens":
+                    values = tuple(settlement_tokens)
+                elif isinstance(raw_value, str):
+                    values = (raw_value,) if raw_value else ()
+                else:
+                    values = ()
+                if any(value and hmac.compare_digest(self.operator_token, value) for value in values):
+                    raise ValueError(
+                        "TR_OPERATOR_TOKEN must differ from "
+                        f"TR_{field_name.upper()}"
+                    )
         if self.federation_settlement_home_token and not self.federation_home_base_url:
             raise ValueError(
                 "TR_FEDERATION_SETTLEMENT_HOME_TOKEN is set but "
@@ -2093,6 +2147,14 @@ class Settings(BaseSettings):
             provider.strip().lower()
             for provider in self.trust_qualifying_providers.split(",")
             if provider.strip()
+        )
+
+    @property
+    def operator_identity_set(self) -> frozenset[str]:
+        return frozenset(
+            identity.strip()
+            for identity in self.operator_identities.split(",")
+            if identity.strip()
         )
 
     @property

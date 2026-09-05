@@ -57,6 +57,8 @@ def test_broadcast_inline_drain_defaults_to_non_production_only() -> None:
             service_surface="internal",
             storage_backend="spanner-bigtable",
             internal_gateway_token="token",  # noqa: S106 - placeholder test secret.
+            operator_token="operator-token",  # noqa: S106 - placeholder test secret.
+            operator_identities="ops@example.com",
             observer_internal_token="observer-token",  # noqa: S106 - test secret.
             sentry_dsn="https://example@sentry.invalid/1",
             spanner_instance_id="inst",

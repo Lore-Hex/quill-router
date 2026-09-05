@@ -18,6 +18,7 @@ from trusted_router.main import create_app
 _ATTRIBUTION_SECRET = "attribution-only-" + "a" * 32
 _ATTRIBUTION_KEY = "aDMnBV9nDwwAD1tr4MpooFMj7i8Kv6lB5Q9LTmrjTfc="
 _GATEWAY_SECRET = "gateway-only-" + "g" * 32
+_OPERATOR_SECRET = "operator-only-" + "p" * 32
 _PRODUCTION_STORAGE = {
     "environment": "production",
     "storage_backend": "spanner-bigtable",
@@ -172,6 +173,7 @@ _SENSITIVE_TEST_VALUES: dict[str, object] = {
     "attribution_cookie_key": _ATTRIBUTION_KEY,
     "attribution_cookie_secret": _ATTRIBUTION_SECRET,
     "internal_gateway_token": _GATEWAY_SECRET,
+    "operator_token": _OPERATOR_SECRET,
     "observer_internal_token": "observer-only-" + "o" * 32,
     "stripe_webhook_secret": "whsec-test",
     "stripe_secret_key": "sk-test",
@@ -284,7 +286,7 @@ _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
     ),
     (
         frozenset({"internal"}),
-        ("internal_gateway_token",),
+        ("internal_gateway_token", "operator_token"),
     ),
     (
         frozenset({"internal", "observer"}),
@@ -328,6 +330,8 @@ def _production(surface: str, **overrides: object) -> Settings:
     values: dict[str, object] = {**_PRODUCTION_STORAGE, "service_surface": surface}
     if surface == "internal":
         values["settle_outbox_enabled"] = True
+        values["operator_token"] = _OPERATOR_SECRET
+        values["operator_identities"] = "ops@example.com"
     values.update(overrides)
     return Settings(**values)
 
@@ -353,6 +357,7 @@ def _full_combined_bridge_production() -> dict[str, object]:
         "federation_home_base_url": "https://home.example",
         # The test credential fixtures contain exactly this alias.
         "trusted_domain_aliases": "allyrouter.com",
+        "operator_identities": "ops@example.com",
     }
 
 
@@ -362,6 +367,8 @@ def test_production_internal_surface_requires_durable_settle_outbox() -> None:
             **_PRODUCTION_STORAGE,
             service_surface="internal",
             internal_gateway_token=_GATEWAY_SECRET,
+            operator_token=_OPERATOR_SECRET,
+            operator_identities="ops@example.com",
             observer_internal_token=_SENSITIVE_TEST_VALUES["observer_internal_token"],
             sentry_dsn="https://example@example.ingest.sentry.io/1",
             settle_outbox_enabled=False,
@@ -423,6 +430,8 @@ def test_combined_bridge_requires_the_legacy_rate_limiter_to_stay_off() -> None:
             "internal",
             {
                 "internal_gateway_token": _GATEWAY_SECRET,
+                "operator_token": _OPERATOR_SECRET,
+                "operator_identities": "ops@example.com",
                 "observer_internal_token": _SENSITIVE_TEST_VALUES[
                     "observer_internal_token"
                 ],
@@ -480,6 +489,10 @@ def test_every_sensitive_setting_rejects_an_unauthorized_deployed_surface(
         )
         if surface == "internal":
             overrides.setdefault("internal_gateway_token", _GATEWAY_SECRET)
+            overrides.setdefault("operator_token", _OPERATOR_SECRET)
+            overrides.setdefault("operator_identities", "ops@example.com")
+    if field_name == "operator_token":
+        overrides["operator_identities"] = "ops@example.com"
     if field_name == "ops_chat_webhook_secret":
         overrides["ops_chat_webhook_urls"] = "https://ops.example/hook"
     if field_name == "postgres_iam_auth":
@@ -710,6 +723,8 @@ def test_internal_and_observer_require_gateway_observability_but_not_account_sec
         }
         if surface == "internal":
             auth["internal_gateway_token"] = _GATEWAY_SECRET
+            auth["operator_token"] = _OPERATOR_SECRET
+            auth["operator_identities"] = "ops@example.com"
         settings = _production(
             surface,
             sentry_dsn="https://example@example.ingest.sentry.io/1",

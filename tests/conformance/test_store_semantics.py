@@ -1167,6 +1167,72 @@ def test_api_key_usage_projection_is_immediate_and_scoped(
     assert store.list_api_keys_with_usage(workspace_id) == []
 
 
+def test_update_key_metadata_round_trips_without_disturbing_caps(
+    store: Store, workspace_id: str, user_id: str
+) -> None:
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id,
+        name="before",
+        creator_user_id=user_id,
+        limit_microdollars=11_000,
+        limit_daily_microdollars=2_000,
+    )
+
+    updated = store.update_key(key.hash, {"name": "after", "disabled": True})
+
+    assert updated is not None
+    assert updated.name == "after"
+    assert updated.disabled is True
+    projected = store.list_api_keys_with_usage(workspace_id)
+    assert len(projected) == 1
+    assert projected[0].api_key.limit_microdollars == 11_000
+    assert projected[0].api_key.limit_daily_microdollars == 2_000
+
+
+def test_update_key_cap_changes_effective_projection(
+    store: Store, workspace_id: str, user_id: str
+) -> None:
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id,
+        name="cap",
+        creator_user_id=user_id,
+        limit_microdollars=11_000,
+    )
+
+    store.update_key(
+        key.hash,
+        {"limit_microdollars": 19_000},
+    )
+
+    projected = store.list_api_keys_with_usage(workspace_id)
+    assert len(projected) == 1
+    assert projected[0].api_key.limit_microdollars == 19_000
+    # The projection pins the entity write; enforcement pins the typed write.
+    store.reserve_key_limit(key.hash, 19_000, usage_type=UsageType.CREDITS)
+
+
+def test_update_key_cap_none_round_trips_as_uncapped(
+    store: Store, workspace_id: str, user_id: str
+) -> None:
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id,
+        name="uncap",
+        creator_user_id=user_id,
+        limit_microdollars=11_000,
+    )
+
+    store.update_key(key.hash, {"limit_microdollars": None})
+
+    projected = store.list_api_keys_with_usage(workspace_id)
+    assert len(projected) == 1
+    assert projected[0].api_key.limit_microdollars is None
+    store.reserve_key_limit(key.hash, 11_001, usage_type=UsageType.CREDITS)
+
+
+def test_update_key_unknown_hash_returns_none(store: Store, unique: str) -> None:
+    assert store.update_key(f"missing-{unique}", {"disabled": True}) is None
+
+
 def test_api_key_scopes_round_trip_across_storage(
     store: Store,
     workspace_id: str,
@@ -1553,8 +1619,8 @@ def test_key_limit_window_columns_and_index_exist(store: Store, unique: str) -> 
 # --------------------------------------------------------------------------
 # Per-key spend caps (reserve/settle/refund_key_limit)
 #
-# Seeded through direct SQL because update_key is still _not_implemented on
-# PostgresStore; these skip on backends with no SQL pool. The semantic
+# Seeded through direct SQL to exercise exact counter states independently of
+# update_key, which is now implemented. These skip on backends with no SQL pool. The semantic
 # reference is InMemoryApiKeys.reserve_limit — same rules, different engine.
 # --------------------------------------------------------------------------
 

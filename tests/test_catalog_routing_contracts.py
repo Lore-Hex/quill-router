@@ -483,6 +483,33 @@ def test_grok_46_uses_xai_native_model_id_and_long_context_pricing() -> None:
         )
 
 
+def test_openai_astra_uses_first_party_long_context_vision_route() -> None:
+    model = MODELS["openai/gpt-6-astra"]
+    prepaid = MODEL_ENDPOINTS["openai/gpt-6-astra@openai/prepaid"]
+    byok = MODEL_ENDPOINTS["openai/gpt-6-astra@openai/byok"]
+
+    assert model.provider == "openai"
+    assert model.context_length == 1_050_000
+    assert model.input_modalities == ("text", "image")
+    assert {"tools", "reasoning", "reasoning_effort", "structured_outputs"} <= set(
+        model.supported_parameters
+    )
+    assert prepaid.upstream_id == "gpt-6-astra"
+    assert byok.upstream_id == "gpt-6-astra"
+    assert [tier.max_prompt_tokens for tier in prepaid.price_tiers] == [272_000, None]
+    assert [
+        (
+            tier.prompt_price_microdollars_per_million_tokens,
+            tier.prompt_cached_price_microdollars_per_million_tokens,
+            tier.completion_price_microdollars_per_million_tokens,
+        )
+        for tier in prepaid.price_tiers
+    ] == [
+        (10_550_000, 1_055_000, 52_750_000),
+        (21_100_000, 2_110_000, 79_125_000),
+    ]
+
+
 def test_qwen_38_routes_only_through_hosts_with_verified_pricing() -> None:
     model_id = "qwen/qwen3.8-max"
 

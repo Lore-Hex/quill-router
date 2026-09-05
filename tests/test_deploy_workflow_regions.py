@@ -71,6 +71,75 @@ def test_deploy_syncs_the_shared_public_snapshot_worker() -> None:
     assert "scripts/deploy/sync_public_analytics_snapshots.sh --apply" in workflow
 
 
+def test_snapshot_sync_cannot_gate_the_control_plane_deploy() -> None:
+    """A public-analytics sync must never hold the control plane hostage.
+
+    It did on 2026-09-04: `gcloud compute scp` pushes a generated SSH key into
+    project metadata, that write timed out twice at 1800s behind a backlog of
+    stuck setCommonInstanceMetadata operations, and the whole deploy failed
+    ~61 minutes in -- with a Stripe-credit fix sitting in the image it was
+    carrying. Bounded and non-fatal, so a snapshot problem degrades snapshots.
+    """
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    step = workflow.split("- name: Sync shared public analytics snapshots", 1)[1].split(
+        "- name:", 1
+    )[0]
+    assert "continue-on-error: true" in step, (
+        "the snapshot sync must not fail the deploy job"
+    )
+    # The deadline belongs on the upload, not the step: a step-level timeout
+    # can sever SSH between the two `mv`s of the remote swap and leave the
+    # node with no live source tree, and the next run deletes the backup.
+    assert "timeout-minutes:" not in step, (
+        "a step deadline can interrupt the remote swap; bound the upload instead"
+    )
+    script = (ROOT / "scripts/deploy/sync_public_analytics_snapshots.sh").read_text(
+        encoding="utf-8"
+    )
+    upload = script.split("compute scp", 1)[0].rsplit("\n", 3)[-1] + script.split(
+        "compute scp", 1
+    )[0][-80:]
+    assert "timeout -k 30 300" in script, "the snapshot upload must be time-bounded"
+    assert "timeout" in upload or "timeout -k 30 300 gcloud" in script, upload
+    swap = script.split("compute ssh", 1)[1]
+    assert "timeout" not in swap.split("--command", 1)[0], (
+        "the remote swap must not carry a deadline that can interrupt it"
+    )
+
+
+def test_snapshot_sync_prunes_metadata_and_uses_short_lived_access() -> None:
+    """A fresh CI runner must never leave an unbounded project SSH key."""
+    script = (ROOT / "scripts/deploy/sync_public_analytics_snapshots.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "gcp_ssh_metadata_hygiene.py" in script
+    assert "--apply" in script
+    assert "timeout -k 10 60 python3" in script
+    assert "trap cleanup EXIT" in script
+    assert "the daily reconciler will retry" in script
+    assert script.count("--ssh-key-expire-after=10m") == 2
+    assert script.count("--tunnel-through-iap") == 2
+
+
+def test_scheduled_ssh_hygiene_is_api_only_and_repairs_ci_keys() -> None:
+    workflow = (ROOT / ".github/workflows/check-archive-freshness.yml").read_text(
+        encoding="utf-8"
+    )
+    standalone = ROOT / ".github/workflows/clickhouse-ssh-hygiene.yml"
+
+    assert "schedule:" in workflow
+    assert "\n  ssh-metadata-hygiene:\n" in workflow
+    hygiene_job = workflow.split("\n  ssh-metadata-hygiene:\n", 1)[1]
+    assert "gcp_ssh_metadata_hygiene.py" in workflow
+    assert "--apply" in workflow
+    assert "group: deploy-trusted-router" in hygiene_job
+    assert "cancel-in-progress: false" in hygiene_job
+    assert "compute ssh" not in hygiene_job
+    assert "compute scp" not in hygiene_job
+    assert not standalone.exists()
+
+
 def test_public_snapshot_worker_swap_is_verified_and_rollbackable() -> None:
     script = (ROOT / "scripts/deploy/sync_public_analytics_snapshots.sh").read_text(
         encoding="utf-8"
@@ -82,6 +151,15 @@ def test_public_snapshot_worker_swap_is_verified_and_rollbackable() -> None:
     assert "rollback()" in script
     assert r"if [ \"\$count\" != 4 ]; then" in script
     assert r"mv \"\$previous_builder\" \"\$builder\"" in script
+    # Upload first, then swap (#1080): the archive must not be streamed over
+    # SSH stdin. Asserted by behaviour rather than by one exact spelling, so
+    # the line can carry a deadline without breaking this.
+    assert "compute scp" in script
+    assert '"$archive" "${NAME}:${remote_archive}"' in script
+    assert '--ssh-flag="-n"' in script
+    assert '--ssh-flag="-T"' in script
+    assert 'tar -xzf \\"\\$archive\\" -C \\"\\$stage\\"' in script
+    assert '<"$archive"' not in script
 
 
 def test_all_regions_launch_together_but_only_primary_warm_gates_traffic() -> None:

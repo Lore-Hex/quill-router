@@ -52,6 +52,7 @@ if [ "$DEPLOYED_COMBINED_BRIDGE" = "true" ]; then
     "TR_STRIPE_SECRET_KEY=trustedrouter-stripe-secret-key:latest"
     "TR_STRIPE_WEBHOOK_SECRET=trustedrouter-stripe-webhook-secret:latest"
     "TR_INTERNAL_GATEWAY_TOKEN=trustedrouter-internal-gateway-token:latest"
+    "TR_OPERATOR_TOKEN=trustedrouter-operator-token:latest"
     "TR_SYNTHETIC_MONITOR_API_KEY=trustedrouter-synthetic-monitor-api-key:latest"
   )
   JOB_SECRET_FLAG="--update-secrets"
@@ -95,6 +96,7 @@ if [ "$DEPLOYED_COMBINED_BRIDGE" = "true" ]; then
   BASE_ENV_VARS+=(
     "TR_SERVICE_SURFACE=combined"
     "TR_ALLOW_DEPLOYED_COMBINED_SURFACE=true"
+    "TR_OPERATOR_IDENTITIES=${TR_OPERATOR_IDENTITIES:-joseph@jperla.com}"
     "TR_RATE_LIMIT_ENABLED=false"
   )
 else

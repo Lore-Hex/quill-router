@@ -2420,14 +2420,6 @@ def test_status_components_include_all_warm_regional_gateways() -> None:
             status="up",
             created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
         ),
-        _sample(
-            id="syn_sa",
-            target="southamerica-east1",
-            target_region="southamerica-east1",
-            probe_type="tls_health",
-            status="up",
-            created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
-        ),
     ]
 
     components = {row["id"]: row for row in status_snapshot(samples, now=now)["components"]}
@@ -2435,7 +2427,9 @@ def test_status_components_include_all_warm_regional_gateways() -> None:
     assert components["us_central1_regional_api"]["status"] == "up"
     assert components["us_east4_regional_api"]["status"] == "up"
     assert components["eu_regional_api"]["status"] == "up"
-    assert components["sa_regional_api"]["status"] == "up"
+    # southamerica-east1 retired 2026-09-04; a sample for it would now land in
+    # the uncategorised bucket rather than publish a component.
+    assert "sa_regional_api" not in components
 
 
 @pytest.mark.asyncio

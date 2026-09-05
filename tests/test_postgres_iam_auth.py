@@ -170,7 +170,11 @@ def test_settings_and_create_store_pass_iam_configuration(
         "postgres_iam_region": "us-east-2",
         # Absent from the SimpleNamespace above, so this pins the *default*:
         # the operational-analytics outbox stays off unless a deployment turns
-        # it on, exactly like the Spanner path.
-        "operational_analytics_outbox_enabled": False,
-        "schema_applied": True,
+            # it on, exactly like the Spanner path.
+            "operational_analytics_outbox_enabled": False,
+            "max_workspaces_per_owner": 25,
+            "trust_qualifying_providers": frozenset({"stripe", "x402"}),
+            "trust_tier3_min_days": 30,
+            "trust_tier3_min_paid_microdollars": 50_000_000,
+            "schema_applied": True,
     }

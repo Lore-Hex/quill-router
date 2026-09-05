@@ -122,6 +122,31 @@ CREATE TABLE IF NOT EXISTS tr_trust_inbox (
     PRIMARY KEY (provider, adverse_ref)
 );
 
+CREATE TABLE IF NOT EXISTS tr_owner_workspace (
+    owner_user_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    PRIMARY KEY (owner_user_id, workspace_id)
+);
+
+CREATE TABLE IF NOT EXISTS tr_trust_override (
+    workspace_id TEXT NOT NULL PRIMARY KEY,
+    tier BIGINT NOT NULL CHECK (tier >= 0 AND tier <= 3),
+    identity_bypass BOOLEAN NOT NULL,
+    operator_identity TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    set_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tr_trust_demotion_remainder (
+    owner_user_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    target_identity_ceiling BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    attempts BIGINT NOT NULL DEFAULT 0,
+    last_error TEXT,
+    PRIMARY KEY (owner_user_id, workspace_id)
+);
+
 CREATE TABLE IF NOT EXISTS tr_trust_backfill (
     provider TEXT NOT NULL,
     account_id TEXT NOT NULL,

@@ -236,6 +236,8 @@ def build_axiom_funnel_query(dataset: str) -> str:
     return (
         f"['{dataset}'] "
         f"| where event in ({event_values}) "
+        "| extend utm_content=iff(isnotempty(column_ifexists('creative_id', '')), "
+        "column_ifexists('creative_id', ''), utm_content) "
         "| summarize people=dcount(anonymous_fingerprint), "
         "google_ads_click_people=dcountif(anonymous_fingerprint, "
         "has_gclid == true or has_gbraid == true or has_wbraid == true), "
@@ -248,7 +250,9 @@ def build_axiom_funnel_query(dataset: str) -> str:
     )
 
 
-def build_axiom_cohort_query(dataset: str) -> str:
+def build_axiom_cohort_query(
+    dataset: str, *, start_at: dt.datetime | None = None, end_at: dt.datetime | None = None,
+) -> str:
     """Return person-level event rows for local acquisition-cohort assignment.
 
     A conversion is intentionally not grouped by its event timestamp or latest
@@ -258,10 +262,21 @@ def build_axiom_cohort_query(dataset: str) -> str:
     """
     if not _DATASET_RE.fullmatch(dataset):
         raise ValueError("Axiom dataset contains unsupported characters")
+    time_filter = ""
+    if start_at is not None or end_at is not None:
+        if (start_at is None or end_at is None or start_at.tzinfo is None
+                or end_at.tzinfo is None or start_at >= end_at):
+            raise ValueError("Axiom query requires ordered, timezone-aware boundaries")
+        start = start_at.astimezone(dt.UTC).isoformat()
+        end = end_at.astimezone(dt.UTC).isoformat()
+        time_filter = f"| where _time >= datetime({start}) and _time < datetime({end}) "
     event_values = ", ".join(f"'{event}'" for event in FUNNEL_EVENTS)
     return (
         f"['{dataset}'] "
+        f"{time_filter}"
         f"| where event in ({event_values}) "
+        "| extend utm_content=iff(isnotempty(column_ifexists('creative_id', '')), "
+        "column_ifexists('creative_id', ''), utm_content) "
         "| extend experiment_id=column_ifexists('experiment_id', ''), "
         "experiment_cell_id=column_ifexists('experiment_cell_id', '') "
         "| summarize first_at=min(_time), events=count(), "
@@ -291,6 +306,117 @@ def parse_axiom_json_lines(payload: str) -> list[dict[str, object]]:
     return rows
 
 
+def parse_cloud_logging_engagements(payload: str) -> list[dict[str, object]]:
+    """Convert structured public-service log entries into cohort event rows."""
+    return [
+        row for row in parse_cloud_logging_acquisition_events(payload)
+        if row["event"] == "acquisition.landing_engaged"
+    ]
+
+
+def parse_cloud_logging_acquisition_events(payload: str) -> list[dict[str, object]]:
+    """Read only acquisition metadata for engagement and creative recovery."""
+    try:
+        entries = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Invalid Cloud Logging JSON") from exc
+    if not isinstance(entries, list):
+        raise ValueError("Cloud Logging payload is not a list")
+
+    rows: list[dict[str, object]] = []
+    for index, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            raise ValueError(f"Cloud Logging entry {index} is not an object")
+        body = entry.get("jsonPayload")
+        if not isinstance(body, dict):
+            continue
+        if body.get("event") not in FUNNEL_EVENTS:
+            continue
+        timestamp = entry.get("timestamp")
+        if not isinstance(timestamp, str) or not timestamp:
+            raise ValueError(f"Cloud Logging entry {index} has no timestamp")
+        row = {
+            field: body.get(field)
+            for field in (
+                "event",
+                "anonymous_fingerprint",
+                "utm_source",
+                "utm_medium",
+                "utm_campaign",
+                "utm_content",
+                "landing_path",
+                "experiment_id",
+                "experiment_cell_id",
+            )
+        }
+        if "creative_id" in body:
+            row["creative_id"] = body["creative_id"]
+        row.update(
+            {
+                "first_at": timestamp,
+                "events": 1,
+                "revenue_microdollars": _nonnegative_int(body.get("amount_microdollars")),
+                "google_ads_click_events": int(
+                    any(
+                        body.get(field) is True
+                        for field in ("has_gclid", "has_gbraid", "has_wbraid")
+                    )
+                ),
+                "google_ads_persisted_events": int(body.get("google_ads_click_persisted") is True),
+            }
+        )
+        rows.append(row)
+    return rows
+
+
+def recover_creative_attribution(
+    records: Iterable[dict[str, object]],
+    evidence: Iterable[dict[str, object]],
+) -> tuple[list[dict[str, object]], dict[str, int]]:
+    """Recover only unambiguous same-person, same-event, same-touch IDs.
+
+    Cloud Logging kept the original UTM metadata when Axiom scrubbed its
+    content-named field. Evidence only enriches existing rows; replaying it
+    must never create conversions or add payment amounts.
+    """
+    identity_fields = (
+        "anonymous_fingerprint", "event", "utm_source", "utm_medium",
+        "utm_campaign", "landing_path", "experiment_id", "experiment_cell_id",
+    )
+    candidates: dict[tuple[str, ...], set[str]] = {}
+    evidence_times: dict[tuple[str, ...], set[dt.datetime]] = {}
+    for item in evidence:
+        if not _ANONYMOUS_FINGERPRINT_RE.fullmatch(_text(item.get("anonymous_fingerprint"))):
+            continue
+        if item.get("event") not in FUNNEL_EVENTS:
+            continue
+        creative = _creative_dimension(item)
+        key = tuple(_text(item.get(field)) for field in identity_fields)
+        candidates.setdefault(key, set()).add(creative)
+        evidence_times.setdefault(key, set()).add(_timestamp(item.get("first_at")))
+    fixed: list[dict[str, object]] = []
+    recovered = unresolved = 0
+    for record in records:
+        item = dict(record)
+        if _creative_dimension(item) == "(unattributed)":
+            key = tuple(_text(item.get(field)) for field in identity_fields)
+            matches = candidates.get(key, set())
+            times = evidence_times.get(key, set())
+            # A summarized row may contain multiple visits. Incomplete evidence
+            # must not assign one surviving creative to the entire group.
+            complete = len(times) >= max(1, _nonnegative_int(item.get("events")))
+            nearby = any(abs((time - _timestamp(item.get("first_at"))).total_seconds()) <= 5
+                         for time in times)
+            if (complete and nearby and len(matches) == 1
+                    and not matches.intersection({"(none)", "(unattributed)"})):
+                item["creative_id"] = next(iter(matches))
+                recovered += 1
+            else:
+                unresolved += 1
+        fixed.append(item)
+    return fixed, {"recovered_records": recovered, "unresolved_records": unresolved}
+
+
 def aggregate_funnel_rows(
     records: Iterable[dict[str, object]],
     *,
@@ -310,7 +436,7 @@ def aggregate_funnel_rows(
             source=_dimension(record.get("utm_source"), "(direct)"),
             medium=_dimension(record.get("utm_medium"), "(none)"),
             campaign=_dimension(record.get("utm_campaign"), "(none)"),
-            creative=_dimension(record.get("utm_content"), "(none)"),
+            creative=_creative_dimension(record),
             landing_path=_dimension(record.get("landing_path"), "(unknown)"),
             experiment_id=_dimension(record.get("experiment_id"), "(none)"),
             experiment_cell_id=_dimension(record.get("experiment_cell_id"), "(none)"),
@@ -426,7 +552,7 @@ def aggregate_cohort_funnel_rows(
             source=_dimension(acquisition_record.get("utm_source"), "(direct)"),
             medium=_dimension(acquisition_record.get("utm_medium"), "(none)"),
             campaign=_dimension(acquisition_record.get("utm_campaign"), "(none)"),
-            creative=_dimension(acquisition_record.get("utm_content"), "(none)"),
+            creative=_creative_dimension(acquisition_record),
             landing_path=_dimension(acquisition_record.get("landing_path"), "(unknown)"),
             experiment_id=_dimension(acquisition_record.get("experiment_id"), "(none)"),
             experiment_cell_id=_dimension(
@@ -651,6 +777,8 @@ def wilson_percentage_interval(
 
 def experiment_state(row: FunnelRow) -> str:
     """Classify evidence without declaring a winner from an immature cell."""
+    if row.creative == "(unattributed)":
+        return "attribution_incomplete"
     if row.engaged_visitors < 100:
         return "collecting"
     if row.activated_users == 0:
@@ -680,6 +808,17 @@ def _ratio(numerator: int, denominator: int | None) -> str | None:
 def _dimension(value: object, fallback: str) -> str:
     text = _text(value)
     return text if text else fallback
+
+
+def _creative_dimension(record: dict[str, object]) -> str:
+    redacted = False
+    for field in ("creative_id", "utm_content"):
+        value = _text(record.get(field))
+        if value.startswith("[Filtered"):
+            redacted = True
+        elif value:
+            return value
+    return "(unattributed)" if redacted else "(none)"
 
 
 def _text(value: object) -> str:

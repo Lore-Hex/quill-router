@@ -77,6 +77,7 @@ from typing import Any
 from trusted_router.operational_analytics_fleet import (
     ANALYTICS_FRESHNESS_FLEET,
     FleetAnalyticsEndpoint,
+    fleet_endpoint,
     registry_defects,
 )
 from trusted_router.operational_analytics_freshness import (
@@ -103,7 +104,18 @@ from trusted_router.operational_analytics_freshness import (
 #: Kept for the single-cloud alias in :mod:`clickhouse.check_aws_analytics_freshness`.
 #: The AWS-EU control plane; not trustedrouter.com, which is the GCP deployment
 #: and would answer this question about the wrong cloud.
-DEFAULT_STATUS_URL = "https://gchircrcif.eu-west-3.awsapprunner.com/status.json"
+#:
+#: DERIVED from the registry rather than written out again. It was a second
+#: copy of the same URL until 2026-09-04, and when the first copy moved off the
+#: retired App Runner hostname this one stayed behind — two checkers, two
+#: clouds' worth of confidence, one of them reading a name that no longer
+#: resolved. A constant that must equal another constant should be that other
+#: constant.
+_AWS_ENDPOINT = fleet_endpoint("aws")
+assert _AWS_ENDPOINT is not None and _AWS_ENDPOINT.status_url, (
+    "the fleet registry must carry a checkable AWS endpoint"
+)
+DEFAULT_STATUS_URL = _AWS_ENDPOINT.status_url
 
 #: A direct sink has no durable, unbounded backlog: its buffer drops oldest
 #: rows. Delivery age is therefore its primary liveness signal and must page
