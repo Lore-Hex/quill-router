@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
 
       - name: Check Terraform formatting
         run: terraform -chdir=infra fmt -check
@@ -68,7 +68,7 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v3
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
 
       - name: Plan static infrastructure
         run: terraform -chdir=src/infra init && terraform -chdir=src/infra plan -out=tfplan
