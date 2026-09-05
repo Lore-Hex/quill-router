@@ -18,6 +18,7 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
+from trusted_router.enclave_regions import ENCLAVE_REGIONS
 from trusted_router.trust_ownership import (
     TRUST_OWNER_MUTATION_BUDGET,
     TRUST_REPLICATED_COLUMN_COUNT,
@@ -1008,7 +1009,7 @@ class Settings(BaseSettings):
     # regions where we've actually deployed a VM. Adding a region here
     # without an actual VM in that region is dishonest — the cert SAN
     # mismatch breaks TLS and the attestation page lies.
-    regions: str = "us-central1,us-east4,europe-west4"
+    regions: str = ",".join(ENCLAVE_REGIONS)
     marketing_regions: str = (
         "us-central1,europe-west4,us-east4,"
         "asia-northeast1,asia-east2,asia-southeast1,"

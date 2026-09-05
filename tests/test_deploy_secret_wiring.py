@@ -8,6 +8,7 @@ from scripts.check_price_coverage import (
     _GLM_DISCOVERABLE_PROVIDER_APIS,
     _OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS,
 )
+from trusted_router.enclave_regions import ENCLAVE_REGIONS
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -206,7 +207,8 @@ def test_all_attested_control_plane_regions_remain_warm() -> None:
         assert match is not None, f"{name} default not found in _lib.sh"
         return match.group(1)
 
-    attested = [r for r in _default("TR_REGIONS").split(",") if r]
+    # The shell reads this inventory; deploy execution tests cover that wiring.
+    attested = ENCLAVE_REGIONS
     warm = [r for r in _default("TR_WARM_REGIONS").split(",") if r]
     minimums = dict(
         entry.split("=", 1)

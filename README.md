@@ -409,9 +409,16 @@ gateway replicas before public traffic is allowed to ramp.
 Multi-region is feasible while preserving the trust boundary, but it has to be
 done carefully:
 
+São Paulo (`southamerica-east1`) remains a live Cloud Run control plane:
+`trusted-router` continues deploying and serving through the global load balancer.
+Only its enclave gateway MIG was retired (quill-cloud-proxy #309); its stale
+regional gateway DNS record has been deleted. Control-plane deployment regions
+remain `us-central1`, `us-east4`, `europe-west4`, and `southamerica-east1`.
+
 - Run independent warm attested gateway pools in `us-central1`, `us-east4`,
-  `europe-west4`, and `southamerica-east1`, then add Asia after the four-region
-  fleet is operationally boring.
+  and `europe-west4`. The enclave inventory is
+  `src/trusted_router/enclave_regions.py`, shared by synthetic probes, provider
+  smoke checks, the watchdog defaults, and `TR_REGIONS` deploy defaults.
 - Keep TLS private keys inside each regional Confidential Space workload.
 - Keep certificate issuance inside the attested workload. Certificates are
   shared between replicas through the encrypted cache. A first regional
@@ -419,8 +426,8 @@ done carefully:
   attestation and a settled PONG; it is expanded only after the regional
   certificate and the same gates pass on every node.
 - Keep regional hostnames such as `api-us-central1.quillrouter.com`,
-  `api-us-east4.quillrouter.com`, `api-europe-west4.quillrouter.com`, and
-  `api-southamerica-east1.quillrouter.com` for deterministic attestation,
+  `api-us-east4.quillrouter.com`, and `api-europe-west4.quillrouter.com`
+  for deterministic attestation,
   smoke tests, and SDK failover.
 - Put `api.trustedrouter.com` behind latency/geo DNS or TCP passthrough that does
   not terminate TLS. Cloudflare orange-cloud proxying remains incompatible
