@@ -142,6 +142,60 @@ for name in wanted:
 PY
 }
 
+# Trust-tier arm identity (decision 76, runbook step 1). The Stripe account id
+# is part of the trust marker primary key for the backfill job, the recurring
+# reconciler and PR 2's MarkerRequirement: a byte difference makes the marker
+# invisible forever, so every job reads the one pin below. Resolution order is
+# the same as the other deploy pins: explicit env, the operator key file, then
+# the deployed account itself (Secret Manager stripe key -> GET /v1/account;
+# the key travels on curl's stdin config, never on a command line).
+TR_TRUST_STRIPE_ACCOUNT_ID="${TR_TRUST_STRIPE_ACCOUNT_ID:-$(read_key_file_var TR_TRUST_STRIPE_ACCOUNT_ID STRIPE_ACCOUNT_ID)}"
+TR_TRUST_STRIPE_SECRET_NAME="${TR_TRUST_STRIPE_SECRET_NAME:-trustedrouter-stripe-secret-key}"
+# Trust jobs (reconciler + tier) are wired into every release but deploy only
+# on explicit opt-in so a release never creates or re-images a production
+# schedule by accident. Set TR_TRUST_JOBS_DEPLOY=1 to arm the wiring.
+TR_TRUST_JOBS_DEPLOY="${TR_TRUST_JOBS_DEPLOY:-0}"
+
+resolve_trust_stripe_account_id_from_deployed_account() {
+  local key account_id
+  key="$(gc secrets versions access latest --secret="$TR_TRUST_STRIPE_SECRET_NAME" 2>/dev/null || true)"
+  [ -n "$key" ] || return 0
+  account_id="$(
+    printf 'header = "Authorization: Bearer %s"\n' "$key" \
+      | curl --fail --silent --show-error --max-time 20 \
+          --config - https://api.stripe.com/v1/account 2>/dev/null \
+      | python3 -c 'import json,sys
+try:
+    body = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+account = body.get("id") if isinstance(body, dict) else None
+if isinstance(account, str) and account.startswith("acct_"):
+    print(account)' || true
+  )"
+  printf '%s' "$account_id"
+}
+
+# Fails closed: the trust jobs must never deploy with an empty account id,
+# because the marker they write would be keyed under "" forever.
+require_trust_stripe_account_id() {
+  if [ -z "$TR_TRUST_STRIPE_ACCOUNT_ID" ]; then
+    TR_TRUST_STRIPE_ACCOUNT_ID="$(resolve_trust_stripe_account_id_from_deployed_account)"
+  fi
+  case "$TR_TRUST_STRIPE_ACCOUNT_ID" in
+    acct_*) ;;
+    "")
+      log "refusing trust job deploy: TR_TRUST_STRIPE_ACCOUNT_ID is empty and the deployed Stripe account could not be resolved"
+      exit 1
+      ;;
+    *)
+      log "refusing trust job deploy: TR_TRUST_STRIPE_ACCOUNT_ID must be a Stripe account id (acct_...), got '${TR_TRUST_STRIPE_ACCOUNT_ID}'"
+      exit 1
+      ;;
+  esac
+  export TR_TRUST_STRIPE_ACCOUNT_ID
+}
+
 ensure_secret_value() {
   local secret_name="$1"
   local value="$2"

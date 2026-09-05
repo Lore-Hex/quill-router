@@ -200,8 +200,14 @@ from trusted_router.trust_ownership import (
     WorkspaceOwnerLimitExceeded,
     require_owner_trust_budget,
 )
+from trusted_router.trust_reconciliation import (
+    OWNER_INVENTORY_ACCOUNT_ID,
+    OWNER_INVENTORY_PROVIDER,
+    OWNER_INVENTORY_SOURCE,
+)
 from trusted_router.trust_tiers import (
     adverse_event_payload,
+    adverse_restamp_wins,
     adverse_transition_outcome,
     compute_trust_tier,
     payment_or_grant_event,
@@ -2100,8 +2106,7 @@ class PostgresStore:
                 "(provider, account_id, environment, source, source_version, "
                 "history_start, closed_through, consistency_delay_seconds, "
                 "unmatched_count, semantic_mismatch_count, completed_at) "
-                "VALUES ('owner_inventory', 'local', %s, 'tr_entities.workspace', "
-                "%s, %s, %s, 0, 0, 0, %s) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, 0, 0, 0, %s) "
                 "ON CONFLICT (provider, account_id, environment, source, source_version) "
                 "DO UPDATE SET "
                 "history_start = EXCLUDED.history_start, "
@@ -2110,7 +2115,16 @@ class PostgresStore:
                 "unmatched_count = EXCLUDED.unmatched_count, "
                 "semantic_mismatch_count = EXCLUDED.semantic_mismatch_count, "
                 "completed_at = EXCLUDED.completed_at",
-                (environment.strip(), source_version.strip(), now, now, now),
+                (
+                    OWNER_INVENTORY_PROVIDER,
+                    OWNER_INVENTORY_ACCOUNT_ID,
+                    environment.strip(),
+                    OWNER_INVENTORY_SOURCE,
+                    source_version.strip(),
+                    now,
+                    now,
+                    now,
+                ),
             )
             return len(expected ^ actual)
 
@@ -4129,15 +4143,16 @@ class PostgresStore:
         lifetime_topup_user_id: str | None = None,
     ) -> bool:
         def credit(conn: Any) -> bool:
-            won = self._insert_entity_once_tx(
-                conn,
-                "stripe_event",
-                event_id,
-                {
-                    "created_at": iso_now(),
-                    "workspace_id": workspace_id,
-                },
-            )
+            marker_body: dict[str, Any] = {
+                "created_at": iso_now(),
+                "workspace_id": workspace_id,
+            }
+            if provenance.external_ref:
+                # Lets a later backfill derive credit evidence locally (P1
+                # review, finding 6); mirrors the Spanner marker body.
+                marker_body["provider"] = provenance.provider
+                marker_body["payment_intent"] = provenance.external_ref
+            won = self._insert_entity_once_tx(conn, "stripe_event", event_id, marker_body)
             if not won:
                 return False
             trust_event_inserted = self._insert_credit_trust_event_tx(
@@ -4151,7 +4166,45 @@ class PostgresStore:
                 currency=currency,
             )
             if not trust_event_inserted:
-                return False
+                # A payment fact for this provider and PaymentIntent already
+                # exists under another event id. Its own stripe_event marker
+                # decides: present means a live credit already happened (replay,
+                # nothing credited); absent means a scan wrote the fact before
+                # this webhook and the money was never credited -- credit exactly
+                # once and mark the fact's event id so later events replay.
+                existing = (
+                    conn.execute(
+                        "SELECT event_id FROM tr_trust_event WHERE provider=%s "
+                        "AND kind='payment' AND original_payment_ref=%s",
+                        (provenance.provider, provenance.external_ref),
+                    ).fetchone()
+                    if provenance.provider in {"stripe", "paypal", "adyen", "x402"}
+                    and provenance.external_ref
+                    else None
+                )
+                if existing is None:
+                    return False
+                fact_event_id = str(existing[0])
+                if self._read_entity_tx(conn, "stripe_event", fact_event_id, dict) is not None:
+                    return False
+                log.warning(
+                    "credit.uncredited_trust_fact_credited provider=%s payment_ref=%s "
+                    "fact_event_id=%s event_id=%s",
+                    provenance.provider,
+                    provenance.external_ref,
+                    fact_event_id,
+                    event_id,
+                )
+                self._insert_entity_once_tx(
+                    conn,
+                    "stripe_event",
+                    fact_event_id,
+                    {
+                        "created_at": iso_now(),
+                        "workspace_id": workspace_id,
+                        "credited_by_event_id": event_id,
+                    },
+                )
             self._credit_workspace_balance_tx(
                 conn,
                 workspace_id,
@@ -4249,6 +4302,26 @@ class PostgresStore:
                 new_status=event.lifecycle_status,
                 new_watermark=event.provider_ordering_watermark,
             )
+            if (
+                outcome == "replay"
+                and existing is not None
+                and adverse_restamp_wins(existing.provider_ordering_watermark, event)
+            ):
+                # Same status, later Stripe Event: converge the Event-derived
+                # stamps to the max-watermark Event without moving money, so
+                # the history converter (which picks the same Event) matches.
+                conn.execute(
+                    "UPDATE tr_trust_event SET occurred_at = %s, provider_subtype = %s, "
+                    "provider_ordering_watermark = %s "
+                    "WHERE workspace_id = %s AND event_id = %s",
+                    (
+                        event.occurred_at,
+                        event.provider_subtype,
+                        event.provider_ordering_watermark,
+                        payment.workspace_id,
+                        existing.event_id,
+                    ),
+                )
             if outcome != "applied":
                 return AdverseTrustResult(
                     outcome,

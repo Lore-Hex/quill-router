@@ -190,6 +190,7 @@ from trusted_router.storage_gcp_synthetic_rollups import (
 )
 from trusted_router.storage_gcp_trust import (
     TRUST_EVENT_COLUMNS,
+    _read_payment_tx,
     absorb_unrecovered_recovery_tx,
     apply_adverse_trust_event_tx,
     drain_matching_trust_inbox_tx,
@@ -226,6 +227,11 @@ from trusted_router.trust_ownership import (
     TRUST_REPLICATED_COLUMN_COUNT,
     WorkspaceOwnerLimitExceeded,
     require_owner_trust_budget,
+)
+from trusted_router.trust_reconciliation import (
+    OWNER_INVENTORY_ACCOUNT_ID,
+    OWNER_INVENTORY_PROVIDER,
+    OWNER_INVENTORY_SOURCE,
 )
 from trusted_router.trust_tiers import compute_trust_tier, payment_or_grant_event
 from trusted_router.types import IdentityVerificationStatus, UsageType
@@ -1819,10 +1825,10 @@ class SpannerBigtableStore:
                     "completed_at",
                 ),
                 values=[(
-                    "owner_inventory",
-                    "local",
+                    OWNER_INVENTORY_PROVIDER,
+                    OWNER_INVENTORY_ACCOUNT_ID,
                     environment,
-                    "tr_entities.workspace",
+                    OWNER_INVENTORY_SOURCE,
                     source_version,
                     now,
                     now,
@@ -3086,21 +3092,54 @@ class SpannerBigtableStore:
                 raise ValueError("credit account not found")
             now = dt.datetime.now(dt.UTC).replace(microsecond=0)
             created_at = now.isoformat().replace("+00:00", "Z")
-            trust_event_inserted = insert_credit_trust_event(
-                transaction,
-                self._param_types,
-                payment_or_grant_event(
-                    workspace_id,
-                    event_id,
-                    amount,
-                    provenance,
-                    recorded_at=now,
-                    payment_amount_microdollars=payment_amount_microdollars,
-                    currency=currency,
-                ),
+            trust_event = payment_or_grant_event(
+                workspace_id,
+                event_id,
+                amount,
+                provenance,
+                recorded_at=now,
+                payment_amount_microdollars=payment_amount_microdollars,
+                currency=currency,
             )
+            trust_event_inserted = insert_credit_trust_event(
+                transaction, self._param_types, trust_event
+            )
+            credited_fact_event_ids: tuple[str, ...] = ()
             if not trust_event_inserted:
-                return False, ()
+                # The guarded insert found a fact for this provider and
+                # PaymentIntent under another event id. Two cases, and only the
+                # stripe_event marker tells them apart:
+                #   * the fact's own event id has a marker: a live credit already
+                #     happened (a second Stripe event for the same payment), so
+                #     this is a replay and nothing is credited;
+                #   * no marker: the fact was written by a scan before this
+                #     webhook was processed. Answering credited:false here made
+                #     Stripe stop retrying and would have zeroed the payment
+                #     forever (2026-09-04). Credit exactly once and mark both ids.
+                existing = (
+                    _read_payment_tx(
+                        transaction,
+                        self._param_types,
+                        provider=trust_event.provider,
+                        original_payment_ref=str(trust_event.original_payment_ref),
+                    )
+                    if trust_event.kind == "payment" and trust_event.original_payment_ref
+                    else None
+                )
+                if existing is None or (
+                    self._read_entity_tx(transaction, "stripe_event", existing.event_id, dict)
+                    is not None
+                ):
+                    return False, ()
+                log.warning(
+                    "credit.uncredited_trust_fact_credited provider=%s payment_ref=%s "
+                    "fact_event_id=%s event_id=%s",
+                    trust_event.provider,
+                    trust_event.original_payment_ref,
+                    existing.event_id,
+                    event_id,
+                )
+                credited_fact_event_ids = (existing.event_id,)
             self._credit_workspace_balance_tx(
                 transaction,
                 workspace_id,
@@ -3116,14 +3155,32 @@ class SpannerBigtableStore:
                     now=now,
                 )
 
+            # The marker names the PaymentIntent it credited so a later
+            # historical backfill can derive credit evidence locally instead
+            # of through Stripe's 30-day Events API (P1 review, finding 6).
+            marker_body: dict[str, Any] = {"created_at": created_at}
+            if provenance.external_ref:
+                marker_body["provider"] = provenance.provider
+                marker_body["payment_intent"] = provenance.external_ref
             insert_entity_dml_at(
                 transaction,
                 self._param_types,
                 "stripe_event",
                 event_id,
-                _json_body({"created_at": created_at}),
+                _json_body(marker_body),
                 now,
             )
+            for fact_event_id in credited_fact_event_ids:
+                # Mark the scan-written fact as credited so a later Stripe event
+                # for the same PaymentIntent is a replay, not a second credit.
+                insert_entity_dml_at(
+                    transaction,
+                    self._param_types,
+                    "stripe_event",
+                    fact_event_id,
+                    _json_body({"created_at": created_at, "credited_by_event_id": event_id}),
+                    now,
+                )
             drained: tuple[AdverseTrustResult, ...] = ()
             if provenance.external_ref is not None:
                 drained = drain_matching_trust_inbox_tx(

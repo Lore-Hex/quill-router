@@ -1,22 +1,21 @@
 #!/usr/bin/env bash
-# Deploy the Stripe/x402 recurring reconciliation Cloud Run job at 15 minutes.
+# Deploy the trust-tier recompute Cloud Run job and its 15-minute schedule.
+# Modelled on trust_reconciler.sh: job in us-east4, scheduler in the primary
+# region at 7,22,37,52 so every tick trails the reconciler's */15 tick and
+# replicates a fresh trust_reconciled_through. Eligibility stays false here.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"
 
-require_trust_stripe_account_id
-ACCOUNT_ID="$TR_TRUST_STRIPE_ACCOUNT_ID"
-JOB_REGION="${TR_TRUST_RECONCILER_JOB_REGION:-us-east4}"
-SCHEDULER_REGION="${TR_TRUST_RECONCILER_SCHEDULER_REGION:-${TR_PRIMARY_REGION}}"
-JOB_NAME="${TR_TRUST_RECONCILER_JOB:-trusted-router-trust-reconciler}"
-SCHEDULER_NAME="${TR_TRUST_RECONCILER_SCHEDULER:-trusted-router-trust-reconciler-15m}"
-INTERVAL_SECONDS="${TR_TRUST_RECONCILE_INTERVAL_SECONDS:-900}"
-[ "$INTERVAL_SECONDS" = "900" ] || {
-  log "refusing deploy: scheduler is pinned to TR_TRUST_RECONCILE_INTERVAL_SECONDS=900"
-  exit 1
-}
+JOB_REGION="${TR_TRUST_TIER_JOB_REGION:-us-east4}"
+SCHEDULER_REGION="${TR_TRUST_TIER_SCHEDULER_REGION:-${TR_PRIMARY_REGION}}"
+JOB_NAME="${TR_TRUST_TIER_JOB:-trusted-router-trust-tier}"
+SCHEDULER_NAME="${TR_TRUST_TIER_SCHEDULER:-trusted-router-trust-tier-15m}"
+# Explicit: every Cloud Run job carries TR_ENVIRONMENT=worker, and the tier
+# job must replicate the marker written under the production environment.
+TIER_ENVIRONMENT="${TR_TRUST_TIER_ENVIRONMENT:-production}"
 
 if ! gc artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
   log "refusing trust job deploy: image ${IMAGE} does not exist"
@@ -48,10 +47,10 @@ gc run jobs "$mutation" "$JOB_NAME" \
   --region "$JOB_REGION" \
   --image "$IMAGE" \
   --command="/app/.venv/bin/python" \
-  --args="-m,trusted_router.trust_reconcile_cli,--account-id,${ACCOUNT_ID},--environment,production" \
+  --args="-m,trusted_router.trust_tier_cli,--environment,${TIER_ENVIRONMENT}" \
   --service-account "$RUN_SERVICE_ACCOUNT" \
   --set-env-vars "$set_env_vars" \
-  --update-secrets="TR_STRIPE_SECRET_KEY=trustedrouter-stripe-secret-key:latest,TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest" \
+  --update-secrets="TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest" \
   --max-retries=0 \
   --task-timeout=10m \
   --cpu=1 \
@@ -67,7 +66,7 @@ gc run jobs add-iam-policy-binding "$JOB_NAME" \
 uri="https://${JOB_REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${JOB_NAME}:run"
 common=(
   --location="$SCHEDULER_REGION"
-  --schedule="*/15 * * * *"
+  --schedule="7,22,37,52 * * * *"
   --time-zone=UTC
   --uri="$uri"
   --http-method=POST
@@ -82,4 +81,4 @@ if gc scheduler jobs describe "$SCHEDULER_NAME" \
 else
   gc scheduler jobs create http "$SCHEDULER_NAME" "${common[@]}" >/dev/null
 fi
-log "trust reconciler deployed with 900-second cadence; eligibility remains false"
+log "trust tier job deployed trailing the reconciler by seven minutes; eligibility remains false"

@@ -938,6 +938,17 @@ jobs:
             bash scripts/deploy/synthetic_image_refresh.sh
           fi
 
+      - name: Re-image trust reconciler and tier jobs (opt-in)
+        # Trust jobs (decision 76) are re-imaged on every release so they never
+        # drift to a stale image at the next merge -- but ONLY once an operator
+        # has armed the wiring with the repository variable TR_TRUST_JOBS_DEPLOY=1
+        # (runbook steps 8-9). Unset or any other value: trust_jobs.sh issues no
+        # cloud call, so this step changes no production schedule by default.
+        env:
+          TR_TRUST_JOBS_DEPLOY: ${{ vars.TR_TRUST_JOBS_DEPLOY || '0' }}
+          TR_TRUST_STRIPE_ACCOUNT_ID: ${{ vars.TR_TRUST_STRIPE_ACCOUNT_ID || '' }}
+        run: bash scripts/deploy/trust_jobs.sh
+
       - name: Enforce Google Data Manager sharing disabled
         # This is deliberately unconditional. Every release reasserts both the
         # paused scheduler and the disabled worker so configuration drift cannot

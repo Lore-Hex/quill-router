@@ -25,6 +25,7 @@ from trusted_router.trust_tiers import (
     TRUST_PAUSE_CAUSES,
     adverse_event_from_payload,
     adverse_event_payload,
+    adverse_restamp_wins,
     adverse_transition_outcome,
     compute_trust_tier,
     payment_recovery_target,
@@ -429,6 +430,40 @@ def apply_adverse_trust_event_tx(
         new_status=event.lifecycle_status,
         new_watermark=event.provider_ordering_watermark,
     )
+    if (
+        transition == "replay"
+        and existing is not None
+        and adverse_restamp_wins(existing.provider_ordering_watermark, event)
+    ):
+        # Same status, later Stripe Event: converge the Event-derived stamps
+        # to the max-watermark Event without moving money (adverse_restamp_wins).
+        restamped = transaction.execute_update(
+            "UPDATE tr_trust_event SET occurred_at=@occurred_at, "
+            "provider_subtype=@provider_subtype, "
+            "provider_ordering_watermark=@provider_ordering_watermark "
+            "WHERE workspace_id=@workspace_id AND event_id=@event_id "
+            "AND provider=@provider AND adverse_ref=@adverse_ref",
+            params={
+                "occurred_at": event.occurred_at,
+                "provider_subtype": event.provider_subtype,
+                "provider_ordering_watermark": event.provider_ordering_watermark,
+                "workspace_id": workspace_id,
+                "event_id": existing.event_id,
+                "provider": event.provider,
+                "adverse_ref": event.adverse_ref,
+            },
+            param_types={
+                "occurred_at": param_types.TIMESTAMP,
+                "provider_subtype": param_types.STRING,
+                "provider_ordering_watermark": param_types.STRING,
+                "workspace_id": param_types.STRING,
+                "event_id": param_types.STRING,
+                "provider": param_types.STRING,
+                "adverse_ref": param_types.STRING,
+            },
+        )
+        if int(restamped) != 1:
+            raise RuntimeError("adverse restamp lost its key guard")
     if transition != "applied":
         return AdverseTrustResult(
             transition,

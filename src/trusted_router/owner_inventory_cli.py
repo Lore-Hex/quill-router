@@ -1,5 +1,11 @@
-#!/usr/bin/env python3
-"""Rebuild both directions of the owner inventory and publish its arm marker."""
+"""Rebuild both directions of the owner inventory and publish its arm marker.
+
+Runs as ``python -m trusted_router.owner_inventory_cli`` inside the image. The
+marker identity (``owner_inventory``/``local``/``tr_entities.workspace``) and the
+default source version come from ``trust_reconciliation``, the same constants
+PR 2's ``MarkerRequirement`` reads. ``--environment`` defaults to production
+because every Cloud Run job carries ``TR_ENVIRONMENT=worker``.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +15,7 @@ from typing import Protocol, cast
 
 from trusted_router.config import get_settings
 from trusted_router.storage import create_store
+from trusted_router.trust_reconciliation import OWNER_INVENTORY_SOURCE_VERSION
 
 log = logging.getLogger(__name__)
 
@@ -32,17 +39,17 @@ def run(
     return changed
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--source-version", required=True)
-    parser.add_argument("--environment")
-    args = parser.parse_args()
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source-version", default=OWNER_INVENTORY_SOURCE_VERSION)
+    parser.add_argument("--environment", default="production")
+    args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
     settings = get_settings()
     run(
         cast(_OwnerInventoryStore, create_store(settings)),
         source_version=args.source_version,
-        environment=args.environment or settings.environment,
+        environment=args.environment,
     )
     return 0
 
