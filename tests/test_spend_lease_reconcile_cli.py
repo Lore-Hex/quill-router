@@ -52,6 +52,7 @@ class _Store:
 
 def _settings() -> SimpleNamespace:
     return SimpleNamespace(
+        spend_lease_binding_enabled=False,
         spend_lease_reconciler_worker=True,
         spend_lease_reconcile_limit=25,
         spend_lease_reconcile_max_attempts=12,
@@ -110,7 +111,7 @@ def test_unresolved_reconciliation_fails_without_success_heartbeat(
     assert heartbeats == []
 
 
-def test_unprovisioned_ledger_is_clean_idle_pass_with_heartbeat(
+def test_unprovisioned_ledger_binding_disabled_is_clean_idle_pass_with_heartbeat(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -132,6 +133,35 @@ def test_unprovisioned_ledger_is_clean_idle_pass_with_heartbeat(
         "table=trustedrouter-spend-lease "
         "profile=tr-spend-us-central1 region=us-central1"
     ) == 1
+
+
+def test_unprovisioned_ledger_binding_enabled_fails_without_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = _Store()
+    store.health_error = SpendLeaseLedgerUnprovisioned(
+        table_id="trustedrouter-spend-lease",
+        profile="tr-spend-us-central1",
+        region="us-central1",
+    )
+    heartbeats = _wire(monkeypatch, store)
+    settings = _settings()
+    settings.spend_lease_binding_enabled = True
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+
+    with caplog.at_level(logging.INFO, logger=cli.__name__):
+        assert cli.main(["reconcile"]) == 1
+
+    assert store.events == ["acquire", "health", "release"]
+    assert heartbeats == []
+    assert caplog.record_tuples.count((
+        cli.__name__,
+        logging.ERROR,
+        "spend_lease.reconcile.ledger_unprovisioned "
+        "table=trustedrouter-spend-lease "
+        "profile=tr-spend-us-central1 region=us-central1",
+    )) == 1
 
 
 def test_generic_health_failure_returns_one_without_heartbeat(

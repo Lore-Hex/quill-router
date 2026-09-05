@@ -15,7 +15,7 @@ REGION="${REGION:-us-central1}"
 # /v1/regions which the SDK's region= shortcut resolves against. Adding
 # a region without a backing gateway VM gives callers a TLS-broken
 # `api-<region>.quillrouter.com` and weakens the trust story.
-TR_REGIONS="${TR_REGIONS:-us-central1,us-east4,europe-west4}"
+TR_REGIONS="${TR_REGIONS:-$(python3 "$(dirname "${BASH_SOURCE[0]}")/../../src/trusted_router/enclave_regions.py")}"
 TR_PRIMARY_REGION="${TR_PRIMARY_REGION:-us-central1}"
 # Cloud Run control-plane regions behind trustedrouter.com. This is broader
 # than TR_REGIONS because cold control-plane regions can serve cached public

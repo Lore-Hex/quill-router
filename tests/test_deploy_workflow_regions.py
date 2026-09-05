@@ -1,6 +1,11 @@
+import re
 from pathlib import Path
 
 import pytest
+
+from scripts.smoke_all_providers import REGIONS as SMOKE_REGIONS
+from trusted_router.config import Settings
+from trusted_router.enclave_regions import ENCLAVE_REGIONS
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -461,3 +466,18 @@ def test_mutex_acquire_step_cannot_swallow_a_blocked_exit() -> None:
                 "deploy_mutex.sh acquire is piped; a blocked acquire would "
                 "exit 0 through the pipe under bash -e without pipefail: " + line.strip()
             )
+
+
+def test_enclave_inventory_is_separate_from_live_control_plane_regions() -> None:
+    assert ENCLAVE_REGIONS == ("us-central1", "us-east4", "europe-west4")
+    assert "southamerica-east1" not in ENCLAVE_REGIONS
+    assert Settings().regions == ",".join(ENCLAVE_REGIONS)
+    assert set(SMOKE_REGIONS) - {"us", "europe"} == set(ENCLAVE_REGIONS)
+    assert SMOKE_REGIONS["us"] == SMOKE_REGIONS["us-central1"]
+    assert SMOKE_REGIONS["europe"] == SMOKE_REGIONS["europe-west4"]
+
+    library = (ROOT / "scripts/deploy/_lib.sh").read_text()
+    match = re.search(r'TR_CONTROL_PLANE_REGIONS:-([^}]+)', library)
+    assert match is not None
+    control_plane_regions = set(match.group(1).split(","))
+    assert control_plane_regions == set(ENCLAVE_REGIONS) | {"southamerica-east1"}

@@ -110,14 +110,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             regions = verify()
         except SpendLeaseLedgerUnprovisioned as exc:
-            logger.info(
-                "spend_lease.reconciler_ledger_unprovisioned "
-                "table=%s profile=%s region=%s",
-                exc.table_id,
-                exc.profile,
-                exc.region,
-            )
-            exit_code = 0
+            if settings.spend_lease_binding_enabled:
+                logger.error(
+                    "spend_lease.reconcile.ledger_unprovisioned "
+                    "table=%s profile=%s region=%s",
+                    exc.table_id,
+                    exc.profile,
+                    exc.region,
+                )
+            else:
+                logger.info(
+                    "spend_lease.reconciler_ledger_unprovisioned "
+                    "table=%s profile=%s region=%s",
+                    exc.table_id,
+                    exc.profile,
+                    exc.region,
+                )
+                exit_code = 0
         except Exception:
             logger.exception("spend_lease.reconciler_health_check_failed")
         else:

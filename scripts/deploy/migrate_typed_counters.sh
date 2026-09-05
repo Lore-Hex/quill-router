@@ -307,10 +307,10 @@ fi
 
 if table_exists tr_trust_backfill; then log "tr_trust_backfill exists, skip"; else
   apply_ddl "CREATE TABLE tr_trust_backfill (
-    provider STRING(32) NOT NULL,
+    provider STRING(16) NOT NULL,
     account_id STRING(255) NOT NULL,
     environment STRING(32) NOT NULL,
-    source STRING(255) NOT NULL,
+    source STRING(64) NOT NULL,
     source_version STRING(64) NOT NULL,
     history_start TIMESTAMP NOT NULL,
     closed_through TIMESTAMP NOT NULL,
@@ -318,8 +318,14 @@ if table_exists tr_trust_backfill; then log "tr_trust_backfill exists, skip"; el
     unmatched_count INT64 NOT NULL,
     semantic_mismatch_count INT64 NOT NULL,
     completed_at TIMESTAMP,
-    CONSTRAINT tr_trust_backfill_complete CHECK (completed_at IS NULL OR (unmatched_count = 0 AND semantic_mismatch_count = 0)),
-  ) PRIMARY KEY (provider, account_id, environment)"
+    CONSTRAINT tr_trust_backfill_counts CHECK (
+      consistency_delay_seconds >= 0 AND unmatched_count >= 0
+      AND semantic_mismatch_count >= 0
+    ),
+    CONSTRAINT tr_trust_backfill_completion CHECK (
+      completed_at IS NULL OR (unmatched_count = 0 AND semantic_mismatch_count = 0)
+    ),
+  ) PRIMARY KEY (provider, account_id, environment, source, source_version)"
 fi
 
 # Historical trust-column backfill statement. It is intentionally a separate,

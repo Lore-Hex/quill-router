@@ -10,6 +10,7 @@ from typing import Any, Protocol, cast
 from trusted_router.config import get_settings
 from trusted_router.services.trust_recovery import alert_stale_trust_inbox
 from trusted_router.storage import create_store
+from trusted_router.storage_trust_reconciliation import replicate_tier_job_watermark
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +35,18 @@ def run(store: _TrustTierStore, settings: Any, *, now: datetime | None = None) -
         alert_stale_trust_inbox(store, now=computed_at)
     workspace_ids = store.list_trust_tier_workspace_ids()
     for workspace_id in workspace_ids:
+        replicated, reconciled_through = replicate_tier_job_watermark(
+            store,
+            workspace_id,
+            settings.trust_qualifying_provider_set,
+            environment=getattr(settings, "environment", "production"),
+        )
+        if replicated:
+            log.info(
+                "trust.reconciled_through workspace_id=%s value=%s",
+                workspace_id,
+                reconciled_through,
+            )
         tier = store.recompute_workspace_trust_tier(
             workspace_id,
             qualifying_providers=settings.trust_qualifying_provider_set,

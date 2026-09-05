@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Iterator
 from pathlib import Path
@@ -193,6 +194,48 @@ def test_typed_authorize_avoids_generic_rows_and_replays_one_hold(
     assert len(database.gateway_authorizations) == 1
     assert database.gateway_authorizations[first.id]["terminal_at"] is None
     assert _generic_request_kinds(database) == set()
+
+
+def test_shared_trace_settles_each_call_once_and_releases_both_holds(
+    typed_request_store: tuple[Any, Any, Any],
+) -> None:
+    store, database, _bigtable = typed_request_store
+    workspace_id = "ws-shared-trace"
+    _seed_credit(store, workspace_id)
+    key = _make_key(store, workspace_id)
+    authorizations = []
+    for _ in range(2):
+        outcome, authorization = _authorize(
+            store, workspace_id=workspace_id, key_hash=key.hash,
+        )
+        assert outcome == AuthorizeOutcome.ACCEPTED and authorization is not None
+        authorizations.append(authorization)
+
+    client = _client()
+    for authorization in authorizations:
+        response = client.post(
+            "/v1/internal/gateway/settle", json=_settle_body(authorization.id),
+        )
+        assert response.status_code == 200, response.text
+    balances_before_replay = copy.deepcopy(database.typed)
+    for authorization in reversed(authorizations):
+        response = client.post(
+            "/v1/internal/gateway/settle", json=_settle_body(authorization.id),
+        )
+        assert response.status_code == 200, response.text
+        assert database.reservations[authorization.credit_reservation_id]["settled"]
+        assert database.settle_outbox[(authorization.id, "settle")]["status"] == "done"
+    assert database.typed == balances_before_replay
+    credit = database.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)]
+    assert credit["reserved"] == 0
+    assert credit["total_usage"] == sum(
+        database.reservations[authorization.credit_reservation_id]["actual_micro"]
+        for authorization in authorizations
+    )
+    assert len({
+        database.gateway_authorizations[authorization.id]["gateway_request_id"]
+        for authorization in authorizations
+    }) == 1
 
 
 def test_typed_settle_starts_bounded_replay_window_after_activity_commit(

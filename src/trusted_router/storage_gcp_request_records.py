@@ -32,7 +32,7 @@ from trusted_router.storage_gcp_spend_lease import (
     authorization_typed_param_types,
     merge_authorization_typed_columns,
 )
-from trusted_router.storage_models import GatewayAuthorization
+from trusted_router.storage_models import AmbiguousGatewayRequestId, GatewayAuthorization
 from trusted_router.types import UsageType
 
 AUTHORIZATION_TABLE = "tr_gateway_authorization"
@@ -289,19 +289,22 @@ def read_gateway_authorization_by_gateway_request_id(
     param_types: Any,
     gateway_request_id: str,
 ) -> GatewayAuthorization | None:
-    """Read one authorization through the request-id secondary index."""
+    """Resolve single-call evidence without misattributing a multi-call trace."""
 
     rows = list(
         reader.execute_sql(
             "SELECT authorization_id FROM "
-            "tr_gateway_authorization@{FORCE_INDEX=tr_gateway_authorization_by_gateway_request_id} "
-            "WHERE gateway_request_id=@gateway_request_id",
+            "tr_gateway_authorization@{FORCE_INDEX=tr_gateway_authorization_by_trace_id} "
+            "WHERE gateway_request_id=@gateway_request_id "
+            "AND gateway_request_id IS NOT NULL LIMIT 2",
             params={"gateway_request_id": gateway_request_id},
             param_types={"gateway_request_id": param_types.STRING},
         )
     )
     if not rows:
         return None
+    if len(rows) > 1:
+        raise AmbiguousGatewayRequestId("multiple authorizations share the gateway request id")
     return read_gateway_authorization(reader, param_types, str(rows[0][0]))
 
 

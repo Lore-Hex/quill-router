@@ -895,6 +895,10 @@ def main() -> int:
             idle_delay = min(idle_delay * 2, 30.0)
         else:
             idle_delay = max(0.1, args.poll_seconds)
+            # A steady trickle must not turn partial batches into a busy loop.
+            # Full batches still drain immediately to catch up with a backlog.
+            if result.fetched < max(1, args.batch_size):
+                time.sleep(idle_delay)
 
 
 if __name__ == "__main__":

@@ -45,6 +45,10 @@ import urllib.request
 from collections.abc import Iterable
 from pathlib import Path
 
+# This script also runs directly from a checkout during deploys.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+from trusted_router.enclave_regions import ENCLAVE_REGIONS  # noqa: E402
+
 # Worst-of: the per-region effective_status is the worst over its checks.
 # `unknown` is treated as severity 0 for ranking but reported separately
 # so the operator can tell "no signal" apart from "all healthy."
@@ -193,7 +197,7 @@ def main() -> int:
     parser.add_argument("--rollback-after", type=int, default=3)
     parser.add_argument(
         "--regions",
-        default="us-central1,us-east4,europe-west4",
+        default=",".join(ENCLAVE_REGIONS),
         help="Comma-separated list of target regions to monitor.",
     )
     parser.add_argument(

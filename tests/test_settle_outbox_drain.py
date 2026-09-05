@@ -2703,6 +2703,7 @@ def test_inline_spend_lease_overrun_caps_charge_generation_typed_cost_and_outbox
         operational_analytics_outbox_enabled=True,
         spend_lease_issuance_enabled=True,
         spend_lease_binding_enabled=True,
+        spend_lease_bigtable_app_profiles="us-central1=tr-spend-us-central1",
         spend_lease_pilot_workspace_ids=ws,
         spend_lease_signing_secret_name="test-secret",  # noqa: S106
     )

@@ -3,10 +3,13 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import json
+from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from clickhouse import ingest_outbox
 from clickhouse.backfill_benchmark_samples import normalise
 from clickhouse.ingest_outbox import (
     DrainMetrics,
@@ -163,8 +166,8 @@ class _Source:
         deleted = set(rows)
         self.rows = [row for row in self.rows if row not in deleted]
 
-    def oldest_commit_ts(self) -> dt.datetime | None:
-        return self.rows[0].commit_ts if self.rows else None
+    def reset_scan_floors(self) -> None:
+        pass
 
 
 class _Writer:
@@ -225,35 +228,361 @@ def test_delete_failure_replays_acknowledged_batch_without_losing_cursor() -> No
 
 
 class _ReadSnapshot:
+    def __init__(self, database: _ReadDatabase) -> None:
+        self.database = database
+
     def __enter__(self) -> _ReadSnapshot:
         return self
 
     def __exit__(self, *_args: Any) -> None:
         return None
 
-    def execute_sql(self, *_args: Any, **_kwargs: Any) -> list[tuple[Any, ...]]:
-        return []
+    def execute_sql(
+        self, sql: str, *, params: dict[str, Any], param_types: dict[str, Any]
+    ) -> list[tuple[Any, ...]]:
+        self.database.calls.append((sql, params, param_types))
+        if self.database.fail_fetch:
+            raise RuntimeError("fetch failed")
+        rows = [row for row in self.database.rows if row.shard == params["shard"]]
+        if "floor" in params:
+            assert "AND commit_ts >= @floor" in sql
+            rows = [row for row in rows if row.commit_ts >= params["floor"]]
+        else:
+            assert "@floor" not in sql
+        rows.sort(key=lambda row: (row.commit_ts, row.event_id))
+        if sql.startswith("SELECT commit_ts "):
+            assert "ORDER BY commit_ts LIMIT 1" in sql
+            return [(row.commit_ts,) for row in rows[:1]]
+        return [(*row.key, row.payload) for row in rows[:params["limit"]]]
+
+
+class _DeleteBatch:
+    def __init__(self, database: _ReadDatabase) -> None:
+        self.database = database
+        self.keys: list[list[Any]] = []
+
+    def __enter__(self) -> _DeleteBatch:
+        return self
+
+    def delete(self, table: str, keyset: Any) -> None:
+        assert table == "tr_analytics_outbox"
+        self.keys = keyset.keys
+
+    def __exit__(self, *_args: Any) -> None:
+        if self.database.fail_delete:
+            raise RuntimeError("delete commit failed")
+        self.database.rows = [
+            row for row in self.database.rows if list(row.key) not in self.keys
+        ]
 
 
 class _ReadDatabase:
     def __init__(self) -> None:
         self.multi_use_values: list[bool] = []
+        self.rows: list[OutboxRow] = []
+        self.calls: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+        self.fail_fetch = False
+        self.fail_delete = False
 
     def snapshot(self, *, multi_use: bool = False) -> _ReadSnapshot:
         self.multi_use_values.append(multi_use)
-        return _ReadSnapshot()
+        return _ReadSnapshot(self)
+
+    def batch(self) -> _DeleteBatch:
+        return _DeleteBatch(self)
 
 
-def test_sharded_reads_request_multi_use_spanner_snapshots() -> None:
+@pytest.fixture
+def spanner_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[_ReadDatabase, Callable[[], SpannerOutboxSource]]:
+    from google.cloud import spanner
+
     database = _ReadDatabase()
-    source = object.__new__(SpannerOutboxSource)
-    source._database = database
-    source._pt = _ParamTypes()
-    source._shard_count = 2
+    client = SimpleNamespace(instance=lambda _name: SimpleNamespace(database=lambda _db: database))
+    monkeypatch.setattr(spanner, "Client", lambda **_kwargs: client)
 
-    assert source.fetch(limit=10) == []
-    assert source.oldest_commit_ts() is None
-    assert database.multi_use_values == [True, True]
+    def create() -> SpannerOutboxSource:
+        return SpannerOutboxSource(project="fake", instance="fake", database="fake", shard_count=4)
+
+    return database, create
+
+
+def test_sharded_reads_request_multi_use_spanner_snapshots(
+    spanner_source: tuple[_ReadDatabase, Callable[[], SpannerOutboxSource]],
+) -> None:
+    database, create = spanner_source
+    assert create().fetch(limit=10) == []
+    assert database.multi_use_values == [True]
+    assert len(database.calls) == 4
+
+
+def test_floor_preserves_timestamp_ties_and_truncated_batches(
+    spanner_source: tuple[_ReadDatabase, Callable[[], SpannerOutboxSource]],
+) -> None:
+    from google.cloud.spanner_v1 import param_types
+
+    database, create = spanner_source
+    source = create()
+    first = dataclasses.replace(_outbox_row(), event_id="a")
+    tied = dataclasses.replace(first, event_id="b")
+    later = dataclasses.replace(first, event_id="c", commit_ts=first.commit_ts + dt.timedelta(seconds=1))
+    other_shard = dataclasses.replace(later, shard=0)
+    database.rows = [later, tied, first, other_shard]
+    writer = _Writer()
+    metrics = DrainMetrics()
+
+    result = drain_once(source, writer, metrics, batch_size=1)
+    assert result.oldest_commit_ts == first.commit_ts
+    assert database.rows == [later, tied, other_shard]
+    assert all("floor" not in params for _, params, _ in database.calls)
+    assert source._floors == {3: first.commit_ts}
+
+    database.calls.clear()
+    assert source.fetch(limit=10) == [tied, other_shard, later]
+    for sql, params, types in database.calls:
+        if params["shard"] == 3:
+            assert "AND commit_ts >= @floor" in sql
+            assert params["floor"] == first.commit_ts
+            assert types["floor"] == param_types.TIMESTAMP
+        else:
+            assert "floor" not in params
+    # Reading ahead must not advance the floor past unacknowledged rows.
+    assert source._floors == {3: first.commit_ts}
+    drain_once(source, writer, metrics, batch_size=10)
+    assert database.rows == []
+    assert source._floors == {0: later.commit_ts, 3: later.commit_ts}
+
+    # Even a subsequently visible timestamp tie remains eligible (inclusive).
+    database.rows = [dataclasses.replace(later, event_id="late-tie")]
+    assert source.fetch(limit=10) == database.rows
+
+
+@pytest.mark.parametrize("failure", ["fetch", "payload", "insert", "delete"])
+def test_drain_error_clears_every_floor_and_replays(
+    spanner_source: tuple[_ReadDatabase, Callable[[], SpannerOutboxSource]],
+    failure: str,
+) -> None:
+    database, create = spanner_source
+    source = create()
+    row = _outbox_row()
+    database.rows = [row, dataclasses.replace(row, shard=0)]
+    metrics = DrainMetrics()
+    drain_once(source, _Writer(), metrics, batch_size=10)
+    assert set(source._floors) == {0, 3}
+
+    pending = dataclasses.replace(row, commit_ts=row.commit_ts + dt.timedelta(seconds=1))
+    database.rows = [pending]
+    database.fail_fetch = failure == "fetch"
+    database.fail_delete = failure == "delete"
+    if failure == "payload":
+        database.rows = [dataclasses.replace(pending, payload="null")]
+    writer = _Writer(failures=int(failure == "insert"))
+    with pytest.raises((RuntimeError, ValueError)):
+        drain_once(source, writer, metrics, batch_size=10)
+    assert source._floors == {}
+    assert len(database.rows) == 1
+
+    database.fail_fetch = database.fail_delete = False
+    # An older row is deliberately injected to prove the retry is a full scan.
+    database.rows = [dataclasses.replace(row, commit_ts=row.commit_ts - dt.timedelta(seconds=1)), pending]
+    database.calls.clear()
+    drain_once(source, writer, metrics, batch_size=10)
+    assert all("floor" not in params for _, params, _ in database.calls)
+    assert database.rows == []
+
+
+def test_restart_restores_full_scan(
+    spanner_source: tuple[_ReadDatabase, Callable[[], SpannerOutboxSource]],
+) -> None:
+    database, create = spanner_source
+    source = create()
+    row = _outbox_row()
+    database.rows = [row]
+    drain_once(source, _Writer(), DrainMetrics(), batch_size=10)
+    assert source._floors
+    restarted = create()
+    database.rows = [dataclasses.replace(row, commit_ts=row.commit_ts - dt.timedelta(days=1))]
+    database.calls.clear()
+    assert restarted.fetch(limit=10) == database.rows
+    assert all("floor" not in params for _, params, _ in database.calls)
+
+
+@pytest.mark.parametrize("busy", [False, True])
+@pytest.mark.parametrize("metrics_due", [False, True])
+def test_main_pass_only_adds_probe_statements_when_metrics_due(
+    monkeypatch: pytest.MonkeyPatch,
+    spanner_source: tuple[_ReadDatabase, Callable[[], SpannerOutboxSource]],
+    busy: bool,
+    metrics_due: bool,
+) -> None:
+    database, _ = spanner_source
+    database.rows = [_outbox_row()] if busy else []
+    monkeypatch.setattr("sys.argv", ["ingest_outbox", "--once"])
+    monkeypatch.setattr(ingest_outbox.time, "monotonic", lambda: 60.0 if metrics_due else 0.0)
+    monkeypatch.setenv("CH_PASSWORD", "fake")
+    monkeypatch.delenv("TR_OUTBOX_IDLE_MAX_SECONDS", raising=False)
+    monkeypatch.setattr(ingest_outbox, "ClickHouseWriter", lambda **_kwargs: _Writer())
+    assert ingest_outbox.main() == 0
+    assert len(database.calls) == 16 * (2 if metrics_due else 1)
+    assert database.rows == []
+
+
+@pytest.mark.parametrize("fetched", [1, 2])
+def test_nonempty_pass_pacing(
+    monkeypatch: pytest.MonkeyPatch,
+    spanner_source: tuple[_ReadDatabase, Callable[[], SpannerOutboxSource]],
+    fetched: int,
+) -> None:
+    monkeypatch.setattr("sys.argv", ["ingest_outbox", "--batch-size", "2"])
+    monkeypatch.setenv("CH_PASSWORD", "fake")
+    monkeypatch.delenv("TR_OUTBOX_IDLE_MAX_SECONDS", raising=False)
+    monkeypatch.setattr(ingest_outbox, "ClickHouseWriter", lambda **_kwargs: _Writer())
+    monkeypatch.setattr(ingest_outbox.time, "monotonic", lambda: 0.0)
+    sleeps: list[float] = []
+    monkeypatch.setattr(ingest_outbox.time, "sleep", sleeps.append)
+    passes = 0
+
+    class StopLoop(BaseException):
+        pass
+
+    def drain(*_args: Any, **_kwargs: Any) -> ingest_outbox.DrainResult:
+        nonlocal passes
+        if passes == 3:
+            raise StopLoop
+        passes += 1
+        return ingest_outbox.DrainResult(fetched, fetched, 1.0)
+
+    monkeypatch.setattr(ingest_outbox, "drain_once", drain)
+    with pytest.raises(StopLoop):
+        ingest_outbox.main()
+    assert sleeps == ([5.0] * 3 if fetched < 2 else [])
+
+
+@pytest.mark.parametrize("offset", [-1, 0, 1])
+def test_floor_canary_warns_only_for_rows_below_their_shard_floor(
+    spanner_source: tuple[_ReadDatabase, Callable[[], SpannerOutboxSource]],
+    caplog: pytest.LogCaptureFixture,
+    offset: int,
+) -> None:
+    database, create = spanner_source
+    source = create()
+    source._shard_count = 16
+    row = _outbox_row()
+    source._floors = {3: row.commit_ts, 2: row.commit_ts - dt.timedelta(seconds=5)}
+    database.rows = [
+        dataclasses.replace(row, commit_ts=row.commit_ts + dt.timedelta(seconds=offset)),
+        dataclasses.replace(row, shard=2, commit_ts=row.commit_ts - dt.timedelta(seconds=2)),
+        dataclasses.replace(row, shard=1, commit_ts=row.commit_ts - dt.timedelta(seconds=10)),
+    ]
+    before = dict(source._floors), list(database.rows)
+    source.check_scan_floors()
+    assert (source._floors, database.rows) == before
+    assert len(database.calls) == 16
+    assert {params["shard"] for _, params, _ in database.calls} == set(range(16))
+    assert all("floor" not in sql and "floor" not in params for sql, params, _ in database.calls)
+    warnings = [record for record in caplog.records if "floor_violation" in record.message]
+    if offset < 0:
+        assert len(warnings) == 1
+        assert warnings[0].levelname == "WARNING"
+        assert "shard=3" in warnings[0].message
+        assert f"commit_ts={database.rows[0].commit_ts.isoformat()}" in warnings[0].message
+        assert f"floor={row.commit_ts.isoformat()}" in warnings[0].message
+    else:
+        assert warnings == []
+
+
+@pytest.mark.parametrize("busy", [False, True])
+@pytest.mark.parametrize("probe_failure", [False, True])
+def test_floor_canary_runs_on_timer_despite_per_batch_logs(
+    monkeypatch: pytest.MonkeyPatch,
+    spanner_source: tuple[_ReadDatabase, Callable[[], SpannerOutboxSource]],
+    caplog: pytest.LogCaptureFixture,
+    busy: bool,
+    probe_failure: bool,
+) -> None:
+    database, _ = spanner_source
+    database.fail_fetch = probe_failure
+    monkeypatch.setattr("sys.argv", ["ingest_outbox"])
+    monkeypatch.setenv("CH_PASSWORD", "fake")
+    monkeypatch.delenv("TR_OUTBOX_IDLE_MAX_SECONDS", raising=False)
+    monkeypatch.setattr(ingest_outbox, "ClickHouseWriter", lambda **_kwargs: _Writer())
+    monkeypatch.setattr(ingest_outbox.time, "sleep", lambda _seconds: None)
+    now = 0.0
+    monkeypatch.setattr(ingest_outbox.time, "monotonic", lambda: now)
+    times = iter([0.0, 30.0, 59.0, 60.0, 90.0, 120.0])
+    calls_after_pass: list[int] = []
+
+    class StopLoop(BaseException):
+        pass
+
+    def drain(*_args: Any, **_kwargs: Any) -> ingest_outbox.DrainResult:
+        nonlocal now
+        calls_after_pass.append(len(database.calls))
+        try:
+            now = next(times)
+        except StopIteration:
+            raise StopLoop from None
+        return ingest_outbox.DrainResult(int(busy), int(busy), 1.0)
+
+    monkeypatch.setattr(ingest_outbox, "drain_once", drain)
+    with pytest.raises(StopLoop):
+        ingest_outbox.main()
+    statements_per_probe = 1 if probe_failure else 16
+    assert calls_after_pass == [n * statements_per_probe for n in [0, 0, 0, 0, 1, 1, 2]]
+    failures = [record for record in caplog.records if "floor_canary_failed" in record.message]
+    assert len(failures) == (2 if probe_failure else 0)
+
+
+@pytest.mark.parametrize("cap", [None, "2"])
+@pytest.mark.parametrize("insert_failure", [False, True])
+def test_idle_backoff_progression_cap_and_reset(
+    monkeypatch: pytest.MonkeyPatch,
+    spanner_source: tuple[_ReadDatabase, Callable[[], SpannerOutboxSource]],
+    cap: str | None,
+    insert_failure: bool,
+) -> None:
+    database, _ = spanner_source
+    monkeypatch.setattr("sys.argv", ["ingest_outbox", "--shards", "4", "--poll-seconds", "0.5"])
+    monkeypatch.setenv("CH_PASSWORD", "fake")
+    if cap is None:
+        monkeypatch.delenv("TR_OUTBOX_IDLE_MAX_SECONDS", raising=False)
+    else:
+        monkeypatch.setenv("TR_OUTBOX_IDLE_MAX_SECONDS", cap)
+    writer = _Writer(failures=int(insert_failure))
+    monkeypatch.setattr(ingest_outbox, "ClickHouseWriter", lambda **_kwargs: writer)
+    monkeypatch.setattr(ingest_outbox.time, "monotonic", lambda: 0.0)
+    sleeps: list[float] = []
+
+    class StopLoop(Exception):
+        pass
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        if len(sleeps) == 6:
+            database.rows = [_outbox_row()]
+        if len(sleeps) == 9:
+            raise StopLoop
+
+    monkeypatch.setattr(ingest_outbox.time, "sleep", sleep)
+    with pytest.raises(StopLoop):
+        ingest_outbox.main()
+    expected = [0.5, 1, 2, 4, 5, 5] if cap is None else [0.5, 1, 2, 2, 2, 2]
+    # A failed insert resets immediately, then the successful retry resets again.
+    assert sleeps == expected + [0.5, 0.5, 0.5 if insert_failure else 1]
+    assert len(writer.batches) == 1 + int(insert_failure)
+    assert len(database.calls) == 9 * 4  # Nine passes, including the failed pass if any.
+
+
+@pytest.mark.parametrize("poll, cap", [("nan", "5"), ("1", "inf"), ("1", "0.5")])
+def test_invalid_idle_intervals_fail_before_opening_spanner(
+    monkeypatch: pytest.MonkeyPatch, poll: str, cap: str,
+) -> None:
+    monkeypatch.setattr("sys.argv", ["ingest_outbox", "--poll-seconds", poll])
+    monkeypatch.setenv("TR_OUTBOX_IDLE_MAX_SECONDS", cap)
+    with pytest.raises(SystemExit) as exc:
+        ingest_outbox.main()
+    assert exc.value.code == 2
 
 
 def test_reconciler_reverse_range_sorts_newer_events_first() -> None:
