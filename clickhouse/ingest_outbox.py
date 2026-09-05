@@ -4,6 +4,19 @@ The durable cursor is the outbox itself: ClickHouse must acknowledge a batch
 before its exact Spanner primary keys are deleted. A crash between those two
 operations replays the batch, which is safe because canonical queries use
 ``FINAL`` over a ReplacingMergeTree.
+
+Per-process, per-shard acknowledged commit timestamps are only scan optimisations;
+deletion remains the authoritative cursor. Strong reads of commit-timestamped,
+immutable enqueues make an inclusive floor safe, including timestamp ties and
+batches truncated at the global limit. Restart or any drain error clears all
+floors and restores full scans.
+
+Empty passes back off from ``--poll-seconds`` (minimum 0.1 s), doubling to
+``TR_OUTBOX_IDLE_MAX_SECONDS`` (default 5 s). The cap must be at least the base
+interval. Backoff adds at most that cap of waiting to delivery latency, excluding
+query/insert time and retries. Reading rows resets the interval; active batches
+drain immediately. Lag metrics use the oldest row from the pass's fetch snapshot,
+before deletion, without a separate probe.
 """
 
 from __future__ import annotations
@@ -55,6 +68,7 @@ class DrainResult:
     fetched: int
     inserted: int
     rows_per_second: float
+    oldest_commit_ts: dt.datetime | None = None
 
 
 class OutboxSource(Protocol):
@@ -62,7 +76,7 @@ class OutboxSource(Protocol):
 
     def delete(self, rows: list[OutboxRow]) -> None: ...
 
-    def oldest_commit_ts(self) -> dt.datetime | None: ...
+    def reset_scan_floors(self) -> None: ...
 
 
 class BatchWriter(Protocol):
@@ -96,6 +110,10 @@ class SpannerOutboxSource:
         )
         self._pt = param_types
         self._shard_count = shard_count
+        self._floors: dict[int, dt.datetime] = {}
+
+    def reset_scan_floors(self) -> None:
+        self._floors.clear()
 
     def fetch(self, *, limit: int) -> list[OutboxRow]:
         if limit < 1:
@@ -110,12 +128,19 @@ class SpannerOutboxSource:
         # single-use snapshot rejects the second query.
         with self._database.snapshot(multi_use=True) as snapshot:
             for shard in range(self._shard_count):
+                params: dict[str, Any] = {"shard": shard, "limit": per_shard}
+                param_types = {"shard": self._pt.INT64, "limit": self._pt.INT64}
+                predicate = "WHERE shard=@shard"
+                if shard in self._floors:
+                    predicate += " AND commit_ts >= @floor"
+                    params["floor"] = self._floors[shard]
+                    param_types["floor"] = self._pt.TIMESTAMP
                 values = snapshot.execute_sql(
-                    "SELECT shard, commit_ts, event_id, payload "
+                    "SELECT shard, commit_ts, event_id, payload "  # noqa: S608 - fixed SQL; values bound
                     "FROM tr_analytics_outbox "
-                    "WHERE shard=@shard ORDER BY commit_ts, event_id LIMIT @limit",
-                    params={"shard": shard, "limit": per_shard},
-                    param_types={"shard": self._pt.INT64, "limit": self._pt.INT64},
+                    f"{predicate} ORDER BY commit_ts, event_id LIMIT @limit",
+                    params=params,
+                    param_types=param_types,
                 )
                 rows.extend(
                     OutboxRow(
@@ -137,23 +162,11 @@ class SpannerOutboxSource:
         with self._database.batch() as batch:
             batch.delete(OUTBOX_TABLE, KeySet(keys=[list(row.key) for row in rows]))
 
-    def oldest_commit_ts(self) -> dt.datetime | None:
-        oldest: dt.datetime | None = None
-        with self._database.snapshot(multi_use=True) as snapshot:
-            for shard in range(self._shard_count):
-                values = list(
-                    snapshot.execute_sql(
-                        "SELECT commit_ts "
-                        "FROM tr_analytics_outbox "
-                        "WHERE shard=@shard ORDER BY commit_ts LIMIT 1",
-                        params={"shard": shard},
-                        param_types={"shard": self._pt.INT64},
-                    )
-                )
-                if values:
-                    candidate = _utc(values[0][0])
-                    oldest = candidate if oldest is None else min(oldest, candidate)
-        return oldest
+        # Only advance after the batch context has committed the exact deletes.
+        for row in rows:
+            self._floors[row.shard] = max(
+                self._floors.get(row.shard, row.commit_ts), row.commit_ts
+            )
 
 
 class ClickHouseWriter:
@@ -216,26 +229,31 @@ def drain_once(
     batch_size: int,
 ) -> DrainResult:
     """Insert then advance the durable cursor by deleting acknowledged rows."""
-    rows = source.fetch(limit=batch_size)
-    if not rows:
-        return DrainResult(fetched=0, inserted=0, rows_per_second=0.0)
-    canonical = [normalise_outbox_payload(row.payload) for row in rows]
-    started = time.monotonic()
     try:
-        writer.insert(canonical)
+        rows = source.fetch(limit=batch_size)
+        if not rows:
+            return DrainResult(fetched=0, inserted=0, rows_per_second=0.0)
+        canonical = [normalise_outbox_payload(row.payload) for row in rows]
+        started = time.monotonic()
+        try:
+            writer.insert(canonical)
+        except Exception:
+            metrics.clickhouse_insert_errors_total += 1
+            raise
+        # This is the cursor advance. It is intentionally after the acknowledged
+        # insert; delete failure causes safe replay on the next pass.
+        source.delete(rows)
+        elapsed = max(time.monotonic() - started, 0.000_001)
+        metrics.rows_ingested_total += len(rows)
+        return DrainResult(
+            fetched=len(rows),
+            inserted=len(rows),
+            rows_per_second=len(rows) / elapsed,
+            oldest_commit_ts=min(row.commit_ts for row in rows),
+        )
     except Exception:
-        metrics.clickhouse_insert_errors_total += 1
+        source.reset_scan_floors()
         raise
-    # This is the cursor advance. It is intentionally after the acknowledged
-    # insert; delete failure causes safe replay on the next pass.
-    source.delete(rows)
-    elapsed = max(time.monotonic() - started, 0.000_001)
-    metrics.rows_ingested_total += len(rows)
-    return DrainResult(
-        fetched=len(rows),
-        inserted=len(rows),
-        rows_per_second=len(rows) / elapsed,
-    )
 
 
 def _lag_seconds(oldest: dt.datetime | None) -> float:
@@ -276,9 +294,23 @@ def main() -> int:
     parser.add_argument("--shards", type=int, default=OUTBOX_SHARDS)
     parser.add_argument("--batch-size", type=int, default=5000)
     parser.add_argument("--poll-seconds", type=float, default=5.0)
+    parser.add_argument(
+        "--idle-max-seconds",
+        type=float,
+        default=os.environ.get("TR_OUTBOX_IDLE_MAX_SECONDS", "5"),
+        help="maximum idle wait (seconds); must be >= the poll interval",
+    )
     parser.add_argument("--metrics-seconds", type=float, default=60.0)
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
+    poll_seconds = max(0.1, args.poll_seconds)
+    if (
+        not math.isfinite(args.poll_seconds)
+        or not math.isfinite(args.idle_max_seconds)
+        or args.idle_max_seconds < poll_seconds
+    ):
+        parser.error("idle max must be finite and >= the finite poll interval (minimum 0.1 s)")
+    idle_seconds = poll_seconds
 
     logging.basicConfig(
         level=logging.INFO,
@@ -304,26 +336,28 @@ def main() -> int:
     )
     while True:
         result = DrainResult(fetched=0, inserted=0, rows_per_second=0.0)
+        failed = False
         try:
             result = drain_once(source, writer, metrics, batch_size=args.batch_size)
         except Exception:
+            failed = True
+            idle_seconds = poll_seconds
             log.exception(
                 "analytics_outbox.drain_failed clickhouse_insert_errors_total=%d",
                 metrics.clickhouse_insert_errors_total,
             )
         now = time.monotonic()
         if result.inserted or now - last_metrics >= args.metrics_seconds:
-            try:
-                oldest = source.oldest_commit_ts()
-            except Exception:
-                log.exception("analytics_outbox.lag_measurement_failed")
-                oldest = None
-            _log_metrics(metrics, result=result, oldest=oldest)
+            _log_metrics(metrics, result=result, oldest=result.oldest_commit_ts)
             last_metrics = now
         if args.once:
             return 0
-        if not result.inserted:
-            time.sleep(max(0.1, args.poll_seconds))
+        if result.fetched:
+            idle_seconds = poll_seconds
+        else:
+            time.sleep(idle_seconds)
+            if not failed:
+                idle_seconds = min(args.idle_max_seconds, idle_seconds * 2)
 
 
 if __name__ == "__main__":
