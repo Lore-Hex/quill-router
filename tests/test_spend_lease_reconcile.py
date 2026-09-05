@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 
+from tests.fakes import spanner as fake_spanner
 from tests.fakes.spanner import FakeSpannerDatabase, make_fake_store
 from tests.fakes.spend_lease_bigtable import FakeBigtableTable
 from trusted_router.spend_lease_ledger import BigtableSpendLeaseLedger
@@ -20,11 +22,13 @@ from trusted_router.spend_lease_state import (
 from trusted_router.storage_gcp_spend_lease import (
     CandidateIdentity,
     insert_candidate,
+    read_open_row,
     take_recovery_ownership,
     upgrade_candidate_to_open,
 )
 from trusted_router.storage_gcp_spend_lease_authorize import FENCE_KIND, SPEND_LEASE_KIND
 from trusted_router.storage_gcp_spend_lease_reconcile import (
+    _close_global,
     acquire_spend_lease_reconciler_lock,
     reconcile_spend_leases,
     release_spend_lease_reconciler_lock,
@@ -160,6 +164,21 @@ def _seed_credit(database: FakeSpannerDatabase, identity: CandidateIdentity) -> 
         "total_usage": 0,
         "reserved": identity.cap_micro,
     }
+
+
+def _assert_global_close_untouched(
+    store: Any,
+    database: FakeSpannerDatabase,
+    identity: CandidateIdentity,
+    *,
+    expected_credit: dict[str, Any],
+    expected_global: dict[str, Any],
+) -> None:
+    assert database.typed["tr_credit_balance"][(identity.workspace_id, 0)] == expected_credit
+    assert store._read_entity(SPEND_LEASE_KIND, identity.lease_id, dict) == expected_global
+    row = database.spend_lease_open[identity.lease_id]
+    assert row["global_closed_at"] is None
+    assert row["local_closed_at"] is None
 
 
 def test_candidate_recovery_compensates_then_tombstones_then_completes() -> None:
@@ -417,6 +436,137 @@ def test_close_step_two_zero_row_credit_release_aborts_every_close_write() -> No
     assert credit["total_usage"] == 0
     assert store._read_entity(FENCE_KIND, fence_id, dict)["open_predecessor_count"] == 1
     assert store._read_entity(SPEND_LEASE_KIND, identity.lease_id, dict) == global_body
+
+
+def test_close_step_two_zero_row_freeze_aborts_before_escrow_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, database, ledger = _store()
+    identity = _identity()
+    _insert_candidate(store, identity)
+    _open_candidate(store, identity)
+    ledger.initialize(
+        _local_candidate(identity, state=SpendLeaseState.DRAINING), region=REGION
+    )
+    _seed_global(store, identity, state="ACTIVE")
+    _seed_credit(database, identity)
+    expected_credit = dict(
+        database.typed["tr_credit_balance"][(identity.workspace_id, 0)]
+    )
+    expected_global = store._read_entity(SPEND_LEASE_KIND, identity.lease_id, dict)
+    real_execute_update = fake_spanner._FakeTransaction.execute_update
+
+    def lose_freeze_guard(
+        self: Any,
+        sql: str,
+        *,
+        params: dict[str, Any] | None = None,
+        param_types: Any = None,
+    ) -> int:
+        if "AND JSON_VALUE(body, '$.state')='ACTIVE'" in sql:
+            frozen_global = dict(expected_global, state="DRAINING")
+            self.pending_writes.append(
+                (
+                    "update_entity_dml",
+                    SPEND_LEASE_KIND,
+                    identity.lease_id,
+                    json.dumps(frozen_global, separators=(",", ":"), sort_keys=True),
+                )
+            )
+            return 0
+        return real_execute_update(
+            self, sql, params=params, param_types=param_types
+        )
+
+    monkeypatch.setattr(
+        fake_spanner._FakeTransaction, "execute_update", lose_freeze_guard
+    )
+
+    result = reconcile_spend_leases(store, now=NOW, max_attempts=99)
+
+    row = database.spend_lease_open[identity.lease_id]
+    local = ledger.get(identity.lease_id, region=REGION)
+    assert result["errors"] == 1
+    assert result["closed"] == 0
+    assert row["attempts"] == 1
+    assert row["last_error"] == "spend lease freeze guard modified 0 rows"
+    assert local is not None and local.state == SpendLeaseState.DRAINING
+    _assert_global_close_untouched(
+        store,
+        database,
+        identity,
+        expected_credit=expected_credit,
+        expected_global=expected_global,
+    )
+
+
+def test_noncloseable_global_state_is_quarantined_before_escrow_release() -> None:
+    store, database, ledger = _store()
+    identity = _identity()
+    _insert_candidate(store, identity)
+    _open_candidate(store, identity)
+    ledger.initialize(
+        _local_candidate(identity, state=SpendLeaseState.DRAINING), region=REGION
+    )
+    _seed_global(store, identity, state="CLOSED")
+    _seed_credit(database, identity)
+    expected_credit = dict(
+        database.typed["tr_credit_balance"][(identity.workspace_id, 0)]
+    )
+    expected_global = store._read_entity(SPEND_LEASE_KIND, identity.lease_id, dict)
+
+    result = reconcile_spend_leases(store, now=NOW, max_attempts=99)
+
+    row = database.spend_lease_open[identity.lease_id]
+    local = ledger.get(identity.lease_id, region=REGION)
+    assert result["errors"] == 1
+    assert result["closed"] == 0
+    assert result["dead"] == 1
+    assert row["dead"] is True
+    assert row["attempts"] == 0
+    assert row["last_error"] == "global spend lease is not closeable"
+    assert local is not None and local.state == SpendLeaseState.DRAINING
+    _assert_global_close_untouched(
+        store,
+        database,
+        identity,
+        expected_credit=expected_credit,
+        expected_global=expected_global,
+    )
+
+
+def test_global_close_rejects_frozen_local_lease_before_expiry() -> None:
+    store, database, ledger = _store()
+    identity = _identity(expires_at=NOW + timedelta(minutes=1))
+    _insert_candidate(store, identity)
+    _open_candidate(store, identity)
+    ledger.initialize(
+        _local_candidate(identity, state=SpendLeaseState.DRAINING), region=REGION
+    )
+    _seed_global(store, identity, state="DRAINING")
+    _seed_credit(database, identity)
+    expected_credit = dict(
+        database.typed["tr_credit_balance"][(identity.workspace_id, 0)]
+    )
+    expected_global = store._read_entity(SPEND_LEASE_KIND, identity.lease_id, dict)
+    with database.snapshot() as snapshot:
+        row = read_open_row(snapshot, store._param_types, identity.lease_id)
+    local = ledger.get(identity.lease_id, region=REGION)
+    assert row is not None and local is not None
+
+    with pytest.raises(
+        RuntimeError, match="global close requires an expired frozen local lease"
+    ):
+        _close_global(store, row, local, now=NOW)
+
+    assert local.state == SpendLeaseState.DRAINING
+    _assert_global_close_untouched(
+        store,
+        database,
+        identity,
+        expected_credit=expected_credit,
+        expected_global=expected_global,
+    )
 
 
 @pytest.mark.parametrize("slot", [False, True], ids=["active-owner", "predecessor-owner"])
