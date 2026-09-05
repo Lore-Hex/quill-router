@@ -172,7 +172,7 @@ class InMemoryStore:
         self.trust_overrides: dict[str, TrustOverride] = {}
         self.trust_abuse_audits: dict[tuple[str, str], dict[str, Any]] = {}
         self.trust_demotion_remainders: set[tuple[str, str]] = set()
-        self.trust_backfills: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self.trust_backfills: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
         self.credit_trust_shards: dict[tuple[str, int], dict[str, Any]] = {}
         self.abuse_pause_clears: set[tuple[str, str]] = set()
         self.webhook_events: set[tuple[str, str]] = set()
@@ -990,7 +990,9 @@ class InMemoryStore:
             return True
 
     def backfill_owner_inventory(self, *, source_version: str, environment: str) -> int:
-        if not source_version.strip() or not environment.strip():
+        source_version = source_version.strip()
+        environment = environment.strip()
+        if not source_version or not environment:
             raise ValueError("source_version and environment are required")
         with self._lock:
             expected = {
@@ -1005,7 +1007,9 @@ class InMemoryStore:
                     owner_id == user.id for owner_id, _ in expected
                 )
             now = dt.datetime.now(dt.UTC)
-            self.trust_backfills[("owner_inventory", "local", environment)] = {
+            self.trust_backfills[(
+                "owner_inventory", "local", environment, "tr_entities.workspace", source_version
+            )] = {
                 "provider": "owner_inventory",
                 "account_id": "local",
                 "environment": environment,

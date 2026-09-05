@@ -24,10 +24,16 @@ from trusted_router.routes.internal._shared import internal_service_credential
 from trusted_router.storage import InMemoryStore, configure_store
 from trusted_router.storage_gcp_credit_shard_admin import reshard_credit_account
 from trusted_router.storage_models import CreditAccount, User
+from trusted_router.storage_trust_reconciliation import trust_reconciliation_repository
 from trusted_router.trust_ownership import (
     OwnerTrustMutationBudgetExceeded,
     WorkspaceOwnerLimitExceeded,
     require_owner_trust_budget,
+)
+from trusted_router.trust_reconciliation import (
+    BackfillMarker,
+    MarkerRequirement,
+    completed_marker_satisfies,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,7 +50,10 @@ def _create_columns(ddl: str, table: str) -> tuple[str, ...]:
         line.strip().split()[0]
         for line in match.group(1).splitlines()
         if line.strip()
-        and not line.strip().startswith(("CONSTRAINT", "PRIMARY KEY", "CHECK"))
+        and len(line.strip().split()) > 1
+        and line.strip().split()[1].startswith(
+            ("STRING", "TIMESTAMP", "INT64", "BOOL", "TEXT", "TIMESTAMPTZ", "BIGINT")
+        )
     )
 
 
@@ -119,7 +128,9 @@ def test_in_memory_owner_inventory_lifecycle_limit_transfer_and_backfill() -> No
     old_owner.owner_workspace_count = 99
     assert store.backfill_owner_inventory(source_version="rev-1", environment="test") == 2
     assert old_owner.owner_workspace_count == 1
-    assert store.trust_backfills[("owner_inventory", "local", "test")][
+    assert store.trust_backfills[(
+        "owner_inventory", "local", "test", "tr_entities.workspace", "rev-1"
+    )][
         "completed_at"
     ] is not None
 
@@ -223,7 +234,7 @@ def test_slice_1c_schemas_have_exact_columns_and_keys() -> None:
         assert _create_columns(spanner, table) == columns
         assert _create_columns(postgres, table) == columns
     assert ") PRIMARY KEY (owner_user_id, workspace_id)" in spanner
-    assert "PRIMARY KEY (provider, account_id, environment)" in postgres
+    assert "PRIMARY KEY (provider, account_id, environment, source, source_version)" in postgres
 
 
 def test_spanner_creation_inventory_and_concurrent_owner_limit() -> None:
@@ -269,6 +280,8 @@ def test_spanner_owner_backfill_repairs_both_directions_and_marks_complete() -> 
         "owner_inventory",
         "local",
         "test",
+        "tr_entities.workspace",
+        "revision-7",
     )]
     assert marker["source_version"] == "revision-7"
     assert marker["completed_at"] is not None
@@ -610,3 +623,36 @@ def test_user_owner_counter_is_a_persisted_dataclass_field() -> None:
     assert "owner_workspace_count" in {
         field.name for field in dataclasses.fields(User)
     }
+
+
+@pytest.mark.parametrize("backend", ["memory", "postgres", "spanner"])
+def test_owner_markers_preserve_source_and_revision_and_use_shared_arm_reader(backend: str) -> None:
+    if backend == "memory":
+        store = InMemoryStore()
+    elif backend == "postgres":
+        store = postgres_store_on(sqlite_postgres_conn())
+    else:
+        store, _database, _ = make_fake_store()
+
+    def read(requirement: MarkerRequirement) -> BackfillMarker | None:
+        if backend == "memory":
+            row = store.trust_backfills.get(tuple(dataclasses.asdict(requirement).values()))
+            return None if row is None else BackfillMarker(**row)
+        return trust_reconciliation_repository(store).get_marker(**dataclasses.asdict(requirement))
+
+    requirements = [
+        MarkerRequirement("owner_inventory", "local", "test", "tr_entities.workspace", version)
+        for version in ("revision-7", "revision-8")
+    ]
+    for requirement in requirements:
+        store.backfill_owner_inventory(source_version=requirement.source_version, environment="test")
+    first = read(requirements[0])
+    store.backfill_owner_inventory(source_version="revision-8", environment="test")
+    assert read(requirements[0]) == first
+    for requirement in requirements:
+        marker = read(requirement)
+        assert completed_marker_satisfies(marker, requirement)
+        for column in ("source", "source_version", "environment"):
+            wrong = dataclasses.replace(requirement, **{column: "other"})
+            assert read(wrong) is None
+            assert not completed_marker_satisfies(marker, wrong)
