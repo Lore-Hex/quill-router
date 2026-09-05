@@ -113,6 +113,8 @@ _ACQUISITION_CLOUD_FIELDS = (
     "utm_medium",
     "utm_campaign",
     "utm_content",
+    "creative_id",
+    "first_creative_id",
     "landing_path",
     "experiment_id",
     "experiment_cell_id",
