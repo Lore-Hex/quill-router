@@ -25,9 +25,10 @@ from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.money import dollars_to_cents, money_pair
 from trusted_router.schemas import CheckoutRequest
+from trusted_router.services.adyen_trust import adyen_adverse_events
 from trusted_router.services.stripe_fees import ProcessingFee, processing_fee
 from trusted_router.storage import STORE
-from trusted_router.storage_models import CreditProvenance
+from trusted_router.storage_models import AdverseTrustEvent, CreditProvenance
 from trusted_router.types import ErrorType
 
 log = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ class PreparedAdyenNotification:
     merchant_reference: str | None = None
     reference: AdyenCheckoutReference | None = None
     occurred_at: datetime | None = None
+    adverse_events: tuple[AdverseTrustEvent, ...] = ()
 
 
 def create_adyen_checkout_session(
@@ -276,6 +278,12 @@ def prepare_adyen_notification(
     if item.get("merchantAccountCode") != settings.adyen_merchant_account:
         raise api_error(400, "Adyen webhook merchant mismatch", ErrorType.BAD_REQUEST)
 
+    adverse = adyen_adverse_events(item)
+    if adverse:
+        return PreparedAdyenNotification(
+            result=AdyenCreditResult(event_code=event_code, psp_reference=psp_reference),
+            adverse_events=adverse,
+        )
     success = _string_field(item.get("success")).lower() == "true"
     if event_code != "AUTHORISATION" or not success:
         return PreparedAdyenNotification(
@@ -325,6 +333,8 @@ def apply_adyen_notification(
 ) -> AdyenCreditResult:
     """Apply a fully validated notification to the typed credit ledger."""
     result = prepared.result
+    for adverse in prepared.adverse_events:
+        STORE.record_adverse_trust_event(adverse)
     if result.manual_review:
         log.warning(
             "adyen.payment_requires_manual_review",

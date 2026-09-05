@@ -41,3 +41,7 @@ def alert_stale_trust_inbox(store: Any, *, now: datetime | None = None) -> int:
             )
             alerted += 1
     return alerted
+
+
+# PR 1b: fact ingestion stays live while lease qualification remains off.
+PROVIDER_CONSISTENCY_DELAY_SECONDS.update({"paypal": 10_800, "adyen": 0})

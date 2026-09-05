@@ -1477,7 +1477,10 @@ class Settings(BaseSettings):
         if self.trust_reconcile_max_age_seconds < minimum_reconcile_age:
             raise ValueError(
                 "TR_TRUST_RECONCILE_MAX_AGE_SECONDS must cover the provider "
-                "consistency delay plus two reconciliation cadences"
+                "consistency delay plus two reconciliation cadences: "
+                f"{minimum_reconcile_age} seconds required for "
+                f"{sorted(self.trust_qualifying_provider_set)}; "
+                f"got {self.trust_reconcile_max_age_seconds}"
             )
         trust_caps = (
             self.spend_lease_tier1_cap_microdollars,

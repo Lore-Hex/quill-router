@@ -28,6 +28,7 @@ from trusted_router.trust_tiers import (
     adverse_transition_outcome,
     compute_trust_tier,
     payment_recovery_target,
+    trust_inbox_reference,
     validate_adverse_event,
 )
 
@@ -659,7 +660,7 @@ def insert_trust_inbox_tx(
         "SELECT 1 FROM tr_trust_inbox WHERE provider=@provider AND adverse_ref=@adverse_ref)",
         params={
             "provider": event.provider,
-            "adverse_ref": event.adverse_ref,
+            "adverse_ref": trust_inbox_reference(event),
             "payload": adverse_event_payload(event),
             "received_at": received_at,
         },

@@ -16,6 +16,8 @@ from trusted_router.services.paypal_billing import (
     credit_paypal_capture,
     verify_paypal_webhook_signature,
 )
+from trusted_router.services.paypal_trust import paypal_adverse_events
+from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
 
@@ -57,4 +59,11 @@ def register(router: APIRouter) -> None:
                     **money_pair("total", result.charge_amount_microdollars),
                 }
             }
+        adverse = paypal_adverse_events(event)
+        if adverse:
+            results = [
+                await run_in_threadpool(STORE.record_adverse_trust_event, row)
+                for row in adverse
+            ]
+            return {"data": {"event_id": event_id, "adverse": [row.outcome for row in results]}}
         return {"data": {"ignored": True, "event_id": event_id}}

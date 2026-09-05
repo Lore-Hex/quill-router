@@ -206,6 +206,7 @@ from trusted_router.trust_tiers import (
     compute_trust_tier,
     payment_or_grant_event,
     payment_recovery_target,
+    trust_inbox_reference,
     validate_adverse_event,
 )
 from trusted_router.types import IdentityVerificationStatus, UsageType
@@ -2102,8 +2103,8 @@ class PostgresStore:
                 "unmatched_count, semantic_mismatch_count, completed_at) "
                 "VALUES ('owner_inventory', 'local', %s, 'tr_entities.workspace', "
                 "%s, %s, %s, 0, 0, 0, %s) "
-                "ON CONFLICT (provider, account_id, environment) DO UPDATE SET "
-                "source = EXCLUDED.source, source_version = EXCLUDED.source_version, "
+                "ON CONFLICT (provider, account_id, environment, source, source_version) "
+                "DO UPDATE SET "
                 "history_start = EXCLUDED.history_start, "
                 "closed_through = EXCLUDED.closed_through, "
                 "consistency_delay_seconds = EXCLUDED.consistency_delay_seconds, "
@@ -4157,6 +4158,10 @@ class PostgresStore:
                 workspace_id,
                 int(amount_microdollars),
             )
+            if provenance.external_ref is not None:
+                from trusted_router.provider_trust_postgres import drain_provider_inbox_tx
+
+                drain_provider_inbox_tx(self, conn, provenance.provider, provenance.external_ref)
             if lifetime_topup_user_id is not None:
                 conn.execute(
                     "INSERT INTO tr_user_lifetime_topup "
@@ -4209,7 +4214,9 @@ class PostgresStore:
             "provider_ordering_watermark"
         )
 
-    def record_adverse_trust_event(self, event: AdverseTrustEvent) -> AdverseTrustResult:
+    def record_adverse_trust_event(
+        self, event: AdverseTrustEvent, *, _connection: Any | None = None,
+    ) -> AdverseTrustResult:
         validate_adverse_event(event)
 
         def apply(conn: Any) -> AdverseTrustResult:
@@ -4226,7 +4233,7 @@ class PostgresStore:
                     "(provider, adverse_ref, payload, received_at) "
                     "VALUES (%s, %s, %s, CURRENT_TIMESTAMP) "
                     "ON CONFLICT (provider, adverse_ref) DO NOTHING",
-                    (event.provider, event.adverse_ref, adverse_event_payload(event)),
+                    (event.provider, trust_inbox_reference(event), adverse_event_payload(event)),
                     prepare=False,
                 )
                 return AdverseTrustResult("inbox", provider=event.provider)
@@ -4433,8 +4440,8 @@ class PostgresStore:
                 event.provider,
             )
 
-        result = self._run_transaction(apply)
-        if result.unrecovered_micro > 0 and result.workspace_id is not None:
+        result = apply(_connection) if _connection is not None else self._run_transaction(apply)
+        if _connection is None and result.unrecovered_micro > 0 and result.workspace_id is not None:
             from trusted_router.services.trust_recovery import (
                 alert_unrecovered_principal,
             )

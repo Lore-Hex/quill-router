@@ -77,7 +77,9 @@ _TYPED_PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "tr_owner_workspace": ("owner_user_id", "workspace_id"),
     "tr_trust_override": ("workspace_id",),
     "tr_trust_demotion_remainder": ("owner_user_id", "workspace_id"),
-    "tr_trust_backfill": ("provider", "account_id", "environment"),
+    "tr_trust_backfill": (
+        "provider", "account_id", "environment", "source", "source_version"
+    ),
 }
 
 
@@ -3939,6 +3941,27 @@ def _execute_sql(
                 {str(pk[0]) for pk in db.typed.get("tr_credit_balance", {})}
             )
         ]
+    if "FROM tr_trust_backfill" in sql:
+        rows = [
+            row for row in _typed_rows("tr_trust_backfill")
+            if all(
+                row.get(column) == params[column]
+                for column in _TYPED_PRIMARY_KEYS["tr_trust_backfill"]
+                if column in params
+            )
+        ]
+        if "completed_at IS NOT NULL" in sql:
+            rows = [
+                row for row in rows
+                if row.get("completed_at") is not None
+                and row.get("unmatched_count") == 0
+                and row.get("semantic_mismatch_count") == 0
+            ]
+        columns = [
+            column.strip()
+            for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [[row.get(column) for column in columns] for row in rows]
     if "FROM tr_owner_workspace" in sql:
         rows = _typed_rows("tr_owner_workspace")
         if "owner" in params:
