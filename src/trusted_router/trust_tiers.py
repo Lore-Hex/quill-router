@@ -292,3 +292,59 @@ def compute_trust_tier(
     if trust_latched_at is not None:
         effective = 0
     return TrustTierDecision(computed_tier=computed, effective_tier=effective)
+
+
+# Slice 1d adds the horizon terminal as an allowed reconciler transition. Kept
+# at the end so the independently authored owner/override slice can merge its
+# additions without touching the existing transition literals.
+_payment_recovery_target_without_horizon = payment_recovery_target
+
+
+def _payment_recovery_target_with_horizon(
+    payment: TrustEvent,
+    adverse: Iterable[TrustEvent],
+) -> tuple[int, int]:
+    rows = tuple(adverse)
+    target, net_refunded = _payment_recovery_target_without_horizon(payment, rows)
+    credited = int(payment.credited_micro or 0)
+    # Horizon terminalization is observational, not a won outcome. Preserve a
+    # claim that was already active without turning a warning/pending dispute
+    # into a new monetary claim.
+    if any(
+        row.kind == "dispute"
+        and row.lifecycle_status == "terminal_by_horizon"
+        and int(row.recovery_target or 0) >= credited
+        for row in rows
+    ):
+        return credited, net_refunded
+    return target, net_refunded
+
+
+payment_recovery_target = _payment_recovery_target_with_horizon
+
+_REFUND_TRANSITIONS["pending"] = _REFUND_TRANSITIONS["pending"] | {
+    "terminal_by_horizon"
+}
+_DISPUTE_TRANSITIONS["pending"] = _DISPUTE_TRANSITIONS["pending"] | {
+    "terminal_by_horizon"
+}
+_DISPUTE_TRANSITIONS["succeeded"] = _DISPUTE_TRANSITIONS["succeeded"] | {
+    "terminal_by_horizon"
+}
+
+
+def trust_reconciliation_is_fresh(
+    reconciled_through: datetime | None,
+    *,
+    now: datetime,
+    max_age_seconds: int,
+) -> bool:
+    """Pure PR-2 mint-guard seam; slice 1d deliberately does not call it."""
+
+    from trusted_router.trust_reconciliation import reconciliation_is_fresh
+
+    return reconciliation_is_fresh(
+        reconciled_through,
+        now=now,
+        max_age_seconds=max_age_seconds,
+    )
