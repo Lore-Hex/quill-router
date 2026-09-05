@@ -21,8 +21,11 @@ conditions:
       trigger:
         count: 1
   - displayName: "Any request p99 exceeds 3 seconds for 10 minutes"
+    # CreateSession excursions of 2.7-2.9 s track Cloud Run revision rollouts
+    # (155 calls in 48 h on 2026-09-04/05), not Spanner health; Commit keeps its
+    # own 1.5 s condition above.
     conditionThreshold:
-      filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/api/request_latencies"'
+      filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/api/request_latencies" AND metric.labels.method != "CreateSession"'
       aggregations:
         - alignmentPeriod: 300s
           perSeriesAligner: ALIGN_PERCENTILE_99
