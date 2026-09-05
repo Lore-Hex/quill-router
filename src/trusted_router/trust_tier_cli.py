@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import logging
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
@@ -29,7 +30,7 @@ class _TrustTierStore(Protocol):
     ) -> int: ...
 
 
-def run(store: _TrustTierStore, settings: Any, *, now: datetime | None = None) -> int:
+def run(store: _TrustTierStore, settings: Any, *, environment: str = "production", now: datetime | None = None) -> int:
     computed_at = now or datetime.now(UTC)
     if hasattr(store, "list_stale_trust_inbox"):
         alert_stale_trust_inbox(store, now=computed_at)
@@ -39,7 +40,7 @@ def run(store: _TrustTierStore, settings: Any, *, now: datetime | None = None) -
             store,
             workspace_id,
             settings.trust_qualifying_provider_set,
-            environment=getattr(settings, "environment", "production"),
+            environment=environment,
         )
         if replicated:
             log.info(
@@ -58,11 +59,14 @@ def run(store: _TrustTierStore, settings: Any, *, now: datetime | None = None) -
     return len(workspace_ids)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--environment", default="production")
+    args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
     settings = get_settings()
     store = cast(_TrustTierStore, create_store(settings))
-    count = run(store, settings)
+    count = run(store, settings, environment=args.environment)
     log.info("trust.tier_job_complete workspaces=%d", count)
     return 0
 

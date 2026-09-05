@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from scripts.recompute_trust_tiers import run as run_trust_tier_job
+from trusted_router.trust_tier_cli import run as run_trust_tier_job
 from tests.fakes.postgres import postgres_store_on, sqlite_postgres_conn
 from tests.fakes.spanner import FakeSpannerDatabase, _ParamTypes, make_fake_store
 from trusted_router.config import Settings

@@ -17,6 +17,11 @@ INTERVAL_SECONDS="${TR_TRUST_RECONCILE_INTERVAL_SECONDS:-900}"
   exit 1
 }
 
+if ! gc artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
+  log "refusing trust job deploy: image ${IMAGE} does not exist"
+  exit 1
+fi
+
 env_vars=(
   "TR_ENVIRONMENT=worker"
   "TR_SERVICE_SURFACE=control"
@@ -42,7 +47,7 @@ gc run jobs "$mutation" "$JOB_NAME" \
   --region "$JOB_REGION" \
   --image "$IMAGE" \
   --command="/app/.venv/bin/python" \
-  --args="/app/scripts/reconcile_stripe_trust.py,--account-id,${ACCOUNT_ID},--environment,production" \
+  --args="-m,trusted_router.trust_reconcile_cli,--account-id,${ACCOUNT_ID},--environment,production" \
   --service-account "$RUN_SERVICE_ACCOUNT" \
   --set-env-vars "$set_env_vars" \
   --update-secrets="TR_STRIPE_SECRET_KEY=trustedrouter-stripe-secret-key:latest,TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest" \
