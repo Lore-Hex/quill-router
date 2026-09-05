@@ -369,7 +369,7 @@ jobs:
           java-version: "17"
       - name: Cache TLA+ tools
         id: tla-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: proofs/tla2tools.jar
           key: tla2tools-v1.8.0
