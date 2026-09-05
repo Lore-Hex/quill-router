@@ -1,18 +1,11 @@
 /**
- * First-visit welcome banner + suggested-prompt grid.
- *
- *  - Welcome banner shows on a brand-new install
- *  - Dismiss persists welcome_dismissed=true
- *  - Suggested prompt buttons fill the input on click (do NOT send)
- *  - When welcome_dismissed=true, banner is gone but suggestions
- *    still render on an empty chat
+ * Quiet empty state + suggested-prompt grid. Suggestions only fill the draft.
  */
 import { test, expect } from "@playwright/test";
 import { mockExternalApis } from "../fixtures/api-mock";
 import { plantSignedInHint } from "../fixtures/sign-in";
 import {
     setLocalStorageState,
-    getLocalStorageState,
     clearLocalStorageState,
 } from "../fixtures/helpers";
 
@@ -21,14 +14,12 @@ test.beforeEach(async ({ context, page, baseURL }) => {
     await plantSignedInHint(context, baseURL!);
 });
 
-test("Welcome banner renders on a fresh install", async ({ page }) => {
+test("Fresh chats show a simple heading without an onboarding panel", async ({ page }) => {
     await page.goto("/chat");
     await clearLocalStorageState(page);
     await page.reload();
-    await expect(page.locator(".chat-welcome")).toBeVisible();
-    await expect(page.locator(".chat-welcome h3")).toContainText(
-        "Compare models",
-    );
+    await expect(page.locator(".chat-welcome")).toHaveCount(0);
+    await expect(page.locator(".chat-empty h2")).toHaveText("What are we working on?");
 });
 
 test("Suggested-prompt grid renders 4-ish cards", async ({ page }) => {
@@ -56,18 +47,6 @@ test("Clicking a suggestion fills input without sending", async ({ page }) => {
     await expect(input).toBeFocused();
     expect(await input.inputValue()).toBe(promptText);
     expect(inferenceCount).toBe(0);
-});
-
-test("Dismissing the welcome banner persists to preferences", async ({
-    page,
-}) => {
-    await page.goto("/chat");
-    await clearLocalStorageState(page);
-    await page.reload();
-    await page.locator(".chat-welcome-close").click();
-    await expect(page.locator(".chat-welcome")).toHaveCount(0);
-    const state = await getLocalStorageState(page);
-    expect(state.preferences.welcome_dismissed).toBe(true);
 });
 
 test("Welcome banner is gone after dismissed=true seed", async ({ page }) => {

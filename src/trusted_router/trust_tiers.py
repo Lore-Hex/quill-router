@@ -136,6 +136,22 @@ def adverse_transition_outcome(
     return "applied"
 
 
+def adverse_restamp_wins(old_watermark: str | None, event: AdverseTrustEvent) -> bool:
+    """Whether a same-status ``replay`` should restamp the stored adverse fact.
+
+    Stripe emits several Events with the same lifecycle status for one refund
+    or dispute (``charge.refunded`` + ``refund.created`` in the same second,
+    ``refund.updated`` hours later). The live writer keeps the stored fact's
+    Event-derived stamps (``occurred_at``, ``provider_subtype``,
+    ``provider_ordering_watermark``) converged on the greatest watermark among
+    those Events, regardless of delivery order; the history converter chooses
+    the same Event, so canonical parity holds (P1 review, findings 2/7).
+    Money never moves on a replay.
+    """
+
+    return old_watermark is None or event.provider_ordering_watermark > str(old_watermark)
+
+
 def payment_recovery_target(payment: TrustEvent, adverse: Iterable[TrustEvent]) -> tuple[int, int]:
     """Return (target, net_refunded) from aggregate current adverse state."""
 

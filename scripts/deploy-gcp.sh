@@ -39,4 +39,7 @@ bash "${SCRIPT_DIR}/deploy/spend_lease_ledger.sh" \
 bash "${SCRIPT_DIR}/deploy/rollout.sh"
 bash "${SCRIPT_DIR}/deploy/regional_quota_reconciler.sh"
 bash "${SCRIPT_DIR}/deploy/spend_lease_reconciler.sh"
+# Trust reconciler + tier jobs: gated on TR_TRUST_JOBS_DEPLOY=1 inside
+# trust_jobs.sh; the default release changes no production trust schedule.
+bash "${SCRIPT_DIR}/deploy/trust_jobs.sh"
 bash "${SCRIPT_DIR}/deploy/synthetic.sh"

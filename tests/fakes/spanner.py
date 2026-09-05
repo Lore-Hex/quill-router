@@ -910,6 +910,25 @@ class _FakeTransaction:
             )
             self.pending_writes.append(("update_typed", "tr_trust_event", pk, new))
             return 1
+        if sql.startswith("UPDATE tr_trust_event SET occurred_at=@occurred_at, provider_subtype="):
+            # Stamp-only restamp of an adverse fact on a later same-status Event
+            # (storage_gcp_trust.apply_adverse_trust_event_tx, adverse_restamp_wins).
+            pk = (p["workspace_id"], p["event_id"])
+            rec = self._typed_current("tr_trust_event", pk)
+            if (
+                rec is None
+                or rec.get("provider") != p["provider"]
+                or rec.get("adverse_ref") != p["adverse_ref"]
+            ):
+                return 0
+            new = dict(
+                rec,
+                occurred_at=p["occurred_at"],
+                provider_subtype=p["provider_subtype"],
+                provider_ordering_watermark=p["provider_ordering_watermark"],
+            )
+            self.pending_writes.append(("update_typed", "tr_trust_event", pk, new))
+            return 1
         if sql.startswith("UPDATE tr_trust_event SET recovered_micro=recovered_micro+"):
             pk = (p["workspace_id"], p["event_id"])
             rec = self._typed_current("tr_trust_event", pk)
@@ -1960,6 +1979,43 @@ class _FakeTransaction:
                 settle_body=None if p["done"] else rec.get("settle_body"),
             )
             self.pending_writes.append(("update_settle_outbox", pk, new))
+            return 1
+        if sql.startswith("UPDATE tr_trust_backfill SET history_start=@history_start"):
+            # Marker upsert, first half: the five-column identity is the WHERE.
+            for column in _TYPED_PRIMARY_KEYS["tr_trust_backfill"]:
+                _require_pred(sql, f"{column}=@{column}", "trust-marker-update")
+            pk = tuple(p[column] for column in _TYPED_PRIMARY_KEYS["tr_trust_backfill"])
+            rec = self._typed_current("tr_trust_backfill", pk)
+            if rec is None:
+                return 0
+            new = dict(
+                rec,
+                history_start=p["history_start"],
+                closed_through=p["closed_through"],
+                consistency_delay_seconds=p["consistency_delay_seconds"],
+                unmatched_count=p["unmatched_count"],
+                semantic_mismatch_count=p["semantic_mismatch_count"],
+                completed_at=p["completed_at"],
+            )
+            self.pending_writes.append(("update_typed", "tr_trust_backfill", pk, new))
+            return 1
+        if sql.startswith("INSERT INTO tr_trust_backfill ("):
+            # Marker upsert, second half. Real Spanner raises AlreadyExists on a
+            # duplicate key; the CHECK constraints are modelled so a marker that
+            # claims completion with outstanding counts fails here as it would
+            # in production.
+            pk = tuple(p[column] for column in _TYPED_PRIMARY_KEYS["tr_trust_backfill"])
+            if self._typed_current("tr_trust_backfill", pk) is not None:
+                raise FakeAlreadyExists(f"tr_trust_backfill/{pk}")
+            if p["completed_at"] is not None and (
+                p["unmatched_count"] != 0 or p["semantic_mismatch_count"] != 0
+            ):
+                raise FakeFailedPrecondition("tr_trust_backfill_completion CHECK violated")
+            if min(
+                p["consistency_delay_seconds"], p["unmatched_count"], p["semantic_mismatch_count"]
+            ) < 0:
+                raise FakeFailedPrecondition("tr_trust_backfill_counts CHECK violated")
+            self.pending_writes.append(("insert_typed_dml", "tr_trust_backfill", pk, dict(p)))
             return 1
         raise NotImplementedError(sql)
 
