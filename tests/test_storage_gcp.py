@@ -262,6 +262,7 @@ def test_gcp_read_gateway_authorization_ignores_unknown_dataclass_fields() -> No
         usage_type="Credits",
         estimated_microdollars=123,
         credit_reservation_id="res_1",
+        key_reserved_microdollars=0,
         requested_model_id="anthropic/claude-haiku-4.5",
         candidate_model_ids=["anthropic/claude-haiku-4.5"],
         region="us",

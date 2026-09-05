@@ -277,6 +277,7 @@ _SPANNER_FAKE_KNOWN_GAPS: dict[str, str] = {
     "test_insufficient_reserve_does_not_mutate_balance": _C1_LEGACY_MONEY,
     "test_finalize_gateway_authorization_is_exactly_once": _C1_LEGACY_MONEY,
     "test_finalize_unknown_authorization_is_false_not_error": _C1_LEGACY_MONEY,
+    "test_legacy_authorization_missing_frozen_hold_releases_zero": _C1_LEGACY_MONEY,
     "test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option": (_FAKE_ROLLUP_ORDERING),
 }
 

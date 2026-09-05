@@ -56,7 +56,9 @@ def _balance_row(conn: Any) -> dict[str, int] | None:
     return {"total_credits": row[0], "total_usage": row[1], "reserved": row[2]}
 
 
-def _authorize_with_reservation(store: Any, estimate: int) -> Any:
+def _authorize_with_reservation(
+    store: Any, estimate: int, *, key_reserved_microdollars: int = 0
+) -> Any:
     reservation = store.reserve(WS, KEY, estimate)
     return store.create_gateway_authorization(
         workspace_id=WS,
@@ -66,6 +68,7 @@ def _authorize_with_reservation(store: Any, estimate: int) -> Any:
         usage_type="Credits",
         estimated_microdollars=estimate,
         credit_reservation_id=reservation.id,
+        key_reserved_microdollars=key_reserved_microdollars,
     )
 
 
@@ -187,8 +190,12 @@ def test_local_settle_releases_hold_under_the_reserved_type(
         " VALUES (%s, %s, 0, 10000000, 0, 0, 0, 0, CURRENT_TIMESTAMP)",
         (WS, KEY),
     )
-    store.reserve_key_limit(KEY, 100, usage_type="Credits")
-    auth = _authorize_with_reservation(store, estimate=100)
+    key_reservation = store.reserve_key_limit(KEY, 100, usage_type="Credits")
+    auth = _authorize_with_reservation(
+        store,
+        estimate=100,
+        key_reserved_microdollars=key_reservation.reserved_microdollars,
+    )
 
     assert store.finalize_gateway_authorization(
         auth.id, success=True, actual_microdollars=40, selected_usage_type="BYOK"

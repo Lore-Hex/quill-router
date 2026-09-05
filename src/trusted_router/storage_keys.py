@@ -39,7 +39,7 @@ from trusted_router.security import (
 from trusted_router.spend_leases import SpendLeaseArtifact
 from trusted_router.spend_windows import (
     KeyLimitExceeded,
-    KeyWindowLimitDecision,
+    KeyLimitReserveResult,
     KeyWindowLimitExceeded,
     decide_key_window_limits,
     enforced_window_limits,
@@ -269,11 +269,12 @@ class InMemoryApiKeys:
         amount_microdollars: int,
         *,
         usage_type: str,
-    ) -> KeyWindowLimitDecision | None:
+    ) -> KeyLimitReserveResult:
         with self._lock:
             key = self.keys[key_hash]
             if _is_byok(usage_type) and not key.include_byok_in_limit:
-                return None  # BYOK excluded from this key's caps (lifetime AND windows)
+                # BYOK excluded from this key's caps (lifetime AND windows).
+                return KeyLimitReserveResult(None, 0)
             # Window limits are independent of the lifetime cap: check first,
             # approximately (in-flight reserved is deliberately not counted —
             # same semantics as the typed authorize check).
@@ -290,7 +291,7 @@ class InMemoryApiKeys:
                 if decision is not None and not decision.allowed:
                     raise KeyWindowLimitExceeded(decision)
             if key.limit_microdollars is None:
-                return decision
+                return KeyLimitReserveResult(decision, 0)
             used = key.usage_microdollars
             if key.include_byok_in_limit:
                 used += key.byok_usage_microdollars
@@ -298,7 +299,7 @@ class InMemoryApiKeys:
             if amount_microdollars > available:
                 raise KeyLimitExceeded(decision)
             key.reserved_microdollars += amount_microdollars
-            return decision
+            return KeyLimitReserveResult(decision, amount_microdollars)
 
     def settle_limit(
         self,
@@ -310,14 +311,13 @@ class InMemoryApiKeys:
     ) -> None:
         with self._lock:
             key = self.keys.get(key_hash)
-            if key is None or key.limit_microdollars is None:
-                return
-            if _is_byok(usage_type) and not key.include_byok_in_limit:
+            if key is None:
                 return
             key.reserved_microdollars = max(0, key.reserved_microdollars - reserved_microdollars)
             # Actual usage is added by add_usage; this method only releases
-            # the estimated key-limit hold.
-            _ = actual_microdollars
+            # the exact authorize-time key-limit hold. Current cap settings
+            # cannot change whether that recorded hold is released.
+            _ = actual_microdollars, usage_type
 
     def refund_limit(
         self,
@@ -328,11 +328,10 @@ class InMemoryApiKeys:
     ) -> None:
         with self._lock:
             key = self.keys.get(key_hash)
-            if key is None or key.limit_microdollars is None:
-                return
-            if _is_byok(usage_type) and not key.include_byok_in_limit:
+            if key is None:
                 return
             key.reserved_microdollars = max(0, key.reserved_microdollars - reserved_microdollars)
+            _ = usage_type
 
     def add_usage(self, key_hash: str, cost_microdollars: int, *, is_byok: bool) -> None:
         """Roll a settled generation's actual cost into the key counters.
@@ -431,6 +430,7 @@ class InMemoryApiKeys:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
+        key_reserved_microdollars: int,
         authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
@@ -490,6 +490,7 @@ class InMemoryApiKeys:
                 usage_type=UsageType.coerce(usage_type),
                 estimated_microdollars=estimated_microdollars,
                 credit_reservation_id=credit_reservation_id,
+                key_reserved_microdollars=key_reserved_microdollars,
                 requested_model_id=requested_model_id,
                 candidate_model_ids=list(candidate_model_ids or []),
                 region=region,

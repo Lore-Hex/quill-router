@@ -409,6 +409,7 @@ def test_gcp_gateway_authorization_create_get_and_mark_settled() -> None:
         usage_type="Credits",
         estimated_microdollars=1_000,
         credit_reservation_id=None,
+        key_reserved_microdollars=0,
         requested_model_id="trustedrouter/auto",
         candidate_model_ids=["openai/gpt-5.4-nano", "mistralai/mistral-small-2603"],
         region="us-central1",

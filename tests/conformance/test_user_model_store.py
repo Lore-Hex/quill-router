@@ -185,6 +185,7 @@ def test_gateway_authorization_round_trips_frozen_user_model_fields(
         usage_type=UsageType.CREDITS,
         estimated_microdollars=123,
         credit_reservation_id=None,
+        key_reserved_microdollars=0,
         user_provided_model_id="tr-user-model/owner-frozen",
         user_provided_model_revision=7,
         user_model_prompt_price_microdollars_per_m=11,
