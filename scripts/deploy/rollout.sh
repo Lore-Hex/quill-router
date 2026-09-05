@@ -679,9 +679,9 @@ ENV_VARS=(
   # Flipped 2026-07-04 with Joseph's authorization. Remove to revert — the
   # flag-off settle path is byte-identical.
   "TR_SETTLE_OUTBOX_ENABLED=true"
-  # Stage D decision 70 is an explicit billing-policy switch. Keep snapshot
-  # booking dark until Joseph approves the dedicated rollout step.
-  "TR_REAP_SNAPSHOT_BOOKING_ENABLED=false"
+  # Stage D decision 70 snapshot booking was enabled on Joseph's word on
+  # 2026-09-03 after the enclave heartbeat rollout.
+  "TR_REAP_SNAPSHOT_BOOKING_ENABLED=true"
   # Provider benchmark events use their own best-effort durable queue. Tenant
   # activity is different: its operational outbox insert is part of the typed
   # settlement transaction, so a charge and its delivery intent cannot split.
