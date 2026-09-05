@@ -105,6 +105,30 @@ Google and X click identifiers can be appended by their respective auto-tagging
 features. Creative-specific `utm_content` values are required so Axiom can
 compare privacy, migration, and reliability messages within one campaign.
 
+### Creative IDs in telemetry
+
+Keep `utm_content` in tracking URLs and encrypted attribution records. Each
+funnel event also emits that identifier as `creative_id`; conversions include
+`first_creative_id` for the original touch. Axiom's content-field privacy
+scrubber intentionally removes `utm_content`, so reporting normalizes
+`creative_id` before aggregating. Prompt, output, and secret scrubbing remains
+enabled, including secret values accidentally supplied as creative IDs.
+
+The funnel report can recover historical redacted IDs from structured
+first-party Cloud Logging. Recovery requires a unique match on the anonymous
+fingerprint, event, source, medium, campaign, landing path, and experiment
+identifiers. It enriches existing Axiom rows without adding events or payment
+amounts. The evidence must cover the grouped event count and match its first
+timestamp within five seconds. It never guesses from a campaign name or another visitor. Remaining
+redacted records are shown as `(unattributed)` and cannot qualify as an
+experiment winner. JSON reports include recovered/unresolved record counts
+under `creative_attribution`. This recovery is read-only and sends no data to
+advertising platforms.
+
+The CLI splits Axiom's 1,000-row results into non-overlapping time windows.
+If a window cannot be read completely within the query/row limits, the report
+fails instead of publishing a truncated funnel.
+
 ## First-Party Funnel Report
 
 TrustedRouter records its metadata-only funnel internally and can compare

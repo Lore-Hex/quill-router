@@ -565,6 +565,7 @@ def _log_conversion(
         "first_utm_source": record.first_touch.get("utm_source"),
         "first_utm_medium": record.first_touch.get("utm_medium"),
         "first_utm_campaign": record.first_touch.get("utm_campaign"),
+        "first_creative_id": _safe_text(record.first_touch.get("utm_content"), 128) or None,
         "first_experiment_id": record.first_touch.get("experiment_id"),
         "first_experiment_cell_id": record.first_touch.get("experiment_cell_id"),
         "first_landing_path": record.first_touch.get("landing_path"),
@@ -584,6 +585,9 @@ def _safe_touch_log_fields(touch: dict[str, str]) -> dict[str, object]:
         "utm_campaign": touch.get("utm_campaign"),
         "utm_term": touch.get("utm_term"),
         "utm_content": touch.get("utm_content"),
+        # The content-key privacy scrubber deliberately removes utm_content.
+        # Keep the campaign identifier under a metadata name at every funnel stage.
+        "creative_id": _safe_text(touch.get("utm_content"), 128) or None,
         "experiment_id": touch.get("experiment_id"),
         "experiment_cell_id": touch.get("experiment_cell_id"),
         "landing_path": touch.get("landing_path"),
