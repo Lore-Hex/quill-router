@@ -392,6 +392,8 @@ def aggregate_leaderboard(
         if _excluded_from_uptime(sample):
             stats.excluded_count += 1
             stats.excluded_reasons[label] += 1
+            if stats.last_seen is None or sample.created_at > stats.last_seen:
+                stats.last_seen = sample.created_at
             continue
         stats.sample_count += 1
         if sample.status == "success":
@@ -443,7 +445,9 @@ def aggregate_leaderboard(
     models = [
         stats
         for stats in by_model.values()
-        if stats.sample_count >= min_samples or stats.throughput_sample_count >= min_samples
+        if stats.sample_count >= min_samples
+        or stats.throughput_sample_count >= min_samples
+        or stats.excluded_count > 0
     ]
     models.sort(
         key=lambda stats: (

@@ -190,7 +190,7 @@ STATUS_RAW_SAMPLE_LIMIT_PER_DAY = 35_000
 STATUS_LIVE_SAMPLE_LIMIT = 500
 STATUS_HOUR_ROLLUP_LIMIT = 5_000
 STATUS_DAY_ROLLUP_LIMIT = 25_000
-STATUS_MONTH_ROLLUP_LIMIT = 50
+STATUS_MONTH_ROLLUP_LIMIT = 5_000
 STATUS_ROLLUP_RETENTION_MONTHS = 24
 STATUS_RESPONSE_CACHE_SECONDS = 60
 STATUS_RESPONSE_STALE_SECONDS = 600
@@ -1691,16 +1691,21 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @public_html_route("/leaderboard")
     async def leaderboard_page(request: Request, background_tasks: BackgroundTasks) -> Response:
-        _ = request
+        window = request.query_params.get("window", "24h")
+        if window not in {"24h", "7d"}:
+            return JSONResponse(
+                {"error": {"type": "bad_request", "message": "window must be 24h or 7d"}},
+                status_code=400,
+            )
         return await _cached_public_response(
             settings,
-            key="leaderboard:page",
+            key=f"leaderboard:page:{window}",
             media_type="text/html",
             ttl_seconds=LEADERBOARD_RESPONSE_CACHE_SECONDS,
             stale_seconds=LEADERBOARD_RESPONSE_STALE_SECONDS,
             background_tasks=background_tasks,
             build=lambda: public_leaderboard_html(
-                settings, _leaderboard_snapshot(settings)
+                settings, _leaderboard_snapshot(settings, window=window)
             ).encode(),
         )
 
@@ -2416,7 +2421,14 @@ def _status_history_page_html(
     )
 
 
-def _leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
+_LEADERBOARD_EVIDENCE_CACHE: tuple[float, dict[str, Any]] | None = None
+
+
+def _leaderboard_snapshot(settings: Settings, *, window: str = "24h") -> dict[str, Any]:
+    if window == "7d":
+        return _leaderboard_evidence_snapshot(settings)
+    if window != "24h":
+        raise ValueError("unsupported leaderboard window")
     global _LEADERBOARD_CACHE
     now = time.monotonic()
     if settings.environment != "test" and _LEADERBOARD_CACHE is not None:
@@ -2464,6 +2476,39 @@ def _leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
         raise
     if settings.environment != "test":
         _LEADERBOARD_CACHE = (now, payload)
+    return payload
+
+
+def _leaderboard_evidence_snapshot(settings: Settings) -> dict[str, Any]:
+    global _LEADERBOARD_EVIDENCE_CACHE
+    now = time.monotonic()
+    if settings.environment != "test" and _LEADERBOARD_EVIDENCE_CACHE is not None:
+        cached_at, cached = _LEADERBOARD_EVIDENCE_CACHE
+        if now - cached_at < LEADERBOARD_SNAPSHOT_CACHE_SECONDS:
+            return cached
+    payload = None
+    if settings.environment != "test":
+        try:
+            payload = _precomputed_public_analytics_snapshot("leaderboard_evidence")
+        except Exception as exc:
+            _log_public_analytics_snapshot_read_failure("leaderboard_evidence", exc)
+            if _LEADERBOARD_EVIDENCE_CACHE is not None:
+                return _LEADERBOARD_EVIDENCE_CACHE[1]
+    if payload is None:
+        # Never add a seven-day raw scan to the public request path. A worker
+        # that has not published yet is honestly shown as warming.
+        payload = aggregate_leaderboard([], min_samples=LEADERBOARD_MIN_SAMPLES)
+        payload.update(
+            {
+                "generated_at": utcnow().isoformat().replace("+00:00", "Z"),
+                "sample_limit": LEADERBOARD_SAMPLE_LIMIT,
+                "sample_window_count": 0,
+                "window_label": "7-day evidence sample, awaiting publication",
+            }
+        )
+    payload = {**payload, "window": "7d"}
+    if settings.environment != "test":
+        _LEADERBOARD_EVIDENCE_CACHE = (now, payload)
     return payload
 
 
@@ -2962,6 +3007,7 @@ def _status_rollups(window: str) -> list[Any]:
                 since=_hour_rollup_since(now, hours=48),
                 limit=STATUS_HOUR_ROLLUP_LIMIT,
             ),
+            *_status_rollups("monthly"),
         ]
     if window in {"24h", "48h"}:
         return STORE.synthetic_rollups(
@@ -2976,12 +3022,14 @@ def _status_rollups(window: str) -> list[Any]:
             limit=STATUS_DAY_ROLLUP_LIMIT,
         )
     if window == "monthly":
-        return STORE.synthetic_rollups(
-            period="day",
-            since=_day_rollup_since(now, months=STATUS_ROLLUP_RETENTION_MONTHS),
-            include_histograms=False,
+        rows = STORE.synthetic_rollups(
+            period="month",
+            since=_month_rollup_since(now, months=STATUS_ROLLUP_RETENTION_MONTHS),
             limit=STATUS_MONTH_ROLLUP_LIMIT,
         )
+        if len(rows) >= STATUS_MONTH_ROLLUP_LIMIT:
+            raise RuntimeError("monthly status rollup limit reached; refusing partial history")
+        return rows
     return []
 
 

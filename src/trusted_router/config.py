@@ -1159,6 +1159,9 @@ class Settings(BaseSettings):
     # status page reads as "we are not sure our own service works".
     # Defaults True (the GCP shape); standalone deployments set it False.
     synthetic_image_probe_enabled: bool = True
+    # Public readers describe the monitor plane, not their own credentials.
+    # Explicit expectations also keep a stopped probe visible as stale/down.
+    synthetic_status_probe_types: str = ""
     # Explicit control-plane /health URL attached to the canonical
     # target. Standalone deployments set this to their own control plane
     # (e.g. the App Runner URL) so control_plane_health measures the
@@ -1273,6 +1276,21 @@ class Settings(BaseSettings):
     def production_is_fail_closed(self) -> Settings:
         environment = self.environment.lower()
         surface = self.service_surface
+        public_probe_types = {
+            value.strip() for value in self.synthetic_status_probe_types.split(",") if value.strip()
+        }
+        if public_probe_types - {
+            "gateway_authorize",
+            "gateway_settle",
+            "gateway_authorize_settle",
+            "provider_fallback",
+            "openai_sdk_pong",
+            "responses_pong",
+        }:
+            raise ValueError(
+                "TR_SYNTHETIC_STATUS_PROBE_TYPES contains an unknown transaction probe"
+            )
+        self.synthetic_status_probe_types = ",".join(sorted(public_probe_types))
         if self.attribution_cookie_key and self.attribution_cookie_secret:
             raise ValueError(
                 "TR_ATTRIBUTION_COOKIE_KEY and TR_ATTRIBUTION_COOKIE_SECRET must not both be set"

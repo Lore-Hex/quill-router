@@ -3648,9 +3648,8 @@ def public_leaderboard_html(settings: Settings, snapshot: dict[str, object]) -> 
             title="LLM Provider & Model Speed Leaderboard | TrustedRouter",
             heading="Provider & model performance",
             description=(
-                "Measured time-to-first-token, effective throughput, and uptime for every "
-                "LLM provider and model TrustedRouter routes to — "
-                "continuously sampled, not vendor-claimed."
+                "First-token latency, completion rate and effective throughput from real "
+                "requests across TrustedRouter providers and models."
             ),
             page_kind="leaderboard",
             snapshot=snapshot,

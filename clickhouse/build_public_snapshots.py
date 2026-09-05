@@ -11,6 +11,7 @@ import datetime as dt
 import json
 import os
 import subprocess
+import sys
 from typing import Any
 
 from trusted_router.apps import aggregate_apps
@@ -29,6 +30,7 @@ PER_PROVIDER_LIMIT = 500
 STATUS_SAMPLES_PER_DIMENSION = 30
 STATUS_LIVE_SAMPLE_LIMIT = 5_000
 STATUS_HOUR_ROLLUP_LIMIT = 5_000
+STATUS_MONTH_ROLLUP_LIMIT = 5_000
 VIDEO_SAMPLE_LIMIT = 5_000
 CLIENT_ROLLUP_LIMIT = 100_000
 # Published rows and calibration rows are fetched by separate queries, each
@@ -91,10 +93,11 @@ def _dataclass_rows(cls: type[Any], output: str) -> list[Any]:
 
 
 def _clickhouse_string_array(values: list[str]) -> str:
-    return "[" + ",".join(
-        "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
-        for value in values
-    ) + "]"
+    return (
+        "["
+        + ",".join("'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'" for value in values)
+        + "]"
+    )
 
 
 def _samples(password: str) -> list[ProviderBenchmarkSample]:
@@ -113,6 +116,36 @@ FROM
 WHERE provider_rank <= 500
 ORDER BY created_at DESC, id DESC
 LIMIT 10000
+FORMAT JSONEachRow
+""",
+    )
+    return _dataclass_rows(ProviderBenchmarkSample, output)
+
+
+def _evidence_samples(password: str) -> list[ProviderBenchmarkSample]:
+    # Equal opportunity for quiet routes without extra paid probes. Keep
+    # source-specific slots so long throughput calls cannot displace uptime.
+    output = _query(
+        password,
+        """
+SELECT * EXCEPT (ingest_version, route_rank, provider_rank)
+FROM (
+  SELECT *, row_number() OVER (
+    PARTITION BY provider ORDER BY route_rank, created_at DESC, id DESC
+  ) AS provider_rank
+  FROM (
+    SELECT *, row_number() OVER (
+      PARTITION BY provider, model, source ORDER BY created_at DESC, id DESC
+    ) AS route_rank
+    FROM provider_benchmark_samples FINAL
+    WHERE created_at >= now64(3) - INTERVAL 7 DAY
+  )
+  WHERE route_rank <= 30
+)
+WHERE provider_rank <= 500
+ORDER BY provider_rank, created_at DESC, id DESC
+LIMIT 10000
+SETTINGS max_execution_time = 15, max_memory_usage = 268435456, max_threads = 2
 FORMAT JSONEachRow
 """,
     )
@@ -168,17 +201,19 @@ FORMAT JSONEachRow
         SyntheticRollup,
         _query(
             password,
-            """
+            f"""
 SELECT * EXCEPT ingest_version
 FROM synthetic_status_rollups FINAL
-WHERE period = 'hour'
-  AND period_start >= toStartOfHour(now()) - INTERVAL 48 HOUR
+WHERE (period = 'hour' AND period_start >= toStartOfHour(now()) - INTERVAL 48 HOUR)
+   OR (period = 'month' AND period_start >= toStartOfMonth(now()) - INTERVAL 23 MONTH)
 ORDER BY period_start DESC, id DESC
-LIMIT 5000
+LIMIT {STATUS_HOUR_ROLLUP_LIMIT + STATUS_MONTH_ROLLUP_LIMIT}
 FORMAT JSONEachRow
 """,
         ),
     )
+    if len(rollups) >= STATUS_HOUR_ROLLUP_LIMIT + STATUS_MONTH_ROLLUP_LIMIT:
+        raise RuntimeError("public status rollup limit reached; refusing partial history")
     return samples, rollups
 
 
@@ -267,6 +302,7 @@ def build_snapshots(
     video_samples: list[ProviderBenchmarkSample] | None = None,
     status_samples: list[SyntheticProbeSample] | None = None,
     status_rollups: list[SyntheticRollup] | None = None,
+    evidence_samples: list[ProviderBenchmarkSample] | None = None,
     client_reliability_rows: list[dict[str, Any]] | None = None,
     client_reliability_signals: dict[str, Any] | None = None,
     client_reliability_all_traffic_rows: list[dict[str, Any]] | None = None,
@@ -283,14 +319,29 @@ def build_snapshots(
             "generated_at": generated_at,
             "sample_window_count": len(samples),
             "sample_limit": SAMPLE_LIMIT,
-            "window_label": (
-                f"rolling benchmark set of up to {SAMPLE_LIMIT:,} samples"
-            ),
+            "window_label": (f"rolling benchmark set of up to {SAMPLE_LIMIT:,} samples"),
             "rank_minimums": {
                 "model_availability_samples": 10,
                 "provider_availability_samples": 30,
                 "ttft_samples": 3,
             },
+        }
+    )
+    evidence = aggregate_leaderboard(
+        evidence_samples or [],
+        min_samples=1,
+        model_rank_min_samples=10,
+        provider_rank_min_samples=30,
+        rank_min_ttft_samples=3,
+    )
+    evidence.update(
+        {
+            "generated_at": generated_at,
+            "sample_window_count": len(evidence_samples or []),
+            "sample_limit": SAMPLE_LIMIT,
+            "window": "7d",
+            "window_label": "7-day evidence sample, balanced across providers and models",
+            "rank_minimums": leaderboard["rank_minimums"],
         }
     )
     apps = aggregate_apps(samples)
@@ -311,9 +362,7 @@ def build_snapshots(
             "generated_at": generated_at,
             "sample_window_count": len(video_rows),
             "sample_limit": VIDEO_SAMPLE_LIMIT,
-            "window_label": (
-                f"rolling video benchmark set of up to {VIDEO_SAMPLE_LIMIT:,} jobs"
-            ),
+            "window_label": (f"rolling video benchmark set of up to {VIDEO_SAMPLE_LIMIT:,} jobs"),
         }
     )
     status_inputs = {
@@ -334,6 +383,7 @@ def build_snapshots(
     )
     return {
         "leaderboard": leaderboard,
+        "leaderboard_evidence": evidence,
         "apps": apps,
         "video_leaderboard": video,
         "status_inputs": status_inputs,
@@ -348,18 +398,28 @@ def main() -> int:
     now = dt.datetime.now(dt.UTC)
     generated_at = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
     status_samples, status_rollups = _status_inputs(password)
+    evidence_rows = None
+    try:
+        evidence_rows = _evidence_samples(password)
+    except RuntimeError:
+        # A bounded research view must not stop current health publication.
+        # Leave its last snapshot untouched so the normal freshness check expires it.
+        print(json.dumps({"event": "leaderboard_evidence_build_failed"}), file=sys.stderr)
     snapshots = build_snapshots(
         _samples(password),
         generated_at=generated_at,
         video_samples=_video_samples(password),
         status_samples=status_samples,
         status_rollups=status_rollups,
+        evidence_samples=evidence_rows,
         client_reliability_rows=_client_reliability_rows(password, now=now),
         client_reliability_signals=_client_reliability_signals(password, now=now),
         client_reliability_all_traffic_rows=_client_reliability_rows(
             password, now=now, scope="fleet_all"
         ),
     )
+    if evidence_rows is None:
+        snapshots.pop("leaderboard_evidence", None)
     rows = [
         {
             "name": name,

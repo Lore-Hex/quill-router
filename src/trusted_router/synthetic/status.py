@@ -223,6 +223,21 @@ def status_snapshot(
     )
     if model_inference_down:
         overall_status = _worse_status(overall_status, "degraded")
+    expected_probes = set(settings.synthetic_status_probe_types.split(",")) - {""}
+    observed_probes = {
+        sample.probe_type
+        for sample in ordered
+        if sample_component_ids(sample)
+        and -FUTURE_SAMPLE_SKEW_SECONDS
+        <= (now - _parse_time(sample.created_at)).total_seconds()
+        <= CURRENT_SAMPLE_TTL_SECONDS
+    }
+    monitoring_gaps = sorted(expected_probes - observed_probes)
+    coverage_only_degradation = bool(monitoring_gaps) and overall_status in {"up", "unknown"}
+    if monitoring_gaps:
+        # Missing evidence must not look healthy, but is not fabricated
+        # request downtime: the SLO denominators remain measured samples.
+        overall_status = _worse_status(overall_status, "degraded")
     down_component_names = [
         str(row["name"])
         for row in components
@@ -234,12 +249,15 @@ def status_snapshot(
         "overall_status": overall_status,
         "overall_status_label": _status_label(overall_status),
         "overall_status_class": _status_class(overall_status),
-        "summary": _summary(
+        "summary": "Monitoring coverage incomplete"
+        if coverage_only_degradation
+        else _summary(
             overall_status,
             freshness=freshness,
             down_components=down_component_names,
         ),
         "monitor_freshness": freshness,
+        "monitoring_gaps": monitoring_gaps,
         "headline_metrics": _headline_metrics(ordered, now=now),
         "current": current,
         "slo_classes": slo_classes,

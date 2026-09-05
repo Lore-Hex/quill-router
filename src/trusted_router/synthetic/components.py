@@ -337,6 +337,9 @@ def applicable_component_definitions(settings: Settings) -> tuple[dict[str, str]
     (regions + synthetic_regional_probes_enabled), never a per-cloud list.
     """
     targets = deployment_probe_targets(settings)
+    expected_probes = {
+        value.strip() for value in settings.synthetic_status_probe_types.split(",") if value.strip()
+    }
     applicable: list[dict[str, str]] = []
     for definition in COMPONENT_DEFINITIONS:
         component_id = str(definition["id"])
@@ -348,7 +351,8 @@ def applicable_component_definitions(settings: Settings) -> tuple[dict[str, str]
         if required is not None and required not in targets:
             continue
         capability = COMPONENT_REQUIRED_CAPABILITIES.get(component_id)
-        if capability is not None and not capability(settings):
+        declared = bool(component_probe_types(component_id) & expected_probes)
+        if capability is not None and not declared and not capability(settings):
             continue
         applicable.append(definition)
     return tuple(applicable)

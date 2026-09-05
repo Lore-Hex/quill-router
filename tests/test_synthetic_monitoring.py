@@ -682,7 +682,7 @@ def test_public_status_snapshot_uses_live_samples_plus_precomputed_rollups(
     payload = public_routes._status_snapshot(Settings(environment="test"))
 
     assert sample_calls == [{"limit": public_routes.STATUS_LIVE_SAMPLE_LIMIT}]
-    assert [call["period"] for call in rollup_calls] == ["hour"]
+    assert [call["period"] for call in rollup_calls] == ["hour", "month"]
     assert all(call["since"] for call in rollup_calls)
     assert all("until" not in call for call in rollup_calls)
     assert payload["windows"]["5m"]["sample_count"] == 1

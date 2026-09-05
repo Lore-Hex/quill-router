@@ -135,6 +135,7 @@ def test_snapshot_builder_precomputes_video_and_status_inputs() -> None:
         "apps",
         "client_reliability",
         "leaderboard",
+        "leaderboard_evidence",
         "status_inputs",
         "video_leaderboard",
     }
