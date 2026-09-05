@@ -1270,9 +1270,14 @@ def _authorize_gateway_sync_impl(
         # Spanner never writes that entity index on the production route after
         # C1; its reservation transaction below owns idempotency and money
         # atomically, so probing either index here only adds happy-path RPCs.
-        existing_authorization = STORE.get_gateway_authorization_by_idempotency_key(
-            workspace.id, api_key.hash, request_idempotency_key
-        )
+        from trusted_router.storage_legacy_trust import BillingPausedError
+        try:
+            existing_authorization = STORE.get_gateway_authorization_by_idempotency_key(
+                workspace.id, api_key.hash, request_idempotency_key
+            )
+        except BillingPausedError as exc:
+            raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
+
         if existing_authorization is not None:
             if existing_authorization.idempotency_fingerprint != request_fingerprint:
                 raise api_error(
@@ -1485,15 +1490,12 @@ def _authorize_gateway_sync_impl(
         regional_lease_authorization=bool(regional_eligible),
     )
     effective_trust_tier: int | None = None
+    from trusted_router.trust_eligibility import lease_eligibility, spend_cap
     if settings.spend_lease_trust_eligibility_enabled and no_lease_reason is None:
-        trust_reader = getattr(STORE, "typed_credit_trust_snapshot", None)
-        trust_snapshot = trust_reader(workspace.id) if callable(trust_reader) else None
-        if trust_snapshot is None:
-            no_lease_reason = "unpaid_workspace"
-        else:
-            effective_trust_tier, trust_latched_at = trust_snapshot
-            if effective_trust_tier < 1 or trust_latched_at is not None:
-                no_lease_reason = "unpaid_workspace"
+        effective_trust_tier, trust_reason = lease_eligibility(_typed_store, settings, workspace.id)
+        no_lease_reason = cast(Any, trust_reason)
+        if trust_reason is None:
+            logger.info("spend_lease.trust_tier tier=%s workspace_id=%s", effective_trust_tier, workspace.id)
     spend_context["no_lease_reason"] = no_lease_reason or spend_context.get("boot_failure_reason")
     if (
         settings.spend_lease_issuance_enabled
@@ -1527,7 +1529,7 @@ def _authorize_gateway_sync_impl(
                     available = max(0, int(snapshot[0]) - int(snapshot[1]) - int(snapshot[2]))
                     post_request_headroom = max(0, available - estimate)
                     cap_micro = min(
-                        settings.spend_lease_max_microdollars,
+                        spend_cap(settings, effective_trust_tier),
                         post_request_headroom
                         * settings.spend_lease_max_available_basis_points
                         // 10_000,
@@ -1607,7 +1609,7 @@ def _authorize_gateway_sync_impl(
                 catalog=catalog,
                 ttl_seconds=settings.spend_lease_ttl_seconds,
                 skew_seconds=settings.spend_lease_skew_seconds,
-                max_microdollars=settings.spend_lease_max_microdollars,
+                max_microdollars=spend_cap(settings, effective_trust_tier),
                 max_available_basis_points=(
                     settings.spend_lease_max_available_basis_points
                 ),
@@ -1708,7 +1710,9 @@ def _authorize_gateway_sync_impl(
                     lease_shard_count=settings.regional_quota_lease_shard_count,
                     invocation_nonce=body.invocation_nonce,
                 )
-            if outcome == "unavailable":
+            if outcome in {"unpaid_workspace", "reconciliation_stale", "trust_gate_unarmed"}:
+                spend_context["no_lease_reason"] = outcome
+            if outcome in {"unavailable", "unpaid_workspace", "reconciliation_stale", "trust_gate_unarmed"}:
                 outcome, authorization = _typed_store.authorize_gateway_typed(
                     workspace_id=workspace.id,
                     key_hash=api_key.hash,
@@ -1834,6 +1838,8 @@ def _authorize_gateway_sync_impl(
                 outcome, "spend_lease_outcome", None
             ) or spend_context.get("binding_outcome")
         remember_spend_window_decision(request, window_decision)
+        if outcome == "billing_paused":
+            raise api_error(403, "billing_paused", ErrorType.FORBIDDEN)
         if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
             release_user_model_slot_after_error()
             if body.spend_lease_admission is not None:
@@ -1897,6 +1903,7 @@ def _authorize_gateway_sync_impl(
             spend_window_headers,
             spend_window_limit_error_message,
         )
+        from trusted_router.storage_legacy_trust import BillingPausedError
 
         try:
             window_decision = STORE.reserve_key_limit(
@@ -1947,6 +1954,9 @@ def _authorize_gateway_sync_impl(
                     idempotency_key=request_idempotency_key,
                 )
                 credit_reservation_id = credit_reservation.id
+            except BillingPausedError as exc:
+                release_user_model_slot_after_error()
+                raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
             except ValueError as exc:
                 # The local balance refused. On a peer plane with deferred
                 # settlement on, a FEDERATED key falls back to spending on
@@ -2025,6 +2035,9 @@ def _authorize_gateway_sync_impl(
         )
         try:
             authorization = create_authorization()
+        except BillingPausedError as exc:
+            release_user_model_slot_after_error()
+            raise api_error(403, "billing_paused", ErrorType.FORBIDDEN) from exc
         except DeferredSettlementCapReached as cap_exc:
             release_user_model_slot_after_error()
             # The key-limit escrow taken above must come back: nothing on this

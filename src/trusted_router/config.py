@@ -932,6 +932,9 @@ class Settings(BaseSettings):
     # independent and defaults off; the other values can ship inertly first.
     spend_lease_trust_eligibility_enabled: bool = False
     trust_qualifying_providers: str = "stripe,x402"
+    # Account identities are deployment pins, never inferred from whichever marker exists.
+    trust_provider_account_ids: str = ""
+    trust_owner_inventory_source_version: str = "owner-inventory-v1"
     trust_tier3_min_days: int = 30
     trust_tier3_min_paid_microdollars: int = 50_000_000
     max_workspaces_per_owner: int = 25
@@ -1435,6 +1438,9 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TR_SPEND_LEASE_MAX_AVAILABLE_BASIS_POINTS must be between 1 and 5000"
             )
+        _ = self.trust_provider_account_map
+        if not self.trust_owner_inventory_source_version.strip():
+            raise ValueError("TR_TRUST_OWNER_INVENTORY_SOURCE_VERSION must not be empty")
         if not self.trust_qualifying_provider_set:
             raise ValueError("TR_TRUST_QUALIFYING_PROVIDERS must not be empty")
         if not self.trust_qualifying_provider_set <= {"stripe", "paypal", "adyen", "x402"}:
@@ -2140,6 +2146,18 @@ class Settings(BaseSettings):
             for workspace_id in self.spend_lease_pilot_workspace_ids.split(",")
             if workspace_id.strip()
         )
+
+    @property
+    def trust_provider_account_map(self) -> dict[str, str]:
+        result: dict[str, str] = {}
+        for entry in self.trust_provider_account_ids.split(","):
+            if not entry.strip():
+                continue
+            provider, separator, account = entry.strip().partition("=")
+            if not separator or not account or provider in result:
+                raise ValueError("TR_TRUST_PROVIDER_ACCOUNT_IDS requires unique provider=account pairs")
+            result[provider] = account
+        return result
 
     @property
     def trust_qualifying_provider_set(self) -> frozenset[str]:

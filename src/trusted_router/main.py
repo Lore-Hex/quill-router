@@ -205,6 +205,9 @@ def create_app(
         configure_store(create_store(settings))
         # No-op unless TR_CLICKHOUSE_URL is set; Bigtable stays authoritative.
         configure_analytics_sink(create_analytics_sink(settings))
+    if settings.spend_lease_trust_eligibility_enabled:
+        from trusted_router.trust_eligibility import lease_eligibility
+        lease_eligibility(STORE, settings)
     if init_observability:
         init_sentry(settings)
         init_axiom(settings)

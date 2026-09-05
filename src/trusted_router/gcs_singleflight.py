@@ -134,7 +134,7 @@ class GCSGenerationLease:
         return max(0.0, expires_at - completed_at)
 
     def _access_token(self) -> str:
-        request = urllib.request.Request(
+        request = urllib.request.Request(  # noqa: S310 - fixed metadata host, matching urlopen below.
             _METADATA_CREDENTIAL_URL,
             headers={"Metadata-Flavor": "Google"},
         )

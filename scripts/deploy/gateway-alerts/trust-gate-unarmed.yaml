@@ -1,0 +1,18 @@
+displayName: "TR Trust: eligibility gate unarmed"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    Trust eligibility was requested but its durable arm gate failed. Lease
+    issuance is closed. Verify the typed Spanner backend, provider account and
+    source-version pins, every completed backfill marker, owner fan-out budget,
+    and recurring reconciliation freshness before enabling eligibility.
+conditions:
+  - displayName: "Requested trust gate cannot arm"
+    conditionMatchedLog:
+      filter: 'resource.type = "cloud_run_revision" AND textPayload:"trust.gate_unarmed"'
+alertStrategy:
+  notificationRateLimit:
+    period: 1800s
+  autoClose: 86400s

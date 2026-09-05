@@ -300,7 +300,8 @@ def test_fresh_typed_gateway_authorize_has_exact_sequential_spanner_operation_co
     assert response["data"]["authorization_id"]
     # Representative steady-state fresh request: the workspace's observed-empty
     # broadcast cache is warm, while this idempotency key and authorization are new.
-    assert operation_count == 10
+    # The replicated pause/epoch read serializes new authorization with adverse events.
+    assert operation_count == 11
 
 
 def test_broadcast_empty_results_are_cached_until_ttl(

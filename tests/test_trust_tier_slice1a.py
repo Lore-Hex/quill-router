@@ -664,7 +664,7 @@ class _RecordingTransaction:
         return self.count
 
     def execute_sql(self, *_args: Any, **_kwargs: Any) -> list[list[Any]]:
-        return [[self.tier, self.latch]]
+        return [[self.tier, self.latch, "", 0, dt.datetime.now(dt.UTC)]]
 
 
 def test_arm_off_mint_sql_is_byte_for_byte_origin_main_golden() -> None:
@@ -720,11 +720,11 @@ def test_armed_binding_precheck_rejects_unpaid_snapshot_before_dml(
 
     store, database, _ = make_fake_store()
     monkeypatch.setattr(authorize, "reservation_exists", lambda *_args: False)
-    monkeypatch.setattr(
-        type(store),
-        "typed_credit_trust_snapshot",
-        lambda _self, _workspace_id: trust_snapshot,
-    )
+    from tests.test_trust_eligibility_pr2 import arm_store, workspace_state
+    arm_store(store, database)
+    row = workspace_state(database, trust_snapshot[0])
+    row["trust_latched_at"] = trust_snapshot[1]
+
 
     result = store.prepare_gateway_spend_lease_binding(
         workspace_id="workspace",
@@ -788,10 +788,8 @@ def test_armed_zero_row_rereads_selected_shard_and_classifies_reason(
 
     assert result["no_lease_reason"] == reason
     sql, params, _ = transaction.calls[0]
-    assert sql.endswith(
-        "AND trust_tier = @expected_trust_tier AND trust_tier >= 1 "
-        "AND trust_latched_at IS NULL"
-    )
+    assert "AND trust_tier = @expected_trust_tier AND trust_tier >= 1 AND trust_latched_at IS NULL" in sql
+    assert "trust_reconciled_through >= @trust_fresh_after" in sql
     assert params["expected_trust_tier"] == 1
 
 

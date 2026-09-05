@@ -821,6 +821,11 @@ class _FakeTransaction:
                     int(rec.get("trust_tier") or 0) == int(p["expected_trust_tier"])
                     and int(rec.get("trust_tier") or 0) >= 1
                     and rec.get("trust_latched_at") is None
+                    and ("trust_fresh_after" not in p or (
+                        str(rec.get("billing_pause_causes") or "") in {"", "[]"}
+                        and rec.get("trust_reconciled_through") is not None
+                        and p["trust_fresh_after"] <= rec["trust_reconciled_through"] <= p["trust_now"]
+                    ))
                 )
             )
             if (
@@ -3939,6 +3944,16 @@ def _execute_sql(
                 {str(pk[0]) for pk in db.typed.get("tr_credit_balance", {})}
             )
         ]
+    if "FROM tr_trust_backfill" in sql:
+        rows = _typed_rows("tr_trust_backfill")
+        rows = [row for row in rows if all(row.get(k) == v for k, v in params.items())]
+        columns = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
+        return [[row.get(c) for c in columns] for row in rows]
+    if "SELECT id, body FROM tr_entities WHERE kind='regional_quota_lease'" in sql:
+        if txn is not None:
+            txn.read_versions[("entity_kind", "regional_quota_lease")] = db.entity_kind_versions.get("regional_quota_lease", 0)
+        return [[entity_id, row.body] for (kind, entity_id), row in db.rows.items()
+                if kind == "regional_quota_lease"]
     if "FROM tr_owner_workspace" in sql:
         rows = _typed_rows("tr_owner_workspace")
         if "owner" in params:
@@ -4085,6 +4100,10 @@ def _execute_sql(
                 _require_pred(sql, f"WHERE {pk_col}=@pk", what)
                 _require_pred(sql, "shard>=0 AND shard<@shard_count", what)
                 _require_pred(sql, "ORDER BY shard", what)
+            if "@ws" in sql and "ws" in params:
+                items = [(pk, rec) for pk, rec in items if rec.get(pk_col) == params["ws"]]
+                if "shard=@shard" in sql:
+                    items = [(pk, rec) for pk, rec in items if rec.get("shard", 0) == params["shard"]]
             if "@pk" in sql and "pk" in params:
                 items = [(pk, rec) for pk, rec in items if rec.get(pk_col) == params["pk"]]
                 if "shard=0" in sql.replace(" ", ""):
@@ -4369,6 +4388,7 @@ def make_fake_store(
     store.request_record_write_mode = request_record_write_mode
     store.max_workspaces_per_owner = 25
     store.trust_qualifying_providers = frozenset({"stripe", "x402"})
+    store.trust_settings = None
     store.trust_tier3_min_days = 30
     store.trust_tier3_min_paid_microdollars = 50_000_000
     store._generation_records_enabled = generation_records_enabled

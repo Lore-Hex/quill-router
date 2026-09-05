@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
@@ -90,8 +92,14 @@ class BindingPlan:
     remaining_micro: int | None = None
     trust_eligibility_enabled: bool = False
     expected_trust_tier: int | None = None
+    trust_max_age_seconds: int = 3600
+    trust_gate: Callable[[Any], str | None] | None = None
 
     def transaction_hook(self, transaction: Any, param_types: Any, workspace_id: str, shard: int) -> dict[str, Any]:
+        if self.trust_eligibility_enabled and self.trust_gate is not None:
+            reason = self.trust_gate(transaction)
+            if reason:
+                return _unbound(reason, "escrow_refused")
         if self.mode == "reuse":
             return self._reuse_hook(
                 transaction,
@@ -134,18 +142,10 @@ class BindingPlan:
                 raise ValueError(
                     "expected_trust_tier is required while trust eligibility is armed"
                 )
-            tier, latched_at = _read_shard_trust(
-                transaction,
-                param_types,
-                workspace_id,
-                shard,
-            )
-            if (
-                tier != self.expected_trust_tier
-                or tier < 1
-                or latched_at is not None
-            ):
-                return _unbound("unpaid_workspace", "escrow_refused")
+            reason = _shard_trust_refusal(transaction, param_types, workspace_id, shard,
+                                          self.trust_max_age_seconds, self.expected_trust_tier)
+            if reason:
+                return _unbound(reason, "escrow_refused")
         if not self._register(transaction, param_types):
             return _unbound("scope_arbitrated", "scope_claimed")
         fence = _read_fence(transaction, param_types, self.fence_id, self.artifact.lease_id)
@@ -165,13 +165,13 @@ class BindingPlan:
             shard=shard,
             trust_eligibility_enabled=self.trust_eligibility_enabled,
             expected_trust_tier=self.expected_trust_tier,
+            trust_max_age_seconds=self.trust_max_age_seconds,
         ):
             if self.trust_eligibility_enabled:
-                tier, latched_at = _read_shard_trust(
-                    transaction, param_types, workspace_id, shard
-                )
-                if tier < 1 or latched_at is not None:
-                    return _unbound("unpaid_workspace", "escrow_refused")
+                reason = _shard_trust_refusal(transaction, param_types, workspace_id, shard,
+                                              self.trust_max_age_seconds)
+                if reason:
+                    return _unbound(reason, "escrow_refused")
             return _unbound("escrow_headroom", "escrow_refused")
         if not self._register(transaction, param_types):
             _require_one(
@@ -383,6 +383,8 @@ def prepare_candidate(
     routing_policy_hash: str | None = None,
     trust_eligibility_enabled: bool = False,
     expected_trust_tier: int | None = None,
+    trust_max_age_seconds: int = 3600,
+    trust_gate: Callable[[Any], str | None] | None = None,
 ) -> BindingPlan:
     now = datetime.now(UTC)
     lease_id = derive_candidate_lease_id(key_hash, boot_kid, gen, provisional_id)
@@ -405,6 +407,7 @@ def prepare_candidate(
         if expected_trust_tier is None:
             raise ValueError("expected_trust_tier is required while trust eligibility is armed")
         claims["trust_tier"] = int(expected_trust_tier)
+        logging.getLogger(__name__).info("spend_lease.trust_tier tier=%s workspace_id=%s", expected_trust_tier, workspace_id)
     artifact = SpendLeaseArtifact(
         token=signer.sign(claims), lease_id=lease_id, cap_micro=cap_micro, gen=gen,
         iat=int(now.timestamp()), exp=int(expires_at.timestamp()), issuer_kid=signer.kid,
@@ -463,6 +466,8 @@ def prepare_candidate(
         authoritative_exhaustion=authoritative_exhaustion,
         trust_eligibility_enabled=trust_eligibility_enabled,
         expected_trust_tier=expected_trust_tier,
+        trust_max_age_seconds=trust_max_age_seconds,
+        trust_gate=trust_gate,
     )
 
 
@@ -479,23 +484,20 @@ def _require_one(count: int, inverse: str) -> None:
         raise SpendLeaseContractError(f"{inverse} modified {count} rows")
 
 
-def _read_shard_trust(
-    transaction: Any,
-    param_types: Any,
-    workspace_id: str,
-    shard: int,
-) -> tuple[int, datetime | None]:
-    rows = list(
-        transaction.execute_sql(
-            "SELECT trust_tier, trust_latched_at FROM tr_credit_balance "
-            "WHERE workspace_id=@ws AND shard=@shard",
-            params={"ws": workspace_id, "shard": shard},
-            param_types={"ws": param_types.STRING, "shard": param_types.INT64},
-        )
-    )
-    if len(rows) != 1:
-        raise SpendLeaseContractError("selected credit shard disappeared")
-    return int(rows[0][0] or 0), rows[0][1]
+def _shard_trust_refusal(
+    transaction: Any, param_types: Any, workspace_id: str, shard: int,
+    max_age_seconds: int, expected_tier: int | None = None,
+) -> str | None:
+    from trusted_router.trust_eligibility import read_lease_trust
+    state = read_lease_trust(transaction, param_types, workspace_id, shard=shard)
+    if state is None:
+        return "reconciliation_stale"
+    reason = state.refusal(now=datetime.now(UTC), max_age_seconds=max_age_seconds)
+    if reason:
+        return reason
+    if expected_tier is not None and state.tier != expected_tier:
+        return "unpaid_workspace"
+    return None
 
 
 def _read_fence(

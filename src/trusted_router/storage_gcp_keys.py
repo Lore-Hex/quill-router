@@ -474,20 +474,10 @@ class SpannerApiKeys:
             spend_lease_status=spend_lease.lease_status if spend_lease else None,
             invocation_nonce=invocation_nonce,
         )
-        if idempotency_key is None:
-            self._io.write_entity("gateway_authorization", auth.id, auth)
-            return auth
-        with self._io.database.batch() as batch:
-            self._io.write_entity_batch(batch, "gateway_authorization", auth.id, auth)
-            self._io.write_entity_batch(
-                batch,
-                "gateway_authorization_idempotency",
-                _gateway_authorization_idempotency_index_id(
-                    workspace_id, key_hash, idempotency_key
-                ),
-                {"authorization_id": auth.id},
-            )
-        return auth
+        from trusted_router.storage_legacy_trust import create_spanner_legacy_authorization
+        index_id = (_gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key)
+                    if idempotency_key is not None else None)
+        return create_spanner_legacy_authorization(self, auth, index_id)
 
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:
         return self._io.read_entity("gateway_authorization", authorization_id, GatewayAuthorization)
@@ -502,6 +492,9 @@ class SpannerApiKeys:
         )
         if not ref:
             return None
+        if ref.get("reason") == "billing_paused":
+            from trusted_router.storage_legacy_trust import BillingPausedError
+            raise BillingPausedError()
         return self.get_gateway_authorization(str(ref["authorization_id"]))
 
     def mark_gateway_authorization_settled(self, authorization_id: str) -> None:

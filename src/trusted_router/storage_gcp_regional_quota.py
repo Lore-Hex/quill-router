@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 import random
 import uuid
@@ -27,7 +28,6 @@ from trusted_router.storage_gcp_counter_dml import (
     read_reservation_by_idempotency,
     release_credit,
     release_key,
-    reserve_credit,
 )
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 from trusted_router.storage_gcp_request_records import insert_gateway_authorization
@@ -58,6 +58,8 @@ class GlobalRegionalQuotaLease:
     created_at: str = field(default_factory=lambda: _iso(utcnow()))
     updated_at: str = field(default_factory=lambda: _iso(utcnow()))
     last_error: str | None = None
+    issuance_tier: int | None = None
+    tier_cap_micro: int | None = None
 
     @property
     def entity_id(self) -> str:
@@ -276,12 +278,27 @@ def grant_regional_quota_lease(
         # before reconciliation and multiply the configured regional exposure.
         if fence is not None and fence.active_lease_id is not None:
             return None
-        if not reserve_credit(
-            transaction,
-            store._param_types,
-            workspace_id,
-            grant,
-            shard=selected_shard,
+        from trusted_router.trust_eligibility import lease_eligibility, tier_cap
+        settings: Any = getattr(store, "trust_settings", None)
+        tier = None
+        cap = None
+        tx_grant = grant
+        armed = settings is not None and settings.spend_lease_trust_eligibility_enabled
+        if armed:
+            tier, reason = lease_eligibility(store, settings, workspace_id, reader=transaction)
+            if reason:
+                log.info("regional_quota.no_lease_reason=%s workspace_id=%s", reason, workspace_id)
+                return None
+            cap = tier_cap(settings, tier or 0)
+            pool = min(settings.regional_quota_lease_max_microdollars, cap)
+            tx_grant = min(grant, max(0, pool - _active_regional_escrow(transaction, workspace_id)))
+            if tx_grant < minimum_grant_microdollars:
+                return None
+        from trusted_router.storage_gcp_counter_dml import reserve_credit_for_spend_lease
+        if not reserve_credit_for_spend_lease(
+            transaction, store._param_types, workspace_id, tx_grant, shard=selected_shard,
+            trust_eligibility_enabled=armed, expected_trust_tier=tier,
+            trust_max_age_seconds=settings.trust_reconcile_max_age_seconds if armed else 3600,
         ):
             return None
         fencing_token = 1 if fence is None else fence.fencing_token + 1
@@ -298,7 +315,9 @@ def grant_regional_quota_lease(
             workspace_id=workspace_id,
             region=region,
             fencing_token=fencing_token,
-            granted_microdollars=grant,
+            granted_microdollars=tx_grant,
+            issuance_tier=tier,
+            tier_cap_micro=cap,
             credit_shard=selected_shard,
             expires_at=_iso(expires_at),
             quota_shard=quota_shard,
@@ -688,6 +707,33 @@ def record_regional_gateway_authorization(
                 if existing["idempotency_fingerprint"] != idempotency_fingerprint:
                     return {"outcome": "idempotency_mismatch"}
                 return replay(existing)
+        from trusted_router.trust_eligibility import billing_paused_tx, lease_eligibility, tier_cap
+        settings: Any = getattr(store, "trust_settings", None)
+        reason = "billing_paused" if billing_paused_tx(transaction, store._param_types, authorization.workspace_id) else None
+        armed = settings is not None and settings.spend_lease_trust_eligibility_enabled
+        current = None
+        if armed or reason:
+            current = store._read_entity_tx(transaction, _LEASE_KIND,
+                _lease_entity_id(authorization.workspace_id, str(authorization.region),
+                                 str(authorization.regional_lease_id)), GlobalRegionalQuotaLease)
+        if armed:
+            tier, gate_reason = lease_eligibility(store, settings, authorization.workspace_id, reader=transaction)
+            reason = reason or gate_reason
+            if reason is None:
+                cap = tier_cap(settings, tier or 0)
+                if (current is None or current.state != "active"
+                    or current.issuance_tier != tier or current.tier_cap_micro != cap
+                    or current.fencing_token != authorization.regional_fencing_token
+                    or current.expires_datetime <= utcnow()
+                    or _active_regional_escrow(transaction, authorization.workspace_id)
+                       > min(settings.regional_quota_lease_max_microdollars, cap)):
+                    reason = "unpaid_workspace"
+        if reason:
+            if current is not None and current.state != "closed":
+                retired = dataclasses.replace(current, state="quarantined", last_error=reason,
+                                               updated_at=_iso(utcnow()))
+                _upsert_entity_dml(transaction, store._param_types, _LEASE_KIND, current.entity_id, retired)
+            return {"outcome": reason}
         insert_reservation(
             transaction,
             store._param_types,
@@ -846,7 +892,7 @@ def _insert_entity_dml(
     transaction.execute_update(
         "INSERT INTO tr_entities (kind, id, body, updated_at) "
         "VALUES (@kind, @id, @body, PENDING_COMMIT_TIMESTAMP())",
-        params={"kind": kind, "id": entity_id, "body": json_body(value)},
+        params={"kind": kind, "id": entity_id, "body": _regional_json_body(value)},
         param_types={
             "kind": param_types.STRING,
             "id": param_types.STRING,
@@ -862,7 +908,7 @@ def _upsert_entity_dml(
     entity_id: str,
     value: Any,
 ) -> None:
-    params = {"kind": kind, "id": entity_id, "body": json_body(value)}
+    params = {"kind": kind, "id": entity_id, "body": _regional_json_body(value)}
     types = {
         "kind": param_types.STRING,
         "id": param_types.STRING,
@@ -915,3 +961,22 @@ def _parse_iso(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _active_regional_escrow(transaction: Any, workspace_id: str) -> int:
+    """Range read serializes all quota shards and regions against concurrent mint."""
+    rows = transaction.execute_sql(
+        "SELECT id, body FROM tr_entities WHERE kind='regional_quota_lease' ORDER BY id")
+    leases = [GlobalRegionalQuotaLease(**json.loads(str(row[1]))) for row in rows]
+    # Quarantined/expired grants still own escrow until the reconciler closes them.
+    return sum(max(0, lease.granted_microdollars - lease.reconciled_spent_microdollars)
+               for lease in leases if lease.workspace_id == workspace_id and lease.state != "closed")
+
+
+def _regional_json_body(value: Any) -> str:
+    if isinstance(value, GlobalRegionalQuotaLease) and value.issuance_tier is None:
+        body = dataclasses.asdict(value)
+        body.pop("issuance_tier")
+        body.pop("tier_cap_micro")
+        return json_body(body)
+    return json_body(value)

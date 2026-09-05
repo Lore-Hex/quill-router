@@ -22,7 +22,7 @@ transaction (docs §5) — the authorize/settle transactions are DML-only.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from trusted_router.storage_gcp_counters import UNSHARDED
@@ -97,6 +97,8 @@ def reserve_credit_for_spend_lease(
     shard: int,
     trust_eligibility_enabled: bool,
     expected_trust_tier: int | None,
+    trust_max_age_seconds: int = 3600,
+    now: datetime | None = None,
 ) -> bool:
     """Apply the selected-shard trust guard only after the arm flag flips."""
 
@@ -106,12 +108,16 @@ def reserve_credit_for_spend_lease(
         )
     if expected_trust_tier is None:
         raise ValueError("expected_trust_tier is required while trust eligibility is armed")
+    now = now or datetime.now(UTC)
     sql = (
         "UPDATE tr_credit_balance SET reserved = reserved + @est "
         "WHERE workspace_id=@ws AND shard=@shard "
         "AND (total_credits - total_usage - reserved) >= @est "
         "AND trust_tier = @expected_trust_tier AND trust_tier >= 1 "
-        "AND trust_latched_at IS NULL"
+        "AND trust_latched_at IS NULL "
+        "AND COALESCE(ARRAY_LENGTH(billing_pause_causes), 0) = 0 "
+        "AND trust_reconciled_through >= @trust_fresh_after "
+        "AND trust_reconciled_through <= @trust_now"
     )
     count = transaction.execute_update(
         sql,
@@ -120,12 +126,16 @@ def reserve_credit_for_spend_lease(
             "ws": workspace_id,
             "shard": shard,
             "expected_trust_tier": int(expected_trust_tier),
+            "trust_fresh_after": now - timedelta(seconds=trust_max_age_seconds),
+            "trust_now": now,
         },
         param_types={
             "est": param_types.INT64,
             "ws": param_types.STRING,
             "shard": param_types.INT64,
             "expected_trust_tier": param_types.INT64,
+            "trust_fresh_after": param_types.TIMESTAMP,
+            "trust_now": param_types.TIMESTAMP,
         },
     )
     return count == 1
