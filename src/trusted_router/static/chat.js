@@ -133,7 +133,6 @@
     // ── State ─────────────────────────────────────────────────────────
     /** @type {{chats: Object, activeChatId: string|null, preferences: Object}} */
     let STATE = loadState();
-    applyUrlModelOverride();
     /** @type {Array<Object>} cached model catalog from /v1/models */
     let MODELS = [];
     /** @type {boolean} */
@@ -472,6 +471,8 @@
                 });
             }
             renderModelPicker();
+            renderModelsBar();
+            updateInputEstimate();
         } catch (e) {
             console.warn("chat: model catalog load failed:", e);
         } finally {
@@ -836,36 +837,12 @@
 
     function renderHeaderMeta() {
         const titleEl = document.querySelector("[data-chat-header-title]");
-        const costEl = document.querySelector("[data-chat-header-cost]");
         const chat = getActiveChat();
         if (titleEl) {
             titleEl.textContent = (chat && chat.title) || "TrustedRouter Chat";
         }
         updateTabTitle();
-        if (costEl) {
-            if (!chat) {
-                costEl.textContent = "";
-                return;
-            }
-            let totalMicro = 0;
-            let totalIn = 0;
-            let totalOut = 0;
-            for (const m of chat.messages || []) {
-                if (m.role !== "assistant") continue;
-                for (const r of m.responses || []) {
-                    totalMicro += r.cost_microdollars || 0;
-                    totalIn += r.tokens_in || 0;
-                    totalOut += r.tokens_out || 0;
-                }
-            }
-            if (totalMicro === 0 && totalIn === 0 && totalOut === 0) {
-                costEl.textContent = "";
-            } else {
-                costEl.textContent =
-                    formatCost(totalMicro) +
-                    "  ·  " + totalIn + " in / " + totalOut + " out";
-            }
-        }
+        renderChatUsage(chat);
     }
 
     function makeModelPill(chat, slot, idx) {
@@ -876,7 +853,7 @@
         const pill = document.createElement("button");
         pill.type = "button";
         pill.className = "chat-model-pill";
-        if (LOCKED_MODEL_ID) pill.title = LOCKED_MODEL_ID;
+        pill.title = slot.model_id;
         if (!LOCKED_MODEL_ID) pill.dataset.action = "toggle-model-dropdown";
         pill.dataset.slotIdx = String(idx);
         const label =
@@ -1268,12 +1245,6 @@
     function renderEmptyState(thread) {
         const empty = document.createElement("div");
         empty.className = "chat-empty";
-        // First-visit welcome banner. Dismissed permanently to
-        // preferences.welcome_dismissed so the page doesn't keep
-        // showing it after the user gets the hang of things.
-        const welcomeBanner = STATE.preferences.welcome_dismissed
-            ? ""
-            : lockedWelcomeBanner();
         const grid = pickedSuggestions()
             .map(
                 (p) =>
@@ -1288,27 +1259,13 @@
                     "</span></button>",
             )
             .join("");
-        const heading = LOCKED_MODEL_ID
-            ? "Chat with this custom model."
-            : "Try any model — zero tokens until you sign in.";
-        const body = LOCKED_MODEL_ID
-            ? "The hidden prompt is prepended inside the attested gateway. Callers only need the model ID."
-            : "Pick a model above, type a prompt, hit Send. Compare up to 4 models side-by-side.";
+        const heading = LOCKED_MODEL_ID ? LOCKED_MODEL_LABEL : "What are we working on?";
         empty.innerHTML =
-            welcomeBanner +
+            '<img class="chat-empty-logo" src="/static/favicon.svg" width="40" height="40" alt="">' +
             "<h2>" + escapeHtml(heading) + "</h2>" +
-            "<p>" + escapeHtml(body) + "</p>" +
+            (LOCKED_MODEL_ID ? '<p><a href="/console/custom-models">Custom Models</a></p>' : "") +
             '<div class="chat-suggest-grid">' + grid + "</div>";
         empty.addEventListener("click", (e) => {
-            const closer = e.target && e.target.closest
-                ? e.target.closest('[data-action="dismiss-welcome"]')
-                : null;
-            if (closer) {
-                STATE.preferences.welcome_dismissed = true;
-                saveState();
-                renderThread();
-                return;
-            }
             const btn = e.target && e.target.closest && e.target.closest(".chat-suggest");
             if (!btn) return;
             const input = document.querySelector("[data-chat-input]");
@@ -1320,31 +1277,6 @@
             }
         });
         thread.appendChild(empty);
-    }
-
-    function lockedWelcomeBanner() {
-        if (!LOCKED_MODEL_ID) {
-            return '<div class="chat-welcome">' +
-                '<button class="chat-welcome-close" data-action="dismiss-welcome" aria-label="Dismiss">×</button>' +
-                '<div class="chat-welcome-eyebrow">Welcome</div>' +
-                '<h3>Compare models side-by-side</h3>' +
-                '<ol>' +
-                '<li>Pick a model in the header, type a prompt.</li>' +
-                '<li>Hit <kbd>+ Add model</kbd> to add up to 3 more. Each one streams its response in its own column.</li>' +
-                '<li>Sign in only when you press Send — nothing fires until then.</li>' +
-                "</ol>" +
-                "</div>";
-        }
-        return '<div class="chat-welcome">' +
-            '<button class="chat-welcome-close" data-action="dismiss-welcome" aria-label="Dismiss">×</button>' +
-            '<div class="chat-welcome-eyebrow">Custom model</div>' +
-            "<h3>" + escapeHtml(LOCKED_MODEL_LABEL) + "</h3>" +
-            '<ol>' +
-            "<li>Locked to <code>" + escapeHtml(LOCKED_MODEL_ID) + "</code>.</li>" +
-            "<li>Type a prompt and press Send. Nothing fires until then.</li>" +
-            '<li>Edit the hidden prompt from <a href="/console/custom-models">Custom Models</a>.</li>' +
-            "</ol>" +
-            "</div>";
     }
 
     function renderThread() {
@@ -1362,6 +1294,7 @@
         thread.innerHTML = "";
         if (chat.messages.length === 0) {
             renderEmptyState(thread);
+            renderHeaderMeta();
             return;
         }
         for (const msg of chat.messages) {
@@ -1594,14 +1527,9 @@
             ) {
                 const meta = document.createElement("div");
                 meta.className = "chat-msg-meta";
-                const finalMicro = resp.cost_microdollars || 0;
-                const estMicro = resp.cost_microdollars_est || 0;
-                const costStr =
-                    finalMicro > 0
-                        ? formatCost(finalMicro)
-                        : estMicro > 0
-                            ? formatCost(estMicro, { estimate: true })
-                            : formatCost(0);
+                const costStr = hasReportedCost(resp)
+                    ? formatUsageCost(resp.cost_microdollars)
+                    : "Cost unavailable";
                 const tps = resp.tokens_per_sec
                     ? "  ·  " + resp.tokens_per_sec + " t/s"
                     : "";
@@ -2091,6 +2019,10 @@
         resp.tokens_in = 0;
         resp.tokens_out = 0;
         resp.cost_microdollars = 0;
+        resp.cost_reported = false;
+        resp.tokens_cached = 0;
+        resp.tokens_reasoning = 0;
+        resp.usage_received = false;
         resp.error = null;
         saveState();
         renderThread();
@@ -2852,6 +2784,7 @@
             model: slot.model_id,
             messages,
             stream: true,
+            stream_options: { include_usage: true },
             ...params,
         };
         if (
@@ -2883,44 +2816,44 @@
                 body: JSON.stringify(body),
             });
         }
-        let resp = await _sendOnce(key);
-        if (resp.status === 401) {
-            try {
-                const freshKey = await ensureBrowserKey({ forceRefresh: true });
-                resp = await _sendOnce(freshKey);
-            } catch (e) {
-                // ensureBrowserKey already pops the sign-in modal on a
-                // hard 401/302 from issue-key; propagate the original
-                // 401 if re-issue itself failed.
-            }
-        }
-        if (!resp.ok) {
-            const errText = await resp.text();
-            throw new Error(errText.slice(0, 240));
-        }
-        // Capture routing provenance from response headers when the
-        // gateway exposes them via Access-Control-Expose-Headers.
-        // Falls back gracefully if browsers don't see them (cross-
-        // origin without explicit expose) — meta line will just
-        // omit "via …" until the gateway is reconfigured.
-        const respSlot = assistantMsg.responses[respIdx] || assistantMsg.responses[0];
-        const headerProvider = resp.headers.get("x-trustedrouter-provider");
-        const headerServedModel = resp.headers.get("x-trustedrouter-served-model");
-        if (headerProvider && respSlot) {
-            respSlot.selected_provider = headerProvider;
-        }
-        if (headerServedModel && respSlot) {
-            respSlot.selected_model_id = headerServedModel;
-        }
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder("utf-8");
-        let buffer = "";
-        // Track tokens-per-second for the metric in the column footer.
-        // We measure from the FIRST delta arrival (not request start)
-        // so cold-start / network latency doesn't deflate the number.
-        let streamStartMs = 0;
-        let firstDeltaSeen = false;
         try {
+            let resp = await _sendOnce(key);
+            if (resp.status === 401) {
+                try {
+                    const freshKey = await ensureBrowserKey({ forceRefresh: true });
+                    resp = await _sendOnce(freshKey);
+                } catch (e) {
+                    // ensureBrowserKey already pops the sign-in modal on a
+                    // hard 401/302 from issue-key; propagate the original
+                    // 401 if re-issue itself failed.
+                }
+            }
+            if (!resp.ok) {
+                const errText = await resp.text();
+                throw new Error(errText.slice(0, 240));
+            }
+            // Capture routing provenance from response headers when the
+            // gateway exposes them via Access-Control-Expose-Headers.
+            // Falls back gracefully if browsers don't see them (cross-
+            // origin without explicit expose) — meta line will just
+            // omit "via …" until the gateway is reconfigured.
+            const respSlot = assistantMsg.responses[respIdx] || assistantMsg.responses[0];
+            const headerProvider = resp.headers.get("x-trustedrouter-provider");
+            const headerServedModel = resp.headers.get("x-trustedrouter-served-model");
+            if (headerProvider && respSlot) {
+                respSlot.selected_provider = headerProvider;
+            }
+            if (headerServedModel && respSlot) {
+                respSlot.selected_model_id = headerServedModel;
+            }
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder("utf-8");
+            let buffer = "";
+            // Track tokens-per-second for the metric in the column footer.
+            // We measure from the FIRST delta arrival (not request start)
+            // so cold-start / network latency doesn't deflate the number.
+            let streamStartMs = 0;
+            let firstDeltaSeen = false;
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
@@ -2990,9 +2923,7 @@
                                 .concat(delta.tool_calls);
                         }
                         if (ev.usage) {
-                            respSlot.tokens_in = ev.usage.prompt_tokens || 0;
-                            respSlot.tokens_out =
-                                ev.usage.completion_tokens || 0;
+                            applyResponseUsage(respSlot, ev);
                             // tokens/sec for the column footer. Only
                             // meaningful with a positive elapsed window.
                             if (firstDeltaSeen && streamStartMs > 0) {
@@ -3003,33 +2934,11 @@
                                     );
                                 }
                             }
-                            // Running cost ticker for the column footer
-                            // while streaming. We DON'T have cost back
-                            // until the [DONE]; approximate using the
-                            // model catalog's per-M rates so users see
-                            // a live counter rather than waiting for
-                            // the final cost line.
-                            if (!respSlot.cost_microdollars) {
-                                const modelMeta = findModel(slot.model_id);
-                                if (modelMeta && modelMeta.input_per_m != null) {
-                                    const estIn =
-                                        (respSlot.tokens_in *
-                                            modelMeta.input_per_m) /
-                                        1_000_000;
-                                    const estOut =
-                                        (respSlot.tokens_out *
-                                            (modelMeta.output_per_m ||
-                                                modelMeta.input_per_m * 3)) /
-                                        1_000_000;
-                                    respSlot.cost_microdollars_est =
-                                        Math.round((estIn + estOut) * 1_000_000);
-                                }
-                            }
                         }
-                        if (ev.trustedrouter && ev.trustedrouter.cost_microdollars) {
-                            respSlot.cost_microdollars =
-                                ev.trustedrouter.cost_microdollars;
+                        if (!ev.usage && ev.trustedrouter) {
+                            applyResponseUsage(respSlot, ev);
                         }
+                        renderChatUsage(getActiveChat());
                     } catch (_) {
                         // Malformed JSON in the stream — skip the
                         // chunk rather than abort.
@@ -3043,6 +2952,7 @@
             renderThread();
         } finally {
             STREAMS.delete(streamKey);
+            saveState();
             updateSendButtonMode();
         }
     }
@@ -3062,11 +2972,25 @@
                   )
                 : null;
         if (col) {
+            const thread = document.querySelector("[data-chat-thread]");
+            const wasNearBottom = thread && isNearBottom(thread);
             col.innerHTML = renderMarkdown(respSlot.content);
             // Toggle the streaming-caret class on the column's bubble.
             // The CSS adds a blinking block character after the text.
             const bubble = col.closest(".chat-msg-bubble");
             if (bubble) {
+                if (respSlot.reasoning) {
+                    let reasoning = bubble.querySelector(".chat-msg-reasoning");
+                    if (!reasoning) {
+                        reasoning = document.createElement("details");
+                        reasoning.className = "chat-msg-reasoning";
+                        reasoning.open = !respSlot.content;
+                        reasoning.innerHTML = '<summary>Thinking</summary><div class="chat-msg-reasoning-body"></div>';
+                        bubble.insertBefore(reasoning, col);
+                    }
+                    reasoning.querySelector(".chat-msg-reasoning-body").textContent = respSlot.reasoning;
+                }
+                if (respSlot.content || respSlot.reasoning) bubble.querySelector(".chat-msg-dots")?.remove();
                 if (opts && opts.streaming) {
                     bubble.classList.add("is-streaming");
                 } else {
@@ -3075,8 +2999,7 @@
             }
             // Auto-scroll only if user hasn't scrolled up; respects
             // the scroll-to-bottom FAB UX.
-            const thread = document.querySelector("[data-chat-thread]");
-            if (thread && isNearBottom(thread)) {
+            if (thread && wasNearBottom) {
                 thread.scrollTop = thread.scrollHeight;
             } else {
                 updateScrollToBottomVisibility();
@@ -3195,15 +3118,85 @@
     }
 
     function sumChatCostMicrodollars(chat) {
-        if (!chat || !chat.messages) return 0;
-        let total = 0;
-        for (const m of chat.messages) {
-            if (m.role !== "assistant") continue;
-            for (const r of m.responses || []) {
-                total += r.cost_microdollars || 0;
+        return chatUsage(chat).cost;
+    }
+
+    function nonnegativeInteger(value) {
+        return Number.isSafeInteger(value) && value >= 0;
+    }
+
+    function hasReportedCost(response) {
+        // Older saved chats have no flag; a positive settled cost is still valid.
+        return nonnegativeInteger(response.cost_microdollars) &&
+            (response.cost_reported === true || response.cost_microdollars > 0);
+    }
+
+    function applyResponseUsage(response, event) {
+        const usage = event.usage || {};
+        const fields = {
+            tokens_in: usage.prompt_tokens ?? usage.input_tokens,
+            tokens_out: usage.completion_tokens ?? usage.output_tokens,
+            tokens_cached: usage.prompt_tokens_details?.cached_tokens ?? usage.input_tokens_details?.cached_tokens,
+            tokens_reasoning: usage.completion_tokens_details?.reasoning_tokens ?? usage.output_tokens_details?.reasoning_tokens,
+        };
+        for (const [key, value] of Object.entries(fields)) {
+            if (nonnegativeInteger(value)) response[key] = value;
+        }
+        if (nonnegativeInteger(fields.tokens_in) || nonnegativeInteger(fields.tokens_out)) {
+            response.usage_received = true;
+        }
+        // Root usage is the billed aggregate, including orchestration. Never add
+        // nested subcall costs or cumulative usage chunks a second time.
+        let cost = [usage.cost_microdollars, usage.total_cost_microdollars,
+            event.trustedrouter?.cost_microdollars].find(nonnegativeInteger);
+        if (cost === undefined && typeof usage.cost === "number" && usage.cost >= 0) {
+            const micro = Math.round(usage.cost * 1_000_000);
+            if (nonnegativeInteger(micro)) cost = micro;
+        }
+        if (cost !== undefined) {
+            response.cost_microdollars = cost;
+            response.cost_reported = true;
+        }
+    }
+
+    function chatUsage(chat) {
+        const totals = { cost: 0, input: 0, output: 0, cached: 0, reasoning: 0, missingCost: 0, missingTokens: 0 };
+        for (const message of chat?.messages || []) {
+            if (message.role !== "assistant") continue;
+            for (const response of message.responses || []) {
+                if (hasReportedCost(response)) totals.cost += response.cost_microdollars;
+                else totals.missingCost++;
+                if (!response.usage_received && !response.tokens_in && !response.tokens_out) totals.missingTokens++;
+                for (const [key, field] of Object.entries({ input: "tokens_in", output: "tokens_out", cached: "tokens_cached", reasoning: "tokens_reasoning" })) {
+                    if (nonnegativeInteger(response[field])) totals[key] += response[field];
+                }
             }
         }
-        return total;
+        return totals;
+    }
+
+    function formatUsageCost(micro) {
+        return "$" + (micro / 1_000_000).toLocaleString("en-US", {
+            minimumFractionDigits: 2, maximumFractionDigits: 6,
+        });
+    }
+
+    function renderChatUsage(chat) {
+        const root = document.querySelector("[data-chat-usage]");
+        if (!root) return;
+        const totals = chatUsage(chat);
+        const count = (n) => n.toLocaleString("en-US");
+        const cost = totals.missingCost
+            ? (totals.cost ? formatUsageCost(totals.cost) + " + unreported" : "Cost unreported")
+            : formatUsageCost(totals.cost);
+        const values = {
+            cost, tokens: count(totals.input + totals.output) + " tokens" + (totals.missingTokens ? " + unreported" : ""),
+            input: count(totals.input), output: count(totals.output),
+            cached: count(totals.cached), reasoning: count(totals.reasoning), billed: cost,
+        };
+        for (const [key, value] of Object.entries(values)) {
+            root.querySelector("[data-chat-usage-" + key + "]").textContent = value;
+        }
     }
 
     function relativeTime(iso) {
@@ -4260,6 +4253,8 @@
     // ── Init ──────────────────────────────────────────────────────────
 
     function init() {
+        // Deep links can create and render a chat; all state must exist first.
+        applyUrlModelOverride();
         bootstrapBrowserKey();
         ensureActiveChat();
         importSharedChatFromHash();
