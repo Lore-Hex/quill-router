@@ -3542,19 +3542,25 @@ class PostgresStore:
         )
 
     @staticmethod
-    def _recorded_key_hold(authorization: GatewayAuthorization) -> int:
-        """Return only a hold durably frozen on the authorization.
+    def _recorded_key_hold(conn: Any, authorization: GatewayAuthorization) -> int:
+        """Honor frozen holds, including zero; retain legacy rollout behavior.
 
-        A legacy JSON record has no safe answer: current cap configuration can
-        describe a different request's hold. Releasing zero may strand an old
-        hold for reconciliation, but it cannot steal newer headroom.
+        Pre-deploy authorizations lack the field. Compute their release from
+        current configuration in the settlement transaction, as before rollout.
         """
-        if authorization.key_reserved_microdollars is None:
-            log.error(
-                "authorization %s has no frozen key hold; releasing zero",
-                authorization.id,
-            )
-        return authorization.frozen_key_hold_microdollars()
+        if authorization.key_reserved_microdollars is not None:
+            return authorization.frozen_key_hold_microdollars()
+        row = conn.execute(
+            "SELECT limit_micro, include_byok FROM tr_key_limit"
+            " WHERE key_hash = %s AND shard = 0",
+            (authorization.key_hash,),
+            prepare=False,
+        ).fetchone()
+        if row is None or row[0] is None:
+            return 0
+        if _is_byok(authorization.usage_type) and not row[1]:
+            return 0
+        return max(0, int(authorization.estimated_microdollars))
 
     def supports_key_writes(self) -> bool:
         return True
@@ -3598,9 +3604,9 @@ class PostgresStore:
                 return None
             apply_key_patch(key, patch)
             typed_limit_patch = bool(TYPED_LIMIT_PATCH_FIELDS & patch.keys())
+            self._write_entity_tx(conn, "api_key", key.hash, key)
             if typed_limit_patch:
                 self._write_key_limit_caps_tx(conn, key)
-            self._write_entity_tx(conn, "api_key", key.hash, key)
             return key
 
         return self._run_transaction(update)
@@ -6454,7 +6460,7 @@ class PostgresStore:
                 self._release_key_hold_tx(
                     conn,
                     authorization.key_hash,
-                    self._recorded_key_hold(authorization),
+                    self._recorded_key_hold(conn, authorization),
                     # The hold was reserved under the AUTHORIZE-time type
                     # (Credits whenever a credit candidate existed) — release
                     # under the same type, or an include_byok=false key whose
@@ -6571,7 +6577,7 @@ class PostgresStore:
             self._release_key_hold_tx(
                 conn,
                 authorization.key_hash,
-                self._recorded_key_hold(authorization),
+                self._recorded_key_hold(conn, authorization),
                 usage_type=authorization.usage_type,
                 window_amount=booked,
                 window_is_byok=_is_byok(selected_usage_type),
@@ -6701,7 +6707,7 @@ class PostgresStore:
                 self._release_key_hold_tx(
                     conn,
                     authorization.key_hash,
-                    self._recorded_key_hold(authorization),
+                    self._recorded_key_hold(conn, authorization),
                     usage_type=authorization.usage_type,
                     window_amount=0,
                 )

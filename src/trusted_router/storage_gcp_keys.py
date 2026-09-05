@@ -357,6 +357,11 @@ class SpannerApiKeys:
         *,
         usage_type: str,
     ) -> None:
+        # Avoid mutating the hot key row for reservations without a hold.
+        # Positive holds must still release after cap/configuration edits.
+        if reserved_microdollars <= 0:
+            return
+
         def txn(transaction: Any) -> None:
             key = self._io.read_entity_tx(transaction, "api_key", key_hash, ApiKey)
             if key is None:

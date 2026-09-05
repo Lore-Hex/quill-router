@@ -30,6 +30,7 @@ import contextlib
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 
@@ -180,7 +181,8 @@ def postgres_store_on(conn: SqlitePostgresConn) -> Any:
     from trusted_router.storage_postgres import PostgresStore
 
     store = PostgresStore.__new__(PostgresStore)
-    store._run_transaction = lambda operation: _run(conn, operation)  # type: ignore[method-assign]
+    store._pool = SimpleNamespace(connection=lambda: contextlib.nullcontext(conn))
+    store._transaction_attempts = 3
     store.max_workspaces_per_owner = 25
     store.trust_qualifying_providers = frozenset({"stripe", "x402"})
     store.trust_tier3_min_days = 30

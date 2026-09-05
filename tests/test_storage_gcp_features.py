@@ -522,3 +522,21 @@ def test_gcp_rate_limit_increments_in_same_window_and_rolls_over() -> None:
     assert third.retry_after_seconds > 0
     assert next_window.allowed is True
     assert next_window.remaining == 1
+
+
+def test_gcp_zero_key_hold_never_mutates_api_key() -> None:
+    for limit, include_byok, usage_type in [(None, True, "Credits"), (100, False, "BYOK")]:
+        store, db, _ = make_fake_store()
+        workspace_id, _ = _seed_workspace_and_key(store)
+        _, key = store.create_api_key(
+            workspace_id=workspace_id, name="zero-hold", creator_user_id=None,
+            limit_microdollars=limit, include_byok_in_limit=include_byok,
+        )
+        version = db.rows[("api_key", key.hash)].version
+        hold = store.reserve_key_limit(key.hash, 100, usage_type=usage_type)
+        assert hold.reserved_microdollars == 0
+        assert db.rows[("api_key", key.hash)].version == version
+        store.settle_key_limit(key.hash, hold.reserved_microdollars, 0, usage_type=usage_type)
+        assert db.rows[("api_key", key.hash)].version == version
+        store.refund_key_limit(key.hash, hold.reserved_microdollars, usage_type=usage_type)
+        assert db.rows[("api_key", key.hash)].version == version

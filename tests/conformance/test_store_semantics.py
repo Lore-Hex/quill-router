@@ -2174,26 +2174,30 @@ def test_finalize_failure_books_no_usage(store: Store, workspace_id: str, unique
     assert settled.finalized_cost_microdollars == 0
 
 
-def test_legacy_authorization_missing_frozen_hold_releases_zero(
+def test_authorization_frozen_zero_hold_releases_zero(
     store: Store,
     workspace_id: str,
     user_id: str,
 ) -> None:
-    """A pre-field authorization must never guess a hold from its estimate."""
+    """A recorded zero must never guess a hold from its estimate.
+
+    Missing legacy fields retain the Postgres rollout fallback; explicit zero
+    is the cross-backend guarantee, even after configuration changes.
+    """
     _raw, key = store.create_api_key(
         workspace_id=workspace_id,
-        name="legacy-missing-hold",
+        name="frozen-zero-hold",
         creator_user_id=user_id,
         limit_microdollars=None,
     )
     uncapped = store.reserve_key_limit(key.hash, 100, usage_type="Credits")
     assert uncapped.reserved_microdollars == 0
-    legacy = _authorize(
+    authorization = _authorize(
         store,
         workspace_id,
         key.hash,
         estimated_microdollars=100,
-        key_reserved_microdollars=None,
+        key_reserved_microdollars=0,
     )
 
     store.update_key(key.hash, {"limit_microdollars": 100})
@@ -2201,7 +2205,7 @@ def test_legacy_authorization_missing_frozen_hold_releases_zero(
     assert current.reserved_microdollars == 100
 
     assert store.finalize_gateway_authorization(
-        legacy.id,  # type: ignore[attr-defined]
+        authorization.id,  # type: ignore[attr-defined]
         success=False,
         actual_microdollars=0,
         selected_usage_type="Credits",

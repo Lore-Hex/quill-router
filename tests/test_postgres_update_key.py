@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -243,27 +244,44 @@ def test_postgres_cap_patch_rejects_zero_row_guarded_update_atomically(
     with pytest.raises(RuntimeError, match="cap UPDATE affected 0 rows"):
         store.update_key(key.hash, {"name": "must-roll-back", "limit_microdollars": 99})
 
-    # The simulated disappearance and the entity patch share the failed
-    # transaction, so rollback must restore the typed row and old JSON entity.
+    # Both changes happened inside the failed transaction. Inspect the entity
+    # first so disabling transactions specifically fails the JSON rollback check.
+    stored = store.get_key_by_hash(key.hash)
+    assert stored is not None
+    assert stored.name == "before"
+    assert stored.limit_microdollars == 10
     rows = conn.execute(
         "SELECT shard, limit_micro FROM tr_key_limit WHERE key_hash = %s ORDER BY shard",
         (key.hash,),
     ).fetchall()
     assert rows == [(0, 10)]
-    stored = store.get_key_by_hash(key.hash)
-    assert stored is not None
-    assert stored.name == "before"
-    assert stored.limit_microdollars == 10
 
 
-def test_postgres_cap_and_entity_writes_roll_back_together() -> None:
+def test_postgres_cap_and_entity_writes_roll_back_together(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     store, conn, key = _key_store()
-    conn.fail_on = "UPDATE tr_key_limit"
+    original_execute = conn.execute
+    observed_partial_write = False
+
+    def fail_typed_write(sql: str, params: tuple[Any, ...] = (), **kwargs: Any) -> Any:
+        nonlocal observed_partial_write
+        if sql.startswith("UPDATE tr_key_limit SET"):
+            row = original_execute(
+                "SELECT body FROM tr_entities WHERE kind = %s AND id = %s",
+                ("api_key", key.hash),
+            ).fetchone()
+            assert json.loads(row[0])["name"] == "must-roll-back"
+            observed_partial_write = True
+            raise RuntimeError("connection reset mid-transaction")
+        return original_execute(sql, params, **kwargs)
+
+    monkeypatch.setattr(conn, "execute", fail_typed_write)
 
     with pytest.raises(RuntimeError, match="connection reset"):
         store.update_key(key.hash, {"name": "must-roll-back", "limit_microdollars": 99})
 
-    conn.fail_on = None
+    assert observed_partial_write
     stored = store.get_key_by_hash(key.hash)
     assert stored is not None
     assert stored.name == "before"
@@ -383,3 +401,70 @@ def test_postgres_alert_only_bypasses_window_block_but_keeps_lifetime_hold() -> 
     store.update_key(key.hash, {"budget_alert_only": False})
     with pytest.raises(KeyWindowLimitExceeded):
         store.reserve_key_limit(key.hash, 1, usage_type="Credits")
+
+
+@pytest.mark.parametrize("success", [True, False])
+@pytest.mark.parametrize("frozen", ["absent", 0])
+def test_postgres_legacy_missing_hold_differs_from_frozen_zero(success, frozen) -> None:
+    store, conn, key = _key_store(limit_microdollars=100, limit_daily_microdollars=None)
+    store.reserve_key_limit(key.hash, 100, usage_type="Credits")
+    auth = _authorization(
+        store, key, usage_type="Credits", estimated_microdollars=100,
+        key_reserved_microdollars=0,
+    )
+    if frozen != 0:
+        body = json.loads(conn.execute(
+            "SELECT body FROM tr_entities WHERE kind = %s AND id = %s",
+            ("gateway_authorization", auth.id),
+        ).fetchone()[0])
+        body.pop("key_reserved_microdollars")
+        conn.execute(
+            "UPDATE tr_entities SET body = %s WHERE kind = %s AND id = %s",
+            (json.dumps(body), "gateway_authorization", auth.id),
+        )
+    assert store.finalize_gateway_authorization(
+        auth.id, success=success, actual_microdollars=0, selected_usage_type="Credits",
+    )
+    assert _reserved(conn, key.hash) == (0 if frozen == "absent" else 100)
+
+
+def test_postgres_gateway_authorize_freezes_uncapped_hold() -> None:
+    from starlette.requests import Request
+
+    from trusted_router.config import Settings
+    from trusted_router.routes.internal import gateway
+    from trusted_router.schemas import GatewayAuthorizeRequest
+    from trusted_router.storage import CreditAccount, Workspace, configure_store
+
+    store, conn, key = _key_store(limit_microdollars=None, limit_daily_microdollars=None)
+    store._write_entity_tx(conn, "workspace", key.workspace_id, Workspace(
+        id=key.workspace_id, name="test", owner_user_id="user-test",
+    ))
+    store._write_entity_tx(conn, "credit", key.workspace_id, CreditAccount(
+        workspace_id=key.workspace_id,
+    ))
+    conn.execute(
+        "INSERT INTO tr_credit_balance (workspace_id, shard, total_credits)"
+        " VALUES (%s, 0, 1000000)", (key.workspace_id,),
+    )
+    configure_store(store)
+    response = gateway._authorize_gateway_sync(
+        Request({"type": "http", "method": "POST", "path": "/", "headers": []}),
+        GatewayAuthorizeRequest(
+            api_key_hash=key.hash, idempotency_key="frozen-hold-route",
+            model="anthropic/claude-haiku-4.5",
+            estimated_input_tokens=100, max_output_tokens=100,
+        ),
+        Settings(environment="test"),
+    )
+    auth_id = response["data"]["authorization_id"]
+    auth = store.get_gateway_authorization(auth_id)
+    store.update_key(key.hash, {"limit_microdollars": 100})
+    store.reserve_key_limit(key.hash, 100, usage_type="Credits")
+    assert store.finalize_gateway_authorization(
+        auth_id, success=True, actual_microdollars=0, selected_usage_type="Credits",
+    )
+    assert _reserved(conn, key.hash) == 100
+    with pytest.raises(KeyLimitExceeded):
+        store.reserve_key_limit(key.hash, 1, usage_type="Credits")
+    assert auth.key_reserved_microdollars == 0

@@ -559,6 +559,7 @@ def _authorization() -> GatewayAuthorization:
         usage_type=UsageType.CREDITS,
         estimated_microdollars=100,
         credit_reservation_id=None,
+        key_reserved_microdollars=0,
     )
 
 
