@@ -11,6 +11,10 @@ from trusted_router.money import microdollars_to_float
 from trusted_router.types import UsageType
 
 
+class AmbiguousGatewayRequestId(ValueError):
+    """A parent trace contains multiple independently billable authorizations."""
+
+
 def utcnow() -> dt.datetime:
     return dt.datetime.now(dt.UTC).replace(microsecond=0)
 

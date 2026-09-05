@@ -234,6 +234,7 @@ from trusted_router.storage_gcp_io import spanner_rpc_budget
 from trusted_router.storage_gcp_secrets import secret_manager_seed_loader
 from trusted_router.storage_models import (
     SYNTHETIC_APP_NAME,
+    AmbiguousGatewayRequestId,
     AppMarkupPayout,
     CustomModelMarkupPayout,
     GatewayAuthorization,
@@ -718,9 +719,16 @@ def _gateway_authorization_by_gateway_request_id_sync(
             "gateway request id must be rlog_ followed by 32 lowercase hex characters",
             ErrorType.BAD_REQUEST,
         )
-    authorization = STORE.get_gateway_authorization_by_gateway_request_id(
-        gateway_request_id
-    )
+    try:
+        authorization = STORE.get_gateway_authorization_by_gateway_request_id(
+            gateway_request_id
+        )
+    except AmbiguousGatewayRequestId:
+        raise api_error(
+            409,
+            "Multiple authorizations share this trace; look up an authorization ID instead",
+            "ambiguous_gateway_request_id",
+        ) from None
     if authorization is None:
         return JSONResponse(
             {
