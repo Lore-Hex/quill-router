@@ -3,8 +3,11 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import time
 from collections import Counter
 from typing import Any, cast
+
+from google.api_core.exceptions import AlreadyExists, FailedPrecondition, InvalidArgument
 
 from trusted_router.services.settle_outbox_apply import (
     _ACTIVITY_PARK_NOTE,
@@ -24,6 +27,29 @@ logger = logging.getLogger(__name__)
 # forever before an operator takes over.
 _ACTIVITY_REPAIR_MAX_AGE_SECONDS = 6 * 60 * 60
 _REAP_BURST_ALERT_THRESHOLD = 20
+
+# Wall-clock budget for the row loop, below the 300s Cloud Run / Cloud
+# Scheduler request deadline so a slow batch returns a partial result instead
+# of a 504 that hides which rows were resolved. Rows not reached are reported
+# as ``deferred`` and stay leased until the lease lapses.
+_DRAIN_BUDGET_SECONDS = 240.0
+# The claim lease must cover the whole budget (plus the claim pass itself) so a
+# row cannot lose its lease mid-run and be resolved by two workers at once.
+_DRAIN_LEASE_SECONDS = 300
+# Deterministic Spanner rejections (a UNIQUE-index violation, a constraint or
+# schema precondition, a malformed statement) fail identically on every replay
+# until the code or data changes. Parking keeps the row pending (a
+# GUARD_STATUSES member, so the reaper keeps the reservation frozen), does not
+# burn attempts toward dead, and retries after a fix lands without operator
+# SQL. Transient errors keep the attempts-counted exponential backoff.
+_DETERMINISTIC_APPLY_ERRORS: tuple[type[Exception], ...] = (
+    AlreadyExists,
+    FailedPrecondition,
+    InvalidArgument,
+)
+_DETERMINISTIC_PARK_SECONDS = 3600
+
+_monotonic = time.monotonic
 
 # SF7 / §6: the drain fires NONE of the inline post-settle side effects:
 # auto-refill, budget-alert emails, metadata broadcast, or provider-error
@@ -48,16 +74,25 @@ def drain_settle_outbox(
 ) -> dict[str, Any]:
     limit = max(1, min(int(limit), 500))
     outbox = spanner_settle_outbox()
-    rows = outbox.claim(limit=limit)
+    rows = outbox.claim(limit=limit, lease_seconds=_DRAIN_LEASE_SECONDS)
+    deadline = _monotonic() + _DRAIN_BUDGET_SECONDS
     outcomes: Counter[str] = Counter()
     recovered_micro = 0
+    deferred = 0
 
     for row in rows:
+        if _monotonic() >= deadline:
+            # Out of budget: leave the row leased and untouched. Its lease
+            # outlives this request, so the next tick reclaims it cleanly.
+            deferred += 1
+            continue
         error_note: str | None = None
+        apply_error: Exception | None = None
         try:
             outcome = apply_frozen_settle(row)
         except Exception as exc:  # noqa: BLE001 - generic drain handler; apply classifies known errors.
             outcome = ApplyOutcome.ERROR
+            apply_error = exc
             error_note = f"{type(exc).__name__}: {exc}"
             logger.exception(
                 "settle outbox apply failed authorization_id=%s intent_kind=%s",
@@ -66,7 +101,7 @@ def drain_settle_outbox(
             )
         outcomes[outcome] += 1
         try:
-            _resolve_row(outbox, row, outcome, error_note=error_note)
+            _resolve_row(outbox, row, outcome, error_note=error_note, apply_error=apply_error)
         except Exception:  # noqa: BLE001 - keep one bad row from aborting the batch.
             # A Spanner blip during resolve must not abort the batch; unresolved
             # rows stay leased and are reclaimed after lease expiry.
@@ -133,12 +168,21 @@ def drain_settle_outbox(
             tags={"reaped_count": str(reap_result.count)},
         )
 
+    if deferred:
+        logger.warning(
+            "settle outbox drain budget exhausted claimed=%s deferred=%s budget_seconds=%s",
+            len(rows),
+            deferred,
+            _DRAIN_BUDGET_SECONDS,
+        )
+
     return {
         "claimed": len(rows),
         "outcomes": dict(outcomes),
         "recovered_micro": recovered_micro,
         "purged": purged,
         "reaped": reap_result.count,
+        "deferred": deferred,
     }
 
 
@@ -148,6 +192,7 @@ def _resolve_row(
     outcome: str,
     *,
     error_note: str | None,
+    apply_error: Exception | None = None,
 ) -> None:
     lease_owner = row.lease_owner
     # Benign done transitions may ignore a lost fence: the winner re-runs the
@@ -409,6 +454,26 @@ def _resolve_row(
         return
 
     if outcome == ApplyOutcome.ERROR:
+        if apply_error is not None and isinstance(apply_error, _DETERMINISTIC_APPLY_ERRORS):
+            # Replaying a transaction that Spanner rejects deterministically
+            # burns the drain's budget (each replay re-takes and re-orphans
+            # the same locks) and walks the row toward dead in 8 ticks. Park
+            # it: status stays 'pending' (hold frozen), attempts unchanged.
+            outbox.park(
+                row.authorization_id,
+                row.intent_kind,
+                lease_owner=lease_owner,
+                retry_after_seconds=_DETERMINISTIC_PARK_SECONDS,
+                note=error_note or "apply_frozen_settle error",
+            )
+            logger.warning(
+                "settle outbox parked deterministic apply error authorization_id=%s "
+                "intent_kind=%s error=%s",
+                row.authorization_id,
+                row.intent_kind,
+                type(apply_error).__name__,
+            )
+            return
         status = outbox.mark(
             row.authorization_id,
             row.intent_kind,

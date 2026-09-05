@@ -10,9 +10,15 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from google.api_core.exceptions import DeadlineExceeded
+from google.api_core.exceptions import DeadlineExceeded, InvalidArgument
 
-from tests.fakes.spanner import _FakeTransaction, make_fake_store
+from tests.fakes.spanner import (
+    FakeAborted,
+    FakeAlreadyExists,
+    FakeFailedPrecondition,
+    _FakeTransaction,
+    make_fake_store,
+)
 from trusted_router.app_markup_billing import (
     APP_MARKUP_PAYOUT_SETTLE_FIELD,
     app_markup_microdollars_from_charge,
@@ -2189,7 +2195,14 @@ def test_drain_leaves_terminal_rows_for_spanner_ttl(
 
     result = drain_mod.drain_settle_outbox(10)
 
-    assert result == {"claimed": 0, "outcomes": {}, "recovered_micro": 0, "purged": 0, "reaped": 0}
+    assert result == {
+        "claimed": 0,
+        "outcomes": {},
+        "recovered_micro": 0,
+        "purged": 0,
+        "reaped": 0,
+        "deferred": 0,
+    }
     assert ob.get("gwa-old-done-a", "settle").status == "done"
     assert ob.get("gwa-old-done-b", "settle").status == "done"
     assert ob.get("gwa-fresh-done", "settle").status == "done"
@@ -2381,8 +2394,9 @@ def test_drain_clamps_limit_to_500(
     class SpyOutbox:
         seen_limit: int | None = None
 
-        def claim(self, *, limit: int) -> list[SettleOutboxRow]:
+        def claim(self, *, limit: int, lease_seconds: int = 60) -> list[SettleOutboxRow]:
             self.seen_limit = limit
+            self.seen_lease_seconds = lease_seconds
             return []
 
         def purge_done(self) -> int:
@@ -2394,7 +2408,144 @@ def test_drain_clamps_limit_to_500(
     result = drain_mod.drain_settle_outbox(99_999)
 
     assert spy.seen_limit == 500
-    assert result == {"claimed": 0, "outcomes": {}, "recovered_micro": 0, "purged": 0, "reaped": 0}
+    # F2(b): a claimed row must keep its lease for the whole row-loop budget.
+    assert spy.seen_lease_seconds >= drain_mod._DRAIN_BUDGET_SECONDS
+    assert result == {
+        "claimed": 0,
+        "outcomes": {},
+        "recovered_micro": 0,
+        "purged": 0,
+        "reaped": 0,
+        "deferred": 0,
+    }
+
+
+def _parse_iso(text: str | None) -> dt.datetime:
+    assert text is not None
+    return dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+
+
+# --- Drain hygiene (2026-09-05 shared-trace settlement convoy, F2) ----------
+#
+# A deterministic Spanner rejection (the #1067 UNIQUE-index AlreadyExists) was
+# replayed by the drain 8 ticks per row, each replay re-taking and orphaning the
+# same hot-row locks for ~16s, until the 300s request deadline killed the pass.
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        FakeAlreadyExists("tr_gateway_authorization_by_gateway_request_id"),
+        FakeFailedPrecondition("column does not allow commit timestamp"),
+        InvalidArgument("malformed statement"),
+    ],
+    ids=["already_exists", "failed_precondition", "invalid_argument"],
+)
+def test_deterministic_apply_error_parks_without_burning_attempts(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    store, _db, _bt = fake_store
+    ob = _outbox(store)
+    auth = _bare_authorization("gwa-deterministic-error")
+    ob.enqueue(_row(auth))
+
+    def rejected_apply(row: SettleOutboxRow) -> str:
+        raise error
+
+    monkeypatch.setattr(drain_mod, "apply_frozen_settle", rejected_apply)
+    before = dt.datetime.now(dt.UTC).replace(microsecond=0)
+
+    result = drain_mod.drain_settle_outbox(10)
+
+    assert result["claimed"] == 1
+    assert result["outcomes"] == {ApplyOutcome.ERROR: 1}
+    row = ob.get(auth.id, "settle")
+    assert row is not None
+    # Parked, not failed: still pending (GUARD_STATUSES, so the reaper keeps
+    # the reservation frozen), attempts untouched, lease released, retry in 1h.
+    assert row.status == "pending"
+    assert row.attempts == 0
+    assert row.lease_owner is None and row.leased_until is None
+    assert row.last_error is not None
+    assert row.last_error.startswith(f"{type(error).__name__}: ")
+    assert _parse_iso(row.next_attempt_at) >= before + dt.timedelta(seconds=3600)
+    assert ob.has_intent(auth.id)
+
+
+def test_transient_apply_error_keeps_the_attempt_counted_backoff(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, _db, _bt = fake_store
+    ob = _outbox(store)
+    auth = _bare_authorization("gwa-transient-error")
+    ob.enqueue(_row(auth))
+
+    def aborted_apply(row: SettleOutboxRow) -> str:
+        raise FakeAborted("commit aborted")
+
+    monkeypatch.setattr(drain_mod, "apply_frozen_settle", aborted_apply)
+    before = dt.datetime.now(dt.UTC).replace(microsecond=0)
+
+    result = drain_mod.drain_settle_outbox(10)
+
+    assert result["outcomes"] == {ApplyOutcome.ERROR: 1}
+    row = ob.get(auth.id, "settle")
+    assert row is not None
+    assert row.status == "pending"
+    assert row.attempts == 1
+    assert row.lease_owner is None
+    assert row.last_error is not None and row.last_error.startswith("FakeAborted: ")
+    # 2^(attempts-1) = 1s backoff, not the deterministic-error park.
+    next_at = _parse_iso(row.next_attempt_at)
+    assert before + dt.timedelta(seconds=1) <= next_at <= before + dt.timedelta(seconds=5)
+
+
+def test_drain_stops_at_its_wall_clock_budget_and_reports_deferred(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, _db, _bt = fake_store
+    ob = _outbox(store)
+    auths = [_bare_authorization(f"gwa-budget-{index:02d}") for index in range(10)]
+    for auth in auths:
+        ob.enqueue(_row(auth))
+    clock = {"now": 1_000.0}
+    monkeypatch.setattr(drain_mod, "_monotonic", lambda: clock["now"])
+    monkeypatch.setattr(drain_mod, "_DRAIN_BUDGET_SECONDS", 240.0)
+    applied: list[str] = []
+
+    def slow_apply(row: SettleOutboxRow) -> str:
+        clock["now"] += 100.0
+        applied.append(row.authorization_id)
+        return ApplyOutcome.SETTLED_NOW
+
+    monkeypatch.setattr(drain_mod, "apply_frozen_settle", slow_apply)
+    claimed_at = dt.datetime.now(dt.UTC)
+
+    result = drain_mod.drain_settle_outbox(10)
+
+    assert result["claimed"] == 10
+    assert result["deferred"] == 7
+    assert result["outcomes"] == {ApplyOutcome.SETTLED_NOW: 3}
+    assert len(applied) == 3
+    for auth in auths:
+        row = ob.get(auth.id, "settle")
+        assert row is not None
+        if auth.id in applied:
+            assert row.status == "done"
+            continue
+        # Untouched: still pending, still leased, lease still valid for the
+        # rest of the budget so no second worker can claim it mid-run.
+        assert row.status == "pending"
+        assert row.attempts == 0
+        assert row.lease_owner is not None
+        assert _parse_iso(row.leased_until) >= claimed_at + dt.timedelta(
+            seconds=drain_mod._DRAIN_BUDGET_SECONDS - 1
+        )
+    assert result["recovered_micro"] == 3 * 777_777
 
 
 def test_drain_endpoint_requires_internal_token(fake_store: tuple[Any, Any, Any]) -> None:
@@ -2421,6 +2572,7 @@ def test_drain_endpoint_requires_internal_token(fake_store: tuple[Any, Any, Any]
         "recovered_micro": 0,
         "purged": 0,
         "reaped": 0,
+        "deferred": 0,
     }
 
 
