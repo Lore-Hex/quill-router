@@ -1434,46 +1434,6 @@ def typed_finalize_atomic(
             if rewritten != 1:
                 raise _SettleError("corrective settle-outbox rewrite lost its lease fence")
 
-        missing_key_releases = []
-        key_count, warning = _release_key_or_skip_deleted(
-            transaction, pt, res, book_actual, book_to_byok=book_to_byok
-        )
-        if warning is not None:
-            missing_key_releases.append(warning)
-        if res["key_reserved_micro"] > 0 and key_count != 1:
-            raise _SettleError("key release row-count != 1")
-
-        if res["credit_reserved_micro"] > 0:
-            credit_actual = book_actual if settled_usage_type == "Credits" else 0
-            credit_count = release_credit(
-                transaction,
-                pt,
-                res["workspace_id"],
-                res["credit_reserved_micro"],
-                credit_actual,
-                shard=res["credit_shard"],
-            )
-            if credit_count != 1:
-                raise _SettleError("credit release row-count != 1")
-        elif regional_hold_unknown and res.get("hold_usage_type") == "RegionalCredits":
-            # The regional grant already reserved this money, but a historical
-            # stale-CAS overwrite can leave no per-request Bigtable hold for the
-            # reconciler to import. Charge against the reservation's atomic
-            # claim without releasing the still-bounded lease grant. Closing
-            # reconciliation later releases that grant as unused, leaving this
-            # direct charge as the single durable booking.
-            credit_actual = book_actual if settled_usage_type == "Credits" else 0
-            credit_count = release_credit(
-                transaction,
-                pt,
-                res["workspace_id"],
-                0,
-                credit_actual,
-                shard=res["credit_shard"],
-            )
-            if credit_count != 1:
-                raise _SettleError("regional fallback credit booking row-count != 1")
-
         if success and user_model_payout is not None and user_model_payout.amount_microdollars > 0:
             # Deliberately NOT wrapped in a swallow. The payout is two DML
             # statements in this same transaction; a failure between them
@@ -1575,6 +1535,54 @@ def typed_finalize_atomic(
                 )
         if marked != 1:
             raise _SettleError("gateway_authorization update row-count != 1")
+
+        # Hot-row releases LAST, in the SAME transaction (never split: separating
+        # claim_reservation(settled=true) from these releases opens a crash
+        # window that strands a settled reservation's hold or double-releases
+        # on retry). tr_key_limit / tr_credit_balance are the rows every
+        # concurrent settle of one key/workspace serializes on; taking their
+        # Exclusive locks after the authorization, outbox, generation and
+        # activity writes holds them for ~2 RPCs + commit instead of ~12 RPCs +
+        # commit. The `!= 1` raises still abort the whole transaction.
+        missing_key_releases = []
+        key_count, warning = _release_key_or_skip_deleted(
+            transaction, pt, res, book_actual, book_to_byok=book_to_byok
+        )
+        if warning is not None:
+            missing_key_releases.append(warning)
+        if res["key_reserved_micro"] > 0 and key_count != 1:
+            raise _SettleError("key release row-count != 1")
+
+        if res["credit_reserved_micro"] > 0:
+            credit_actual = book_actual if settled_usage_type == "Credits" else 0
+            credit_count = release_credit(
+                transaction,
+                pt,
+                res["workspace_id"],
+                res["credit_reserved_micro"],
+                credit_actual,
+                shard=res["credit_shard"],
+            )
+            if credit_count != 1:
+                raise _SettleError("credit release row-count != 1")
+        elif regional_hold_unknown and res.get("hold_usage_type") == "RegionalCredits":
+            # The regional grant already reserved this money, but a historical
+            # stale-CAS overwrite can leave no per-request Bigtable hold for the
+            # reconciler to import. Charge against the reservation's atomic
+            # claim without releasing the still-bounded lease grant. Closing
+            # reconciliation later releases that grant as unused, leaving this
+            # direct charge as the single durable booking.
+            credit_actual = book_actual if settled_usage_type == "Credits" else 0
+            credit_count = release_credit(
+                transaction,
+                pt,
+                res["workspace_id"],
+                0,
+                credit_actual,
+                shard=res["credit_shard"],
+            )
+            if credit_count != 1:
+                raise _SettleError("regional fallback credit booking row-count != 1")
         return {
             "outcome": SettleOutcome.SETTLED,
             "missing_key_releases": missing_key_releases,

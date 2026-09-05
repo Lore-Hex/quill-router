@@ -329,7 +329,14 @@ def release_credit(
             param_types,
             workspace_id=workspace_id,
             amount_micro=free,
-            shard_count=_credit_shard_count_from_rows(transaction, param_types, workspace_id),
+            # Lazy on purpose (#1071 follow-up): the shard-set read takes
+            # ReaderShared on EVERY credit shard while this transaction holds
+            # Exclusive on one of them — the cross-shard X-on-mine/S-on-yours
+            # wait that defeats credit sharding — and costs one RPC per
+            # settle. absorb only needs it when a payment claim exists.
+            shard_count=lambda: _credit_shard_count_from_rows(
+                transaction, param_types, workspace_id
+            ),
             now=datetime.now(UTC),
             read_entity_tx=None,
             write_entity_tx=None,

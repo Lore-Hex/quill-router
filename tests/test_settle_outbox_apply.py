@@ -16,7 +16,7 @@ from google.api_core.exceptions import (
     ServiceUnavailable,
 )
 
-from tests.fakes.spanner import make_fake_store
+from tests.fakes.spanner import _FakeTransaction, make_fake_store
 from trusted_router.app_markup_billing import (
     APP_MARKUP_APP_ID_SETTLE_FIELD,
     APP_MARKUP_OWNER_SETTLE_FIELD,
@@ -1612,3 +1612,95 @@ def test_error_outcome_passthrough(
     assert store.get_gateway_authorization(auth.id).settled is False
     assert _typed_credit(db, ws)["total_usage"] == 0
     assert _typed_credit(db, ws)["reserved"] == ESTIMATE
+
+
+# --- Hot-row hold inside typed_finalize_atomic (2026-09-05 convoy, F3) -------
+#
+# Every concurrent settle of one key / workspace serializes on tr_key_limit and
+# tr_credit_balance. The releases must be the LAST statements of the finalize
+# transaction (never a separate transaction), so those Exclusive locks are held
+# for ~2 RPCs + commit rather than across the authorization, outbox,
+# generation and activity writes.
+
+
+def _statement_spy(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, str]]:
+    calls: list[tuple[int, str]] = []
+    next_txn = 0
+
+    def txn_number(transaction: Any) -> int:
+        nonlocal next_txn
+        if "_spy_txn" not in transaction.__dict__:
+            transaction.__dict__["_spy_txn"] = next_txn
+            next_txn += 1
+        return int(transaction.__dict__["_spy_txn"])
+
+    original_sql = _FakeTransaction.execute_sql
+    original_update = _FakeTransaction.execute_update
+
+    def spy_sql(self: Any, sql: str, **kwargs: Any) -> Any:
+        calls.append((txn_number(self), sql))
+        return original_sql(self, sql, **kwargs)
+
+    def spy_update(self: Any, sql: str, **kwargs: Any) -> int:
+        calls.append((txn_number(self), sql))
+        return original_update(self, sql, **kwargs)
+
+    monkeypatch.setattr(_FakeTransaction, "execute_sql", spy_sql)
+    monkeypatch.setattr(_FakeTransaction, "execute_update", spy_update)
+    return calls
+
+
+def test_typed_finalize_releases_hot_rows_last_in_the_same_transaction(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, db, _bt = fake_store
+    ws = "ws_finalize_lock_order"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    calls = _statement_spy(monkeypatch)
+
+    assert apply_frozen_settle(_row(auth, cost=777_777)) == ApplyOutcome.SETTLED_NOW
+
+    finalize_txns = {
+        txn for txn, sql in calls if sql.startswith("UPDATE tr_reservation SET settled=true")
+    }
+    assert len(finalize_txns) == 1, "exactly one finalize transaction claimed the reservation"
+    [finalize_txn] = finalize_txns
+    statements = [sql for txn, sql in calls if txn == finalize_txn]
+    key_release = next(
+        i for i, sql in enumerate(statements) if sql.startswith("UPDATE tr_key_limit")
+    )
+    credit_release = next(
+        i for i, sql in enumerate(statements) if sql.startswith("UPDATE tr_credit_balance")
+    )
+    # Key then credit (unchanged lock order), both in the SAME transaction as
+    # the claim, after every other write of that transaction: the
+    # authorization mark, and (when enabled) the outbox done-mark, generation
+    # record and activity intent all precede the first hot-row lock.
+    assert key_release < credit_release
+    before = statements[:key_release]
+    assert any(sql.startswith("UPDATE tr_gateway_authorization SET settled=true") for sql in before)
+    assert not any("tr_key_limit" in sql or "tr_credit_balance" in sql for sql in before)
+    # From the first hot-row lock to commit: only the releases themselves
+    # (release_key's fast/slow UPDATE pair, then the credit release) plus the
+    # single tr_trust_event debt-indicator read. No other statement may ride
+    # inside the hold. (Restoring the old order puts ~8 statements here.)
+    after_first_release = statements[key_release + 1 :]
+    releases = [
+        sql
+        for sql in after_first_release
+        if sql.startswith(("UPDATE tr_key_limit", "UPDATE tr_credit_balance"))
+    ]
+    reads = [sql for sql in after_first_release if "FROM tr_trust_event" in sql]
+    assert len(releases) + len(reads) == len(after_first_release), after_first_release
+    assert len(reads) <= 1
+    assert releases[-1] == statements[credit_release], "credit release is the last DML"
+    assert len(statements[credit_release + 1 :]) <= 1
+    # Money unchanged by the reorder.
+    assert _typed_credit(db, ws)["total_usage"] == 777_777
+    assert _typed_credit(db, ws)["reserved"] == 0
+    assert _typed_key(db, key.hash)["reserved"] == 0
+    assert db.reservations[auth.credit_reservation_id]["settled"] is True
+    assert store.get_gateway_authorization(auth.id).settled is True

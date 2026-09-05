@@ -5,6 +5,7 @@ from collections.abc import Callable
 import pytest
 from google.api_core.exceptions import (
     Aborted,
+    AlreadyExists,
     DeadlineExceeded,
     InternalServerError,
     ResourceExhausted,
@@ -12,6 +13,8 @@ from google.api_core.exceptions import (
 )
 from google.api_core.retry import Retry, if_exception_type
 
+from tests.fakes.spanner import FakeAborted, FakeAlreadyExists
+from trusted_router import storage_gcp_io as io_mod
 from trusted_router.storage_gcp_io import (
     TXN_BUDGET_SECONDS,
     configure_spanner_rpc_deadlines,
@@ -216,6 +219,122 @@ def test_non_aborted_exceptions_are_not_retried(monkeypatch: pytest.MonkeyPatch)
         with pytest.raises(type(exc)):
             run_in_transaction_with_retry(database, _txn, attempts=5)
         assert database.calls == 1
+
+
+class _RollbackTrackingTransaction:
+    def __init__(self, *, rollback_error: Exception | None = None) -> None:
+        self.rollbacks = 0
+        self.rollback_deadlines: list[float | None] = []
+        self._rollback_error = rollback_error
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
+        self.rollback_deadlines.append(io_mod._SPANNER_RPC_DEADLINE.get())
+        if self._rollback_error is not None:
+            raise self._rollback_error
+
+
+class _CallbackDatabase:
+    """Hands the callback a transaction the way ``Session.run_in_transaction``
+    does, and — like both the real client and the test fake — re-invokes the
+    callback on an abort. It never rolls back itself: the real client skips
+    rollback on GoogleAPICallError, which is exactly the gap under test."""
+
+    def __init__(self, *, rollback_error: Exception | None = None) -> None:
+        self.calls = 0
+        self.transactions: list[_RollbackTrackingTransaction] = []
+        self._rollback_error = rollback_error
+
+    def run_in_transaction(
+        self,
+        func: Callable[..., str],
+        *,
+        timeout_secs: float | None = None,
+        transaction_tag: str | None = None,
+    ) -> str:
+        while True:
+            self.calls += 1
+            txn = _RollbackTrackingTransaction(rollback_error=self._rollback_error)
+            self.transactions.append(txn)
+            try:
+                return func(txn)
+            except (FakeAborted, Aborted):
+                continue
+
+
+def test_api_call_error_rolls_back_the_transaction_exactly_once() -> None:
+    boom = FakeAlreadyExists("tr_gateway_authorization_by_gateway_request_id")
+
+    def failing(_transaction: object) -> str:
+        raise boom
+
+    database = _CallbackDatabase()
+    with pytest.raises(AlreadyExists) as excinfo:
+        run_in_transaction_with_retry(database, failing, attempts=5)
+
+    assert excinfo.value is boom, "the API error must propagate unchanged"
+    assert database.calls == 1, "a deterministic API error is never retried"
+    [txn] = database.transactions
+    assert txn.rollbacks == 1
+
+
+def test_rollback_failure_never_masks_the_original_api_error() -> None:
+    boom = FakeAlreadyExists("duplicate")
+
+    def failing(_transaction: object) -> str:
+        raise boom
+
+    # Real Transaction.rollback raises ValueError when the transaction was
+    # never begun; a best-effort rollback must swallow that and re-raise boom.
+    database = _CallbackDatabase(rollback_error=ValueError("Transaction is not begun"))
+    with pytest.raises(AlreadyExists) as excinfo:
+        run_in_transaction_with_retry(database, failing, attempts=5)
+    assert excinfo.value is boom
+    assert database.transactions[0].rollbacks == 1
+
+
+@pytest.mark.parametrize("abort", [FakeAborted("fake abort"), Aborted("spanner aborted")])
+def test_aborted_is_left_to_the_client_retry_without_rollback(abort: Exception) -> None:
+    outcomes = iter([abort, None])
+
+    def flaky(_transaction: object) -> str:
+        exc = next(outcomes)
+        if exc is not None:
+            raise exc
+        return "ok"
+
+    database = _CallbackDatabase()
+    assert run_in_transaction_with_retry(database, flaky, attempts=5) == "ok"
+    assert database.calls == 2, "the client-side retry re-ran the callback"
+    assert [txn.rollbacks for txn in database.transactions] == [0, 0]
+
+
+def test_rollback_gets_a_deadline_floor_after_the_budget_is_spent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The failing statement usually exhausted the shared RPC budget; the
+    bounded rollback RPC must still get a positive deadline or the locks stay
+    held for Spanner's idle reap."""
+    clock = _Clock()
+    _install_clock(monkeypatch, clock)
+
+    def failing(_transaction: object) -> str:
+        raise FakeAlreadyExists("duplicate")
+
+    database = _CallbackDatabase()
+    spent = clock.now - 1.0
+    token = io_mod._SPANNER_RPC_DEADLINE.set(spent)
+    try:
+        with pytest.raises(AlreadyExists):
+            run_in_transaction_with_retry(database, failing, attempts=5)
+        # The floor is scoped to the rollback RPC; the caller's budget is untouched.
+        assert io_mod._SPANNER_RPC_DEADLINE.get() == spent
+    finally:
+        io_mod._SPANNER_RPC_DEADLINE.reset(token)
+    [txn] = database.transactions
+    [deadline] = txn.rollback_deadlines
+    assert deadline is not None
+    assert deadline >= clock.now + io_mod._ROLLBACK_FLOOR_SECONDS - 1e-9
 
 
 def test_aborted_retries_then_succeeds_within_budget(monkeypatch: pytest.MonkeyPatch) -> None:

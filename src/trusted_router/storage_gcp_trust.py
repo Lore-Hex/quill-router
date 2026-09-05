@@ -259,12 +259,18 @@ def absorb_unrecovered_recovery_tx(
     *,
     workspace_id: str,
     amount_micro: int,
-    shard_count: int,
+    shard_count: int | Callable[[], int],
     now: dt.datetime,
     read_entity_tx: Callable[..., Any] | None,
     write_entity_tx: Callable[..., Any] | None,
 ) -> int:
-    """Move later credit into oldest payment claims; return amount absorbed."""
+    """Move later credit into oldest payment claims; return amount absorbed.
+
+    ``shard_count`` may be a callable so a caller inside a hot settle
+    transaction pays for the all-shard read only when a payment claim exists;
+    workspaces with no payment debt (the common case) never take those
+    ReaderShared locks.
+    """
 
     remaining = max(0, int(amount_micro))
     rows = list(
@@ -278,6 +284,7 @@ def absorb_unrecovered_recovery_tx(
     )
     if not rows:
         return 0
+    resolved_shard_count = shard_count() if callable(shard_count) else int(shard_count)
     absorbed = 0
     for raw in rows:
         if remaining == 0:
@@ -323,7 +330,7 @@ def absorb_unrecovered_recovery_tx(
         transaction,
         param_types,
         workspace_id=workspace_id,
-        shard_count=shard_count,
+        shard_count=resolved_shard_count,
         paused=still_unrecovered,
         now=now,
         read_entity_tx=read_entity_tx,
