@@ -208,6 +208,47 @@ def test_binding_settings_requires_issuance() -> None:
     assert settings.spend_lease_issuance_enabled is True
 
 
+def test_binding_settings_env_rejects_empty_app_profiles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TR_SPEND_LEASE_BINDING_ENABLED", "true")
+    monkeypatch.setenv("TR_SPEND_LEASE_BIGTABLE_APP_PROFILES", "")
+
+    with pytest.raises(
+        ValueError,
+        match="TR_SPEND_LEASE_BINDING_ENABLED requires TR_SPEND_LEASE_BIGTABLE_APP_PROFILES",
+    ):
+        Settings(
+            environment="test",
+            spend_lease_issuance_enabled=True,
+            spend_lease_pilot_workspace_ids="workspace-1",
+            spend_lease_signing_secret_name="projects/test/secrets/spend-lease",  # noqa: S106
+            operational_analytics_sink="direct",
+        )
+
+
+def test_binding_settings_env_accepts_configured_app_profiles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TR_SPEND_LEASE_BINDING_ENABLED", "true")
+    monkeypatch.setenv(
+        "TR_SPEND_LEASE_BIGTABLE_APP_PROFILES", "us-central1=tr-spend-us-central1",
+    )
+
+    settings = Settings(
+        environment="test",
+        spend_lease_issuance_enabled=True,
+        spend_lease_pilot_workspace_ids="workspace-1",
+        spend_lease_signing_secret_name="projects/test/secrets/spend-lease",  # noqa: S106
+        operational_analytics_sink="direct",
+    )
+
+    assert settings.spend_lease_binding_enabled is True
+    assert settings.spend_lease_bigtable_app_profile_map == {
+        "us-central1": "tr-spend-us-central1",
+    }
+
+
 @pytest.mark.parametrize("profiles", ["", "   ", " , , "])
 @pytest.mark.parametrize("binding_enabled", [False, True])
 def test_binding_settings_requires_nonempty_app_profile_map(
