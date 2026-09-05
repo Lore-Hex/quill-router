@@ -2358,7 +2358,7 @@ def _jwt(payload: dict[str, Any]) -> bytes:
     return f"header.{body}.signature".encode()
 
 
-def test_configured_targets_include_primary_regional_gateway() -> None:
+def test_configured_targets_include_primary_gateway_and_ignore_retired_enclave() -> None:
     from trusted_router.synthetic.probes import configured_targets
 
     settings = Settings(
@@ -2383,14 +2383,28 @@ def test_configured_targets_include_primary_regional_gateway() -> None:
     assert by_name["europe-west4"].api_base_url == (
         "https://api-europe-west4.quillrouter.com/v1"
     )
-    assert by_name["southamerica-east1"].api_base_url == (
-        "https://api-southamerica-east1.quillrouter.com/v1"
-    )
+    assert "southamerica-east1" not in by_name
+    assert set(by_name) == {"canonical", "us-central1", "us-east4", "europe-west4"}
     assert all(
         target.control_plane_url is None
         for name, target in by_name.items()
         if name != "canonical"
     )
+
+
+def test_stale_pinned_gcp_gateway_targets_use_enclave_inventory() -> None:
+    from trusted_router.enclave_regions import ENCLAVE_REGIONS
+    from trusted_router.synthetic.probes import configured_targets
+
+    settings = Settings(
+        environment="test",
+        synthetic_gateway_region_targets=(
+            "us-east4=live.example,southamerica-east1=retired.example"
+        ),
+    )
+    pinned = [target for target in configured_targets(settings) if target.connect_host]
+    assert [target.name for target in pinned] == ["us-east4"]
+    assert all(target.region in ENCLAVE_REGIONS for target in pinned)
 
 
 def test_status_components_include_all_warm_regional_gateways() -> None:

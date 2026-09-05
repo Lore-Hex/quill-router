@@ -21,8 +21,13 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
+
+# Keep direct script execution independent of an installed router package.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from trusted_router.enclave_regions import ENCLAVE_REGIONS  # noqa: E402
 
 # (provider_slug, model_id) — picks one canonical-routed model per
 # provider that should always be available on the keyed credential.
@@ -65,9 +70,7 @@ PROBES: list[tuple[str, str]] = [
 # whichever region was geographically closest to the smoke client,
 # which left other regions un-monitored.
 #
-# Regions are listed in the same order as TR_REGIONS in
-# scripts/deploy/_lib.sh — the source of truth for "which regions
-# are configured."
+# Region membership comes from trusted_router.enclave_regions.
 #
 # Caveats per region:
 #   - us-central1: this is the primary region. The canonical hostname
@@ -81,26 +84,17 @@ PROBES: list[tuple[str, str]] = [
 #     running instance. If the MIG is at targetSize=0 the smoke will
 #     fail TLS for this region — that's a deployment-state signal,
 #     not a smoke bug. Resize the MIG and re-probe.
-#   - asia-northeast1, asia-southeast1: control-plane only (no enclave
-#     MIG by design). They serve
-#     authorize/settle from local Cloud Run instances but the
-#     inference path lands on the closest warm enclave. The smoke
-#     skips the enclave probe for these regions; the synthetic
-#     monitor's separate /health probe via Cloud Run direct URLs
-#     covers the control-plane health for them.
+# Control-plane-only regions have no entry in this gateway inventory.
 REGIONS = {
-    "us-central1": "https://api.trustedrouter.com",
-    "europe-west4": "https://api-europe-west4.quillrouter.com",
-    "us-east4": "https://api-us-east4.quillrouter.com",
-    # Aliases preserved for backward-compat with operator muscle memory.
-    "us": "https://api.trustedrouter.com",
-    "europe": "https://api-europe-west4.quillrouter.com",
+    region: (
+        "https://api.trustedrouter.com"
+        if region == "us-central1"
+        else f"https://api-{region}.quillrouter.com"
+    )
+    for region in ENCLAVE_REGIONS
 }
-
-# Regions that have a regional enclave MIG. The smoke iterates these
-# by default; the aliases above are accepted via --regions for legacy
-# callers but produce duplicate probes against the same backend.
-ENCLAVE_REGIONS = ("us-central1", "europe-west4", "us-east4")
+# Aliases preserved for backward-compat with operator muscle memory.
+REGIONS.update(us=REGIONS["us-central1"], europe=REGIONS["europe-west4"])
 
 
 @dataclass
@@ -194,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
         nargs="+",
         default=list(ENCLAVE_REGIONS),
         help="Regions to probe. Default: all enclave-capable regions "
-        "(us-central1, europe-west4, us-east4). Pass legacy "
+        f"({', '.join(ENCLAVE_REGIONS)}). Pass legacy "
         "aliases ('us', 'europe') if you want the old behavior.",
     )
     parser.add_argument(

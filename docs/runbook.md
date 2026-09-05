@@ -1389,13 +1389,13 @@ for prov, n in sorted(c.items(), key=lambda kv: -kv[1]):
 "
 ```
 
-Per-region MIG status (GCP enclave):
+Per-region MIG status (GCP enclave). São Paulo’s enclave MIG is retired; its
+`southamerica-east1` Cloud Run control plane remains live and deployed:
 ```bash
 for entry in \
   us-central1:quill-enclave-mig-us \
   us-east4:quill-enclave-mig-useast4 \
-  europe-west4:quill-enclave-mig-eu \
-  southamerica-east1:quill-enclave-mig-sa; do
+  europe-west4:quill-enclave-mig-eu; do
   region=${entry%%:*}
   mig=${entry#*:}
   echo "=== ${region} ==="
