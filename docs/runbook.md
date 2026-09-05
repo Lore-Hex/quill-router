@@ -702,7 +702,9 @@ gcloud scheduler jobs resume trusted-router-settle-outbox-drain \
 
 Every 5 min it POSTs
 `/v1/internal/gateway/settle-outbox/drain?limit=100` with the internal-token
-header and returns `{claimed, outcomes, recovered_micro, purged, reaped}`. It also
+header and returns `{claimed, outcomes, recovered_micro, purged, reaped, deferred}`
+(`deferred` counts claimed rows left leased and untouched because the pass hit
+its 240s wall-clock budget; the next tick reclaims them after the lease lapses). It also
 purges `done` rows older than 30 days; it never purges `pending`, `dead`, or
 `release_approved`. The drain also reclaims expired abandoned reservation holds
 (limit 200/tick); frozen `pending`/`dead`-guarded holds are never reaped.

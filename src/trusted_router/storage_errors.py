@@ -122,9 +122,7 @@ def _postgres_error_types() -> tuple[tuple[type[Exception], ...], tuple[type[Exc
         psycopg.InterfaceError,
         psycopg.OperationalError,
     )
-    conflict: tuple[type[Exception], ...] = (
-        psycopg.errors.SerializationFailure,
-    )
+    conflict: tuple[type[Exception], ...] = (psycopg.errors.SerializationFailure,)
     return (transient, conflict)
 
 
@@ -166,6 +164,39 @@ def is_transient_store_error(exc: BaseException) -> bool:
 def is_conflict_error(exc: BaseException) -> bool:
     """True when the transaction lost a write conflict and may be replayed."""
     return isinstance(exc, conflict_store_error_types())
+
+
+@lru_cache(maxsize=1)
+def deterministic_store_error_types() -> tuple[type[Exception], ...]:
+    """Types meaning "this statement will fail the same way every time".
+
+    The FOURTH question: a drain replaying a transaction that the store rejects
+    deterministically (a duplicate key, a failed precondition, a malformed
+    statement) burns its budget re-taking and re-orphaning the same locks and
+    walks the row toward dead. The right response is to park the row for an
+    operator, not to back off and try again. Transient faults and conflicts are
+    deliberately excluded: those are retried by `is_transient_store_error` /
+    `is_conflict_error`.
+    """
+    types: list[type[Exception]] = []
+    try:
+        from google.api_core.exceptions import AlreadyExists, FailedPrecondition, InvalidArgument
+    except ImportError:  # pragma: no cover - only hit without GCP deps
+        pass
+    else:
+        types.extend((AlreadyExists, FailedPrecondition, InvalidArgument))
+    try:
+        import psycopg
+    except ImportError:  # pragma: no cover - only hit without Postgres deps
+        pass
+    else:
+        types.extend((psycopg.errors.IntegrityError, psycopg.errors.SyntaxError))
+    return tuple(types)
+
+
+def is_deterministic_store_error(exc: BaseException) -> bool:
+    """True when replaying the same statement can only fail identically."""
+    return isinstance(exc, deterministic_store_error_types())
 
 
 @lru_cache(maxsize=1)

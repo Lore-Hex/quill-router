@@ -453,6 +453,12 @@ ENV_VARS=(
   "TR_SPANNER_INSTANCE_ID=$(legacy_env_required TR_SPANNER_INSTANCE_ID)"
   "TR_SPANNER_DATABASE_ID=$(legacy_env_required TR_SPANNER_DATABASE_ID)"
   "TR_SPANNER_POOL_SIZE=$(legacy_env_required TR_SPANNER_POOL_SIZE)"
+  # Pin the Spanner client's read-write session model explicitly (the 3.69
+  # client defaults this to true). An orphaned read-write transaction on a
+  # multiplexed session is not invalidated by the session's next transaction,
+  # so run_in_transaction_with_retry rolls back deterministic API failures
+  # itself (storage_gcp_io.py). Keep this a decision, not a client default.
+  "GOOGLE_CLOUD_SPANNER_MULTIPLEXED_SESSIONS_FOR_RW=true"
   "TR_BIGTABLE_INSTANCE_ID=$(legacy_env_required TR_BIGTABLE_INSTANCE_ID)"
   "TR_BIGTABLE_GENERATION_TABLE=$(legacy_env_required TR_BIGTABLE_GENERATION_TABLE)"
   "TR_BIGTABLE_MIRROR_WRITES_ENABLED=$(legacy_env_required TR_BIGTABLE_MIRROR_WRITES_ENABLED)"

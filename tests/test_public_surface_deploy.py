@@ -46,6 +46,7 @@ BASE_ENV = {
     "TR_BIGTABLE_GENERATION_TABLE": "trustedrouter-generations",
     "TR_BIGTABLE_MIRROR_WRITES_ENABLED": "true",
     "TR_ANALYTICS_READ_MODE": "clickhouse",
+    "GOOGLE_CLOUD_SPANNER_MULTIPLEXED_SESSIONS_FOR_RW": "true",
     # The status page this surface serves reports outbox freshness; without
     # this its store has no outbox object and publishes not_configured,
     # failing verify-cloud-complete stage (c) on every deploy.
