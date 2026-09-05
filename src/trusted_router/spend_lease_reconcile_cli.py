@@ -136,7 +136,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "deferred", "errors", "dead",
                     )),
                 )
-                exit_code = 0
+                exit_code = int(bool(result.get("errors", 0) or result.get("dead", 0)))
     except Exception:
         logger.exception("spend_lease.reconciler_failed")
     finally:

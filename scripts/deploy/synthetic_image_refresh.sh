@@ -88,9 +88,11 @@ for entry in "${jobs[@]}"; do
       | {name, valueFrom}] | sort_by(.name))
   }' <<<"$before")"
 
-  env_updates="TR_RELEASE=${release}"
+  # Image-only refreshes still reconcile non-secret routing configuration.
+  # Otherwise retired gateways survive indefinitely in an old job env var.
+  env_updates="^|^TR_RELEASE=${release}|TR_REGIONS=${TR_REGIONS}"
   if [ "$job_kind" = "health" ]; then
-    env_updates="${env_updates},TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL=https://trustedrouter.com"
+    env_updates="${env_updates}|TR_SYNTHETIC_CONTROL_PLANE_HEALTH_URL=https://trustedrouter.com"
   fi
 
   log "refreshing existing synthetic job ${job_name} in ${job_region}"

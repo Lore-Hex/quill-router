@@ -97,6 +97,19 @@ def test_failed_ledger_health_gate_does_no_work_or_heartbeat(
     assert heartbeats == []
 
 
+@pytest.mark.parametrize("failure", ["errors", "dead"])
+def test_unresolved_reconciliation_fails_without_success_heartbeat(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    store = _Store()
+    heartbeats = _wire(monkeypatch, store)
+    monkeypatch.setattr(store, "reconcile_spend_leases", lambda **_: {failure: 1})
+
+    assert cli.main(["reconcile"]) == 1
+    assert store.events[-1] == "release"
+    assert heartbeats == []
+
+
 def test_unprovisioned_ledger_is_clean_idle_pass_with_heartbeat(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
