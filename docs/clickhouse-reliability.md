@@ -121,6 +121,16 @@ scripts/deploy/clickhouse_analytics_cutover.sh --apply
 scripts/deploy/retire_bigtable_runtime.sh --apply
 ```
 
+`clickhouse_live_ingestion.sh` before `rollout.sh` is a runtime dependency,
+not a convention. Since 2026-09-05 the control plane's `/status.json` analytics
+section on Spanner is built from the heartbeat row the VM poller writes (see
+"Public drain-lag signal" below) and publishes `reason: poller_stale` until one
+exists. Deploy the VM first, confirm the row landed —
+`SELECT body FROM tr_entities WHERE kind='operational_outbox_heartbeat'` returns
+one row — and only then roll the control plane. Reversed, gcp's analytics
+section flips to `poller_stale` until the first heartbeat lands and
+`check_fleet_analytics_freshness` fails, by design: an unobserved lag is not 0.
+
 The final script deploys one region at a time, switches to
 `spanner-clickhouse` plus `clickhouse-only`, and disables Bigtable mirror
 writes. It never deletes the Bigtable instance or its data. The retained copy
@@ -243,9 +253,18 @@ from outside the VPC — which the private ClickHouse nodes are not. A read
 failure publishes `{"available": false, "reason": ...}`; the key is never
 omitted and a stale number is never re-served.
 
-Cost: one index seek per status-cache miss. Postgres/DSQL uses
-`tr_operational_analytics_outbox_enqueued_at_idx`; Spanner reads the head of
-each of the 32 shards on the key prefix. `outbox_depth` is deliberately
+Cost: one seek per status-cache miss. Postgres/DSQL uses
+`tr_operational_analytics_outbox_enqueued_at_idx`. Spanner does not read the
+outbox at all: its per-shard head read walks the deleted-row versions the drain
+leaves behind (823-957 ms CPU per call, measured 2026-09-05), so the VM poller
+publishes a heartbeat row into `tr_entities` after each pass — the oldest live
+`commit_ts` it saw, floored by its committed deletes — and the control plane
+point-reads that row, publishing `reason: poller_stale` when it is absent or
+when its Spanner commit time (`updated_at`, not the poller's own `observed_at`)
+is older than 180 s, rather than scanning. A dead poller therefore shows on
+`/status.json` within 180 s plus the page's 60 s per-process analytics cache.
+The heartbeat needs no DDL, but it does fix the rollout order (VM poller first;
+see Deployment above). `outbox_depth` is deliberately
 optional — `count(*)` over a large backlog is the expensive question and the
 lag already answers the important one.
 

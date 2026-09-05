@@ -9,6 +9,15 @@ import pytest
 from clickhouse import ingest_operational_outbox as worker
 
 
+def _quiet_source() -> SimpleNamespace:
+    """A source the heartbeat publisher can call without a caught traceback per pass.
+
+    ``drain_once`` is stubbed here, so the source only ever meets
+    ``OutboxHeartbeatPublisher.after_pass``: an empty head and a no-op write.
+    """
+    return SimpleNamespace(oldest_commit_ts=lambda: None, publish_heartbeat=lambda _body: None)
+
+
 @pytest.mark.parametrize(
     ("batches", "expected_sleeps"),
     [
@@ -41,7 +50,7 @@ def test_worker_paces_partial_batches_without_delaying_full_backlogs(
 
     monkeypatch.setenv("CH_PASSWORD", "local-fake")
     monkeypatch.setattr(sys, "argv", ["worker", "--batch-size", "5", "--poll-seconds", "2"])
-    monkeypatch.setattr(worker, "SpannerOperationalOutboxSource", lambda **_: object())
+    monkeypatch.setattr(worker, "SpannerOperationalOutboxSource", lambda **_: _quiet_source())
     monkeypatch.setattr(worker, "ClickHouseOperationalWriter", lambda **_: object())
     monkeypatch.setattr(worker, "sd_notify", lambda _: None)
     monkeypatch.setattr(worker, "drain_once", drain)
@@ -54,7 +63,7 @@ def test_worker_paces_partial_batches_without_delaying_full_backlogs(
 def test_once_does_not_wait_after_processing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CH_PASSWORD", "local-fake")
     monkeypatch.setattr(sys, "argv", ["worker", "--once"])
-    monkeypatch.setattr(worker, "SpannerOperationalOutboxSource", lambda **_: object())
+    monkeypatch.setattr(worker, "SpannerOperationalOutboxSource", lambda **_: _quiet_source())
     monkeypatch.setattr(worker, "ClickHouseOperationalWriter", lambda **_: object())
     monkeypatch.setattr(worker, "sd_notify", lambda _: None)
     monkeypatch.setattr(

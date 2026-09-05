@@ -112,19 +112,68 @@ def test_status_snapshot_connect_timeout_falls_back_without_error(
     assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
 
-class _FailingOutbox:
-    def __init__(self, exc: Exception) -> None:
-        self._exc = exc
+class _HeartbeatSnapshot:
+    """The one point read the Spanner freshness path makes (tr_entities)."""
 
-    def oldest_enqueued_at(self, *, timeout: float) -> dt.datetime | None:
-        _ = timeout
-        raise self._exc
+    def __init__(self, answer) -> None:
+        self._answer = answer
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return None
+
+    def execute_sql(self, _sql, *, params, param_types, timeout):
+        assert timeout > 0
+        _ = (params, param_types)
+        if isinstance(self._answer, Exception):
+            raise self._answer
+        # (body, updated_at): a row committed just now, as a live poller's is.
+        return [] if self._answer is None else [[self._answer, dt.datetime.now(dt.UTC)]]
+
+
+class _HeartbeatDatabase:
+    def __init__(self, answer) -> None:
+        self._answer = answer
+
+    def snapshot(self, **_kwargs):
+        return _HeartbeatSnapshot(self._answer() if callable(self._answer) else self._answer)
+
+
+class _ParamTypes:
+    STRING = "STRING"
+
+
+def _spanner_store(answer) -> SpannerBigtableStore:
+    """A store whose heartbeat point read answers with ``answer``.
+
+    ``answer`` is a heartbeat body, ``None`` for no row, an exception to
+    raise, or a callable producing one of those per read. The outbox itself
+    is a sentinel: the /status path must never touch it (pinned in
+    tests/test_outbox_freshness_heartbeat.py).
+    """
+    store = object.__new__(SpannerBigtableStore)
+    store._operational_analytics_outbox = object()  # type: ignore[assignment]
+    store._database = _HeartbeatDatabase(answer)
+    store._param_types = _ParamTypes()
+    return store
+
+
+def _heartbeat_body(oldest: dt.datetime | None) -> str:
+    from clickhouse.ingest_operational_outbox import heartbeat_body
+
+    return heartbeat_body(
+        oldest_live_commit_ts=oldest,
+        observed_at=dt.datetime.now(dt.UTC),
+        last_delivery_at=None,
+        fetched=0 if oldest is None else 1,
+        poller="test",
+    )
 
 
 def _freshness_with_failure(exc: Exception) -> OutboxFreshness:
-    store = object.__new__(SpannerBigtableStore)
-    store._operational_analytics_outbox = _FailingOutbox(exc)  # type: ignore[assignment]
-    return store.operational_analytics_outbox_freshness()
+    return _spanner_store(exc).operational_analytics_outbox_freshness()
 
 
 def test_transient_spanner_freshness_timeout_is_a_single_warning(caplog) -> None:
@@ -348,7 +397,7 @@ def test_an_arbitrary_reason_never_reaches_the_published_dict(leaky_reason: str)
     assert published == {"available": False, "reason": REASON_UNREACHABLE}
 
 
-def test_the_three_real_reasons_survive_the_clamp() -> None:
+def test_every_real_reason_survives_the_clamp() -> None:
     """A clamp that flattened everything would be a clamp that says nothing."""
     for reason in PUBLISHABLE_REASONS:
         published = analytics_status_from_reading(
@@ -584,8 +633,12 @@ def test_the_spanner_lag_read_bounds_the_whole_shard_sweep() -> None:
     healthy drain. One statement removes the arithmetic and the problem
     together: what the client is given IS the ceiling on the whole call.
 
-    The remaining risk -- a client that ignores its own timeout -- is covered
-    not here but by the caller-side bound, proven behaviourally in
+    Since 2026-09-05 this read is operator tooling only: /status.json reads
+    the VM poller's heartbeat instead (tests/test_outbox_freshness_heartbeat.py
+    pins that no request path calls it), so the budget bounds a tool, not the
+    public page. The page's own read is bounded the same way, and the
+    remaining risk there -- a client that ignores its own timeout -- is
+    covered by the caller-side bound, proven behaviourally in
     test_a_backend_that_answers_slowly_does_not_hold_the_status_build_open.
     """
     from trusted_router.storage_gcp_operational_analytics_outbox import (
@@ -632,16 +685,13 @@ def test_analytics_probe_is_capped_at_the_60_second_freshness_cadence(
     monkeypatch.setattr(public_routes, "_STATUS_CACHE", None)
     settings = Settings(environment="local")
 
-    class FakeOutbox:
-        def oldest_enqueued_at(self, *, timeout: float) -> dt.datetime:
-            assert timeout > 0
-            calls.append(clock[0])
-            if len(calls) > 1:
-                raise RuntimeError("Spanner unavailable")
-            return dt.datetime.now(dt.UTC) - dt.timedelta(seconds=90)
+    def heartbeat_read():
+        calls.append(clock[0])
+        if len(calls) > 1:
+            return RuntimeError("Spanner unavailable")
+        return _heartbeat_body(dt.datetime.now(dt.UTC) - dt.timedelta(seconds=90))
 
-    store = object.__new__(SpannerBigtableStore)
-    store._operational_analytics_outbox = FakeOutbox()  # type: ignore[assignment]
+    store = _spanner_store(heartbeat_read)
     monkeypatch.setattr(public_routes, "STORE", store)
     first = public_routes._status_snapshot(settings)[ANALYTICS_STATUS_KEY]
     assert first["available"] is True

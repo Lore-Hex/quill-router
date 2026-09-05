@@ -95,6 +95,7 @@ from trusted_router.operational_analytics_freshness import (
     REASON_FIELD,
     REASON_NO_DATA,
     REASON_NOT_CONFIGURED,
+    REASON_POLLER_STALE,
     REASON_UNREACHABLE,
     SECONDS_SINCE_LAST_DELIVERY_FIELD,
     publishable_backend,
@@ -188,6 +189,16 @@ _UNAVAILABLE_EXPLANATION: dict[str, str] = {
         "problem. Either turn that flag on for a cloud that should run it, or "
         "set expects_outbox=False for it in ANALYTICS_FRESHNESS_FLEET so this "
         "job reports it as explicitly unchecked instead of failing daily."
+    ),
+    REASON_POLLER_STALE: (
+        "the control plane (Spanner) found no recent heartbeat from the outbox "
+        "poller -- the row is absent or older than the plane's "
+        "OUTBOX_HEARTBEAT_MAX_AGE_SECONDS. The plane deliberately does not "
+        "scan the outbox itself, so this is a stopped, crash-looping, or "
+        "write-denied tr-clickhouse-operational-ingest.service on the "
+        "ClickHouse VM (`journalctl -u tr-clickhouse-operational-ingest`), or a "
+        "plane that cannot read tr_entities. Either way the drain lag is "
+        "UNOBSERVED, which is not the same as 0."
     ),
 }
 

@@ -44,6 +44,27 @@ LIMIT 1``), not a scan.  Note the asymmetry deliberately: ``outbox_depth`` is
 optional, because ``count(*)`` over a large backlog is the expensive question
 and the lag already answers the important one.
 
+Spanner is the other asymmetry, and it is deliberate too
+------------------------------------------------------
+
+On the Spanner backend the control plane does NOT read the outbox at all.  Its
+outbox is keyed ``(shard, commit_ts)`` and the drain deletes every delivered
+row, so the per-shard ``ORDER BY commit_ts LIMIT 1`` head read steps over
+seven days of deleted-row versions on every execution: measured at 823-957 ms
+of Spanner CPU per call in production (2026-09-05), from every Cloud Run
+instance, every minute.  Instead the VM poller
+(:mod:`clickhouse.ingest_operational_outbox`) publishes a HEARTBEAT after each
+pass -- the oldest live ``commit_ts`` it observed, floored by its own
+committed-delete watermark, plus when it looked -- as one ``tr_entities`` row
+(:data:`OUTBOX_HEARTBEAT_KIND`, :data:`OUTBOX_HEARTBEAT_ID`), and the control
+plane reads that row with one point read.  A heartbeat that is absent or older
+than the plane's maximum age publishes :data:`REASON_POLLER_STALE`: the plane
+never falls back to scanning the outbox, because a lag it has not observed
+must not be published as 0.  Postgres/DSQL keeps its index seek and the direct
+sink its in-memory snapshot; both are cheap and unchanged.  The poller cannot
+import this module (its systemd unit has no ``PYTHONPATH``), so it carries its
+own copy of the row and field names; a test pins the two copies equal.
+
 Nothing here does IO.  The storage backend answers with an
 :class:`OutboxFreshness` and the publisher calls
 :func:`analytics_status_from_reading`;
@@ -54,6 +75,7 @@ back, for every cloud, with no credentials at all.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import math
 from dataclasses import dataclass
 from typing import Any
@@ -106,6 +128,13 @@ REASON_UNREACHABLE = "unreachable"
 #: an empty outbox: "nothing is being enqueued" and "everything enqueued has been
 #: delivered" publish the same 0 rows and mean opposite things.
 REASON_NOT_CONFIGURED = "not_configured"
+#: Spanner only.  The control plane reads the drain's published heartbeat rather
+#: than the outbox (see the module docstring), and the heartbeat is missing or
+#: older than the plane tolerates.  Fail-closed on purpose: the plane has no
+#: recent observation of the outbox head, and "I have not looked" must not
+#: publish as the healthiest lag there is.  A poller that has stopped, is
+#: crash-looping, or can no longer write is the expected cause.
+REASON_POLLER_STALE = "poller_stale"
 
 #: The ONLY reasons that may appear on the public page.  This is a privacy
 #: boundary, not tidiness, and it is a clamp rather than an assertion because
@@ -122,7 +151,7 @@ REASON_NOT_CONFIGURED = "not_configured"
 #: :func:`trusted_router.client_reliability.client_observed_status_section`,
 #: which narrows every value it publishes.
 PUBLISHABLE_REASONS: frozenset[str] = frozenset(
-    {REASON_NO_DATA, REASON_UNREACHABLE, REASON_NOT_CONFIGURED}
+    {REASON_NO_DATA, REASON_UNREACHABLE, REASON_NOT_CONFIGURED, REASON_POLLER_STALE}
 )
 
 #: ``backend`` values.  The column the lag comes from differs per backend --
@@ -142,6 +171,85 @@ BACKEND_UNKNOWN = "unknown"
 PUBLISHABLE_BACKENDS: frozenset[str] = frozenset(
     {BACKEND_SPANNER, BACKEND_POSTGRES, BACKEND_MEMORY, BACKEND_DIRECT}
 )
+
+
+#: The Spanner poller's heartbeat row.  A generic ``tr_entities`` entity, so it
+#: needs no DDL: ``(kind, id)`` is the primary key and ``body`` the JSON below.
+#: MIRRORED by literal in ``clickhouse.ingest_operational_outbox`` (which cannot
+#: import this module on the VM); ``tests/test_outbox_freshness_heartbeat.py``
+#: pins the two copies equal.
+OUTBOX_HEARTBEAT_KIND = "operational_outbox_heartbeat"
+OUTBOX_HEARTBEAT_ID = "spanner-poller"
+OUTBOX_HEARTBEAT_SCHEMA_VERSION = 1
+HEARTBEAT_SCHEMA_VERSION_FIELD = "schema_version"
+HEARTBEAT_OLDEST_LIVE_COMMIT_TS_FIELD = "oldest_live_commit_ts"
+HEARTBEAT_OBSERVED_AT_FIELD = "observed_at"
+HEARTBEAT_LAST_DELIVERY_AT_FIELD = "last_delivery_at"
+HEARTBEAT_FETCHED_FIELD = "fetched"
+HEARTBEAT_POLLER_FIELD = "poller"
+
+
+@dataclass(frozen=True)
+class OutboxHeartbeat:
+    """What the Spanner poller last said about the outbox head.
+
+    ``oldest_live_commit_ts`` is the oldest undelivered row the poller could
+    see after its pass (``None`` when it saw none -- the drained state, lag 0),
+    ``observed_at`` when it looked, and ``last_delivery_at`` when it last
+    committed a delete after ClickHouse accepted a batch (``None`` until the
+    process has delivered once).  ``fetched`` and ``poller`` are diagnostic.
+    """
+
+    oldest_live_commit_ts: dt.datetime | None
+    observed_at: dt.datetime
+    last_delivery_at: dt.datetime | None = None
+    fetched: int = 0
+    poller: str = ""
+
+    @classmethod
+    def parse(cls, body: str) -> OutboxHeartbeat:
+        """Decode a stored heartbeat body; ``ValueError`` on anything unusable.
+
+        Strict on purpose: a row this module cannot read is a row it must not
+        publish from, and the caller turns the error into ``poller_stale``.
+        """
+        try:
+            data = json.loads(body)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"heartbeat body is not JSON: {exc}") from None
+        if not isinstance(data, dict):
+            raise ValueError("heartbeat body is not a JSON object")
+        if data.get(HEARTBEAT_SCHEMA_VERSION_FIELD) != OUTBOX_HEARTBEAT_SCHEMA_VERSION:
+            raise ValueError("heartbeat schema_version is not supported")
+        observed_at = _heartbeat_time(data.get(HEARTBEAT_OBSERVED_AT_FIELD))
+        if observed_at is None:
+            raise ValueError("heartbeat observed_at is missing")
+        fetched = data.get(HEARTBEAT_FETCHED_FIELD, 0)
+        if isinstance(fetched, bool) or not isinstance(fetched, int):
+            raise ValueError("heartbeat fetched is not an integer")
+        poller = data.get(HEARTBEAT_POLLER_FIELD, "")
+        if not isinstance(poller, str):
+            raise ValueError("heartbeat poller is not a string")
+        return cls(
+            oldest_live_commit_ts=_heartbeat_time(data.get(HEARTBEAT_OLDEST_LIVE_COMMIT_TS_FIELD)),
+            observed_at=observed_at,
+            last_delivery_at=_heartbeat_time(data.get(HEARTBEAT_LAST_DELIVERY_AT_FIELD)),
+            fetched=fetched,
+            poller=poller,
+        )
+
+
+def _heartbeat_time(value: object) -> dt.datetime | None:
+    """``None`` for an absent (JSON ``null``) timestamp; ``ValueError`` otherwise."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("heartbeat timestamp is not a string")
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError("heartbeat timestamp is not ISO 8601") from None
+    return _utc(parsed)
 
 
 @dataclass(frozen=True)

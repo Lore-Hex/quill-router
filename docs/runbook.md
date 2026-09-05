@@ -111,7 +111,21 @@ ClickHouse degraded:
    in every cloud's `/status.json`; `PYTHONPATH=src python3 -m
    clickhouse.check_fleet_analytics_freshness` reads it for the whole fleet.
    A `not_configured` reason means that deployment has no outbox wired at all,
-   which is a different problem from a stopped drain.
+   which is a different problem from a stopped drain. A `poller_stale` reason
+   (Spanner only) means the control plane has no recent heartbeat from
+   `tr-clickhouse-operational-ingest.service`: the plane reads the poller's
+   published head instead of scanning the outbox, and reports it unobserved
+   rather than guessing. "Recent" is the row's Spanner commit time within
+   180 s, so the page shows a dead poller within 180 s plus its own 60 s
+   analytics cache. A ClickHouse insert outage surfaces the same way: the
+   drain raises before the heartbeat is published and the unit crash-loops
+   under `Restart=always`, so read `journalctl -u
+   tr-clickhouse-operational-ingest` before blaming the poller's Spanner
+   access. It is also what a control plane deployed BEFORE the VM poller
+   reports: deploy `scripts/deploy/clickhouse_live_ingestion.sh` first,
+   confirm `SELECT body FROM tr_entities WHERE
+   kind='operational_outbox_heartbeat'` returns a row, then the control
+   plane.
 3. Check all three ClickHouse replicas, disk capacity, and Keeper delay.
 4. Start `tr-clickhouse-operational-ingest.service`, then run
    `clickhouse.verify_spanner_delivery` and confirm no missing or mismatched

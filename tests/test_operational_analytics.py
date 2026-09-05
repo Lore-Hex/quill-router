@@ -1550,8 +1550,8 @@ def test_spanner_floor_keeps_ties_across_shards_and_restart(
     assert database.queries[-1][1]["after"] == _WATERMARK_EPOCH
 
 
-@pytest.mark.parametrize("failure", ["fetch", "insert", "delete", "probe"])
-def test_spanner_warm_floor_clears_on_every_error(
+@pytest.mark.parametrize("failure", ["fetch", "insert", "delete"])
+def test_spanner_warm_floor_clears_on_every_drain_error(
     monkeypatch: pytest.MonkeyPatch, failure: str,
 ) -> None:
     first = _outbox_row()
@@ -1568,12 +1568,33 @@ def test_spanner_warm_floor_clears_on_every_error(
             source.delete(source.fetch(limit=1))
         else:
             database.failure = "read"
-            if failure == "probe":
-                source.oldest_commit_ts()
-            else:
-                source.fetch(limit=1)
+            source.fetch(limit=1)
     assert source._after is None
     assert database.rows == [next_row]
     database.failure = ""
     assert source.fetch(limit=1) == [next_row]
     assert database.queries[-1][1]["after"] == _WATERMARK_EPOCH
+
+
+def test_spanner_head_read_failure_keeps_the_warm_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``oldest_commit_ts`` is advisory (the heartbeat publisher calls it after
+    every pass). Its failure says nothing about committed deletes, so the floor
+    stays and the next fetch seeks from it, not from the epoch."""
+    first = _outbox_row()
+    next_row = dataclasses.replace(first, event_id="next")
+    database = _LiveOutboxDatabase([first, next_row])
+    source = _live_spanner_source(monkeypatch, database)
+    drain_once(source, _Writer(), batch_size=1)
+    assert source._after == first.commit_ts
+
+    database.failure = "read"
+    with pytest.raises(RuntimeError):
+        source.oldest_commit_ts()
+    assert source._after == first.commit_ts
+
+    database.failure = ""
+    assert source.fetch(limit=1) == [next_row]
+    assert database.queries[-1][1]["after"] == first.commit_ts
+    assert source.oldest_commit_ts() == next_row.commit_ts
