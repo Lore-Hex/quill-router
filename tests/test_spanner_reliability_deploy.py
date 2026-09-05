@@ -132,3 +132,19 @@ def test_cross_project_backup_uses_an_isolated_project() -> None:
     assert 'DR_PROJECT_ID="${TR_SPANNER_DR_PROJECT_ID:-trustedrouter-dr}"' in reliability
     assert "projects/trustedrouter-dr/instances/trusted-router-backups" in workflow
     assert "--service-account=\"$BACKUP_SERVICE_ACCOUNT_EMAIL\"" in reliability
+
+
+def test_latency_any_method_condition_excludes_createsession() -> None:
+    """CreateSession p99 excursions track revision rollouts, not Spanner health.
+
+    The Commit condition keeps its own 1.5 s threshold; the any-method 3 s
+    condition must not page on session creation during a rollout.
+    """
+    policy = yaml.safe_load(
+        (DEPLOY / "spanner-alerts" / "latency.yaml").read_text(encoding="utf-8")
+    )
+    by_name = {c["displayName"]: c for c in policy["conditions"]}
+    any_method = by_name["Any request p99 exceeds 3 seconds for 10 minutes"]
+    assert 'metric.labels.method != "CreateSession"' in any_method["conditionThreshold"]["filter"]
+    commit = by_name["Commit p99 exceeds 1.5 seconds for 10 minutes"]
+    assert 'metric.labels.method = "Commit"' in commit["conditionThreshold"]["filter"]
