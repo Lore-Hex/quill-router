@@ -1522,6 +1522,10 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TR_SPEND_LEASE_BINDING_ENABLED requires TR_SPEND_LEASE_ISSUANCE_ENABLED"
             )
+        if self.spend_lease_binding_enabled and not self.spend_lease_bigtable_app_profile_map:
+            raise ValueError(
+                "TR_SPEND_LEASE_BINDING_ENABLED requires TR_SPEND_LEASE_BIGTABLE_APP_PROFILES"
+            )
         if self.spend_lease_admission_accept and not self.spend_lease_binding_enabled:
             raise ValueError(
                 "TR_SPEND_LEASE_ADMISSION_ACCEPT requires TR_SPEND_LEASE_BINDING_ENABLED"

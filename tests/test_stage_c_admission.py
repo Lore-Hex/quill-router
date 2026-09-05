@@ -121,6 +121,7 @@ def _settings(workspace_id: str, digest: str) -> Settings:
         operational_analytics_sink="direct",
         spend_lease_issuance_enabled=True,
         spend_lease_binding_enabled=True,
+        spend_lease_bigtable_app_profiles="us-central1=tr-spend-us-central1",
         spend_lease_admission_accept=True,
         spend_lease_pilot_workspace_ids=workspace_id,
         spend_lease_signing_secret_name="stage-c-test-seed",  # noqa: S106
