@@ -9,6 +9,9 @@
    sign-in modal, base CSS) and overrides the hero/body blocks for
    the chat-specific surface. #}
 {% extends "public/_base.html" %}
+{% from "public/_chat_icons.html" import icon %}
+{% block body_attributes %}class="chat-page"{% endblock %}
+{% block footer %}{% endblock %}
 
 {% block hero %}
 {# Empty hero — chat has its own header inside the body block. The
@@ -41,44 +44,27 @@
 
   <main class="chat-main">
     <header class="chat-header">
-      <button class="chat-hamburger" type="button" aria-label="Toggle sidebar" data-action="toggle-sidebar">&#9776;</button>
+      <button class="chat-hamburger" type="button" aria-label="Toggle sidebar" data-action="toggle-sidebar">{{ icon('menu') }}</button>
       <div class="chat-header-title">
         <h1 class="chat-header-chat-title" data-chat-header-title>TrustedRouter Chat</h1>
-        <span class="chat-header-chat-cost" data-chat-header-cost></span>
-      </div>
-      <div class="chat-models-bar" data-chat-models-bar>
-        {# Model pills + Add-Model button rendered client-side from
-           chat.models[]. Up to 4 pills, with per-model dropdown. #}
       </div>
       <div class="chat-header-actions">
-        <button class="btn chat-header-btn" type="button" data-action="toggle-system-prompt" title="System prompt">Sys</button>
+        <button class="btn chat-header-btn" type="button" data-action="toggle-system-prompt" title="System prompt" aria-label="System prompt">{{ icon('file-text') }}</button>
         <button class="btn chat-header-btn chat-header-btn-icon" type="button" data-action="clear-chat" title="Clear current chat" aria-label="Clear current chat">
-          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M3 4 H13" />
-            <path d="M6 4 V3 H10 V4" />
-            <path d="M5 6 L5.5 13 H10.5 L11 6" />
-            <path d="M7 7.5 V11.5" />
-            <path d="M9 7.5 V11.5" />
-          </svg>
+          {{ icon('trash') }}
         </button>
         <button class="btn chat-header-btn chat-header-btn-icon" type="button" data-action="enter-voice-mode" title="Voice mode" aria-label="Voice mode">
-          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="6" y="2" width="4" height="8" rx="2" />
-            <path d="M3.5 7 C3.5 9.5 5.5 11 8 11 C10.5 11 12.5 9.5 12.5 7" />
-            <path d="M8 11 L8 14" />
-            <path d="M6 14 L10 14" />
-          </svg>
+          {{ icon('audio-lines') }}
         </button>
-        <button class="btn chat-header-btn" type="button" data-action="export-md" title="Export to Markdown">⤓</button>
+        <button class="btn chat-header-btn" type="button" data-action="export-md" title="Export to Markdown" aria-label="Export to Markdown">{{ icon('download') }}</button>
         <button class="btn chat-header-btn chat-header-btn-icon" type="button" data-action="share-link" title="Copy share link" aria-label="Share">
-          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M8 2 L8 11" />
-            <path d="M5 5 L8 2 L11 5" />
-            <path d="M3 8 L3 14 L13 14 L13 8" />
-          </svg>
+          {{ icon('share') }}
         </button>
-        <button class="btn chat-header-btn" type="button" data-action="show-settings" title="Settings">⚙</button>
-        <button class="btn chat-header-btn" type="button" data-action="show-shortcuts" title="Keyboard shortcuts">?</button>
+        <button class="btn chat-header-btn" type="button" data-action="show-settings" title="Settings" aria-label="Settings">{{ icon('sliders') }}</button>
+        <button class="btn chat-header-btn" type="button" data-action="show-shortcuts" title="Keyboard shortcuts" aria-label="Keyboard shortcuts">{{ icon('keyboard') }}</button>
+      </div>
+      <div class="chat-models-bar" data-chat-models-bar aria-label="Selected models">
+        {# A separate row leaves enough room for complete model names. #}
       </div>
     </header>
 
@@ -105,10 +91,6 @@
 
     <footer class="chat-input-bar">
       <div class="chat-attachments-tray" data-chat-attachments hidden></div>
-      <div class="chat-input-meta" data-chat-input-meta>
-        <span class="chat-token-counter" data-chat-token-counter></span>
-        <span class="chat-cost-estimate" data-chat-cost-estimate></span>
-      </div>
       <div class="chat-input-row">
         <button
           type="button"
@@ -116,7 +98,7 @@
           data-action="attach-file"
           title="Attach image"
           aria-label="Attach image"
-        >Add</button>
+        >{{ icon('paperclip') }}</button>
         <button
           type="button"
           class="chat-input-btn"
@@ -124,7 +106,7 @@
           data-action="voice-input"
           title="Voice input"
           aria-label="Voice input"
-        >Voice</button>
+        >{{ icon('mic') }}</button>
         <input
           type="file"
           accept="image/*"
@@ -145,6 +127,30 @@
           data-action="send-message"
           aria-label="Send message"
         ><svg class="chat-send-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2 L2 7.5 L7 9 L9 14 Z" /><path d="M14 2 L7 9" /></svg><span class="chat-send-label">Send</span><kbd class="chat-send-kbd">⌘↵</kbd></button>
+      </div>
+      <div class="chat-composer-footer">
+        <div class="chat-input-meta" data-chat-input-meta>
+          <span class="chat-token-counter" data-chat-token-counter></span>
+          <span class="chat-cost-estimate" data-chat-cost-estimate></span>
+        </div>
+        <details class="chat-usage" data-chat-usage>
+          <summary aria-label="Conversation usage">
+            <span data-chat-usage-cost>$0.00</span>
+            <span aria-hidden="true">·</span>
+            <span data-chat-usage-tokens>0 tokens</span>
+          </summary>
+          <div class="chat-usage-details">
+            <strong>Conversation usage</strong>
+            <dl>
+              <div><dt>Input</dt><dd data-chat-usage-input>0</dd></div>
+              <div><dt>Cached input</dt><dd data-chat-usage-cached>0</dd></div>
+              <div><dt>Output</dt><dd data-chat-usage-output>0</dd></div>
+              <div><dt>Reasoning (included in output)</dt><dd data-chat-usage-reasoning>0</dd></div>
+              <div><dt>Reported cost</dt><dd data-chat-usage-billed>$0.00</dd></div>
+            </dl>
+            <p data-chat-usage-note>API-reported usage for current responses. Deleted or replaced responses are excluded. Not your account balance.</p>
+          </div>
+        </details>
       </div>
     </footer>
   </main>

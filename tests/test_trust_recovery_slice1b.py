@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from tests.fakes.postgres import postgres_store_on, sqlite_postgres_conn
-from tests.fakes.spanner import make_fake_store
+from tests.fakes.spanner import _FakeTransaction, make_fake_store
 from trusted_router.services import trust_recovery
 from trusted_router.storage import STORE, InMemoryStore
 from trusted_router.storage_gcp_counter_dml import release_credit
@@ -264,6 +264,78 @@ def test_concurrent_replay_debits_once() -> None:
 
     assert sorted(results) == ["applied", "replay"]
     assert _balance(database, workspace_id) == 500
+
+
+_SHARD_SET_SQL = "SELECT shard FROM tr_credit_balance WHERE workspace_id=@pk ORDER BY shard"
+
+
+def _transaction_sql_spy(monkeypatch: Any) -> list[str]:
+    seen: list[str] = []
+    original = _FakeTransaction.execute_sql
+
+    def spy(self: Any, sql: str, **kwargs: Any) -> Any:
+        seen.append(sql)
+        return original(self, sql, **kwargs)
+
+    monkeypatch.setattr(_FakeTransaction, "execute_sql", spy)
+    return seen
+
+
+def test_release_without_payment_debt_never_reads_the_shard_set(monkeypatch: Any) -> None:
+    """F4 (2026-09-05 convoy): the all-shard read takes ReaderShared on every
+    credit shard while the settle holds Exclusive on one of them. A workspace
+    with no payment claim — the common case — must not pay for it."""
+    store, database, _ = make_fake_store()
+    workspace = store.create_workspace("owner", "no-debt", trial_credit_microdollars=1_000)
+    database.typed["tr_credit_balance"][(workspace.id, 0)]["reserved"] = 50
+    seen = _transaction_sql_spy(monkeypatch)
+
+    count = database.run_in_transaction(
+        lambda transaction: release_credit(
+            transaction,
+            store._param_types,
+            workspace.id,
+            50,
+            0,
+            shard=0,
+        )
+    )
+
+    assert count == 1
+    assert database.typed["tr_credit_balance"][(workspace.id, 0)]["reserved"] == 0
+    assert any("FROM tr_trust_event" in sql for sql in seen), "debt indicator read still runs"
+    assert _SHARD_SET_SQL not in seen
+
+
+def test_release_with_open_claim_reads_the_shard_set_and_absorbs(monkeypatch: Any) -> None:
+    store, database, workspace_id = _store_with_payment(credited=1_000, charged=1_000)
+    for (owner, _), row in database.typed["tr_credit_balance"].items():
+        if owner == workspace_id:
+            row["total_usage"] = row["total_credits"]
+    shard = database.typed["tr_credit_balance"][(workspace_id, 0)]
+    shard["reserved"] = 50
+    shard["total_usage"] = shard["total_credits"] - 50
+    result = store.record_adverse_trust_event(
+        _adverse(kind="dispute", adverse_ref="dp_lazy_release", amount=1_000)
+    )
+    assert result.unrecovered_micro == 1_000
+    seen = _transaction_sql_spy(monkeypatch)
+
+    count = database.run_in_transaction(
+        lambda transaction: release_credit(
+            transaction,
+            store._param_types,
+            workspace_id,
+            50,
+            0,
+            shard=0,
+        )
+    )
+
+    assert count == 1
+    assert _SHARD_SET_SQL in seen
+    assert _payment(database, workspace_id)["unrecovered_micro"] == 950
+    assert _payment(database, workspace_id)["recovered_micro"] == 50
 
 
 def test_reservation_release_satisfies_open_recovery_claim() -> None:

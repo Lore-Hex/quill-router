@@ -15,6 +15,14 @@ from trusted_router.storage_models import TrustEvent
 STRIPE_CONSISTENCY_DELAY_SECONDS = 15 * 60
 STRIPE_TRUST_SOURCE = "stripe-created-lists"
 STRIPE_TRUST_SOURCE_VERSION = "stripe-trust-v1"
+# Owner-inventory marker identity. Every marker writer and every
+# MarkerRequirement reads these constants; a byte difference in any of them
+# makes the marker invisible to the arm gate forever, so nothing spells them
+# inline.
+OWNER_INVENTORY_PROVIDER = "owner_inventory"
+OWNER_INVENTORY_ACCOUNT_ID = "local"
+OWNER_INVENTORY_SOURCE = "tr_entities.workspace"
+OWNER_INVENTORY_SOURCE_VERSION = "owner-inventory-v1"
 REFUND_HORIZON = timedelta(days=30)
 DISPUTE_HORIZON_AFTER_EVIDENCE = timedelta(days=90)
 TERMINAL_REFUND_STATUSES = frozenset({"succeeded", "failed", "reversed", "terminal_by_horizon"})

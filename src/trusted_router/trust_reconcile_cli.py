@@ -6,16 +6,20 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from trusted_router.config import Settings
+from trusted_router.sentry_config import init_sentry
 from trusted_router.storage import create_store
 from trusted_router.storage_trust_reconciliation import trust_reconciliation_repository
 from trusted_router.stripe_trust_history import (
-    latest_adverse_event_watermark,
+    adverse_lifecycle_status,
+    latest_adverse_event,
     scan_created_range,
     scan_stripe_responses,
+    stamp_adverse_source_event,
 )
 from trusted_router.synthetic.alerts import ops_alert
 from trusted_router.trust_reconcile_job import run_recurring_reconciliation
@@ -47,15 +51,6 @@ def _mapping(value: Any) -> dict[str, Any]:
     return dict(value)
 
 
-def _latest_event_watermark(stripe_client: Any, row: OutstandingAdverse) -> str | None:
-    return latest_adverse_event_watermark(
-        stripe_client,
-        kind=row.kind,
-        adverse_ref=row.adverse_ref,
-        occurred_at=row.occurred_at,
-    )
-
-
 def refetch_stripe_adverse(
     stripe_client: Any,
     row: OutstandingAdverse,
@@ -67,9 +62,19 @@ def refetch_stripe_adverse(
         else stripe_client.Dispute.retrieve(row.adverse_ref)
     )
     body = _mapping(obj)
-    watermark = _latest_event_watermark(stripe_client, row)
-    if watermark is not None:
-        body["_trust_ordering_watermark"] = watermark
+    # Event-based occurred_at, subtype and watermark from the max-watermark
+    # Event of the object's current status: the shape the live writer
+    # converges to, so the refetched fact is a replay, not a mismatch.
+    stamp_adverse_source_event(
+        body,
+        latest_adverse_event(
+            stripe_client,
+            kind=row.kind,
+            adverse_ref=row.adverse_ref,
+            occurred_at=row.occurred_at,
+            lifecycle_status=adverse_lifecycle_status(body, kind=row.kind),
+        ),
+    )
     payment_intent = stripe_client.PaymentIntent.retrieve(row.original_payment_ref)
     scan = scan_stripe_responses(
         payment_intents=(),
@@ -109,16 +114,30 @@ def _alert_horizon(row: OutstandingAdverse) -> None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--account-id", required=True)
-    parser.add_argument("--environment")
+    # Explicit because every Cloud Run job carries TR_ENVIRONMENT=worker, which
+    # would key the marker under an environment nothing else ever reads.
+    parser.add_argument("--environment", default="production")
     parser.add_argument("--source-version", default=SOURCE_VERSION)
     parser.add_argument("--providers", default="stripe,x402")
     parser.add_argument("--now", type=_parse_time, help=argparse.SUPPRESS)
     return parser
 
 
+REFUSAL_REMEDY = (
+    "re-execute the historical backfill job (trusted-router-trust-backfill, --apply; "
+    "runbook step 6) until its marker completes, then resume the reconciler"
+)
+
+
 def main(argv: list[str] | None = None, *, stripe_client: Any | None = None) -> int:
+    # INFO on the root logger: the runbook greps the job log for
+    # ``trust.reconcile.outstanding provider=... value=0``; the default WARNING
+    # root dropped those lines. Sentry: ``ops_alert`` reaches Sentry only after
+    # ``init_sentry`` (the pattern every live job follows).
+    logging.basicConfig(level=logging.INFO)
     args = _parser().parse_args(argv)
     settings = Settings()
+    init_sentry(settings)
     now = args.now or datetime.now(UTC).replace(microsecond=0)
     if stripe_client is None:
         if not settings.stripe_secret_key:
@@ -136,27 +155,39 @@ def main(argv: list[str] | None = None, *, stripe_client: Any | None = None) -> 
         raise ValueError("--providers must contain stripe and/or x402")
     exit_code = 0
     for provider in sorted(providers):
-        result = run_recurring_reconciliation(
-            repository,
-            lambda start, end: scan_created_range(
-                stripe_client,
-                start=start,
-                end=end,
-                recorded_at=now,
-                include_event_watermarks=True,
-            ),
-            lambda row, observed: refetch_stripe_adverse(
-                stripe_client, row, observed
-            ),
-            provider=provider,
-            account_id=args.account_id,
-            environment=args.environment or settings.environment,
-            source=SOURCE,
-            source_version=args.source_version,
-            cadence_seconds=settings.trust_reconcile_interval_seconds,
-            now=now,
-            alert_horizon=_alert_horizon,
-        )
+        try:
+            result = run_recurring_reconciliation(
+                repository,
+                lambda start, end: scan_created_range(
+                    stripe_client,
+                    start=start,
+                    end=end,
+                    recorded_at=now,
+                    include_event_watermarks=True,
+                ),
+                lambda row, observed: refetch_stripe_adverse(
+                    stripe_client, row, observed
+                ),
+                provider=provider,
+                account_id=args.account_id,
+                environment=args.environment,
+                source=SOURCE,
+                source_version=args.source_version,
+                cadence_seconds=settings.trust_reconcile_interval_seconds,
+                now=now,
+                alert_horizon=_alert_horizon,
+            )
+        except RuntimeError as exc:
+            # A refused provider (absent or incomplete historical marker) pages
+            # with its remedy and does not skip the other provider.
+            ops_alert(
+                f"trust.reconcile.refused provider={provider} reason={exc} "
+                f"remedy={REFUSAL_REMEDY}",
+                fingerprint=["trust.reconcile.refused", provider],
+                tags={"provider": provider},
+            )
+            exit_code = 1
+            continue
         print(json.dumps(dataclasses.asdict(result), default=str, sort_keys=True))
         if not result.marker.is_complete:
             ops_alert(

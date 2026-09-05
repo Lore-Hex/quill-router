@@ -13,6 +13,7 @@ here, just plumbing.
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import functools
 import secrets
@@ -36,6 +37,13 @@ P = ParamSpec("P")
 # does not affect them in practice; it only truncates the contended tail.
 TXN_BUDGET_SECONDS = 20.0
 _MIN_INNER_TIMEOUT_SECONDS = 0.5
+# Floor for the best-effort Rollback RPC issued when a transaction callback
+# fails with a deterministic API error. The failing statement usually spent the
+# shared ContextVar budget, and ``configure_spanner_rpc_deadlines`` raises
+# DeadlineExceeded for any RPC (rollback included) once that budget is gone —
+# which would silently leave the server-side locks held for Spanner's idle
+# reap (~16s) instead of releasing them now.
+_ROLLBACK_FLOOR_SECONDS = 2.0
 _SPANNER_RPC_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
     "trusted_router_spanner_rpc_deadline",
     default=None,
@@ -233,6 +241,7 @@ def run_in_transaction_with_retry(
     from google.api_core.exceptions import Aborted
 
     retryable_errors = (Aborted,) + also_retry
+    rolled_back_func = _rollback_on_api_error(func)
     deadline = time.monotonic() + max(total_budget_seconds, _MIN_INNER_TIMEOUT_SECONDS)
     delay = 0.05
     last_retryable: BaseException | None = None
@@ -249,7 +258,7 @@ def run_in_transaction_with_retry(
             transaction_kwargs: dict[str, Any] = {"timeout_secs": inner_timeout}
             if transaction_tag is not None:
                 transaction_kwargs["transaction_tag"] = transaction_tag
-            result = database.run_in_transaction(func, **transaction_kwargs)
+            result = database.run_in_transaction(rolled_back_func, **transaction_kwargs)
         except retryable_errors as exc:
             last_retryable = exc
             if attempt >= attempts:
@@ -268,6 +277,58 @@ def run_in_transaction_with_retry(
             attempts_out.append(attempt)
         return result
     raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _rollback_on_api_error(func: Callable[..., T]) -> Callable[..., T]:
+    """Roll back the server-side transaction when the callback fails with a
+    non-Aborted ``GoogleAPICallError``.
+
+    google-cloud-spanner's ``Session.run_in_transaction`` rolls back only on
+    generic Python exceptions; on ``GoogleAPICallError`` (e.g. ``AlreadyExists``
+    from a UNIQUE index, ``FailedPrecondition``) it drops its client-side
+    handle and re-raises, and with multiplexed read-write sessions the next
+    transaction on the session does not invalidate the orphan either. Its
+    ReaderShared/Exclusive locks then outlive the caller by Spanner's idle
+    reap (~16s), and every later writer of those rows queues behind them.
+    ``Aborted`` is deliberately excluded: the client retries it and owns that
+    transaction's lifecycle. Rollback is best-effort — the transaction is
+    discarded either way — so its own failure never masks the real error.
+    """
+    from google.api_core.exceptions import Aborted, GoogleAPICallError
+
+    @functools.wraps(func)
+    def rolled_back(transaction: Any, *args: Any, **kwargs: Any) -> T:
+        try:
+            return func(transaction, *args, **kwargs)
+        except Aborted:
+            raise
+        except GoogleAPICallError:
+            _rollback_discarded_transaction(transaction)
+            raise
+
+    return rolled_back
+
+
+def _rollback_discarded_transaction(transaction: Any) -> None:
+    rollback = getattr(transaction, "rollback", None)
+    if not callable(rollback):
+        return
+    # Independent floor for the Rollback RPC: the failing statement typically
+    # exhausted the shared ContextVar budget, and the bounded RPC wrappers
+    # would otherwise raise DeadlineExceeded before the request is even sent.
+    floor = time.monotonic() + _ROLLBACK_FLOOR_SECONDS
+    existing_deadline = _SPANNER_RPC_DEADLINE.get()
+    token = None
+    if existing_deadline is not None and existing_deadline < floor:
+        token = _SPANNER_RPC_DEADLINE.set(floor)
+    try:
+        # Best effort: the transaction is discarded either way and the original
+        # API error is what propagates to the caller.
+        with contextlib.suppress(Exception):
+            rollback()
+    finally:
+        if token is not None:
+            _SPANNER_RPC_DEADLINE.reset(token)
 
 
 @dataclass(frozen=True)

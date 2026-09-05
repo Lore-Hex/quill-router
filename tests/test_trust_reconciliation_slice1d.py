@@ -32,7 +32,7 @@ from trusted_router.trust_reconciliation import (
     reconcile_canonical_mappings,
     reconciliation_tail_start,
 )
-from trusted_router.trust_tiers import trust_reconciliation_is_fresh
+from trusted_router.trust_tiers import adverse_restamp_wins, trust_reconciliation_is_fresh
 
 ROOT = Path(__file__).parents[1]
 NOW = datetime(2026, 9, 4, 12, tzinfo=UTC)
@@ -103,10 +103,17 @@ def _dispute(
     }
 
 
+#: The Stripe Event whose processing credited ``pi_fee`` in these fixtures; its
+#: ``stripe_event`` marker is the local credit evidence the writer demands.
+CREDITING_EVENT_ID = "evt_pay_fee"
+
+
 class _Repository:
-    def __init__(self) -> None:
+    def __init__(self, *, stripe_events: tuple[str, ...] = (CREDITING_EVENT_ID,)) -> None:
         self.events: dict[tuple[str, str], TrustEvent] = {}
         self.markers: dict[tuple[str, str, str, str, str], BackfillMarker] = {}
+        self.stripe_events: set[str] = set(stripe_events)
+        self.payment_writes: list[tuple[str, tuple[str, ...]]] = []
 
     @staticmethod
     def _marker_key(values: tuple[str, str, str, str, str]) -> tuple[str, ...]:
@@ -133,16 +140,24 @@ class _Repository:
             )
         ] = marker
 
-    def write_payment_fact(self, event: TrustEvent) -> bool:
+    def has_credit_evidence(self, evidence_ids: tuple[str, ...]) -> bool:
+        return any(evidence_id in self.stripe_events for evidence_id in evidence_ids)
+
+    def write_payment_fact(
+        self, event: TrustEvent, *, evidence_ids: tuple[str, ...] = ()
+    ) -> str:
+        self.payment_writes.append((str(event.original_payment_ref), tuple(evidence_ids)))
         if any(
             row.provider == event.provider
             and row.kind == "payment"
             and row.original_payment_ref == event.original_payment_ref
             for row in self.events.values()
         ):
-            return False
+            return "duplicate"
+        if not self.has_credit_evidence(evidence_ids):
+            return "uncredited"
         self.events[(event.workspace_id, event.event_id)] = dataclasses.replace(event)
-        return True
+        return "inserted"
 
     def write_adverse_fact(self, event: AdverseTrustEvent) -> str:
         payment = next(
@@ -168,10 +183,18 @@ class _Repository:
         if existing_key is not None:
             existing = self.events[existing_key]
             if existing.lifecycle_status == event.lifecycle_status:
+                # Mirror storage_gcp_trust.apply_adverse_trust_event_tx: a
+                # later same-status Event restamps without moving money.
+                if adverse_restamp_wins(existing.provider_ordering_watermark, event):
+                    existing.occurred_at = event.occurred_at
+                    existing.provider_subtype = event.provider_subtype
+                    existing.provider_ordering_watermark = event.provider_ordering_watermark
                 return "replay"
             if str(existing.provider_ordering_watermark) >= event.provider_ordering_watermark:
                 return "stale"
             existing.amount_micro = event.amount_micro
+            # The real writer moves occurred_at on every applied transition.
+            existing.occurred_at = event.occurred_at
             existing.lifecycle_status = event.lifecycle_status
             existing.provider_ordering_watermark = event.provider_ordering_watermark
             existing.provider_subtype = event.provider_subtype
@@ -234,12 +257,16 @@ class _Repository:
         raise AssertionError("not used")
 
 
+CREDITING_EVENTS = {"pi_fee": (CREDITING_EVENT_ID,)}
+
+
 def _scan(*, refund_status: str = "succeeded") -> StripeTrustScan:
     return scan_stripe_responses(
         payment_intents=(_payment_intent(),),
         refunds=(_refund(status=refund_status),),
         disputes=(),
         recorded_at=NOW,
+        crediting_events=CREDITING_EVENTS,
     )
 
 
@@ -305,8 +332,9 @@ def test_canonical_hash_mismatch_keeps_initial_safe_watermark() -> None:
     repository = _Repository()
     scan = _scan()
     assert repository.write_payment_fact(
-        dataclasses.replace(scan.payments[0], workspace_id="wrong_workspace")
-    )
+        dataclasses.replace(scan.payments[0], workspace_id="wrong_workspace"),
+        evidence_ids=(CREDITING_EVENT_ID,),
+    ) == "inserted"
 
     result = run_historical_backfill(
         repository,
@@ -450,6 +478,7 @@ def test_nonterminal_dispute_and_refund_are_refetched_until_terminal() -> None:
         refunds=(_refund(status="pending"),),
         disputes=(_dispute(),),
         recorded_at=NOW,
+        crediting_events=CREDITING_EVENTS,
     )
     # The reconciliation model accepts provider lifecycle states directly. Preserve
     # this recorded provider state instead of the scanner's recovery-oriented alias.
@@ -620,6 +649,82 @@ def test_failed_outstanding_refetch_leaves_watermark_unchanged() -> None:
     assert result.marker.completed_at is None
     assert result.marker.unmatched_count == 1
     assert not result.watermark_advanced
+    # The unclean tick is reported, not persisted: the last clean marker stays.
+    assert not result.marker_saved
+    assert (
+        repository.get_marker(
+            "stripe", "acct_1", "production", "stripe-created-lists", "stripe-trust-v1"
+        )
+        == before
+    )
+
+
+def test_unclean_recurring_tick_never_latches_the_next_tick() -> None:
+    """Two ticks against a persisting repository (P1 review, findings 3/5/8).
+
+    Before: an unclean tick overwrote the completed historical marker with
+    completed_at NULL and the P1-E guard then refused every later tick until an
+    operator re-ran the 24h backfill job. Now the tick leaves the clean marker,
+    and the next tick re-covers the same tail and advances when clean.
+    """
+
+    repository = _Repository()
+    key = ("stripe", "acct_1", "production", "stripe-created-lists", "stripe-trust-v1")
+    kwargs: dict[str, Any] = {
+        "provider": "stripe",
+        "account_id": "acct_1",
+        "environment": "production",
+        "source": "stripe-created-lists",
+        "source_version": "stripe-trust-v1",
+    }
+    backfill = run_historical_backfill(
+        repository,
+        _scan(refund_status="pending"),
+        history_start=HISTORY_START,
+        closed_through=NOW - timedelta(minutes=15),
+        consistency_delay_seconds=900,
+        now=NOW,
+        **kwargs,
+    )
+    assert backfill.marker.is_complete and backfill.marker_saved
+    assert repository.get_marker(*key) == backfill.marker
+
+    def failed(_row: OutstandingAdverse, _now: datetime) -> Any:
+        raise RuntimeError("Stripe 5xx on Refund.retrieve")
+
+    empty = StripeTrustScan((), (), (), (), ())
+    unclean = run_recurring_reconciliation(
+        repository, lambda _s, _e: empty, failed,
+        cadence_seconds=900, now=NOW + timedelta(minutes=15), alert_horizon=lambda _row: None,
+        **kwargs,
+    )
+    assert unclean.marker.unmatched_count == 1
+    assert unclean.marker.completed_at is None
+    assert not unclean.marker_saved and not unclean.watermark_advanced
+    assert repository.get_marker(*key) == backfill.marker
+
+    # Stripe recovers and the refund has succeeded: the next tick runs (no
+    # RuntimeError), applies the transition and advances the watermark.
+    succeeded = next(row for row in _scan(refund_status="succeeded").adverse)
+
+    def refetch(row: OutstandingAdverse, _now: datetime) -> tuple[AdverseTrustEvent, OutstandingAdverse]:
+        return (
+            dataclasses.replace(
+                succeeded, provider_ordering_watermark="00000000000000000003:evt_refund_ok"
+            ),
+            dataclasses.replace(row, lifecycle_status="succeeded"),
+        )
+
+    clean = run_recurring_reconciliation(
+        repository, lambda _s, _e: empty, refetch,
+        cadence_seconds=900, now=NOW + timedelta(minutes=30), alert_horizon=lambda _row: None,
+        **kwargs,
+    )
+    assert clean.marker.is_complete and clean.marker_saved and clean.watermark_advanced
+    persisted = repository.get_marker(*key)
+    assert persisted is not None and persisted.closed_through == NOW + timedelta(minutes=15)
+    refund = next(row for row in repository.events.values() if row.kind == "refund")
+    assert refund.lifecycle_status == "succeeded"
 
 
 def test_horizon_marks_terminal_through_adverse_writer_and_alerts() -> None:
@@ -630,6 +735,7 @@ def test_horizon_marks_terminal_through_adverse_writer_and_alerts() -> None:
         refunds=(_refund(status="pending", created=old_created, watermark="1:pending"),),
         disputes=(),
         recorded_at=NOW,
+        crediting_events=CREDITING_EVENTS,
     )
     result = run_historical_backfill(
         repository,
@@ -758,6 +864,7 @@ def test_marker_ddl_exact_columns_completion_check_and_explicit_conflict_target(
 def test_cloud_run_job_is_pinned_inert_and_scheduled_from_interval() -> None:
     deploy = (ROOT / "scripts/deploy/trust_reconciler.sh").read_text()
     backfill = (ROOT / "scripts/deploy/trust_backfill_job.sh").read_text()
+    tier = (ROOT / "scripts/deploy/trust_tier_job.sh").read_text()
     assert '"TR_TRUST_RECONCILE_INTERVAL_SECONDS=900"' in deploy
     assert '"TR_TRUST_RECONCILE_MAX_AGE_SECONDS=3600"' in deploy
     assert '"TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=false"' in deploy
@@ -765,3 +872,35 @@ def test_cloud_run_job_is_pinned_inert_and_scheduled_from_interval() -> None:
     assert '"TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=false"' in backfill
     assert "--drain-window-start" in backfill
     assert "jobs execute" not in backfill
+    # P1-A: the image ships src/ only (Dockerfile copies src and entrypoint.sh;
+    # .gcloudignore drops scripts/*), so every job runs a package module with
+    # -m like the live jobs; /app/scripts does not exist in any image.
+    assert (
+        '--args="-m,trusted_router.trust_reconcile_cli,--account-id,${ACCOUNT_ID},'
+        "--environment,production\"" in deploy
+    )
+    assert (
+        'job_args="-m,trusted_router.trust_backfill_cli,--account-id,${ACCOUNT_ID},'
+        "--environment,production,--history-start,${HISTORY_START},"
+        '--drain-window-start,${DRAIN_START},--apply"' in backfill
+    )
+    assert '--args="$job_args"' in backfill
+    # The operator-attested allowlist reaches the job only as a mounted secret.
+    assert 'job_args="${job_args},--credited-events,${CREDITED_EVENTS_MOUNT}"' in backfill
+    assert '--update-secrets="$job_secrets"' in backfill
+    assert (
+        '--args="-m,trusted_router.trust_tier_cli,--environment,${TIER_ENVIRONMENT}"' in tier
+    )
+    for script in (deploy, backfill, tier):
+        assert "/app/scripts" not in script
+        assert "gc artifacts docker images describe \"$IMAGE\"" in script
+    assert '"TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=false"' in tier
+    assert '--schedule="7,22,37,52 * * * *"' in tier
+    assert 'JOB_NAME="${TR_TRUST_TIER_JOB:-trusted-router-trust-tier}"' in tier
+    assert (
+        'SCHEDULER_NAME="${TR_TRUST_TIER_SCHEDULER:-trusted-router-trust-tier-15m}"' in tier
+    )
+    assert 'JOB_REGION="${TR_TRUST_TIER_JOB_REGION:-us-east4}"' in tier
+    for script in (deploy, backfill):
+        assert "require_trust_stripe_account_id" in script
+        assert "TR_TRUST_STRIPE_ACCOUNT_ID:?" not in script
