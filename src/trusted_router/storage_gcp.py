@@ -60,7 +60,7 @@ from trusted_router.spend_leases import (
     SpendLeaseArtifact,
     SpendLeaseBoot,
 )
-from trusted_router.spend_windows import KeyWindowLimitDecision
+from trusted_router.spend_windows import KeyLimitReserveResult
 from trusted_router.storage import (
     AcquisitionAttribution,
     ActivationReminderTask,
@@ -4316,6 +4316,7 @@ class SpannerBigtableStore:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
+        key_reserved_microdollars: int,
         authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
@@ -4354,6 +4355,7 @@ class SpannerBigtableStore:
             usage_type=usage_type,
             estimated_microdollars=estimated_microdollars,
             credit_reservation_id=credit_reservation_id,
+            key_reserved_microdollars=key_reserved_microdollars,
             authorization_id=authorization_id,
             requested_model_id=requested_model_id,
             candidate_model_ids=candidate_model_ids,
@@ -6392,7 +6394,7 @@ class SpannerBigtableStore:
         amount_microdollars: int,
         *,
         usage_type: str,
-    ) -> KeyWindowLimitDecision | None:
+    ) -> KeyLimitReserveResult:
         return self.api_keys.reserve_limit(key_hash, amount_microdollars, usage_type=usage_type)
 
     def settle_key_limit(

@@ -1716,6 +1716,81 @@ def test_reserve_key_limit_byok_excluded_is_noop(store: Store, unique: str) -> N
     assert _key_limit_row(store, kh)["reserved"] == 0
 
 
+def test_key_limit_hold_result_is_frozen_across_uncapped_to_capped_edit(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+) -> None:
+    """A zero hold recorded while uncapped cannot release a later request."""
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id,
+        name="uncapped-then-capped",
+        creator_user_id=user_id,
+        limit_microdollars=None,
+    )
+    uncapped = store.reserve_key_limit(key.hash, 100, usage_type="Credits")
+    assert uncapped.reserved_microdollars == 0
+
+    store.update_key(key.hash, {"limit_microdollars": 100})
+    capped = store.reserve_key_limit(key.hash, 100, usage_type="Credits")
+    assert capped.reserved_microdollars == 100
+
+    store.refund_key_limit(
+        key.hash,
+        uncapped.reserved_microdollars,
+        usage_type="Credits",
+    )
+    with pytest.raises(ValueError):
+        store.reserve_key_limit(key.hash, 1, usage_type="Credits")
+
+
+def test_key_limit_hold_releases_after_cap_is_removed(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+) -> None:
+    """Release uses the recorded hold even when the current key is uncapped."""
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id,
+        name="capped-then-uncapped",
+        creator_user_id=user_id,
+        limit_microdollars=100,
+    )
+    held = store.reserve_key_limit(key.hash, 100, usage_type="Credits")
+    assert held.reserved_microdollars == 100
+
+    store.update_key(key.hash, {"limit_microdollars": None})
+    store.refund_key_limit(key.hash, held.reserved_microdollars, usage_type="Credits")
+    store.update_key(key.hash, {"limit_microdollars": 100})
+
+    replacement = store.reserve_key_limit(key.hash, 100, usage_type="Credits")
+    assert replacement.reserved_microdollars == 100
+
+
+def test_byok_key_limit_hold_releases_after_include_flag_is_disabled(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+) -> None:
+    """Current BYOK policy cannot strand a hold taken under the old policy."""
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id,
+        name="byok-policy-flip",
+        creator_user_id=user_id,
+        limit_microdollars=100,
+        include_byok_in_limit=True,
+    )
+    held = store.reserve_key_limit(key.hash, 100, usage_type="BYOK")
+    assert held.reserved_microdollars == 100
+
+    store.update_key(key.hash, {"include_byok_in_limit": False})
+    store.refund_key_limit(key.hash, held.reserved_microdollars, usage_type="BYOK")
+    store.update_key(key.hash, {"include_byok_in_limit": True})
+
+    replacement = store.reserve_key_limit(key.hash, 100, usage_type="BYOK")
+    assert replacement.reserved_microdollars == 100
+
+
 def test_reserve_key_limit_counts_byok_when_included(store: Store, unique: str) -> None:
     kh = f"kl-byok-in-{unique}"
     _seed_key_limit(
@@ -1755,7 +1830,8 @@ def test_reserve_key_limit_window_blocks_before_lifetime(store: Store, unique: s
     assert excinfo.value.decision.allowed is False
     assert excinfo.value.decision.reset_seconds >= 1
     # Under the window cap still succeeds against the same row.
-    decision = store.reserve_key_limit(kh, 5, usage_type="Credits")
+    result = store.reserve_key_limit(kh, 5, usage_type="Credits")
+    decision = result.window_decision
     assert decision is not None
     assert decision.window == "daily"
     assert decision.limit == 100
@@ -1884,6 +1960,7 @@ def _authorize(store: Store, workspace_id: str, key_hash: str, **kw: object) -> 
         usage_type="Credits",
         estimated_microdollars=100,
         credit_reservation_id=None,
+        key_reserved_microdollars=0,
     )
     params.update(kw)
     return store.create_gateway_authorization(**params)  # type: ignore[arg-type]
@@ -1983,8 +2060,14 @@ def test_finalize_failure_books_no_usage(store: Store, workspace_id: str, unique
     _seed_key_limit(
         store, kh, limit_micro=1_000, usage=0, byok_usage=0, reserved=0, include_byok=True
     )
-    auth = _authorize(store, workspace_id, kh, estimated_microdollars=60)
-    store.reserve_key_limit(kh, 60, usage_type="Credits")
+    reservation = store.reserve_key_limit(kh, 60, usage_type="Credits")
+    auth = _authorize(
+        store,
+        workspace_id,
+        kh,
+        estimated_microdollars=60,
+        key_reserved_microdollars=reservation.reserved_microdollars,
+    )
 
     assert (
         store.finalize_gateway_authorization(
@@ -2003,6 +2086,42 @@ def test_finalize_failure_books_no_usage(store: Store, workspace_id: str, unique
     assert settled is not None
     assert settled.finalization_outcome == "refunded"
     assert settled.finalized_cost_microdollars == 0
+
+
+def test_legacy_authorization_missing_frozen_hold_releases_zero(
+    store: Store,
+    workspace_id: str,
+    user_id: str,
+) -> None:
+    """A pre-field authorization must never guess a hold from its estimate."""
+    _raw, key = store.create_api_key(
+        workspace_id=workspace_id,
+        name="legacy-missing-hold",
+        creator_user_id=user_id,
+        limit_microdollars=None,
+    )
+    uncapped = store.reserve_key_limit(key.hash, 100, usage_type="Credits")
+    assert uncapped.reserved_microdollars == 0
+    legacy = _authorize(
+        store,
+        workspace_id,
+        key.hash,
+        estimated_microdollars=100,
+        key_reserved_microdollars=None,
+    )
+
+    store.update_key(key.hash, {"limit_microdollars": 100})
+    current = store.reserve_key_limit(key.hash, 100, usage_type="Credits")
+    assert current.reserved_microdollars == 100
+
+    assert store.finalize_gateway_authorization(
+        legacy.id,  # type: ignore[attr-defined]
+        success=False,
+        actual_microdollars=0,
+        selected_usage_type="Credits",
+    )
+    with pytest.raises(ValueError):
+        store.reserve_key_limit(key.hash, 1, usage_type="Credits")
 
 
 def test_federated_key_is_resolvable_on_a_LATER_request(store: Store, unique: str) -> None:

@@ -85,6 +85,7 @@ from trusted_router.spend_leases import (
 )
 from trusted_router.spend_windows import (
     KeyLimitExceeded,
+    KeyLimitReserveResult,
     KeyWindowLimitDecision,
     KeyWindowLimitExceeded,
     decide_key_window_limits,
@@ -2698,6 +2699,55 @@ class PostgresStore:
 
     # API keys ---------------------------------------------------------------
 
+    def _write_key_limit_caps_tx(self, conn: Any, key: ApiKey) -> None:
+        """Write cap configuration only for the one supported shard layout.
+
+        Postgres key-limit rows are single-shard by construction. Keeping all
+        cap writes here makes a future or damaged multi-shard layout fail
+        closed instead of replicating a full cap across shards or updating no
+        row while reporting success.
+        """
+        rows = conn.execute(
+            "SELECT workspace_id, shard FROM tr_key_limit"
+            " WHERE key_hash = %s ORDER BY workspace_id, shard FOR UPDATE",
+            (key.hash,),
+            prepare=False,
+        ).fetchall()
+        layout = [(str(workspace_id), int(shard)) for workspace_id, shard in rows]
+        expected = [(key.workspace_id, 0)]
+        if layout != expected:
+            shards = [shard for _workspace_id, shard in layout]
+            raise RuntimeError(
+                f"cannot write caps for key_hash={key.hash}: "
+                f"shard_count={len(layout)}, shards={shards}; exactly one row at "
+                "shard 0 is required; distributing a cap across shards is not "
+                "implemented on this backend"
+            )
+        cursor = conn.execute(
+            "UPDATE tr_key_limit SET"
+            " limit_micro = %s::bigint, include_byok = %s,"
+            " day_limit_micro = %s::bigint,"
+            " week_limit_micro = %s::bigint,"
+            " month_limit_micro = %s::bigint,"
+            " updated_at = CURRENT_TIMESTAMP"
+            " WHERE workspace_id = %s AND key_hash = %s AND shard = 0",
+            (
+                _int8_param(key.limit_microdollars),
+                key.include_byok_in_limit,
+                _int8_param(key.limit_daily_microdollars),
+                _int8_param(key.limit_weekly_microdollars),
+                _int8_param(key.limit_monthly_microdollars),
+                key.workspace_id,
+                key.hash,
+            ),
+            prepare=False,
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError(
+                f"cannot write caps for key_hash={key.hash}: cap UPDATE affected "
+                f"{cursor.rowcount} rows; exactly one row at shard 0 is required"
+            )
+
     def create_api_key(
         self,
         *,
@@ -2760,21 +2810,11 @@ class PostgresStore:
             )
             conn.execute(
                 "INSERT INTO tr_key_limit "
-                "(workspace_id, key_hash, shard, limit_micro, include_byok, "
-                "day_limit_micro, week_limit_micro, month_limit_micro, "
-                "source_updated_at, updated_at) "
-                "VALUES (%s, %s, 0, %s, %s, %s, %s, %s, "
-                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                (
-                    workspace_id,
-                    key.hash,
-                    _int8_param(limit_microdollars),
-                    include_byok_in_limit,
-                    _int8_param(limit_daily_microdollars),
-                    _int8_param(limit_weekly_microdollars),
-                    _int8_param(limit_monthly_microdollars),
-                ),
+                "(workspace_id, key_hash, shard, source_updated_at, updated_at) "
+                "VALUES (%s, %s, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (workspace_id, key.hash),
             )
+            self._write_key_limit_caps_tx(conn, key)
 
         self._run_transaction(create)
         return raw, key
@@ -2822,28 +2862,12 @@ class PostgresStore:
             # from the home record; usage and reserved start at zero.
             conn.execute(
                 "INSERT INTO tr_key_limit"
-                " (workspace_id, key_hash, shard, limit_micro, usage, byok_usage,"
-                "  reserved, include_byok, day_limit_micro, week_limit_micro,"
-                "  month_limit_micro)"
-                " VALUES (%s, %s, 0, %s, 0, 0, 0, %s, %s, %s, %s)"
-                " ON CONFLICT (workspace_id, key_hash, shard) DO UPDATE SET"
-                "   limit_micro = EXCLUDED.limit_micro"
-                " , include_byok = EXCLUDED.include_byok"
-                " , day_limit_micro = EXCLUDED.day_limit_micro"
-                " , week_limit_micro = EXCLUDED.week_limit_micro"
-                " , month_limit_micro = EXCLUDED.month_limit_micro"
-                " , updated_at = CURRENT_TIMESTAMP",
-                (
-                    key.workspace_id,
-                    key.hash,
-                    _int8_param(key.limit_microdollars),
-                    key.include_byok_in_limit,
-                    _int8_param(key.limit_daily_microdollars),
-                    _int8_param(key.limit_weekly_microdollars),
-                    _int8_param(key.limit_monthly_microdollars),
-                ),
+                " (workspace_id, key_hash, shard) VALUES (%s, %s, 0)"
+                " ON CONFLICT (workspace_id, key_hash, shard) DO NOTHING",
+                (key.workspace_id, key.hash),
                 prepare=False,
             )
+            self._write_key_limit_caps_tx(conn, key)
             return key
 
         return self._run_transaction(upsert)
@@ -2982,7 +3006,7 @@ class PostgresStore:
         amount_microdollars: int,
         *,
         usage_type: UsageType | str,
-    ) -> KeyWindowLimitDecision | None:
+    ) -> KeyLimitReserveResult:
         """Hold `amount` against this key's caps, or raise.
 
         Mirrors InMemoryApiKeys.reserve_limit (storage_keys.py), which is the
@@ -3007,19 +3031,27 @@ class PostgresStore:
         decision_now = utcnow()
         window_floor_map = window_floors(decision_now)
 
-        def reserve(conn: Any) -> KeyWindowLimitDecision | None:
+        def reserve(conn: Any) -> KeyLimitReserveResult:
             row = conn.execute(
-                "SELECT limit_micro, usage, byok_usage, reserved, include_byok,"
-                " day_limit_micro, week_limit_micro, month_limit_micro,"
-                " day_usage, day_start, week_usage, week_start, month_usage, month_start"
-                " FROM tr_key_limit WHERE key_hash = %s AND shard = 0",
+                "SELECT key_limit.limit_micro, key_limit.usage,"
+                " key_limit.byok_usage, key_limit.reserved, key_limit.include_byok,"
+                " key_limit.day_limit_micro, key_limit.week_limit_micro,"
+                " key_limit.month_limit_micro, key_limit.day_usage,"
+                " key_limit.day_start, key_limit.week_usage, key_limit.week_start,"
+                " key_limit.month_usage, key_limit.month_start,"
+                " key_record.body ->> 'budget_alert_only'"
+                " FROM tr_key_limit AS key_limit"
+                " LEFT JOIN tr_entities AS key_record"
+                "   ON key_record.kind = 'api_key'"
+                "  AND key_record.id = key_limit.key_hash"
+                " WHERE key_limit.key_hash = %s AND key_limit.shard = 0",
                 (key_hash,),
                 prepare=False,
             ).fetchone()
             if row is None:
                 # No typed row: nothing to enforce here. The gateway's own
                 # KEY_MISSING handling covers the typed-authorize path.
-                return None
+                return KeyLimitReserveResult(None, 0)
             (
                 limit_micro,
                 _usage,
@@ -3035,39 +3067,48 @@ class PostgresStore:
                 week_start,
                 month_usage,
                 month_start,
+                budget_alert_only_raw,
             ) = row
 
             if _is_byok(usage_type) and not include_byok:
-                return None
+                return KeyLimitReserveResult(None, 0)
 
-            # Lazy windows: a NULL or stale *_start means the window has not
-            # started in this period, so its usage reads as ZERO. No reset job
-            # exists (or could silently stop and leave keys stuck over limit).
-            windows = (
-                ("daily", day_limit, day_usage, day_start),
-                ("weekly", week_limit, week_usage, week_start),
-                ("monthly", month_limit, month_usage, month_start),
-            )
-            window_limits: dict[str, int] = {}
-            used_by_window: dict[str, int] = {}
-            for name, limit, used, started in windows:
-                if limit is None:
-                    continue
-                floor = window_floor_map[name]
-                current = 0 if started is None or _as_utc(started) < floor else int(used or 0)
-                window_limits[name] = int(limit)
-                used_by_window[name] = current
-            decision = decide_key_window_limits(
-                window_limits,
-                used_by_window,
-                amount_microdollars,
-                now=decision_now,
-            )
-            if decision is not None and not decision.allowed:
-                raise KeyWindowLimitExceeded(decision)
+            decision: KeyWindowLimitDecision | None = None
+            budget_alert_only = str(budget_alert_only_raw).lower() in {"1", "true"}
+            if not budget_alert_only:
+                # Lazy windows: a NULL or stale *_start means the window has
+                # not started in this period, so its usage reads as ZERO. No
+                # reset job exists (or could silently stop and leave keys
+                # stuck over limit).
+                windows = (
+                    ("daily", day_limit, day_usage, day_start),
+                    ("weekly", week_limit, week_usage, week_start),
+                    ("monthly", month_limit, month_usage, month_start),
+                )
+                window_limits: dict[str, int] = {}
+                used_by_window: dict[str, int] = {}
+                for name, limit, used, started in windows:
+                    if limit is None:
+                        continue
+                    floor = window_floor_map[name]
+                    current = (
+                        0
+                        if started is None or _as_utc(started) < floor
+                        else int(used or 0)
+                    )
+                    window_limits[name] = int(limit)
+                    used_by_window[name] = current
+                decision = decide_key_window_limits(
+                    window_limits,
+                    used_by_window,
+                    amount_microdollars,
+                    now=decision_now,
+                )
+                if decision is not None and not decision.allowed:
+                    raise KeyWindowLimitExceeded(decision)
 
             if limit_micro is None:
-                return decision
+                return KeyLimitReserveResult(decision, 0)
 
             updated = conn.execute(
                 "UPDATE tr_key_limit"
@@ -3086,7 +3127,7 @@ class PostgresStore:
             ).rowcount
             if updated == 0:
                 raise KeyLimitExceeded(decision)
-            return decision
+            return KeyLimitReserveResult(decision, amount_microdollars)
 
         return self._run_transaction(reserve)
 
@@ -3392,25 +3433,21 @@ class PostgresStore:
         is whether the spend being rolled into the windows was BYOK. They
         differ on a mixed-candidate authorization: the hold is Credits-typed
         whenever any credit candidate existed, but the enclave may select a
-        BYOK endpoint. Deriving both from one value made the early-return
-        below skip the RELEASE for include_byok=false keys — stranding
-        `reserved` forever — when what should be skipped is only the window
-        contribution.
+        BYOK endpoint. Deriving both from one value used to skip the RELEASE
+        for include_byok=false keys — stranding `reserved` forever — when
+        what should be skipped is only the window contribution. Mutable
+        current configuration must never decide whether a recorded hold is
+        released.
         """
         floors = window_floors(utcnow())
         row = conn.execute(
-            "SELECT limit_micro, include_byok FROM tr_key_limit WHERE key_hash = %s AND shard = 0",
+            "SELECT include_byok FROM tr_key_limit WHERE key_hash = %s AND shard = 0",
             (key_hash,),
             prepare=False,
         ).fetchone()
         if row is None:
             return
-        limit_micro, include_byok = row
-        if _is_byok(usage_type) and not include_byok:
-            # Symmetric with reserve_key_limit: no hold was ever taken for a
-            # BYOK-typed reservation on a key that excludes BYOK, so there is
-            # nothing to release and nothing to roll.
-            return
+        (include_byok,) = row
         if window_is_byok is None:
             window_is_byok = _is_byok(usage_type)
         if window_is_byok and not include_byok:
@@ -3460,7 +3497,21 @@ class PostgresStore:
             ),
             prepare=False,
         )
-        _ = limit_micro  # read for the BYOK/uncapped guard above only.
+
+    @staticmethod
+    def _recorded_key_hold(authorization: GatewayAuthorization) -> int:
+        """Return only a hold durably frozen on the authorization.
+
+        A legacy JSON record has no safe answer: current cap configuration can
+        describe a different request's hold. Releasing zero may strand an old
+        hold for reconciliation, but it cannot steal newer headroom.
+        """
+        if authorization.key_reserved_microdollars is None:
+            log.error(
+                "authorization %s has no frozen key hold; releasing zero",
+                authorization.id,
+            )
+        return authorization.frozen_key_hold_microdollars()
 
     def supports_key_writes(self) -> bool:
         return True
@@ -3483,43 +3534,8 @@ class PostgresStore:
             apply_key_patch(key, patch)
             typed_limit_patch = bool(TYPED_LIMIT_PATCH_FIELDS & patch.keys())
             if typed_limit_patch:
-                shard_count = int(
-                    conn.execute(
-                        "SELECT COUNT(*) FROM tr_key_limit WHERE key_hash = %s",
-                        (key.hash,),
-                        prepare=False,
-                    ).fetchone()[0]
-                )
-                if shard_count > 1:
-                    raise RuntimeError(
-                        f"cannot update caps for key_hash={key.hash}: "
-                        f"shard_count={shard_count}; distributing a cap across shards "
-                        "is not implemented on this backend"
-                    )
+                self._write_key_limit_caps_tx(conn, key)
             self._write_entity_tx(conn, "api_key", key.hash, key)
-            if typed_limit_patch:
-                # Postgres creates exactly one typed row, shard 0. The count
-                # above makes that assumption fail closed if multiple shards
-                # ever appear. For a legacy/orphaned entity with zero typed
-                # rows, this remains a no-op while the entity update succeeds.
-                conn.execute(
-                    "UPDATE tr_key_limit SET"
-                    " limit_micro = %s::bigint, include_byok = %s,"
-                    " day_limit_micro = %s::bigint,"
-                    " week_limit_micro = %s::bigint,"
-                    " month_limit_micro = %s::bigint,"
-                    " updated_at = CURRENT_TIMESTAMP"
-                    " WHERE key_hash = %s AND shard = 0",
-                    (
-                        _int8_param(key.limit_microdollars),
-                        key.include_byok_in_limit,
-                        _int8_param(key.limit_daily_microdollars),
-                        _int8_param(key.limit_weekly_microdollars),
-                        _int8_param(key.limit_monthly_microdollars),
-                        key.hash,
-                    ),
-                    prepare=False,
-                )
             return key
 
         return self._run_transaction(update)
@@ -5792,6 +5808,7 @@ class PostgresStore:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
+        key_reserved_microdollars: int,
         authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
@@ -5851,6 +5868,7 @@ class PostgresStore:
             usage_type=cast(Any, usage_type),
             estimated_microdollars=estimated_microdollars,
             credit_reservation_id=credit_reservation_id,
+            key_reserved_microdollars=key_reserved_microdollars,
             requested_model_id=requested_model_id,
             candidate_model_ids=list(candidate_model_ids or []),
             region=region,
@@ -6069,7 +6087,7 @@ class PostgresStore:
                 self._release_key_hold_tx(
                     conn,
                     authorization.key_hash,
-                    authorization.estimated_microdollars,
+                    self._recorded_key_hold(authorization),
                     # The hold was reserved under the AUTHORIZE-time type
                     # (Credits whenever a credit candidate existed) — release
                     # under the same type, or an include_byok=false key whose
@@ -6186,7 +6204,7 @@ class PostgresStore:
             self._release_key_hold_tx(
                 conn,
                 authorization.key_hash,
-                authorization.estimated_microdollars,
+                self._recorded_key_hold(authorization),
                 usage_type=authorization.usage_type,
                 window_amount=booked,
                 window_is_byok=_is_byok(selected_usage_type),
@@ -6316,7 +6334,7 @@ class PostgresStore:
                 self._release_key_hold_tx(
                     conn,
                     authorization.key_hash,
-                    authorization.estimated_microdollars,
+                    self._recorded_key_hold(authorization),
                     usage_type=authorization.usage_type,
                     window_amount=0,
                 )

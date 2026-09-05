@@ -14,7 +14,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from trusted_router.operational_analytics_freshness import OutboxFreshness
 from trusted_router.spend_leases import SpendLeaseArtifact, SpendLeaseBoot
-from trusted_router.spend_windows import KeyWindowLimitDecision
+from trusted_router.spend_windows import KeyLimitReserveResult
 from trusted_router.storage_models import (
     AcquisitionAttribution,
     ActivationReminderTask,
@@ -482,7 +482,7 @@ class Store(Protocol):
         amount_microdollars: int,
         *,
         usage_type: UsageType | str,
-    ) -> KeyWindowLimitDecision | None: ...
+    ) -> KeyLimitReserveResult: ...
     def settle_key_limit(
         self,
         key_hash: str,
@@ -887,6 +887,7 @@ class Store(Protocol):
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
+        key_reserved_microdollars: int,
         authorization_id: str | None = ...,
         requested_model_id: str | None = ...,
         candidate_model_ids: list[str] | None = ...,

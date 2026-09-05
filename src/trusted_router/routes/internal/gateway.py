@@ -1899,11 +1899,12 @@ def _authorize_gateway_sync_impl(
         )
 
         try:
-            window_decision = STORE.reserve_key_limit(
+            key_limit_reservation = STORE.reserve_key_limit(
                 api_key.hash,
                 estimate,
                 usage_type=reservation_usage_type,
             )
+            window_decision = key_limit_reservation.window_decision
             remember_spend_window_decision(request, window_decision)
         except KeyWindowLimitExceeded as exc:
             release_user_model_slot_after_error()
@@ -1960,7 +1961,9 @@ def _authorize_gateway_sync_impl(
                 if not _deferred_settlement_applies(settings, api_key):
                     release_user_model_slot_after_error()
                     STORE.refund_key_limit(
-                        api_key.hash, estimate, usage_type=reservation_usage_type
+                        api_key.hash,
+                        key_limit_reservation.reserved_microdollars,
+                        usage_type=reservation_usage_type,
                     )
                     raise _insufficient_credits_error(workspace) from exc
                 settlement = _DEFERRED_HOME_SETTLEMENT
@@ -1975,6 +1978,7 @@ def _authorize_gateway_sync_impl(
             usage_type=reservation_usage_type,
             estimated_microdollars=estimate,
             credit_reservation_id=credit_reservation_id,
+            key_reserved_microdollars=key_limit_reservation.reserved_microdollars,
             authorization_id=authorization_id,
             requested_model_id=requested_model_id,
             candidate_model_ids=[
@@ -2030,7 +2034,11 @@ def _authorize_gateway_sync_impl(
             # The key-limit escrow taken above must come back: nothing on this
             # plane would ever release it for a request that never became an
             # authorization (the reaper only sees authorizations).
-            STORE.refund_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
+            STORE.refund_key_limit(
+                api_key.hash,
+                key_limit_reservation.reserved_microdollars,
+                usage_type=reservation_usage_type,
+            )
             raise api_error(
                 402,
                 "This plane is holding the maximum unsettled spend for this workspace "
@@ -2046,7 +2054,11 @@ def _authorize_gateway_sync_impl(
             # committed OUTSIDE this transaction, so nothing downstream will
             # ever release it for a request that produced no authorization —
             # swallowing this into a bare 503 leaks it silently, forever.
-            STORE.refund_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
+            STORE.refund_key_limit(
+                api_key.hash,
+                key_limit_reservation.reserved_microdollars,
+                usage_type=reservation_usage_type,
+            )
             logger.warning(
                 "billing.authorize_conflict_after_escrow workspace_id=%s request_id=%s "
                 "requested_model=%s estimated_microdollars=%s error_class=%s",

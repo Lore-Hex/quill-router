@@ -780,6 +780,10 @@ class GatewayAuthorization:
     usage_type: UsageType
     estimated_microdollars: int
     credit_reservation_id: str | None = None
+    # Exact lifetime key-cap hold taken at authorize. None means a legacy JSON
+    # record created before this fact was persisted; it must never be guessed
+    # from mutable current key configuration during settlement.
+    key_reserved_microdollars: int | None = None
     settled: bool = False
     created_at: str = field(default_factory=iso_now)
     requested_model_id: str | None = None
@@ -895,6 +899,17 @@ class GatewayAuthorization:
         # is always a UsageType at runtime regardless of construction path.
         if not isinstance(self.usage_type, UsageType):
             self.usage_type = UsageType.coerce(self.usage_type)
+
+    def frozen_key_hold_microdollars(self) -> int:
+        """Return only the authorize-time key hold recorded for this request.
+
+        Old JSON records have no trustworthy value. Releasing zero can leave
+        an old hold for reconciliation, but guessing from the estimate can
+        release a newer request's money after the key configuration changes.
+        """
+        if self.key_reserved_microdollars is None:
+            return 0
+        return max(0, int(self.key_reserved_microdollars))
 
     def record_finalization(
         self,

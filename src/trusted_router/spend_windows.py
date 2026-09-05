@@ -59,6 +59,20 @@ class KeyWindowLimitDecision:
     allowed: bool
 
 
+@dataclass(frozen=True)
+class KeyLimitReserveResult:
+    """One key-cap admission result, including the hold actually taken.
+
+    ``reserved_microdollars`` is deliberately separate from the requested
+    estimate. An uncapped or BYOK-excluded request takes no lifetime-cap hold,
+    and settlement must preserve that authorize-time fact even if the key's
+    configuration changes while the request is in flight.
+    """
+
+    window_decision: KeyWindowLimitDecision | None
+    reserved_microdollars: int
+
+
 class KeyWindowLimitExceeded(ValueError):
     """A per-window key spend limit blocked the request."""
 

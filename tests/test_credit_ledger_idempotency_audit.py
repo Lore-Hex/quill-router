@@ -204,6 +204,7 @@ def test_mark_gateway_authorization_settled_is_idempotent() -> None:
         usage_type=UsageType.CREDITS,
         estimated_microdollars=100_000,
         credit_reservation_id=None,
+        key_reserved_microdollars=0,
     )
 
     STORE.mark_gateway_authorization_settled(auth.id)
@@ -237,6 +238,7 @@ def test_create_gateway_authorization_dedupes_by_idempotency_key() -> None:
         usage_type=UsageType.CREDITS,
         estimated_microdollars=10_000,
         credit_reservation_id=None,
+        key_reserved_microdollars=0,
         idempotency_key="idk_gw_create_audit_1",
     )
     # Lookup via the explicit dedup path that the gateway route uses.
@@ -266,6 +268,7 @@ def test_finalize_gateway_authorization_returns_false_on_replay() -> None:
         usage_type=UsageType.CREDITS,
         estimated_microdollars=200_000,
         credit_reservation_id=reservation.id,
+        key_reserved_microdollars=0,
     )
 
     first = STORE.finalize_gateway_authorization(

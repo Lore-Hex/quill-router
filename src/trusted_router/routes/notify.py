@@ -277,11 +277,13 @@ class _Charge:
         reservation_id: str | None,
         amount: int,
         *,
+        key_reserved_microdollars: int = 0,
         billable: bool = True,
     ) -> None:
         self._key_hash = key_hash
         self._reservation_id = reservation_id
         self._amount = amount
+        self._key_reserved_microdollars = key_reserved_microdollars
         self._finalized = False
         # False when no credit hold could be taken. The send still happens; the
         # response must then report zero rather than a price nobody charged.
@@ -301,11 +303,12 @@ class _Charge:
 
         key_hash = principal.api_key.hash
         try:
-            window_decision = STORE.reserve_key_limit(
+            key_limit_reservation = STORE.reserve_key_limit(
                 key_hash,
                 amount,
                 usage_type=UsageType.CREDITS,
             )
+            window_decision = key_limit_reservation.window_decision
             remember_spend_window_decision(request, window_decision)
         except KeyWindowLimitExceeded as exc:
             remember_spend_window_decision(request, exc.decision)
@@ -344,16 +347,31 @@ class _Charge:
         try:
             reservation = STORE.reserve(principal.workspace.id, key_hash, amount)
         except ValueError as exc:
-            STORE.refund_key_limit(key_hash, amount, usage_type=UsageType.CREDITS)
+            STORE.refund_key_limit(
+                key_hash,
+                key_limit_reservation.reserved_microdollars,
+                usage_type=UsageType.CREDITS,
+            )
             raise api_error(402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS) from exc
         except RuntimeError:
             log.warning(
                 "notify: credit reservation unavailable on this backend; "
                 "delivering unbilled (workspace=%s)", principal.workspace.id,
             )
-            return cls(key_hash, None, amount, billable=False)
+            return cls(
+                key_hash,
+                None,
+                amount,
+                key_reserved_microdollars=key_limit_reservation.reserved_microdollars,
+                billable=False,
+            )
 
-        return cls(key_hash, reservation.id, amount)
+        return cls(
+            key_hash,
+            reservation.id,
+            amount,
+            key_reserved_microdollars=key_limit_reservation.reserved_microdollars,
+        )
 
     def settle(self, actual: int) -> None:
         if self._finalized or self._key_hash is None:
@@ -361,7 +379,12 @@ class _Charge:
         self._finalized = True
         if self._reservation_id is not None:
             STORE.settle(self._reservation_id, actual)
-        STORE.settle_key_limit(self._key_hash, self._amount, actual, usage_type=UsageType.CREDITS)
+        STORE.settle_key_limit(
+            self._key_hash,
+            self._key_reserved_microdollars,
+            actual,
+            usage_type=UsageType.CREDITS,
+        )
 
     def refund(self) -> None:
         if self._finalized or self._key_hash is None:
@@ -369,4 +392,8 @@ class _Charge:
         self._finalized = True
         if self._reservation_id is not None:
             STORE.refund(self._reservation_id)
-        STORE.refund_key_limit(self._key_hash, self._amount, usage_type=UsageType.CREDITS)
+        STORE.refund_key_limit(
+            self._key_hash,
+            self._key_reserved_microdollars,
+            usage_type=UsageType.CREDITS,
+        )

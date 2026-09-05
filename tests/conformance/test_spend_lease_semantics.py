@@ -69,6 +69,7 @@ def test_gateway_authorization_replay_preserves_verbatim_spend_lease_token(
         "usage_type": "Credits",
         "estimated_microdollars": 100,
         "credit_reservation_id": None,
+        "key_reserved_microdollars": 0,
         "idempotency_key": f"lease-idem-{unique}",
         "spend_lease": artifact,
     }
