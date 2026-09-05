@@ -226,6 +226,9 @@ OPENROUTER_LANDING_EXPERIMENT_CAMPAIGNS = frozenset(
     }
 )
 _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
+# Share the 60s response cadence even across snapshot/stale-fallback rebuilds.
+_STATUS_ANALYTICS_CACHE: tuple[float, dict[str, Any]] | None = None
+_STATUS_ANALYTICS_CACHE_LOCK = threading.Lock()
 # /fleet fans out to every peer's status.json, so its cache TTL is what keeps
 # a page-refresh storm from turning into a cross-cloud fetch storm.
 _FLEET_CACHE: tuple[float, dict[str, Any]] | None = None
@@ -2682,42 +2685,40 @@ def _merge_analytics_status(payload: dict[str, Any]) -> dict[str, Any]:
     :mod:`clickhouse.check_fleet_analytics_freshness` relies on, and the reason
     the registry can insist that no cloud is missing the section.
 
-    The key is written unconditionally. Omitting it on failure would be the
-    original bug in a new place: the checker reads a missing section as "this
-    deployment does not publish drain lag", and a section that disappears
-    whenever the database is unhappy is a signal that is quietest exactly when
-    it matters. A read failure publishes `available: false` with a reason
-    instead, and never the last good number -- a stale-but-plausible lag is
-    indistinguishable from a healthy one. That claim is why `_status_snapshot`
-    calls this function on its stale-cache fallback paths TOO: those re-serve
-    the previous payload wholesale, and without a re-read they would re-serve
-    the previous drain lag with it, which is precisely the last good number.
+    The analytics section has its own 60s cache, matching the response cadence.
+    Snapshot rebuilds (every 15s) and stale-payload fallbacks share that window.
+    Keep both the lag and generated_at from the observation: re-stamping an old
+    value would make a frozen reading look fresh. Cache failures too, and never
+    serve the previous successful reading after a failed refresh.
 
-    Runs inside `_status_snapshot`, so it is behind `STATUS_SNAPSHOT_CACHE_SECONDS`
-    and costs one bounded index seek per cache miss rather than one per request.
-    Two bounds apply, and neither is the other's substitute: the store caps its
-    own pool wait and statement (3s, as `readiness_check` does), and
-    `_read_outbox_freshness_bounded` caps how long THIS function is willing to
-    wait for any of that to happen. A read that overruns publishes
-    `unavailable` and the page is served.
+    Two bounds apply to each refresh: the store caps its own pool wait and
+    statement (3s), and `_read_outbox_freshness_bounded` caps the caller's wait.
 
     Nothing in here may raise. The section is written unconditionally, and an
     exception escaping would drop the key -- which the fleet checker reads as
     "this deployment runs code too old to publish drain lag" and answers by
     sending somebody to redeploy a healthy service.
     """
-    try:
-        # Called through the declared `Store` surface rather than a getattr
-        # probe, so a backend that stops implementing it fails mypy instead of
-        # silently degrading every cloud's status page to "unreachable".
-        reading = _read_outbox_freshness_bounded(STATUS_ANALYTICS_READ_TIMEOUT_SECONDS)
-        section = analytics_status_from_reading(reading, now=dt.datetime.now(dt.UTC))
-    except Exception:
-        # The projection too, not just the read: it handles a value some
-        # backend produced, and the clamps it runs are the last thing standing
-        # between that value and an uncredentialed page.
-        log.exception("operational_analytics_status_section_failed")
-        section = analytics_status_unavailable(REASON_UNREACHABLE)
+    global _STATUS_ANALYTICS_CACHE
+    with _STATUS_ANALYTICS_CACHE_LOCK:
+        now = time.monotonic()
+        cached = _STATUS_ANALYTICS_CACHE
+        if cached is not None and now - cached[0] < max(60, STATUS_RESPONSE_CACHE_SECONDS):
+            section = dict(cached[1])
+        else:
+            try:
+                # Called through the declared `Store` surface rather than a getattr
+                # probe, so a backend that stops implementing it fails mypy instead of
+                # silently degrading every cloud's status page to "unreachable".
+                reading = _read_outbox_freshness_bounded(STATUS_ANALYTICS_READ_TIMEOUT_SECONDS)
+                section = analytics_status_from_reading(reading, now=dt.datetime.now(dt.UTC))
+            except Exception:
+                # The projection too, not just the read: it handles a value some
+                # backend produced, and the clamps it runs are the last thing standing
+                # between that value and an uncredentialed page.
+                log.exception("operational_analytics_status_section_failed")
+                section = analytics_status_unavailable(REASON_UNREACHABLE)
+            _STATUS_ANALYTICS_CACHE = (time.monotonic(), dict(section))
     result = dict(payload)
     result[ANALYTICS_STATUS_KEY] = section
     return result
@@ -2736,12 +2737,8 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
         except Exception as exc:
             _log_public_analytics_snapshot_read_failure("status_inputs", exc)
             if _STATUS_CACHE is not None:
-                # The rest of the payload may be served stale; the analytics
-                # section may NOT. Re-read it, so this path publishes the drain
-                # lag as of now (or `unavailable`) rather than whatever the
-                # last successful build happened to see. A stale lag is the one
-                # value here that is worse than no value: it is a plausible
-                # small number that ages into a lie while the outbox grows.
+                # Analytics uses its own 60s observation window; never reuse
+                # this arbitrarily stale payload's lag or timestamp.
                 return _apply_public_client_observed_policy(
                     _merge_analytics_status(_STATUS_CACHE[1]), settings=settings
                 )
@@ -2777,8 +2774,8 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
     except Exception:
         if settings.environment != "test" and _STATUS_CACHE is not None:
             log.exception("status_live_fallback_failed_serving_stale")
-            # Same rule as the precomputed path above: everything else may be
-            # stale, the drain lag may not.
+            # Refresh analytics on its own cadence, as on the precomputed
+            # fallback above.
             return _apply_public_client_observed_policy(
                 _merge_analytics_status(_STATUS_CACHE[1]), settings=settings
             )
