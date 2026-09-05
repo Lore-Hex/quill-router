@@ -55,6 +55,7 @@ from trusted_router.storage_models import (
     ActivationReminderTask,
     AdverseTrustEvent,
     AdverseTrustResult,
+    AmbiguousGatewayRequestId,
     ApiKey,
     ApiKeyAuthContext,
     ApiKeyUsageSnapshot,
@@ -3023,14 +3024,17 @@ class InMemoryStore:
         self, gateway_request_id: str
     ) -> GatewayAuthorization | None:
         with self._lock:
-            return next(
-                (
-                    authorization
-                    for authorization in self.api_keys.gateway_authorizations.values()
-                    if authorization.gateway_request_id == gateway_request_id
-                ),
-                None,
+            matches = (
+                authorization
+                for authorization in self.api_keys.gateway_authorizations.values()
+                if authorization.gateway_request_id == gateway_request_id
             )
+            first = next(matches, None)
+            if next(matches, None) is not None:
+                raise AmbiguousGatewayRequestId(
+                    "multiple authorizations share the gateway request id"
+                )
+            return first
 
     def get_gateway_authorization_by_idempotency_key(
         self, workspace_id: str, key_hash: str, idempotency_key: str
