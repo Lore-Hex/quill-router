@@ -30,9 +30,13 @@ from trusted_router.operational_analytics import (
 from trusted_router.operational_analytics_freshness import (
     BACKEND_DIRECT,
     BACKEND_SPANNER,
+    OUTBOX_HEARTBEAT_ID,
+    OUTBOX_HEARTBEAT_KIND,
     REASON_NOT_CONFIGURED,
+    REASON_POLLER_STALE,
     REASON_UNREACHABLE,
     OutboxFreshness,
+    OutboxHeartbeat,
 )
 from trusted_router.receipt_keys import (
     RECEIPT_KEY_KIND,
@@ -246,6 +250,34 @@ class _AuthorizationReplay(Exception):
 #: `readiness_check`, and the same rule: a public page degrades rather than
 #: waits. See `SpannerBigtableStore.operational_analytics_outbox_freshness`.
 OUTBOX_FRESHNESS_TIMEOUT_SECONDS = 3.0
+
+#: How old the Spanner poller's heartbeat may be before /status.json stops
+#: publishing a lag from it and says `poller_stale` instead. The bound is
+#: exclusive: a row committed exactly this many seconds ago is still a
+#: reading, one committed any later than that is stale. Age is measured
+#: from the row's Spanner commit timestamp (`tr_entities.updated_at`, written
+#: as PENDING_COMMIT_TIMESTAMP()), not from the poller's own wall clock in the
+#: body. The poller writes at most once per 15s and its idle poll backs off to
+#: 30s, so 180s is several missed passes, not one slow one. The bound as seen
+#: on /status.json is this PLUS the 60s per-process analytics status cache in
+#: routes/public.py (`_merge_analytics_status`). Env override for an incident,
+#: never for comfort: raising it widens the window in which a dead poller
+#: still reads as a healthy drain.
+OUTBOX_HEARTBEAT_MAX_AGE_SECONDS = float(
+    os.environ.get("TR_OUTBOX_HEARTBEAT_MAX_AGE_SECONDS", "180")
+)
+
+
+def _heartbeat_commit_time(value: object) -> dt.datetime:
+    """`tr_entities.updated_at` as an aware UTC datetime; ``ValueError`` otherwise.
+
+    Spanner hands TIMESTAMP back as a tz-aware ``datetime`` subclass. A NULL or
+    non-timestamp value is a hand-written or corrupted row, and the caller
+    turns the error into `poller_stale` like any other unreadable heartbeat.
+    """
+    if not isinstance(value, dt.datetime):
+        raise ValueError("heartbeat updated_at is not a timestamp")
+    return value.replace(tzinfo=dt.UTC) if value.tzinfo is None else value.astimezone(dt.UTC)
 
 _SESSION_AUTH_CONTEXT_SQL = """
     /* auth_session_context */
@@ -6531,11 +6563,36 @@ class SpannerBigtableStore:
         meaning, and this is the number an external check uses to decide the
         pipeline is alive.
 
+        The durable-outbox answer comes from the VM poller's HEARTBEAT, not
+        from the outbox. The per-shard head read
+        (`SpannerOperationalAnalyticsOutbox.oldest_enqueued_at`) steps over
+        seven days of deleted-row versions and cost 823-957 ms of Spanner CPU
+        per execution in production (2026-09-05), once per Cloud Run instance
+        per minute; a test pins that no production request path calls it any
+        more. The poller already knows the outbox head, floored by its own
+        committed deletes, and publishes it into `tr_entities` after each pass
+        (`clickhouse.ingest_operational_outbox.OutboxHeartbeatPublisher`).
+        This is one point read on the primary key.
+
+        Fail-closed: a heartbeat that is absent, unreadable, or older than
+        `OUTBOX_HEARTBEAT_MAX_AGE_SECONDS` publishes `poller_stale`, and
+        nothing here falls back to scanning the outbox. A lag this process has
+        not observed is not a lag of 0. Age is the row's Spanner commit time
+        (`updated_at`), so a poller with a skewed wall clock can neither look
+        fresher nor staler than its last committed write; its `observed_at`
+        stays in the body for lag arithmetic and diagnostics.
+
+        Rollout order is a runtime dependency: the VM poller
+        (`scripts/deploy/clickhouse_live_ingestion.sh`) must be deployed
+        FIRST and have written a row -- `SELECT body FROM tr_entities WHERE
+        kind='operational_outbox_heartbeat'` returns one -- before the control
+        plane that runs this code. Reversed, this reads `poller_stale` until
+        the first heartbeat lands and the fleet freshness checker fails, by
+        design. See docs/clickhouse-reliability.md.
+
         Bounded like `readiness_check` above, and for the sharper reason that
         this read is on the PUBLIC /status.json path inside an async handler --
-        a blocking wait there stops the event loop, not one thread. The budget
-        covers the whole 32-shard sweep rather than each statement, so the cap
-        is a real ceiling on how long the status page can be held up; a timeout
+        a blocking wait there stops the event loop, not one thread. A timeout
         raises and degrades to `unreachable` here, and never propagates.
         """
         outbox = self._operational_analytics_outbox
@@ -6560,7 +6617,7 @@ class SpannerBigtableStore:
                 flush_failures=stats.flush_failures,
             )
         try:
-            oldest = outbox.oldest_enqueued_at(timeout=OUTBOX_FRESHNESS_TIMEOUT_SECONDS)
+            row = self._read_outbox_heartbeat_row()
         except Exception as exc:
             context = {
                 "error_class": type(exc).__name__,
@@ -6584,7 +6641,73 @@ class SpannerBigtableStore:
                     extra=context,
                 )
             return OutboxFreshness.unavailable(BACKEND_SPANNER, REASON_UNREACHABLE)
-        return OutboxFreshness(backend=BACKEND_SPANNER, oldest_enqueued_at=oldest)
+        if row is None:
+            log.warning(
+                "spanner.operational_analytics_outbox_heartbeat_missing",
+                extra={"kind": OUTBOX_HEARTBEAT_KIND, "id": OUTBOX_HEARTBEAT_ID},
+            )
+            return OutboxFreshness.unavailable(BACKEND_SPANNER, REASON_POLLER_STALE)
+        body, committed_raw = row
+        try:
+            heartbeat = OutboxHeartbeat.parse(body)
+            committed_at = _heartbeat_commit_time(committed_raw)
+        except ValueError as exc:
+            log.exception(
+                "spanner.operational_analytics_outbox_heartbeat_invalid",
+                extra={"error_message": str(exc)[:500]},
+            )
+            return OutboxFreshness.unavailable(BACKEND_SPANNER, REASON_POLLER_STALE)
+        now = dt.datetime.now(dt.UTC)
+        # The server's commit time is the clock. `observed_at` is the poller's
+        # own stamp and stays in the body for diagnostics (its distance from the
+        # commit is the poller's write lag); it must not decide freshness.
+        age_seconds = (now - committed_at).total_seconds()
+        if age_seconds > OUTBOX_HEARTBEAT_MAX_AGE_SECONDS:
+            log.warning(
+                "spanner.operational_analytics_outbox_heartbeat_stale",
+                extra={
+                    "age_seconds": round(age_seconds, 3),
+                    "max_age_seconds": OUTBOX_HEARTBEAT_MAX_AGE_SECONDS,
+                    "committed_at": committed_at.isoformat(),
+                    "observed_at": heartbeat.observed_at.isoformat(),
+                    "poller": heartbeat.poller,
+                },
+            )
+            return OutboxFreshness.unavailable(BACKEND_SPANNER, REASON_POLLER_STALE)
+        return OutboxFreshness(
+            backend=BACKEND_SPANNER,
+            oldest_enqueued_at=heartbeat.oldest_live_commit_ts,
+            seconds_since_last_delivery=(
+                None
+                if heartbeat.last_delivery_at is None
+                else max(0.0, (now - heartbeat.last_delivery_at).total_seconds())
+            ),
+        )
+
+    def _read_outbox_heartbeat_row(self) -> tuple[str, Any] | None:
+        """The poller's heartbeat ``(body, updated_at)``, or ``None`` if never written.
+
+        One point read on the `tr_entities` primary key, under the same budget
+        as the rest of the /status.json path. Not `_read_entity`: that helper
+        has no timeout, and this is the one caller that must not wait.
+        ``updated_at`` is returned raw; the caller validates it, because a
+        malformed row is `poller_stale`, not `unreachable`.
+        """
+        with self._database.snapshot() as snapshot:
+            rows = list(
+                snapshot.execute_sql(
+                    "SELECT body, updated_at FROM tr_entities WHERE kind=@kind AND id=@id",
+                    params={"kind": OUTBOX_HEARTBEAT_KIND, "id": OUTBOX_HEARTBEAT_ID},
+                    param_types={
+                        "kind": self._param_types.STRING,
+                        "id": self._param_types.STRING,
+                    },
+                    timeout=OUTBOX_FRESHNESS_TIMEOUT_SECONDS,
+                )
+            )
+        if not rows:
+            return None
+        return str(rows[0][0]), rows[0][1]
 
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
         if self._operational_analytics_outbox is not None:

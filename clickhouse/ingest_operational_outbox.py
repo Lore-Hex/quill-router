@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import socket
 import subprocess
 import time
 from collections import defaultdict
@@ -24,6 +25,32 @@ OUTBOX_SHARDS = 32
 # Watermark used before the first acknowledged batch of a process: seeks from
 # the start of every shard, i.e. the old full walk, exactly once.
 _WATERMARK_EPOCH = dt.datetime(1970, 1, 1, tzinfo=dt.UTC)
+
+# The heartbeat this drain publishes for /status.json (see
+# OutboxHeartbeatPublisher). One generic tr_entities row -- no DDL -- read back
+# by trusted_router.storage_gcp.SpannerBigtableStore.operational_analytics_outbox_freshness.
+# These names are MIRRORED from trusted_router.operational_analytics_freshness
+# by literal: this module cannot import trusted_router on the VM, because
+# tr-clickhouse-operational-ingest.service sets no PYTHONPATH and `python -m`
+# puts only /opt/tr-clickhouse on sys.path. tests/test_outbox_freshness_heartbeat.py
+# pins the two copies equal.
+HEARTBEAT_TABLE = "tr_entities"
+HEARTBEAT_KIND = "operational_outbox_heartbeat"
+HEARTBEAT_ID = "spanner-poller"
+HEARTBEAT_SCHEMA_VERSION = 1
+HEARTBEAT_SCHEMA_VERSION_FIELD = "schema_version"
+HEARTBEAT_OLDEST_LIVE_COMMIT_TS_FIELD = "oldest_live_commit_ts"
+HEARTBEAT_OBSERVED_AT_FIELD = "observed_at"
+HEARTBEAT_LAST_DELIVERY_AT_FIELD = "last_delivery_at"
+HEARTBEAT_FETCHED_FIELD = "fetched"
+HEARTBEAT_POLLER_FIELD = "poller"
+# At most one heartbeat write per this many seconds. The control plane
+# tolerates 180s (OUTBOX_HEARTBEAT_MAX_AGE_SECONDS, judged from the row's
+# Spanner commit timestamp), so this is a bound on write cost, not on
+# detection: the fast poll is 2s and the idle poll backs off to 30s, both well
+# inside it. A dead poller shows on /status.json within 180s plus the plane's
+# 60s per-process analytics status cache.
+HEARTBEAT_MIN_INTERVAL_SECONDS = 15.0
 
 ACTIVITY_COLUMNS = (
     "generation_id",
@@ -405,34 +432,67 @@ class SpannerOperationalOutboxSource:
         if self._after is None or newest > self._after:
             self._after = newest
 
+    def publish_heartbeat(self, body: str) -> None:
+        """Upsert the heartbeat row in its own small transaction.
+
+        Never inside the drain's fetch/insert/delete: the heartbeat is advisory
+        and a failure to write it must not undo, delay, or retry a delivery.
+        ``INSERT OR UPDATE`` DML so the first write and every later one are the
+        same statement, and ``PENDING_COMMIT_TIMESTAMP()`` so ``updated_at``
+        is the commit itself -- the one tr_entities statement in this
+        transaction, so the same-table trap does not apply.
+        """
+
+        def txn(transaction: Any) -> None:
+            transaction.execute_update(
+                # HEARTBEAT_TABLE is a module constant, not caller input.
+                f"INSERT OR UPDATE INTO {HEARTBEAT_TABLE} "  # noqa: S608
+                "(kind, id, body, updated_at) "
+                "VALUES (@kind, @id, @body, PENDING_COMMIT_TIMESTAMP())",
+                params={"kind": HEARTBEAT_KIND, "id": HEARTBEAT_ID, "body": body},
+                param_types={
+                    "kind": self._pt.STRING,
+                    "id": self._pt.STRING,
+                    "body": self._pt.STRING,
+                },
+            )
+
+        self._database.run_in_transaction(txn)
+
     def oldest_commit_ts(self) -> dt.datetime | None:
+        """The live outbox head, seeking each shard from the committed-delete floor.
+
+        A failure here does NOT reset the scan floor. The floor records deletes
+        that committed, and a head read that could not complete says nothing
+        about them; only ``fetch``/``delete`` -- the path whose own failure can
+        leave a fetched-but-unacknowledged row -- may clear it. The heartbeat
+        publisher calls this after every pass, so resetting on its failure
+        would turn one slow advisory read into the epoch-watermark full walk
+        on the next drain.
+        """
         oldest: dt.datetime | None = None
-        try:
-            with self._database.snapshot(multi_use=True) as snapshot:
-                for shard in range(self._shard_count):
-                    params: dict[str, Any] = {"shard": shard}
-                    param_types = {"shard": self._pt.INT64}
-                    predicate = "WHERE shard=@shard"
-                    if self._after is not None:
-                        # fetch() returns global commit_ts order, so this
-                        # committed-delete floor is valid for every shard.
-                        predicate += " AND commit_ts >= @floor"
-                        params["floor"] = self._after
-                        param_types["floor"] = self._pt.TIMESTAMP
-                    values = list(
-                        snapshot.execute_sql(
-                            "SELECT commit_ts FROM tr_operational_analytics_outbox "  # noqa: S608
-                            f"{predicate} ORDER BY commit_ts LIMIT 1",
-                            params=params,
-                            param_types=param_types,
-                        )
+        with self._database.snapshot(multi_use=True) as snapshot:
+            for shard in range(self._shard_count):
+                params: dict[str, Any] = {"shard": shard}
+                param_types = {"shard": self._pt.INT64}
+                predicate = "WHERE shard=@shard"
+                if self._after is not None:
+                    # fetch() returns global commit_ts order, so this
+                    # committed-delete floor is valid for every shard.
+                    predicate += " AND commit_ts >= @floor"
+                    params["floor"] = self._after
+                    param_types["floor"] = self._pt.TIMESTAMP
+                values = list(
+                    snapshot.execute_sql(
+                        "SELECT commit_ts FROM tr_operational_analytics_outbox "  # noqa: S608
+                        f"{predicate} ORDER BY commit_ts LIMIT 1",
+                        params=params,
+                        param_types=param_types,
                     )
-                    if values:
-                        candidate = _utc(values[0][0])
-                        oldest = candidate if oldest is None else min(oldest, candidate)
-        except Exception:
-            self.reset_scan_floors()
-            raise
+                )
+                if values:
+                    candidate = _utc(values[0][0])
+                    oldest = candidate if oldest is None else min(oldest, candidate)
         return oldest
 
 
@@ -837,6 +897,107 @@ def _lag_seconds(oldest: dt.datetime | None) -> float:
     return max(0.0, (dt.datetime.now(dt.UTC) - _utc(oldest)).total_seconds())
 
 
+def heartbeat_body(
+    *,
+    oldest_live_commit_ts: dt.datetime | None,
+    observed_at: dt.datetime,
+    last_delivery_at: dt.datetime | None,
+    fetched: int,
+    poller: str,
+) -> str:
+    """The heartbeat row's JSON body, exactly as the control plane parses it."""
+
+    def stamp(value: dt.datetime | None) -> str | None:
+        return None if value is None else _utc(value).isoformat()
+
+    return json.dumps(
+        {
+            HEARTBEAT_SCHEMA_VERSION_FIELD: HEARTBEAT_SCHEMA_VERSION,
+            HEARTBEAT_OLDEST_LIVE_COMMIT_TS_FIELD: stamp(oldest_live_commit_ts),
+            HEARTBEAT_OBSERVED_AT_FIELD: stamp(observed_at),
+            HEARTBEAT_LAST_DELIVERY_AT_FIELD: stamp(last_delivery_at),
+            HEARTBEAT_FETCHED_FIELD: int(fetched),
+            HEARTBEAT_POLLER_FIELD: poller,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _now_utc() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
+
+
+class OutboxHeartbeatPublisher:
+    """Tell /status.json what this drain last saw, at most once per interval.
+
+    The control plane used to answer "how old is the oldest undelivered row?"
+    by reading every shard's head itself, and that read walks the deleted-row
+    garbage the drain leaves behind (823-957 ms of Spanner CPU per call in
+    production, once per instance per minute). This process already knows the
+    answer: after a pass, ``oldest_commit_ts()`` seeks each shard from the
+    committed-delete watermark, and a pass that fetched nothing saw an empty
+    outbox and needs no read at all. So the drain publishes, and the plane
+    reads one row.
+
+    Runs AFTER ``drain_once`` returned, so a pass that raised publishes
+    nothing: the heartbeat then ages past the plane's maximum and the page
+    says ``poller_stale``, which is the truth. Nothing in ``after_pass``
+    raises -- a heartbeat that cannot be written is logged, and the next pass
+    drains exactly as it would have.
+    """
+
+    def __init__(
+        self,
+        source: SpannerOperationalOutboxSource,
+        *,
+        min_interval_seconds: float = HEARTBEAT_MIN_INTERVAL_SECONDS,
+        monotonic: Any = time.monotonic,
+        now: Any = _now_utc,
+        poller: str | None = None,
+    ) -> None:
+        self._source = source
+        self._min_interval_seconds = max(0.0, min_interval_seconds)
+        self._monotonic = monotonic
+        self._now = now
+        self._poller = poller or f"{socket.gethostname()}:{os.getpid()}"
+        self._last_attempt: float | None = None
+        self._last_delivery_at: dt.datetime | None = None
+
+    def after_pass(self, result: DrainResult) -> bool:
+        """Publish for a completed pass; ``True`` only when a row was written.
+
+        Delivery time is recorded on every pass with rows -- ``drain_once``
+        returned, so the insert and the delete both committed -- even when
+        the rate limit skips the write, so the next heartbeat carries it.
+        """
+        if result.fetched:
+            self._last_delivery_at = self._now()
+        elapsed = None if self._last_attempt is None else self._monotonic() - self._last_attempt
+        if elapsed is not None and elapsed < self._min_interval_seconds:
+            return False
+        # Stamped before the attempt: a Spanner that rejects every write must
+        # not turn into one exception traceback per 2s poll.
+        self._last_attempt = self._monotonic()
+        try:
+            # An empty fetch IS the observation: the strong snapshot saw no
+            # live row in any shard, so the head is None and the lag 0, and
+            # there is nothing to seek for.
+            oldest = None if result.fetched == 0 else self._source.oldest_commit_ts()
+            body = heartbeat_body(
+                oldest_live_commit_ts=oldest,
+                observed_at=self._now(),
+                last_delivery_at=self._last_delivery_at,
+                fetched=result.fetched,
+                poller=self._poller,
+            )
+            self._source.publish_heartbeat(body)
+        except Exception:
+            log.exception("operational_analytics_outbox.heartbeat_failed")
+            return False
+        return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", default=os.environ.get("GCP_PROJECT_ID", PROJECT))
@@ -867,6 +1028,7 @@ def main() -> int:
         shard_count=args.shards,
     )
     writer = ClickHouseOperationalWriter(password=password)
+    heartbeat = OutboxHeartbeatPublisher(source)
     # Idle backoff: the poll interval doubles while the outbox stays empty
     # (cap 30s) and snaps back to fast the moment work appears. Combined with
     # the single-statement fetch this takes the idle cost from 64 statements
@@ -879,6 +1041,7 @@ def main() -> int:
     while True:
         sd_notify("WATCHDOG=1")
         result = drain_once(source, writer, batch_size=max(1, args.batch_size))
+        heartbeat.after_pass(result)
         if result.fetched:
             log.info(
                 "operational_analytics_outbox.metrics rows=%d rows_per_second=%.3f "

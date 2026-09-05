@@ -125,10 +125,18 @@ class SpannerOperationalAnalyticsOutbox:
     ) -> dt.datetime | None:
         """Commit timestamp of the oldest undelivered row, or ``None`` if empty.
 
+        OPERATOR TOOLING ONLY. No production request path calls this any more,
+        and ``tests/test_outbox_freshness_heartbeat.py`` pins that: the drain
+        deletes every delivered row, so each shard's head read steps over seven
+        days of deleted-row versions and cost 823-957 ms of Spanner CPU per
+        execution in production (2026-09-05) when /status.json ran it from
+        every instance every minute. /status.json now reads the VM poller's
+        heartbeat instead (``SpannerBigtableStore.operational_analytics_outbox_freshness``).
+
         Spanner's column is ``commit_ts``, not ``enqueued_at`` -- the method is
-        named for the contract it feeds (``analytics.oldest_enqueued_at`` in
-        /status.json) rather than for one backend's column, so the publisher
-        can hold either outbox without knowing which cloud it is on.
+        named for the contract it once fed (``analytics.oldest_enqueued_at`` in
+        /status.json) rather than for one backend's column, so a caller can
+        hold either outbox without knowing which cloud it is on.
 
         Per shard rather than one global ``ORDER BY commit_ts LIMIT 1``: the
         table's primary key leads with ``shard``, so the global form is a scan
@@ -141,12 +149,10 @@ class SpannerOperationalAnalyticsOutbox:
         them identical is what stops the published number and the drain's own
         ``backlog_alarm`` from meaning different things.
 
-        ``timeout`` bounds the one statement, which is the whole call. This
-        runs on the public /status.json path, in an async handler, where a
-        blocking wait stops the event loop rather than one thread. Running out
-        raises rather than returning a partial answer: a minimum over the
+        ``timeout`` bounds the one statement, which is the whole call. Running
+        out raises rather than returning a partial answer: a minimum over the
         shards that happened to reply before the clock expired is not the
-        oldest row, it is a smaller number that would publish as better health.
+        oldest row, it is a smaller number that would read as better health.
 
         ``floors`` may contain only in-memory commit timestamps proved by a
         drain's committed deletes. Each bound is inclusive to retain ties;
