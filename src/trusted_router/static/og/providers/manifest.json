@@ -1,11 +1,11 @@
 {
   "aion-labs": {
     "card_version": 2,
-    "model_count": 4,
+    "model_count": 0,
     "name": "Aion Labs",
     "privacy": "Policy documented",
-    "route_count": 4,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "aion-labs"
   },
   "akashml": {
@@ -289,11 +289,11 @@
   },
   "inception": {
     "card_version": 2,
-    "model_count": 1,
+    "model_count": 0,
     "name": "Inception Labs",
     "privacy": "Policy documented",
-    "route_count": 1,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "inception"
   },
   "inceptron": {
@@ -388,11 +388,11 @@
   },
   "mancer": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 0,
     "name": "Mancer",
     "privacy": "Policy documented",
-    "route_count": 7,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "mancer"
   },
   "meta": {
@@ -469,11 +469,11 @@
   },
   "nextbit": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 0,
     "name": "NextBit",
     "privacy": "Policy documented",
-    "route_count": 8,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "nextbit"
   },
   "novita": {
@@ -631,11 +631,11 @@
   },
   "sail-research": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 0,
     "name": "Sail Research",
     "privacy": "Policy documented",
-    "route_count": 6,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "sail-research"
   },
   "sakana": {
@@ -649,11 +649,11 @@
   },
   "sambanova": {
     "card_version": 2,
-    "model_count": 6,
+    "model_count": 0,
     "name": "SambaNova",
     "privacy": "Policy documented",
-    "route_count": 6,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "sambanova"
   },
   "scaleway": {
@@ -748,11 +748,11 @@
   },
   "upstage": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 0,
     "name": "Upstage",
     "privacy": "Policy documented",
-    "route_count": 3,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "upstage"
   },
   "venice": {
