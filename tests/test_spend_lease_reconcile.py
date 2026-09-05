@@ -331,18 +331,19 @@ def test_reconciler_monetary_mismatch_quarantines_with_proof_and_replays(
 
 
 @pytest.mark.parametrize(
-    ("slot", "global_state", "fence_count"),
+    ("slot", "failed_guard", "fence_count"),
     [
-        (False, "ACTIVE", 1),
-        (True, "DRAINING", 0),
-        (True, "ACTIVE", 1),
+        (False, "_mark_closing", 1),
+        (True, "_decrement_fence", 0),
+        (True, "_unmark_incumbent", 1),
     ],
     ids=["closing-guard", "fence-count-guard", "slot-owner-guard"],
 )
 def test_close_step_two_lost_guard_rolls_back_credit_release(
     slot: bool,
-    global_state: str,
+    failed_guard: str,
     fence_count: int,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store, database, ledger = _store()
     identity = _identity()
@@ -351,15 +352,20 @@ def test_close_step_two_lost_guard_rolls_back_credit_release(
     ledger.initialize(
         _local_candidate(identity, state=SpendLeaseState.DRAINING), region=REGION
     )
-    _seed_global(store, identity, state=global_state, slot=slot, count=fence_count)
+    _seed_global(store, identity, state="ACTIVE", slot=slot, count=fence_count)
     _seed_credit(database, identity)
     before = dict(database.typed["tr_credit_balance"][(identity.workspace_id, 0)])
+    monkeypatch.setattr(
+        "trusted_router.storage_gcp_spend_lease_reconcile." + failed_guard,
+        lambda *args, **kwargs: 0,
+    )
 
     result = reconcile_spend_leases(store, now=NOW, max_attempts=99)
 
     assert result["errors"] == 1
     assert database.typed["tr_credit_balance"][(identity.workspace_id, 0)] == before
     assert database.spend_lease_open[identity.lease_id]["global_closed_at"] is None
+    assert store._read_entity(SPEND_LEASE_KIND, identity.lease_id, dict)["state"] == "ACTIVE"
 
 
 def test_close_step_two_zero_row_credit_release_aborts_every_close_write() -> None:
@@ -445,6 +451,135 @@ def test_close_step_two_and_three_close_global_then_local(slot: bool) -> None:
             dict,
         )
         assert fence["open_predecessor_count"] == 0
+
+
+@pytest.mark.parametrize("slot", [False, True])
+def test_expired_active_lease_closes_and_releases_escrow_once(slot: bool) -> None:
+    store, database, ledger = _store()
+    identity = _identity()
+    _insert_candidate(store, identity)
+    _open_candidate(store, identity)
+    ledger.initialize(_local_candidate(identity), region=REGION)
+    _seed_global(store, identity, state="ACTIVE", slot=slot, count=int(slot))
+    _seed_credit(database, identity)
+
+    first = reconcile_spend_leases(store, now=NOW)
+    second = reconcile_spend_leases(store, now=NOW + timedelta(minutes=1))
+
+    assert first["errors"] == second["errors"] == 0
+    assert first["closed"] == 1
+    credit = database.typed["tr_credit_balance"][(identity.workspace_id, 0)]
+    assert credit["reserved"] == 0
+    assert credit["total_usage"] == 0
+    assert credit["total_credits"] == 100_000
+    assert ledger.get(identity.lease_id, region=REGION).state == SpendLeaseState.CLOSED
+    body = store._read_entity(SPEND_LEASE_KIND, identity.lease_id, dict)
+    assert body["state"] == "CLOSED"
+    assert body["holds_predecessor_slot"] is False
+    fence = store._read_entity(
+        FENCE_KIND, store._spend_lease_pair_id(identity.key_hash, identity.boot_kid), dict
+    )
+    assert fence["open_predecessor_count"] == 0
+
+
+@pytest.mark.parametrize("slot", [False, True])
+@pytest.mark.parametrize("state", [SpendLeaseState.DRAINING, SpendLeaseState.TOMBSTONED])
+def test_active_global_close_matches_already_frozen_close(
+    slot: bool, state: SpendLeaseState
+) -> None:
+    outcomes = []
+    for global_state in ("ACTIVE", state.value.upper()):
+        store, database, ledger = _store()
+        identity = _identity()
+        _insert_candidate(store, identity)
+        _open_candidate(store, identity)
+        ledger.initialize(_local_candidate(identity, state=state), region=REGION)
+        _seed_global(store, identity, state=global_state, slot=slot, count=int(slot))
+        _seed_credit(database, identity)
+        result = reconcile_spend_leases(store, now=NOW)
+        assert result["closed"] == 1 and result["errors"] == 0
+        outcomes.append((
+            database.typed["tr_credit_balance"][(identity.workspace_id, 0)],
+            store._read_entity(SPEND_LEASE_KIND, identity.lease_id, dict),
+            ledger.get(identity.lease_id, region=REGION),
+        ))
+    assert outcomes[0] == outcomes[1]
+
+
+def test_tombstoned_lease_cannot_release_escrow_before_expiry() -> None:
+    store, database, ledger = _store()
+    identity = _identity(expires_at=NOW + timedelta(minutes=1))
+    _insert_candidate(store, identity)
+    _open_candidate(store, identity)
+    ledger.initialize(_local_candidate(identity, state=SpendLeaseState.TOMBSTONED), region=REGION)
+    _seed_global(store, identity, state="ACTIVE")
+    _seed_credit(database, identity)
+    database.spend_lease_open[identity.lease_id]["next_attempt_at"] = NOW
+
+    result = reconcile_spend_leases(store, now=NOW)
+
+    assert result["closed"] == result["errors"] == 0
+    assert database.typed["tr_credit_balance"][(identity.workspace_id, 0)]["reserved"] == identity.cap_micro
+    assert store._read_entity(SPEND_LEASE_KIND, identity.lease_id, dict)["state"] == "ACTIVE"
+
+
+def test_close_reads_predecessor_ownership_inside_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import storage_gcp_spend_lease_reconcile as module
+
+    store, database, ledger = _store()
+    identity = _identity()
+    _insert_candidate(store, identity)
+    _open_candidate(store, identity)
+    ledger.initialize(_local_candidate(identity), region=REGION)
+    _seed_global(store, identity, state="ACTIVE", slot=False, count=0)
+    _seed_credit(database, identity)
+    original = module._read_global_body
+
+    def read_then_successor(*args: Any) -> dict[str, Any] | None:
+        stale = original(*args)
+        _seed_global(store, identity, state="ACTIVE", slot=True, count=1)
+        return stale
+
+    monkeypatch.setattr(module, "_read_global_body", read_then_successor)
+    result = reconcile_spend_leases(store, now=NOW)
+    assert result["closed"] == 1 and result["errors"] == 0
+    fence = store._read_entity(FENCE_KIND, store._spend_lease_pair_id(identity.key_hash, identity.boot_kid), dict)
+    assert fence["open_predecessor_count"] == 0
+
+
+def test_concurrent_global_close_retries_release_escrow_exactly_once() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from trusted_router.storage_gcp_spend_lease import read_open_row
+    from trusted_router.storage_gcp_spend_lease_reconcile import _close_global
+
+    store, database, ledger = _store()
+    identity = _identity()
+    _insert_candidate(store, identity)
+    _open_candidate(store, identity)
+    ledger.initialize(_local_candidate(identity, state=SpendLeaseState.DRAINING), region=REGION)
+    _seed_global(store, identity, state="ACTIVE", slot=True, count=1)
+    _seed_credit(database, identity)
+    with database.snapshot() as snapshot:
+        row = read_open_row(snapshot, store._param_types, identity.lease_id)
+    local = ledger.get(identity.lease_id, region=REGION)
+    assert row is not None and local is not None
+    database._ready_barrier = Barrier(2)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(_close_global, store, row, local, now=NOW) for _ in range(2)]
+        for future in futures:
+            future.result(timeout=15)
+    database._ready_barrier = None
+
+    assert database.aborts >= 1
+    credit = database.typed["tr_credit_balance"][(identity.workspace_id, 0)]
+    assert credit["reserved"] == credit["total_usage"] == 0
+    assert credit["total_credits"] == 100_000
+    fence = store._read_entity(FENCE_KIND, store._spend_lease_pair_id(identity.key_hash, identity.boot_kid), dict)
+    assert fence["open_predecessor_count"] == 0
 
 
 def test_global_close_reentry_rejects_changed_local_frozen_version(

@@ -2459,7 +2459,7 @@ def _execute_spend_lease_entity_update(
         path_sql, value_sql = json_set.groups()
         path = str(_evaluate_spanner_expression(path_sql, params, now))
         body = json.loads(str(record["body"]))
-        if path in {"$.holds_predecessor_slot", "$.closing_at"}:
+        if path in {"$.holds_predecessor_slot", "$.closing_at", "$.state"}:
             body[path[2:]] = _evaluate_spanner_expression(value_sql, params, now)
         elif path == "$.open_predecessor_count":
             decrement = re.fullmatch(
