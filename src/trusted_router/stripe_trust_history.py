@@ -42,6 +42,10 @@ class StripeTrustScan:
     #: Unmatched adverse id -> provider inferred from the referenced PI metadata.
     #: Without an x402 stamp, the Stripe API object belongs to Stripe's summary.
     unmatched_providers: Mapping[str, str] = field(default_factory=dict)
+    #: Adverse ids whose stored PI has no workspace_id, regardless of status.
+    out_of_scope_ids: tuple[str, ...] = ()
+    #: Same PI-metadata provider attribution as unmatched_providers.
+    out_of_scope_providers: Mapping[str, str] = field(default_factory=dict)
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -473,6 +477,9 @@ def scan_stripe_responses(
     ``checkout_sessions`` maps PaymentIntent id -> Checkout Session object (for
     ``occurred_at`` parity and ACH evidence); ``crediting_events`` maps
     PaymentIntent id -> Stripe Event ids whose processing credited it.
+
+    Adverse objects are out of scope only when a stored PaymentIntent has no
+    workspace_id. Unknown PIs and unmodeled workspace payments stay unmatched.
     """
 
     sessions = {
@@ -542,10 +549,21 @@ def scan_stripe_responses(
     outstanding: list[OutstandingAdverse] = []
     unmatched: list[str] = []
     unmatched_providers: dict[str, str] = {}
+    out_of_scope: list[str] = []
+    out_of_scope_providers: dict[str, str] = {}
 
     def append_adverse(obj: dict[str, Any], *, kind: str) -> None:
         adverse_ref = str(obj.get("id") or "")
         payment_ref = _object_id(obj.get("payment_intent"))
+        stored_payment = payment_by_id.get(payment_ref)
+        stored_metadata = stored_payment.get("metadata") if stored_payment is not None else None
+        if stored_payment is not None and not (
+            isinstance(stored_metadata, Mapping) and stored_metadata.get("workspace_id")
+        ):
+            out_of_scope_id = adverse_ref or f"{kind}:missing_id"
+            out_of_scope.append(out_of_scope_id)
+            out_of_scope_providers[out_of_scope_id] = _provider_for_payment(stored_payment)
+            return
         payment = payment_events.get(payment_ref)
         if not adverse_ref or payment is None:
             unmatched_id = adverse_ref or f"{kind}:missing_id"
@@ -640,6 +658,8 @@ def scan_stripe_responses(
         unmatched_ids=tuple(sorted(unmatched)),
         credit_evidence=credit_evidence,
         unmatched_providers=unmatched_providers,
+        out_of_scope_ids=tuple(sorted(out_of_scope)),
+        out_of_scope_providers=out_of_scope_providers,
     )
 
 

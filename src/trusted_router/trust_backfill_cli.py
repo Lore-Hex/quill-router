@@ -145,6 +145,7 @@ def print_plan(
                     ),
                     "latches_implied": sum(row.latch_implied for row in plan.adverse),
                     "unmatched_ids": list(plan.unmatched_ids),
+                    "out_of_scope_ids": list(plan.out_of_scope_ids),
                     "writes": 0,
                 }
             )

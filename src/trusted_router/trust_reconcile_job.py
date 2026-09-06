@@ -38,6 +38,7 @@ class TrustReconcileResult:
     watermark_advanced: bool
     uncredited_payment_refs: tuple[str, ...] = ()
     marker_saved: bool = True
+    out_of_scope_ids: tuple[str, ...] = ()
 
 
 def _provider_mapping(
@@ -60,7 +61,7 @@ def _provider_mapping(
     # live writer moves that on every status change, while the scan lists
     # refunds/disputes by the OBJECT's created: an old pending refund that
     # succeeds inside this window would be local-only by clock alone. Adverse
-    # completeness is proven the other way (every listed refund/dispute needs
+    # completeness is proven the other way (every in-scope refund/dispute needs
     # a local key; non-terminal ones are re-fetched), so local adverse facts
     # join the diff only when the source lists them (P1 review, finding 9).
     local_records = tuple(
@@ -210,6 +211,16 @@ def reconcile_scan(
     marker_saved = clean or write_payments
     if marker_saved:
         repository.save_marker(marker)
+    out_of_scope_ids = tuple(
+        ref for ref in scan.out_of_scope_ids
+        if scan.out_of_scope_providers.get(ref, "stripe") == provider
+    )
+    if out_of_scope_ids:
+        log.info(
+            "trust.reconcile.out_of_scope provider=%s out_of_scope_ids=%s",
+            provider,
+            out_of_scope_ids,
+        )
     log.info(
         "trust.backfill.unmatched provider=%s value=%d semantic_mismatch=%d",
         provider,
@@ -229,6 +240,7 @@ def reconcile_scan(
         watermark_advanced=clean and persisted_closed_through != previous_closed_through,
         uncredited_payment_refs=uncredited,
         marker_saved=marker_saved,
+        out_of_scope_ids=out_of_scope_ids,
     )
 
 
@@ -300,6 +312,7 @@ class BackfillPlan:
     payments: tuple[PaymentPlan, ...]
     adverse: tuple[AdversePlan, ...]
     unmatched_ids: tuple[str, ...]
+    out_of_scope_ids: tuple[str, ...] = ()
 
     @property
     def uncredited_count(self) -> int:
@@ -423,6 +436,10 @@ def plan_historical_backfill(
         unmatched_ids=tuple(
             ref for ref in scan.unmatched_ids
             if scan.unmatched_providers.get(ref, "stripe") == provider
+        ),
+        out_of_scope_ids=tuple(
+            ref for ref in scan.out_of_scope_ids
+            if scan.out_of_scope_providers.get(ref, "stripe") == provider
         ),
     )
 
