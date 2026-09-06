@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.parsers import anthropic as anthropic_parser
@@ -11,6 +12,27 @@ from trusted_router.catalog import (
     endpoints_for_model,
 )
 from trusted_router.synthetic.probes import rotation_candidates
+
+
+def test_anthropic_parser_reads_current_cards_and_future_names() -> None:
+    html = (Path(__file__).parent / "fixtures/pricing/anthropic.html").read_text()
+    prices = anthropic_parser.parse(html)
+
+    assert prices["anthropic/claude-sonnet-5"] == {
+        "prompt_micro_per_m": 2_000_000,
+        "completion_micro_per_m": 10_000_000,
+        "prompt_cached_micro_per_m": 200_000,
+    }
+    assert prices["anthropic/claude-fable-5.1"]["prompt_cached_micro_per_m"] == 250_000
+    assert prices["anthropic/claude-opus-5-fast"] == {
+        "prompt_micro_per_m": 10_000_000,
+        "completion_micro_per_m": 50_000_000,
+        "prompt_cached_micro_per_m": 1_000_000,
+    }
+    # Synthetic future name, with the captured card's prices unchanged.
+    future = anthropic_parser.parse(html.replace("Opus 5", "Opus 6"))
+    assert future["anthropic/claude-opus-6"] == prices["anthropic/claude-opus-5"]
+    assert future["anthropic/claude-opus-6-fast"] == prices["anthropic/claude-opus-5-fast"]
 
 
 def _opus_5_api_row() -> dict[str, object]:

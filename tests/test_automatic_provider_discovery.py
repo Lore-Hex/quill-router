@@ -469,8 +469,48 @@ def test_grok_failed_new_model_canary_is_published_dark(
     assert all(row["routable_reason"] == "provider-canary-failed" for row in rows)
 
 
+@pytest.mark.parametrize("field", ["input_modalities", "output_modalities"])
+@pytest.mark.parametrize(
+    "modalities",
+    [
+        ["image", "text"],
+        ["text", "image"],
+        ["image", "text", "image", "text"],
+    ],
+)
+def test_shared_writer_serializes_canonical_modalities(
+    tmp_path,  # noqa: ANN001
+    field: str,
+    modalities: list[str],
+) -> None:
+    manifest = tmp_path / "future-provider.json"
+    result = ProviderPricingResult(
+        slug="future-provider",
+        prices={"vendor/future-model": ModelPrice(1, 2)},
+        source="api",
+        fetched_url="https://provider.example/v1/models",
+    )
+
+    write_discovered_chat_manifest(
+        result,
+        manifest_path=manifest,
+        discovered_rows={
+            "vendor/future-model": {
+                "id": "vendor/future-model",
+                field: modalities,
+            }
+        },
+        source_url=result.fetched_url,
+    )
+
+    written = json.loads(manifest.read_text(encoding="utf-8"))
+    assert written["models"][0][field] == ["text", "image"]
+
+
+@pytest.mark.parametrize("modalities", [["text", "image"], ["image", "text", "image"]])
 def test_shared_writer_bootstraps_manifest_and_preserves_multi_tier_prices(
     tmp_path,  # noqa: ANN001
+    modalities: list[str],
 ) -> None:
     manifest = tmp_path / "future-provider.json"
     price = ModelPrice(
@@ -494,6 +534,7 @@ def test_shared_writer_bootstraps_manifest_and_preserves_multi_tier_prices(
                 "id": "vendor/future-model",
                 "upstream_id": "future-model",
                 "endpoints": ["chat/completions"],
+                "input_modalities": modalities,
             }
         },
         source_url="https://provider.example/v1/models",
@@ -501,6 +542,7 @@ def test_shared_writer_bootstraps_manifest_and_preserves_multi_tier_prices(
 
     raw = json.loads(manifest.read_text(encoding="utf-8"))
     assert raw["provider"] == "future-provider"
+    assert raw["models"][0]["input_modalities"] == ["text", "image"]
     assert raw["models"][0]["price_tiers"] == [
         {
             "max_prompt_tokens": 100,

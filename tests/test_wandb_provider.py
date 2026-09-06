@@ -220,7 +220,8 @@ def test_wandb_manifest_is_priced_and_preserves_exact_upstream_ids() -> None:
     assert held["routable_reason"].startswith("operator-hold")
     assert held["routable_reason"] == wandb.CATALOG.spec.operator_hold_reasons[held["id"]]
     assert "unresolved_since" not in held
-    assert "upstream_id" not in held
+    # Keyed discovery enriches the keyless held row without lifting its hold.
+    assert held.get("upstream_id") in {None, "zai-org/GLM-5.3-Flash"}
     assert not any("price" in key for key in held)
     assert all(row["upstream_id"] for row in rows.values())
     assert all(row["input_token_price_per_m"] > 0 for row in rows.values())

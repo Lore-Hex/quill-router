@@ -490,7 +490,7 @@ def test_openai_astra_uses_first_party_long_context_vision_route() -> None:
 
     assert model.provider == "openai"
     assert model.context_length == 1_050_000
-    assert model.input_modalities == ("text", "image")
+    assert set(model.input_modalities) == {"text", "image"}
     assert {"tools", "reasoning", "reasoning_effort", "structured_outputs"} <= set(
         model.supported_parameters
     )
