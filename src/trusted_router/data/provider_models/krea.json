@@ -31,7 +31,7 @@
   ],
   "source": "https://api.krea.ai/openapi.json",
   "pricing_source": "https://api.krea.ai/openapi.json",
-  "generated_at": "2026-09-06T10:29:32Z",
+  "generated_at": "2026-09-06T14:01:06Z",
   "price_scale": "microdollars_per_million",
   "model_count": 1
 }
