@@ -1608,6 +1608,7 @@
 
 .chat-model-picker-filters {
     display: flex;
+    flex-wrap: wrap;
     gap: 6px;
     padding: 8px 14px;
     border-bottom: 1px solid var(--chat-border);
@@ -1749,7 +1750,7 @@
     padding: 10px 16px;
     cursor: pointer;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
     gap: 4px 16px;
     align-items: center;
     font-family: inherit;
@@ -1807,6 +1808,8 @@
 
 .chat-model-row-meta {
     display: flex;
+    flex-wrap: wrap;
+    padding-left: 34px;
     gap: 10px;
     font-size: 11px;
     color: var(--chat-muted);
@@ -2883,8 +2886,6 @@
 @media (max-width: 600px) {
     .chat-header-title { max-width: 100%; }
     .chat-header-actions { flex-wrap: wrap; }
-    .chat-model-row { grid-template-columns: minmax(0, 1fr); }
-    .chat-model-row-meta { padding-left: 34px; flex-wrap: wrap; white-space: normal; }
     .chat-input { font-size: 16px; }
     .chat-empty { padding: 16px 0; }
     .chat-suggest-grid { grid-template-columns: 1fr 1fr; }
