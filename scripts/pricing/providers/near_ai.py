@@ -25,6 +25,7 @@ from scripts.pricing.base import (
 )
 from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.model_ids import remember_upstream_id
+from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "near-ai"
 CATALOG_URL = "https://cloud-api.near.ai/v1/models"
@@ -88,10 +89,13 @@ _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 
 
 def canonical_model_id(native_id: str) -> str | None:
-    """Return a canonical ID only for a release-pinned direct workload."""
+    """Discover only active, release-pinned direct workloads."""
 
-    entry = _VERIFIED_DIRECT_MODELS.get(native_id.strip())
-    return entry[0] if entry is not None else None
+    native_id = native_id.strip()
+    entry = _VERIFIED_DIRECT_MODELS.get(native_id)
+    if entry is None or provider_model_retired(SLUG, entry[0], native_id):
+        return None
+    return entry[0]
 
 
 def _microdollars_per_million_from_per_token(value: object) -> int | None:
@@ -179,6 +183,11 @@ def fetch() -> ProviderPricingResult:
     if not isinstance(rows, list):
         raise RuntimeError("near-ai: authenticated model catalog returned an unexpected shape")
     domains = _direct_domains(endpoints_response.json())
+    active_direct_models = {
+        native_id: entry
+        for native_id, entry in _VERIFIED_DIRECT_MODELS.items()
+        if not provider_model_retired(SLUG, entry[0], native_id)
+    }
 
     prices: dict[str, ModelPrice] = {}
     discovered: dict[str, dict[str, Any]] = {}
@@ -187,9 +196,9 @@ def fetch() -> ProviderPricingResult:
         if not isinstance(source, dict) or source.get("owned_by") != "nearai":
             continue
         native_id = source.get("id")
-        if not isinstance(native_id, str) or native_id not in _VERIFIED_DIRECT_MODELS:
+        if not isinstance(native_id, str) or native_id not in active_direct_models:
             continue
-        model_id, pinned_domain = _VERIFIED_DIRECT_MODELS[native_id]
+        model_id, pinned_domain = active_direct_models[native_id]
         if domains.get(native_id) != pinned_domain:
             notes.append(f"direct endpoint mismatch for {native_id}")
             continue
@@ -224,7 +233,7 @@ def fetch() -> ProviderPricingResult:
 
     live_endpoints_without_prices = sorted(
         native_id
-        for native_id, (model_id, pinned_domain) in _VERIFIED_DIRECT_MODELS.items()
+        for native_id, (model_id, pinned_domain) in active_direct_models.items()
         if domains.get(native_id) == pinned_domain and model_id not in prices
     )
     if live_endpoints_without_prices:
@@ -234,7 +243,8 @@ def fetch() -> ProviderPricingResult:
         )
 
     _DISCOVERED_MANIFEST_ROWS = discovered
-    errors = validate(prices, EXPECTED_MODELS)
+    active_model_ids = {model_id for model_id, _domain in active_direct_models.values()}
+    errors = validate(prices, [model_id for model_id in EXPECTED_MODELS if model_id in active_model_ids])
     if errors:
         raise RuntimeError("; ".join(errors))
     return ProviderPricingResult(
