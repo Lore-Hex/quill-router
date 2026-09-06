@@ -300,6 +300,50 @@ def test_recorded_history_backfill_is_rerunnable_and_uses_pro_rata_target() -> N
     assert canonical[("stripe", "payment", "pi_fee")].recovery_target == 500_000
 
 
+@pytest.mark.parametrize("kind", ["refund", "dispute"])
+@pytest.mark.parametrize("known", [False, True], ids=["listed", "known"])
+@pytest.mark.parametrize(
+    "payment_case", ["non_workspace", "non_workspace_failed", "unknown", "workspace_failed"]
+)
+def test_adverse_scope_requires_stored_non_workspace_payment(
+    kind: str, known: bool, payment_case: str,
+) -> None:
+    payment = _payment_intent()
+    out_of_scope = payment_case.startswith("non_workspace")
+    if out_of_scope:
+        payment["metadata"] = {}
+    if payment_case.endswith("failed"):
+        payment["status"] = "requires_payment_method"
+    payments = () if payment_case == "unknown" else (payment,)
+    adverse = _refund() if kind == "refund" else _dispute()
+    scan = scan_stripe_responses(
+        payment_intents=() if known else payments,
+        known_payment_intents=payments if known else (),
+        refunds=(adverse,) if kind == "refund" else (),
+        disputes=(adverse,) if kind == "dispute" else (),
+        recorded_at=NOW,
+    )
+    assert scan.out_of_scope_ids == ((adverse["id"],) if out_of_scope else ())
+    assert scan.out_of_scope_providers == ({adverse["id"]: "stripe"} if out_of_scope else {})
+    assert scan.unmatched_ids == (() if out_of_scope else (adverse["id"],))
+    assert scan.unmatched_providers == ({} if out_of_scope else {adverse["id"]: "stripe"})
+    assert scan.payments == scan.adverse == scan.source_events == scan.outstanding == ()
+    repository = _Repository()
+    result = run_historical_backfill(
+        repository, scan, provider="stripe", account_id="acct_1",
+        environment="production", source="stripe-created-lists", source_version="stripe-trust-v1",
+        history_start=HISTORY_START, closed_through=NOW - timedelta(minutes=15),
+        consistency_delay_seconds=900, now=NOW,
+    )
+    assert result.marker.unmatched_count == int(not out_of_scope)
+    assert result.marker.is_complete is out_of_scope
+    assert result.marker.completed_at == (NOW if out_of_scope else None)
+    assert result.marker.closed_through == (NOW - timedelta(minutes=15) if out_of_scope else HISTORY_START)
+    assert result.out_of_scope_ids == scan.out_of_scope_ids
+    assert tuple(repository.markers.values()) == (result.marker,)
+    assert repository.events == {} and repository.payment_writes == []
+
+
 def test_unmatched_id_keeps_initial_safe_watermark() -> None:
     repository = _Repository()
     scan = scan_stripe_responses(
