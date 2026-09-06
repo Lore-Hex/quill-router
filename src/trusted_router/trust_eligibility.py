@@ -100,13 +100,22 @@ def read_lease_trust(
     )
 
 
-def billing_paused_tx(reader: Any, pt: Any, workspace_id: str) -> bool:
+def billing_paused_tx(
+    reader: Any, pt: Any, workspace_id: str, *, shard: int | None = None
+) -> bool:
     # Reading the epoch establishes a conflict even if a pause was cleared
     # before this transaction retries. A new authorization takes no holds.
+    params: dict[str, Any] = {"ws": workspace_id}
+    types = {"ws": pt.STRING}
+    suffix = ""
+    if shard is not None:
+        suffix = " AND shard=@shard"
+        params["shard"] = shard
+        types["shard"] = pt.INT64
     rows = reader.execute_sql(
-        "SELECT billing_pause_causes, pause_epoch FROM tr_credit_balance WHERE workspace_id=@ws",
-        params={"ws": workspace_id},
-        param_types={"ws": pt.STRING},
+        "SELECT billing_pause_causes, pause_epoch FROM tr_credit_balance WHERE workspace_id=@ws" + suffix,  # noqa: S608 - fixed shard clause
+        params=params,
+        param_types=types,
     )
     return any(str(row[0] or "") not in ("", "[]") for row in rows)
 
