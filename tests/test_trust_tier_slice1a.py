@@ -664,7 +664,7 @@ class _RecordingTransaction:
         return self.count
 
     def execute_sql(self, *_args: Any, **_kwargs: Any) -> list[list[Any]]:
-        return [[self.tier, self.latch]]
+        return [[self.tier, self.latch, [], 0, dt.datetime.now(dt.UTC)]]
 
 
 def test_arm_off_mint_sql_is_byte_for_byte_origin_main_golden() -> None:
@@ -717,14 +717,13 @@ def test_armed_binding_precheck_rejects_unpaid_snapshot_before_dml(
     trust_snapshot: tuple[int, dt.datetime | None],
 ) -> None:
     import trusted_router.storage_gcp_spend_lease_authorize as authorize
+    from tests.test_trust_eligibility_pr2 import arm_store, workspace_state
 
-    store, database, _ = make_fake_store()
+    store, database, _ = make_fake_store(request_record_write_mode="typed")
+    arm_store(store, database)
+    row = workspace_state(database, trust_snapshot[0])
+    row["trust_latched_at"] = trust_snapshot[1]
     monkeypatch.setattr(authorize, "reservation_exists", lambda *_args: False)
-    monkeypatch.setattr(
-        type(store),
-        "typed_credit_trust_snapshot",
-        lambda _self, _workspace_id: trust_snapshot,
-    )
 
     result = store.prepare_gateway_spend_lease_binding(
         workspace_id="workspace",
@@ -770,6 +769,7 @@ def _binding_plan(transaction_tier: int, latch: Any = None) -> BindingPlan:
         authoritative_exhaustion=False,
         trust_eligibility_enabled=True,
         expected_trust_tier=1,
+        trust_gate=lambda _tx: None,
     )
 
 
@@ -790,7 +790,10 @@ def test_armed_zero_row_rereads_selected_shard_and_classifies_reason(
     sql, params, _ = transaction.calls[0]
     assert sql.endswith(
         "AND trust_tier = @expected_trust_tier AND trust_tier >= 1 "
-        "AND trust_latched_at IS NULL"
+        "AND trust_latched_at IS NULL "
+        "AND COALESCE(ARRAY_LENGTH(billing_pause_causes), 0) = 0 "
+        "AND trust_reconciled_through >= @trust_fresh_after "
+        "AND trust_reconciled_through <= @trust_now"
     )
     assert params["expected_trust_tier"] == 1
 
@@ -823,6 +826,7 @@ def test_armed_admission_reuse_rechecks_trust_before_registration(
         authoritative_exhaustion=False,
         trust_eligibility_enabled=True,
         expected_trust_tier=1,
+        trust_gate=lambda _tx: None,
     )
 
     result = plan.transaction_hook(

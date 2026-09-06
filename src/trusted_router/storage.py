@@ -2781,7 +2781,13 @@ class InMemoryStore:
     ) -> Reservation:
         from trusted_router.storage_legacy_trust import BillingPausedError
         with self._lock:
-            if self._legacy_paused(workspace_id) or (workspace_id, key_hash, idempotency_key or "") in self._paused_authorizations:
+            terminal_key = (workspace_id, key_hash, idempotency_key or "")
+            if self._legacy_paused(workspace_id) or terminal_key in self._paused_authorizations:
+                if idempotency_key is not None:
+                    existing_id = self.api_keys.reservation_id_by_idempotency_key.get(idempotency_key)
+                    if existing_id is not None:
+                        self.refund(existing_id)
+                    self._paused_authorizations.add(terminal_key)
                 self.api_keys.refund_limit(key_hash, amount_microdollars, usage_type=UsageType.CREDITS)
                 raise BillingPausedError()
             reservation = self.api_keys.reserve(workspace_id, key_hash, amount_microdollars,
@@ -2795,7 +2801,8 @@ class InMemoryStore:
 
     def _legacy_paused(self, workspace_id: str) -> bool:
         workspace = self.workspaces.get(workspace_id)
-        return bool(workspace and (workspace.billing_paused or workspace.billing_pause_causes))
+        return any(row.get("billing_pause_causes") for (ws, _), row in self.credit_trust_shards.items()
+                   if ws == workspace_id) or bool(workspace and (workspace.billing_paused or workspace.billing_pause_causes))
 
     def _recover_released_credit_locked(self, workspace_id: str) -> None:
         money = self.credit_money[workspace_id]

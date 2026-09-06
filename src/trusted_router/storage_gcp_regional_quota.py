@@ -291,7 +291,7 @@ def grant_regional_quota_lease(
                 return None
             cap = tier_cap(settings, tier or 0)
             pool = min(settings.regional_quota_lease_max_microdollars, cap)
-            tx_grant = min(grant, max(0, pool - _active_regional_escrow(transaction, workspace_id)))
+            tx_grant = min(grant, max(0, pool - _active_regional_escrow(transaction, store._param_types, workspace_id)))
             if tx_grant < minimum_grant_microdollars:
                 return None
         from trusted_router.storage_gcp_counter_dml import reserve_credit_for_spend_lease
@@ -725,7 +725,7 @@ def record_regional_gateway_authorization(
                     or current.issuance_tier != tier or current.tier_cap_micro != cap
                     or current.fencing_token != authorization.regional_fencing_token
                     or current.expires_datetime <= utcnow()
-                    or _active_regional_escrow(transaction, authorization.workspace_id)
+                    or _active_regional_escrow(transaction, store._param_types, authorization.workspace_id)
                        > min(settings.regional_quota_lease_max_microdollars, cap)):
                     reason = "unpaid_workspace"
         if reason:
@@ -963,10 +963,13 @@ def _parse_iso(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def _active_regional_escrow(transaction: Any, workspace_id: str) -> int:
+def _active_regional_escrow(transaction: Any, param_types: Any, workspace_id: str) -> int:
     """Range read serializes all quota shards and regions against concurrent mint."""
     rows = transaction.execute_sql(
-        "SELECT id, body FROM tr_entities WHERE kind='regional_quota_lease' ORDER BY id")
+        "SELECT id, body FROM tr_entities WHERE kind='regional_quota_lease' "
+        "AND STARTS_WITH(id, @prefix) ORDER BY id",
+        params={"prefix": f"{workspace_id}#"}, param_types={"prefix": param_types.STRING},
+    )
     leases = [GlobalRegionalQuotaLease(**json.loads(str(row[1]))) for row in rows]
     # Quarantined/expired grants still own escrow until the reconciler closes them.
     return sum(max(0, lease.granted_microdollars - lease.reconciled_spent_microdollars)

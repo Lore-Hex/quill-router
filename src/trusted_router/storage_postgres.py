@@ -5398,6 +5398,16 @@ class PostgresStore:
             paused, epoch = postgres_pause(conn, workspace_id)
             terminal = self._read_entity_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, idempotency_key, dict) if idempotency_key else None
             if paused or (terminal and terminal.get("reason") == "billing_paused"):
+                from trusted_router.storage_legacy_trust import reject_postgres_reservation
+
+                if terminal and terminal.get("id"):
+                    reject_postgres_reservation(conn, self, str(terminal["id"]))
+                if idempotency_key:
+                    self._write_entity_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, idempotency_key,
+                                          {"reason": "billing_paused"})
+                    self._write_entity_tx(conn, _GATEWAY_IDEMPOTENCY_KIND,
+                        _gateway_idempotency_id(workspace_id, key_hash, idempotency_key),
+                        {"reason": "billing_paused"})
                 self._release_key_hold_tx(conn, key_hash, amount_microdollars,
                                           usage_type=UsageType.CREDITS, window_amount=0)
                 return None
@@ -5981,7 +5991,7 @@ class PostgresStore:
         from trusted_router.storage_legacy_trust import (
             BillingPausedError,
             postgres_pause,
-            recover_released_postgres,
+            reject_postgres_reservation,
         )
 
         def create(conn: Any) -> GatewayAuthorization | None:
@@ -5997,21 +6007,7 @@ class PostgresStore:
             observed = self._read_entity_tx(conn, "reservation_pause_epoch", credit_reservation_id, dict) if credit_reservation_id else None
             if paused or (expected_pause_epoch is not None and expected_pause_epoch != epoch) or (credit_reservation_id and int((observed or {}).get("pause_epoch", 0)) != epoch):
                 if credit_reservation_id:
-                    reservation = self._read_entity_tx(conn, _RESERVATION_KIND, credit_reservation_id, Reservation, for_update=True)
-                    if reservation is None:
-                        raise RuntimeError("paused reservation disappeared")
-                    won = self._insert_entity_once_tx(conn, _RESERVATION_FINALIZATION_KIND, credit_reservation_id,
-                                                       {"actual_microdollars": 0, "operation": "billing_paused"})
-                    if won:
-                        released = conn.execute("UPDATE tr_credit_balance SET reserved = reserved - %s "
-                            "WHERE workspace_id = %s AND shard = 0 AND reserved >= %s",
-                            (reservation.amount_microdollars, workspace_id, reservation.amount_microdollars))
-                        if released.rowcount != 1:
-                            raise RuntimeError("paused reservation release lost")
-                        recover_released_postgres(conn, workspace_id, self)
-                    if reservation.idempotency_key:
-                        self._write_entity_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, reservation.idempotency_key,
-                                              {"reason": "billing_paused", "reservation_id": credit_reservation_id})
+                    reject_postgres_reservation(conn, self, credit_reservation_id)
                 self._release_key_hold_tx(conn, key_hash, estimated_microdollars, usage_type=usage_type, window_amount=0)
                 if pointer_id:
                     self._write_entity_tx(conn, _GATEWAY_IDEMPOTENCY_KIND, pointer_id, {"reason": "billing_paused"})

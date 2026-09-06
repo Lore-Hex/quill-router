@@ -4034,7 +4034,7 @@ def _execute_sql(
         if txn is not None:
             txn.read_versions[("entity_kind", "regional_quota_lease")] = db.entity_kind_versions.get("regional_quota_lease", 0)
         return [[entity_id, row.body] for (kind, entity_id), row in db.rows.items()
-                if kind == "regional_quota_lease"]
+                if kind == "regional_quota_lease" and entity_id.startswith(str(params.get("prefix", "")))]
     if "FROM tr_owner_workspace" in sql:
         rows = _typed_rows("tr_owner_workspace")
         if "owner" in params:
