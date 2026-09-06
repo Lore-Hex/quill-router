@@ -394,6 +394,10 @@ def authorize_atomic(
             if existing is not None:
                 return _replay(transaction, existing)
 
+        from trusted_router.trust_eligibility import billing_paused_tx
+        if billing_paused_tx(transaction, pt, workspace_id):
+            raise _Reject("billing_paused")
+
         key_result = KEY_MISSING
         selected_key_shard = UNSHARDED
         saw_key_row = False

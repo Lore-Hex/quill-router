@@ -933,6 +933,8 @@ class Settings(BaseSettings):
     # independent and defaults off; the other values can ship inertly first.
     spend_lease_trust_eligibility_enabled: bool = False
     trust_qualifying_providers: str = "stripe,x402"
+    # Same account pin used by the deployed backfill and reconciliation jobs.
+    trust_stripe_account_id: str = ""
     trust_tier3_min_days: int = 30
     trust_tier3_min_paid_microdollars: int = 50_000_000
     max_workspaces_per_owner: int = 25

@@ -423,6 +423,7 @@ class SpannerBigtableStore:
         spend_lease_bigtable_table: str = "trustedrouter-spend-lease",
         spend_lease_bigtable_app_profiles: dict[str, str] | None = None,
         max_workspaces_per_owner: int = 25,
+        trust_settings: Any = None,
         trust_qualifying_providers: frozenset[str] = frozenset({"stripe", "x402"}),
         trust_tier3_min_days: int = 30,
         trust_tier3_min_paid_microdollars: int = 50_000_000,
@@ -446,6 +447,7 @@ class SpannerBigtableStore:
             raise ValueError("Bigtable-free storage requires clickhouse-only reads")
         self.request_record_write_mode = request_record_write_mode
         self.max_workspaces_per_owner = int(max_workspaces_per_owner)
+        self.trust_settings = trust_settings
         self.trust_qualifying_providers = trust_qualifying_providers
         self.trust_tier3_min_days = int(trust_tier3_min_days)
         self.trust_tier3_min_paid_microdollars = int(
@@ -4434,6 +4436,7 @@ class SpannerBigtableStore:
         deferred_cap_microdollars: int | None = None,
         spend_lease: SpendLeaseArtifact | None = None,
         invocation_nonce: str | None = None,
+        expected_pause_epoch: int | None = None,
     ) -> GatewayAuthorization:
         return self.api_keys.create_gateway_authorization(
             workspace_id=workspace_id,
@@ -4474,6 +4477,7 @@ class SpannerBigtableStore:
             deferred_cap_microdollars=deferred_cap_microdollars,
             spend_lease=spend_lease,
             invocation_nonce=invocation_nonce,
+            expected_pause_epoch=expected_pause_epoch,
         )
 
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:
@@ -4908,6 +4912,12 @@ class SpannerBigtableStore:
                 minimum_grant_microdollars=estimate,
             )
             if global_lease is None:
+                settings = self.trust_settings
+                if settings is not None and settings.spend_lease_trust_eligibility_enabled:
+                    from trusted_router.trust_eligibility import lease_eligibility
+                    _tier, reason = lease_eligibility(self, settings, workspace_id)
+                    if reason:
+                        return reason, None
                 return "unavailable", None
             try:
                 ledger.initialize(regional_lease_from_global(global_lease))
@@ -4987,6 +4997,11 @@ class SpannerBigtableStore:
             authorization.credit_reservation_id = str(result["reservation_id"])
             return "accepted", authorization
         self._refund_regional_quota_hold_safely(authorization)
+        if result["outcome"] in {"billing_paused", "unpaid_workspace", "reconciliation_stale", "trust_gate_unarmed"}:
+            with self._regional_quota_lease_cache_lock:
+                self._regional_quota_lease_cache.pop(cache_key, None)
+            log.info("regional_quota.no_lease_reason=%s workspace_id=%s", result["outcome"], workspace_id)
+            return str(result["outcome"]), None
         if result["outcome"] == "idempotency_mismatch":
             return "idempotency_mismatch", None
         replay = self.get_gateway_authorization(str(result["authorization_id"]))
@@ -5879,6 +5894,9 @@ class SpannerBigtableStore:
             reservation_exists,
         )
 
+        trust_eligibility_enabled = trust_eligibility_enabled or bool(
+            self.trust_settings is not None and self.trust_settings.spend_lease_trust_eligibility_enabled
+        )
         if idempotency_key is None:
             return None, "no_idempotency_key"
         scope = _gateway_authorization_idempotency_index_id(
@@ -5888,17 +5906,25 @@ class SpannerBigtableStore:
             return None, None
         expected_trust_tier: int | None = None
         if trust_eligibility_enabled:
-            trust_snapshot = self.typed_credit_trust_snapshot(workspace_id)
-            if trust_snapshot is None:
-                return None, "ledger_unavailable"
-            expected_trust_tier, trust_latched_at = trust_snapshot
-            if expected_trust_tier < 1 or trust_latched_at is not None:
-                return None, "unpaid_workspace"
+            from trusted_router.trust_eligibility import lease_eligibility, spend_cap
+            trust_settings = self.trust_settings
+            if trust_settings is None or not trust_settings.spend_lease_trust_eligibility_enabled:
+                return None, "trust_gate_unarmed"
+            expected_trust_tier, reason = lease_eligibility(self, trust_settings, workspace_id)
+            if reason:
+                return None, reason
+            max_microdollars = spend_cap(trust_settings, expected_trust_tier)
         ledger = self._spend_lease_ledger
         if ledger is None or not ledger.supports_region(region):
             return None, "ledger_unavailable"
         now = dt.datetime.now(dt.UTC)
         active = self.get_active_spend_lease(key_hash, boot_kid)
+        if trust_eligibility_enabled and active is not None:
+            from trusted_router.trust_eligibility import artifact_trust_tier
+
+            if artifact_trust_tier(active) != expected_trust_tier:
+                # Its escrow stays held until normal expiry/reconciliation.
+                return None, "unpaid_workspace"
         if (
             active is not None
             and echo_lease_id is not None
@@ -5995,6 +6021,10 @@ class SpannerBigtableStore:
                             authoritative_exhaustion=False,
                             trust_eligibility_enabled=trust_eligibility_enabled,
                             expected_trust_tier=expected_trust_tier,
+                            trust_max_age_seconds=(self.trust_settings.trust_reconcile_max_age_seconds
+                                                   if trust_eligibility_enabled else 3600),
+                            trust_gate=(lambda tx: lease_eligibility(self, self.trust_settings,
+                                        workspace_id, reader=tx)[1]) if trust_eligibility_enabled else None,
                         ),
                         None,
                     )
@@ -6050,6 +6080,10 @@ class SpannerBigtableStore:
                 routing_policy_hash=routing_policy_hash,
                 trust_eligibility_enabled=trust_eligibility_enabled,
                 expected_trust_tier=expected_trust_tier,
+                            trust_max_age_seconds=(self.trust_settings.trust_reconcile_max_age_seconds
+                                                   if trust_eligibility_enabled else 3600),
+                            trust_gate=(lambda tx: lease_eligibility(self, self.trust_settings,
+                                        workspace_id, reader=tx)[1]) if trust_eligibility_enabled else None,
             ),
             None,
         )
@@ -6139,6 +6173,9 @@ class SpannerBigtableStore:
         )
         from trusted_router.storage_gcp_spend_lease_authorize import BindingPlan
 
+        trust_eligibility_enabled = trust_eligibility_enabled or bool(
+            self.trust_settings is not None and self.trust_settings.spend_lease_trust_eligibility_enabled
+        )
         scope = _gateway_authorization_idempotency_index_id(
             workspace_id,
             key_hash,
@@ -6173,11 +6210,15 @@ class SpannerBigtableStore:
 
         expected_trust_tier: int | None = None
         if trust_eligibility_enabled:
-            trust_snapshot = self.typed_credit_trust_snapshot(workspace_id)
-            if trust_snapshot is None:
-                return None, "reuse_lost", None
-            expected_trust_tier, trust_latched_at = trust_snapshot
-            if expected_trust_tier < 1 or trust_latched_at is not None:
+            from trusted_router.trust_eligibility import lease_eligibility
+            if self.trust_settings is None:
+                return None, "hold_refused", None
+            expected_trust_tier, reason = lease_eligibility(self, self.trust_settings, workspace_id)
+            if reason:
+                return None, "hold_refused", None
+            from trusted_router.trust_eligibility import artifact_trust_tier
+
+            if artifact_trust_tier(artifact) != expected_trust_tier:
                 return None, "hold_refused", None
         ledger = self._spend_lease_ledger
         if ledger is None or not ledger.supports_region(region):
@@ -6231,6 +6272,10 @@ class SpannerBigtableStore:
                 remaining_micro=result.lease.available_micro,
                 trust_eligibility_enabled=trust_eligibility_enabled,
                 expected_trust_tier=expected_trust_tier,
+                trust_max_age_seconds=(self.trust_settings.trust_reconcile_max_age_seconds
+                                       if trust_eligibility_enabled else 3600),
+                trust_gate=(lambda tx: lease_eligibility(self, self.trust_settings,
+                            workspace_id, reader=tx)[1]) if trust_eligibility_enabled else None,
             ),
             None,
             None,
@@ -6397,7 +6442,9 @@ class SpannerBigtableStore:
         values = {(int(row[1] or 0), row[2]) for row in rows}
         if len(values) != 1:
             return None
-        return values.pop()
+        tier, latch = values.pop()
+        from trusted_router.trust_tiers import effective_trust_tier
+        return effective_trust_tier(tier, trust_latched_at=latch), latch
 
     def list_trust_tier_workspace_ids(self) -> tuple[str, ...]:
         with self._database.snapshot() as snapshot:
