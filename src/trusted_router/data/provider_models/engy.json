@@ -67,8 +67,8 @@
       "title": "glm-5.3-flash",
       "model_type": "chat",
       "input_modalities": [
-        "image",
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -127,8 +127,8 @@
       "title": "kimi-k3",
       "model_type": "chat",
       "input_modalities": [
-        "image",
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -156,8 +156,8 @@
       "title": "qwen3.8-27b",
       "model_type": "chat",
       "input_modalities": [
-        "image",
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -209,6 +209,6 @@
       "cached_input_token_price_per_m": 180000
     }
   ],
-  "generated_at": "2026-09-03T17:37:35Z",
+  "generated_at": "2026-09-06T08:03:59Z",
   "model_count": 7
 }

@@ -28,7 +28,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 500000
+      "output_token_price_per_m": 500000,
+      "missing_since": "2026-09-06"
     },
     {
       "display_name": "Llama 3.1 8B Instruct",
@@ -53,7 +54,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 450000
+      "output_token_price_per_m": 450000,
+      "missing_since": "2026-09-06"
     },
     {
       "display_name": "Llama 3.3 70B Instruct",
@@ -78,7 +80,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 1500000
+      "output_token_price_per_m": 1500000,
+      "missing_since": "2026-09-06"
     },
     {
       "display_name": "Llama 4 Maverick",
@@ -104,7 +107,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 1500000
+      "output_token_price_per_m": 1500000,
+      "missing_since": "2026-09-06"
     },
     {
       "display_name": "Kimi K3",
@@ -168,7 +172,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 600000
+      "output_token_price_per_m": 600000,
+      "missing_since": "2026-09-06"
     },
     {
       "display_name": "GPT OSS 20B",
@@ -194,7 +199,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 70000,
-      "output_token_price_per_m": 300000
+      "output_token_price_per_m": 300000,
+      "missing_since": "2026-09-06"
     },
     {
       "display_name": "Qwen3 Next 80B A3B Instruct",
@@ -219,7 +225,8 @@
       ],
       "routable": true,
       "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 1200000
+      "output_token_price_per_m": 1200000,
+      "missing_since": "2026-09-06"
     },
     {
       "display_name": "Qwen 3.5 122B A10B",
@@ -246,7 +253,8 @@
       "routable": true,
       "max_output_tokens": 25000,
       "input_token_price_per_m": 220000,
-      "output_token_price_per_m": 2200000
+      "output_token_price_per_m": 2200000,
+      "missing_since": "2026-09-06"
     },
     {
       "display_name": "Inkling",
@@ -317,9 +325,10 @@
       },
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 260000
+      "cached_input_token_price_per_m": 260000,
+      "missing_since": "2026-09-06"
     }
   ],
-  "generated_at": "2026-09-03T17:37:35Z",
+  "generated_at": "2026-09-06T08:03:59Z",
   "model_count": 11
 }

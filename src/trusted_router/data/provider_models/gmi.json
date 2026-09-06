@@ -2,8 +2,8 @@
   "_about": "Provider-native GMI Cloud catalog. Account-visible models are intersected with GMI's official billing feed; explicitly approved routes omitted from /v1/models remain current only after an exact visible-content PONG canary succeeds.",
   "provider": "gmi",
   "source": "https://console.gmicloud.ai/api/v1/billing/model_prices",
-  "generated_at": "2026-09-03T17:37:35Z",
-  "model_count": 95,
+  "generated_at": "2026-09-06T08:03:59Z",
+  "model_count": 96,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -2240,6 +2240,41 @@
       "input_token_price_per_m": 750000,
       "output_token_price_per_m": 3750000,
       "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "GPT-6-Astra",
+      "title": "openai/gpt-6-astra",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-6-astra",
+      "upstream_id": "openai/gpt-6-astra",
+      "context_length": 1050000,
+      "input_token_price_per_m": 10000000,
+      "output_token_price_per_m": 50000000,
+      "cached_input_token_price_per_m": 1000000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 271999,
+          "input_token_price_per_m": 10000000,
+          "output_token_price_per_m": 50000000,
+          "cached_input_token_price_per_m": 1000000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 20000000,
+          "output_token_price_per_m": 75000000,
+          "cached_input_token_price_per_m": 2000000
+        }
+      ]
     }
   ],
   "price_scale": "microdollars_per_million"

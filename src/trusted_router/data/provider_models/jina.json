@@ -283,9 +283,9 @@
       "model_type": "embedding",
       "input_modalities": [
         "text",
+        "audio",
         "image",
-        "video",
-        "audio"
+        "video"
       ],
       "output_modalities": [
         "embeddings"
@@ -307,9 +307,9 @@
       "model_type": "embedding",
       "input_modalities": [
         "text",
+        "audio",
         "image",
-        "video",
-        "audio"
+        "video"
       ],
       "output_modalities": [
         "embeddings"
@@ -370,7 +370,7 @@
   ],
   "source": "https://api.jina.ai/v1/models",
   "pricing_source": "https://api.jina.ai/v1/models",
-  "generated_at": "2026-09-03T17:37:35Z",
+  "generated_at": "2026-09-06T08:03:59Z",
   "price_scale": "microdollars_per_million",
   "model_count": 17
 }

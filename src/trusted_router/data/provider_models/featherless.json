@@ -297,7 +297,7 @@
       "status": 1,
       "id": "qwen/qwen3.8-27b",
       "upstream_id": "Qwen/Qwen3.8-27B",
-      "context_length": 32768,
+      "context_length": 262144,
       "max_output_tokens": 32768,
       "routable": true,
       "input_token_price_per_m": 400000,
@@ -320,7 +320,7 @@
       "status": 1,
       "id": "qwen/qwen3.8-flash-next",
       "upstream_id": "Qwen/Qwen3.8-Flash-Next",
-      "context_length": 32768,
+      "context_length": 262144,
       "max_output_tokens": 32768,
       "routable": true,
       "input_token_price_per_m": 150000,
@@ -371,7 +371,7 @@
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/pricing",
-  "generated_at": "2026-09-03T17:37:35Z",
+  "generated_at": "2026-09-06T08:03:59Z",
   "price_scale": "microdollars_per_million",
   "model_count": 17
 }

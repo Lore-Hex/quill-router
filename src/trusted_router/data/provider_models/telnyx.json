@@ -2,7 +2,7 @@
   "_about": "Provider-native Telnyx inference routes, context windows, capabilities, and reconciled account-billable prices refreshed hourly from Telnyx-owned sources.",
   "provider": "telnyx",
   "source": "https://api.telnyx.com/v2/ai/openai/models",
-  "generated_at": "2026-09-03T17:37:35Z",
+  "generated_at": "2026-09-06T08:03:59Z",
   "price_scale": "microdollars_per_million",
   "model_count": 16,
   "models": [
@@ -405,6 +405,7 @@
       "upstream_id": "zai-org/GLM-5.3",
       "context_length": 1048576,
       "provider_regions": [
+        "ap-southeast-2",
         "us-east-1",
         "us-west-1"
       ],
