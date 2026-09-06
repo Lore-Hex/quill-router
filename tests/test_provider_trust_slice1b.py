@@ -411,6 +411,104 @@ def test_provider_event_contract(provider: str, code: str, kind: str, subtype: s
     assert {row[1] for row in PROVIDER_EVENT_CONTRACT if row[0] == "adyen"} == set(ADYEN_ADVERSE_CODES)
 
 
+@pytest.mark.parametrize("code,status,target", [
+    ("CHARGEBACK", "succeeded", 1_000_000),
+    ("CHARGEBACK_REVERSED", "won", 0),
+])
+def test_adyen_chargeback_status_controls_applied_recovery(code: str, status: str, target: int) -> None:
+    store, database, workspace = funded("adyen")
+    event, = adyen_adverse_events(adyen_item(code))
+
+    result = store.record_adverse_trust_event(event)
+
+    # Literal expectations: deriving these from event.lifecycle_status hides a
+    # provider mapping that accidentally treats a chargeback as merchant-won.
+    assert (result.outcome, result.recovery_target, result.recovered_micro, result.unrecovered_micro) == ("applied", target, target, 0)
+    assert (event.kind, event.provider_subtype, event.lifecycle_status) == ("dispute", "chargeback", status)
+    assert balance(database, workspace) == 1_000_000 - target
+    payment = database.typed["tr_trust_event"][(workspace, "payment")]
+    assert (payment["recovery_target"], payment["recovered_micro"], payment["unrecovered_micro"]) == (target, target, 0)
+    # The trust latch is sticky for every adverse fact, including a won claim;
+    # it is independent of whether that fact claims any principal.
+    shards = [row for (owner, _), row in database.typed["tr_credit_balance"].items() if owner == workspace]
+    assert shards and all(row["trust_latched_at"] is not None for row in shards)
+
+
+def test_paypal_capture_reversal_applies_lost_dispute_debit(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router import storage
+    from trusted_router.services.paypal_trust import apply_paypal_adverse
+
+    store, database, workspace = funded("paypal")
+    # Replace the module binding, never a forwarded method on the STORE proxy.
+    monkeypatch.setattr(storage, "STORE", store)
+    payload = paypal_event("PAYMENT.CAPTURE.REVERSED")
+    event, = paypal_adverse_events(payload)
+
+    assert apply_paypal_adverse(payload) == ["applied"]
+
+    payment = database.typed["tr_trust_event"][(workspace, "payment")]
+    assert (payment["recovery_target"], payment["recovered_micro"], payment["unrecovered_micro"]) == (1_000_000, 1_000_000, 0)
+    assert balance(database, workspace) == 0
+    assert (event.original_payment_ref, event.kind, event.provider_subtype, event.lifecycle_status) == ("capture1", "dispute", "reversal", "lost")
+    adverse = database.typed["tr_trust_event"][(workspace, event.event_id)]
+    assert adverse["lifecycle_status"] == "lost"
+    shards = [row for (owner, _), row in database.typed["tr_credit_balance"].items() if owner == workspace]
+    assert shards and all(row["trust_latched_at"] is not None for row in shards)
+    assert apply_paypal_adverse(payload) == ["replay"]
+    assert balance(database, workspace) == 0
+
+
+@pytest.mark.parametrize("provider", ["paypal", "adyen"])
+@pytest.mark.parametrize("reverse_delivery", [False, True])
+def test_provider_inbox_replays_refund_debit_before_reversal(
+    provider: str, reverse_delivery: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import storage_gcp
+    from trusted_router.services.provider_trust import provider_inbox_key
+
+    if provider == "paypal":
+        refund, = paypal_adverse_events(paypal_event())
+        reversal, = paypal_adverse_events(paypal_event("PAYMENT.REFUND.FAILED", at=NOW + timedelta(seconds=1)))
+    else:
+        refund, = adyen_adverse_events(adyen_item())
+        reversal, = adyen_adverse_events(adyen_item("REFUND_FAILED", at=NOW + timedelta(seconds=1)))
+    assert refund.adverse_ref == reversal.adverse_ref
+    assert refund.provider_ordering_watermark < reversal.provider_ordering_watermark
+    store, database, workspace = funded(provider, payment_first=False)
+    for index, event in enumerate((reversal, refund) if reverse_delivery else (refund, reversal)):
+        assert store.record_adverse_trust_event(event).outcome == "inbox"
+        # Explicit receipt times make the SQL order deterministic and opposite
+        # to provider chronology in the reverse-delivery case.
+        database.typed["tr_trust_inbox"][(provider, provider_inbox_key(event))]["received_at"] = NOW + timedelta(minutes=index)
+    assert len(database.typed["tr_trust_inbox"]) == 2
+
+    drain = storage_gcp.drain_matching_trust_inbox_tx
+    applied = []
+
+    def observe_drain(*args: Any, **kwargs: Any) -> Any:
+        results = drain(*args, **kwargs)
+        applied.extend(results)
+        return results
+
+    monkeypatch.setattr(storage_gcp, "drain_matching_trust_inbox_tx", observe_drain)
+    credit(store, workspace, provider)
+
+    # Final balances alone converge even without sorting: a reversal inserted
+    # first makes the refund stale. Pin the real transaction's intermediate
+    # recovery results to prove the debit and restoration both happened.
+    assert [(result.outcome, result.recovery_target, result.recovered_micro, result.unrecovered_micro)
+            for result in applied] == [("applied", 500_000, 500_000, 0), ("applied", 0, 0, 0)]
+    assert not database.typed["tr_trust_inbox"]
+    assert balance(database, workspace) == 1_000_000
+    payment = database.typed["tr_trust_event"][(workspace, "payment")]
+    assert (payment["recovery_target"], payment["recovered_micro"], payment["unrecovered_micro"]) == (0, 0, 0)
+    adverse = database.typed["tr_trust_event"][(workspace, refund.event_id)]
+    assert adverse["lifecycle_status"] == "reversed"
+    assert adverse["provider_ordering_watermark"] == reversal.provider_ordering_watermark
+    shards = [row for (owner, _), row in database.typed["tr_credit_balance"].items() if owner == workspace]
+    assert shards and all(row["trust_latched_at"] is not None for row in shards)
+
+
 @pytest.mark.parametrize("provider", ["paypal", "adyen"])
 @pytest.mark.parametrize("payment_first", [False, True])
 @pytest.mark.parametrize("reverse_delivery", [False, True])
