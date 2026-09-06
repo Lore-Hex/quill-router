@@ -6,7 +6,7 @@ from scripts.pricing.model_ids import (
     mapped_or_canonical_model_id,
 )
 from scripts.pricing.parsers import kimi
-from scripts.pricing.providers import tinfoil
+from scripts.pricing.providers import fireworks, tinfoil, wandb
 
 
 def test_canonicalize_provider_native_ids_for_new_model_discovery() -> None:
@@ -25,6 +25,21 @@ def test_canonicalize_unqualified_aggregator_model_families() -> None:
     )
     assert canonicalize_unqualified_model_id("phala/qwen3.7-max") == ("qwen/qwen3.7-max")
     assert canonicalize_unqualified_model_id("unrelated-model") is None
+
+
+def test_glm53_discovery_preserves_variants_and_native_namespaces() -> None:
+    # Both syntaxes normalize without selecting an unverified native route.
+    for namespace in ("models", "routers"):
+        assert canonicalize_unqualified_model_id(
+            f"accounts/fireworks/{namespace}/glm-5p3-fast"
+        ) == "z-ai/glm-5.3-fast"
+    assert fireworks.UPSTREAM_ID_MAP["z-ai/glm-5.3-flash"] == (
+        "accounts/fireworks/models/glm-5p3-flash"
+    )
+    assert fireworks.UPSTREAM_ID_MAP["z-ai/glm-5.3-fast"] == (
+        "accounts/fireworks/routers/glm-5p3-fast"
+    )
+    assert wandb.CATALOG.model_id("zai-org/GLM-5.3-Flash") == "z-ai/glm-5.3-flash"
 
 
 def test_nvidia_native_brand_prefix_does_not_create_duplicate_public_model() -> None:

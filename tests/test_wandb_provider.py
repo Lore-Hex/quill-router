@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import wandb
+from scripts.pricing.providers._direct_openai import DirectOpenAIProvider
 from scripts.pricing.refresh import PROVIDER_SLUGS
 from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
@@ -78,6 +81,97 @@ def test_wandb_parses_first_party_models_prices_and_capabilities() -> None:
     )
     assert prices["deepseek/deepseek-v4-pro"] == ModelPrice(100_000, 200_000)
     assert "openai/gpt-5.5" not in prices
+    assert "z-ai/glm-5.3-flash" not in prices
+
+
+def test_wandb_reviewed_price_label_can_precede_model_docs() -> None:
+    documented = wandb._parse_model_docs(_model_docs_html())
+    # Synthetic future price: tests parsing, not a published W&B rate.
+    future_row = (
+        "<tr class='compare-data-row'>"
+        "<th><span data-compare='row-label'>Z.AI GLM 5.3 Flash</span></th>"
+        "<td>$0.11</td><td>$0.22</td><td>$0.01</td></tr>"
+    )
+    html = _pricing_html().replace("</tbody>", future_row + "</tbody>", 1)
+    prices = wandb._parse_prices(html, documented_models=documented)
+    assert prices["z-ai/glm-5.3-flash"] == ModelPrice(
+        110_000, 220_000, prompt_cached_micro_per_m=10_000,
+    )
+
+
+def test_wandb_flash_hold_survives_refresh_until_operator_lifts_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.pricing.providers import _direct_openai
+
+    model_id = "z-ai/glm-5.3-flash"
+    # Fixture native ID; production must retain whichever exact ID the API returns.
+    native_id = "zai-org/GLM-5.3-Flash"
+    documented = wandb._parse_model_docs(_model_docs_html())
+    prices = wandb._parse_prices(_pricing_html(), documented_models=documented)
+    monkeypatch.setattr(wandb, "_load_model_docs", lambda: documented)
+    rows = [{"id": native} for _label, native, *_rest in _MODELS]
+    rows += [{"id": native_id}, {"id": "zai-org/GLM-9.9-unreviewed"}]
+    monkeypatch.setenv("WANDB_API_KEY", "test-key")
+    checked: list[str] = []
+    flash_healthy = False
+
+    def probe(**kwargs: object) -> bool:
+        checked.append(str(kwargs["model"]))
+        return kwargs["model"] != native_id or flash_healthy
+
+    monkeypatch.setattr(_direct_openai, "probe_openai_chat", probe)
+    catalog = DirectOpenAIProvider(
+        replace(wandb.CATALOG.spec, catalog_loader=lambda _key: rows, price_loader=lambda: prices),
+        manifest_path=tmp_path / "wandb.json",
+    )
+    for _ in range(2):
+        result = catalog.fetch()
+        catalog.write_provider_manifest(result)
+        manifest = json.loads(catalog.manifest_path.read_text())
+        by_id = {row["id"]: row for row in manifest["models"]}
+        row = by_id[model_id]
+        assert row["upstream_id"] == native_id
+        assert row["routable"] is False
+        assert row["routable_reason"] == wandb.CATALOG.spec.operator_hold_reasons[model_id]
+        assert row["routable_reason"].startswith("operator-hold")
+        assert "unresolved_since" not in row
+        assert "input_token_price_per_m" not in row
+        assert "output_token_price_per_m" not in row
+        assert model_id not in result.prices
+        assert native_id not in checked
+        assert "z-ai/glm-9.9-unreviewed" not in by_id
+
+    # A synthetic future price alone cannot lift the operator hold.
+    prices[model_id] = ModelPrice(110_000, 220_000)
+    result = catalog.fetch()
+    catalog.write_provider_manifest(result)
+    manifest = json.loads(catalog.manifest_path.read_text())
+    row = next(row for row in manifest["models"] if row["id"] == model_id)
+    assert row["routable"] is False
+    assert row["routable_reason"].startswith("operator-hold")
+    assert native_id not in checked
+
+    # Lifting a hold requires clearing it in both spec and manifest. Reclassify
+    # as awaiting-price so the preserved model must pass its first paid canary.
+    catalog.spec = replace(catalog.spec, operator_hold_reasons={})
+    row["routable_reason"] = "awaiting-price"
+    catalog.manifest_path.write_text(json.dumps(manifest))
+    result = catalog.fetch()
+    catalog.write_provider_manifest(result)
+    assert native_id in checked
+    by_id = {row["id"]: row for row in json.loads(catalog.manifest_path.read_text())["models"]}
+    assert by_id[model_id]["routable"] is False
+    assert by_id[model_id]["routable_reason"] == "provider-canary-failed"
+
+    flash_healthy = True
+    result = catalog.fetch()
+    catalog.write_provider_manifest(result)
+    assert checked.count(native_id) == 2
+    by_id = {row["id"]: row for row in json.loads(catalog.manifest_path.read_text())["models"]}
+    assert by_id[model_id]["routable"] is True
+    assert "routable_reason" not in by_id[model_id]
+    assert "unresolved_since" not in by_id[model_id]
 
 
 def test_wandb_rejects_layout_or_catalog_collapse(
@@ -121,6 +215,13 @@ def test_wandb_manifest_is_priced_and_preserves_exact_upstream_ids() -> None:
     assert raw["provider"] == wandb.SLUG
     assert raw["model_count"] >= 20
     rows = {row["id"]: row for row in raw["models"]}
+    held = rows.pop("z-ai/glm-5.3-flash")
+    assert held["routable"] is False
+    assert held["routable_reason"].startswith("operator-hold")
+    assert held["routable_reason"] == wandb.CATALOG.spec.operator_hold_reasons[held["id"]]
+    assert "unresolved_since" not in held
+    assert "upstream_id" not in held
+    assert not any("price" in key for key in held)
     assert all(row["upstream_id"] for row in rows.values())
     assert all(row["input_token_price_per_m"] > 0 for row in rows.values())
     assert all(row["output_token_price_per_m"] > 0 for row in rows.values())
