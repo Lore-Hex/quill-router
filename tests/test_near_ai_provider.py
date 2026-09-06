@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,8 @@ from fastapi import HTTPException
 from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
 from scripts.pricing.providers import near_ai
 from scripts.pricing.refresh import PROVIDER_SLUGS
+from tests.lifecycle_clock import CATALOG_CLOCK
+from trusted_router import provider_lifecycle
 from trusted_router.catalog import MODEL_ENDPOINTS, PROVIDERS
 from trusted_router.catalog_data import (
     PRIVACY_TIER_CONFIDENTIAL,
@@ -60,6 +63,7 @@ def _endpoints(*native_ids: str) -> dict[str, Any]:
 def test_near_ai_fetch_intersects_catalog_direct_registry_and_release_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: datetime(2026, 9, 5, tzinfo=UTC))
     dsv4 = "deepseek-ai/DeepSeek-V4-Flash"
     glm = "z-ai/glm-5.2"
     catalog = {
@@ -220,7 +224,10 @@ def test_near_ai_manifest_and_catalog_are_attested_prepaid_only() -> None:
         endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "near-ai"
     ]
     assert endpoints
-    assert {endpoint.model_id for endpoint in endpoints} == manifest_ids
+    assert {endpoint.model_id for endpoint in endpoints} == {
+        model_id for model_id in manifest_ids
+        if not provider_lifecycle.provider_model_retired("near-ai", model_id, at=CATALOG_CLOCK)
+    }
     assert {endpoint.usage_type for endpoint in endpoints} == {"Credits"}
     assert all(not endpoint.is_byok for endpoint in endpoints)
     assert all(
@@ -240,12 +247,12 @@ def test_near_ai_manifest_and_catalog_are_attested_prepaid_only() -> None:
 
 def test_near_ai_is_e2e_eligible_but_never_satisfies_zdr_or_deny() -> None:
     e2e_ids = {model.id for model in e2e_candidate_models(limit=100)}
-    assert "z-ai/glm-5.2" in e2e_ids
+    assert "deepseek/deepseek-v4-flash" in e2e_ids
 
     settings = Settings(environment="test")
     e2e = chat_route_endpoint_candidates(
         {
-            "model": "z-ai/glm-5.2",
+            "model": "deepseek/deepseek-v4-flash",
             "provider": {"only": ["near-ai"], "min_privacy": "e2e"},
         },
         settings,
@@ -258,7 +265,7 @@ def test_near_ai_is_e2e_eligible_but_never_satisfies_zdr_or_deny() -> None:
     ):
         with pytest.raises(HTTPException) as exc_info:
             chat_route_endpoint_candidates(
-                {"model": "z-ai/glm-5.2", "provider": provider_filter},
+                {"model": "deepseek/deepseek-v4-flash", "provider": provider_filter},
                 settings,
             )
         assert getattr(exc_info.value, "status_code", None) == 400
@@ -272,7 +279,7 @@ def test_near_ai_hourly_refresh_secret_and_authority_wiring_are_complete() -> No
     url, env_names, normalize = discoverable["near-ai"]
     assert url == near_ai.CATALOG_URL
     assert env_names == ("NEAR_API_KEY",)
-    assert normalize("z-ai/glm-5.2") == "z-ai/glm-5.2"
+    assert normalize("deepseek-ai/DeepSeek-V4-Flash") == "deepseek/deepseek-v4-flash"
     assert normalize("unreviewed/model") is None
     assert "near_ai" in PROVIDER_SLUGS
     assert "near-ai" in _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS

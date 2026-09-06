@@ -28,6 +28,7 @@ TOGETHER_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 7, 27, 0, 0, tzinfo=UTC)
 BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 TINFOIL_KIMI_K26_RETIREMENT_AT = datetime(2026, 8, 3, 0, 0, tzinfo=UTC)
 TINFOIL_GLM52_RETIREMENT_AT = datetime(2026, 9, 10, 0, 0, tzinfo=UTC)
+NEAR_AI_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 11, 13, 0, tzinfo=UTC)
 PARASAIL_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
 FRIENDLI_QWEN3_235B_RETIREMENT_AT = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
 FRIENDLI_K_EXAONE_236B_RETIREMENT_AT = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
@@ -110,6 +111,15 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # NEAR announced both GLM retirements for 2026-09-11 13:00 UTC. Do not
+    # silently substitute the suggested GLM 5.3 Flash: its direct workload
+    # requires separate attestation review. Other providers are unaffected.
+    _Retirement(
+        provider="near-ai",
+        model_ids=frozenset({"z-ai/glm-5.1", "z-ai/glm-5.2"}),
+        upstream_ids=frozenset({"zai-org/GLM-5.1-FP8", "z-ai/glm-5.2"}),
+        effective_at=NEAR_AI_SEPTEMBER_2026_RETIREMENT_AT,
+    ),
     # Xiaomi announced that the limited-beta MiMo V2.5 Pro UltraSpeed Model
     # API ends on 2026-09-08 in UTC+08. No exact hour or replacement was
     # provided, so retire conservatively at the start of that local date.
