@@ -57,13 +57,13 @@ _DISPUTE_TRANSITIONS = {
 
 
 def validate_adverse_event(event: AdverseTrustEvent) -> None:
-    if event.provider not in {"stripe", "x402"}:
-        raise ValueError("slice 1b adverse provider must be stripe or x402")
+    if event.provider not in {"stripe", "x402", "paypal", "adyen"}:
+        raise ValueError("unsupported adverse payment provider")
     if event.kind not in {"refund", "dispute"}:
         raise ValueError("adverse trust event must be a refund or dispute")
     if not event.adverse_ref or not event.original_payment_ref:
         raise ValueError("adverse and original payment references are required")
-    if not event.original_payment_ref.startswith("pi_"):
+    if event.provider in {"stripe", "x402"} and not event.original_payment_ref.startswith("pi_"):
         raise ValueError("Stripe/x402 adverse event requires a PaymentIntent id")
     if event.amount_micro < 0:
         raise ValueError("adverse amount must not be negative")

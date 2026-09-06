@@ -2204,11 +2204,14 @@ class InMemoryStore:
             if result is not None:
                 resolved = result
             else:
+                from trusted_router.services.provider_trust import provider_inbox_key
+
+                inbox_key = provider_inbox_key(resolved_event)
                 self.trust_inbox.setdefault(
-                    (resolved_event.provider, resolved_event.adverse_ref),
+                    (resolved_event.provider, inbox_key),
                     TrustInboxRow(
                         resolved_event.provider,
-                        resolved_event.adverse_ref,
+                        inbox_key,
                         adverse_event_payload(resolved_event),
                         dt.datetime.now(dt.UTC),
                     ),

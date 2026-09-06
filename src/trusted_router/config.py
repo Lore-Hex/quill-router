@@ -1480,7 +1480,10 @@ class Settings(BaseSettings):
         if self.trust_reconcile_max_age_seconds < minimum_reconcile_age:
             raise ValueError(
                 "TR_TRUST_RECONCILE_MAX_AGE_SECONDS must cover the provider "
-                "consistency delay plus two reconciliation cadences"
+                f"consistency delay plus two reconciliation cadences: "
+                f"enabled={','.join(sorted(self.trust_qualifying_provider_set))}, "
+                f"delay={enabled_consistency_delay}, minimum={minimum_reconcile_age}; "
+                "the default 3600 is invalid when PayPal is enabled"
             )
         trust_caps = (
             self.spend_lease_tier1_cap_microdollars,

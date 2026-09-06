@@ -504,6 +504,9 @@ class PostgresTrustReconciliationRepository:
                     event.event_id,
                 ),
             )
+            from trusted_router.provider_trust_postgres import drain_provider_inbox_tx
+
+            drain_provider_inbox_tx(self.store, conn, event.provider, event.original_payment_ref)
             return "inserted"
 
         return str(self.store._run_transaction(write))
