@@ -1,7 +1,7 @@
 """Fireworks AI catalog and first-party pricing integration.
 
 Fireworks publishes a first-party serverless pricing table for its headline
-models. We fetch that docs page and parse the standard serving-path prices.
+models. We parse that table and the GLM 5.3 model page's separate Fast prices.
 Prices become routable only when the authenticated operator model list also
 contains the model. The supplemental manifest is rebuilt from that intersection
 so newly published, priced chat models are added automatically.
@@ -10,11 +10,17 @@ so newly published, priced chat models are added automatically.
 from __future__ import annotations
 
 import os
+import re
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from bs4 import BeautifulSoup
+
 from scripts.pricing.base import (
+    ModelPrice,
     ProviderPricingResult,
+    fetch_html,
     fetch_json,
     fetch_provider,
     validate,
@@ -31,6 +37,7 @@ from trusted_router.provider_lifecycle import provider_model_retired
 SLUG = "fireworks"
 URL = "https://docs.fireworks.ai/serverless/pricing.md"
 MODELS_URL = "https://api.fireworks.ai/inference/v1/models"
+GLM53_PRICING_URL = "https://app.fireworks.ai/models/fireworks/glm-5p3"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -48,6 +55,9 @@ EXPECTED_MODELS = [
     "deepseek/deepseek-v4-flash-0731",
     "z-ai/glm-5.2",
     "z-ai/glm-5.2-fast",
+    "z-ai/glm-5.3",
+    "z-ai/glm-5.3-fast",
+    "z-ai/glm-5.3-flash",
     "openai/gpt-oss-120b",
     "meta-models/muse-glimmer-30b",
     "minimax/minimax-m3",
@@ -77,6 +87,8 @@ _DISPLAY_NAMES = {
     "qwen/qwen3.8-max": "Qwen 3.8 Max",
     "z-ai/glm-5.2": "GLM 5.2",
     "z-ai/glm-5.2-fast": "GLM 5.2 Fast",
+    "z-ai/glm-5.3": "GLM 5.3",
+    "z-ai/glm-5.3-fast": "GLM 5.3 Fast",
     "z-ai/glm-5.3-flash": "GLM 5.3 Flash",
 }
 
@@ -93,6 +105,8 @@ _NATIVE_TO_CANONICAL = {
     "accounts/fireworks/models/deepseek-v4-flash-0731": "deepseek/deepseek-v4-flash-0731",
     "accounts/fireworks/models/glm-5p2": "z-ai/glm-5.2",
     "accounts/fireworks/routers/glm-5p2-fast": "z-ai/glm-5.2-fast",
+    "accounts/fireworks/models/glm-5p3": "z-ai/glm-5.3",
+    "accounts/fireworks/routers/glm-5p3-fast": "z-ai/glm-5.3-fast",
     "accounts/fireworks/models/glm-5p3-flash": "z-ai/glm-5.3-flash",
     "accounts/fireworks/models/glm-5p1": "z-ai/glm-5.1",
     "accounts/fireworks/models/gpt-oss-120b": "openai/gpt-oss-120b",
@@ -126,7 +140,30 @@ _VERSIONED_PRICE_FAMILIES = {
     "deepseek/deepseek-v4-flash-": "deepseek/deepseek-v4-flash",
     "deepseek/deepseek-v4-pro-": "deepseek/deepseek-v4-pro",
 }
-_PRESERVE_UNPRICED_MODEL_IDS = frozenset({"z-ai/glm-5.3-flash"})
+_PRESERVE_UNPRICED_MODEL_IDS = frozenset({"z-ai/glm-5.3-fast", "z-ai/glm-5.3-flash"})
+
+
+def _parse_glm53_fast_price(html: str) -> ModelPrice:
+    """Read Fast's own serving-card prices when the pricing table lags."""
+
+    if UPSTREAM_ID_MAP["z-ai/glm-5.3-fast"] not in html:
+        raise RuntimeError("fireworks: GLM 5.3 page no longer identifies the Fast router")
+    pattern = re.compile(
+        r"^Fast\b.*?Uncached Input\s+\$([0-9]+(?:\.[0-9]+)?)\s*/M\s+"
+        r"Cached Input\s+\$([0-9]+(?:\.[0-9]+)?)\s*/M\s+"
+        r"Output\s+\$([0-9]+(?:\.[0-9]+)?)\s*/M$"
+    )
+    matches = [
+        match
+        for button in BeautifulSoup(html, "html.parser").find_all("button")
+        if (match := pattern.fullmatch(button.get_text(" ", strip=True))) is not None
+    ]
+    if len(matches) != 1:
+        raise RuntimeError("fireworks: expected one GLM 5.3 Fast per-million price card")
+    prompt, cached, completion = (
+        int(Decimal(value) * 1_000_000) for value in matches[0].groups()
+    )
+    return ModelPrice(prompt, completion, prompt_cached_micro_per_m=cached)
 
 
 def _live_model_rows() -> list[dict[str, Any]]:
@@ -168,13 +205,18 @@ def fetch() -> ProviderPricingResult:
         live_model_ids,
         _VERSIONED_PRICE_FAMILIES,
     )
+    fast_model_id = "z-ai/glm-5.3-fast"
     result = fetch_provider(
         slug=SLUG,
         url=URL,
-        expected_models=EXPECTED_MODELS,
+        expected_models=[model_id for model_id in EXPECTED_MODELS if model_id != fast_model_id],
         required_models=frozenset(price_aliases),
         required_model_price_aliases=price_aliases,
     )
+    used_fast_price_card = fast_model_id in live_model_ids and fast_model_id not in result.prices
+    if used_fast_price_card:
+        result.prices[fast_model_id] = _parse_glm53_fast_price(fetch_html(GLM53_PRICING_URL))
+        result.notes.append(f"GLM 5.3 Fast prices read from {GLM53_PRICING_URL}")
     verified_launch_ids = VERIFIED_PRICED_LAUNCH_MODELS.intersection(result.prices)
     routable_model_ids = live_model_ids | verified_launch_ids
     docs_only = sorted(set(result.prices) - routable_model_ids)
@@ -190,6 +232,8 @@ def fetch() -> ProviderPricingResult:
         upstream_id_map=UPSTREAM_ID_MAP,
         preserve_unpriced_model_ids=_PRESERVE_UNPRICED_MODEL_IDS,
     )
+    if fast_model_id in discovered:
+        discovered[fast_model_id]["pricing_source"] = GLM53_PRICING_URL if used_fast_price_card else URL
     # A verified launch exception is allowed to precede the account model-list
     # feed, but only while the first-party pricing page still publishes it.
     for model_id in verified_launch_ids - set(discovered):
@@ -222,6 +266,10 @@ def fetch() -> ProviderPricingResult:
             "verified launch models served before /v1/models catalog update: "
             + ", ".join(launch_ids_missing_from_catalog)
         )
+    # Availability was freshly authenticated even when prices came from the
+    # deterministic docs parser. The writer needs this signal to recover
+    # awaiting-price rows and reconcile real catalog misses.
+    result.source = "api"
     return result
 
 

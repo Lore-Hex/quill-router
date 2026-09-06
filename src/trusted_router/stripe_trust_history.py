@@ -39,6 +39,13 @@ class StripeTrustScan:
     #: the payment was credited locally. Empty means no derivable evidence: the
     #: writer must then refuse the payment fact (decision 76, P1-B).
     credit_evidence: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    #: Unmatched adverse id -> provider inferred from the referenced PI metadata.
+    #: Without an x402 stamp, the Stripe API object belongs to Stripe's summary.
+    unmatched_providers: Mapping[str, str] = field(default_factory=dict)
+    #: Adverse ids whose stored PI has no workspace_id, regardless of status.
+    out_of_scope_ids: tuple[str, ...] = ()
+    #: Same PI-metadata provider attribution as unmatched_providers.
+    out_of_scope_providers: Mapping[str, str] = field(default_factory=dict)
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -380,8 +387,8 @@ def credit_evidence_ids(
 ) -> tuple[str, ...]:
     """Candidate ``stripe_event`` marker ids proving this payment was credited.
 
-    The live credit paths key their idempotency marker as follows, and only
-    these keys count as local credit evidence:
+    The accepted marker keys are listed below. Each is only a candidate:
+    local credit evidence still requires the marker row to exist.
 
     * x402: ``x402_event_id(pi)`` (services/x402_billing.py);
     * ACH Checkout: ``stripe_checkout:<payment_intent or session id>``
@@ -389,6 +396,12 @@ def credit_evidence_ids(
     * card Checkout and auto-refill: the Stripe Event id of the crediting
       webhook, which is only knowable from Stripe's Events API (30-day
       retention) or an operator-attested list (``--credited-events``).
+    * Stripe (non-x402): ``lifetime_backfill:stripe:<payment_intent_id>``
+      records an applied lifetime paid-top-up total backfill for that PI.
+      ``scripts/backfill_lifetime_topups.py`` says: "This script changes only
+      ``tr_user_lifetime_topup`` through ``Store.add_lifetime_topup``; it never
+      grants workspace credits." It attests the historical paid top-up, not
+      a new workspace credit grant.
     """
 
     payment_intent_id = str(payment_intent.get("id") or "")
@@ -409,6 +422,8 @@ def credit_evidence_ids(
         session_id = str(session.get("id") or "")
         if payment_method == "ach" and session_id:
             candidates.append(f"stripe_checkout:{session_id}")
+    if payment_intent_id and _provider_for_payment(payment_intent) == "stripe":
+        candidates.append(f"lifetime_backfill:stripe:{payment_intent_id}")
     for event_id in crediting_event_ids:
         if event_id and event_id not in candidates:
             candidates.append(str(event_id))
@@ -462,6 +477,9 @@ def scan_stripe_responses(
     ``checkout_sessions`` maps PaymentIntent id -> Checkout Session object (for
     ``occurred_at`` parity and ACH evidence); ``crediting_events`` maps
     PaymentIntent id -> Stripe Event ids whose processing credited it.
+
+    Adverse objects are out of scope only when a stored PaymentIntent has no
+    workspace_id. Unknown PIs and unmodeled workspace payments stay unmatched.
     """
 
     sessions = {
@@ -530,13 +548,29 @@ def scan_stripe_responses(
     source_adverse: list[TrustEvent] = []
     outstanding: list[OutstandingAdverse] = []
     unmatched: list[str] = []
+    unmatched_providers: dict[str, str] = {}
+    out_of_scope: list[str] = []
+    out_of_scope_providers: dict[str, str] = {}
 
     def append_adverse(obj: dict[str, Any], *, kind: str) -> None:
         adverse_ref = str(obj.get("id") or "")
         payment_ref = _object_id(obj.get("payment_intent"))
+        stored_payment = payment_by_id.get(payment_ref)
+        stored_metadata = stored_payment.get("metadata") if stored_payment is not None else None
+        if stored_payment is not None and not (
+            isinstance(stored_metadata, Mapping) and stored_metadata.get("workspace_id")
+        ):
+            out_of_scope_id = adverse_ref or f"{kind}:missing_id"
+            out_of_scope.append(out_of_scope_id)
+            out_of_scope_providers[out_of_scope_id] = _provider_for_payment(stored_payment)
+            return
         payment = payment_events.get(payment_ref)
         if not adverse_ref or payment is None:
-            unmatched.append(adverse_ref or f"{kind}:missing_id")
+            unmatched_id = adverse_ref or f"{kind}:missing_id"
+            unmatched.append(unmatched_id)
+            unmatched_providers[unmatched_id] = _provider_for_payment(
+                payment_by_id.get(payment_ref, {})
+            )
             return
         status = (
             _refund_status(obj.get("status"))
@@ -623,6 +657,9 @@ def scan_stripe_responses(
         outstanding=tuple(outstanding),
         unmatched_ids=tuple(sorted(unmatched)),
         credit_evidence=credit_evidence,
+        unmatched_providers=unmatched_providers,
+        out_of_scope_ids=tuple(sorted(out_of_scope)),
+        out_of_scope_providers=out_of_scope_providers,
     )
 
 
