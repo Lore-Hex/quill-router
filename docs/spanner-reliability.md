@@ -81,6 +81,28 @@ latency, and error analytics from ClickHouse. Do not aggregate or full-scan raw
 Spanner generation, entity, or analytics-outbox rows for reporting. Spanner is
 reserved for bounded ledger and control-plane reads on this path.
 
+For payment ownership, use the bounded operator helper rather than searching
+JSON bodies for a Stripe ID:
+
+```bash
+uv run python -m scripts.inspect_payment_owner \
+  --project quill-cloud-proxy --instance trusted-router-nam6 \
+  --database trusted-router --payment-intent pi_EXAMPLE --include-email
+```
+
+Supply the existing read-only credential through
+`CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE` and the Stripe key through
+`STRIPE_SECRET_KEY`; never print key values. The helper performs one exact
+Stripe GET followed by at most two Spanner primary-key reads. Reads are tagged
+`tr_ops_payment_owner`, LOW priority, have five-second RPC timeouts, and do not
+retry. It reports missing attribution without scanning for a replacement.
+An owner found this way is the **current workspace owner**, not proof of who
+made a historical payment or caused a database incident.
+
+`LIMIT` is not a query-work budget. A leading-wildcard body search still scans
+the table when it returns zero rows. Operators with direct SQL access can bypass
+the helper, so it is an approved safe path, not an IAM-enforced SQL firewall.
+
 ### Transaction contention
 
 Inspect Spanner transaction and lock insights. A high abort ratio or lock-wait
