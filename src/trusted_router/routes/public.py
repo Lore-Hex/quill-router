@@ -186,6 +186,29 @@ LEGACY_MODEL_PAGE_REDIRECTS: dict[str, str] = {
     # backlink by sending readers to the current open-weight catalog.
     "meta/muse-spark-1.1": "/models?filter=open",
 }
+LEGACY_MODEL_ID_ALIASES: dict[str, str] = {
+    "lightning-ai/nemotron-3-nano-omni-30b-a3b-reasoning": (
+        "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b"
+    ),
+    "nvidia/nemotron-120b-a12b": "nvidia/nemotron-3-120b-a12b",
+    "nvidia/nvidia-nemotron-3-ultra-550b-a55b": "nvidia/nemotron-3-ultra-550b-a55b",
+    "xiaomi/mimo-v2-flash": "xiaomimimo/mimo-v2-flash",
+    "zai-org/glm-4.5": "z-ai/glm-4.5",
+}
+
+
+def _canonical_public_model_id(model_id: str) -> str:
+    """Resolve known aliases and unambiguous casing to existing catalog IDs."""
+    # Exact native IDs remain authoritative, including mixed-case provider IDs.
+    if model_id in MODELS:
+        return model_id
+    alias = LEGACY_MODEL_ID_ALIASES.get(model_id)
+    if alias is not None and alias in MODELS:
+        return alias
+    matches = [candidate for candidate in MODELS if candidate.casefold() == model_id.casefold()]
+    return matches[0] if len(matches) == 1 else model_id
+
+
 STATUS_RAW_SAMPLE_LIMIT_PER_DAY = 35_000
 STATUS_LIVE_SAMPLE_LIMIT = 500
 STATUS_HOUR_ROLLUP_LIMIT = 5_000
@@ -1866,11 +1889,13 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         right_author: str,
         right_slug: str,
     ) -> Response:
-        left_id = f"{left_author.strip()}/{left_slug.strip()}"
-        right_id = f"{right_author.strip()}/{right_slug.strip()}"
+        requested_left_id = f"{left_author.strip()}/{left_slug.strip()}"
+        requested_right_id = f"{right_author.strip()}/{right_slug.strip()}"
+        left_id = _canonical_public_model_id(requested_left_id)
+        right_id = _canonical_public_model_id(requested_right_id)
         canonical_path = canonical_model_comparison_path(left_id, right_id)
         if canonical_path is not None:
-            requested_path = f"/compare/models/{left_id}/vs/{right_id}"
+            requested_path = f"/compare/models/{requested_left_id}/vs/{requested_right_id}"
             if requested_path != canonical_path:
                 return RedirectResponse(url=canonical_path, status_code=301)
         body = public_model_compare_html(settings, left_id, right_id)
@@ -1933,6 +1958,15 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         legacy_model_id = (
             maybe_base_model_id if separator and maybe_section in MODEL_SEO_SECTIONS else cleaned
         )
+        canonical_model_id = _canonical_public_model_id(legacy_model_id)
+        if canonical_model_id != legacy_model_id:
+            section_suffix = (
+                f"/{maybe_section}" if separator and maybe_section in MODEL_SEO_SECTIONS else ""
+            )
+            return RedirectResponse(
+                url=f"/models/{canonical_model_id}{section_suffix}",
+                status_code=301,
+            )
         legacy_target = LEGACY_MODEL_PAGE_REDIRECTS.get(legacy_model_id)
         if legacy_target:
             return RedirectResponse(url=legacy_target, status_code=301)

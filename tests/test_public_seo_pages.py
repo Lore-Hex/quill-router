@@ -1685,6 +1685,77 @@ def test_retired_model_pages_redirect_to_current_catalog_entries(client: TestCli
         assert response.headers["location"] == target
 
 
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize(
+    ("requested", "canonical"),
+    [
+        ("nvidia/Nemotron-3-Ultra-550b-a55b", "nvidia/nemotron-3-ultra-550b-a55b"),
+        ("xiaomi/mimo-v2-flash", "xiaomimimo/mimo-v2-flash"),
+        ("xiaomi/mimo-v2-flash/pricing", "xiaomimimo/mimo-v2-flash/pricing"),
+        ("nvidia/nvidia-nemotron-3-ultra-550b-a55b/providers", "nvidia/nemotron-3-ultra-550b-a55b/providers"),
+        ("zai-org/glm-4.5", "z-ai/glm-4.5"),
+        ("nvidia/nemotron-120b-a12b", "nvidia/nemotron-3-120b-a12b"),
+        ("lightning-ai/nemotron-3-nano-omni-30b-a3b-reasoning", "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b"),
+    ],
+)
+def test_model_aliases_redirect_once_to_existing_pages(
+    client: TestClient, method: str, requested: str, canonical: str,
+) -> None:
+    response = client.request(method, f"/models/{requested}", follow_redirects=False)
+    assert response.status_code == 301
+    assert response.headers["location"] == f"/models/{canonical}"
+    target = client.request(method, response.headers["location"], follow_redirects=False)
+    assert target.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/models/nvidia/unknown-model",
+        "/models/xiaomi/mimo-v2-flash/unknown-section",
+        "/compare/models/xiaomi/mimo-v2-flash/vs/unknown/model",
+        "/compare/models/xiaomi/mimo-v2-flash/vs/xiaomimimo/mimo-v2-flash",
+    ],
+)
+def test_model_normalization_preserves_unknown_and_invalid_pair_404s(
+    client: TestClient, path: str,
+) -> None:
+    assert client.get(path, follow_redirects=False).status_code == 404
+
+
+def test_model_comparison_normalizes_alias_case_and_order_in_one_redirect(
+    client: TestClient,
+) -> None:
+    response = client.get(
+        "/compare/models/zai-org/glm-4.5/vs/nvidia/Nemotron-3-Ultra-550b-a55b",
+        follow_redirects=False,
+    )
+    assert response.status_code == 301
+    assert response.headers["location"] == (
+        "/compare/models/nvidia/nemotron-3-ultra-550b-a55b/vs/z-ai/glm-4.5"
+    )
+    assert client.get(response.headers["location"], follow_redirects=False).status_code == 200
+
+
+def test_model_normalization_requires_live_unambiguous_targets(monkeypatch) -> None:
+    from trusted_router.routes import public
+
+    monkeypatch.setattr(public, "MODELS", {"native/MixedCase": object()})
+    assert public._canonical_public_model_id("native/MixedCase") == "native/MixedCase"
+    assert public._canonical_public_model_id("NATIVE/mixedcase") == "native/MixedCase"
+    assert public._canonical_public_model_id("xiaomi/mimo-v2-flash") == "xiaomi/mimo-v2-flash"
+    monkeypatch.setattr(public, "MODELS", {"native/Case": object(), "native/case": object()})
+    assert public._canonical_public_model_id("native/Case") == "native/Case"
+    assert public._canonical_public_model_id("native/CASE") == "native/CASE"
+
+
+def test_native_mixed_case_model_page_remains_canonical(client: TestClient) -> None:
+    path = "/models/Sao10K/L3-8B-Stheno-v3.2"
+    response = client.get(path, follow_redirects=False)
+    assert response.status_code == 200
+    assert f'<link rel="canonical" href="https://trustedrouter.com{path}">' in response.text
+
+
 def test_benchmarks_and_rankings_pages_link_model_clusters(client: TestClient) -> None:
     for path in ["/benchmarks", "/rankings"]:
         response = client.get(path)
