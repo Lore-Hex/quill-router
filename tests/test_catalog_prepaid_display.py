@@ -82,6 +82,26 @@ def test_model_detail_prices_credits_routes_once_and_shows_cached_input() -> Non
     )
 
 
+def test_fireworks_glm53_flash_published_price_is_prepaid() -> None:
+    endpoint = MODEL_ENDPOINTS["z-ai/glm-5.3-flash@fireworks/prepaid"]
+    assert endpoint.upstream_id == "accounts/fireworks/models/glm-5p3-flash"
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 158_250
+    assert endpoint.completion_price_microdollars_per_million_tokens == 527_500
+    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 31_650
+
+    fast = MODEL_ENDPOINTS["z-ai/glm-5.3-fast@fireworks/prepaid"]
+    assert fast.upstream_id == "accounts/fireworks/routers/glm-5p3-fast"
+    assert fast.prompt_price_microdollars_per_million_tokens == 2_215_500
+    assert fast.completion_price_microdollars_per_million_tokens == 6_963_000
+    assert fast.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 411_450
+
+
+def test_wandb_glm53_flash_without_provider_price_stays_dark() -> None:
+    model_id = "z-ai/glm-5.3-flash"
+    assert model_id in _provider_manifest_dark_model_ids()["wandb"]
+    assert not any(endpoint.provider == "wandb" for endpoint in endpoints_for_model(model_id))
+
+
 def test_cerebras_only_credits_serves_allowlisted_models() -> None:
     # Cerebras's public account-callable feed is authoritative for Credits.
     # The generated manifest replaces a stale source allowlist so new models
