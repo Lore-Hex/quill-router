@@ -1692,6 +1692,9 @@ def test_retired_model_pages_redirect_to_current_catalog_entries(client: TestCli
         ("nvidia/Nemotron-3-Ultra-550b-a55b", "nvidia/nemotron-3-ultra-550b-a55b"),
         ("xiaomi/mimo-v2-flash", "xiaomimimo/mimo-v2-flash"),
         ("xiaomi/mimo-v2-flash/pricing", "xiaomimimo/mimo-v2-flash/pricing"),
+        ("Xiaomi/MiMo-V2-Flash", "xiaomimimo/mimo-v2-flash"),
+        ("Xiaomi/MiMo-V2-Flash/pricing", "xiaomimimo/mimo-v2-flash/pricing"),
+        ("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B", "nvidia/nemotron-3-ultra-550b-a55b"),
         ("nvidia/nvidia-nemotron-3-ultra-550b-a55b/providers", "nvidia/nemotron-3-ultra-550b-a55b/providers"),
         ("zai-org/glm-4.5", "z-ai/glm-4.5"),
         ("nvidia/nemotron-120b-a12b", "nvidia/nemotron-3-120b-a12b"),
@@ -1727,7 +1730,7 @@ def test_model_comparison_normalizes_alias_case_and_order_in_one_redirect(
     client: TestClient,
 ) -> None:
     response = client.get(
-        "/compare/models/zai-org/glm-4.5/vs/nvidia/Nemotron-3-Ultra-550b-a55b",
+        "/compare/models/Zai-Org/GLM-4.5/vs/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
         follow_redirects=False,
     )
     assert response.status_code == 301

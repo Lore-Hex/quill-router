@@ -202,7 +202,7 @@ def _canonical_public_model_id(model_id: str) -> str:
     # Exact native IDs remain authoritative, including mixed-case provider IDs.
     if model_id in MODELS:
         return model_id
-    alias = LEGACY_MODEL_ID_ALIASES.get(model_id)
+    alias = LEGACY_MODEL_ID_ALIASES.get(model_id.casefold())
     if alias is not None and alias in MODELS:
         return alias
     matches = [candidate for candidate in MODELS if candidate.casefold() == model_id.casefold()]
