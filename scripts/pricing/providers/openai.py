@@ -7,7 +7,13 @@ import re
 from pathlib import Path
 from typing import Any
 
-from scripts.pricing.base import ProviderPricingResult, fetch_json, fetch_provider
+from scripts.pricing.base import (
+    ProviderPricingResult,
+    emit_workflow_warning,
+    fetch_json,
+    fetch_provider,
+    runtime_required_models,
+)
 from scripts.pricing.manifest import (
     apply_canary_results,
     models_requiring_canary,
@@ -93,7 +99,13 @@ def fetch() -> ProviderPricingResult:
         slug=SLUG,
         url=URL,
         expected_models=EXPECTED_MODELS,
+        require_runtime_models=False,
     )
+    unpriced = sorted(runtime_required_models(SLUG) - result.prices.keys())
+    if unpriced:
+        note = f"openai: no official price for discovered models; excluded from routing: {unpriced}"
+        emit_workflow_warning(note)
+        result.notes.append(note)
     api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("CHATGPT_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is required for model discovery")

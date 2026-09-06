@@ -1518,6 +1518,7 @@ def fetch_provider(
     expected_models: list[str],
     required_models: list[str] | tuple[str, ...] | frozenset[str] = (),
     required_model_price_aliases: dict[str, str] | None = None,
+    require_runtime_models: bool = True,
     extra_headers: dict[str, str] | None = None,
     accepted_status_codes: frozenset[int] = frozenset(),
 ) -> ProviderPricingResult:
@@ -1527,6 +1528,10 @@ def fetch_provider(
     `extra_headers` lets a provider config request specific headers on
     the fetch — e.g. `{"X-Return-Format": "markdown"}` for Jina-proxied
     URLs that should return clean markdown instead of HTML.
+
+    ``require_runtime_models=False`` lets an adapter isolate unpriced launch
+    hints from third-party discovery. Explicit ``required_models`` and all
+    price validation still apply; the adapter must keep unpriced models dark.
 
     Steps:
       1. fetch_html(url, extra_headers=...)
@@ -1540,7 +1545,11 @@ def fetch_provider(
       9. validate the sandbox output.
       10. only after all pass, write the new source to disk and return.
     """
-    strict_models = frozenset(required_models) | runtime_required_models(slug)
+    # Authenticated adapters can quarantine unpriced discoveries per model.
+    # A third-party launch hint must not invalidate their other official prices.
+    strict_models = frozenset(required_models)
+    if require_runtime_models:
+        strict_models |= runtime_required_models(slug)
     log.info(
         "pricing.fetch slug=%s url=%s required_models=%d",
         slug,
