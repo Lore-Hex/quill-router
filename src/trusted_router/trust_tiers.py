@@ -262,6 +262,20 @@ def payment_or_grant_event(
     )
 
 
+def effective_trust_tier(
+    computed: int, *, trust_override_tier: int | None = None,
+    identity_ceiling: int = 3, trust_latched_at: datetime | None = None,
+) -> int:
+    """Resolve raw policy, or recheck an already materialized shard tier.
+
+    Shards store the effective tier; readers must not reapply a raw override
+    because doing so would undo a transactional identity demotion.
+    """
+    if trust_latched_at is not None:
+        return 0
+    return max(0, min(3, identity_ceiling, max(computed, trust_override_tier or 0)))
+
+
 def compute_trust_tier(
     events: Iterable[TrustEvent],
     *,
@@ -302,11 +316,11 @@ def compute_trust_tier(
         ):
             computed = 3
 
-    override = max(0, min(3, int(trust_override_tier or 0)))
-    identity_ceiling = 3 if approved or identity_bypass else 1
-    effective = min(identity_ceiling, max(computed, override), 3)
-    if trust_latched_at is not None:
-        effective = 0
+    effective = effective_trust_tier(
+        computed, trust_override_tier=trust_override_tier,
+        identity_ceiling=3 if approved or identity_bypass else 1,
+        trust_latched_at=trust_latched_at,
+    )
     return TrustTierDecision(computed_tier=computed, effective_tier=effective)
 
 

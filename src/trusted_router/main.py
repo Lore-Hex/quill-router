@@ -208,6 +208,10 @@ def create_app(
     if init_observability:
         init_sentry(settings)
         init_axiom(settings)
+    if settings.spend_lease_trust_eligibility_enabled:
+        from trusted_router.trust_eligibility import lease_eligibility
+
+        lease_eligibility(STORE, settings)
     _configure_application_logging()
     # Swagger UI moves to /api/reference so the public docs hub can own
     # /docs (the marketing nav points "Docs" there). ReDoc stays at /redoc.

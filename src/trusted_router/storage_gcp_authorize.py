@@ -431,6 +431,16 @@ def authorize_atomic(
                 raise _Reject(AuthorizeOutcome.INSUFFICIENT_CREDITS)
             credit_hold = estimate
 
+        # Pause state is replicated atomically across the credit shards. Read
+        # only the selected shard, whose balance DML already joined this txn's
+        # read set; a workspace-wide scan couples otherwise independent holds
+        # and can exhaust the retry budget under contention. BYOK / lease-
+        # escrowed requests use shard zero. A pause still conflicts on this
+        # shard and rejection rolls back every staged key and credit hold.
+        from trusted_router.trust_eligibility import billing_paused_tx
+        if billing_paused_tx(transaction, pt, workspace_id, shard=selected_credit_shard):
+            raise _Reject("billing_paused")
+
         lease_result: dict[str, Any] = {
             "bound": False,
             "no_lease_reason": None,

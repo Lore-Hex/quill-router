@@ -817,12 +817,24 @@ class _FakeTransaction:
             rec = self._typed_current("tr_credit_balance", pk)
             if rec is None:
                 return 0
+            if "expected_trust_tier" in p:
+                for predicate in ("trust_tier = @expected_trust_tier", "trust_tier >= 1",
+                                  "trust_latched_at IS NULL",
+                                  "COALESCE(ARRAY_LENGTH(billing_pause_causes), 0) = 0",
+                                  "trust_reconciled_through >= @trust_fresh_after",
+                                  "trust_reconciled_through <= @trust_now"):
+                    _require_pred(sql, predicate, "armed lease escrow")
             trust_matches = (
                 "expected_trust_tier" not in p
                 or (
                     int(rec.get("trust_tier") or 0) == int(p["expected_trust_tier"])
                     and int(rec.get("trust_tier") or 0) >= 1
                     and rec.get("trust_latched_at") is None
+                    and ("trust_fresh_after" not in p or (
+                        not rec.get("billing_pause_causes")
+                        and rec.get("trust_reconciled_through") is not None
+                        and p["trust_fresh_after"] <= rec["trust_reconciled_through"] <= p["trust_now"]
+                    ))
                 )
             )
             if (
@@ -4018,6 +4030,11 @@ def _execute_sql(
             for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
         ]
         return [[row.get(column) for column in columns] for row in rows]
+    if "SELECT id, body FROM tr_entities WHERE kind='regional_quota_lease'" in sql:
+        if txn is not None:
+            txn.read_versions[("entity_kind", "regional_quota_lease")] = db.entity_kind_versions.get("regional_quota_lease", 0)
+        return [[entity_id, row.body] for (kind, entity_id), row in db.rows.items()
+                if kind == "regional_quota_lease" and entity_id.startswith(str(params.get("prefix", "")))]
     if "FROM tr_owner_workspace" in sql:
         rows = _typed_rows("tr_owner_workspace")
         if "owner" in params:
@@ -4164,6 +4181,10 @@ def _execute_sql(
                 _require_pred(sql, f"WHERE {pk_col}=@pk", what)
                 _require_pred(sql, "shard>=0 AND shard<@shard_count", what)
                 _require_pred(sql, "ORDER BY shard", what)
+            if "@ws" in sql and "ws" in params:
+                items = [(pk, rec) for pk, rec in items if rec.get(pk_col) == params["ws"]]
+                if "shard=@shard" in sql:
+                    items = [(pk, rec) for pk, rec in items if rec.get("shard", 0) == params["shard"]]
             if "@pk" in sql and "pk" in params:
                 items = [(pk, rec) for pk, rec in items if rec.get(pk_col) == params["pk"]]
                 if "shard=0" in sql.replace(" ", ""):
@@ -4448,6 +4469,7 @@ def make_fake_store(
     store.request_record_write_mode = request_record_write_mode
     store.max_workspaces_per_owner = 25
     store.trust_qualifying_providers = frozenset({"stripe", "x402"})
+    store.trust_settings = None
     store.trust_tier3_min_days = 30
     store.trust_tier3_min_paid_microdollars = 50_000_000
     store._generation_records_enabled = generation_records_enabled

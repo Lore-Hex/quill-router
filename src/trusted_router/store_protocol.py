@@ -923,6 +923,7 @@ class Store(Protocol):
         deferred_cap_microdollars: int | None = ...,
         spend_lease: SpendLeaseArtifact | None = ...,
         invocation_nonce: str | None = ...,
+        expected_pause_epoch: int | None = ...,
     ) -> GatewayAuthorization: ...
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None: ...
     def get_gateway_authorization_by_gateway_request_id(

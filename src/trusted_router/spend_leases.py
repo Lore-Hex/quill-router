@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import threading
 import time
 import uuid
@@ -52,6 +53,9 @@ ShadowDivergence = Literal["none", "admit_diverged", "estimate_low", "echo_inval
 SpendLeaseEligibilityFailure = Literal[
     "boot_digest_not_accepted",
     "unpaid_workspace",
+    "trust_gate_unarmed",
+    "reconciliation_stale",
+    "billing_paused",
     "not_pilot",
     "route_type",
     "no_candidates",
@@ -701,6 +705,7 @@ def mint_shadow_spend_lease(
     }
     if trust_tier is not None:
         claims["trust_tier"] = int(trust_tier)
+        logging.getLogger(__name__).info("spend_lease.trust_tier tier=%s workspace_id=%s", trust_tier, workspace_id)
     token = signer.sign(claims)
     return SpendLeaseArtifact(
         token=token,

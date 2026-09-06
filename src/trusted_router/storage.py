@@ -181,6 +181,8 @@ class InMemoryStore:
         self.trust_demotion_remainders: set[tuple[str, str]] = set()
         self.trust_backfills: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
         self.credit_trust_shards: dict[tuple[str, int], dict[str, Any]] = {}
+        self._reservation_pause_epochs: dict[str, int] = {}
+        self._paused_authorizations: set[tuple[str, str, str]] = set()
         self.abuse_pause_clears: set[tuple[str, str]] = set()
         self.webhook_events: set[tuple[str, str]] = set()
         self.earnings_money: dict[str, tuple[int, int]] = {}
@@ -260,6 +262,8 @@ class InMemoryStore:
             self.trust_demotion_remainders.clear()
             self.trust_backfills.clear()
             self.credit_trust_shards.clear()
+            self._reservation_pause_epochs.clear()
+            self._paused_authorizations.clear()
             self.abuse_pause_clears.clear()
             self.webhook_events.clear()
             self.earnings_money.clear()
@@ -2778,18 +2782,52 @@ class InMemoryStore:
         *,
         idempotency_key: str | None = None,
     ) -> Reservation:
-        return self.api_keys.reserve(
-            workspace_id,
-            key_hash,
-            amount_microdollars,
-            idempotency_key=idempotency_key,
-        )
+        from trusted_router.storage_legacy_trust import BillingPausedError
+        with self._lock:
+            terminal_key = (workspace_id, key_hash, idempotency_key or "")
+            if self._legacy_paused(workspace_id) or terminal_key in self._paused_authorizations:
+                if idempotency_key is not None:
+                    existing_id = self.api_keys.reservation_id_by_idempotency_key.get(idempotency_key)
+                    if existing_id is not None:
+                        self.refund(existing_id)
+                    self._paused_authorizations.add(terminal_key)
+                self.api_keys.refund_limit(key_hash, amount_microdollars, usage_type=UsageType.CREDITS)
+                raise BillingPausedError()
+            reservation = self.api_keys.reserve(workspace_id, key_hash, amount_microdollars,
+                                                idempotency_key=idempotency_key)
+            self._reservation_pause_epochs.setdefault(reservation.id, self._legacy_pause_epoch(workspace_id))
+            return reservation
+
+    def _legacy_pause_epoch(self, workspace_id: str) -> int:
+        return max((int(row.get("pause_epoch") or 0) for (ws, _), row in self.credit_trust_shards.items()
+                    if ws == workspace_id), default=0)
+
+    def _legacy_paused(self, workspace_id: str) -> bool:
+        workspace = self.workspaces.get(workspace_id)
+        return any(row.get("billing_pause_causes") for (ws, _), row in self.credit_trust_shards.items()
+                   if ws == workspace_id) or bool(workspace and (workspace.billing_paused or workspace.billing_pause_causes))
+
+    def _recover_released_credit_locked(self, workspace_id: str) -> None:
+        money = self.credit_money[workspace_id]
+        available = max(0, money.total_credits_microdollars - money.total_usage_microdollars - money.reserved_microdollars)
+        for payment in sorted((row for row in self.trust_events.values() if row.workspace_id == workspace_id
+                               and row.kind == "payment" and int(row.unrecovered_micro or 0) > 0),
+                              key=lambda row: (row.occurred_at, row.event_id)):
+            take = min(available, int(payment.unrecovered_micro or 0))
+            payment.recovered_micro = int(payment.recovered_micro or 0) + take
+            payment.unrecovered_micro = int(payment.unrecovered_micro or 0) - take
+            payment.debit_status = "debited" if payment.unrecovered_micro == 0 else "partial"
+            money.total_credits_microdollars -= take
+            available -= take
+        self._sync_principal_recovery_pause_locked(workspace_id)
 
     def settle(self, reservation_id: str, actual_microdollars: int) -> None:
         self.api_keys.settle(reservation_id, actual_microdollars)
 
     def refund(self, reservation_id: str) -> None:
-        self.api_keys.refund(reservation_id)
+        with self._lock:
+            self.api_keys.refund(reservation_id)
+            self._recover_released_credit_locked(self.api_keys.reservations[reservation_id].workspace_id)
 
     # --- Cross-plane credit transfer ---------------------------------------
     #
@@ -2997,47 +3035,64 @@ class InMemoryStore:
         deferred_cap_microdollars: int | None = None,
         spend_lease: SpendLeaseArtifact | None = None,
         invocation_nonce: str | None = None,
+        expected_pause_epoch: int | None = None,
     ) -> GatewayAuthorization:
-        return self.api_keys.create_gateway_authorization(
-            workspace_id=workspace_id,
-            key_hash=key_hash,
-            model_id=model_id,
-            provider=provider,
-            usage_type=usage_type,
-            estimated_microdollars=estimated_microdollars,
-            credit_reservation_id=credit_reservation_id,
-            authorization_id=authorization_id,
-            requested_model_id=requested_model_id,
-            candidate_model_ids=candidate_model_ids,
-            region=region,
-            endpoint_id=endpoint_id,
-            candidate_endpoint_ids=candidate_endpoint_ids,
-            idempotency_key=idempotency_key,
-            tags=tags,
-            idempotency_fingerprint=idempotency_fingerprint,
-            app_id=app_id,
-            app_markup_basis_points=app_markup_basis_points,
-            receipt_fee_basis_points=receipt_fee_basis_points,
-            app_owner_user_id=app_owner_user_id,
-            custom_model_id=custom_model_id,
-            custom_model_revision=custom_model_revision,
-            custom_model_markup_basis_points=custom_model_markup_basis_points,
-            custom_model_owner_user_id=custom_model_owner_user_id,
-            user_provided_model_id=user_provided_model_id,
-            user_provided_model_revision=user_provided_model_revision,
-            user_model_prompt_price_microdollars_per_m=(user_model_prompt_price_microdollars_per_m),
-            user_model_completion_price_microdollars_per_m=(
-                user_model_completion_price_microdollars_per_m
-            ),
-            user_model_owner_user_id=user_model_owner_user_id,
-            additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
-            native_batch_eligible=native_batch_eligible,
-            settlement=settlement,
-            expires_at=expires_at,
-            deferred_cap_microdollars=deferred_cap_microdollars,
-            spend_lease=spend_lease,
-            invocation_nonce=invocation_nonce,
-        )
+        from trusted_router.storage_legacy_trust import BillingPausedError
+        with self._lock:
+            terminal_key = (workspace_id, key_hash, idempotency_key or "")
+            existing = self.api_keys.get_gateway_authorization_by_idempotency_key(workspace_id, key_hash, idempotency_key) if idempotency_key else None
+            if existing is not None:
+                return existing
+            stale_epoch = (expected_pause_epoch is not None and expected_pause_epoch != self._legacy_pause_epoch(workspace_id)) or (credit_reservation_id is not None and
+                self._reservation_pause_epochs.get(credit_reservation_id, 0) != self._legacy_pause_epoch(workspace_id))
+            if self._legacy_paused(workspace_id) or stale_epoch or terminal_key in self._paused_authorizations:
+                if terminal_key not in self._paused_authorizations or idempotency_key is None:
+                    if credit_reservation_id is not None:
+                        self.refund(credit_reservation_id)
+                    self.api_keys.refund_limit(key_hash, estimated_microdollars, usage_type=usage_type)
+                    if idempotency_key is not None:
+                        self._paused_authorizations.add(terminal_key)
+                raise BillingPausedError()
+            return self.api_keys.create_gateway_authorization(
+                workspace_id=workspace_id,
+                key_hash=key_hash,
+                model_id=model_id,
+                provider=provider,
+                usage_type=usage_type,
+                estimated_microdollars=estimated_microdollars,
+                credit_reservation_id=credit_reservation_id,
+                authorization_id=authorization_id,
+                requested_model_id=requested_model_id,
+                candidate_model_ids=candidate_model_ids,
+                region=region,
+                endpoint_id=endpoint_id,
+                candidate_endpoint_ids=candidate_endpoint_ids,
+                idempotency_key=idempotency_key,
+                tags=tags,
+                idempotency_fingerprint=idempotency_fingerprint,
+                app_id=app_id,
+                app_markup_basis_points=app_markup_basis_points,
+                receipt_fee_basis_points=receipt_fee_basis_points,
+                app_owner_user_id=app_owner_user_id,
+                custom_model_id=custom_model_id,
+                custom_model_revision=custom_model_revision,
+                custom_model_markup_basis_points=custom_model_markup_basis_points,
+                custom_model_owner_user_id=custom_model_owner_user_id,
+                user_provided_model_id=user_provided_model_id,
+                user_provided_model_revision=user_provided_model_revision,
+                user_model_prompt_price_microdollars_per_m=(user_model_prompt_price_microdollars_per_m),
+                user_model_completion_price_microdollars_per_m=(
+                    user_model_completion_price_microdollars_per_m
+                ),
+                user_model_owner_user_id=user_model_owner_user_id,
+                additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
+                native_batch_eligible=native_batch_eligible,
+                settlement=settlement,
+                expires_at=expires_at,
+                deferred_cap_microdollars=deferred_cap_microdollars,
+                spend_lease=spend_lease,
+                invocation_nonce=invocation_nonce,
+            )
 
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:
         return self.api_keys.get_gateway_authorization(authorization_id)
@@ -3061,6 +3116,9 @@ class InMemoryStore:
     def get_gateway_authorization_by_idempotency_key(
         self, workspace_id: str, key_hash: str, idempotency_key: str
     ) -> GatewayAuthorization | None:
+        if (workspace_id, key_hash, idempotency_key) in self._paused_authorizations:
+            from trusted_router.storage_legacy_trust import BillingPausedError
+            raise BillingPausedError()
         return self.api_keys.get_gateway_authorization_by_idempotency_key(
             workspace_id, key_hash, idempotency_key
         )
@@ -3661,6 +3719,7 @@ def create_store(settings: Any) -> Store:
 
         bigtable_enabled = backend == "spanner-bigtable"
         return SpannerBigtableStore(
+            trust_settings=settings,
             project_id=settings.gcp_project_id,
             spanner_instance_id=settings.spanner_instance_id,
             spanner_database_id=settings.spanner_database_id,

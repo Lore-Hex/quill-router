@@ -543,6 +543,15 @@ if [ -z "$PROVIDER_ANALYTICS_CLICKHOUSE_URL" ]; then
   fi
 fi
 
+# Preserve the account pin from the serving revision across ordinary releases.
+# The explicit trust setup rollout resolves it through the same helper as the jobs.
+if [ -z "${TR_TRUST_STRIPE_ACCOUNT_ID}" ]; then
+  TR_TRUST_STRIPE_ACCOUNT_ID="$(read_primary_regional_quota_env TR_TRUST_STRIPE_ACCOUNT_ID "")"
+fi
+if [ "${TR_TRUST_JOBS_DEPLOY}" = "1" ]; then
+  require_trust_stripe_account_id
+fi
+
 ENV_VARS=(
   "TR_ENVIRONMENT=production"
   "TR_SERVICE_SURFACE=combined"
@@ -764,8 +773,15 @@ ENV_VARS=(
   "TR_STAGE_D_HEARTBEAT_ENABLED=true"
   "TR_STAGE_D_ELIGIBILITY_ENABLED=false"
   "TR_STAGE_D_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d"
-  # Slice 1a ships the trust guard inert. A later arm-gate slice owns enabling.
+  # Trust eligibility remains inert; its arm gate validates the completed program.
   "TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=false"
+  "TR_TRUST_STRIPE_ACCOUNT_ID=${TR_TRUST_STRIPE_ACCOUNT_ID}"
+  "TR_TRUST_QUALIFYING_PROVIDERS=stripe,x402"
+  "TR_TRUST_RECONCILE_INTERVAL_SECONDS=900"
+  "TR_TRUST_RECONCILE_MAX_AGE_SECONDS=3600"
+  "TR_SPEND_LEASE_TIER1_CAP_MICRODOLLARS=5000000"
+  "TR_SPEND_LEASE_TIER2_CAP_MICRODOLLARS=25000000"
+  "TR_SPEND_LEASE_TIER3_CAP_MICRODOLLARS=100000000"
   "TR_HEARTBEAT_GRACE_SECONDS=${TR_HEARTBEAT_GRACE_SECONDS:-300}"
   "TR_SPEND_LEASE_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d"
   "TR_SPEND_LEASE_SIGNING_SECRET_NAME=trustedrouter-spend-lease-signing-seed"
