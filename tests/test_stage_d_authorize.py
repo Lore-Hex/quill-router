@@ -279,16 +279,17 @@ def test_app_markup_and_receipt_fee_remain_in_stage_d_cohort(
 
 
 def test_stage_d_eligibility_kill_switch_declares_nothing_eligible() -> None:
-    """Emergency kill (2026-09-03): with eligibility off the router never puts a
-    request in the Stage D cohort, so the enclave never sends a heartbeat."""
+    """The code default is off; production pins eligibility on for exactly the
+    two-workspace cohort. The kill switch declares nothing eligible when disabled.
+    """
     from trusted_router.routes.internal.gateway import _stage_d_eligibility_reason
 
     assert Settings(environment="test").stage_d_eligibility_enabled is False
     rollout = (Path(__file__).parents[1] / "scripts" / "deploy" / "rollout.sh").read_text()
     for literal in (
-        '"TR_STAGE_D_ELIGIBILITY_ENABLED=false"',
+        '"TR_STAGE_D_ELIGIBILITY_ENABLED=true"',
         '"TR_STAGE_D_HEARTBEAT_ENABLED=true"',
-        '"TR_STAGE_D_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d"',
+        '"TR_STAGE_D_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d,91d7810e-93b2-4c37-b1bd-ba9227585416"',
         '"TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="',
         '"TR_REAP_SNAPSHOT_BOOKING_ENABLED=false"',
     ):

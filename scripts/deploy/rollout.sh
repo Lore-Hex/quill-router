@@ -771,8 +771,22 @@ ENV_VARS=(
   # kill switch; verification stays deployed so in-flight receipts fail closed.
   "TR_SPEND_LEASE_ADMISSION_ACCEPT=false"
   "TR_STAGE_D_HEARTBEAT_ENABLED=true"
-  "TR_STAGE_D_ELIGIBILITY_ENABLED=false"
-  "TR_STAGE_D_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d"
+  # Re-enabled 2026-09-06 after decision 77's four preconditions landed:
+  # signed accepted-digest policy with a durable Spanner watermark (plane gcp,
+  # sequence 873), naming the running enclave digest
+  # sha256:cf91973741331833afed5fb47a55f39b8d748000d26d5b6c8298ac0b5c97a0ff;
+  # boot-bound eligibility that fails open to the synchronous path; streaming
+  # roll gates; and the staged cohort. Settings.stage_d_eligibility_enabled
+  # stays False so only a deployed router is in the cohort. The enclave still
+  # heartbeats only where QUILL_USAGE_HEARTBEAT=on, which rolls region by region
+  # after this lands.
+  "TR_STAGE_D_ELIGIBILITY_ENABLED=true"
+  # Decision 77 (d): the spend-lease pilot plus the dedicated Stage D probe
+  # workspace (provisioned 2026-09-06, heartbeat-capable local typed key).
+  # The probe is deliberately NOT on the regional-quota path so the roll gate's
+  # key is in the cohort. Clearing this list is the later fleet-expansion step,
+  # not part of arming.
+  "TR_STAGE_D_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d,91d7810e-93b2-4c37-b1bd-ba9227585416"
   # Trust eligibility remains inert; its arm gate validates the completed program.
   "TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=false"
   "TR_TRUST_STRIPE_ACCOUNT_ID=${TR_TRUST_STRIPE_ACCOUNT_ID}"
