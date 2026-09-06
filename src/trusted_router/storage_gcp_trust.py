@@ -693,6 +693,8 @@ def insert_trust_inbox_tx(
     *,
     received_at: dt.datetime,
 ) -> None:
+    from trusted_router.services.provider_trust import provider_inbox_key
+
     transaction.execute_update(
         "INSERT INTO tr_trust_inbox (provider, adverse_ref, payload, received_at) "
         # Same GoogleSQL rule as insert_credit_trust_event above.
@@ -701,7 +703,7 @@ def insert_trust_inbox_tx(
         "SELECT 1 FROM tr_trust_inbox WHERE provider=@provider AND adverse_ref=@adverse_ref)",
         params={
             "provider": event.provider,
-            "adverse_ref": event.adverse_ref,
+            "adverse_ref": provider_inbox_key(event),
             "payload": adverse_event_payload(event),
             "received_at": received_at,
         },
@@ -733,6 +735,8 @@ def drain_matching_trust_inbox_tx(
         )
     )
     results: list[AdverseTrustResult] = []
+    if provider in {"paypal", "adyen"}:
+        rows.sort(key=lambda row: (adverse_event_from_payload(str(row[2])).provider_ordering_watermark, str(row[1])))
     for _provider, adverse_ref, payload, _received_at in rows:
         event = adverse_event_from_payload(str(payload))
         if event.original_payment_ref != original_payment_ref:

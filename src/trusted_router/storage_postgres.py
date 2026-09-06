@@ -4222,6 +4222,9 @@ class PostgresStore:
                     "updated_at = CURRENT_TIMESTAMP",
                     (lifetime_topup_user_id, int(amount_microdollars)),
                 )
+            from trusted_router.provider_trust_postgres import drain_provider_inbox_tx
+
+            drain_provider_inbox_tx(self, conn, provenance.provider, provenance.external_ref)
             return True
 
         return self._run_transaction(credit)
@@ -4263,7 +4266,9 @@ class PostgresStore:
             "provider_ordering_watermark"
         )
 
-    def record_adverse_trust_event(self, event: AdverseTrustEvent) -> AdverseTrustResult:
+    def record_adverse_trust_event(
+        self, event: AdverseTrustEvent, *, _connection: Any | None = None,
+    ) -> AdverseTrustResult:
         validate_adverse_event(event)
 
         def apply(conn: Any) -> AdverseTrustResult:
@@ -4275,12 +4280,14 @@ class PostgresStore:
                 prepare=False,
             ).fetchone()
             if payment_row is None:
+                from trusted_router.services.provider_trust import provider_inbox_key
+
                 conn.execute(
                     "INSERT INTO tr_trust_inbox "
                     "(provider, adverse_ref, payload, received_at) "
                     "VALUES (%s, %s, %s, CURRENT_TIMESTAMP) "
                     "ON CONFLICT (provider, adverse_ref) DO NOTHING",
-                    (event.provider, event.adverse_ref, adverse_event_payload(event)),
+                    (event.provider, provider_inbox_key(event), adverse_event_payload(event)),
                     prepare=False,
                 )
                 return AdverseTrustResult("inbox", provider=event.provider)
@@ -4507,6 +4514,10 @@ class PostgresStore:
                 event.provider,
             )
 
+        # Inbox replay is part of the payment's transaction; never acknowledge
+        # a separately committed fact or alert before that transaction commits.
+        if _connection is not None:
+            return apply(_connection)
         result = self._run_transaction(apply)
         if result.unrecovered_micro > 0 and result.workspace_id is not None:
             from trusted_router.services.trust_recovery import (

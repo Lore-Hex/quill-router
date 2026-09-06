@@ -57,4 +57,9 @@ def register(router: APIRouter) -> None:
                     **money_pair("total", result.charge_amount_microdollars),
                 }
             }
+        from trusted_router.services.paypal_trust import apply_paypal_adverse
+
+        outcomes = await run_in_threadpool(apply_paypal_adverse, event)
+        if outcomes:
+            return {"data": {"event_id": event_id, "adverse": outcomes}}
         return {"data": {"ignored": True, "event_id": event_id}}

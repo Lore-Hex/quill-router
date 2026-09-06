@@ -41,3 +41,7 @@ def alert_stale_trust_inbox(store: Any, *, now: datetime | None = None) -> int:
             )
             alerted += 1
     return alerted
+
+
+# PR 1b providers remain nonqualifying, but their unmatched adverse work pages.
+PROVIDER_CONSISTENCY_DELAY_SECONDS.update({"paypal": 10_800, "adyen": 0})
