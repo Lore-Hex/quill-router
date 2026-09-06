@@ -12,6 +12,8 @@ async function setup(page, context, signedIn = true) {
   await page.route(/\/v1\/models(?:\/picker)?$/, (route) => route.fulfill({ json: { data: [{
     id: MODEL, name: LONG_NAME, context_length: 1_000_000,
     pricing: { prompt: "0.000001", completion: "0.000002" },
+    trustedrouter: { open_weights: true, us_provider_available: true,
+      eu_focused_provider_available: true, capabilities: ["vision", "tools"] },
   }] } }));
   // All inference is mocked. Unexpected requests must never leave the test.
   await page.route("**/v1/chat/completions", (route) => route.fulfill({
@@ -48,6 +50,16 @@ test("chat and picker show full names with composer in viewport on desktop and m
     const rowName = page.locator(".chat-model-row-name").first();
     await expect(rowName).toHaveText(LONG_NAME);
     expect(await rowName.evaluate((el) => el.scrollWidth <= el.clientWidth + 1 && getComputedStyle(el).textOverflow !== "ellipsis")).toBe(true);
+    const rowLayout = await rowName.evaluate((el) => {
+      const row = el.closest(".chat-model-row");
+      return {
+        mainBottom: row.querySelector(".chat-model-row-main").getBoundingClientRect().bottom,
+        metaTop: row.querySelector(".chat-model-row-meta").getBoundingClientRect().top,
+        clipped: row.scrollWidth > row.clientWidth + 1,
+      };
+    });
+    expect(rowLayout.metaTop).toBeGreaterThanOrEqual(rowLayout.mainBottom);
+    expect(rowLayout.clipped).toBe(false);
     await page.screenshot({ path: testInfo.outputPath(`picker-${width}.png`) });
   }
 });
