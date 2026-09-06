@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -45,6 +44,15 @@ def usd_micro(amount: Any, *, minor_units: bool = False) -> int:
         return invalid("Invalid provider adverse amount")
 
 
+def ordering_watermark(updated: datetime, status: str) -> str:
+    # Provider clocks may have only second precision. Use the transition
+    # graph's topological order for ties: a reversal cannot sort before the
+    # successful refund it reverses. The writer still rejects illegal edges.
+    rank = {"pending": 0, "succeeded": 1, "failed": 1, "reversed": 2,
+            "won": 2, "lost": 2, "closed": 3, "terminal_by_horizon": 4}[status]
+    return f"{updated.isoformat(timespec='microseconds')}:{rank}:{status}"
+
+
 def observation(
     *, provider: str, reference: str, payment: str, kind: str,
     subtype: str, status: str, amount: int, created: datetime, updated: datetime,
@@ -59,7 +67,7 @@ def observation(
         adverse_ref=adverse_ref, original_payment_ref=payment,
         amount_micro=amount, provider_subtype=subtype, lifecycle_status=status,
         occurred_at=created,
-        provider_ordering_watermark=f"{updated.isoformat(timespec='microseconds')}:{status}",
+        provider_ordering_watermark=ordering_watermark(updated, status),
         payload="",
     )
 

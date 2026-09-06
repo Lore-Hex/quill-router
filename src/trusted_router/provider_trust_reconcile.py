@@ -6,7 +6,9 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from trusted_router.provider_trust_history import (
-    PROVIDER_ENVIRONMENTS, PROVIDER_SOURCES, provider_marker_qualifies,
+    PROVIDER_ENVIRONMENTS,
+    PROVIDER_SOURCES,
+    provider_marker_qualifies,
 )
 from trusted_router.storage_models import AdverseTrustEvent
 from trusted_router.storage_trust_reconciliation import TrustReconciliationRepository

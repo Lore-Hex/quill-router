@@ -17,7 +17,7 @@ def drain_provider_inbox_tx(store: Any, conn: Any, provider: str, payment_ref: s
     for key, event in sorted(observations, key=lambda row: (row[1].provider_ordering_watermark, row[0])):
         if event.original_payment_ref != payment_ref:
             continue
-        result = store.record_adverse_trust_event(event, _connection=conn)
+        result = store._record_adverse_trust_event(event, _connection=conn)
         if result.outcome == "inbox":
             raise RuntimeError("Provider inbox still cannot resolve its payment")
         deleted = conn.execute(

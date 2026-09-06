@@ -4266,7 +4266,10 @@ class PostgresStore:
             "provider_ordering_watermark"
         )
 
-    def record_adverse_trust_event(
+    def record_adverse_trust_event(self, event: AdverseTrustEvent) -> AdverseTrustResult:
+        return self._record_adverse_trust_event(event)
+
+    def _record_adverse_trust_event(
         self, event: AdverseTrustEvent, *, _connection: Any | None = None,
     ) -> AdverseTrustResult:
         validate_adverse_event(event)

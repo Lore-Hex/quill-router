@@ -21,9 +21,9 @@ NOW = datetime(2026, 9, 5, 12, tzinfo=UTC)
 ROOT = Path(__file__).parents[1]
 
 
-def paypal_event(code: str = "PAYMENT.CAPTURE.REFUNDED", *, status: str = "COMPLETED", ref: str = "refund1", at: datetime = NOW) -> dict[str, Any]:
+def paypal_event(code: str = "PAYMENT.CAPTURE.REFUNDED", *, status: str | None = None, ref: str = "refund1", at: datetime = NOW) -> dict[str, Any]:
     resource: dict[str, Any] = {
-        "id": ref, "status": status, "amount": {"currency_code": "USD", "value": "0.60"},
+        "id": ref, "status": status or (code.rsplit(".", 1)[-1] if code.startswith("PAYMENT.REFUND.") else "COMPLETED"), "amount": {"currency_code": "USD", "value": "0.60"},
         "create_time": NOW.isoformat(), "update_time": at.isoformat(),
         "supplementary_data": {"related_ids": {"capture_id": "capture1"}},
     }
@@ -75,7 +75,7 @@ def test_every_paypal_handler_recovers_once_and_drains_inbox(code: str, payment_
         assert not database.typed["tr_trust_inbox"]
     before = balance(database, workspace)
     assert store.record_adverse_trust_event(event).outcome == "replay"
-    expected = 0 if event.lifecycle_status == "won" else 500_000 if event.kind == "refund" else 1_000_000
+    expected = 0 if event.lifecycle_status in {"pending", "failed", "reversed", "won"} else 500_000 if event.kind == "refund" else 1_000_000
     assert balance(database, workspace) == before == 1_000_000 - expected
     payment = database.typed["tr_trust_event"][(workspace, "payment")]
     assert payment["recovery_target"] == payment["recovered_micro"] + payment["unrecovered_micro"] == expected
@@ -278,3 +278,162 @@ def test_adyen_existing_route_validates_entire_batch_before_adverse_write() -> N
         assert STORE.credit_money_snapshot(workspace) == (before, 0, 0)
         assert client.post("/v1/internal/adyen/webhook", json=_webhook_payload(good)).status_code == 200
         assert STORE.credit_money_snapshot(workspace) == (before - 500_000, 0, 0)
+
+
+@pytest.mark.parametrize("backend", ["memory", "postgres"])
+@pytest.mark.parametrize("provider,code", [
+    *[("paypal", code) for code in sorted(PAYPAL_ADVERSE_EVENTS)],
+    *[("adyen", code) for code in sorted(ADYEN_ADVERSE_CODES)],
+])
+@pytest.mark.parametrize("payment_first", [False, True])
+def test_provider_handlers_conform_on_other_backends(backend: str, provider: str, code: str, payment_first: bool) -> None:
+    from tests.fakes.postgres import postgres_store_on, sqlite_postgres_conn
+    from trusted_router.storage import InMemoryStore
+
+    conn = sqlite_postgres_conn() if backend == "postgres" else None
+    store = InMemoryStore() if conn is None else postgres_store_on(conn)
+    def snapshot(workspace_id: str) -> tuple[int, int, int]:
+        if conn is None:
+            return store.credit_money_snapshot(workspace_id)
+        return conn.execute("SELECT SUM(total_credits), SUM(total_usage), SUM(reserved) FROM tr_credit_balance WHERE workspace_id=%s", (workspace_id,)).fetchone()
+    workspace = store.create_workspace("owner", "conformance", trial_credit_microdollars=0)
+    if payment_first:
+        credit(store, workspace.id, provider)
+    event, = paypal_adverse_events(paypal_event(code)) if provider == "paypal" else adyen_adverse_events(adyen_item(code))
+    result = store.record_adverse_trust_event(event)
+    if not payment_first:
+        assert result.outcome == "inbox"
+        credit(store, workspace.id, provider)
+    expected = 0 if event.lifecycle_status in {"pending", "failed", "reversed", "won"} else 500_000 if event.kind == "refund" else 1_000_000
+    result = store.record_adverse_trust_event(event)
+    assert result.outcome == "replay"
+    assert result.recovery_target == result.recovered_micro + result.unrecovered_micro == expected
+    assert snapshot(workspace.id) == (1_000_000 - expected, 0, 0)
+    stale = dataclasses.replace(event, lifecycle_status="pending" if event.lifecycle_status != "pending" else "succeeded", provider_ordering_watermark="0")
+    assert store.record_adverse_trust_event(stale).outcome == "stale"
+    assert snapshot(workspace.id) == (1_000_000 - expected, 0, 0)
+
+
+@pytest.mark.parametrize("mutation", ["currency", "fractional_cents", "negative", "timestamp", "success"])
+def test_adyen_malformed_adverse_is_rejected(mutation: str) -> None:
+    item = adyen_item()
+    if mutation == "currency":
+        item["amount"]["currency"] = "EUR"
+    elif mutation == "fractional_cents":
+        item["amount"]["value"] = 0.5
+    elif mutation == "negative":
+        item["amount"]["value"] = -1
+    elif mutation == "timestamp":
+        item["eventDate"] = "2026-09-05"
+    else:
+        item["success"] = "unknown"
+    with pytest.raises(HTTPException):
+        adyen_adverse_events(item)
+
+
+def test_adyen_missing_original_is_durable_unmatched_work() -> None:
+    item = adyen_item()
+    del item["originalReference"]
+    del item["eventDate"]
+    event, = adyen_adverse_events(item)
+    store, database, workspace = funded("adyen")
+    assert store.record_adverse_trust_event(event).outcome == "inbox"
+    assert len(database.typed["tr_trust_inbox"]) == 1
+    assert balance(database, workspace) == 1_000_000
+
+
+def test_paypal_refund_up_link_resolves_and_conflicting_lineage_is_rejected() -> None:
+    event = paypal_event()
+    resource = event["resource"]
+    resource["links"] = [{"rel": "up", "href": "https://api-m.paypal.com/v2/payments/captures/capture1"}]
+    resource["supplementary_data"] = {}
+    assert paypal_adverse_events(event)[0].original_payment_ref == "capture1"
+    resource["supplementary_data"] = {"related_ids": {"capture_id": "different"}}
+    with pytest.raises(HTTPException, match="disagree"):
+        paypal_adverse_events(event)
+
+
+def test_provider_inbox_identity_includes_kind_status_and_watermark() -> None:
+    from trusted_router.services.provider_trust import provider_inbox_key
+
+    event, = paypal_adverse_events(paypal_event())
+    variants = [event, dataclasses.replace(event, kind="dispute"),
+                dataclasses.replace(event, lifecycle_status="pending"),
+                dataclasses.replace(event, provider_ordering_watermark="z")]
+    assert len({provider_inbox_key(row) for row in variants}) == 4
+    assert provider_inbox_key(event) == provider_inbox_key(dataclasses.replace(event, payload="ignored"))
+
+
+@pytest.mark.parametrize("provider", ["paypal", "adyen"])
+def test_same_raw_reference_across_kinds_and_providers_cannot_collide(provider: str) -> None:
+    store, database, workspace = funded(provider)
+    refund = paypal_adverse_events(paypal_event(ref="shared"))[0] if provider == "paypal" else adyen_adverse_events(adyen_item(ref="shared"))[0]
+    dispute = paypal_adverse_events(paypal_event("CUSTOMER.DISPUTE.CREATED", ref="shared"))[0] if provider == "paypal" else adyen_adverse_events(adyen_item("CHARGEBACK", ref="shared"))[0]
+    assert store.record_adverse_trust_event(refund).recovery_target == 500_000
+    assert store.record_adverse_trust_event(dispute).recovery_target == 1_000_000
+    assert len(database.typed["tr_trust_event"]) == 3
+    assert balance(database, workspace) == 0
+
+
+# Literal decision-76 contract, independent of the implementation's dispatch maps.
+PROVIDER_EVENT_CONTRACT = [
+    ("paypal", "PAYMENT.CAPTURE.REFUNDED", "refund", "refund", "succeeded"),
+    ("paypal", "PAYMENT.CAPTURE.REVERSED", "dispute", "reversal", "lost"),
+    ("paypal", "PAYMENT.REFUND.PENDING", "refund", "refund", "pending"),
+    ("paypal", "PAYMENT.REFUND.COMPLETED", "refund", "refund", "succeeded"),
+    ("paypal", "PAYMENT.REFUND.FAILED", "refund", "refund", "reversed"),
+    ("paypal", "CUSTOMER.DISPUTE.CREATED", "dispute", "dispute", "succeeded"),
+    ("paypal", "CUSTOMER.DISPUTE.UPDATED", "dispute", "dispute", "succeeded"),
+    ("paypal", "CUSTOMER.DISPUTE.RESOLVED", "dispute", "dispute", "won"),
+    ("adyen", "REFUND", "refund", "refund", "succeeded"),
+    ("adyen", "REFUND_FAILED", "refund", "refund", "reversed"),
+    ("adyen", "REFUNDED_REVERSED", "dispute", "refund_reversal", "lost"),
+    ("adyen", "CANCEL_OR_REFUND", "dispute", "cancellation", "lost"),
+    ("adyen", "CANCELLATION", "dispute", "cancellation", "lost"),
+    ("adyen", "TECHNICAL_CANCEL", "dispute", "cancellation", "lost"),
+    ("adyen", "CAPTURE_FAILED", "dispute", "capture_failure", "lost"),
+    ("adyen", "CAPTURE_REVERSED", "dispute", "capture_reversal", "lost"),
+    ("adyen", "NOTIFICATION_OF_FRAUD", "dispute", "fraud", "pending"),
+    ("adyen", "NOTIFICATION_OF_CHARGEBACK", "dispute", "chargeback", "pending"),
+    ("adyen", "CHARGEBACK", "dispute", "chargeback", "succeeded"),
+    ("adyen", "CHARGEBACK_REVERSED", "dispute", "chargeback", "won"),
+    ("adyen", "SECOND_CHARGEBACK", "dispute", "second_chargeback", "lost"),
+]
+
+
+@pytest.mark.parametrize("provider,code,kind,subtype,status", PROVIDER_EVENT_CONTRACT)
+def test_provider_event_contract(provider: str, code: str, kind: str, subtype: str, status: str) -> None:
+    event, = paypal_adverse_events(paypal_event(code)) if provider == "paypal" else adyen_adverse_events(adyen_item(code))
+    assert (event.provider, event.kind, event.provider_subtype, event.lifecycle_status) == (provider, kind, subtype, status)
+    assert event.original_payment_ref == "capture1"
+    assert event.amount_micro == 600_000
+    assert {row[1] for row in PROVIDER_EVENT_CONTRACT if row[0] == "paypal"} == PAYPAL_ADVERSE_EVENTS
+    assert {row[1] for row in PROVIDER_EVENT_CONTRACT if row[0] == "adyen"} == set(ADYEN_ADVERSE_CODES)
+
+
+@pytest.mark.parametrize("provider", ["paypal", "adyen"])
+@pytest.mark.parametrize("payment_first", [False, True])
+@pytest.mark.parametrize("reverse_delivery", [False, True])
+def test_equal_timestamp_refund_reversal_converges_in_either_delivery_order(provider: str, payment_first: bool, reverse_delivery: bool) -> None:
+    if provider == "paypal":
+        events = [paypal_adverse_events(paypal_event(status=status))[0]
+                  for status in ("PENDING", "COMPLETED", "FAILED")]
+    else:
+        from trusted_router.services.provider_trust import ordering_watermark
+
+        succeeded, = adyen_adverse_events(adyen_item())
+        pending = dataclasses.replace(succeeded, lifecycle_status="pending",
+                                      provider_ordering_watermark=ordering_watermark(NOW, "pending"))
+        reversed_event, = adyen_adverse_events(adyen_item("REFUND_FAILED"))
+        events = [pending, succeeded, reversed_event]
+    assert events[0].provider_ordering_watermark < events[1].provider_ordering_watermark < events[2].provider_ordering_watermark
+    store, database, workspace = funded(provider, payment_first=payment_first)
+    for event in reversed(events) if reverse_delivery else events:
+        store.record_adverse_trust_event(event)
+    if not payment_first:
+        credit(store, workspace, provider)
+        assert not database.typed["tr_trust_inbox"]
+    result = store.record_adverse_trust_event(events[-1])
+    assert result.outcome == "replay"
+    assert result.recovery_target == result.recovered_micro == result.unrecovered_micro == 0
+    assert balance(database, workspace) == 1_000_000

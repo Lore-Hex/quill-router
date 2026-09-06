@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 from trusted_router.provider_trust_history import provider_scan
 from trusted_router.services.adyen_billing import _parse_checkout_reference
 from trusted_router.services.adyen_trust import adyen_adverse_events
-from trusted_router.services.provider_trust import timestamp
+from trusted_router.services.provider_trust import ordering_watermark, timestamp
 from trusted_router.storage_models import AdverseTrustEvent, CreditProvenance, TrustEvent
 from trusted_router.stripe_trust_history import StripeTrustScan
 from trusted_router.trust_reconciliation import OutstandingAdverse
@@ -31,8 +31,9 @@ RECORD_CODES = {
     "Chargeback": "CHARGEBACK", "ChargebackReversed": "CHARGEBACK_REVERSED",
     "SecondChargeback": "SECOND_CHARGEBACK",
     "SentForRefund": "REFUND",
+    "SettledReversed": "CAPTURE_REVERSED",
 }
-NON_ADVERSE_RECORDS = frozenset({"Authorised", "Received", "SentForSettle", "Settled", "Refused", "Error", "Expired", "SettledReversed"})
+NON_ADVERSE_RECORDS = frozenset({"Authorised", "Received", "SentForSettle", "Settled", "Refused", "Error"})
 
 
 def read_payment_accounting_report(path: Path) -> tuple[dict[str, str], ...]:
@@ -99,7 +100,7 @@ class AdyenAccountingSource:
         if row["Record Type"] == "SentForRefund":
             from dataclasses import replace
             event = replace(event, lifecycle_status="pending",
-                            provider_ordering_watermark=event.provider_ordering_watermark.rsplit(":", 1)[0] + ":pending")
+                            provider_ordering_watermark=ordering_watermark(_booking(row), "pending"))
         return event
 
     def scan(self, start: datetime, end: datetime, recorded_at: datetime) -> StripeTrustScan:

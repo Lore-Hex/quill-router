@@ -258,3 +258,207 @@ def test_postgres_history_records_fact_without_minting_and_drains_inbox(provider
     assert conn.execute("SELECT COUNT(*) FROM tr_trust_inbox").fetchone()[0] == 0
     assert conn.execute("SELECT SUM(total_credits) FROM tr_credit_balance").fetchone()[0] == 0
     assert conn.execute("SELECT recovery_target,unrecovered_micro FROM tr_trust_event WHERE kind='payment'").fetchone() == (500_000, 500_000)
+
+
+@pytest.mark.parametrize("corruption", ["capture_id", "refund_id", "page_count"])
+def test_paypal_inconsistent_canonical_responses_fail_completion(corruption: str) -> None:
+    class BrokenAPI(PayPalAPI):
+        def get(self, path: str, params: Any = None) -> dict[str, Any]:
+            body = super().get(path, params)
+            if corruption == "capture_id" and path.startswith("/v2/payments/captures/"):
+                body["id"] = "another_capture"
+            elif corruption == "refund_id" and path.startswith("/v2/payments/refunds/"):
+                body["id"] = "another_refund"
+            elif corruption == "page_count" and path == "/v1/reporting/transactions":
+                body["total_pages"] = 2 if params["page"] == 1 else 1
+            return body
+    if corruption == "page_count":
+        with pytest.raises(ValueError, match="page count changed"):
+            scan_paypal_created_range(BrokenAPI(), account_id="merchant", start=START,
+                                      end=NOW - timedelta(hours=3), recorded_at=NOW)
+    else:
+        scan = scan_paypal_created_range(BrokenAPI(), account_id="merchant", start=START,
+                                        end=NOW - timedelta(hours=3), recorded_at=NOW)
+        assert scan.unmatched_ids
+
+
+def test_paypal_empty_transaction_search_is_a_valid_closed_scan() -> None:
+    class EmptyAPI(PayPalAPI):
+        def get(self, path: str, params: Any = None) -> dict[str, Any]:
+            if path == "/v1/reporting/transactions":
+                return {"total_pages": 0, "transaction_details": []}
+            return super().get(path, params)
+    scan = scan_paypal_created_range(EmptyAPI(), account_id="merchant", start=START,
+                                    end=NOW - timedelta(hours=3), recorded_at=NOW)
+    assert scan.payments == scan.adverse == scan.unmatched_ids == ()
+
+
+@pytest.mark.parametrize("conflict", ["amount", "lineage", "illegal_transition"])
+def test_provider_scan_rejects_conflicting_or_illegal_observations(conflict: str) -> None:
+    payment = paypal_payment(capture(), recorded_at=NOW)
+    event, = paypal_adverse_events(paypal_event())
+    other = dataclasses.replace(event, amount_micro=1 if conflict == "amount" else event.amount_micro,
+                                original_payment_ref="other" if conflict == "lineage" else event.original_payment_ref)
+    if conflict == "illegal_transition":
+        other = dataclasses.replace(event, lifecycle_status="pending", provider_ordering_watermark="z")
+    scan = provider_scan([payment], [event, other], recorded_at=NOW)
+    assert scan.unmatched_ids
+
+
+@pytest.mark.parametrize("provider", ["paypal", "adyen"])
+def test_recurring_requires_complete_expected_marker_and_validates_refetch_identity(provider: str) -> None:
+    repository = _Repository()
+    source, version, delay = PROVIDER_SOURCES[provider]
+    kwargs = dict(provider=provider, account_id="merchant", environment="live", cadence_seconds=900,
+                  now=NOW, alert_horizon=lambda row: None)
+    def empty(start: datetime, end: datetime) -> Any:
+        return provider_scan([], [], recorded_at=NOW)
+    with pytest.raises(ValueError, match="marker"):
+        run_provider_recurring(repository, empty, lambda row, now: None, **kwargs)
+    payment = paypal_payment(capture(), recorded_at=NOW) if provider == "paypal" else accounting(report()).scan(START, NOW, NOW).payments[0]
+    event = paypal_adverse_events(paypal_event())[0] if provider == "paypal" else adyen_adverse_events(adyen_item())[0]
+    event = dataclasses.replace(event, lifecycle_status="pending", occurred_at=START)
+    repository.stripe_events.add(payment.event_id)
+    repository.write_payment_fact(payment, evidence_ids=(payment.event_id,))
+    repository.write_adverse_fact(event)
+    old = NOW - timedelta(days=1)
+    marker = BackfillMarker(provider, "merchant", "live", source, version, START, old, delay, 0, 0, old)
+    repository.save_marker(marker)
+    def wrong(row: OutstandingAdverse, now: datetime) -> Any:
+        return dataclasses.replace(event, original_payment_ref="other"), row
+    result = run_provider_recurring(repository, empty, wrong, **kwargs)
+    assert not result.watermark_advanced
+    assert repository.get_marker(provider, "merchant", "live", source, version) == marker
+
+
+def test_adyen_report_csv_reader_validates_columns(tmp_path: Any) -> None:
+    import csv
+
+    from trusted_router.adyen_trust_history import read_payment_accounting_report
+
+    path = tmp_path / "accounting.csv"
+    rows = report()
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    assert read_payment_accounting_report(path) == tuple(rows)
+    path.write_text("Merchant Account,Psp Reference\nmerchant,payment\n")
+    with pytest.raises(ValueError, match="columns"):
+        read_payment_accounting_report(path)
+
+
+def test_packaged_provider_reconciler_is_shipped_and_help_is_read_only(capsys: Any) -> None:
+    from pathlib import Path
+
+    from trusted_router.provider_trust_cli import main
+
+    root = Path(__file__).parents[1]
+    assert "COPY src ./src" in (root / "Dockerfile").read_text()
+    assert "from trusted_router.provider_trust_cli import main" in (root / "scripts/reconcile_provider_trust.py").read_text()
+    with pytest.raises(SystemExit) as exc:
+        main(["--help"])
+    assert exc.value.code == 0
+    assert "--drained-at" in capsys.readouterr().out
+
+
+def test_paypal_capture_listing_cannot_substitute_another_payment_id() -> None:
+    class WrongCaptureAPI(PayPalAPI):
+        def get(self, path: str, params: Any = None) -> dict[str, Any]:
+            if path == "/v1/reporting/transactions":
+                return {"total_pages": 1, "transaction_details": [{"transaction_info": {
+                    "paypal_account_id": "merchant", "transaction_id": "capture1", "transaction_event_code": "T0006",
+                    "transaction_initiation_date": START.isoformat(),
+                }}]}
+            if path == "/v2/payments/captures/capture1":
+                return {**capture(), "id": "substituted"}
+            return super().get(path, params)
+    scan = scan_paypal_created_range(WrongCaptureAPI(), account_id="merchant", start=START,
+                                    end=NOW - timedelta(hours=3), recorded_at=NOW)
+    assert scan.unmatched_ids == ("capture1",)
+    assert not scan.payments
+
+
+def test_provider_refetch_rejects_wrong_identity_before_transaction(monkeypatch: Any) -> None:
+    from trusted_router import provider_trust_reconcile
+
+    repository = _Repository()
+    source, version, delay = PROVIDER_SOURCES["paypal"]
+    repository.save_marker(BackfillMarker("paypal", "merchant", "live", source, version,
+                                         START, NOW - timedelta(days=1), delay, 0, 0, NOW))
+    event, = paypal_adverse_events(paypal_event())
+    row = OutstandingAdverse("paypal", "refund", event.adverse_ref, "capture1", "pending", START)
+    def intercept(repository: Any, scan: Any, refetch: Any, **kwargs: Any) -> Any:
+        with pytest.raises(ValueError, match="identity changed"):
+            refetch(row, NOW)
+    monkeypatch.setattr(provider_trust_reconcile, "run_recurring_reconciliation", intercept)
+    run_provider_recurring(
+        repository, lambda start, end: provider_scan([], [], recorded_at=NOW),
+        lambda row, now: (dataclasses.replace(event, original_payment_ref="wrong"), row),
+        provider="paypal", account_id="merchant", environment="live", cadence_seconds=900,
+        now=NOW, alert_horizon=lambda row: None,
+    )
+
+
+def test_unclassified_paypal_activity_cannot_silently_complete_history() -> None:
+    class UnknownAPI(PayPalAPI):
+        def get(self, path: str, params: Any = None) -> dict[str, Any]:
+            body = super().get(path, params)
+            if path == "/v1/reporting/transactions":
+                body["transaction_details"][0]["transaction_info"]["transaction_event_code"] = "T9999"
+            return body
+    scan = scan_paypal_created_range(UnknownAPI(), account_id="merchant", start=START,
+                                    end=NOW - timedelta(hours=3), recorded_at=NOW)
+    assert scan.unmatched_ids == ("refund1",)
+
+
+def test_adyen_settlement_reversal_claims_principal_and_expiration_needs_lineage() -> None:
+    scan = accounting(report(record="SettledReversed")).scan(START, NOW, NOW)
+    assert not scan.unmatched_ids
+    event, = scan.adverse
+    assert (event.kind, event.provider_subtype, event.lifecycle_status) == ("dispute", "capture_reversal", "lost")
+    assert accounting(report(record="Expired")).scan(START, NOW, NOW).unmatched_ids
+
+
+@pytest.mark.parametrize("backend", ["spanner", "postgres"])
+@pytest.mark.parametrize("provider", ["paypal", "adyen"])
+def test_actual_transactional_writers_complete_source_hash_proof(backend: str, provider: str) -> None:
+    from tests.fakes.postgres import postgres_store_on, sqlite_postgres_conn
+    from tests.fakes.spanner import make_fake_store
+    from trusted_router.storage_trust_reconciliation import trust_reconciliation_repository
+
+    store = make_fake_store()[0] if backend == "spanner" else postgres_store_on(sqlite_postgres_conn())
+    workspace = store.create_workspace("owner", "source-proof", trial_credit_microdollars=0)
+    if provider == "paypal":
+        class API(PayPalAPI):
+            def get(self, path: str, params: Any = None) -> dict[str, Any]:
+                body = super().get(path, params)
+                if path == "/v2/payments/captures/capture1":
+                    body["custom_id"] = f"tr1|{workspace.id}|100|120"
+                return body
+        scan = scan_paypal_created_range(API(), account_id="merchant", start=START,
+                                        end=NOW - timedelta(hours=3), recorded_at=NOW)
+    else:
+        rows = report()
+        reference = _new_checkout_reference(workspace_id=workspace.id, credit_amount_cents=100,
+                                           charge_amount_cents=120, reference_key=KEY)
+        for row in rows:
+            row["Merchant Reference"] = reference
+        scan = accounting(rows).scan(START, NOW, NOW)
+    payment, = scan.payments
+    assert store.credit_workspace_typed_direct(
+        workspace.id, payment.credited_micro, payment.event_id,
+        provenance=CreditProvenance(payment.provider_subtype, provider, "capture1", payment.occurred_at),
+        payment_amount_microdollars=payment.payment_amount_micro, currency="USD")
+    # A live webhook has already applied the fact: the source and actual stored
+    # canonical hashes must still match, including stamps and recovery target.
+    event, = scan.adverse
+    assert store.record_adverse_trust_event(event).recovery_target == 500_000
+    repository = trust_reconciliation_repository(store)
+    for _ in range(2):
+        result = run_provider_backfill(repository, lambda start, end: scan, provider=provider,
+                                       account_id="merchant", environment="live", history_start=START,
+                                       drained_at=NOW - timedelta(hours=4), now=NOW)
+        assert (result.marker.unmatched_count, result.marker.semantic_mismatch_count) == (0, 0)
+        assert result.marker.completed_at == NOW
+        assert store.record_adverse_trust_event(event).recovery_target == 500_000

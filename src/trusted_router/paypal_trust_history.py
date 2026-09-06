@@ -91,6 +91,7 @@ def scan_paypal_created_range(
     unmatched: list[str] = []
     for begin, stop in transaction_windows(start, end, now=recorded_at):
         page = 1
+        expected_pages: int | None = None
         while True:
             body = client.get("/v1/reporting/transactions", {
                 "start_date": begin.isoformat(), "end_date": stop.isoformat(),
@@ -99,8 +100,11 @@ def scan_paypal_created_range(
             })
             details = body.get("transaction_details")
             pages = body.get("total_pages")
-            if not isinstance(details, list) or not isinstance(pages, int) or pages < 1:
+            if not isinstance(details, list) or not isinstance(pages, int) or isinstance(pages, bool) or pages < 0:
                 raise ValueError("PayPal Transaction Search pagination is incomplete")
+            if (pages == 0 and details) or (expected_pages is not None and pages != expected_pages):
+                raise ValueError("PayPal Transaction Search page count changed during enumeration")
+            expected_pages = pages
             for row in details:
                 info = row["transaction_info"]
                 if info.get("paypal_account_id") != account_id:
@@ -121,7 +125,10 @@ def scan_paypal_created_range(
 
     def payment(ref: str) -> None:
         if ref not in payments:
-            payments[ref] = paypal_payment(client.get(f"/v2/payments/captures/{ref}"), recorded_at=recorded_at)
+            capture = client.get(f"/v2/payments/captures/{ref}")
+            if capture.get("id") != ref:
+                raise ValueError("PayPal canonical capture identity changed")
+            payments[ref] = paypal_payment(capture, recorded_at=recorded_at)
 
     for ref, info in rows.items():
         code = str(info.get("transaction_event_code") or "")
@@ -133,10 +140,14 @@ def scan_paypal_created_range(
                 continue
             if code == "T1107":
                 resource = client.get(f"/v2/payments/refunds/{ref}")
+                if resource.get("id") != ref:
+                    raise ValueError("PayPal canonical refund identity changed")
                 event_code = "PAYMENT.CAPTURE.REFUNDED"
             elif code == "T1106":
                 original = str(info.get("paypal_reference_id") or "")
                 resource = client.get(f"/v2/payments/captures/{original}")
+                if resource.get("id") != original:
+                    raise ValueError("PayPal canonical reversal identity changed")
                 event_code = "PAYMENT.CAPTURE.REVERSED"
             elif code.startswith("T12"):
                 # Transaction search references the payment, not a dispute id.
@@ -159,7 +170,7 @@ def scan_paypal_created_range(
             elif code.startswith(("T11", "T01", "T15")):
                 raise ValueError("Unsupported PayPal adjustment code")
             else:
-                continue  # Non-payment account transfers/fees cannot qualify.
+                raise ValueError("Unclassified PayPal transaction code; source coverage is incomplete")
             events = paypal_adverse_events({"event_type": event_code, "resource": resource,
                                            "create_time": resource.get("update_time") or info["transaction_updated_date"]})
             for event in events:
@@ -181,6 +192,8 @@ def scan_paypal_created_range(
             ref = str(item.get("dispute_id") or "")
             try:
                 resource = client.get(f"/v1/customer/disputes/{ref}")
+                if resource.get("dispute_id") != ref:
+                    raise ValueError("PayPal canonical dispute identity changed")
                 if not start <= timestamp(resource["create_time"]) < end:
                     continue
                 for event in paypal_adverse_events({
@@ -202,8 +215,7 @@ def scan_paypal_created_range(
             raise ValueError("PayPal dispute pagination did not advance")
         seen_tokens.add(tokens[0])
         params = {"next_page_token": tokens[0], "page_size": 50}
-    unique = {(event.provider, event.adverse_ref, event.provider_ordering_watermark): event for event in adverse}
-    return provider_scan(payments.values(), unique.values(), recorded_at=recorded_at, unmatched_ids=unmatched)
+    return provider_scan(payments.values(), adverse, recorded_at=recorded_at, unmatched_ids=unmatched)
 
 
 def refetch_paypal_adverse(
