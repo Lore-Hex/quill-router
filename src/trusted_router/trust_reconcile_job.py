@@ -420,7 +420,10 @@ def plan_historical_backfill(
         provider=provider,
         payments=tuple(payments),
         adverse=tuple(adverse_plans),
-        unmatched_ids=tuple(scan.unmatched_ids),
+        unmatched_ids=tuple(
+            ref for ref in scan.unmatched_ids
+            if scan.unmatched_providers.get(ref, "stripe") == provider
+        ),
     )
 
 
