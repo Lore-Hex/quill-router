@@ -3,7 +3,7 @@
   "provider": "fireworks",
   "source": "https://api.fireworks.ai/inference/v1/models",
   "generated_at": "2026-09-03T17:37:35Z",
-  "model_count": 23,
+  "model_count": 24,
   "models": [
     {
       "id": "moonshotai/kimi-k3",
@@ -502,9 +502,7 @@
       "upstream_id": "accounts/fireworks/models/glm-5p3-flash",
       "context_length": 1048576,
       "created": 1787754936,
-      "routable": false,
-      "routable_reason": "awaiting-price",
-      "unresolved_since": "2026-08-27",
+      "routable": true,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 500000,
       "cached_input_token_price_per_m": 30000
@@ -552,6 +550,28 @@
       "input_token_price_per_m": 220000,
       "output_token_price_per_m": 660000,
       "cached_input_token_price_per_m": 7000
+    },
+    {
+      "display_name": "GLM 5.3 Fast on Fireworks",
+      "title": "accounts/fireworks/routers/glm-5p3-fast",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3-fast",
+      "routable": true,
+      "upstream_id": "accounts/fireworks/routers/glm-5p3-fast",
+      "pricing_source": "https://app.fireworks.ai/models/fireworks/glm-5p3",
+      "input_token_price_per_m": 2100000,
+      "output_token_price_per_m": 6600000,
+      "cached_input_token_price_per_m": 390000
     }
   ],
   "pricing_source": "https://docs.fireworks.ai/serverless/pricing.md",

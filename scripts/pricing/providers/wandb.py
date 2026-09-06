@@ -26,6 +26,10 @@ MANIFEST_PATH = (
     Path(__file__).resolve().parents[3] / "src/trusted_router/data/provider_models/wandb.json"
 )
 MANIFEST_STALE_FALLBACK = True
+# The live API can lead the model docs and pricing page. Preserve this
+# reviewed release through the price join so the operator hold can keep it dark.
+_PRESERVE_UNPRICED_MODEL_IDS = frozenset({"z-ai/glm-5.3-flash"})
+_PRICE_LABEL_MODEL_IDS = {"Z.AI GLM 5.3 Flash": "z-ai/glm-5.3-flash"}
 
 _MODEL_TABLE_HEADERS = (
     "Model",
@@ -139,17 +143,20 @@ def _parse_prices(
             cells = row.find_all("td", recursive=False)
             if label_cell is None or len(cells) != 3:
                 continue
-            native_id = label_to_native_id.get(label_cell.get_text(" ", strip=True))
-            if native_id is None:
-                continue
-            model_id = mapped_or_canonical_model_id(native_id, {})
+            label = label_cell.get_text(" ", strip=True)
+            native_id = label_to_native_id.get(label)
+            model_id = (
+                mapped_or_canonical_model_id(native_id, {})
+                if native_id is not None
+                else _PRICE_LABEL_MODEL_IDS.get(label)
+            )
             if model_id is None:
                 continue
             prompt = _microdollars_per_million(cells[0].get_text(" ", strip=True))
             completion = _microdollars_per_million(cells[1].get_text(" ", strip=True))
             cached = _microdollars_per_million(cells[2].get_text(" ", strip=True))
             if prompt is None or completion is None:
-                raise RuntimeError(f"wandb: incomplete price for {native_id}")
+                raise RuntimeError(f"wandb: incomplete price for {native_id or label}")
             if model_id in prices:
                 raise RuntimeError(f"wandb: duplicate price for {model_id}")
             prices[model_id] = ModelPrice(
@@ -200,6 +207,14 @@ CATALOG = DirectOpenAIProvider(
         catalog_url=URL,
         api_key_env="WANDB_API_KEY",
         explicit_model_map={},
+        preserve_unpriced_model_ids=_PRESERVE_UNPRICED_MODEL_IDS,
+        operator_hold_reasons={
+            "z-ai/glm-5.3-flash": (
+                "operator-hold: W&B has not published a GLM 5.3 Flash price "
+                "(docs.wandb.ai/inference/models and wandb.ai/site/pricing/inference/ "
+                "checked 2026-09-06); remove this hold when the price is published"
+            ),
+        },
         pricing_source_url=PRICING_URL,
         price_loader=_load_prices,
         normalize_rows=_normalize_rows,

@@ -840,8 +840,9 @@ def reconcile_manifest_tombstones(
                 elif old_operator_hold:
                     row["routable"] = False
                     row["routable_reason"] = old_reason
-                elif old_reason == "delisted-upstream" or (
-                    old_reason == "awaiting-price" and model_id in priced_ids
+                elif present_reason != "provider-canary-failed" and (
+                    old_reason == "delisted-upstream"
+                    or (old_reason == "awaiting-price" and model_id in priced_ids)
                 ):
                     row["routable"] = True
                     row.pop("routable_reason", None)

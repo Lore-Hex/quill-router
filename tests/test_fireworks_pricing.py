@@ -4,6 +4,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.parsers import fireworks as fireworks_parser
 from scripts.pricing.providers import fireworks
@@ -22,6 +24,61 @@ def _price() -> ModelPrice:
         completion_micro_per_m=2_000_000,
         prompt_cached_micro_per_m=100_000,
     )
+
+
+def _glm53_price_cards() -> str:
+    return (Path(__file__).parent / "fixtures/pricing/fireworks_glm53.html").read_text()
+
+
+def test_fireworks_glm53_fast_uses_its_own_price_card_and_native_router(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_id = "z-ai/glm-5.3-fast"
+    native_id = "accounts/fireworks/routers/glm-5p3-fast"
+    monkeypatch.setattr(fireworks, "MANIFEST_PATH", tmp_path / "fireworks.json")
+    monkeypatch.setattr(fireworks, "UPSTREAM_ID_MAP", dict(fireworks.UPSTREAM_ID_MAP))
+    monkeypatch.setattr(fireworks, "_live_model_rows", lambda: [
+        {"id": fireworks.UPSTREAM_ID_MAP[model]} for model in fireworks.EXPECTED_MODELS
+    ])
+    monkeypatch.setattr(fireworks, "fetch_provider", lambda **_kwargs: ProviderPricingResult(
+        slug="fireworks",
+        prices={model: _price() for model in fireworks.EXPECTED_MODELS if model != model_id},
+        source="deterministic",
+        fetched_url=fireworks.URL,
+    ))
+    fetched: list[str] = []
+
+    def fetch_card(url: str) -> str:
+        fetched.append(url)
+        return _glm53_price_cards()
+
+    monkeypatch.setattr(fireworks, "fetch_html", fetch_card)
+    result = fireworks.fetch()
+    assert fetched == [fireworks.GLM53_PRICING_URL]
+    assert result.prices[model_id] == ModelPrice(
+        2_100_000, 6_600_000, prompt_cached_micro_per_m=390_000,
+    )
+    fireworks.write_provider_manifest(result)
+    rows = {row["id"]: row for row in json.loads(fireworks.MANIFEST_PATH.read_text())["models"]}
+    row = rows[model_id]
+    assert row["upstream_id"] == native_id
+    assert row["display_name"] == "GLM 5.3 Fast on Fireworks"
+    assert row.get("routable") is not False
+    assert row["input_token_price_per_m"] == 2_100_000
+    assert row["output_token_price_per_m"] == 6_600_000
+    assert row["cached_input_token_price_per_m"] == 390_000
+    assert row["pricing_source"] == fireworks.GLM53_PRICING_URL
+
+
+@pytest.mark.parametrize("old,new", [
+    ("/M", "/K"),
+    ("Cached Input", "Cache unavailable"),
+    ("glm-5p3-fast", "glm-5p3"),
+    (">Fast<", ">Standard<"),
+])
+def test_fireworks_glm53_fast_price_card_fails_closed(old: str, new: str) -> None:
+    with pytest.raises(RuntimeError, match="fireworks:"):
+        fireworks._parse_glm53_fast_price(_glm53_price_cards().replace(old, new))
 
 
 def test_fireworks_dsv4_flash_announced_cutover_is_exact() -> None:
@@ -170,6 +227,68 @@ def test_fireworks_parser_reads_kimi_k3_standard_pricing() -> None:
     }
 
 
+def test_fireworks_parser_reads_published_glm53_prices_without_inventing_fast() -> None:
+    parsed = fireworks_parser.parse(
+        "| [GLM 5.3 Flash](https://app.fireworks.ai/models/fireworks/glm-5p3-flash) "
+        "| $0.15 / $0.03 / $0.50 | — |\n"
+        "| [GLM 5.3](https://app.fireworks.ai/models/fireworks/glm-5p3) "
+        "| $1.40 / $0.26 / $4.40 | $1.75 / $0.325 / $5.50 |"
+    )
+
+    assert parsed["z-ai/glm-5.3-flash"] == {
+        "prompt_micro_per_m": 150_000,
+        "prompt_cached_micro_per_m": 30_000,
+        "completion_micro_per_m": 500_000,
+    }
+    assert parsed["z-ai/glm-5.3"]["prompt_cached_micro_per_m"] == 260_000
+    assert "z-ai/glm-5.3-fast" not in parsed
+
+
+@pytest.mark.parametrize("hold", ["awaiting-price", "operator-review"])
+def test_fireworks_live_fetch_recovers_priced_flash_but_preserves_operator_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hold: str,
+) -> None:
+    model_id = "z-ai/glm-5.3-flash"
+    manifest_path = tmp_path / "fireworks.json"
+    manifest_path.write_text(json.dumps({"models": [{
+        "id": model_id,
+        "upstream_id": fireworks.UPSTREAM_ID_MAP[model_id],
+        "routable": False,
+        "routable_reason": hold,
+        "unresolved_since": "2026-08-27",
+        "max_output_tokens": 65_536,
+        "features": ["function-calling"],
+    }]}))
+    monkeypatch.setattr(fireworks, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(fireworks, "UPSTREAM_ID_MAP", dict(fireworks.UPSTREAM_ID_MAP))
+    monkeypatch.setattr(fireworks, "_live_model_rows", lambda: [
+        {"id": fireworks.UPSTREAM_ID_MAP[model]} for model in fireworks.EXPECTED_MODELS
+    ])
+    prices = {model: _price() for model in fireworks.EXPECTED_MODELS}
+    prices[model_id] = ModelPrice(150_000, 500_000, prompt_cached_micro_per_m=30_000)
+    monkeypatch.setattr(fireworks, "fetch_provider", lambda **_kwargs: ProviderPricingResult(
+        slug="fireworks", prices=prices, source="deterministic", fetched_url=fireworks.URL,
+    ))
+
+    result = fireworks.fetch()
+    assert result.source == "api"
+    fireworks.write_provider_manifest(result)
+    rows = {row["id"]: row for row in json.loads(manifest_path.read_text())["models"]}
+    row = rows[model_id]
+    assert row["input_token_price_per_m"] == 150_000
+    assert row["output_token_price_per_m"] == 500_000
+    assert row["cached_input_token_price_per_m"] == 30_000
+    assert row["max_output_tokens"] == 65_536
+    assert row["features"] == ["function-calling"]
+    if hold == "awaiting-price":
+        assert row["routable"] is True
+        assert "routable_reason" not in row
+        assert "unresolved_since" not in row
+    else:
+        assert row["routable"] is False
+        assert row["routable_reason"] == hold
+
+
 def test_fireworks_parser_distinguishes_fast_routes_and_replacements() -> None:
     parsed = fireworks_parser.parse(
         """
@@ -258,7 +377,8 @@ def test_fireworks_fetch_preserves_live_unpriced_model_as_dark_metadata(
         "fetch_provider",
         lambda **_kwargs: ProviderPricingResult(
             slug="fireworks",
-            prices={model_id: _price() for model_id in fireworks.EXPECTED_MODELS},
+            prices={model_id: _price() for model_id in fireworks.EXPECTED_MODELS
+                    if model_id != "z-ai/glm-5.3-flash"},
             source="deterministic",
         ),
     )

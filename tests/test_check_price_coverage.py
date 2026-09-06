@@ -1169,3 +1169,47 @@ def test_strict_model_discovery_does_not_fail_provider_api_visibility_warning(
     )
 
     assert rc == 0
+
+
+def test_wandb_flash_manifest_is_classified_operator_hold() -> None:
+    routable, unresolved, classified, new_unresolved = (
+        check_price_coverage._manifest_provider_model_state("wandb")
+    )
+    model_id = "z-ai/glm-5.3-flash"
+    assert model_id in classified
+    assert model_id not in routable
+    assert model_id not in unresolved
+    assert model_id not in new_unresolved
+
+
+@pytest.mark.parametrize("normalize_before_replay", [False, True])
+def test_wandb_flash_ci_discovery_replay_has_no_publication_blocker(
+    monkeypatch: pytest.MonkeyPatch, normalize_before_replay: bool,
+) -> None:
+    provider = next(
+        entry for entry in check_price_coverage._DISCOVERABLE_MANIFEST_PROVIDERS
+        if entry[0] == "wandb"
+    )
+    native_id = "zai-org/GLM-5.3-Flash"
+    normalized = provider[3](native_id)
+    assert normalized == "z-ai/glm-5.3-flash"
+    monkeypatch.setattr(check_price_coverage, "_DISCOVERABLE_MANIFEST_PROVIDERS", (provider,))
+    monkeypatch.setattr(check_price_coverage, "_GLM_DISCOVERABLE_PROVIDER_APIS", ())
+    warnings, info = check_price_coverage._model_discovery_audit(
+        fetch_text=lambda _url: "Supported Models: GLM-5.2",
+        fetch_json=lambda _url, _env_names: {
+            "data": [{"id": normalized if normalize_before_replay else native_id}],
+        },
+        published_model_ids=set(),
+    )
+    assert not any(
+        warning.startswith("wandb:") and (
+            "required unpublished" in warning or "newly discovered required" in warning
+        )
+        for warning in warnings
+    ), warnings
+    # The committed row has no verified native ID. The normalized CI ID is
+    # fully classified; raw native aliases may still produce review-only info.
+    if normalize_before_replay:
+        assert not any(warning.startswith("wandb:") for warning in warnings), warnings
+        assert "wandb: model discovery matched catalog (1 id(s)) ✓" in info

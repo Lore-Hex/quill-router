@@ -51,6 +51,17 @@ is a no-op — the next rollout overwrites it.
 
 **Never** run large unbatched DML against production Spanner during a rolling deploy.
 
+**Read-only is not load-safe.** Never search production `tr_entities.body` with
+`LIKE`, regular expressions, or JSON predicates without a complete indexed key.
+`LIMIT 5` limits results, not the rows scanned. Do not discover entity kinds with
+wildcard `COUNT(*)` queries. Three ad hoc Stripe-ID body searches caused the
+September 6 CPU incident. Use `python -m scripts.inspect_payment_owner` for
+payment ownership; it retrieves the Stripe object and performs at most two
+complete-primary-key Spanner reads, at LOW priority, with short deadlines and
+no retries. Missing metadata is a stop condition, not permission to full-scan.
+Use bounded `SPANNER_SYS` statistics for CPU investigations and ClickHouse for
+request analytics. Never loosen the 45% CPU alarm to make operator scans pass.
+
 ## Money code
 
 `reserve` / `settle` / `refund` and anything touching credits are the highest-risk code in the

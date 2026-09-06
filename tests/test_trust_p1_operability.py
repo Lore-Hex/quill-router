@@ -333,8 +333,8 @@ def test_backfill_refuses_payment_fact_without_local_credit_evidence(
         recorded_at=NOW,
         checkout_sessions={"pi_1": _checkout_session(workspace_id)},
     )
-    # A card Checkout payment has no derivable marker id: evidence is empty.
-    assert scan.credit_evidence == {"pi_1": ()}
+    # A candidate alone is not evidence: the lifetime marker is absent.
+    assert scan.credit_evidence == {"pi_1": ("lifetime_backfill:stripe:pi_1",)}
 
     result = _backfill(repository, scan)
 
@@ -373,14 +373,56 @@ def test_derivable_evidence_ids_match_the_live_marker_keys() -> None:
     ach = _payment_intent("ws", payment_method="ach")
     assert credit_evidence_ids(
         ach, checkout_session=_checkout_session("ws", payment_method="ach")
-    ) == ("stripe_checkout:pi_1", "stripe_checkout:cs_1")
+    ) == ("stripe_checkout:pi_1", "stripe_checkout:cs_1", "lifetime_backfill:stripe:pi_1")
     x402 = _payment_intent("ws", payment_method="x402", amount_microdollars="5000000")
     assert credit_evidence_ids(x402) == ("x402:pi_1",)
     card = _payment_intent("ws")
-    assert credit_evidence_ids(card) == ()
-    assert credit_evidence_ids(card, crediting_event_ids=("evt_a", "evt_a", "")) == ("evt_a",)
+    assert credit_evidence_ids(card, checkout_session=_checkout_session("ws")) == (
+        "lifetime_backfill:stripe:pi_1",
+    )
+    assert credit_evidence_ids(card, crediting_event_ids=("evt_a", "evt_a", "")) == (
+        "lifetime_backfill:stripe:pi_1", "evt_a",
+    )
     auto_refill = _payment_intent("ws", auto_refill="true", amount_microdollars="5000000")
-    assert credit_evidence_ids(auto_refill, crediting_event_ids=("evt_pi",)) == ("evt_pi",)
+    assert credit_evidence_ids(auto_refill, crediting_event_ids=("evt_pi",)) == (
+        "lifetime_backfill:stripe:pi_1", "evt_pi",
+    )
+
+
+@pytest.mark.parametrize("marker_exists", [False, True])
+def test_lifetime_marker_controls_plan_and_backfill_credit_evidence(
+    marker_exists: bool, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    _alerts(monkeypatch)
+    store, database, workspace_id = _spanner_workspace()
+    repository = trust_reconciliation_repository(store)
+    if marker_exists:
+        store._write_entity(
+            "stripe_event", "lifetime_backfill:stripe:pi_1",
+            {"created_at": "2026-08-16T06:00:00Z"},
+        )
+    scan = scan_stripe_responses(
+        payment_intents=(_payment_intent(workspace_id),),
+        refunds=(), disputes=(), recorded_at=NOW,
+        checkout_sessions={"pi_1": _checkout_session(workspace_id)},
+    )
+    assert trust_backfill_cli.print_plan(
+        repository, scan, providers=("stripe",),
+        history_start=HISTORY_START, closed_through=CLOSED_THROUGH,
+    ) == int(not marker_exists)
+    payment, summary = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert payment["credited_locally"] is marker_exists
+    assert payment["action"] == ("write" if marker_exists else "refuse_uncredited")
+    assert summary["payments_credited_locally"] == int(marker_exists)
+    assert _facts(database, workspace_id) == {}
+
+    result = _backfill(repository, scan)
+    assert result.uncredited_payment_refs == (() if marker_exists else ("pi_1",))
+    assert result.marker.is_complete is marker_exists
+    assert set(_facts(database, workspace_id)) == (
+        {"trust-backfill:stripe:payment:pi_1"} if marker_exists else set()
+    )
+    assert _balance(database, workspace_id) == 0
 
 
 def test_postgres_writer_applies_the_same_evidence_rule() -> None:
@@ -685,7 +727,9 @@ def test_converter_resolves_the_checkout_session_and_events_through_the_client()
     payment = scan.payments[0]
     assert payment.occurred_at == SESSION_CREATED
     assert payment.provider_ordering_watermark is None
-    assert scan.credit_evidence == {"pi_1": ("evt_checkout_1", "evt_attested")}
+    assert scan.credit_evidence == {
+        "pi_1": ("lifetime_backfill:stripe:pi_1", "evt_checkout_1", "evt_attested"),
+    }
     assert ("checkout.Session.list", {"payment_intent": "pi_1", "limit": 1}) in stripe.calls
     event_lists = [kwargs for name, kwargs in stripe.calls if name == "Event.list"]
     assert {kwargs["type"] for kwargs in event_lists} == {
@@ -748,6 +792,51 @@ def test_plan_mode_lists_credit_status_and_every_adverse_consequence_without_wri
     assert lines[-1]["recovery_debit_micro"] == 2_500_000
     assert lines[-1]["latches_implied"] == 1
     assert (dict(database.typed.get("tr_trust_event", {})), dict(database.typed.get("tr_trust_backfill", {}))) == before
+
+
+@pytest.mark.parametrize("include_x402_unmatched", [False, True])
+def test_plan_summaries_isolate_unmatched_and_out_of_scope_ids_by_provider(
+    include_x402_unmatched: bool, capsys: pytest.CaptureFixture[str],
+) -> None:
+    store, _, _ = _spanner_workspace()
+    refunds = [_refund_event(refund_id="re_stripe", payment_intent_id="pi_missing")["data"]["object"]]
+    if include_x402_unmatched:
+        refunds.append(
+            _refund_event(refund_id="re_x402", payment_intent_id="pi_x402")["data"]["object"]
+        )
+    out_of_scope_payments = []
+    for provider in ("stripe", "x402"):
+        out_of_scope_payments.append(
+            _payment_intent("", payment_intent_id=f"pi_external_{provider}", payment_method=provider)
+        )
+        refunds.append(
+            _refund_event(refund_id=f"re_external_{provider}", payment_intent_id=f"pi_external_{provider}")["data"]["object"]
+        )
+    scan = scan_stripe_responses(
+        payment_intents=out_of_scope_payments,
+        # A workspace PI that did not succeed remains a money-relevant gap.
+        known_payment_intents=(
+            {**_payment_intent("ws_x402", payment_intent_id="pi_x402", payment_method="x402"),
+             "status": "requires_payment_method"},
+        ),
+        refunds=refunds, disputes=(), recorded_at=NOW,
+    )
+    assert scan.unmatched_ids == (
+        ("re_stripe", "re_x402") if include_x402_unmatched else ("re_stripe",)
+    )
+    assert trust_backfill_cli.print_plan(
+        trust_reconciliation_repository(store), scan, providers=("stripe", "x402"),
+        history_start=HISTORY_START, closed_through=CLOSED_THROUGH,
+    ) == 0
+    summaries = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [(row["provider"], row["unmatched_ids"]) for row in summaries] == [
+        ("stripe", ["re_stripe"]),
+        ("x402", ["re_x402"] if include_x402_unmatched else []),
+    ]
+    assert [(row["provider"], row["out_of_scope_ids"]) for row in summaries] == [
+        ("stripe", ["re_external_stripe"]), ("x402", ["re_external_x402"]),
+    ]
+    assert all(row["plan"] == "summary" and row["payments"] == 0 for row in summaries)
 
 
 def test_backfill_cli_requires_plan_or_apply_and_keeps_them_exclusive(
@@ -1776,6 +1865,38 @@ def test_reconcile_cli_alerts_a_refused_provider_and_still_reconciles_the_other(
     # Runbook steps 6 and 8 grep the job log for exactly this line.
     assert "trust.reconcile.outstanding provider=x402 value=0" in caplog.text
     assert "trust.backfill.unmatched provider=x402 value=0 semantic_mismatch=0" in caplog.text
+
+
+def test_reconcile_cli_logs_out_of_scope_without_unmatched_alert(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture,
+) -> None:
+    repository = _ProviderRepository({
+        "stripe": _complete_marker(), "x402": _complete_marker(provider="x402"),
+    })
+    _settings, _sentry, _configured, alerts = _reconcile_cli_fixture(monkeypatch, repository)
+    payment = _payment_intent("", created=NOW - timedelta(hours=1))
+    payment["metadata"] = {}
+    stripe = _FakeStripe(
+        payment_intents=[payment], refunds=[_refund_event()["data"]["object"]],
+    )
+    with caplog.at_level(logging.INFO, logger="trusted_router.trust_reconcile_job"):
+        code = trust_reconcile_cli.main(
+            ["--account-id", "acct_test", "--now", (NOW + timedelta(minutes=15)).isoformat()],
+            stripe_client=stripe,
+        )
+    assert code == 0 and alerts == []
+    printed = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [(row["marker"]["provider"], row["out_of_scope_ids"]) for row in printed] == [
+        ("stripe", ["re_1"]), ("x402", []),
+    ]
+    assert len(repository.saved) == 2
+    assert all(marker.is_complete and marker.unmatched_count == 0 for marker in repository.saved)
+    assert repository.payment_writes == repository.adverse_writes == []
+    scope_logs = [record for record in caplog.records if "trust.reconcile.out_of_scope" in record.message]
+    assert [(record.levelno, record.message) for record in scope_logs] == [
+        (logging.INFO, "trust.reconcile.out_of_scope provider=stripe out_of_scope_ids=('re_1',)"),
+    ]
+    assert all("re_1" not in record.message for record in caplog.records if "trust.backfill.unmatched" in record.message)
 
 
 def test_reconcile_cli_exits_one_and_alerts_on_an_unclean_tick_without_a_marker_write(

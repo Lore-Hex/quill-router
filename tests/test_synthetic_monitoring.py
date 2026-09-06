@@ -3544,6 +3544,9 @@ def test_rotation_candidates_cover_credits_endpoints() -> None:
     )
     assert "z-ai/glm-5.3" in pool.get("tinfoil", [])
     assert "z-ai/glm-5.3-flash" in pool.get("tinfoil", [])
+    assert "z-ai/glm-5.3-flash" in pool.get("fireworks", [])
+    assert "z-ai/glm-5.3-fast" in pool.get("fireworks", [])
+    assert "z-ai/glm-5.3-flash" not in pool.get("wandb", [])
     assert "google/gemma-4-31b-it" in pool.get("tinfoil", [])
 
 

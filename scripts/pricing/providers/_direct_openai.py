@@ -52,6 +52,7 @@ class DirectOpenAIProviderSpec:
     explicit_model_map: dict[str, str]
     namespace_unqualified: str | None = None
     expected_models: tuple[str, ...] = ()
+    preserve_unpriced_model_ids: frozenset[str] = frozenset()
     catalog_url: str | None = None
     pricing_source_url: str | None = None
     static_prices: dict[str, ModelPrice] = field(default_factory=dict)
@@ -167,8 +168,13 @@ class DirectOpenAIProvider:
                 explicit_map=explicit_model_map,
                 upstream_id_map=self.upstream_id_map,
                 include=self.spec.include,
+                preserve_unpriced_model_ids=self.spec.preserve_unpriced_model_ids,
             )
-            prices = {model_id: joined_prices[model_id] for model_id in discovered}
+            prices = {
+                model_id: joined_prices[model_id]
+                for model_id in discovered
+                if model_id in joined_prices
+            }
         else:
             prices, discovered = discover_openai_chat_catalog(
                 rows,
@@ -194,6 +200,14 @@ class DirectOpenAIProvider:
             self.manifest_path,
             (set(discovered) & set(prices)) - self.spec.operator_hold_reasons.keys(),
         )
+        # A preserved unpriced row has never passed a paid-path canary.
+        if self.spec.preserve_unpriced_model_ids:
+            checked |= models_requiring_canary(
+                self.manifest_path,
+                (set(discovered) & set(prices) & self.spec.preserve_unpriced_model_ids)
+                - self.spec.operator_hold_reasons.keys(),
+                failure_reason="awaiting-price",
+            )
         healthy = {
             model_id
             for model_id in checked
@@ -229,7 +243,7 @@ class DirectOpenAIProvider:
             source="api",
             fetched_url=self.spec.pricing_source_url or catalog_url,
             notes=[
-                f"discovered {len(discovered)} priced chat models",
+                f"discovered {len(prices)} priced chat models",
                 f"canaried {len(checked)} new or unhealthy routes; {len(healthy)} passed",
             ],
         )
