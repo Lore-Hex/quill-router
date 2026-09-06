@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for FriendliAI serverless Model API routes. Verified against https://api.friendli.ai/serverless/v1/models on 2026-06-22.",
   "provider": "friendli",
   "source": "https://api.friendli.ai/serverless/v1/models",
-  "generated_at": "2026-09-06T08:03:59Z",
+  "generated_at": "2026-09-06T10:29:32Z",
   "model_count": 12,
   "models": [
     {
@@ -259,7 +259,9 @@
       "input_token_price_per_m": 600000,
       "output_token_price_per_m": 2400000,
       "cached_input_token_price_per_m": 120000,
-      "missing_since": "2026-09-06"
+      "missing_since": "2026-09-06",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "zai-org/GLM-5.3-Flash",

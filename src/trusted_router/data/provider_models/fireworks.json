@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for the Fireworks AI serverless models enabled on the TrustedRouter Fireworks account. Verified against https://api.fireworks.ai/inference/v1/models, Fireworks' first-party pricing page, and direct chat completions. Kimi K3 is a verified launch route served before the account model-list feed caught up. Fireworks uses full accounts/fireworks/models/... upstream IDs, so the enclave preserves upstream_id verbatim for this provider.",
   "provider": "fireworks",
   "source": "https://api.fireworks.ai/inference/v1/models",
-  "generated_at": "2026-09-06T08:03:59Z",
+  "generated_at": "2026-09-06T10:29:32Z",
   "model_count": 24,
   "models": [
     {
@@ -91,7 +91,9 @@
       ],
       "status": 1,
       "created": 1777003717,
-      "missing_since": "2026-09-06"
+      "missing_since": "2026-09-06",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "z-ai/glm-5.2",
@@ -242,7 +244,9 @@
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
       "cached_input_token_price_per_m": 60000,
-      "missing_since": "2026-09-06"
+      "missing_since": "2026-09-06",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "MiniMax M3 on Fireworks",
@@ -287,7 +291,9 @@
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 8000000,
       "cached_input_token_price_per_m": 300000,
-      "missing_since": "2026-09-06"
+      "missing_since": "2026-09-06",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Kimi K2.7 Code on Fireworks",
@@ -332,7 +338,9 @@
       "input_token_price_per_m": 1900000,
       "output_token_price_per_m": 8000000,
       "cached_input_token_price_per_m": 380000,
-      "missing_since": "2026-09-06"
+      "missing_since": "2026-09-06",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Kimi K3 Fast on Fireworks",
@@ -400,7 +408,9 @@
       "input_token_price_per_m": 70000,
       "output_token_price_per_m": 300000,
       "cached_input_token_price_per_m": 35000,
-      "missing_since": "2026-09-06"
+      "missing_since": "2026-09-06",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen 3.7 Plus on Fireworks",
@@ -422,7 +432,9 @@
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 1600000,
       "cached_input_token_price_per_m": 80000,
-      "missing_since": "2026-09-06"
+      "missing_since": "2026-09-06",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen 3.8 Max on Fireworks",
