@@ -205,6 +205,11 @@ def write_discovered_chat_manifest(
         else:
             row = dict(existing)
         row.update(discovered)
+        # Modalities describe capabilities, not preference. Keep text first
+        # and the remaining names alphabetical regardless of provider order.
+        for field in ("input_modalities", "output_modalities"):
+            if isinstance(row.get(field), list):
+                row[field] = sorted(set(row[field]), key=lambda value: (value != "text", value))
         if discovered.get("routable") is True:
             # An explicit healthy signal from the provider adapter supersedes
             # machine-owned holds such as account-unfunded. Without removing

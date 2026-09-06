@@ -38,11 +38,12 @@ MANIFEST_PATH = (
     / "pearl.json"
 )
 EXPECTED_MODELS = [
-    "google/gemma-4-31b-it",
-    "z-ai/glm-5.2",
-    "deepseek/deepseek-v4-pro",
+    # Current serverless catalog: https://pearlresearch.ai/pricing (2026-09-06).
+    # Missing legacy rows follow the shared two-fresh-miss tombstone policy.
+    "z-ai/glm-5.3",
+    "z-ai/glm-5.3-flash",
+    "deepseek/deepseek-v4-pro-0813",
     "deepseek/deepseek-v4-flash-0731",
-    "deepseek/deepseek-v4-flash",
 ]
 EXPLICIT_MODEL_MAP: dict[str, str] = {}
 UPSTREAM_ID_MAP: dict[str, str] = {}

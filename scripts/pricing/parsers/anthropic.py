@@ -3,7 +3,10 @@
 # 2026-05-08. Captured fixture lives at tests/fixtures/pricing/anthropic.html
 # and is the ground truth that tests/test_pricing_fixtures.py runs against.
 #
-# Page structure (as of capture):
+# Page structure (September 2026, redirected to claude.com/pricing):
+#   * CSS-module modelName headings and priceRow/priceLabel/priceValue rows
+#     replace the Webflow classes below. Values are visible "$5 / MTok" text.
+#   * Keep the previous Webflow layout supported for historical fixtures:
 #   * Each model is an <h3 class="card_pricing_title_text"> with text like
 #     "Opus 4.7", "Sonnet 4.6", "Haiku 4.5".
 #   * Walking up two ancestors from the h3 lands on the model card.
@@ -30,7 +33,7 @@ _FAST_MODE_RE = re.compile(
 def parse(html: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
     out: dict = {}
-    for heading in soup.select("h3.card_pricing_title_text"):
+    for heading in soup.select('h3.card_pricing_title_text, h3[class*="__modelName"]'):
         name = heading.get_text(strip=True)
         parts = name.split()
         if (
@@ -45,9 +48,9 @@ def parse(html: str) -> dict:
         if card is None:
             continue
         prices: dict[str, Decimal] = {}
-        for price_node in card.select(".tokens_main_wrap"):
-            label = price_node.select_one(".tokens_main_label")
-            value = price_node.select_one(".tokens_main_val_number")
+        for price_node in card.select('.tokens_main_wrap, [class*="__priceRow"]'):
+            label = price_node.select_one('.tokens_main_label, [class*="__priceLabel"]')
+            value = price_node.select_one('.tokens_main_val_number, [class*="__priceValue"]')
             if label is None or value is None:
                 continue
             name = label.get_text(" ", strip=True).lower()
@@ -56,7 +59,10 @@ def parse(html: str) -> dict:
             try:
                 raw_value = value.get("data-value")
                 if not isinstance(raw_value, str):
-                    raw_value = value.get_text(strip=True)
+                    raw_value = value.get_text(" ", strip=True)
+                    dollars = re.fullmatch(r"\$([0-9]+(?:\.[0-9]+)?)\s*/\s*MTok", raw_value)
+                    if dollars is not None:
+                        raw_value = dollars.group(1)
                 prices[name] = Decimal(raw_value)
             except (InvalidOperation, TypeError, ValueError):
                 continue
