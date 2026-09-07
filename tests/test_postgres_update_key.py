@@ -428,6 +428,90 @@ def test_postgres_legacy_missing_hold_differs_from_frozen_zero(success, frozen) 
     assert _reserved(conn, key.hash) == (0 if frozen == "absent" else 100)
 
 
+def _remove_frozen_hold(conn: Any, authorization_id: str) -> None:
+    """Persist the pre-rollout shape, with the frozen field absent entirely."""
+    body = json.loads(conn.execute(
+        "SELECT body FROM tr_entities WHERE kind = %s AND id = %s",
+        ("gateway_authorization", authorization_id),
+    ).fetchone()[0])
+    body.pop("key_reserved_microdollars")
+    conn.execute(
+        "UPDATE tr_entities SET body = %s WHERE kind = %s AND id = %s",
+        (json.dumps(body), "gateway_authorization", authorization_id),
+    )
+
+
+def test_postgres_legacy_hold_releases_after_cap_removed_and_can_recap() -> None:
+    store, conn, key = _key_store(limit_microdollars=100, limit_daily_microdollars=None)
+    reservation = store.reserve_key_limit(key.hash, 100, usage_type="Credits")
+    assert reservation.reserved_microdollars == 100
+    auth = _authorization(
+        store, key, usage_type="Credits", estimated_microdollars=100,
+        key_reserved_microdollars=100,
+    )
+    _remove_frozen_hold(conn, auth.id)
+    store.update_key(key.hash, {"limit_microdollars": None})
+    assert _reserved(conn, key.hash) == 100
+
+    assert store.finalize_gateway_authorization(
+        auth.id, success=True, actual_microdollars=0, selected_usage_type="Credits",
+    )
+    assert _reserved(conn, key.hash) == 0
+    store.update_key(key.hash, {"limit_microdollars": 100})
+    assert store.reserve_key_limit(key.hash, 1, usage_type="Credits").reserved_microdollars == 1
+
+
+def test_postgres_legacy_cap_removed_byok_release_depends_only_on_inclusion() -> None:
+    # Legacy behavior deliberately retains a BYOK hold if inclusion flips off.
+    # Pair it with the included case: removing the cap alone must still release.
+    for include_byok, expected_reserved in [(False, 100), (True, 0)]:
+        store, conn, key = _key_store(limit_microdollars=100, limit_daily_microdollars=None)
+        reservation = store.reserve_key_limit(key.hash, 100, usage_type="BYOK")
+        assert reservation.reserved_microdollars == 100
+        auth = _authorization(
+            store, key, usage_type="BYOK", estimated_microdollars=100,
+            key_reserved_microdollars=100,
+        )
+        _remove_frozen_hold(conn, auth.id)
+        store.update_key(key.hash, {
+            "limit_microdollars": None, "include_byok_in_limit": include_byok,
+        })
+        assert _reserved(conn, key.hash) == 100
+
+        assert store.finalize_gateway_authorization(
+            auth.id, success=True, actual_microdollars=0, selected_usage_type="BYOK",
+        )
+        assert _reserved(conn, key.hash) == expected_reserved
+
+
+def test_postgres_cap_removed_frozen_zero_preserves_legacy_sibling_hold() -> None:
+    store, conn, key = _key_store(limit_microdollars=None, limit_daily_microdollars=None)
+    reservation = store.reserve_key_limit(key.hash, 100, usage_type="Credits")
+    assert reservation.reserved_microdollars == 0
+    frozen = _authorization(
+        store, key, usage_type="Credits", estimated_microdollars=100,
+        key_reserved_microdollars=0,
+    )
+    store.update_key(key.hash, {"limit_microdollars": 100})
+    assert store.reserve_key_limit(key.hash, 100, usage_type="Credits").reserved_microdollars == 100
+    legacy = _authorization(
+        store, key, usage_type="Credits", estimated_microdollars=100,
+        key_reserved_microdollars=100,
+    )
+    _remove_frozen_hold(conn, legacy.id)
+    store.update_key(key.hash, {"limit_microdollars": None})
+
+    assert store.finalize_gateway_authorization(
+        frozen.id, success=True, actual_microdollars=0, selected_usage_type="Credits",
+    )
+    assert _reserved(conn, key.hash) == 100
+    # Identical estimates and current caps; only field presence differs.
+    assert store.finalize_gateway_authorization(
+        legacy.id, success=True, actual_microdollars=0, selected_usage_type="Credits",
+    )
+    assert _reserved(conn, key.hash) == 0
+
+
 def test_postgres_gateway_authorize_freezes_uncapped_hold() -> None:
     from starlette.requests import Request
 

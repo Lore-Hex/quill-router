@@ -3113,7 +3113,7 @@ class InMemoryStore:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
-        key_reserved_microdollars: int,
+        key_reserved_microdollars: int | None = None,
         authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
@@ -3158,7 +3158,13 @@ class InMemoryStore:
                     if terminal_key not in self._paused_authorizations or idempotency_key is None:
                         if credit_reservation_id is not None:
                             self.refund(credit_reservation_id)
-                        self.api_keys.refund_limit(key_hash, estimated_microdollars, usage_type=usage_type)
+                        from trusted_router.storage_legacy_trust import legacy_key_hold
+
+                        hold = (
+                            legacy_key_hold(self.api_keys.get_by_hash(key_hash), estimated_microdollars, usage_type)
+                            if key_reserved_microdollars is None else max(0, int(key_reserved_microdollars))
+                        )
+                        self.api_keys.refund_limit(key_hash, hold, usage_type=usage_type)
                         if idempotency_key is not None:
                             self._paused_authorizations.add(terminal_key)
                     raise BillingPausedError()

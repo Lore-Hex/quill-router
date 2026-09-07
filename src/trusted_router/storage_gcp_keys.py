@@ -383,7 +383,7 @@ class SpannerApiKeys:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
-        key_reserved_microdollars: int,
+        key_reserved_microdollars: int | None = None,
         authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
@@ -427,7 +427,8 @@ class SpannerApiKeys:
             )
         existing = (
             self.get_gateway_authorization_by_idempotency_key(
-                workspace_id, key_hash, idempotency_key
+                workspace_id, key_hash, idempotency_key,
+                trust_eligibility_enabled=trust_eligibility_enabled,
             )
             if idempotency_key is not None
             else None

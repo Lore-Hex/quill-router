@@ -3556,9 +3556,9 @@ class PostgresStore:
             (authorization.key_hash,),
             prepare=False,
         ).fetchone()
-        if row is None or row[0] is None:
-            return 0
-        if _is_byok(authorization.usage_type) and not row[1]:
+        # A removed cap must not strand a hold taken before rollout. Only
+        # BYOK exclusion suppressed the legacy estimate-based release.
+        if row is not None and _is_byok(authorization.usage_type) and not row[1]:
             return 0
         return max(0, int(authorization.estimated_microdollars))
 
@@ -6146,7 +6146,7 @@ class PostgresStore:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
-        key_reserved_microdollars: int,
+        key_reserved_microdollars: int | None = None,
         authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
@@ -6269,7 +6269,17 @@ class PostgresStore:
                 if paused or (expected_pause_epoch is not None and expected_pause_epoch != epoch) or (credit_reservation_id and int((observed or {}).get("pause_epoch", 0)) != epoch):
                     if credit_reservation_id:
                         reject_postgres_reservation(conn, self, credit_reservation_id)
-                    self._release_key_hold_tx(conn, key_hash, estimated_microdollars, usage_type=usage_type, window_amount=0)
+                    from trusted_router.storage_legacy_trust import legacy_key_hold
+
+                    hold = (
+                        legacy_key_hold(
+                            self._read_entity_tx(conn, "api_key", key_hash, ApiKey, for_update=True),
+                            estimated_microdollars, usage_type,
+                        )
+                        if key_reserved_microdollars is None
+                        else authorization.frozen_key_hold_microdollars()
+                    )
+                    self._release_key_hold_tx(conn, key_hash, hold, usage_type=usage_type, window_amount=0)
                     if pointer_id:
                         self._write_entity_tx(conn, _GATEWAY_IDEMPOTENCY_KIND, pointer_id, {"reason": "billing_paused"})
                     return None

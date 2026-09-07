@@ -430,7 +430,7 @@ class InMemoryApiKeys:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
-        key_reserved_microdollars: int,
+        key_reserved_microdollars: int | None = None,
         authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
