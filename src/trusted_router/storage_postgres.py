@@ -108,6 +108,7 @@ from trusted_router.storage_gcp_codec import (
 from trusted_router.storage_gcp_counters import credit_shard_count, distribute_credit_amount
 from trusted_router.storage_key_patch import TYPED_LIMIT_PATCH_FIELDS, apply_key_patch
 from trusted_router.storage_key_usage import api_key_from_json, api_key_usage_snapshot
+from trusted_router.storage_legacy_trust import trust_program_armed
 from trusted_router.storage_models import (
     FUTURE_SAMPLE_SKEW_SECONDS,
     AcquisitionAttribution,
@@ -522,6 +523,7 @@ class PostgresStore:
         postgres_iam_auth: str = "",
         postgres_iam_region: str = "",
         operational_analytics_outbox_enabled: bool = False,
+        trust_settings: Any = None,
         max_workspaces_per_owner: int = 25,
         trust_qualifying_providers: frozenset[str] = frozenset({"stripe", "x402"}),
         trust_tier3_min_days: int = 30,
@@ -532,6 +534,7 @@ class PostgresStore:
         if transaction_attempts < 1:
             raise ValueError("transaction_attempts must be positive")
         self._transaction_attempts = transaction_attempts
+        self.trust_settings = trust_settings
         self.max_workspaces_per_owner = int(max_workspaces_per_owner)
         self.trust_qualifying_providers = trust_qualifying_providers
         self.trust_tier3_min_days = int(trust_tier3_min_days)
@@ -5409,22 +5412,23 @@ class PostgresStore:
         from trusted_router.storage_legacy_trust import BillingPausedError, postgres_pause
 
         def reserve_credit(conn: Any) -> Reservation | None:
-            paused, epoch = postgres_pause(conn, workspace_id)
-            terminal = self._read_entity_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, idempotency_key, dict) if idempotency_key else None
-            if paused or (terminal and terminal.get("reason") == "billing_paused"):
-                from trusted_router.storage_legacy_trust import reject_postgres_reservation
+            if trust_program_armed(self):
+                paused, epoch = postgres_pause(conn, workspace_id)
+                terminal = self._read_entity_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, idempotency_key, dict) if idempotency_key else None
+                if paused or (terminal and terminal.get("reason") == "billing_paused"):
+                    from trusted_router.storage_legacy_trust import reject_postgres_reservation
 
-                if terminal and terminal.get("id"):
-                    reject_postgres_reservation(conn, self, str(terminal["id"]))
-                if idempotency_key:
-                    self._write_entity_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, idempotency_key,
-                                          {"reason": "billing_paused"})
-                    self._write_entity_tx(conn, _GATEWAY_IDEMPOTENCY_KIND,
-                        _gateway_idempotency_id(workspace_id, key_hash, idempotency_key),
-                        {"reason": "billing_paused"})
-                self._release_key_hold_tx(conn, key_hash, amount_microdollars,
-                                          usage_type=UsageType.CREDITS, window_amount=0)
-                return None
+                    if terminal and terminal.get("id"):
+                        reject_postgres_reservation(conn, self, str(terminal["id"]))
+                    if idempotency_key:
+                        self._write_entity_tx(conn, _RESERVATION_IDEMPOTENCY_KIND, idempotency_key,
+                                              {"reason": "billing_paused"})
+                        self._write_entity_tx(conn, _GATEWAY_IDEMPOTENCY_KIND,
+                            _gateway_idempotency_id(workspace_id, key_hash, idempotency_key),
+                            {"reason": "billing_paused"})
+                    self._release_key_hold_tx(conn, key_hash, amount_microdollars,
+                                              usage_type=UsageType.CREDITS, window_amount=0)
+                    return None
             if idempotency_key is not None:
                 won = self._insert_entity_once_tx(
                     conn,
@@ -5465,7 +5469,8 @@ class PostgresStore:
             )
             if cursor.rowcount != 1:
                 raise ValueError("insufficient credits")
-            self._write_entity_tx(conn, "reservation_pause_epoch", reservation.id, {"pause_epoch": epoch})
+            if trust_program_armed(self):
+                self._write_entity_tx(conn, "reservation_pause_epoch", reservation.id, {"pause_epoch": epoch})
             return reservation
 
         result = self._run_transaction(reserve_credit)
@@ -6009,23 +6014,24 @@ class PostgresStore:
         )
 
         def create(conn: Any) -> GatewayAuthorization | None:
-            paused, epoch = postgres_pause(conn, workspace_id)
-            pointer_id = _gateway_idempotency_id(workspace_id, key_hash, idempotency_key) if idempotency_key else None
-            prior = self._read_entity_tx(conn, _GATEWAY_IDEMPOTENCY_KIND, pointer_id, dict, for_update=True) if pointer_id else None
-            if prior and prior.get("reason") == "billing_paused":
-                return None
-            if prior and prior.get("authorization_id"):
-                existing = self._read_entity_tx(conn, _GATEWAY_AUTHORIZATION_KIND, str(prior["authorization_id"]), GatewayAuthorization)
-                if existing is not None:
-                    return existing
-            observed = self._read_entity_tx(conn, "reservation_pause_epoch", credit_reservation_id, dict) if credit_reservation_id else None
-            if paused or (expected_pause_epoch is not None and expected_pause_epoch != epoch) or (credit_reservation_id and int((observed or {}).get("pause_epoch", 0)) != epoch):
-                if credit_reservation_id:
-                    reject_postgres_reservation(conn, self, credit_reservation_id)
-                self._release_key_hold_tx(conn, key_hash, estimated_microdollars, usage_type=usage_type, window_amount=0)
-                if pointer_id:
-                    self._write_entity_tx(conn, _GATEWAY_IDEMPOTENCY_KIND, pointer_id, {"reason": "billing_paused"})
-                return None
+            if trust_program_armed(self):
+                paused, epoch = postgres_pause(conn, workspace_id)
+                pointer_id = _gateway_idempotency_id(workspace_id, key_hash, idempotency_key) if idempotency_key else None
+                prior = self._read_entity_tx(conn, _GATEWAY_IDEMPOTENCY_KIND, pointer_id, dict, for_update=True) if pointer_id else None
+                if prior and prior.get("reason") == "billing_paused":
+                    return None
+                if prior and prior.get("authorization_id"):
+                    existing = self._read_entity_tx(conn, _GATEWAY_AUTHORIZATION_KIND, str(prior["authorization_id"]), GatewayAuthorization)
+                    if existing is not None:
+                        return existing
+                observed = self._read_entity_tx(conn, "reservation_pause_epoch", credit_reservation_id, dict) if credit_reservation_id else None
+                if paused or (expected_pause_epoch is not None and expected_pause_epoch != epoch) or (credit_reservation_id and int((observed or {}).get("pause_epoch", 0)) != epoch):
+                    if credit_reservation_id:
+                        reject_postgres_reservation(conn, self, credit_reservation_id)
+                    self._release_key_hold_tx(conn, key_hash, estimated_microdollars, usage_type=usage_type, window_amount=0)
+                    if pointer_id:
+                        self._write_entity_tx(conn, _GATEWAY_IDEMPOTENCY_KIND, pointer_id, {"reason": "billing_paused"})
+                    return None
             if idempotency_key:
                 index_id = _gateway_idempotency_id(workspace_id, key_hash, idempotency_key)
                 won = self._insert_entity_once_tx(
@@ -6111,7 +6117,7 @@ class PostgresStore:
             _gateway_idempotency_id(workspace_id, key_hash, idempotency_key),
             dict,
         )
-        if pointer and pointer.get("reason") == "billing_paused":
+        if trust_program_armed(self) and pointer and pointer.get("reason") == "billing_paused":
             from trusted_router.storage_legacy_trust import BillingPausedError
             raise BillingPausedError()
         authorization_id = str((pointer or {}).get("authorization_id") or "")

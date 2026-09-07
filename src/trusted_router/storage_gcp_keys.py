@@ -408,6 +408,7 @@ class SpannerApiKeys:
         spend_lease: SpendLeaseArtifact | None = None,
         invocation_nonce: str | None = None,
         expected_pause_epoch: int | None = None,
+        trust_eligibility_enabled: bool = False,
     ) -> GatewayAuthorization:
         if deferred_cap_microdollars is not None:
             # Deferred settlement is a PEER-plane mechanism: a plane spending
@@ -475,6 +476,22 @@ class SpannerApiKeys:
             spend_lease_status=spend_lease.lease_status if spend_lease else None,
             invocation_nonce=invocation_nonce,
         )
+        if not trust_eligibility_enabled:
+            if idempotency_key is None:
+                self._io.write_entity("gateway_authorization", auth.id, auth)
+                return auth
+            with self._io.database.batch() as batch:
+                self._io.write_entity_batch(batch, "gateway_authorization", auth.id, auth)
+                self._io.write_entity_batch(
+                    batch,
+                    "gateway_authorization_idempotency",
+                    _gateway_authorization_idempotency_index_id(
+                        workspace_id, key_hash, idempotency_key
+                    ),
+                    {"authorization_id": auth.id},
+                )
+            return auth
+
         from trusted_router.storage_legacy_trust import create_spanner_legacy_authorization
         index_id = (_gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key)
                     if idempotency_key is not None else None)
@@ -484,7 +501,8 @@ class SpannerApiKeys:
         return self._io.read_entity("gateway_authorization", authorization_id, GatewayAuthorization)
 
     def get_gateway_authorization_by_idempotency_key(
-        self, workspace_id: str, key_hash: str, idempotency_key: str
+        self, workspace_id: str, key_hash: str, idempotency_key: str,
+        *, trust_eligibility_enabled: bool = False,
     ) -> GatewayAuthorization | None:
         ref = self._io.read_entity(
             "gateway_authorization_idempotency",
@@ -493,7 +511,7 @@ class SpannerApiKeys:
         )
         if not ref:
             return None
-        if ref.get("reason") == "billing_paused":
+        if trust_eligibility_enabled and ref.get("reason") == "billing_paused":
             from trusted_router.storage_legacy_trust import BillingPausedError
             raise BillingPausedError()
         return self.get_gateway_authorization(str(ref["authorization_id"]))
