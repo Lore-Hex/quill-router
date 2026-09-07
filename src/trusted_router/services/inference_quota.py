@@ -51,6 +51,7 @@ class QuotaTicket:
     usage_type: UsageType
     reservation_id: str | None
     key_hash: str
+    key_reserved_microdollars: int
     _finalized: bool = False
 
     def settle(self, actual_cost_microdollars: int) -> None:
@@ -61,7 +62,7 @@ class QuotaTicket:
             STORE.settle(self.reservation_id, actual_cost_microdollars)
         STORE.settle_key_limit(
             self.key_hash,
-            self.reserve_amount,
+            self.key_reserved_microdollars,
             actual_cost_microdollars,
             usage_type=self.usage_type,
         )
@@ -74,7 +75,7 @@ class QuotaTicket:
             STORE.refund(self.reservation_id)
         STORE.refund_key_limit(
             self.key_hash,
-            self.reserve_amount,
+            self.key_reserved_microdollars,
             usage_type=self.usage_type,
         )
 
@@ -98,11 +99,12 @@ async def reserved_quota(
     assert principal.api_key is not None
     usage_type = usage_type_override or UsageType.for_model(model)
     try:
-        window_decision = STORE.reserve_key_limit(
+        key_limit_reservation = STORE.reserve_key_limit(
             principal.api_key.hash,
             reserve_amount,
             usage_type=usage_type,
         )
+        window_decision = key_limit_reservation.window_decision
         remember_spend_window_decision(request, window_decision)
     except KeyWindowLimitExceeded as exc:
         remember_spend_window_decision(request, exc.decision)
@@ -138,7 +140,7 @@ async def reserved_quota(
         except ValueError as exc:
             STORE.refund_key_limit(
                 principal.api_key.hash,
-                reserve_amount,
+                key_limit_reservation.reserved_microdollars,
                 usage_type=usage_type,
             )
             raise api_error(
@@ -152,6 +154,7 @@ async def reserved_quota(
         usage_type=usage_type,
         reservation_id=reservation_id,
         key_hash=principal.api_key.hash,
+        key_reserved_microdollars=key_limit_reservation.reserved_microdollars,
     )
     started_at = time.monotonic()
     try:
@@ -202,6 +205,7 @@ def apply_authorization_outcome(
     """
     reservation_usage_type = authorization.usage_type
     actual_usage_type = UsageType.coerce(selected_usage_type or authorization.usage_type)
+    key_reserved_microdollars = authorization.frozen_key_hold_microdollars()
     if success:
         if authorization.credit_reservation_id is not None:
             if actual_usage_type == UsageType.CREDITS:
@@ -214,7 +218,7 @@ def apply_authorization_outcome(
                 STORE.refund(authorization.credit_reservation_id)
         STORE.settle_key_limit(
             authorization.key_hash,
-            authorization.estimated_microdollars,
+            key_reserved_microdollars,
             actual_cost_microdollars,
             usage_type=reservation_usage_type,
         )
@@ -223,7 +227,7 @@ def apply_authorization_outcome(
             STORE.refund(authorization.credit_reservation_id)
         STORE.refund_key_limit(
             authorization.key_hash,
-            authorization.estimated_microdollars,
+            key_reserved_microdollars,
             usage_type=reservation_usage_type,
         )
 

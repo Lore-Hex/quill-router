@@ -25,7 +25,7 @@ from trusted_router.security import (
     verify_api_key,
 )
 from trusted_router.spend_leases import SpendLeaseArtifact
-from trusted_router.spend_windows import KeyWindowLimitDecision
+from trusted_router.spend_windows import KeyLimitReserveResult
 from trusted_router.storage_gcp_codec import workspace_key_id as _workspace_key_id
 from trusted_router.storage_gcp_counters import (
     KEY_LIMIT_COLUMNS,
@@ -291,13 +291,13 @@ class SpannerApiKeys:
         amount_microdollars: int,
         *,
         usage_type: str,
-    ) -> KeyWindowLimitDecision | None:
-        def txn(transaction: Any) -> None:
+    ) -> KeyLimitReserveResult:
+        def txn(transaction: Any) -> int:
             key = self._io.read_entity_tx(transaction, "api_key", key_hash, ApiKey)
             if key is None or key.limit_microdollars is None:
-                return
+                return 0
             if _is_byok(usage_type) and not key.include_byok_in_limit:
-                return
+                return 0
             used = key.usage_microdollars
             if key.include_byok_in_limit:
                 used += key.byok_usage_microdollars
@@ -306,12 +306,13 @@ class SpannerApiKeys:
                 raise ValueError("key limit exceeded")
             key.reserved_microdollars += amount_microdollars
             self._io.write_entity_tx(transaction, "api_key", key.hash, key)
+            return amount_microdollars
 
-        run_in_transaction_with_retry(self._io.database, txn)
+        reserved = run_in_transaction_with_retry(self._io.database, txn)
         # This retired JSON-counter path has no authoritative spend-window
         # counters. Production gateway authorization uses the typed path below;
         # never fabricate window headers here from stale JSON mirrors.
-        return None
+        return KeyLimitReserveResult(None, int(reserved))
 
     def settle_limit(
         self,
@@ -356,15 +357,19 @@ class SpannerApiKeys:
         *,
         usage_type: str,
     ) -> None:
+        # Avoid mutating the hot key row for reservations without a hold.
+        # Positive holds must still release after cap/configuration edits.
+        if reserved_microdollars <= 0:
+            return
+
         def txn(transaction: Any) -> None:
             key = self._io.read_entity_tx(transaction, "api_key", key_hash, ApiKey)
-            if key is None or key.limit_microdollars is None:
-                return
-            if _is_byok(usage_type) and not key.include_byok_in_limit:
+            if key is None:
                 return
             key.reserved_microdollars = max(0, key.reserved_microdollars - reserved_microdollars)
             self._io.write_entity_tx(transaction, "api_key", key.hash, key)
 
+        _ = usage_type
         run_in_transaction_with_retry(self._io.database, txn)
 
     # ── Gateway authorizations ──────────────────────────────────────────
@@ -378,6 +383,7 @@ class SpannerApiKeys:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
+        key_reserved_microdollars: int | None = None,
         authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
@@ -421,7 +427,8 @@ class SpannerApiKeys:
             )
         existing = (
             self.get_gateway_authorization_by_idempotency_key(
-                workspace_id, key_hash, idempotency_key
+                workspace_id, key_hash, idempotency_key,
+                trust_eligibility_enabled=trust_eligibility_enabled,
             )
             if idempotency_key is not None
             else None
@@ -437,6 +444,7 @@ class SpannerApiKeys:
             usage_type=UsageType.coerce(usage_type),
             estimated_microdollars=estimated_microdollars,
             credit_reservation_id=credit_reservation_id,
+            key_reserved_microdollars=key_reserved_microdollars,
             settlement=settlement,
             expires_at=expires_at,
             requested_model_id=requested_model_id,

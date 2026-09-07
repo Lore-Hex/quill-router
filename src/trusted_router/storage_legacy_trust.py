@@ -17,6 +17,19 @@ class BillingPausedError(ValueError):
         super().__init__("billing_paused")
 
 
+def legacy_key_hold(key: Any, estimate: int, usage_type: Any) -> int:
+    """Compatibility for callers predating the frozen-hold argument.
+
+    New callers must pass the reserve result explicitly, including zero, so
+    cap edits between reserve and creation cannot change the release amount.
+    """
+    if key is None or key.limit_microdollars is None:
+        return 0
+    if str(usage_type).lower() == "byok" and not key.include_byok_in_limit:
+        return 0
+    return max(0, int(estimate))
+
+
 def postgres_pause(conn: Any, workspace_id: str) -> tuple[bool, int]:
     rows = conn.execute(
         "SELECT billing_pause_causes, pause_epoch FROM tr_credit_balance "
@@ -130,14 +143,13 @@ def create_spanner_legacy_authorization(
             if authorization.credit_reservation_id is not None:
                 raise RuntimeError("legacy credit reservation requires typed recovery")
             key = io.read_entity_tx(tx, "api_key", authorization.key_hash, ApiKey)
-            if (
-                key is not None
-                and key.limit_microdollars is not None
-                and (str(authorization.usage_type).lower() != "byok" or key.include_byok_in_limit)
-            ):
-                key.reserved_microdollars = max(
-                    0, key.reserved_microdollars - authorization.estimated_microdollars
+            if key is not None:
+                hold = (
+                    legacy_key_hold(key, authorization.estimated_microdollars, authorization.usage_type)
+                    if authorization.key_reserved_microdollars is None
+                    else authorization.frozen_key_hold_microdollars()
                 )
+                key.reserved_microdollars = max(0, key.reserved_microdollars - hold)
                 io.write_entity_tx(tx, "api_key", key.hash, key)
             if index_id:
                 io.write_entity_tx(

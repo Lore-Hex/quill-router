@@ -233,6 +233,59 @@ class TestPostgresAtomicity:
 
         assert pg_conn.spendable("ws-home-1") == 900_000
 
+    def test_refresh_rejects_extra_limit_shard_without_partial_writes(
+        self, pg_conn: SqlitePostgresConn
+    ) -> None:
+        """A federated cap refresh must not silently update only shard zero.
+
+        Postgres does not implement distributing one key cap across multiple
+        rows.  If an unexpected shard exists, succeeding would leave the
+        stored entity claiming the new cap while the typed rows carry a
+        different aggregate cap.  The layout guard must reject the refresh,
+        and the transaction must roll back the entity writes that happen
+        before that guard.
+        """
+        store = postgres_store_on(pg_conn)
+        store.upsert_federated_api_key(HOME_RECORD)
+        pg_conn.execute(
+            "INSERT INTO tr_key_limit"
+            " (workspace_id, key_hash, shard, limit_micro) VALUES (%s, %s, 1, %s)",
+            (HOME_RECORD["workspace_id"], HOME_RECORD["key_hash"], 125_000),
+        )
+        cap_rows_before = pg_conn.execute(
+            "SELECT shard, limit_micro FROM tr_key_limit"
+            " WHERE workspace_id = %s AND key_hash = %s ORDER BY shard",
+            (HOME_RECORD["workspace_id"], HOME_RECORD["key_hash"]),
+        ).fetchall()
+
+        with pytest.raises(
+            RuntimeError,
+            match=r"shard_count=2, shards=\[0, 1\].*exactly one row at shard 0",
+        ):
+            store.upsert_federated_api_key(
+                {
+                    **HOME_RECORD,
+                    "name": "refreshed name",
+                    "limit_microdollars": 7_000_000,
+                    "workspace_billing_paused": True,
+                    "revision": "2026-08-04T00:00:00Z",
+                }
+            )
+
+        assert pg_conn.execute(
+            "SELECT shard, limit_micro FROM tr_key_limit"
+            " WHERE workspace_id = %s AND key_hash = %s ORDER BY shard",
+            (HOME_RECORD["workspace_id"], HOME_RECORD["key_hash"]),
+        ).fetchall() == cap_rows_before
+        stored_key = store.get_key_by_hash(HOME_RECORD["key_hash"])
+        assert stored_key is not None
+        assert stored_key.name == HOME_RECORD["name"]
+        assert stored_key.limit_microdollars == HOME_RECORD["limit_microdollars"]
+        stored_workspace = store.get_workspace(HOME_RECORD["workspace_id"])
+        assert stored_workspace is not None
+        assert stored_workspace.billing_paused is False
+        assert stored_workspace.federated_home == HOME_RECORD["revision"]
+
 
 # --------------------------------------------------------------------------
 # End to end: the exact bug

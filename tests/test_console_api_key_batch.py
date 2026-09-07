@@ -478,6 +478,12 @@ def test_postgres_key_limit_seed_binds_small_limits_as_int8(
     class Result:
         rowcount = 1
 
+        def __init__(self, rows: list[tuple[str, int]] | None = None) -> None:
+            self._rows = rows or []
+
+        def fetchall(self) -> list[tuple[str, int]]:
+            return self._rows
+
     class Connection:
         def __init__(self) -> None:
             self.calls: list[tuple[str, tuple[Any, ...]]] = []
@@ -491,6 +497,8 @@ def test_postgres_key_limit_seed_binds_small_limits_as_int8(
         ) -> Result:
             del prepare
             self.calls.append((sql, params))
+            if sql.startswith("SELECT workspace_id, shard FROM tr_key_limit"):
+                return Result([("ws-int8", 0)])
             return Result()
 
     connection = Connection()
@@ -512,10 +520,12 @@ def test_postgres_key_limit_seed_binds_small_limits_as_int8(
     )
 
     sql, params = next(
-        (sql, params) for sql, params in connection.calls if "INSERT INTO tr_key_limit" in sql
+        (sql, params)
+        for sql, params in connection.calls
+        if sql.startswith("UPDATE tr_key_limit SET") and " limit_micro = %s" in sql
     )
     assert "limit_micro" in sql
-    assert [type(value) for value in (params[2], params[4], params[5], params[6])] == [
+    assert [type(value) for value in (params[0], params[2], params[3], params[4])] == [
         Int8,
         Int8,
         Int8,

@@ -1186,6 +1186,7 @@ def test_gateway_settle_ancient_legacy_reservation_missing_typed_row_is_clean() 
         usage_type="Credits",
         estimated_microdollars=100_000,
         credit_reservation_id="legacy-reservation-never-in-typed",
+        key_reserved_microdollars=0,
         requested_model_id=model.id,
         candidate_model_ids=[model.id],
         region="us-central1",

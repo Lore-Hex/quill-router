@@ -53,6 +53,7 @@ def _authorize(
     expires_at: str | None = None,
     cap: int | None = CAP,
     idempotency_key: str | None = None,
+    key_reserved_microdollars: int = 0,
 ) -> Any:
     return store.create_gateway_authorization(
         workspace_id=WS,
@@ -62,6 +63,7 @@ def _authorize(
         usage_type="Credits",
         estimated_microdollars=estimate,
         credit_reservation_id=None,
+        key_reserved_microdollars=key_reserved_microdollars,
         idempotency_key=idempotency_key,
         settlement="deferred_home",
         expires_at=expires_at or _in(hours=2),
@@ -269,7 +271,7 @@ def test_byok_selected_settle_releases_the_credits_hold(
         " VALUES (%s, %s, 0, 10000000, 0, 0, 1000000, 0, CURRENT_TIMESTAMP)",
         (WS, KEY),
     )
-    auth = _authorize(store, estimate=1_000_000)
+    auth = _authorize(store, estimate=1_000_000, key_reserved_microdollars=1_000_000)
 
     assert store.finalize_gateway_authorization(
         auth.id, success=True, actual_microdollars=400_000, selected_usage_type="BYOK"
@@ -421,6 +423,7 @@ def test_reaper_ignores_local_authorizations(harness: tuple[Any, Any]) -> None:
         usage_type="Credits",
         estimated_microdollars=1_000_000,
         credit_reservation_id=None,
+        key_reserved_microdollars=0,
     )
     assert local.settlement == "local"
     assert local.expires_at is None

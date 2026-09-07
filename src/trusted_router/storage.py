@@ -38,7 +38,7 @@ from trusted_router.routable_payouts import (
     validate_routable_release_status,
 )
 from trusted_router.spend_leases import SpendLeaseArtifact, SpendLeaseBoot
-from trusted_router.spend_windows import KeyWindowLimitDecision
+from trusted_router.spend_windows import KeyLimitReserveResult
 from trusted_router.storage_attribution import InMemoryAcquisitionAttribution
 from trusted_router.storage_auth_context import build_session_auth_context
 from trusted_router.storage_auth_sessions import InMemoryAuthSessions
@@ -1479,7 +1479,7 @@ class InMemoryStore:
         amount_microdollars: int,
         *,
         usage_type: str,
-    ) -> KeyWindowLimitDecision | None:
+    ) -> KeyLimitReserveResult:
         return self.api_keys.reserve_limit(key_hash, amount_microdollars, usage_type=usage_type)
 
     def settle_key_limit(
@@ -3113,6 +3113,7 @@ class InMemoryStore:
         usage_type: UsageType | str,
         estimated_microdollars: int,
         credit_reservation_id: str | None,
+        key_reserved_microdollars: int | None = None,
         authorization_id: str | None = None,
         requested_model_id: str | None = None,
         candidate_model_ids: list[str] | None = None,
@@ -3157,7 +3158,13 @@ class InMemoryStore:
                     if terminal_key not in self._paused_authorizations or idempotency_key is None:
                         if credit_reservation_id is not None:
                             self.refund(credit_reservation_id)
-                        self.api_keys.refund_limit(key_hash, estimated_microdollars, usage_type=usage_type)
+                        from trusted_router.storage_legacy_trust import legacy_key_hold
+
+                        hold = (
+                            legacy_key_hold(self.api_keys.get_by_hash(key_hash), estimated_microdollars, usage_type)
+                            if key_reserved_microdollars is None else max(0, int(key_reserved_microdollars))
+                        )
+                        self.api_keys.refund_limit(key_hash, hold, usage_type=usage_type)
                         if idempotency_key is not None:
                             self._paused_authorizations.add(terminal_key)
                     raise BillingPausedError()
@@ -3169,6 +3176,7 @@ class InMemoryStore:
                 usage_type=usage_type,
                 estimated_microdollars=estimated_microdollars,
                 credit_reservation_id=credit_reservation_id,
+                key_reserved_microdollars=key_reserved_microdollars,
                 authorization_id=authorization_id,
                 requested_model_id=requested_model_id,
                 candidate_model_ids=candidate_model_ids,
@@ -3261,10 +3269,11 @@ class InMemoryStore:
                 else:
                     self.api_keys.refund(authorization.credit_reservation_id)
 
+            key_reserved_microdollars = authorization.frozen_key_hold_microdollars()
             if success:
                 self.api_keys.settle_limit(
                     authorization.key_hash,
-                    authorization.estimated_microdollars,
+                    key_reserved_microdollars,
                     actual_microdollars,
                     usage_type=authorization.usage_type,
                 )
@@ -3273,7 +3282,7 @@ class InMemoryStore:
             else:
                 self.api_keys.refund_limit(
                     authorization.key_hash,
-                    authorization.estimated_microdollars,
+                    key_reserved_microdollars,
                     usage_type=authorization.usage_type,
                 )
 
