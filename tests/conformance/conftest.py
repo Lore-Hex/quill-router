@@ -408,3 +408,26 @@ def make_synthetic_probe_sample(
         ttfb_milliseconds=ttfb_milliseconds,
         created_at=created_at,
     )
+
+
+@pytest.fixture(
+    params=[*_BACKEND_PARAMS, "postgres-fake"], ids=lambda name: f"backend={name}",
+)
+def user_credit_transfer_store(request: pytest.FixtureRequest) -> Iterator[Store]:
+    """Run the daily-cap contract on registered backends plus the Postgres SQL fake."""
+    if request.param == "postgres-fake":
+        from tests.fakes.postgres import postgres_store_on, sqlite_postgres_conn
+
+        conn = sqlite_postgres_conn()
+        try:
+            yield postgres_store_on(conn)
+        finally:
+            conn._raw.close()
+        return
+    backend = BACKENDS[request.param]()
+    try:
+        yield backend
+    finally:
+        close = getattr(backend, "close", None)
+        if close is not None:
+            close()

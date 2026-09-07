@@ -260,6 +260,28 @@ class EarningsTransferRequest(_Strict):
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=64)
 
 
+class CreditTransferRequest(_Strict):
+    recipient_username: str = Field(min_length=3, max_length=32)
+    amount: str = Field(strict=True, pattern=r"^(0|[1-9][0-9]{0,4})(\.[0-9]{1,2})?$")
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @field_validator("amount", mode="before")
+    @classmethod
+    def amount_is_transferable(cls, value: object) -> str:
+        import re
+
+        if not isinstance(value, str) or re.fullmatch(r"(0|[1-9][0-9]{0,4})(\.[0-9]{1,2})?", value) is None:
+            raise ValueError("amount must be a plain dollar string with at most two decimals")
+        microdollars = dollars_to_microdollars(value)
+        if microdollars < MICRODOLLARS_PER_DOLLAR:
+            raise ValueError("amount must be at least 1")
+        return value
+
+    @property
+    def amount_microdollars(self) -> int:
+        return dollars_to_microdollars(self.amount)
+
+
 class SpendLeaseEcho(_Strict):
     lease_id: str | None = Field(default=None, max_length=64)
     state: str = Field(min_length=1, max_length=64)

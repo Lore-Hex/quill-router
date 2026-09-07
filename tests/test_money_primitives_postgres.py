@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 from psycopg.types.numeric import Int8
 
 from tests.fakes.postgres import postgres_store_on, sqlite_postgres_conn
-from trusted_router.storage_models import CreditAccount, CreditMovement, CreditProvenance
+from trusted_router.storage_models import (
+    CreditAccount,
+    CreditMovement,
+    CreditProvenance,
+    User,
+    Workspace,
+)
 
 
 def _seed_workspace(store: object, conn: object, workspace_id: str) -> None:
+    store._write_entity_tx(conn, "user", workspace_id, User(id=workspace_id, email="test@example.com"))  # type: ignore[attr-defined]
+    store._write_entity_tx(conn, "workspace", workspace_id, Workspace(id=workspace_id, name="test", owner_user_id=workspace_id))  # type: ignore[attr-defined]
     store._write_entity_tx(  # type: ignore[attr-defined]
         conn,
         "credit",
@@ -168,6 +178,44 @@ def test_postgres_earnings_transfer_rolls_back_every_write_on_failure() -> None:
     assert store.earnings_summary(user_id)["available"] == 100
     assert conn.balance(workspace_id) == (0, 0, 0)
     assert not conn.has_entity("stripe_event", "evt-pg-transfer-rollback")
+
+
+def test_postgres_user_credit_transfer_rolls_back_both_balances_on_ledger_failure() -> None:
+    conn = sqlite_postgres_conn()
+    store = postgres_store_on(conn)
+    sender_id = "ws-pg-user-transfer-sender"
+    recipient_id = "ws-pg-user-transfer-recipient"
+    _seed_workspace(store, conn, sender_id)
+    _seed_workspace(store, conn, recipient_id)
+    assert store.credit_workspace_typed_direct(
+        sender_id,
+        100,
+        "evt-pg-user-transfer-fund",
+        provenance=CreditProvenance.system_grant(),
+    )
+
+    store._insert_credit_movement_tx(
+        conn,
+        CreditMovement(
+            account_id=recipient_id,
+            movement_id="user-transfer-rollback",
+            kind="user_transfer_in",
+            amount_microdollars=60,
+            counterparty_account_id=sender_id,
+        ),
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        store.transfer_workspace_credits(
+            sender_id,
+            recipient_id,
+            60,
+            "user-transfer-rollback",
+            daily_cap_microdollars=100,
+        )
+    assert conn.balance(sender_id) == (100, 0, 0)
+    assert conn.balance(recipient_id) == (0, 0, 0)
+    assert store.list_credit_movements(sender_id, kinds=["user_transfer_out"]) == []
+    assert len(store.list_credit_movements(recipient_id, kinds=["user_transfer_in"])) == 1
 
 
 def test_postgres_lifetime_topup_is_atomic_with_grant_claim() -> None:

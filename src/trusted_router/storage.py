@@ -189,6 +189,7 @@ class InMemoryStore:
         self.abuse_pause_clears: set[tuple[str, str]] = set()
         self.webhook_events: set[tuple[str, str]] = set()
         self.earnings_money: dict[str, tuple[int, int]] = {}
+        self.user_transfer_daily: dict[tuple[str, str], int] = {}
         self.credit_movements: dict[tuple[str, str], CreditMovement] = {}
         self.routable_payout_profiles: dict[str, RoutablePayoutProfile] = {}
         self.routable_payout_profile_users_by_company: dict[str, str] = {}
@@ -271,6 +272,7 @@ class InMemoryStore:
             self.webhook_events.clear()
             self.earnings_money.clear()
             self.credit_movements.clear()
+            self.user_transfer_daily.clear()
             self.routable_payout_profiles.clear()
             self.routable_payout_profile_users_by_company.clear()
             self.earnings_cashouts.clear()
@@ -1106,14 +1108,18 @@ class InMemoryStore:
                 return None
             return self.users.get(user_id)
 
-    def find_user_by_username(self, username: str) -> User | None:
+    def find_user_by_username(
+        self, username: str, *, fallback_user_id: str = ""
+    ) -> User | None:
         try:
             normalized = validate_creator_username(username)
         except ValueError:
             return None
         with self._lock:
             user_id = self.user_ids_by_username.get(normalized)
-            return self.users.get(user_id) if user_id is not None else None
+            # Always read a user row; transfers supply the real sender on a miss.
+            user = self.users.get(user_id if user_id is not None else fallback_user_id)
+            return user if user_id is not None else None
 
     def claim_user_username(self, user_id: str, username: str) -> User:
         normalized = validate_creator_username(username)
@@ -1498,6 +1504,17 @@ class InMemoryStore:
         self.api_keys.refund_limit(key_hash, reserved_microdollars, usage_type=usage_type)
 
     def supports_key_writes(self) -> bool:
+        return True
+
+    def workspace_owner_usernames(self, workspace_ids: list[str]) -> dict[str, str | None]:
+        with self._lock:
+            return {
+                wid: user.username if (workspace := self.workspaces.get(wid)) is not None
+                and (user := self.users.get(workspace.owner_user_id)) is not None else None
+                for wid in workspace_ids
+            }
+
+    def supports_user_credit_transfers(self) -> bool:
         return True
 
     def update_key(self, key_hash: str, patch: dict[str, Any]) -> ApiKey | None:
@@ -2385,6 +2402,80 @@ class InMemoryStore:
                 created_at=created_at,
             )
             return "accepted"
+
+    def transfer_workspace_credits(
+        self,
+        sender_workspace_id: str,
+        recipient_workspace_id: str,
+        amount_microdollars: int,
+        transfer_id: str,
+        *,
+        daily_cap_microdollars: int,
+        now: dt.datetime | None = None,
+    ) -> tuple[str, CreditMovement | None]:
+        """Move spendable credit between workspaces in one locked transaction."""
+        amount = self._positive_money_amount(amount_microdollars)
+        cap = self._positive_money_amount(daily_cap_microdollars)
+        occurred_at = (now or dt.datetime.now(dt.UTC)).astimezone(dt.UTC).replace(microsecond=0)
+        created_at = occurred_at.isoformat().replace("+00:00", "Z")
+        day_start = occurred_at.replace(hour=0, minute=0, second=0, microsecond=0)
+        with self._lock:
+            if any(self.workspaces[wid].billing_pause_causes for wid in (sender_workspace_id, recipient_workspace_id)):
+                return "paused", None
+            existing = self.credit_movements.get((sender_workspace_id, transfer_id))
+            if existing is not None:
+                if existing.kind != "user_transfer_out":
+                    raise RuntimeError("credit transfer id collides with another movement")
+                return "duplicate", existing
+            counter_id = (self.workspaces[sender_workspace_id].owner_user_id, day_start.date().isoformat())
+            sent_today = self.user_transfer_daily.get(counter_id, 0)
+            if sent_today + amount > cap:
+                return "daily_limit", None
+            sender = self.credit_money.get(sender_workspace_id)
+            recipient = self.credit_money.get(recipient_workspace_id)
+            if recipient is None:
+                raise ValueError("credit_account_not_found")
+            available = (
+                -1
+                if sender is None
+                else sender.total_credits_microdollars
+                - sender.total_usage_microdollars
+                - sender.reserved_microdollars
+            )
+            if sender is None or available < amount:
+                return "insufficient", None
+            sender_before = sender.total_credits_microdollars
+            recipient_before = recipient.total_credits_microdollars
+            try:
+                sender.total_credits_microdollars -= amount
+                recipient.total_credits_microdollars += amount
+                outgoing = CreditMovement(
+                    account_id=sender_workspace_id,
+                    movement_id=transfer_id,
+                    kind="user_transfer_out",
+                    amount_microdollars=-amount,
+                    counterparty_account_id=recipient_workspace_id,
+                    created_at=created_at,
+                )
+                incoming = CreditMovement(
+                    account_id=recipient_workspace_id,
+                    movement_id=transfer_id,
+                    kind="user_transfer_in",
+                    amount_microdollars=amount,
+                    counterparty_account_id=sender_workspace_id,
+                    created_at=created_at,
+                )
+                self.credit_movements[(sender_workspace_id, transfer_id)] = outgoing
+                self.credit_movements[(recipient_workspace_id, transfer_id)] = incoming
+                self.user_transfer_daily[counter_id] = sent_today + amount
+            except BaseException:
+                sender.total_credits_microdollars = sender_before
+                recipient.total_credits_microdollars = recipient_before
+                self.credit_movements.pop((sender_workspace_id, transfer_id), None)
+                self.credit_movements.pop((recipient_workspace_id, transfer_id), None)
+                self.user_transfer_daily[counter_id] = sent_today
+                raise
+            return "accepted", outgoing
 
     def get_routable_payout_profile(
         self,

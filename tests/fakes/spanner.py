@@ -248,6 +248,7 @@ class FakeSpannerDatabase:
         # cannot masquerade as one logical Store operation.
         self.snapshot_execute_sql_calls = 0
         self.snapshot_sql: list[str] = []
+        self.snapshot_sql_params: list[dict[str, Any]] = []
         self.transaction_execute_sql_calls = 0
         self.transaction_execute_update_calls = 0
         self.now = now
@@ -1228,6 +1229,12 @@ class _FakeTransaction:
             }
             self.pending_writes.append(("insert_typed_dml", "tr_credit_movement", pk, record))
             return 1
+        if sql.startswith("DELETE FROM tr_credit_movement"):
+            pk = (p["account_id"], p["movement_id"])
+            if self._typed_current("tr_credit_movement", pk) is None:
+                return 0
+            self.pending_writes.append(("delete_typed", "tr_credit_movement", pk))
+            return 1
         if "UPDATE tr_key_limit " in sql and "reserved = reserved - @hold" in sql:
             _require_pred(sql, "key_hash=@kh AND shard=@shard AND reserved >= @hold", "key-release")
             usage_settle = "usage = usage + @actual" in sql
@@ -1709,6 +1716,10 @@ class _FakeTransaction:
         if sql.startswith("INSERT INTO tr_entities"):
             entity_key = (p["kind"], p["id"])
             if entity_key in self.db.rows:
+                if entity_key in self.read_versions and self.read_versions[entity_key] != self.db.rows[entity_key].version:
+                    # A row appeared after a missing-row read in this txn.
+                    # Real Spanner invalidates that snapshot and retries.
+                    raise FakeAborted()
                 raise FakeAlreadyExists(f"{p['kind']}/{p['id']}")  # duplicate PK
             if entity_key not in self.read_versions:
                 self.read_versions[entity_key] = 0  # observed absent
@@ -2090,6 +2101,7 @@ class _FakeSnapshot:
             )
         self.db.snapshot_execute_sql_calls += 1
         self.db.snapshot_sql.append(sql)
+        self.db.snapshot_sql_params.append(dict(params or {}))
         return _execute_sql(self.db, None, sql, params or {})
 
 
@@ -3370,6 +3382,54 @@ def _execute_sql(
             ]
         ]
     if (
+        "FROM tr_credit_movement WHERE account_id=@account_id "
+        "AND movement_id=@movement_id" in sql
+    ):
+        rec = (
+            txn._typed_current(
+                "tr_credit_movement",
+                (str(params["account_id"]), str(params["movement_id"])),
+            )
+            if txn is not None
+            else db.typed.get("tr_credit_movement", {}).get(
+                (str(params["account_id"]), str(params["movement_id"]))
+            )
+        )
+        if rec is None:
+            return []
+        columns = [
+            column.strip()
+            for column in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [[rec.get(column) for column in columns]]
+    if (
+        "FROM tr_credit_movement WHERE account_id=@account_id "
+        "AND kind='user_transfer_out' AND created_at>=@day_start" in sql
+    ):
+        total = sum(
+            -int(rec["amount_microdollars"])
+            for rec in _typed_rows("tr_credit_movement")
+            if rec["account_id"] == params["account_id"]
+            and rec["kind"] == "user_transfer_out"
+            and rec["created_at"] >= params["day_start"]
+        )
+        return [[total]]
+    if (
+        "SELECT shard, total_credits, total_usage, reserved "
+        "FROM tr_credit_balance WHERE workspace_id=@workspace_id" in sql
+    ):
+        rows = [
+            rec
+            for rec in _typed_rows("tr_credit_balance")
+            if rec["workspace_id"] == params["workspace_id"]
+            and 0 <= int(rec["shard"]) < int(params["shard_count"])
+        ]
+        rows.sort(key=lambda rec: int(rec["shard"]))
+        return [
+            [rec["shard"], rec["total_credits"], rec["total_usage"], rec["reserved"]]
+            for rec in rows
+        ]
+    if (
         "FROM tr_credit_movement " in sql
         and "WHERE kind='custom_model_payout' AND created_at>=@since" in sql
     ):
@@ -4301,6 +4361,8 @@ def _execute_sql(
         return [[body] for _, body in rows]
     if "SELECT id, body FROM tr_entities WHERE kind=@kind" in sql:
         rows = [(eid, r.body) for (k, eid), r in db.rows.items() if k == kind]
+        if "id IN UNNEST(@ids)" in sql:
+            rows = [(eid, body) for eid, body in rows if eid in params["ids"]]
         rows.sort(key=lambda item: item[0])
         return [[entity_id, body] for entity_id, body in rows]
     if "WHERE kind=@kind" in sql:
