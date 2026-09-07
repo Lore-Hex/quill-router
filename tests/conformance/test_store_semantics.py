@@ -32,6 +32,7 @@ import threading
 import pytest
 from psycopg.types.numeric import Int8
 
+from tests.fakes.credit_hold import reserve_for_transfer
 from trusted_router.routable_payouts import (
     payout_idempotency_entity_id,
     payout_request_fingerprint,
@@ -316,6 +317,91 @@ def test_transfer_earnings_is_atomic_idempotent_and_visible_in_workspace(
     assert user_movements[0].counterparty_account_id == workspace_id
     assert workspace_movements[0].amount_microdollars == 60
     assert workspace_movements[0].counterparty_account_id == f"user:{user_id}"
+
+
+def test_user_credit_transfer_is_atomic_idempotent_reserved_safe_and_conserving(
+    store: Store,
+    user_id: str,
+    workspace_id: str,
+    unique: str,
+) -> None:
+    recipient = store.ensure_user(
+        f"recipient-{unique}",
+        f"recipient-{unique}@example.com",
+        trial_credit_microdollars=0,
+    )
+    recipient_workspace = store.create_workspace(
+        recipient.id,
+        f"recipient-{unique}",
+        trial_credit_microdollars=0,
+    )
+    assert store.credit_workspace_once(
+        workspace_id, 100, f"evt-user-transfer-fund-{unique}"
+    )
+    release_hold = reserve_for_transfer(store, workspace_id, 40)
+    transfer_id = f"user-transfer-{unique}"
+    when = dt.datetime(2026, 9, 5, 12, tzinfo=dt.UTC)
+    outcome, first = store.transfer_workspace_credits(
+        workspace_id,
+        recipient_workspace.id,
+        60,
+        transfer_id,
+        daily_cap_microdollars=75,
+        now=when,
+    )
+    replay, repeated = store.transfer_workspace_credits(
+        workspace_id,
+        recipient_workspace.id,
+        60,
+        transfer_id,
+        daily_cap_microdollars=75,
+        now=when,
+    )
+    assert outcome == "accepted"
+    assert replay == "duplicate"
+    assert first == repeated
+    sender = live_credit_summary(workspace_id, store=store)
+    receiver = live_credit_summary(recipient_workspace.id, store=store)
+    assert sender is not None and sender["available"] == 0
+    assert receiver is not None and receiver["available"] == 60
+    outgoing = store.list_credit_movements(workspace_id, kinds=["user_transfer_out"])
+    incoming = store.list_credit_movements(
+        recipient_workspace.id, kinds=["user_transfer_in"]
+    )
+    assert len(outgoing) == len(incoming) == 1
+    assert outgoing[0].amount_microdollars + incoming[0].amount_microdollars == 0
+    capped, capped_movement = store.transfer_workspace_credits(
+        workspace_id,
+        recipient_workspace.id,
+        16,
+        f"user-transfer-capped-{unique}",
+        daily_cap_microdollars=75,
+        now=when,
+    )
+    assert (capped, capped_movement) == ("daily_limit", None)
+    assert len(store.list_credit_movements(workspace_id, kinds=["user_transfer_out"])) == 1
+    refused_id = f"user-transfer-insufficient-{unique}"
+    refused, _ = store.transfer_workspace_credits(
+        workspace_id, recipient_workspace.id, 1, refused_id,
+        daily_cap_microdollars=75, now=when,
+    )
+    assert refused == "insufficient"
+    assert len(store.list_credit_movements(workspace_id, kinds=["user_transfer_out"])) == 1
+    release_hold()
+    retried, _ = store.transfer_workspace_credits(
+        workspace_id, recipient_workspace.id, 1, refused_id,
+        daily_cap_microdollars=75, now=when,
+    )
+    assert retried == "accepted"
+    rolled, _ = store.transfer_workspace_credits(
+        workspace_id,
+        recipient_workspace.id,
+        16,
+        f"user-transfer-capped-{unique}",
+        daily_cap_microdollars=75,
+        now=when + dt.timedelta(days=1),
+    )
+    assert rolled == "accepted"
 
 
 def test_routable_profile_is_user_scoped_and_company_unique(
@@ -2350,3 +2436,143 @@ def test_round4_refusal_reset_round_trips(store: Store, user_id: str, unique: st
     assert reloaded.phone_last_refused is None
     assert reloaded.identity_verified
     assert reloaded.pending_phone is None
+
+
+def _daily_cap_workspaces(store: Store, unique: str) -> tuple[str, str, str, str]:
+    """Fund two workspaces for one owner and one for an independent sender."""
+    workspaces = []
+    for name, owner in (("a", "alice"), ("b", "alice"), ("c", "carol"), ("r", "recipient")):
+        user = store.ensure_user(
+            f"{owner}-{unique}", f"{owner}-{unique}@example.com",
+            trial_credit_microdollars=0,
+        )
+        workspace = store.create_workspace(
+            user.id, f"{name}-{unique}", trial_credit_microdollars=0,
+        )
+        assert store.credit_workspace_once(
+            workspace.id, 200_000_000, f"fund-{name}-{unique}",
+        )
+        workspaces.append(workspace.id)
+    return workspaces[0], workspaces[1], workspaces[2], workspaces[3]
+
+
+def test_user_credit_transfer_daily_cap_shared_across_workspaces(
+    user_credit_transfer_store: Store, unique: str,
+) -> None:
+    store = user_credit_transfer_store
+    a, b, _, recipient = _daily_cap_workspaces(store, unique)
+    when = dt.datetime(2026, 9, 5, 12, tzinfo=dt.UTC)
+    assert store.transfer_workspace_credits(
+        a, recipient, 60_000_000, f"first-{unique}",
+        daily_cap_microdollars=100_000_000, now=when,
+    )[0] == "accepted"
+    # B has ample funds and no outgoing history of its own: only A's spend blocks this.
+    assert store.transfer_workspace_credits(
+        b, recipient, 60_000_000, f"blocked-{unique}",
+        daily_cap_microdollars=100_000_000, now=when,
+    ) == ("daily_limit", None)
+    assert store.list_credit_movements(b, kinds=["user_transfer_out"]) == []
+    balance = live_credit_summary(b, store=store)
+    assert balance is not None and balance["available"] == 200_000_000
+    assert store.transfer_workspace_credits(
+        b, recipient, 30_000_000, f"smaller-{unique}",
+        daily_cap_microdollars=100_000_000, now=when,
+    )[0] == "accepted"
+    balance = live_credit_summary(b, store=store)
+    assert balance is not None and balance["available"] == 170_000_000
+
+
+def test_user_credit_transfer_daily_cap_independent_between_users(
+    user_credit_transfer_store: Store, unique: str,
+) -> None:
+    store = user_credit_transfer_store
+    a, _, c, recipient = _daily_cap_workspaces(store, unique)
+    when = dt.datetime(2026, 9, 5, 12, tzinfo=dt.UTC)
+    for sender in (a, c):
+        assert store.transfer_workspace_credits(
+            sender, recipient, 60_000_000, f"send-{sender}-{unique}",
+            daily_cap_microdollars=100_000_000, now=when,
+        )[0] == "accepted"
+        balance = live_credit_summary(sender, store=store)
+        assert balance is not None and balance["available"] == 140_000_000
+    incoming = store.list_credit_movements(recipient, kinds=["user_transfer_in"])
+    assert len(incoming) == 2
+    assert sum(m.amount_microdollars for m in incoming) == 120_000_000
+
+
+def test_user_credit_transfer_daily_cap_replay_does_not_double_count(
+    user_credit_transfer_store: Store, unique: str,
+) -> None:
+    store = user_credit_transfer_store
+    a, b, _, recipient = _daily_cap_workspaces(store, unique)
+    when = dt.datetime(2026, 9, 5, 12, tzinfo=dt.UTC)
+    outcome, first = store.transfer_workspace_credits(
+        a, recipient, 60_000_000, f"first-{unique}",
+        daily_cap_microdollars=100_000_000, now=when,
+    )
+    assert outcome == "accepted" and first is not None
+    assert store.transfer_workspace_credits(
+        a, recipient, 60_000_000, f"first-{unique}",
+        daily_cap_microdollars=100_000_000, now=when,
+    ) == ("duplicate", first)
+    # A replay must leave exactly $40 of the owner's $100 daily allowance.
+    assert store.transfer_workspace_credits(
+        b, recipient, 40_000_000, f"remaining-{unique}",
+        daily_cap_microdollars=100_000_000, now=when,
+    )[0] == "accepted"
+    assert store.transfer_workspace_credits(
+        b, recipient, 1, f"over-{unique}",
+        daily_cap_microdollars=100_000_000, now=when,
+    ) == ("daily_limit", None)
+    outgoing = [
+        movement for sender in (a, b)
+        for movement in store.list_credit_movements(sender, kinds=["user_transfer_out"])
+    ]
+    assert len(outgoing) == 2
+    assert sum(m.amount_microdollars for m in outgoing) == -100_000_000
+    incoming = store.list_credit_movements(recipient, kinds=["user_transfer_in"])
+    assert len(incoming) == 2
+    assert sum(m.amount_microdollars for m in incoming) == 100_000_000
+
+
+def test_user_transfer_cap_stays_with_sender_after_ownership_transfer(
+    store: Store, user_id: str, workspace_id: str, unique: str,
+) -> None:
+    carol = store.ensure_user(f"carol-{unique}@example.com", trial_credit_microdollars=0)
+    bob = store.ensure_user(f"bob-{unique}@example.com", trial_credit_microdollars=0)
+    receiver = store.create_workspace(bob.id, "receiver", trial_credit_microdollars=0)
+    second = store.create_workspace(user_id, "second", trial_credit_microdollars=0)
+    for wid in (workspace_id, second.id):
+        assert store.credit_workspace_once(wid, 10_000_000, f"fund-{wid}-{unique}")
+    when = dt.datetime(2026, 9, 5, tzinfo=dt.UTC)
+    assert store.transfer_workspace_credits(workspace_id, receiver.id, 2_000_000,
+        f"first-{unique}", daily_cap_microdollars=3_000_000, now=when)[0] == "accepted"
+    store.transfer_workspace_ownership(workspace_id, carol.id)
+    assert store.transfer_workspace_credits(second.id, receiver.id, 2_000_000,
+        f"second-{unique}", daily_cap_microdollars=3_000_000, now=when) == ("daily_limit", None)
+    assert live_credit_summary(second.id, store=store)["available"] == 10_000_000
+    assert store.list_credit_movements(second.id, kinds=["user_transfer_out"]) == []
+    # Carol has not spent Alice's historical usage.
+    assert store.transfer_workspace_credits(workspace_id, receiver.id, 2_000_000,
+        f"carol-{unique}", daily_cap_microdollars=3_000_000, now=when)[0] == "accepted"
+
+
+def test_user_transfer_failure_between_debit_and_credit_rolls_back(
+    store: Store, user_id: str, workspace_id: str, unique: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.fakes.credit_hold import fail_before_transfer_credit
+
+    recipient = store.create_workspace(user_id, "recipient", trial_credit_microdollars=0)
+    assert store.credit_workspace_once(workspace_id, 100, f"rollback-fund-{unique}")
+    before = [live_credit_summary(wid, store=store) for wid in (workspace_id, recipient.id)]
+    with monkeypatch.context() as patch:
+        fail_before_transfer_credit(store, recipient.id, patch)
+        with pytest.raises(RuntimeError, match="injected before recipient credit"):
+            store.transfer_workspace_credits(workspace_id, recipient.id, 60,
+                f"rollback-{unique}", daily_cap_microdollars=100)
+    assert [live_credit_summary(wid, store=store) for wid in (workspace_id, recipient.id)] == before
+    for wid in (workspace_id, recipient.id):
+        assert store.list_credit_movements(wid, kinds=["user_transfer_out", "user_transfer_in"]) == []
+    assert store.transfer_workspace_credits(workspace_id, recipient.id, 60,
+        f"rollback-{unique}", daily_cap_microdollars=100)[0] == "accepted"

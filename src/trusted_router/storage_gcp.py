@@ -142,6 +142,7 @@ from trusted_router.storage_gcp_codec import (
 )
 from trusted_router.storage_gcp_counter_dml import (
     credit_credit_shard,
+    debit_credit_shard,
     debit_workspace_credit,
     insert_entity_dml_at,
     update_entity_body_dml,
@@ -2086,15 +2087,17 @@ class SpannerBigtableStore:
             return None
         return self.get_user(str(record["user_id"]))
 
-    def find_user_by_username(self, username: str) -> User | None:
+    def find_user_by_username(
+        self, username: str, *, fallback_user_id: str = ""
+    ) -> User | None:
         try:
             normalized = validate_creator_username(username)
         except ValueError:
             return None
         record = self._read_entity("username_user", normalized, dict)
-        if not record:
-            return None
-        return self.get_user(str(record["user_id"]))
+        # Match the hit path, including user deserialization, on a miss.
+        user = self.get_user(str(record["user_id"]) if record else fallback_user_id)
+        return user if record else None
 
     def claim_user_username(self, user_id: str, username: str) -> User:
         normalized = validate_creator_username(username)
@@ -2730,6 +2733,26 @@ class SpannerBigtableStore:
         return self.api_keys.delete(key_hash)
 
     def supports_key_writes(self) -> bool:
+        return True
+
+    def workspace_owner_usernames(self, workspace_ids: list[str]) -> dict[str, str | None]:
+        def batch(kind: str, ids: list[str]) -> dict[str, Any]:
+            if not ids:
+                return {}
+            with self._database.snapshot() as snapshot:
+                rows = snapshot.execute_sql(
+                    "SELECT id, body FROM tr_entities WHERE kind=@kind AND id IN UNNEST(@ids)",
+                    params={"kind": kind, "ids": ids},
+                    param_types={"kind": self._param_types.STRING,
+                                 "ids": self._param_types.Array(self._param_types.STRING)},
+                )
+                return {str(row[0]): json.loads(row[1]) for row in rows}
+        workspaces = batch("workspace", list(set(workspace_ids)))
+        users = batch("user", list({w["owner_user_id"] for w in workspaces.values()}))
+        return {wid: users.get(workspaces.get(wid, {}).get("owner_user_id"), {}).get("username")
+                for wid in workspace_ids}
+
+    def supports_user_credit_transfers(self) -> bool:
         return True
 
     def update_key(self, key_hash: str, patch: dict[str, Any]) -> ApiKey | None:
@@ -3697,6 +3720,207 @@ class SpannerBigtableStore:
             return "accepted"
 
         return self._run_in_transaction(txn)
+
+    def transfer_workspace_credits(
+        self,
+        sender_workspace_id: str,
+        recipient_workspace_id: str,
+        amount_microdollars: int,
+        transfer_id: str,
+        *,
+        daily_cap_microdollars: int,
+        now: dt.datetime | None = None,
+    ) -> tuple[str, CreditMovement | None]:
+        """Move available credit and write both ledger sides atomically."""
+        amount = self._positive_money_amount(amount_microdollars)
+        cap = self._positive_money_amount(daily_cap_microdollars)
+        occurred_at = (now or dt.datetime.now(dt.UTC)).astimezone(dt.UTC).replace(microsecond=0)
+        day_start = occurred_at.replace(hour=0, minute=0, second=0, microsecond=0)
+        pt = self._param_types
+
+        def txn(transaction: Any) -> tuple[str, CreditMovement | None]:
+            workspace = self._read_entity_tx(transaction, "workspace", sender_workspace_id, Workspace)
+            if workspace is None:
+                raise ValueError("sender_workspace_not_found")
+            recipient_workspace = self._read_entity_tx(
+                transaction, "workspace", recipient_workspace_id, Workspace
+            )
+            if recipient_workspace is None:
+                raise ValueError("recipient_workspace_not_found")
+            if workspace.billing_pause_causes or recipient_workspace.billing_pause_causes:
+                return "paused", None
+            # Read and write the same per-user counter inside this transaction.
+            # Spanner also validates the missing-row read on the first send.
+            owner = self._read_entity_tx(
+                transaction, "user", workspace.owner_user_id, User
+            )
+            if owner is None:
+                raise ValueError("sender_owner_not_found")
+            counter_id = f"{owner.id}:{day_start.date().isoformat()}"
+            counter = self._read_entity_tx(transaction, "user_transfer_daily", counter_id, dict)
+            sent_today = int(counter["amount"]) if counter else 0
+            outgoing = CreditMovement(
+                account_id=sender_workspace_id,
+                movement_id=transfer_id,
+                kind="user_transfer_out",
+                amount_microdollars=-amount,
+                counterparty_account_id=recipient_workspace_id,
+                created_at=_iso_timestamp(occurred_at),
+            )
+            won = transaction.execute_update(
+                "INSERT OR IGNORE INTO tr_credit_movement "
+                "(account_id, movement_id, kind, amount_microdollars, "
+                "counterparty_account_id, custom_model_id, authorization_id, created_at) "
+                "VALUES (@account_id, @movement_id, @kind, @amount, @counterparty, "
+                "@custom_model_id, @authorization_id, @created_at)",
+                params={
+                    "account_id": sender_workspace_id,
+                    "movement_id": transfer_id,
+                    "kind": outgoing.kind,
+                    "amount": -amount,
+                    "counterparty": recipient_workspace_id,
+                    "custom_model_id": None,
+                    "authorization_id": None,
+                    "created_at": occurred_at,
+                },
+                param_types={
+                    "account_id": pt.STRING,
+                    "movement_id": pt.STRING,
+                    "kind": pt.STRING,
+                    "amount": pt.INT64,
+                    "counterparty": pt.STRING,
+                    "custom_model_id": pt.STRING,
+                    "authorization_id": pt.STRING,
+                    "created_at": pt.TIMESTAMP,
+                },
+            )
+            if won == 0:
+                existing_rows = list(
+                transaction.execute_sql(
+                    "SELECT account_id, movement_id, kind, amount_microdollars, "
+                    "counterparty_account_id, custom_model_id, authorization_id, created_at "
+                    "FROM tr_credit_movement WHERE account_id=@account_id "
+                    "AND movement_id=@movement_id",
+                    params={"account_id": sender_workspace_id, "movement_id": transfer_id},
+                    param_types={"account_id": pt.STRING, "movement_id": pt.STRING},
+                    )
+                )
+                if not existing_rows:
+                    raise RuntimeError("credit transfer claim disappeared")
+                row = existing_rows[0]
+                if str(row[2]) != "user_transfer_out":
+                    raise RuntimeError("credit transfer id collides with another movement")
+                return (
+                    "duplicate",
+                    CreditMovement(
+                        account_id=str(row[0]),
+                        movement_id=str(row[1]),
+                        kind=str(row[2]),
+                        amount_microdollars=int(row[3]),
+                        counterparty_account_id=None if row[4] is None else str(row[4]),
+                        custom_model_id=None if row[5] is None else str(row[5]),
+                        authorization_id=None if row[6] is None else str(row[6]),
+                        created_at=_iso_timestamp(row[7]),
+                    ),
+                )
+            account = self._read_entity_tx(
+                transaction, "credit", sender_workspace_id, CreditAccount
+            )
+            if account is None:
+                self._delete_credit_transfer_claim_tx(
+                    transaction, sender_workspace_id, transfer_id
+                )
+                return "insufficient", None
+            shard_count = credit_shard_count(account)
+            balance_rows = list(
+                transaction.execute_sql(
+                    "SELECT shard, total_credits, total_usage, reserved "
+                    "FROM tr_credit_balance WHERE workspace_id=@workspace_id "
+                    "AND shard>=0 AND shard<@shard_count ORDER BY shard",
+                    params={
+                        "workspace_id": sender_workspace_id,
+                        "shard_count": shard_count,
+                    },
+                    param_types={"workspace_id": pt.STRING, "shard_count": pt.INT64},
+                )
+            )
+            if [int(row[0]) for row in balance_rows] != list(range(shard_count)):
+                raise ValueError("credit_balance_shard_missing")
+            if sent_today + amount > cap:
+                self._delete_credit_transfer_claim_tx(
+                    transaction, sender_workspace_id, transfer_id
+                )
+                return "daily_limit", None
+            available = sum(
+                int(row[1]) - int(row[2]) - int(row[3]) for row in balance_rows
+            )
+            if available < amount:
+                self._delete_credit_transfer_claim_tx(
+                    transaction, sender_workspace_id, transfer_id
+                )
+                return "insufficient", None
+            remaining = amount
+            for shard, credits, usage, reserved in balance_rows:
+                take = min(remaining, max(0, int(credits) - int(usage) - int(reserved)))
+                if take:
+                    if not debit_credit_shard(
+                        transaction,
+                        pt,
+                        sender_workspace_id,
+                        take,
+                        shard=int(shard),
+                    ):
+                        raise RuntimeError("credit transfer debit guard lost")
+                    remaining -= take
+                if remaining == 0:
+                    break
+            if remaining:
+                raise RuntimeError("credit transfer debit did not consume requested amount")
+            self._credit_workspace_balance_tx(
+                transaction,
+                recipient_workspace_id,
+                amount,
+                now=occurred_at,
+            )
+            self._insert_credit_movement_tx(
+                transaction,
+                account_id=recipient_workspace_id,
+                movement_id=transfer_id,
+                kind="user_transfer_in",
+                amount_microdollars=amount,
+                counterparty_account_id=sender_workspace_id,
+                created_at=occurred_at,
+            )
+            counter_body = _json_body({"amount": sent_today + amount})
+            if counter is None:
+                insert_entity_dml_at(
+                    transaction, pt, "user_transfer_daily", counter_id, counter_body, occurred_at,
+                )
+            else:
+                update_entity_body_dml(
+                    transaction, pt, "user_transfer_daily", counter_id, counter_body, occurred_at,
+                )
+            return "accepted", outgoing
+
+        return self._run_in_transaction(txn)
+
+    def _delete_credit_transfer_claim_tx(
+        self,
+        transaction: Any,
+        account_id: str,
+        movement_id: str,
+    ) -> None:
+        deleted = transaction.execute_update(
+            "DELETE FROM tr_credit_movement "
+            "WHERE account_id=@account_id AND movement_id=@movement_id",
+            params={"account_id": account_id, "movement_id": movement_id},
+            param_types={
+                "account_id": self._param_types.STRING,
+                "movement_id": self._param_types.STRING,
+            },
+        )
+        if deleted != 1:
+            raise RuntimeError("credit transfer claim disappeared before rollback")
 
     def get_routable_payout_profile(
         self,

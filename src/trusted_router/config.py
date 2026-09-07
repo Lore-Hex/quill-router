@@ -1108,6 +1108,9 @@ class Settings(BaseSettings):
     # compromised peer's damage per workspace per day. Default 4x the peer's
     # own outstanding cap.
     federation_settlement_workspace_daily_cap_microdollars: int = 100_000_000
+    # Same-plane user-to-user transfers are final. This per-sender UTC-day
+    # ceiling is enforced inside the balance transaction, alongside the debit.
+    user_credit_transfer_daily_cap_microdollars: int = 100_000_000
     # The canonical target serves a self-signed cert minted inside the
     # TEE (AWS Nitro standalone deployments): probes skip CA verification
     # and the attestation probe instead verifies the document binds the

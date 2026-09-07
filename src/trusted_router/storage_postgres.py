@@ -25,6 +25,7 @@ from psycopg.types.numeric import Int8
 from psycopg_pool import ConnectionPool
 
 from trusted_router import credit_transfer
+from trusted_router.creator_identity import validate_creator_username
 from trusted_router.credit_transfer import (
     CreditTransferConflict,
     validate_amount,
@@ -1885,8 +1886,17 @@ class PostgresStore:
             return None
         return self.get_user(str(record["user_id"]))
 
-    def find_user_by_username(self, username: str) -> User | None:
-        self._not_implemented("find_user_by_username")
+    def find_user_by_username(
+        self, username: str, *, fallback_user_id: str = ""
+    ) -> User | None:
+        try:
+            normalized = validate_creator_username(username)
+        except ValueError:
+            return None
+        record = self._read_entity("username_user", normalized, dict)
+        # Match the hit path, including user deserialization, on a miss.
+        user = self.get_user(str(record["user_id"]) if record else fallback_user_id)
+        return user if record else None
 
     def claim_user_username(self, user_id: str, username: str) -> User:
         self._not_implemented("claim_user_username")
@@ -3498,6 +3508,28 @@ class PostgresStore:
     def supports_key_writes(self) -> bool:
         return True
 
+    def workspace_owner_usernames(self, workspace_ids: list[str]) -> dict[str, str | None]:
+        def batch(kind: str, ids: list[str]) -> dict[str, Any]:
+            if not ids:
+                return {}
+            def read(conn: Any) -> dict[str, Any]:
+                placeholders = ", ".join(["%s"] * len(ids))
+                rows = conn.execute(
+                    "SELECT id, body FROM tr_entities WHERE kind = %s AND id IN ("  # noqa: S608 — placeholders only
+                    + placeholders + ")", (kind, *ids),
+                ).fetchall()
+                return {str(row[0]): json.loads(row[1]) if isinstance(row[1], str)
+                        else dict(row[1]) for row in rows}
+            return self._run_transaction(read)
+        workspaces = batch("workspace", list(set(workspace_ids)))
+        users = batch("user", list({w["owner_user_id"] for w in workspaces.values()}))
+        return {wid: users.get(workspaces.get(wid, {}).get("owner_user_id"), {}).get("username")
+                for wid in workspace_ids}
+
+    def supports_user_credit_transfers(self) -> bool:
+        # Recipient workspace lookups and username claims are not implemented yet.
+        return False
+
     def update_key(
         self,
         key_hash: str,
@@ -4596,11 +4628,12 @@ class PostgresStore:
         for shard, delta in enumerate(deltas):
             cursor = conn.execute(
                 "UPDATE tr_credit_balance "
-                "SET total_credits = total_credits + %s, "
+                "SET total_credits = total_credits + %s::bigint, "
                 "source_updated_at = CURRENT_TIMESTAMP, "
                 "updated_at = CURRENT_TIMESTAMP "
                 "WHERE workspace_id = %s AND shard = %s",
-                (delta, workspace_id, shard),
+                (_int8_param(delta), workspace_id, shard),
+                prepare=False,
             )
             if cursor.rowcount != 1:
                 raise ValueError("credit_balance_shard_missing")
@@ -4855,6 +4888,175 @@ class PostgresStore:
                 ),
             )
             return "accepted"
+
+        return self._run_transaction(transfer)
+
+    def transfer_workspace_credits(
+        self,
+        sender_workspace_id: str,
+        recipient_workspace_id: str,
+        amount_microdollars: int,
+        transfer_id: str,
+        *,
+        daily_cap_microdollars: int,
+        now: dt.datetime | None = None,
+    ) -> tuple[str, CreditMovement | None]:
+        """Move available credit and write both ledger sides atomically."""
+        amount = self._positive_money_amount(amount_microdollars)
+        cap = self._positive_money_amount(daily_cap_microdollars)
+        occurred_at = (now or dt.datetime.now(dt.UTC)).astimezone(dt.UTC).replace(microsecond=0)
+        day_start = occurred_at.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        def transfer(conn: Any) -> tuple[str, CreditMovement | None]:
+            # Lock both workspaces in a stable order, also serializing pauses
+            # and ownership changes with the money operation.
+            workspaces = {
+                wid: self._read_entity_tx(conn, "workspace", wid, Workspace, for_update=True)
+                for wid in sorted((sender_workspace_id, recipient_workspace_id))
+            }
+            workspace = workspaces[sender_workspace_id]
+            recipient_workspace = workspaces[recipient_workspace_id]
+            if workspace is None:
+                raise ValueError("sender_workspace_not_found")
+            if recipient_workspace is None:
+                raise ValueError("recipient_workspace_not_found")
+            if workspace.billing_pause_causes or recipient_workspace.billing_pause_causes:
+                return "paused", None
+            # A shared owner row serializes sends from different workspaces,
+            # including the first send of a day when the counter does not exist.
+            owner = self._read_entity_tx(
+                conn, "user", workspace.owner_user_id, User, for_update=True
+            )
+            if owner is None:
+                raise ValueError("sender_owner_not_found")
+            counter_id = f"{owner.id}:{day_start.date().isoformat()}"
+            counter = self._read_entity_tx(conn, "user_transfer_daily", counter_id, dict)
+            sent_today = int(counter["amount"]) if counter else 0
+            outgoing = CreditMovement(
+                account_id=sender_workspace_id,
+                movement_id=transfer_id,
+                kind="user_transfer_out",
+                amount_microdollars=-amount,
+                counterparty_account_id=recipient_workspace_id,
+                created_at=_timestamp_string(occurred_at),
+            )
+            claim = conn.execute(
+                "INSERT INTO tr_credit_movement "
+                "(account_id, movement_id, kind, amount_microdollars, "
+                "counterparty_account_id, custom_model_id, authorization_id, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (account_id, movement_id) DO NOTHING",
+                (
+                    outgoing.account_id,
+                    outgoing.movement_id,
+                    outgoing.kind,
+                    _int8_param(outgoing.amount_microdollars),
+                    outgoing.counterparty_account_id,
+                    None,
+                    None,
+                    occurred_at,
+                ),
+                prepare=False,
+            )
+            if claim.rowcount == 0:
+                row = conn.execute(
+                "SELECT account_id, movement_id, kind, amount_microdollars, "
+                "counterparty_account_id, custom_model_id, authorization_id, created_at "
+                "FROM tr_credit_movement WHERE account_id = %s AND movement_id = %s",
+                (sender_workspace_id, transfer_id),
+                prepare=False,
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("credit transfer claim disappeared")
+                if str(row[2]) != "user_transfer_out":
+                    raise RuntimeError("credit transfer id collides with another movement")
+                return (
+                    "duplicate",
+                    CreditMovement(
+                        account_id=str(row[0]),
+                        movement_id=str(row[1]),
+                        kind=str(row[2]),
+                        amount_microdollars=int(row[3]),
+                        counterparty_account_id=None if row[4] is None else str(row[4]),
+                        custom_model_id=None if row[5] is None else str(row[5]),
+                        authorization_id=None if row[6] is None else str(row[6]),
+                        created_at=_timestamp_string(row[7]),
+                    ),
+                )
+            account = self._read_entity_tx(
+                conn, "credit", sender_workspace_id, CreditAccount, for_update=True
+            )
+            if account is None:
+                conn.execute(
+                    "DELETE FROM tr_credit_movement WHERE account_id = %s AND movement_id = %s",
+                    (sender_workspace_id, transfer_id),
+                    prepare=False,
+                )
+                return "insufficient", None
+            # Lock balance sets in a deterministic order for opposite-direction
+            # transfers. The owner lock above serializes the daily cap across
+            # all of that user's workspaces.
+            balance_rows = conn.execute(
+                "SELECT workspace_id, shard, total_credits, total_usage, reserved "
+                "FROM tr_credit_balance WHERE workspace_id IN (%s, %s) "
+                "ORDER BY workspace_id, shard FOR UPDATE",
+                tuple(sorted((sender_workspace_id, recipient_workspace_id))),
+                prepare=False,
+            ).fetchall()
+            sender_rows = [row for row in balance_rows if str(row[0]) == sender_workspace_id]
+            if [int(row[1]) for row in sender_rows] != list(range(credit_shard_count(account))):
+                raise ValueError("credit_balance_shard_missing")
+            if sent_today + amount > cap:
+                conn.execute(
+                    "DELETE FROM tr_credit_movement WHERE account_id = %s AND movement_id = %s",
+                    (sender_workspace_id, transfer_id),
+                    prepare=False,
+                )
+                return "daily_limit", None
+            available = sum(
+                int(row[2]) - int(row[3]) - int(row[4]) for row in sender_rows
+            )
+            if available < amount:
+                conn.execute(
+                    "DELETE FROM tr_credit_movement WHERE account_id = %s AND movement_id = %s",
+                    (sender_workspace_id, transfer_id),
+                    prepare=False,
+                )
+                return "insufficient", None
+            remaining = amount
+            for _workspace_id, shard, credits, usage, reserved in sender_rows:
+                take = min(remaining, max(0, int(credits) - int(usage) - int(reserved)))
+                if take:
+                    changed = conn.execute(
+                        "UPDATE tr_credit_balance SET total_credits = total_credits - %s, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE workspace_id = %s AND shard = %s "
+                        "AND total_credits - total_usage - reserved >= %s",
+                        (_int8_param(take), sender_workspace_id, int(shard), _int8_param(take)),
+                        prepare=False,
+                    )
+                    if changed.rowcount != 1:
+                        raise RuntimeError("credit transfer debit guard lost")
+                    remaining -= take
+                if remaining == 0:
+                    break
+            if remaining:
+                raise RuntimeError("credit transfer debit did not consume requested amount")
+            self._credit_workspace_balance_tx(conn, recipient_workspace_id, amount)
+            self._insert_credit_movement_tx(
+                conn,
+                CreditMovement(
+                    account_id=recipient_workspace_id,
+                    movement_id=transfer_id,
+                    kind="user_transfer_in",
+                    amount_microdollars=amount,
+                    counterparty_account_id=sender_workspace_id,
+                    created_at=outgoing.created_at,
+                ),
+            )
+            self._write_entity_tx(
+                conn, "user_transfer_daily", counter_id, {"amount": sent_today + amount}
+            )
+            return "accepted", outgoing
 
         return self._run_transaction(transfer)
 

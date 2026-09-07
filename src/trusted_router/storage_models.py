@@ -169,6 +169,11 @@ class User:
     # Maintained with tr_owner_workspace. This is an inventory invariant, not
     # a cached display count: every ownership-changing transaction rewrites it.
     owner_workspace_count: int = 0
+    # Operator safety states. Either one blocks user-to-user money movement in
+    # both directions; they stay separate because suspension is reversible
+    # while disabling is an account lifecycle decision.
+    suspended: bool = False
+    disabled: bool = False
 
     @property
     def identity_verified(self) -> bool:

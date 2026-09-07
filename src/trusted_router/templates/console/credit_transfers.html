@@ -1,0 +1,59 @@
+{% extends "console/_layout.html" %}
+{% block body %}
+{% if sent %}<div class="notice" style="margin-bottom:18px">Credits sent. <a href="/console/credit-transfers">Start a new transfer</a>.</div>{% endif %}
+{% if error %}
+<div class="notice bad" style="margin-bottom:18px">
+  {% if error == 'insufficient' %}Your available balance does not cover this transfer.
+  {% elif error == 'daily_limit' %}This transfer would exceed your daily sending limit.
+  {% elif error == 'not_found' %}That recipient could not be found.
+  {% elif error == 'forbidden' %}Both accounts must be active and identity-verified.
+  {% elif error == 'invalid' %}Enter a valid username and an amount of at least $1.
+  {% else %}The transfer could not be completed.{% endif %}
+</div>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-head"><h2>Send credits</h2></div>
+  <div class="panel-body">
+    <div class="notice warn" style="margin-bottom:18px">
+      Transfers are final and cannot be reversed. Only available credits can be sent; credits held for in-flight requests stay protected.
+    </div>
+    <form class="form" method="post" action="/console/credit-transfers">
+      <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
+      <div class="row">
+        <label>Recipient username
+          <input name="recipient_username" minlength="3" maxlength="32" required autocomplete="off" placeholder="username">
+        </label>
+        <label>Amount (USD)
+          <input name="amount" type="number" min="1" step="0.01" required placeholder="10.00">
+        </label>
+      </div>
+      <button class="btn primary" type="submit">Send credits</button>
+    </form>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>Transfer history</h2><span class="pill">{{ transfers|length }}</span></div>
+  <div class="panel-body">
+    {% if transfers %}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Direction</th><th>Counterparty</th><th>Amount</th></tr></thead>
+        <tbody>
+        {% for transfer in transfers %}
+          <tr>
+            <td>{{ transfer.created_at }}</td>
+            <td>{{ transfer.direction }}</td>
+            {% set counterparty = transfer.recipient_username if transfer.direction == 'sent' else transfer.sender_username %}
+            <td>{{ '@' ~ counterparty if counterparty else 'Unavailable account' }}</td>
+            <td>{{ '-' if transfer.direction == 'sent' else '+' }}{{ format_money_display(transfer.amount_microdollars) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}<p style="color:var(--muted);margin:0">No transfers yet.</p>{% endif %}
+  </div>
+</section>
+{% endblock %}

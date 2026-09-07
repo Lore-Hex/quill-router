@@ -42,8 +42,10 @@ class SqlitePostgresConn:
         #: in for a crash or connection reset partway through a transaction,
         #: after earlier statements in it have already run.
         self.fail_on: str | None = None
+        self.statements: list[tuple[str, tuple[Any, ...]]] = []
 
     def execute(self, sql: str, params: tuple[Any, ...] = (), **_kwargs: Any) -> Any:
+        self.statements.append((sql, params))
         if self.fail_on is not None and self.fail_on in sql:
             raise RuntimeError("connection reset mid-transaction")
         # `FOR UPDATE` is stripped, not honoured: SQLite has no row locks, and
@@ -160,8 +162,8 @@ def schema_statements() -> list[str]:
     return statements
 
 
-def sqlite_postgres_conn() -> SqlitePostgresConn:
-    raw = sqlite3.connect(":memory:")
+def sqlite_postgres_conn(*, check_same_thread: bool = True) -> SqlitePostgresConn:
+    raw = sqlite3.connect(":memory:", check_same_thread=check_same_thread)
     raw.isolation_level = None  # explicit BEGIN/COMMIT, like psycopg
     for statement in schema_statements():
         raw.execute(statement)

@@ -60,6 +60,7 @@ from trusted_router.routes.compat import (
     register_versioned_compat_stub_routes,
 )
 from trusted_router.routes.console import register_console_routes
+from trusted_router.routes.credit_transfers import register_credit_transfer_routes
 from trusted_router.routes.custom_models import register_custom_model_routes
 from trusted_router.routes.email_verify import register_email_verify_routes
 from trusted_router.routes.identity_verify import register_identity_verify_routes
@@ -760,6 +761,7 @@ def _make_api_router(settings: Settings, surface: str) -> APIRouter:
         register_payout_routes(router)
         register_activity_routes(router)
         register_client_events_routes(router)
+        register_credit_transfer_routes(router)
         register_workspace_routes(router)
         if _control_plane_inference_enabled(settings):
             register_inference_routes(inference_router)
