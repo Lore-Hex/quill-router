@@ -8,6 +8,7 @@ import pytest
 
 from scripts.stress_credit_shards import _seed, run_stress
 from tests.fakes.spanner import _FakeTransaction
+from trusted_router.config import Settings
 from trusted_router.storage_gcp_authorize import authorize_atomic, settle_atomic
 from trusted_router.storage_gcp_counter_dml import reserve_credit
 from trusted_router.storage_gcp_trust import _sync_principal_recovery_pause_tx
@@ -95,6 +96,7 @@ def test_authorize_pause_read_conflicts_only_with_relevant_writes(
         has_credit_candidate=True, reservation_usage_type="Credits",
         idempotency_scope="scope", idempotency_fingerprint="body", expires_at=None,
         credit_shard=credit_shard,
+        trust_settings=Settings(environment="test", spend_lease_trust_eligibility_enabled=True),
         build_auth_body=lambda aid, rid: json.dumps(
             {"id": aid, "credit_reservation_id": rid},
         ),

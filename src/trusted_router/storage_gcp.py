@@ -4478,6 +4478,7 @@ class SpannerBigtableStore:
             spend_lease=spend_lease,
             invocation_nonce=invocation_nonce,
             expected_pause_epoch=expected_pause_epoch,
+            trust_eligibility_enabled=bool(self.trust_settings is not None and self.trust_settings.spend_lease_trust_eligibility_enabled),
         )
 
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:
@@ -4519,7 +4520,8 @@ class SpannerBigtableStore:
         self, workspace_id: str, key_hash: str, idempotency_key: str
     ) -> GatewayAuthorization | None:
         return self.api_keys.get_gateway_authorization_by_idempotency_key(
-            workspace_id, key_hash, idempotency_key
+            workspace_id, key_hash, idempotency_key,
+            trust_eligibility_enabled=bool(self.trust_settings is not None and self.trust_settings.spend_lease_trust_eligibility_enabled),
         )
 
     def mark_gateway_authorization_settled(self, authorization_id: str) -> None:
@@ -4542,7 +4544,7 @@ class SpannerBigtableStore:
     def authorize_gateway_atomic(self, **kwargs: Any) -> dict:
         from trusted_router.storage_gcp_authorize import authorize_atomic
 
-        return authorize_atomic(self._database, self._param_types, **kwargs)
+        return authorize_atomic(self._database, self._param_types, trust_settings=self.trust_settings, **kwargs)
 
     def typed_finalize_gateway(self, **kwargs: Any) -> dict:
         from trusted_router.storage_gcp_authorize import typed_finalize_atomic
@@ -5561,6 +5563,7 @@ class SpannerBigtableStore:
                     workspace_id=workspace_id,
                     key_hash=key_hash,
                     estimate=estimate,
+                    trust_settings=self.trust_settings,
                     has_credit_candidate=has_credit_candidate,
                     reservation_usage_type=str(usage),
                     idempotency_scope=scope,

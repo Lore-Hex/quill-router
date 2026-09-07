@@ -1918,7 +1918,10 @@ def _authorize_gateway_sync_impl(
         )
         from trusted_router.storage_legacy_trust import BillingPausedError, legacy_pause_epoch
 
-        expected_pause_epoch = legacy_pause_epoch(STORE, workspace.id)
+        expected_pause_epoch = (
+            legacy_pause_epoch(STORE, workspace.id)
+            if settings.spend_lease_trust_eligibility_enabled else None
+        )
         try:
             window_decision = STORE.reserve_key_limit(
                 api_key.hash,

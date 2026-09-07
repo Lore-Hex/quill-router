@@ -277,8 +277,10 @@ def test_typed_accepted_authorization_matches_persisted_record() -> None:
     assert dataclasses.asdict(authorization) == dataclasses.asdict(persisted)
 
 
-def test_fresh_typed_gateway_authorize_has_exact_sequential_spanner_operation_count() -> None:
-    _store, database, key = _seed_typed_gateway_store()
+@pytest.mark.parametrize("armed", [False, True])
+def test_fresh_typed_gateway_authorize_has_exact_sequential_spanner_operation_count(armed: bool) -> None:
+    store, database, key = _seed_typed_gateway_store()
+    store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=armed)
     gateway._BROADCAST_EMPTY_CACHE.clear()
     assert gateway._broadcast_destinations_for_authorize(key.workspace_id) == []
     before = (
@@ -300,8 +302,9 @@ def test_fresh_typed_gateway_authorize_has_exact_sequential_spanner_operation_co
     assert response["data"]["authorization_id"]
     # Representative steady-state fresh request: the workspace's observed-empty
     # broadcast cache is warm, while this idempotency key and authorization are new.
-    # Trust PR 2 adds the transactional pause/epoch read before either hold.
-    assert operation_count == 11
+    # The original ten operations stay exact with the trust program disarmed.
+    # Armed authorization adds one selected-shard pause/epoch read.
+    assert operation_count == 10 + int(armed)
 
 
 def test_broadcast_empty_results_are_cached_until_ttl(

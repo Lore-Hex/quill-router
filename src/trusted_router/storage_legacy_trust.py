@@ -6,6 +6,12 @@ import json
 from typing import Any
 
 
+def trust_program_armed(store: Any) -> bool:
+    """Legacy trust enforcement must also ship inert until the arm flag flips."""
+    settings = getattr(store, "trust_settings", None)
+    return bool(getattr(settings, "spend_lease_trust_eligibility_enabled", False))
+
+
 class BillingPausedError(ValueError):
     def __init__(self) -> None:
         super().__init__("billing_paused")
@@ -165,6 +171,8 @@ def spanner_pause_epoch(reader: Any, pt: Any, workspace_id: str) -> int:
 
 def legacy_pause_epoch(store: Any, workspace_id: str) -> int:
     """Snapshot for split legacy authorization; creation rechecks it atomically."""
+    if not trust_program_armed(store):
+        return 0
     if hasattr(store, "_legacy_pause_epoch"):
         return int(store._legacy_pause_epoch(workspace_id))
     if hasattr(store, "_database"):

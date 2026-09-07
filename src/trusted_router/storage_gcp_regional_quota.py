@@ -709,8 +709,8 @@ def record_regional_gateway_authorization(
                 return replay(existing)
         from trusted_router.trust_eligibility import billing_paused_tx, lease_eligibility, tier_cap
         settings: Any = getattr(store, "trust_settings", None)
-        reason = "billing_paused" if billing_paused_tx(transaction, store._param_types, authorization.workspace_id) else None
         armed = settings is not None and settings.spend_lease_trust_eligibility_enabled
+        reason = "billing_paused" if armed and billing_paused_tx(transaction, store._param_types, authorization.workspace_id) else None
         current = None
         if armed or reason:
             current = store._read_entity_tx(transaction, _LEASE_KIND,

@@ -50,6 +50,7 @@ from trusted_router.storage_errors import StoreConflict
 from trusted_router.storage_generations import InMemoryGenerations
 from trusted_router.storage_group_buy import InMemoryBedrockGroupBuy
 from trusted_router.storage_keys import InMemoryApiKeys
+from trusted_router.storage_legacy_trust import trust_program_armed
 from trusted_router.storage_models import (
     AcquisitionAttribution,
     ActivationReminderTask,
@@ -151,12 +152,14 @@ class InMemoryStore:
     def __init__(
         self,
         *,
+        trust_settings: Any = None,
         max_workspaces_per_owner: int = 25,
         trust_qualifying_providers: frozenset[str] = frozenset({"stripe", "x402"}),
         trust_tier3_min_days: int = 30,
         trust_tier3_min_paid_microdollars: int = 50_000_000,
     ) -> None:
         self._lock = threading.RLock()
+        self.trust_settings = trust_settings
         self.max_workspaces_per_owner = int(max_workspaces_per_owner)
         self.trust_qualifying_providers = trust_qualifying_providers
         self.trust_tier3_min_days = int(trust_tier3_min_days)
@@ -2784,18 +2787,20 @@ class InMemoryStore:
     ) -> Reservation:
         from trusted_router.storage_legacy_trust import BillingPausedError
         with self._lock:
-            terminal_key = (workspace_id, key_hash, idempotency_key or "")
-            if self._legacy_paused(workspace_id) or terminal_key in self._paused_authorizations:
-                if idempotency_key is not None:
-                    existing_id = self.api_keys.reservation_id_by_idempotency_key.get(idempotency_key)
-                    if existing_id is not None:
-                        self.refund(existing_id)
-                    self._paused_authorizations.add(terminal_key)
-                self.api_keys.refund_limit(key_hash, amount_microdollars, usage_type=UsageType.CREDITS)
-                raise BillingPausedError()
+            if trust_program_armed(self):
+                terminal_key = (workspace_id, key_hash, idempotency_key or "")
+                if self._legacy_paused(workspace_id) or terminal_key in self._paused_authorizations:
+                    if idempotency_key is not None:
+                        existing_id = self.api_keys.reservation_id_by_idempotency_key.get(idempotency_key)
+                        if existing_id is not None:
+                            self.refund(existing_id)
+                        self._paused_authorizations.add(terminal_key)
+                    self.api_keys.refund_limit(key_hash, amount_microdollars, usage_type=UsageType.CREDITS)
+                    raise BillingPausedError()
             reservation = self.api_keys.reserve(workspace_id, key_hash, amount_microdollars,
                                                 idempotency_key=idempotency_key)
-            self._reservation_pause_epochs.setdefault(reservation.id, self._legacy_pause_epoch(workspace_id))
+            if trust_program_armed(self):
+                self._reservation_pause_epochs.setdefault(reservation.id, self._legacy_pause_epoch(workspace_id))
             return reservation
 
     def _legacy_pause_epoch(self, workspace_id: str) -> int:
@@ -2827,7 +2832,8 @@ class InMemoryStore:
     def refund(self, reservation_id: str) -> None:
         with self._lock:
             self.api_keys.refund(reservation_id)
-            self._recover_released_credit_locked(self.api_keys.reservations[reservation_id].workspace_id)
+            if trust_program_armed(self):
+                self._recover_released_credit_locked(self.api_keys.reservations[reservation_id].workspace_id)
 
     # --- Cross-plane credit transfer ---------------------------------------
     #
@@ -3039,20 +3045,21 @@ class InMemoryStore:
     ) -> GatewayAuthorization:
         from trusted_router.storage_legacy_trust import BillingPausedError
         with self._lock:
-            terminal_key = (workspace_id, key_hash, idempotency_key or "")
-            existing = self.api_keys.get_gateway_authorization_by_idempotency_key(workspace_id, key_hash, idempotency_key) if idempotency_key else None
-            if existing is not None:
-                return existing
-            stale_epoch = (expected_pause_epoch is not None and expected_pause_epoch != self._legacy_pause_epoch(workspace_id)) or (credit_reservation_id is not None and
-                self._reservation_pause_epochs.get(credit_reservation_id, 0) != self._legacy_pause_epoch(workspace_id))
-            if self._legacy_paused(workspace_id) or stale_epoch or terminal_key in self._paused_authorizations:
-                if terminal_key not in self._paused_authorizations or idempotency_key is None:
-                    if credit_reservation_id is not None:
-                        self.refund(credit_reservation_id)
-                    self.api_keys.refund_limit(key_hash, estimated_microdollars, usage_type=usage_type)
-                    if idempotency_key is not None:
-                        self._paused_authorizations.add(terminal_key)
-                raise BillingPausedError()
+            if trust_program_armed(self):
+                terminal_key = (workspace_id, key_hash, idempotency_key or "")
+                existing = self.api_keys.get_gateway_authorization_by_idempotency_key(workspace_id, key_hash, idempotency_key) if idempotency_key else None
+                if existing is not None:
+                    return existing
+                stale_epoch = (expected_pause_epoch is not None and expected_pause_epoch != self._legacy_pause_epoch(workspace_id)) or (credit_reservation_id is not None and
+                    self._reservation_pause_epochs.get(credit_reservation_id, 0) != self._legacy_pause_epoch(workspace_id))
+                if self._legacy_paused(workspace_id) or stale_epoch or terminal_key in self._paused_authorizations:
+                    if terminal_key not in self._paused_authorizations or idempotency_key is None:
+                        if credit_reservation_id is not None:
+                            self.refund(credit_reservation_id)
+                        self.api_keys.refund_limit(key_hash, estimated_microdollars, usage_type=usage_type)
+                        if idempotency_key is not None:
+                            self._paused_authorizations.add(terminal_key)
+                    raise BillingPausedError()
             return self.api_keys.create_gateway_authorization(
                 workspace_id=workspace_id,
                 key_hash=key_hash,
@@ -3116,7 +3123,7 @@ class InMemoryStore:
     def get_gateway_authorization_by_idempotency_key(
         self, workspace_id: str, key_hash: str, idempotency_key: str
     ) -> GatewayAuthorization | None:
-        if (workspace_id, key_hash, idempotency_key) in self._paused_authorizations:
+        if trust_program_armed(self) and (workspace_id, key_hash, idempotency_key) in self._paused_authorizations:
             from trusted_router.storage_legacy_trust import BillingPausedError
             raise BillingPausedError()
         return self.api_keys.get_gateway_authorization_by_idempotency_key(
@@ -3670,6 +3677,7 @@ def create_store(settings: Any) -> Store:
     backend = str(getattr(settings, "storage_backend", "memory")).lower()
     if backend == "memory":
         return InMemoryStore(
+            trust_settings=settings,
             max_workspaces_per_owner=int(
                 getattr(settings, "max_workspaces_per_owner", 25)
             ),
@@ -3696,6 +3704,7 @@ def create_store(settings: Any) -> Store:
             )
         store = PostgresStore(
             dsn,
+            trust_settings=settings,
             postgres_iam_auth=str(getattr(settings, "postgres_iam_auth", "") or ""),
             postgres_iam_region=str(getattr(settings, "postgres_iam_region", "") or ""),
             operational_analytics_outbox_enabled=bool(

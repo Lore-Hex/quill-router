@@ -154,17 +154,17 @@ def test_settings_and_create_store_pass_iam_configuration(
     assert settings.postgres_iam_region == "us-east-2"
 
     monkeypatch.setattr(storage_postgres, "PostgresStore", FakeStore)
-    result = create_store(
-        SimpleNamespace(
-            storage_backend="postgres",
-            postgres_dsn="postgresql://admin@cluster.example/postgres",
-            postgres_iam_auth="aws-dsql",
-            postgres_iam_region="us-east-2",
-        )
+    store_settings = SimpleNamespace(
+        storage_backend="postgres",
+        postgres_dsn="postgresql://admin@cluster.example/postgres",
+        postgres_iam_auth="aws-dsql",
+        postgres_iam_region="us-east-2",
     )
+    result = create_store(store_settings)
 
     assert isinstance(result, FakeStore)
     assert captured == {
+        "trust_settings": store_settings,
         "dsn": "postgresql://admin@cluster.example/postgres",
         "postgres_iam_auth": "aws-dsql",
         "postgres_iam_region": "us-east-2",

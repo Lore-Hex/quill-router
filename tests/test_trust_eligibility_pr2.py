@@ -401,6 +401,7 @@ def test_legacy_pause_rejects_atomically_and_terminal_key_survives_unpause(
     from trusted_router.types import UsageType
 
     store = InMemoryStore() if backend == "memory" else postgres_store_on(sqlite_postgres_conn())
+    store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=True)
     ws = store.create_workspace("owner", "legacy", trial_credit_microdollars=1_000_000)
     _raw, key = store.create_api_key(
         workspace_id=ws.id, name="key", creator_user_id="owner", limit_microdollars=1_000_000
@@ -465,6 +466,7 @@ def test_selected_shard_pause_during_typed_authorize_takes_no_holds() -> None:
     from tests.test_spend_lease_authorize import _authorize_store, _store_binding_harness
 
     store, db, key, plan, _ledger = _store_binding_harness()
+    store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=True)
     row = db.typed["tr_credit_balance"][("workspace-1", 0)]
     row["billing_pause_causes"] = ["abuse"]
     row["pause_epoch"] = 1
@@ -480,6 +482,7 @@ def test_legacy_spanner_byok_rechecks_pause_inside_creation() -> None:
     from trusted_router.types import UsageType
 
     store, db, _ = make_fake_store(request_record_write_mode="legacy")
+    store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=True)
     ws = store.create_workspace("owner", "legacy-gcp")
     _raw, key = store.create_api_key(
         workspace_id=ws.id, name="key", creator_user_id="owner", limit_microdollars=1000
@@ -522,6 +525,7 @@ def test_legacy_release_recovers_principal_before_unpause(backend: str) -> None:
     from trusted_router.types import UsageType
 
     store = InMemoryStore() if backend == "memory" else postgres_store_on(sqlite_postgres_conn())
+    store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=True)
     ws = store.create_workspace("owner", "debt-release", trial_credit_microdollars=0)
     now = datetime.now(UTC)
     store.credit_workspace_typed_direct(
@@ -595,6 +599,7 @@ def test_pause_at_reservation_is_terminal_and_cannot_settle_released_hold(
     from trusted_router.types import UsageType
 
     store = InMemoryStore() if backend == "memory" else postgres_store_on(sqlite_postgres_conn())
+    store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=True)
     ws = store.create_workspace("owner", "reserve-race", trial_credit_microdollars=1000)
     _raw, key = store.create_api_key(
         workspace_id=ws.id, name="key", creator_user_id="owner", limit_microdollars=1000
@@ -658,6 +663,7 @@ def test_legacy_pause_cleared_between_reserve_and_create_still_refuses(
         store = (
             InMemoryStore() if backend == "memory" else postgres_store_on(sqlite_postgres_conn())
         )
+    store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=True)
     ws = store.create_workspace("owner", "epoch-race", trial_credit_microdollars=1000)
     _raw, key = store.create_api_key(
         workspace_id=ws.id, name="key", creator_user_id="owner", limit_microdollars=1000
@@ -1028,6 +1034,7 @@ def test_legacy_partial_release_allocates_recovery_in_payment_order(backend: str
     from trusted_router.types import UsageType
 
     store = InMemoryStore() if backend == "memory" else postgres_store_on(sqlite_postgres_conn())
+    store.trust_settings = Settings(environment="test", spend_lease_trust_eligibility_enabled=True)
     ws = store.create_workspace("owner", "partial-release", trial_credit_microdollars=0)
     now = datetime.now(UTC)
     # Insertion order deliberately differs from the canonical payment order.
