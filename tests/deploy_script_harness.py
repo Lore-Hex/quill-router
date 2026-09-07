@@ -1219,6 +1219,7 @@ _INTERNAL_SECRET_BINDINGS = (
     ("TR_OPERATOR_TOKEN", "trustedrouter-operator-token"),
     ("TR_OBSERVER_INTERNAL_TOKEN", "trustedrouter-observer-internal-token"),
     ("TR_SYNTHETIC_MONITOR_API_KEY", "trustedrouter-synthetic-monitor-api-key"),
+    ("TR_STAGE_D_PROBE_API_KEY", "trustedrouter-stage-d-probe-api-key"),
     ("TR_SENTRY_DSN", "trustedrouter-sentry-dsn"),
     ("TR_FEDERATION_PEER_TOKEN", "trustedrouter-federation-peer-token"),
     ("TR_FEDERATION_HOME_TOKEN", "trustedrouter-federation-home-token"),

@@ -289,6 +289,7 @@ SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     "aws_access_key_id": frozenset({"control", "actions"}),
     "aws_secret_access_key": frozenset({"control", "actions"}),
     "synthetic_monitor_api_key": frozenset({"internal", "observer"}),
+    "stage_d_probe_api_key": frozenset({"internal"}),
     "federation_peer_token": frozenset({"internal"}),
     "federation_home_token": frozenset({"internal"}),
     "federation_credit_inbound_token": frozenset({"internal"}),
@@ -1028,6 +1029,9 @@ class Settings(BaseSettings):
     regional_api_hostname_template: str = "api-{region}.quillrouter.com"
     synthetic_monitor_region: str | None = None
     synthetic_monitor_api_key: str | None = None
+    # Second internal probe credential, used by the enclave rollout gate
+    # for the Stage D cohort. Empty leaves only the synthetic monitor key.
+    stage_d_probe_api_key: str = ""
     synthetic_monitor_model: str = "trustedrouter/monitor"
     # Exact HTTPS control-plane origin synthetic canaries exercise. None falls
     # back to the canonical GCP plane. Observer-authenticated requests cannot

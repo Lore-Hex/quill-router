@@ -3301,9 +3301,9 @@ def _require_monitor_model_key(
 ) -> None:
     if not _requests_monitor_model(body):
         return
-    expected = settings.synthetic_monitor_api_key
-    if expected and api_key_lookup_hash == lookup_hash_api_key(expected):
-        return
+    for expected in (settings.synthetic_monitor_api_key, settings.stage_d_probe_api_key):
+        if expected and api_key_lookup_hash == lookup_hash_api_key(expected):
+            return
     raise api_error(
         403,
         "trustedrouter/monitor is restricted to the synthetic monitor key",

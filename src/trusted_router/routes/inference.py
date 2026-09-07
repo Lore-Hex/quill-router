@@ -959,17 +959,16 @@ def _require_monitor_model_key(
     settings: Settings,
 ) -> None:
     """Block any caller from requesting `trustedrouter/monitor` unless
-    they hold the synthetic-monitor API key. The monitor model is for
+    they hold a configured internal probe API key. The monitor model is for
     internal probing only; otherwise customers could hammer it for free
     routing decisions."""
     if not _requests_monitor_model(body):
         return
     api_key = principal.api_key
-    expected = settings.synthetic_monitor_api_key
-    if api_key is not None and expected and api_key.lookup_hash == lookup_hash_api_key(
-        expected
-    ):
-        return
+    api_key_lookup_hash = api_key.lookup_hash if api_key is not None else None
+    for expected in (settings.synthetic_monitor_api_key, settings.stage_d_probe_api_key):
+        if expected and api_key_lookup_hash == lookup_hash_api_key(expected):
+            return
     raise api_error(
         403,
         "trustedrouter/monitor is restricted to the synthetic monitor key",

@@ -132,6 +132,7 @@ _ACTION_FORBIDDEN_CONFIG: tuple[tuple[str, object, str], ...] = (
         "synthetic-secret",
         "TR_SYNTHETIC_MONITOR_API_KEY",
     ),
+    ("stage_d_probe_api_key", "probe-secret", "TR_STAGE_D_PROBE_API_KEY"),
     ("federation_peer_token", "f" * 32, "TR_FEDERATION_PEER_TOKEN"),
     ("federation_home_token", "h" * 32, "TR_FEDERATION_HOME_TOKEN"),
     (
@@ -211,6 +212,7 @@ _SENSITIVE_TEST_VALUES: dict[str, object] = {
     "aws_access_key_id": "ses-access",
     "aws_secret_access_key": "ses-secret",
     "synthetic_monitor_api_key": "synthetic-secret",
+    "stage_d_probe_api_key": "probe-secret",
     "federation_peer_token": "f" * 40,
     "federation_home_token": "h" * 40,
     "federation_credit_inbound_token": "i" * 40,
@@ -286,7 +288,7 @@ _EXPECTED_OWNER_GROUPS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
     ),
     (
         frozenset({"internal"}),
-        ("internal_gateway_token", "operator_token"),
+        ("internal_gateway_token", "operator_token", "stage_d_probe_api_key"),
     ),
     (
         frozenset({"internal", "observer"}),

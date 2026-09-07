@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -18,6 +19,7 @@ REGIONS = {
     "southamerica-east1",
 }
 EXPECTED_SECRETS = {
+    "TR_STAGE_D_PROBE_API_KEY": "trustedrouter-stage-d-probe-api-key:latest",
     "TR_INTERNAL_GATEWAY_TOKEN": "trustedrouter-internal-gateway-token:latest",
     "TR_OPERATOR_TOKEN": "trustedrouter-operator-token:latest",
     "TR_OBSERVER_INTERNAL_TOKEN": "trustedrouter-observer-internal-token:latest",
@@ -44,6 +46,7 @@ EXPECTED_SECRETS = {
     ),
 }
 SECRET_VALUES = {
+    "TR_STAGE_D_PROBE_API_KEY": "probe-" + "d" * 40,
     "TR_INTERNAL_GATEWAY_TOKEN": "gateway-" + "g" * 40,
     "TR_OPERATOR_TOKEN": "operator-" + "p" * 40,
     "TR_OBSERVER_INTERNAL_TOKEN": "observer-" + "o" * 40,
@@ -464,3 +467,34 @@ def test_missing_runtime_grant_refuses_before_cloud_mutation(
     assert message in run.stderr
     mutating = ("create", "update", "deploy", "add-backend", "import")
     assert not any(any(part in mutating for part in call[1:]) for call in run.calls)
+
+
+@pytest.mark.parametrize("stage", ("companion", "routed"))
+def test_missing_stage_d_probe_binding_is_optional_on_first_internal_deploy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str,
+) -> None:
+    original = SCRIPT_FIXTURES[SCRIPT]
+    responses = []
+    for pattern, response in original.responses:
+        if "run revisions describe trusted-router-active" in pattern:
+            revision = json.loads(response)
+            container = revision["spec"]["containers"][0]
+            container["env"] = [
+                entry for entry in container["env"]
+                if entry["name"] != "TR_STAGE_D_PROBE_API_KEY"
+            ]
+            response = json.dumps(revision)
+        responses.append((pattern, response))
+    monkeypatch.setitem(SCRIPT_FIXTURES, SCRIPT, replace(original, responses=tuple(responses)))
+
+    run = DeployScriptHarness(tmp_path / "missing-probe-binding").run(SCRIPT, args=(stage,))
+
+    assert run.returncode == 0, summarise(run)
+    calls = _deploy_calls(run)
+    assert len(calls) == 4
+    for call in calls:
+        assert _mapping(call, "--set-secrets", ",") == {
+            name: reference for name, reference in EXPECTED_SECRETS.items()
+            if name != "TR_STAGE_D_PROBE_API_KEY"
+        }
+        assert Settings(**_settings_kwargs(call)).stage_d_probe_api_key == ""
