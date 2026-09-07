@@ -29,6 +29,7 @@
     {% elif phone_error == 'too_many_attempts' %}<p class="notice bad">Too many attempts — that code is now dead. Send a new one.</p>
     {% elif phone_error == 'no_pending' %}<p class="notice bad">No code is waiting. Send one first.</p>
     {% elif phone_error == 'rate' %}<p class="notice bad">A code was just sent. Wait a moment before asking for another.</p>
+    {% elif phone_identity_notice %}<p class="notice bad">Complete <a href="/console/account/verification?error=identity_required">identity verification</a> before verifying a phone number from this region.</p>
     {% elif phone_error == 'consent' %}<p class="notice bad">Tick the consent box before we can text or call you.</p>{% endif %}
     {% if phone_error == 'funding' %}<p class="notice bad">Add credits first — phone verification is available after your first top-up. <a href="/console/credits?purpose=identity_verification">Add credits</a></p>
     {% elif phone_error == 'email' %}<p class="notice bad">Add an email address before verifying a phone. <a href="/console/account/preferences">Add email</a></p>{% endif %}
@@ -41,6 +42,17 @@
       <p class="muted">Your agents can reach you here with <code>POST /v1/notify</code> — push, email, SMS, or a phone call. They cannot send anywhere else: the destination is resolved from the API key to this account, never from the request. <a href="/docs/notify">How it works</a>.</p>
       <form class="form" method="post" action="/console/settings/phone/remove">
         <button class="btn" type="submit">Remove this number</button>
+      </form>
+    {% elif phone_requires_identity %}
+      <p class="notice bad">This number is blocked until you complete <a href="/console/account/verification?error=identity_required">identity verification</a>.</p>
+      {% if phone_pending %}
+      <form class="form" method="post" action="/console/settings/phone/cancel">
+        <button class="btn" type="submit">Cancel verification</button>
+      </form>
+      {% endif %}
+      <p>US, Canadian, and most European numbers can verify directly. <a href="https://github.com/Lore-Hex/quill-router/blob/main/src/trusted_router/phone_verification.py">Exact phone-region rule</a>.</p>
+      <form class="form" method="post" action="/console/settings/phone/start">
+        {% include "_sms_enrolment_fields.html" %}
       </form>
     {% elif phone_pending %}
       <p>A code is on its way to <strong>{{ phone_pending }}</strong>.</p>
@@ -80,7 +92,7 @@
       {% if phone_missing_requirements[0] == 'email' and phone_error != 'email' %}<p class="notice bad">Add an email address before verifying a phone. <a href="/console/account/preferences">Add email</a></p>
       {% elif phone_missing_requirements[0] == 'funding' and phone_error != 'funding' %}<p class="notice bad">Add credits first — phone verification is available after your first top-up. <a href="/console/credits?purpose=identity_verification">Add credits</a></p>{% endif %}
     {% else %}
-      <p>Add a mobile number so your agents can reach you when something breaks. Verifying it is what unlocks every notification channel, email included.</p>
+      <p>Add a mobile number so your agents can reach you when something breaks. US, Canadian, and most European numbers can verify directly; numbers from other regions require <a href="/console/account/verification">identity verification</a> first. <a href="https://github.com/Lore-Hex/quill-router/blob/main/src/trusted_router/phone_verification.py">Exact phone-region rule</a>.</p>
       <form class="form" method="post" action="/console/settings/phone/start">
         {% include "_sms_enrolment_fields.html" %}
       </form>

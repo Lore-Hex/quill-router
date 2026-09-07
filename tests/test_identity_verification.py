@@ -57,22 +57,19 @@ def _verify_phone(user: Any) -> None:
 def _eligible_user(client: TestClient) -> Any:
     user = _user(client)
     _fund(user)
-    _verify_phone(user)
     return user
 
 
 @pytest.mark.parametrize(
-    ("missing_email", "phone_verified", "funded", "expected"),
+    ("missing_email", "funded", "expected"),
     [
-        (True, True, True, ["email"]),
-        (False, False, True, ["phone_verified"]),
-        (False, True, False, ["funding"]),
-        (True, False, False, ["email", "phone_verified", "funding"]),
+        (True, True, ["email"]),
+        (False, False, ["funding"]),
+        (True, False, ["email", "funding"]),
     ],
 )
 def test_identity_session_reports_exact_missing_requirements(
     missing_email: bool,
-    phone_verified: bool,
     funded: bool,
     expected: list[str],
 ) -> None:
@@ -92,8 +89,6 @@ def test_identity_session_reports_exact_missing_requirements(
         else:
             user = _user(client)
             headers = HEADERS
-        if phone_verified:
-            _verify_phone(user)
         if funded:
             _fund(user)
 
@@ -104,6 +99,17 @@ def test_identity_session_reports_exact_missing_requirements(
     assert error["type"] == "verification_required"
     assert error["missing_requirements"] == expected
     assert error["verification_url"] == "/console/account/verification"
+
+
+def test_identity_session_starts_without_phone_verification() -> None:
+    for client in _client():
+        user = _user(client)
+        _fund(user)
+
+        response = client.post("/v1/auth/identity/session", headers=HEADERS)
+
+    assert response.status_code == 201
+    assert not user.phone_verified
 
 
 def test_identity_session_disabled_without_dev_fallback() -> None:
@@ -300,3 +306,17 @@ def test_declined_or_stale_pending_creates_and_charges_new_session(
         movement.movement_id == f"veriff_fee:{user.id}:new-session"
         for movement in movements
     )
+
+
+def test_status_requests_phone_after_identity_without_phone() -> None:
+    for client in _client():
+        user = _eligible_user(client)
+        STORE.mark_user_email_verified(user.id)
+        response = client.get("/v1/auth/verification-status", headers=HEADERS)
+        assert response.json()["data"]["next_step"] == "identity"
+        STORE.set_user_identity_status(user.id, status="approved")
+        response = client.get("/v1/auth/verification-status", headers=HEADERS)
+        assert response.json()["data"]["next_step"] == "phone"
+        _verify_phone(user)
+        response = client.get("/v1/auth/verification-status", headers=HEADERS)
+        assert response.json()["data"]["next_step"] is None

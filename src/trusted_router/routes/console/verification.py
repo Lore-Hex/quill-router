@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from trusted_router import phone_verification as pv
 from trusted_router.auth import SettingsDep
 from trusted_router.config import Settings
 from trusted_router.creator_identity import validate_creator_username
@@ -76,6 +77,7 @@ def register(app: FastAPI) -> None:
                 lifetime_topup_required=required,
                 lifetime_progress=min(100, int(lifetime_topup * 100 / required)),
                 phone_funding_unlocked=lifetime_topup > 0,
+                phone_requires_identity=pv.console_phone_requires_identity(user),
                 identity_fee_display=format_money_display(
                     VERIFF_ATTEMPT_FEE_MICRODOLLARS
                 ),
@@ -147,7 +149,6 @@ def register(app: FastAPI) -> None:
 #: reading "phone_verified" is reading our schema, not an instruction.
 _REQUIREMENT_LABELS = {
     "email": "a verified email address",
-    "phone_verified": "a verified phone number",
     "funding": "the minimum lifetime top-up",
 }
 

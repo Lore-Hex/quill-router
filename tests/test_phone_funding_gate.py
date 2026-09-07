@@ -284,13 +284,13 @@ def test_verification_status_reports_shape_and_next_step_progression(
         "verification_fee_microdollars": 5_000_000,
         "lifetime_topup_required": 25.0,
         "lifetime_topup_required_microdollars": 25_000_000,
-        "missing_requirements": ["phone_verified", "funding"],
+        "missing_requirements": ["funding"],
         "next_step": "email",
     }
     assert email_done["next_step"] == "funding"
     assert funded["lifetime_topup_microdollars"] == 25_000_000
-    assert funded["missing_requirements"] == ["phone_verified"]
-    assert funded["next_step"] == "phone"
+    assert funded["missing_requirements"] == []
+    assert funded["next_step"] == "identity"
     assert phone_done["phone_verified"] is True
     assert phone_done["phone"] == "+13059511381"
     assert phone_done["next_step"] == "identity"

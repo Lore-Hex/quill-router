@@ -18,7 +18,7 @@
     {% endif %}
     {% if identity_verification_checkout %}
     <div class="notice" style="margin-top:18px">
-      Identity verification requires {{ verification_topup_remaining_display }} more in lifetime top-ups. Any successful top-up also unlocks phone verification.
+      Identity verification requires {{ verification_topup_remaining_display }} more in lifetime top-ups. With email requirements met, a successful top-up unlocks direct phone verification for US, Canadian, and most European numbers; other regions require identity verification first. Identity verification does not require a verified phone. <a href="https://github.com/Lore-Hex/quill-router/blob/main/src/trusted_router/phone_verification.py">Exact phone-region rule</a>.
     </div>
     {% endif %}
     <form class="form" method="post" action="/console/credits/checkout" style="margin-top:18px">

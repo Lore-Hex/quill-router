@@ -29,8 +29,6 @@ def missing_identity_verification_requirements(
     missing: list[str] = []
     if not user.email:
         missing.append("email")
-    if not user.phone_verified:
-        missing.append("phone_verified")
     lifetime_topup = (
         STORE.get_lifetime_topup_microdollars(user.id)
         if lifetime_topup_microdollars is None

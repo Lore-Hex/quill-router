@@ -127,8 +127,8 @@ def _next_step(user: User, lifetime_topup: int) -> str | None:
         return "email"
     if lifetime_topup < VERIFICATION_MIN_LIFETIME_TOPUP_MICRODOLLARS:
         return "funding"
-    if not user.phone_verified:
-        return "phone"
     if not user.identity_verified:
         return "identity"
+    if not user.phone_verified:
+        return "phone"
     return None

@@ -7,10 +7,12 @@ Status: DRAFT (design in progress, 2026-08-25). Increments merge separately.
 1. **Scopes** on the OAuth / "Sign in with TrustedRouter" flow, enforced
    fail-closed on delegated keys.
 2. **Verification-level disclosure**: an app can learn how verified the
-   signing-in user is — `none < email < phone < identity` — resolved from
+   signing-in user is: the highest tier achieved, ranked
+   `identity > phone > email > none`, resolved from
    state TrustedRouter already maintains (email verification, phone
    verification via SMS/voice code, Veriff full-ID verification from the
-   Custom Models program).
+   Custom Models program). Apps must not infer lower tiers from this value;
+   identity_verified does not imply phone_verified.
 3. **App registry + markup economy**: a registered app can add a percentage
    markup on top of token costs for requests made through its delegated
    keys. The signing-in user pays the marked-up total from their credits;
@@ -73,7 +75,10 @@ unscoped. Legacy keys federate exactly as before.
 computed (not stored) as the highest of: `email_verified`,
 `phone_verified`, `identity_status == "approved"`. Exposed via the
 `profile` scope in the userinfo response and in the token-exchange
-response. The ladder is ordered; apps can gate on `>=`.
+response. This is the highest tier achieved, ranked `identity > phone > email > none`.
+Apps must not infer lower tiers from it: identity_verified does not imply
+phone_verified. Phone verification may happen after identity verification; an
+app requiring a verified phone cannot use `verification_level >= phone` as proof.
 
 ### Registry decisions from B review round 1 (2026-08-26)
 
