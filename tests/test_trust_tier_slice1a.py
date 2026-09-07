@@ -1019,6 +1019,7 @@ def test_armed_shadow_and_authoritative_claims_carry_the_effective_tier() -> Non
 
 
 def test_new_settings_are_inert_and_pinned_to_scope_defaults() -> None:
+    """Only the deployed router is armed; code and scope defaults stay unchanged."""
     settings = Settings(environment="test")
 
     assert settings.spend_lease_trust_eligibility_enabled is False
@@ -1036,7 +1037,7 @@ def test_new_settings_are_inert_and_pinned_to_scope_defaults() -> None:
         settings.spend_lease_tier3_cap_microdollars,
     ) == (5_000_000, 25_000_000, 100_000_000)
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
-    assert '"TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=false"' in rollout
+    assert '"TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=true"' in rollout
 
 
 def test_reconciliation_freshness_covers_delay_plus_two_cadences() -> None:
