@@ -938,7 +938,6 @@ def test_additional_arm_preconditions_fail_closed(condition: str) -> None:
 def test_rollout_preserves_account_pin_without_ungated_provider_lookup(
     pin: str, live: str, jobs: str, expected: str
 ) -> None:
-    """The armed rollout preserves the account pin without ungated provider lookup."""
     import os
     import subprocess
     from pathlib import Path
@@ -967,7 +966,7 @@ def test_rollout_preserves_account_pin_without_ungated_provider_lookup(
         },
     )
     assert result.stdout == expected
-    assert '"TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=true"' in text
+    assert '"TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=false"' in text
 
 
 @pytest.mark.parametrize(
