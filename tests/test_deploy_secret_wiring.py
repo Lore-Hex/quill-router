@@ -1,16 +1,70 @@
+import json
 import os
 import re
 import subprocess
+from dataclasses import replace
 from pathlib import Path
+
+import pytest
 
 from scripts.check_price_coverage import (
     _DISCOVERABLE_MANIFEST_PROVIDERS,
     _GLM_DISCOVERABLE_PROVIDER_APIS,
     _OPTIONAL_STALE_MANIFEST_PROVIDER_SLUGS,
 )
+from tests.deploy_script_harness import SCRIPT_FIXTURES, DeployScriptHarness, summarise
 from trusted_router.enclave_regions import ENCLAVE_REGIONS
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("incoming", ["acct_repository", "", None])
+@pytest.mark.parametrize("serving", ["acct_serving", "", None])
+@pytest.mark.parametrize("region", ["us-central1", "europe-west4", "us-east4", "southamerica-east1"])
+def test_rollout_stripe_account_override_and_preservation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    incoming: str | None,
+    serving: str | None,
+    region: str,
+) -> None:
+    script = "scripts/deploy/rollout.sh"
+    fixture = SCRIPT_FIXTURES[script]
+    responses = []
+    for pattern, reply in fixture.responses:
+        if "run revisions describe trusted-router-active" in pattern:
+            revision = json.loads(reply)
+            if serving is not None:
+                revision["spec"]["containers"][0]["env"].append(
+                    {"name": "TR_TRUST_STRIPE_ACCOUNT_ID", "value": serving}
+                )
+            reply = json.dumps(revision)
+        responses.append((pattern, reply))
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES, script, replace(fixture, responses=tuple(responses))
+    )
+    # Match the workflow's one-region-per-process rollout invocation. The
+    # harness argv recorder does not serialize concurrent CLI writers.
+    env = {"TR_DEPLOY_TARGET_REGIONS": region}
+    if incoming is not None:
+        env["TR_TRUST_STRIPE_ACCOUNT_ID"] = incoming
+    run = DeployScriptHarness(tmp_path).run(script, extra_env=env)
+    assert run.returncode == 0, summarise(run)
+    deploys = [
+        call for call in run.calls
+        if call[:6] == ["gcloud", "--project", "quill-cloud-proxy", "run", "deploy", "trusted-router"]
+    ]
+    assert len(deploys) == 1
+    assert deploys[0][deploys[0].index("--region") + 1] == region
+    for call in deploys:
+        # These are the candidate revisions the workflow subsequently ramps.
+        assert "--no-traffic" in call
+        raw = call[call.index("--set-env-vars") + 1]
+        assert raw.startswith("^|^")
+        emitted = dict(item.split("=", 1) for item in raw.removeprefix("^|^").split("|"))
+        assert emitted["TR_TRUST_STRIPE_ACCOUNT_ID"] == (incoming or serving or "")
+    # An ordinary release must not resolve a missing pin by contacting Stripe.
+    assert not any("https://api.stripe.com/v1/account" in call for call in run.calls)
 
 
 def test_top_level_deploy_passes_spanner_config_to_unshared_migration() -> None:

@@ -163,7 +163,10 @@ def test_internal_deploy_pins_each_region_stage_and_exact_secret_allowlist(
     stage: str,
     client_ip_mode: str,
 ) -> None:
-    run = harness.run(SCRIPT, args=(stage,))
+    # A control-plane account pin must not widen this surface's env allowlist.
+    run = harness.run(
+        SCRIPT, args=(stage,), extra_env={"TR_TRUST_STRIPE_ACCOUNT_ID": "acct_repository"}
+    )
     assert run.returncode == 0, summarise(run)
     calls = _deploy_calls(run)
     assert len(calls) == 4
