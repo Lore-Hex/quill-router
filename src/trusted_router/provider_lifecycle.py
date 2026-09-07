@@ -32,6 +32,7 @@ NEAR_AI_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 11, 13, 0, tzinfo=UTC)
 PARASAIL_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
 FRIENDLI_QWEN3_235B_RETIREMENT_AT = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
 FRIENDLI_K_EXAONE_236B_RETIREMENT_AT = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
+FRIENDLI_K_EXAONE_2_RETIREMENT_AT = datetime(2026, 9, 6, 0, 0, tzinfo=UTC)
 CRUSOE_NEMOTRON_3_ULTRA_RETIREMENT_AT = datetime(2026, 7, 28, 18, 0, tzinfo=UTC)
 WAFER_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 WAFER_GLM52_RETIREMENT_AT = datetime(2026, 9, 5, 6, 59, tzinfo=UTC)
@@ -112,6 +113,17 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # Friendli's September 4 notice specifies September 6 00:00 UTC
+    # (September 5 17:00 PDT). Only the shared Model API is retiring;
+    # dedicated endpoints and equivalent models on other providers survive.
+    # Discovery already delisted this route. The clock guard additionally
+    # protects stale processes and prevents a later feed from resurrecting it.
+    _Retirement(
+        provider="friendli",
+        model_ids=frozenset({"lgai-exaone/k-exaone-2.0-750b-a37b"}),
+        upstream_ids=frozenset({"LGAI-EXAONE/K-EXAONE-2.0-750B-A37B"}),
+        effective_at=FRIENDLI_K_EXAONE_2_RETIREMENT_AT,
+    ),
     # NEAR announced both GLM retirements for 2026-09-11 13:00 UTC. Do not
     # silently substitute the suggested GLM 5.3 Flash: its direct workload
     # requires separate attestation review. Other providers are unaffected.
