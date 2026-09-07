@@ -24,7 +24,7 @@ def test_crusoe_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # n
     payload = {
         "data": [
             {
-                "id": "zai/GLM-5.2",
+                "id": "zai/GLM-5.3",
                 "pricing": {
                     "prompt": "1.40",
                     "completion": "4.40",
@@ -74,14 +74,14 @@ def test_crusoe_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # n
     monkeypatch.setattr(crusoe.httpx, "Client", FakeClient)
 
     result = crusoe.fetch()
-    glm = result.prices["z-ai/glm-5.2"]
+    glm = result.prices["z-ai/glm-5.3"]
     flash = result.prices["deepseek/deepseek-v4-flash"]
 
     assert glm.prompt_micro_per_m == 1_400_000
     assert glm.completion_micro_per_m == 4_400_000
     assert glm.tiers[0].prompt_cached_micro_per_m == 260_000
     assert flash.prompt_micro_per_m == 140_000
-    assert crusoe.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "zai/GLM-5.2"
+    assert crusoe.UPSTREAM_ID_MAP["z-ai/glm-5.3"] == "zai/GLM-5.3"
     assert (
         crusoe.UPSTREAM_ID_MAP["deepseek/deepseek-v4-flash"]
         == "deepseek-ai/Deepseek-V4-Flash"
