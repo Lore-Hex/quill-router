@@ -54,6 +54,7 @@ from trusted_router.storage_gcp_counter_dml import (
     KEY_ACCEPTED,
     KEY_INSUFFICIENT,
     KEY_MISSING,
+    KEY_NO_HOLD,
     complete_reservation_retention,
     insert_entity_dml,
     insert_reservation,
@@ -275,6 +276,7 @@ def authorize_atomic(
     credit_shard: int = UNSHARDED,
     credit_shard_candidates: tuple[int, ...] | None = None,
     key_shard_candidates: tuple[int, ...] = (UNSHARDED,),
+    skip_key_limit: bool = False,
     authorization_id: str | None = None,
     spend_lease_hook: Callable[[Any, int], dict[str, Any]] | None = None,
     build_authorization_for_lease: (
@@ -299,6 +301,12 @@ def authorize_atomic(
     enough independent sub-budget is recorded durably on the reservation. The
     store wrapper applies `bounded_credit_shard_candidates`; direct callers must
     likewise pass no more than the hot-path limit.
+
+    `skip_key_limit` is opt-in: the gateway's already-loaded ApiKey must have
+    no lifetime cap and no window caps applicable to this request. Omitted
+    by older callers, it preserves the existing reserve SQL. The first candidate
+    still receives settlement usage, with zero held, without an authorize read
+    or write of tr_key_limit.
 
     Per-window key caps are checked by the CALLER via check_key_window_limits on
     a lock-free snapshot BEFORE this transaction — deliberately NOT in here: a
@@ -395,30 +403,39 @@ def authorize_atomic(
             if existing is not None:
                 return _replay(transaction, existing)
 
-        key_result = KEY_MISSING
-        selected_key_shard = UNSHARDED
-        saw_key_row = False
-        for candidate in key_candidates:
-            candidate_result = reserve_key(
-                transaction,
-                pt,
-                key_hash,
-                estimate,
-                is_byok=is_byok,
-                shard=candidate,
-            )
-            if candidate_result == KEY_MISSING:
-                continue
-            saw_key_row = True
-            if candidate_result == KEY_INSUFFICIENT:
-                continue
-            key_result = candidate_result
-            selected_key_shard = candidate
-            break
-        if key_result == KEY_MISSING:
-            raise _Reject(
-                AuthorizeOutcome.KEY_LIMIT_EXCEEDED if saw_key_row else AuthorizeOutcome.KEY_MISSING
-            )
+        # Bounded lifetime-cap TOCTOU: a cap committed after the gateway's
+        # entity read can miss only requests already in flight at that commit,
+        # each admitted for its own estimate (aggregate: sum of those estimates).
+        # The next fresh entity read enforces the cap; removal likewise takes
+        # effect on the next request. Do not add a hot api_key/counter read here.
+        if skip_key_limit:
+            key_result = KEY_NO_HOLD
+            selected_key_shard = key_candidates[0]
+        else:
+            key_result = KEY_MISSING
+            selected_key_shard = UNSHARDED
+            saw_key_row = False
+            for candidate in key_candidates:
+                candidate_result = reserve_key(
+                    transaction,
+                    pt,
+                    key_hash,
+                    estimate,
+                    is_byok=is_byok,
+                    shard=candidate,
+                )
+                if candidate_result == KEY_MISSING:
+                    continue
+                saw_key_row = True
+                if candidate_result == KEY_INSUFFICIENT:
+                    continue
+                key_result = candidate_result
+                selected_key_shard = candidate
+                break
+            if key_result == KEY_MISSING:
+                raise _Reject(
+                    AuthorizeOutcome.KEY_LIMIT_EXCEEDED if saw_key_row else AuthorizeOutcome.KEY_MISSING
+                )
         key_hold = estimate if key_result == KEY_ACCEPTED else 0
 
         credit_hold = 0
@@ -625,8 +642,9 @@ def _release_key_or_skip_deleted(
     `release_key` deliberately returns the raw UPDATE count. A 0 count is
     ambiguous only here, after the reservation has been claimed: the key row may
     have been deleted, or the `reserved >= hold` corruption guard may have fired.
-    Missing row is a committed-success warning; present row keeps the loud
-    row-count failure path.
+    Zero-hold usage (including skip-path reservations) must book even after a
+    shrink reshard: recover on shard zero or raise with the amount preserved.
+    Held/deleted keys and zero-usage refunds retain their historical behavior.
     """
     from trusted_router.storage_gcp_counter_dml import key_limit_exists, release_key
 
@@ -645,6 +663,26 @@ def _release_key_or_skip_deleted(
     )
     if count == 1:
         return count, None
+    # Pre-migration credit-only reservations can legitimately have no key.
+    if res["key_hash"] is not None and key_hold == 0 and actual_micro > 0:
+        if key_shard != 0:
+            recovered = release_key(
+                transaction, param_types, key_hash, 0, int(actual_micro),
+                book_to_byok=book_to_byok, window_floors=window_floors(utcnow()),
+                shard=0,
+            )
+            if recovered == 1:
+                return 1, {
+                    "key_hash": key_hash, "hold_micro": 0,
+                    "missing_shard": key_shard, "actual_micro": int(actual_micro),
+                }
+        # Deliberately not _SettleError: callers must see the amount and retry
+        # (the outbox retains its frozen payload), never report SETTLED.
+        raise RuntimeError(
+            f"key usage booking failed reservation_id={res['reservation_id']} "
+            f"key_hash={key_hash} shard={key_shard} fallback_shard=0 "
+            f"actual_micro={actual_micro} book_to_byok={book_to_byok}"
+        )
     if key_limit_exists(transaction, param_types, key_hash, shard=key_shard):
         return count, None
     return 1, {"key_hash": key_hash, "hold_micro": key_hold}
@@ -653,6 +691,16 @@ def _release_key_or_skip_deleted(
 def _log_missing_key_releases(result: dict[str, Any]) -> None:
     warnings = result.pop("missing_key_releases", ())
     for warning in warnings:
+        if "missing_shard" in warning:
+            # Structured counter event for log-based metrics; emit after commit
+            # so Spanner transaction retries do not count speculative recovery.
+            log.warning(
+                "metric=key_usage_shard_fallback_total value=1 "
+                "key usage recovered key_hash=%s shard=%s fallback_shard=0 actual_micro=%s",
+                warning["key_hash"], warning["missing_shard"], warning["actual_micro"],
+                extra={"metric": "key_usage_shard_fallback_total", "value": 1, **warning},
+            )
+            continue
         log.warning(
             "skipped key release for missing tr_key_limit row key_hash=%s hold_micro=%s",
             warning["key_hash"],
@@ -746,7 +794,7 @@ def settle_atomic(
         if warning is not None:
             missing_key_releases.append(warning)
         # A recorded hold MUST release; an uncapped/no-hold row (key_reserved==0)
-        # may 0-row and is tolerated (best-effort usage tracking).
+        # with positive usage must book or raise in the shared helper.
         if res["key_reserved_micro"] > 0 and key_count != 1:
             raise _SettleError("key release row-count != 1")
 

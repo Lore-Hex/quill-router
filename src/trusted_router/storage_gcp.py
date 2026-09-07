@@ -5326,6 +5326,7 @@ class SpannerBigtableStore:
         receipt_fee_basis_points: int = 0,
         app_owner_user_id: str = "",
         key_usage_shards: int = 1,
+        skip_key_limit: bool = False,
         tags: dict[str, str] | None = None,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
@@ -5578,6 +5579,7 @@ class SpannerBigtableStore:
                     # configured shard.
                     credit_shard_candidates=bounded_credit_shard_candidates(candidates),
                     key_shard_candidates=key_shard_candidates,
+                    skip_key_limit=skip_key_limit and not window_limits,
                     authorization_id=authorization_id,
                     spend_lease_hook=spend_hook,
                     build_authorization_for_lease=(
