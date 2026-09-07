@@ -162,6 +162,8 @@ def _normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             key: str(value) if value is not None else None
             for key, value in source["pricing"].items()
         }
+        if pricing.get("prompt") is None or pricing.get("completion") is None:
+            raise RuntimeError(f"featherless: missing per-token API prices for {row.get('id')}")
         row["pricing"] = pricing
         current = openai_model_price(row)
         if current is None:

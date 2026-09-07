@@ -131,6 +131,14 @@ def test_different_authenticated_plan_price_does_not_get_class_discount(monkeypa
         _normalize(monkeypatch, [_row(prompt="0.000002")])
 
 
+@pytest.mark.parametrize("missing", ["prompt", "completion"])
+def test_per_million_api_fields_never_become_per_token_prices(monkeypatch, missing):
+    row = _row("future/model", "future")
+    del row["pricing"][missing]
+    with pytest.raises(RuntimeError, match="missing per-token API prices"):
+        _normalize(monkeypatch, [row])
+
+
 def test_missing_cache_column_does_not_become_output_price(monkeypatch):
     with pytest.raises(RuntimeError, match="cache.*table"):
         _normalize(monkeypatch, [_row()], PRICES.replace("Cached input / 1M tokens", "Other"))
