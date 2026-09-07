@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-09-06T23:35:58Z",
+  "generated_at": "2026-09-07T09:05:12Z",
   "model_count": 119,
   "models": [
     {
@@ -1931,9 +1931,10 @@
       "status": 1,
       "id": "meta-llama/llama-3.2-90b-vision-instruct",
       "upstream_id": "meta/llama-3.2-90b-vision-instruct",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
-      "output_token_price_per_m": 10000000
+      "output_token_price_per_m": 10000000,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "display_name": "meta/llama-3.3-70b-instruct",
