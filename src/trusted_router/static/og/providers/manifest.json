@@ -802,10 +802,10 @@
   },
   "xiaomi": {
     "card_version": 2,
-    "model_count": 3,
+    "model_count": 2,
     "name": "Xiaomi MiMo",
     "privacy": "Policy documented",
-    "route_count": 6,
+    "route_count": 4,
     "route_mode": "Prepaid + BYOK",
     "slug": "xiaomi"
   },
