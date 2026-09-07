@@ -13,6 +13,8 @@ def test_canonicalize_provider_native_ids_for_new_model_discovery() -> None:
     assert canonicalize_native_model_id("moonshotai/Kimi-K2.7-Code") == "moonshotai/kimi-k2.7-code"
     assert canonicalize_native_model_id("Qwen/Qwen3.5-397B-A17B") == ("qwen/qwen3.5-397b-a17b")
     assert canonicalize_native_model_id("zai-org/GLM-5.2") == "z-ai/glm-5.2"
+    assert canonicalize_native_model_id("zai/GLM-5.3") == "z-ai/glm-5.3"
+    assert canonicalize_native_model_id("ZAI/GLM-5.3-Flash") == "z-ai/glm-5.3-flash"
     assert canonicalize_native_model_id("MiniMaxAI/MiniMax-M2.7") == ("minimax/minimax-m2.7")
 
 

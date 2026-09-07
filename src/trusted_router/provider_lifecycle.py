@@ -33,6 +33,7 @@ PARASAIL_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
 FRIENDLI_QWEN3_235B_RETIREMENT_AT = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
 FRIENDLI_K_EXAONE_236B_RETIREMENT_AT = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
 CRUSOE_NEMOTRON_3_ULTRA_RETIREMENT_AT = datetime(2026, 7, 28, 18, 0, tzinfo=UTC)
+CRUSOE_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 13, 4, 0, tzinfo=UTC)
 WAFER_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
 WAFER_GLM52_RETIREMENT_AT = datetime(2026, 9, 5, 6, 59, tzinfo=UTC)
 DEEPINFRA_TERMINUS_RETIREMENT_AT = datetime(2026, 8, 17, 0, 0, tzinfo=UTC)
@@ -442,6 +443,28 @@ _RETIREMENTS = (
         model_ids=frozenset({"nvidia/nemotron-3-ultra-550b"}),
         upstream_ids=frozenset({"nvidia/NVIDIA-Nemotron-3-Ultra-550B"}),
         effective_at=CRUSOE_NEMOTRON_3_ULTRA_RETIREMENT_AT,
+    ),
+    # Crusoe's Serverless cutoff is September 12 at 21:00 Pacific daylight
+    # time (UTC-7), hence September 13 at 04:00 UTC. Match only the announced
+    # checkpoints; keep other providers and dedicated deployments untouched.
+    # Replacements are migration guidance, never silent routing aliases.
+    _Retirement(
+        provider="crusoe",
+        model_ids=frozenset({
+            "z-ai/glm-5.1",
+            "z-ai/glm-5.2",
+            "deepseek/deepseek-v3-0324",
+            "qwen/qwen3-235b-a22b-2507",
+            "meta-llama/llama-3.3-70b-instruct",
+        }),
+        upstream_ids=frozenset({
+            "zai/GLM-5.1",
+            "zai/GLM-5.2",
+            "deepseek-ai/DeepSeek-V3-0324",
+            "Qwen/Qwen3-235B-A22B-Instruct-2507",
+            "meta-llama/Llama-3.3-70B-Instruct",
+        }),
+        effective_at=CRUSOE_SEPTEMBER_2026_RETIREMENT_AT,
     ),
     # Baseten announced that these Model API routes become inactive at
     # 2026-07-24 17:00 PT, which is 2026-07-25 00:00 UTC. Dedicated

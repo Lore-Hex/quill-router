@@ -16,6 +16,7 @@ _AUTHOR_ALIASES = {
     "minimaxai": "minimax",
     "moonshotai": "moonshotai",
     "qwen": "qwen",
+    "zai": "z-ai",
     "zai-org": "z-ai",
     "zhipuai": "z-ai",
     "zhipu-ai": "z-ai",
