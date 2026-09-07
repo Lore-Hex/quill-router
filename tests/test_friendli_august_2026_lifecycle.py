@@ -8,8 +8,9 @@ from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import friendli
 from tests.lifecycle_clock import catalog_predates
-from trusted_router import provider_lifecycle
+from trusted_router import catalog, provider_lifecycle
 from trusted_router.catalog import endpoints_for_model
+from trusted_router.catalog_data import ModelEndpoint
 
 _QWEN_CUTOFF = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
 _EXAONE_CUTOFF = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
@@ -65,12 +66,27 @@ def test_friendli_exaone_retires_at_announced_instant() -> None:
 def test_friendli_qwen_retirement_is_provider_scoped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # This historical Friendli boundary must not depend on providers that
+    # independently retire Qwen later (Crusoe in September).
+    endpoints = {}
+    for provider in ("friendli", "atlas-cloud", "crusoe"):
+        endpoint = ModelEndpoint(
+            id=f"{_QWEN}@{provider}/prepaid", model_id=_QWEN,
+            provider=provider, usage_type="Credits", upstream_id=_QWEN_UPSTREAM,
+        )
+        endpoints[endpoint.id] = endpoint
+    monkeypatch.setattr(catalog, "MODEL_ENDPOINTS", endpoints)
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now", lambda: _QWEN_CUTOFF - timedelta(microseconds=1),
+    )
+    assert {endpoint.provider for endpoint in endpoints_for_model(_QWEN)} == {
+        "friendli", "atlas-cloud", "crusoe",
+    }
     monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _QWEN_CUTOFF)
 
     providers = {endpoint.provider for endpoint in endpoints_for_model(_QWEN)}
 
-    assert "friendli" not in providers
-    assert {"atlas-cloud", "crusoe"}.issubset(providers)
+    assert providers == {"atlas-cloud", "crusoe"}
 
 
 def test_friendli_exaone_catalog_route_retires_on_schedule(
