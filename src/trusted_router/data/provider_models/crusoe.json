@@ -8,6 +8,8 @@
   "models": [
     {
       "id": "deepseek/deepseek-v3-0324",
+      "retirement_at": "2026-09-13T04:00:00Z",
+      "replacement_model_id": "deepseek/deepseek-v4-pro",
       "upstream_id": "deepseek-ai/DeepSeek-V3-0324",
       "display_name": "deepseek-ai/DeepSeek-V3-0324",
       "title": "deepseek-ai/DeepSeek-V3-0324",
@@ -202,6 +204,8 @@
     },
     {
       "id": "meta-llama/llama-3.3-70b-instruct",
+      "retirement_at": "2026-09-13T04:00:00Z",
+      "replacement_model_id": "deepseek/deepseek-v4-flash",
       "upstream_id": "meta-llama/Llama-3.3-70B-Instruct",
       "display_name": "meta-llama/Llama-3.3-70B-Instruct",
       "title": "meta-llama/Llama-3.3-70B-Instruct",
@@ -542,6 +546,8 @@
     },
     {
       "id": "qwen/qwen3-235b-a22b-2507",
+      "retirement_at": "2026-09-13T04:00:00Z",
+      "replacement_model_id": "deepseek/deepseek-v4-flash",
       "upstream_id": "Qwen/Qwen3-235B-A22B-Instruct-2507",
       "display_name": "Qwen/Qwen3-235B-A22B-Instruct-2507",
       "title": "Qwen/Qwen3-235B-A22B-Instruct-2507",
@@ -638,6 +644,8 @@
     },
     {
       "id": "z-ai/glm-5.1",
+      "retirement_at": "2026-09-13T04:00:00Z",
+      "replacement_model_id": "z-ai/glm-5.3",
       "upstream_id": "zai/GLM-5.1",
       "display_name": "zai/GLM-5.1",
       "title": "zai/GLM-5.1",
@@ -686,6 +694,8 @@
     },
     {
       "id": "z-ai/glm-5.2",
+      "retirement_at": "2026-09-13T04:00:00Z",
+      "replacement_model_id": "z-ai/glm-5.3",
       "upstream_id": "zai/GLM-5.2",
       "display_name": "zai/GLM-5.2",
       "title": "zai/GLM-5.2",
