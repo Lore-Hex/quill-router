@@ -31,11 +31,12 @@
     <div class="panel-head"><h2>Verify a phone first</h2><span class="pill">required for every channel</span></div>
     <div class="panel-body">
       <p>Every channel — including email — requires a verified phone number on the account. The phone is not protecting the recipient, since there is only one possible recipient. It is a cost floor on account farming: TrustedRouter sends from its own A2P brand, so sender reputation is shared, and email is the cheapest channel to abuse.</p>
+      <p>After email and a funded top-up, US, Canadian, and most European numbers can verify directly; other regions require identity verification first. <a href="https://github.com/Lore-Hex/quill-router/blob/main/src/trusted_router/phone_verification.py">Exact phone-region rule</a>.</p>
       <p>Add a number in <strong>Settings &rarr; Notifications</strong>, or over the API:</p>
       <pre><code># Send a code. channel: "sms" or "voice".
 curl {{ api_base_url }}/notify/phone/start \
   -H "Content-Type: application/json" \
-  -d '{"phone": "+15551234567", "channel": "voice"}'
+  -d '{"phone": "+14165550123", "channel": "voice"}'
 
 # Confirm it.
 curl {{ api_base_url }}/notify/phone/confirm \

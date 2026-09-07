@@ -4,7 +4,7 @@
 {% if dev_approved %}<p class="notice ok">Development verification approved.</p>{% endif %}
 {% if error == 'insufficient' %}<p class="notice bad">You need {{ identity_fee_display }} in available credits to start identity verification. <a href="/console/credits?purpose=identity_verification">Add credits</a></p>
 {% elif error == 'veriff_unavailable' %}<p class="notice bad">Identity verification is temporarily unavailable. Try again later.</p>
-{% elif error == 'prereqs' %}<p class="notice bad">Complete email, funding, and phone verification before starting identity verification.</p>{% endif %}
+{% elif error == 'prereqs' %}<p class="notice bad">Complete email and funding requirements before starting identity verification.</p>{% endif %}
 
 <ol class="verification-checklist" aria-label="Account verification progress">
   <li class="verification-step {{ 'complete' if current_user.email and current_user.email_verified else 'current' }}" data-step="email" data-step-state="{{ 'complete' if current_user.email and current_user.email_verified else 'incomplete' }}">
@@ -26,7 +26,7 @@
         <div><span class="verification-kicker">Step 2</span><h2>Fund your account</h2></div>
         {% if lifetime_topup >= lifetime_topup_required %}<span class="pill good">complete</span>{% elif phone_funding_unlocked %}<span class="pill warn">in progress</span>{% else %}<span class="pill">not started</span>{% endif %}
       </div>
-      <p>$1+ unlocks phone verification; $25 total unlocks identity verification.</p>
+      <p>$1+ unlocks direct phone verification for US, Canadian, and most European numbers; $25 total unlocks identity verification. <a href="https://github.com/Lore-Hex/quill-router/blob/main/src/trusted_router/phone_verification.py">Exact phone-region rule</a>.</p>
       <div class="verification-funding-progress">
         <div class="verification-progress-copy"><strong>{{ lifetime_topup_display }}</strong><span>of {{ lifetime_topup_required_display }} cumulative funding</span></div>
         <div class="verification-progress-track" role="progressbar" aria-label="Lifetime funding progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ lifetime_progress }}"><span style="width: {{ lifetime_progress }}%"></span></div>
@@ -35,18 +35,18 @@
     </div>
   </li>
 
-  <li class="verification-step {{ 'complete' if current_user.phone_verified else '' }}" data-step="phone" data-step-state="{{ 'complete' if current_user.phone_verified else 'incomplete' }}">
+  <li class="verification-step {{ 'complete' if current_user.phone_verified else '' }}" data-step="phone" data-step-state="{{ 'complete' if current_user.phone_verified else 'blocked-until-identity' if phone_requires_identity else 'incomplete' }}">
     <div class="verification-step-marker" aria-hidden="true">{{ '✓' if current_user.phone_verified else '3' }}</div>
     <div class="verification-step-content">
       <div class="verification-step-head">
         <div><span class="verification-kicker">Step 3</span><h2>Phone</h2></div>
-        {% if current_user.phone_verified %}<span class="pill good">verified</span>{% else %}<span class="pill">not verified</span>{% endif %}
+        {% if current_user.phone_verified %}<span class="pill good">verified</span>{% elif phone_requires_identity %}<span class="pill warn">blocked until identity</span>{% else %}<span class="pill">not verified</span>{% endif %}
       </div>
-      {% if current_user.phone_verified %}<p>{{ current_user.phone }}</p>{% else %}<p>Verify a phone number using the existing one-time-code flow in Settings.</p><a class="btn" href="/console/settings#phone">Verify phone</a>{% endif %}
+      {% if current_user.phone_verified %}<p>{{ current_user.phone }}</p>{% elif phone_requires_identity %}<p>This number can be verified after <a href="#identity">identity verification</a>.</p><a class="btn" href="/console/settings#phone">Verify phone with a different number</a>{% else %}<p>US, Canadian, and most European numbers can verify directly. Other regions require identity verification first. <a href="https://github.com/Lore-Hex/quill-router/blob/main/src/trusted_router/phone_verification.py">Exact phone-region rule</a>.</p><a class="btn" href="/console/settings#phone">Verify phone</a>{% endif %}
     </div>
   </li>
 
-  <li class="verification-step {{ 'complete' if current_user.identity_verified else '' }}" data-step="identity" data-step-state="{{ identity_status }}">
+  <li id="identity" class="verification-step {{ 'complete' if current_user.identity_verified else '' }}" data-step="identity" data-step-state="{{ identity_status }}">
     <div class="verification-step-marker" aria-hidden="true">{{ '✓' if current_user.identity_verified else '4' }}</div>
     <div class="verification-step-content">
       <div class="verification-step-head">

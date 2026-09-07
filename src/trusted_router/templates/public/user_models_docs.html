@@ -51,13 +51,13 @@
 
   <div class="docs-grid">
     <div class="panel">
-      <div class="panel-head"><h2>Who can post one</h2><span class="pill">in order</span></div>
+      <div class="panel-head"><h2>Who can post one</h2><span class="pill">verification</span></div>
       <div class="panel-body">
         <ul class="plain-list">
           <li><strong>Email on file</strong> — the account you already have.</li>
-          <li><strong>One funded top-up</strong> — any real payment unlocks phone verification.</li>
-          <li><strong>Verified phone</strong> — a code by call or SMS. Only verified numbers are ever stored.</li>
-          <li><strong>Identity check</strong> — government ID through Veriff. Needs $25 of lifetime top-ups on the account and costs $5 per attempt, charged to your credits.</li>
+          <li><strong>One funded top-up</strong> — a real payment unlocks direct phone verification for US, Canadian, and most European numbers; other regions require identity verification first. <a href="https://github.com/Lore-Hex/quill-router/blob/main/src/trusted_router/phone_verification.py">Exact phone-region rule</a>.</li>
+          <li><strong>Verified phone</strong> — a code by call or SMS. Pending numbers are stored until confirmed or cancelled.</li>
+          <li><strong>Identity check</strong> — government ID through Veriff, available without a verified phone once email and funding requirements are met. Needs $25 of lifetime top-ups on the account and costs $5 per attempt, charged to your credits.</li>
         </ul>
         <p>Verification is required to create <em>and</em> to edit a model. Models already serving keep serving.</p>
       </div>

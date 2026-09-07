@@ -71,6 +71,14 @@ def register(app: FastAPI) -> None:
                 phone_error=error,
                 phone_error_detail=detail,
                 phone_missing_requirements=phone_missing_requirements,
+                phone_requires_identity=pv.console_phone_requires_identity(user),
+                phone_identity_notice=(
+                    error == "identity_required"
+                    and not user.pending_phone
+                    and not user.phone_verified
+                    and not user.identity_verified
+                    and not pv.console_phone_requires_identity(user)
+                ),
             )
         )
 
@@ -118,7 +126,11 @@ def register(app: FastAPI) -> None:
         wanted: Literal["sms", "voice"] = (
             "sms" if channel == "sms" and settings.notify_sms_available else "voice"
         )
-        started = STORE.begin_phone_verification(ctx.user.id, normalized, wanted)
+        try:
+            started = STORE.begin_phone_verification(ctx.user.id, normalized, wanted)
+        except pv.PhoneIdentityVerificationRequired:
+            STORE.set_user_phone_last_refused(ctx.user.id, normalized)
+            return _back("error=identity_required")
         if started is None:
             return _back("error=phone&detail=account+not+found")
         code, _updated = started
@@ -133,7 +145,10 @@ def register(app: FastAPI) -> None:
 
     @app.post("/console/settings/phone/confirm")
     def console_phone_confirm(ctx: ConsoleDep, code: str = Form("")) -> Response:
-        status, _user = STORE.confirm_phone_verification(ctx.user.id, code)
+        try:
+            status, _user = STORE.confirm_phone_verification(ctx.user.id, code)
+        except pv.PhoneNumberError as exc:
+            return _back(f"error=phone&detail={quote(str(exc))}")
         if status == "ok":
             return _back("phone_saved=1")
         return _back(f"error={status}")

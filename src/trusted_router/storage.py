@@ -1221,6 +1221,8 @@ class InMemoryStore:
             normalized = IdentityVerificationStatus.coerce(status)
             if normalized is IdentityVerificationStatus.APPROVED and not user.identity_verified_at:
                 user.identity_verified_at = iso_now()
+            if normalized is IdentityVerificationStatus.APPROVED:
+                user.phone_last_refused = None
             user.identity_status = normalized.value
             if session_id is not None:
                 if session_id != user.veriff_session_id or not user.veriff_session_created_at:
@@ -1312,6 +1314,14 @@ class InMemoryStore:
             if user is None:
                 return None
             phone_verification.cancel_pending(user)
+            return user
+
+    def set_user_phone_last_refused(self, user_id: str, phone: str) -> User | None:
+        with self._lock:
+            user = self.users.get(user_id)
+            if user is None:
+                return None
+            user.phone_last_refused = phone
             return user
 
     def clear_user_phone(self, user_id: str) -> User | None:

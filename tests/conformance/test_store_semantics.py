@@ -2312,3 +2312,41 @@ def test_concurrent_transfers_cannot_overdraw(store: Store, workspace_id: str, u
     # PostgresStore._RETRYABLE_ROLLBACK_SQLSTATES.
     assert not escaped, f"store errors reached the caller: {escaped}"
     assert moved.count(True) == 1, f"oversubscribed the balance: {moved}"
+
+
+def test_phone_refused_region_persists_without_staging_a_code(
+    store: Store, user_id: str
+) -> None:
+    before = store.get_user(user_id)
+    assert before is not None
+    before_pending = before.pending_phone
+    before_hash = before.phone_code_hash
+    updated = store.set_user_phone_last_refused(user_id, "+18765550123")
+    assert updated is not None
+    reloaded = store.get_user(user_id)
+    assert reloaded is not None
+    assert reloaded.phone_last_refused == "+18765550123"
+    assert reloaded.pending_phone == before_pending
+    assert reloaded.phone_code_hash == before_hash
+    assert store.set_user_phone_last_refused("missing-round3-user", "+18765550123") is None
+
+
+@pytest.mark.parametrize("action", ["approve", "webhook"])
+def test_round4_refusal_reset_round_trips(store: Store, user_id: str, unique: str, action: str) -> None:
+    store.set_user_identity_status(user_id, status="pending", session_id=unique)
+    store.set_user_phone_last_refused(user_id, "+18765550123")
+    refused = store.get_user(user_id)
+    assert refused is not None
+    assert refused.phone_last_refused == "+18765550123"
+    assert refused.pending_phone is None
+    if action == "approve":
+        store.set_user_identity_status(user_id, status="approved")
+    else:
+        assert store.apply_veriff_identity_decision(
+            user_id, event_id=unique, session_id=unique, status="approved", decision_code=9001
+        ) == "applied"
+    reloaded = store.get_user(user_id)
+    assert reloaded is not None
+    assert reloaded.phone_last_refused is None
+    assert reloaded.identity_verified
+    assert reloaded.pending_phone is None

@@ -27,8 +27,11 @@ curl https://trustedrouter.com/v1/oauth/token \
 
 The response contains `access_token` (the delegated key), `token_type:
 bearer`, granted `scope`, and `trustedrouter` metadata with
-`verification_level`, `app_id`, and `workspace_id`. Verification is ordered
-`none < email < phone < identity`. Errors use RFC 6749 `error` and
+`verification_level`, `app_id`, and `workspace_id`. The reported level is the highest completed check, not an ordered ladder:
+identity does not imply a verified phone. Identity verification is available
+once email and funding requirements are met, without phone verification.
+Phone verification is available directly for US, Canadian, and most European numbers
+after email and a funded top-up; other regions require identity verification first. See the [exact phone-region rule](https://github.com/Lore-Hex/quill-router/blob/main/src/trusted_router/phone_verification.py). Errors use RFC 6749 `error` and
 `error_description`; token responses are non-cacheable.
 
 ### Scopes

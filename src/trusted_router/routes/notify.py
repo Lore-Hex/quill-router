@@ -187,7 +187,15 @@ def register_notify_routes(router: APIRouter) -> None:
         except pv.PhoneNumberError as exc:
             raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
 
-        started = STORE.begin_phone_verification(user.id, phone, channel)
+        try:
+            started = STORE.begin_phone_verification(user.id, phone, channel)
+        except pv.PhoneIdentityVerificationRequired as exc:
+            raise api_error(
+                403,
+                str(exc),
+                ErrorType.VERIFICATION_REQUIRED,
+                extra={"verification_url": "/console/account/verification"},
+            ) from exc
         if started is None:
             raise api_error(404, "user not found", ErrorType.NOT_FOUND)
         code, _updated = started
@@ -211,9 +219,21 @@ def register_notify_routes(router: APIRouter) -> None:
         if user is None:
             raise api_error(403, "sign in to manage your phone number", ErrorType.FORBIDDEN)
 
-        status, updated = STORE.confirm_phone_verification(user.id, str(payload.get("code") or ""))
+        try:
+            status, updated = STORE.confirm_phone_verification(
+                user.id, str(payload.get("code") or "")
+            )
+        except pv.PhoneNumberError as exc:
+            raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
         if status == "ok":
             return JSONResponse({"verified": True, "phone": updated.phone if updated else None})
+        if status == "identity_required":
+            raise api_error(
+                403,
+                "Complete identity verification before verifying a phone number from this region",
+                ErrorType.VERIFICATION_REQUIRED,
+                extra={"verification_url": "/console/account/verification"},
+            )
 
         # 400 for a wrong code, 409 for a state problem the user must restart.
         code = 400 if status == "mismatch" else 409

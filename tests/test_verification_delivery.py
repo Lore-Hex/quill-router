@@ -143,6 +143,46 @@ class TestSettingsRoutes:
         assert response.status_code == 400
         assert fake.sent == [], "a carrier was called with a number we knew was bad"
 
+    def test_regional_gate_blocks_begin_and_confirm_until_identity(
+        self, client, user_headers, monkeypatch
+    ) -> None:
+        fake = _Telephony()
+        monkeypatch.setattr(notify_module, "get_telephony_service", lambda s: fake)
+        user = STORE.ensure_user("alice@example.com")
+
+        blocked_begin = client.post(
+            "/notify/phone/start",
+            headers=user_headers,
+            json={"phone": "+2348012345678", "channel": "voice"},
+        )
+        assert blocked_begin.status_code == 403
+        assert blocked_begin.json()["error"]["verification_url"] == (
+            "/console/account/verification"
+        )
+        assert "identity verification" in blocked_begin.json()["error"]["message"].lower()
+        assert fake.sent == []
+
+        STORE.set_user_identity_status(user.id, status="approved")
+        started = STORE.begin_phone_verification(user.id, "+2348012345678", "voice")
+        assert started is not None
+        code, _updated = started
+        STORE.set_user_identity_status(user.id, status="declined")
+
+        blocked_confirm = client.post(
+            "/notify/phone/confirm", headers=user_headers, json={"code": code}
+        )
+        assert blocked_confirm.status_code == 403
+        assert blocked_confirm.json()["error"]["verification_url"] == (
+            "/console/account/verification"
+        )
+
+        STORE.set_user_identity_status(user.id, status="approved")
+        confirmed = client.post(
+            "/notify/phone/confirm", headers=user_headers, json={"code": code}
+        )
+        assert confirmed.status_code == 200
+        assert confirmed.json()["verified"] is True
+
     def test_sms_falls_back_to_voice_while_carrier_registration_is_pending(
         self, client, user_headers, monkeypatch
     ) -> None:
@@ -213,3 +253,26 @@ class TestSettingsRoutes:
         user = STORE.find_user_by_email("alice@example.com")
         assert user is not None
         assert user.pending_phone == "+13059511381"
+
+
+@pytest.mark.parametrize("phone", ["+1٨761234567", "+1８761234567"])
+def test_unicode_api_start_and_legacy_confirm_are_bad_requests(
+    client, user_headers, monkeypatch, phone
+) -> None:
+    from trusted_router import phone_verification as pv
+
+    fake = _Telephony()
+    monkeypatch.setattr(notify_module, "get_telephony_service", lambda s: fake)
+    started = client.post(
+        "/notify/phone/start", headers=user_headers, json={"phone": phone}
+    )
+    assert started.status_code == 400
+    assert not fake.sent
+    user = STORE.ensure_user("alice@example.com")
+    code = pv.begin(user, "+13059511381")
+    user.pending_phone = phone
+    response = client.post(
+        "/notify/phone/confirm", headers=user_headers, json={"code": code}
+    )
+    assert response.status_code == 400
+    assert not user.phone_verified

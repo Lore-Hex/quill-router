@@ -1986,6 +1986,8 @@ class PostgresStore:
             normalized = IdentityVerificationStatus.coerce(status)
             if normalized is IdentityVerificationStatus.APPROVED and not user.identity_verified_at:
                 user.identity_verified_at = iso_now()
+            if normalized is IdentityVerificationStatus.APPROVED:
+                user.phone_last_refused = None
             user.identity_status = normalized.value
             if session_id is not None:
                 if session_id != user.veriff_session_id or not user.veriff_session_created_at:
@@ -2039,6 +2041,8 @@ class PostgresStore:
             normalized = IdentityVerificationStatus.coerce(status)
             if normalized is IdentityVerificationStatus.APPROVED and not user.identity_verified_at:
                 user.identity_verified_at = iso_now()
+            if normalized is IdentityVerificationStatus.APPROVED:
+                user.phone_last_refused = None
             user.identity_status = normalized.value
             user.veriff_decision_code = decision_code
             if decision_reason is not None:
@@ -2177,6 +2181,17 @@ class PostgresStore:
 
     def cancel_phone_verification(self, user_id: str) -> User | None:
         self._not_implemented("cancel_phone_verification")
+
+    def set_user_phone_last_refused(self, user_id: str, phone: str) -> User | None:
+        def txn(conn: Any) -> User | None:
+            user = self._read_entity_tx(conn, "user", user_id, User, for_update=True)
+            if user is None:
+                return None
+            user.phone_last_refused = phone
+            self._write_entity_tx(conn, "user", user.id, user)
+            return user
+
+        return self._run_transaction(txn)
 
     def clear_user_phone(self, user_id: str) -> User | None:
         self._not_implemented("clear_user_phone")

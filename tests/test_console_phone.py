@@ -143,6 +143,18 @@ class TestVerifying:
         assert "error=phone" in response.headers["location"]
         assert carrier.sent == []
 
+    def test_a_non_allowlisted_number_links_to_identity(self, client, carrier) -> None:
+        response = client.post(
+            "/console/settings/phone/start",
+            data={"phone": "+8801712345678", "channel": "voice", "sms_consent": "yes"},
+        )
+
+        assert response.headers["location"].endswith("error=identity_required")
+        assert carrier.sent == []
+        page = client.get(response.headers["location"])
+        assert "This number is blocked until you complete" in page.text
+        assert 'href="/console/account/verification?error=identity_required">identity verification</a>' in page.text
+
     def test_a_wrong_code_does_not_verify(self, client, carrier) -> None:
         client.post(
             "/console/settings/phone/start",
@@ -403,3 +415,178 @@ class TestSmsConsentIsRealAndVerifiable:
             ):
                 assert required in flat, f"{path} is missing {required!r}"
 
+
+def test_blocked_pending_can_cancel_or_replace_with_us_number(client, carrier) -> None:
+    import datetime as dt
+
+    from trusted_router import phone_verification as pv
+    from trusted_router.storage_models import utcnow
+
+    user = _user()
+    # Simulate an older staged number whose identity approval no longer holds.
+    pv.begin(user, "+13059511381", now=utcnow() - dt.timedelta(minutes=2))
+    user.pending_phone = "+18761234567"
+    # The memory backend exposes this stored record directly.
+    assert _user().pending_phone == "+18761234567"
+    page = client.get("/console/settings")
+    assert 'action="/console/settings/phone/cancel"' in page.text
+    assert 'action="/console/settings/phone/start"' in page.text
+    assert 'name="phone"' in page.text
+    assert 'name="sms_consent"' in page.text
+    response = client.post(
+        "/console/settings/phone/start",
+        data={"phone": "+13059511381", "channel": "voice", "sms_consent": "yes"},
+    )
+    assert response.headers["location"].endswith("sent=voice")
+    assert carrier.sent[0][1] == "+13059511381"
+    assert _user().pending_phone == "+13059511381"
+
+
+def test_console_legacy_unicode_confirm_shows_number_error(client) -> None:
+    from trusted_router import phone_verification as pv
+
+    user = _user()
+    code = pv.begin(user, "+13059511381")
+    user.pending_phone = "+1٨761234567"
+    response = client.post("/console/settings/phone/confirm", data={"code": code})
+    assert "error=phone" in response.headers["location"]
+    assert not user.phone_verified
+
+
+@pytest.mark.parametrize("pending", ["+14165550123", "+13055550123"])
+def test_round3_refused_submit_preserves_live_pending_form(client, carrier, pending) -> None:
+    import datetime as dt
+
+    from trusted_router.storage_models import utcnow
+
+    started = client.post(
+        "/console/settings/phone/start",
+        data={"phone": pending, "sms_consent": "yes"},
+    )
+    assert "sent=voice" in started.headers["location"]
+    # Past the resend floor, but well inside the ten-minute code lifetime.
+    _user().phone_code_sent_at = (utcnow() - dt.timedelta(seconds=61)).isoformat()
+    response = client.post(
+        "/console/settings/phone/start",
+        data={"phone": "+18765550123", "sms_consent": "yes"},
+    )
+    assert "error=identity_required" in response.headers["location"]
+    assert len(carrier.sent) == 1
+    page = client.get(response.headers["location"]).text
+    assert 'action="/console/settings/phone/confirm"' in page
+    assert pending in page
+    assert "Cancel verification" not in page
+    assert "This number is blocked" not in page
+    checklist = client.get("/console/account/verification?error=identity_required").text
+    assert 'data-step="phone" data-step-state="incomplete"' in checklist
+    code = "".join(ch for ch in carrier.sent[0][2].split("is")[1] if ch.isdigit())[:6]
+    confirmed = client.post("/console/settings/phone/confirm", data={"code": code})
+    assert "phone_saved=1" in confirmed.headers["location"]
+
+
+@pytest.mark.parametrize("pending", [None, "+18765550123"])
+def test_round3_approved_identity_ignores_stale_error(client, pending) -> None:
+    user = _user()
+    STORE.set_user_identity_status(user.id, status="approved")
+    if pending:
+        STORE.begin_phone_verification(user.id, pending, "voice")
+    page = client.get("/console/settings?error=identity_required").text
+    assert "This number is blocked" not in page
+    assert "before verifying a phone number from this region" not in page
+    assert "Cancel verification" not in page
+    if pending:
+        assert 'action="/console/settings/phone/confirm"' in page
+    checklist = client.get("/console/account/verification?error=identity_required").text
+    assert 'data-step="phone" data-step-state="incomplete"' in checklist
+
+
+def test_round3_first_refusal_has_one_notice_and_no_cancel(client, carrier) -> None:
+    response = client.post(
+        "/console/settings/phone/start",
+        data={"phone": "+18765550123", "sms_consent": "yes"},
+    )
+    page = client.get(response.headers["location"]).text
+    assert page.count('class="notice bad"') == 1
+    assert "This number is blocked until you complete" in page
+    assert 'href="/console/account/verification?error=identity_required"' in page
+    assert 'action="/console/settings/phone/cancel"' not in page
+    assert 'action="/console/settings/phone/start"' in page
+    assert _user().pending_phone is None
+    assert carrier.sent == []
+    # No inline link or query string: normal navigation must retain the reason.
+    checklist = client.get("/console/account/verification").text
+    assert 'data-step="phone" data-step-state="blocked-until-identity"' in checklist
+    revisited = client.get("/console/settings").text
+    assert "This number is blocked until you complete" in revisited
+    assert 'action="/console/settings/phone/cancel"' not in revisited
+
+
+def test_round3_query_only_is_notice_not_state(client) -> None:
+    page = client.get("/console/settings?error=identity_required").text
+    assert page.count('class="notice bad"') == 1
+    assert "before verifying a phone number from this region" in page
+    assert 'href="/console/account/verification?error=identity_required"' in page
+    assert 'action="/console/settings/phone/cancel"' not in page
+    assert "This number is blocked" not in page
+    assert "before verifying a phone number from this region" not in client.get("/console/settings").text
+    checklist = client.get("/console/account/verification?error=identity_required").text
+    assert 'data-step="phone" data-step-state="incomplete"' in checklist
+
+
+def test_round3_verified_phone_ignores_refused_attempt(client) -> None:
+    user = _user()
+    code, _ = STORE.begin_phone_verification(user.id, "+14165550123", "voice")
+    STORE.confirm_phone_verification(user.id, code)
+    STORE.set_user_phone_last_refused(user.id, "+18765550123")
+    page = client.get("/console/settings?error=identity_required").text
+    assert "before verifying a phone number from this region" not in page
+    assert "This number is blocked" not in page
+    assert 'action="/console/settings/phone/remove"' in page
+    checklist = client.get("/console/account/verification").text
+    assert 'data-step="phone" data-step-state="complete"' in checklist
+
+
+@pytest.mark.parametrize("page", ["/console/settings", "/console/account/verification"])
+def test_round4_confirm_then_remove_renders_clean_state(client, carrier, page) -> None:
+    import datetime as dt
+
+    from trusted_router.storage_models import utcnow
+
+    started = client.post(
+        "/console/settings/phone/start",
+        data={"phone": "+14165550123", "sms_consent": "yes"},
+    )
+    assert "sent=voice" in started.headers["location"]
+    _user().phone_code_sent_at = (utcnow() - dt.timedelta(seconds=61)).isoformat()
+    refused = client.post(
+        "/console/settings/phone/start",
+        data={"phone": "+18765550123", "sms_consent": "yes"},
+    )
+    assert "error=identity_required" in refused.headers["location"]
+    assert _user().phone_last_refused == "+18765550123"
+    assert len(carrier.sent) == 1
+    code = "".join(ch for ch in carrier.sent[0][2].split("is")[1] if ch.isdigit())[:6]
+    confirmed = client.post("/console/settings/phone/confirm", data={"code": code})
+    assert "phone_saved=1" in confirmed.headers["location"]
+    removed = client.post("/console/settings/phone/remove")
+    assert removed.status_code == 303
+    response = client.get(page)
+    assert response.status_code == 200
+    assert "This number is blocked" not in response.text
+    assert 'data-step-state="blocked-until-identity"' not in response.text
+    assert _user().phone_last_refused is None
+    assert _user().phone is None
+    assert _user().pending_phone is None
+
+
+@pytest.mark.parametrize("action", ["remove", "cancel"])
+def test_round4_phone_reset_clears_stored_refusal(client, action) -> None:
+    user = _user()
+    STORE.begin_phone_verification(user.id, "+14165550123", "voice")
+    STORE.set_user_phone_last_refused(user.id, "+18765550123")
+    response = client.post(f"/console/settings/phone/{action}")
+    assert response.status_code == 303
+    reloaded = STORE.get_user(user.id)
+    assert reloaded is not None
+    assert reloaded.phone_last_refused is None
+    assert reloaded.pending_phone is None

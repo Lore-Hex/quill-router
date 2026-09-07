@@ -143,6 +143,8 @@ class User:
     phone_verified: bool = False
     phone_verified_at: str | None = None
     pending_phone: str | None = None
+    # Last refused destination, for regional guidance only; never a pending proof.
+    phone_last_refused: str | None = None
     phone_code_hash: str | None = None
     phone_code_salt: str | None = None
     phone_code_expires_at: str | None = None
