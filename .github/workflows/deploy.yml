@@ -484,6 +484,7 @@ jobs:
         id: warm_all
         env:
           IMAGE_TAG: ${{ needs.build-image.outputs.sha }}
+          TR_TRUST_STRIPE_ACCOUNT_ID: ${{ vars.TR_TRUST_STRIPE_ACCOUNT_ID || '' }}
         run: |
           set -euo pipefail
 

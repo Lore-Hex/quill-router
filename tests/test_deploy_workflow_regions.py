@@ -38,6 +38,27 @@ def test_every_load_balanced_control_plane_region_is_staged() -> None:
         assert region in ramp
 
 
+def test_every_rollout_step_receives_the_repository_stripe_account_pin() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    invocations = []
+    for step in workflow.split("\n      - ")[1:]:
+        metadata, separator, run = step.partition("\n        run:")
+        if not separator:
+            continue
+        commands = "\n".join(
+            line for line in run.splitlines() if not line.lstrip().startswith("#")
+        )
+        if not re.search(r"scripts/(?:deploy/rollout|deploy-gcp)\.sh", commands):
+            continue
+        invocations.append(metadata.splitlines()[0])
+        assert "\n        env:\n" in metadata
+        assert (
+            "\n          TR_TRUST_STRIPE_ACCOUNT_ID: "
+            "${{ vars.TR_TRUST_STRIPE_ACCOUNT_ID || '' }}"
+        ) in metadata, metadata
+    assert invocations == ["name: Warm all four regions in parallel (no traffic)"]
+
+
 def test_prod_smoke_checks_public_origins_and_converges_private_regions() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
 
