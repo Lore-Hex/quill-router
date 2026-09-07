@@ -788,17 +788,8 @@ ENV_VARS=(
   # key is in the cohort. Clearing this list is the later fleet-expansion step,
   # not part of arming.
   "TR_STAGE_D_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d,91d7810e-93b2-4c37-b1bd-ba9227585416"
-  # Decisions 75-76: the arm gate's conditions are satisfied in production as of
-  # 2026-09-07: typed Spanner settlement (TR_STORAGE_BACKEND=spanner-bigtable,
-  # TR_REQUEST_RECORD_WRITE_MODE=typed); stripe, x402 and owner-inventory markers
-  # complete with zero unmatched and zero semantic mismatches and a 900 s
-  # consistency delay; maximum per-owner fan-out 420 against the 20,000 budget;
-  # and the Stripe account pin now reaching the router. The recurring reconciler
-  # and tier job have run four consecutive clean cadences with every tiered shard
-  # fresh, and the pilot workspace is tier 2, unlatched, on all 16 shards.
-  # Settings.spend_lease_trust_eligibility_enabled stays False so only a deployed
-  # router is armed. Rollback is the reverse one-line edit to false.
-  "TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=true"
+  # Trust eligibility remains inert; its arm gate validates the completed program.
+  "TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=false"
   "TR_TRUST_STRIPE_ACCOUNT_ID=${TR_TRUST_STRIPE_ACCOUNT_ID}"
   "TR_TRUST_QUALIFYING_PROVIDERS=stripe,x402"
   "TR_TRUST_RECONCILE_INTERVAL_SECONDS=900"
