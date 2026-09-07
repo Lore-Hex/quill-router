@@ -11,6 +11,7 @@ cache_creation_input_tokens. Two things must hold:
 """
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.catalog import cache_token_prices_microdollars, endpoint_for_id
@@ -18,6 +19,7 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import token_cost_microdollars
 from trusted_router.storage import STORE
+from trusted_router.typed_balance import live_credit_summary
 
 
 def _client_and_key() -> tuple[TestClient, dict]:
@@ -103,16 +105,17 @@ def test_anthropic_cache_read_and_write_tokens_are_billed() -> None:
     assert generation.tokens_prompt == 14 + 6081 + 2000
 
 
-def test_openai_compatible_cached_subset_is_normalized() -> None:
+@pytest.mark.parametrize("provider_slug", ["tinfoil", "featherless"])
+def test_openai_compatible_cached_subset_is_normalized(provider_slug: str) -> None:
     client, key = _client_and_key()
     auth = _authorize(
         client,
         key,
         "z-ai/glm-5.3",
-        provider={"only": ["tinfoil"]},
+        provider={"only": [provider_slug]},
     )
     endpoint = endpoint_for_id(auth["endpoint_id"])
-    assert endpoint is not None and endpoint.provider == "tinfoil"
+    assert endpoint is not None and endpoint.provider == provider_slug
 
     settle = client.post(
         "/v1/internal/gateway/settle",
@@ -135,6 +138,8 @@ def test_openai_compatible_cached_subset_is_normalized() -> None:
         endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
     )
     assert read_price is not None
+    if provider_slug == "featherless":
+        assert read_price == 274_300  # $0.26/M with the standard customer markup.
     expected = (
         token_cost_microdollars(100, prompt_price)  # 1000 - 900 cached
         + token_cost_microdollars(50, completion_price)
@@ -145,6 +150,23 @@ def test_openai_compatible_cached_subset_is_normalized() -> None:
     generation = STORE.get_generation(data["generation_id"])
     assert generation is not None
     assert generation.tokens_prompt == 1_000
+    assert generation.cached_input_tokens == 900
+
+    balance = live_credit_summary(key["workspace_id"])
+    replay = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth["authorization_id"],
+            "actual_input_tokens": 1_000,
+            "actual_output_tokens": 50,
+            "cache_read_input_tokens": 900,
+            "request_id": "gw-cache-openai-compat",
+            "elapsed_seconds": 1.0,
+        },
+    )
+    assert replay.status_code == 200
+    assert replay.json()["data"]["cost_microdollars"] == expected
+    assert live_credit_summary(key["workspace_id"]) == balance
 
 
 def test_tinfoil_glm_53_uses_published_cached_input_rate() -> None:
