@@ -5594,7 +5594,7 @@ class SpannerBigtableStore:
                     # configured shard.
                     credit_shard_candidates=bounded_credit_shard_candidates(candidates),
                     key_shard_candidates=key_shard_candidates,
-                    skip_key_limit=skip_key_limit and not window_limits,
+                    skip_key_limit=skip_key_limit,
                     authorization_id=authorization_id,
                     spend_lease_hook=spend_hook,
                     build_authorization_for_lease=(
