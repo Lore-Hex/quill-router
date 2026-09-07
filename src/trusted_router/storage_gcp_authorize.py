@@ -303,7 +303,7 @@ def authorize_atomic(
     likewise pass no more than the hot-path limit.
 
     `skip_key_limit` is opt-in: the gateway's already-loaded ApiKey must have
-    no lifetime cap and no window caps applicable to this request. Omitted
+    no lifetime cap, regardless of window caps checked by the caller. Omitted
     by older callers, it preserves the existing reserve SQL. The first candidate
     still receives settlement usage, with zero held, without an authorize read
     or write of tr_key_limit.

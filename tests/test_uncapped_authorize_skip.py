@@ -39,7 +39,8 @@ def operations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, dict[str
 
         def record(self: Any, *args: Any, **kwargs: Any) -> Any:
             target = str(args[0] if args else kwargs.get("table", ""))
-            log.append((name, target, copy.deepcopy(kwargs)))
+            source = "snapshot_execute_sql" if isinstance(self, spanner._FakeSnapshot) else name
+            log.append((source, target, copy.deepcopy(kwargs)))
             return original(self, *args, **kwargs)
 
         monkeypatch.setattr(cls, name, record)
@@ -118,8 +119,9 @@ def test_capped_and_window_paths_keep_exact_reserve_sql_and_parameters(
     estimate = store.get_gateway_authorization(data["authorization_id"]).estimated_microdollars
     assert estimate > 0
     updates = [op for op in key_ops(operations) if op[0] == "execute_update"]
-    if window is not None and byok and not include_byok:
-        assert key_ops(operations) == []
+    if window is not None:
+        assert [op for op in key_ops(operations) if op[0] != "snapshot_execute_sql"] == []
+        assert bool(key_ops(operations)) == (not byok or include_byok)
         assert res["key_reserved_micro"] == 0
         return
     assert len(updates) == 1
@@ -391,3 +393,83 @@ def test_missing_shard_settlement_matches_healthy_ledger(
             db.reservations[rid]["actual_micro"],
         ))
     assert ledgers[0] == ledgers[1]
+
+
+@pytest.mark.parametrize("scenario", ["settle", "over_window", "lifetime_cap", "reserve_noop",
+                                      "alert_only"])
+def test_daily_window_uncapped_skip_and_preserved_contracts(
+    monkeypatch: pytest.MonkeyPatch, operations: list[Any], scenario: str,
+) -> None:
+    """Exercise the new path before each boundary/transition's preserved behavior.
+
+    Every case must detect reverting either skip guard. Exact reserve SQL also
+    pins the NULL predicate: the fake itself does not interpret arbitrary SQL.
+    """
+    from trusted_router.storage_gcp_counter_dml import KEY_NO_HOLD, reserve_key
+
+    store, db, key = seed(monkeypatch, window="daily")
+    before = copy.deepcopy(db.typed[KEY_LIMIT_TABLE])
+    operations.clear()
+    data = authorize(key)
+    observed = key_ops(operations)
+    assert observed
+    assert all(op[0] == "snapshot_execute_sql" for op in observed), observed
+    assert any("day_usage" in op[1] for op in observed)
+    assert db.typed[KEY_LIMIT_TABLE] == before
+    rid = data["credit_reservation_id"]
+    assert db.reservations[rid]["key_reserved_micro"] == 0
+    assert db.reservations[rid]["key_shard"] == 3
+    operations.clear()
+
+    if scenario == "settle":
+        assert settle(store, rid)["outcome"] == SettleOutcome.SETTLED
+        updates = [op for op in key_ops(operations) if op[0] == "execute_update"]
+        assert len(updates) == 1
+        assert updates[0][2]["params"]["shard"] == 3
+        assert updates[0][2]["params"]["hold"] == 0
+        rows = db.typed[KEY_LIMIT_TABLE]
+        for field in ("usage", "day_usage", "week_usage", "month_usage"):
+            assert [rows[(key.hash, i)][field] for i in range(4)] == [0, 0, 0, 700]
+    elif scenario == "over_window":
+        # Settle crosses the window; the next fresh request must be refused.
+        assert settle(store, rid, amount=50_000_001)["outcome"] == SettleOutcome.SETTLED
+        operations.clear()
+        with pytest.raises(Exception) as raised:
+            authorize(key, idem="over-window")
+        assert getattr(raised.value, "status_code", None) == 429
+        assert key_ops(operations)
+        assert all(op[0] == "snapshot_execute_sql" for op in key_ops(operations))
+        assert len(db.reservations) == 1
+    elif scenario == "lifetime_cap":
+        # A fresh entity read after adding a cap must restore the old reserve.
+        assert store.update_key(key.hash, {"limit_microdollars": 50_000_000}) is not None
+        operations.clear()
+        capped = authorize(key, idem="capped-window")
+        estimate = store.get_gateway_authorization(capped["authorization_id"]).estimated_microdollars
+        assert estimate > 0
+        updates = [op for op in key_ops(operations) if op[0] == "execute_update"]
+        assert updates == [("execute_update", RESERVE_SQL, {
+            "params": {"est": estimate, "kh": key.hash, "shard": 3, "is_byok": False},
+            "param_types": {"est": store._param_types.INT64, "kh": store._param_types.STRING,
+                            "shard": store._param_types.INT64, "is_byok": store._param_types.BOOL},
+        })]
+        assert any(op[0] == "snapshot_execute_sql" for op in key_ops(operations))
+        assert db.reservations[capped["credit_reservation_id"]]["key_reserved_micro"] == estimate
+    elif scenario == "reserve_noop":
+        def reserve(transaction: Any) -> str:
+            outcome = reserve_key(transaction, store._param_types, key.hash, 1234,
+                                  is_byok=False, shard=3)
+            assert transaction.pending_writes == []
+            return outcome
+
+        assert db.run_in_transaction(reserve) == KEY_NO_HOLD
+        assert db.typed[KEY_LIMIT_TABLE] == before
+        assert [op[0] for op in key_ops(operations)] == ["execute_update", "execute_sql"]
+        assert key_ops(operations)[0][1] == RESERVE_SQL
+    else:
+        assert store.update_key(key.hash, {"budget_alert_only": True,
+                                           "limit_daily_microdollars": 1}) is not None
+        operations.clear()
+        alert = authorize(key, idem="alert-window")
+        assert key_ops(operations) == []
+        assert db.reservations[alert["credit_reservation_id"]]["key_reserved_micro"] == 0

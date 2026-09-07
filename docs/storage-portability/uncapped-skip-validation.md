@@ -1,11 +1,11 @@
 # Uncapped authorize contention regression proof
 
 The gateway derives `skip_key_limit` from its already-authenticated ApiKey:
-`limit_microdollars is None` and the request-applicable `window_limits` is empty.
-BYOK-excluded requests omit window limits, including enforced windows on uncapped keys.
-A BYOK-excluded request on a capped key still follows the original reserve path.
-The typed store also refuses the skip when supplied blocking window limits.
-Older/direct callers default to the original behavior.
+`limit_microdollars is None`, regardless of request-applicable window limits.
+BYOK-excluded requests still omit window limits; a BYOK-excluded request on a
+capped key still follows the original reserve path. The typed store forwards
+the skip after the unchanged lock-free snapshot window check. Older/direct
+callers default to the original behavior.
 
 `authorize_atomic` records the first pre-randomized key candidate and a zero
 key hold without calling `reserve_key`. The existing reserve loop and its SQL
@@ -206,3 +206,59 @@ Local logs: `/tmp/qr-round2-full-final.log` and
 `/tmp/qr-round2-U2-stale-removal.log`, and
 `/tmp/qr-round2-keyless-revert.log`. All implementation mutations were restored
 before the final full and explicit-path gates.
+
+
+## Window-cap extension (September 2026)
+
+Baseline: `a7056ae783fc2b24ee40f200f04f9b453815ba20` (HEAD and origin/main).
+NULL lifetime caps now skip reserve even with enforced windows. The complete
+snapshot window-check block and counter DML module were compared byte-for-byte
+with origin/main and are unchanged. Settlement, shard recovery, replay, and the
+cap-change race bound above are unchanged.
+
+The statement recorder now distinguishes snapshot reads from transaction SQL,
+DML, and buffered mutations. The five cases of
+`test_daily_window_uncapped_skip_and_preserved_contracts` each start by admitting
+an enforced daily-window request with zero transaction counter operations and a
+real snapshot read, then check one boundary: settlement to one shard (including
+window counters), refusal after settlement crosses the daily cap, exact baseline
+reserve SQL/parameters after adding a lifetime cap, direct NULL-cap reserve with
+KEY_NO_HOLD and no pending or committed writes, or transition to alert-only.
+The common admission assertion is intentional: the preserved behaviors alone
+cannot distinguish a faithful reversion. Each complete scenario can.
+
+Actual temporary reversion runs (source restored in a `finally` block):
+
+| Reversion/mutation | Result on the five new cases |
+| --- | --- |
+| Restore all three implementation files to HEAD | 5 failed |
+| Restore gateway guard only | 5 failed |
+| Restore store guard only | 5 failed |
+| Remove reserve SQL's NULL predicate | 2 failed, 3 passed |
+| Disable snapshot window check | 5 failed |
+
+The SQL assertion is necessary because the fake dispatches recognized statements
+rather than evaluating arbitrary SQL predicates. Removing the NULL predicate is
+therefore explicitly detected even if the fake still returns KEY_NO_HOLD.
+Logs: `/tmp/qr-windows-{revert,gateway-revert,store-revert,null-predicate,window-check}.log`.
+
+Restored-tree gates:
+
+- `uv run --no-sync ruff check .`: passed.
+- `uv run --no-sync mypy`: passed, 370 source files.
+- Explicit required paths: **174 passed**, zero failures (40.81 seconds).
+- Full suite: **9,517 passed, 377 skipped, 10 xfailed**, zero failures,
+  exit 0 (568.19 seconds). Coverage **84.17%**, exceeding 70%.
+- `git diff --check`: passed. No unrelated tracked files changed; no commits
+  or file deletions.
+
+Commands used `UV_CACHE_DIR=/tmp/qr-locks-uv-cache` with the existing virtualenv:
+
+```bash
+uv run --no-sync pytest -q tests/test_uncapped_authorize_skip.py tests/test_billing_typed_enforcement.py tests/test_gateway_authorize_spanner_operations.py tests/test_settle_outbox_apply.py
+uv run --no-sync pytest -q -n 4 --dist loadgroup --cov=trusted_router --cov-report=term:skip-covered --cov-fail-under=70
+```
+
+The full suite had test-owned loopback networking permitted. Gate logs:
+`/tmp/qr-windows-targeted.log`, `/tmp/qr-windows-mypy.log`, and
+`/tmp/qr-windows-full.log`.

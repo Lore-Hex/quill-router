@@ -1749,10 +1749,8 @@ def _authorize_gateway_sync_impl(
                     key_usage_shards=key_usage_shards,
                     # The entity is already authenticated; a no-op reserve
                     # UPDATE would still lock uncapped usage counter rows.
-                    skip_key_limit=(
-                        api_key.limit_microdollars is None
-                        and not window_limits
-                    ),
+                    # Window caps are enforced separately on a snapshot.
+                    skip_key_limit=api_key.limit_microdollars is None,
                     custom_model_id=custom_model.id if custom_model else None,
                     custom_model_revision=custom_model.revision if custom_model else None,
                     custom_model_markup_basis_points=(
