@@ -498,3 +498,17 @@ def test_provider_portal_uses_private_vpc_and_dedicated_clickhouse_reader() -> N
     )
     assert '"trustedrouter-clickhouse-provider-read-password"' in workflow
     assert "TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD is required" in workflow
+
+
+def test_stage_d_probe_secret_is_optional_and_bound_only_to_legacy_and_internal() -> None:
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+    mandatory_block = rollout.split("SECRET_ENVS=(", 1)[1].split(")", 1)[0]
+    assert "TR_STAGE_D_PROBE_API_KEY" not in mandatory_block
+    assert (
+        'add_secret_env_if_exists "TR_STAGE_D_PROBE_API_KEY" '
+        '"trustedrouter-stage-d-probe-api-key"' in rollout
+    )
+    internal = (ROOT / "scripts/deploy/internal_surface.sh").read_text()
+    assert 'if secret_reference="$(legacy_secret_reference TR_STAGE_D_PROBE_API_KEY)"; then' in internal
+    assert 'SECRET_ENVS+=("TR_STAGE_D_PROBE_API_KEY=${secret_reference}")' in internal
+    assert "TR_STAGE_D_PROBE_API_KEY" not in (ROOT / "scripts/deploy/public_surface.sh").read_text()

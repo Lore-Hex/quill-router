@@ -773,10 +773,11 @@ def test_status_page_peer_links_follow_the_fleet_setting() -> None:
     assert "aws.trustedrouter.com" not in page.text
 
 
-def test_chat_monitor_model_requires_configured_monitor_key() -> None:
+@pytest.mark.parametrize("key_setting", ("synthetic_monitor_api_key", "stage_d_probe_api_key"))
+def test_chat_monitor_model_requires_configured_monitor_key(key_setting: str) -> None:
     monitor_key = "sk-tr-monitor-test"  # noqa: S105 - test key.
     app = create_app(
-        Settings(environment="test", synthetic_monitor_api_key=monitor_key),
+        Settings(environment="test", **{key_setting: monitor_key}),
         init_observability=False,
     )
     local_client = TestClient(app)
@@ -2248,10 +2249,11 @@ def test_internal_generation_activity_reconciliation_endpoint_is_guarded_and_cal
     }
 
 
-def test_gateway_monitor_model_requires_configured_monitor_key() -> None:
+@pytest.mark.parametrize("key_setting", ("synthetic_monitor_api_key", "stage_d_probe_api_key"))
+def test_gateway_monitor_model_requires_configured_monitor_key(key_setting: str) -> None:
     monitor_key = "sk-tr-monitor-gateway"  # noqa: S105 - test key.
     app = create_app(
-        Settings(environment="test", synthetic_monitor_api_key=monitor_key),
+        Settings(environment="test", **{key_setting: monitor_key}),
         init_observability=False,
     )
     local_client = TestClient(app)
@@ -2289,6 +2291,9 @@ def test_gateway_monitor_model_requires_configured_monitor_key() -> None:
     )
 
     assert denied.status_code == 403
+    assert denied.json()["error"]["message"] == (
+        "trustedrouter/monitor is restricted to the synthetic monitor key"
+    )
     assert allowed.status_code == 200, allowed.text
 
 

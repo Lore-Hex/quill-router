@@ -460,6 +460,12 @@ for required_secret_env in \
   SECRET_ENVS+=("${required_secret_env}=${secret_reference}")
 done
 
+# Optional during the first rollout: the active legacy revision may predate
+# the Stage D probe binding. Copy it once present; never read secret values.
+if secret_reference="$(legacy_secret_reference TR_STAGE_D_PROBE_API_KEY)"; then
+  SECRET_ENVS+=("TR_STAGE_D_PROBE_API_KEY=${secret_reference}")
+fi
+
 FEDERATION_SECRET_ENVS=(
   TR_FEDERATION_PEER_TOKEN
   TR_FEDERATION_HOME_TOKEN
