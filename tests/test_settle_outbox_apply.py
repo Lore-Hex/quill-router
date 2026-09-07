@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from collections.abc import Iterator
@@ -1704,3 +1705,33 @@ def test_typed_finalize_releases_hot_rows_last_in_the_same_transaction(
     assert _typed_key(db, key.hash)["reserved"] == 0
     assert db.reservations[auth.credit_reservation_id]["settled"] is True
     assert store.get_gateway_authorization(auth.id).settled is True
+
+
+def test_zero_hold_missing_key_rolls_back_finalize_and_preserves_frozen_usage(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, db, _bt = fake_store
+    store.request_record_write_mode = "typed"
+    ws = "ws-missing-uncapped-key"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws, limit=None)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    assert db.reservations[auth.credit_reservation_id]["key_reserved_micro"] == 0
+    original_row = dict(_typed_key(db, key.hash))
+    db.typed[KEY_LIMIT_TABLE].clear()
+    outbox = SpannerSettleOutbox(db, store._param_types)
+    outbox.enqueue(_row(auth, cost=777_777))
+    [claimed] = outbox.claim(limit=1)
+    frozen_before = copy.deepcopy(db.settle_outbox)
+    with pytest.raises(RuntimeError, match="actual_micro=777777"):
+        apply_frozen_settle(claimed)
+    assert copy.deepcopy(db.settle_outbox) == frozen_before
+    assert not db.reservations[auth.credit_reservation_id]["settled"]
+    assert not store.get_gateway_authorization(auth.id).settled
+    assert _typed_credit(db, ws)["total_usage"] == 0
+    assert _typed_credit(db, ws)["reserved"] == ESTIMATE
+    db.typed[KEY_LIMIT_TABLE][(key.hash, 0)] = original_row
+    assert apply_frozen_settle(claimed) == ApplyOutcome.SETTLED_NOW
+    assert _typed_key(db, key.hash)["usage"] == 777_777
+    assert _typed_credit(db, ws)["total_usage"] == 777_777
+    assert apply_frozen_settle(claimed) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
