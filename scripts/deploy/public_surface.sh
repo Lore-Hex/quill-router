@@ -449,6 +449,9 @@ ENV_VARS=(
   "TR_GCP_PROJECT_ID=$(legacy_env_required TR_GCP_PROJECT_ID)"
   "TR_REGIONS=$(legacy_env_required TR_REGIONS)"
   "TR_PRIMARY_REGION=$(legacy_env_required TR_PRIMARY_REGION)"
+  # Capability metadata only. The public service never gets the probe key
+  # or internal billing token, but must display the separately scheduled jobs.
+  "TR_SYNTHETIC_STATUS_PROBE_TYPES=gateway_authorize,gateway_settle,provider_fallback,openai_sdk_pong,responses_pong"
   "TR_STORAGE_BACKEND=$(legacy_env_required TR_STORAGE_BACKEND)"
   "TR_SPANNER_INSTANCE_ID=$(legacy_env_required TR_SPANNER_INSTANCE_ID)"
   "TR_SPANNER_DATABASE_ID=$(legacy_env_required TR_SPANNER_DATABASE_ID)"

@@ -86,7 +86,7 @@ def test_leaderboard_page_renders_measurements() -> None:
     resp = client.get("/leaderboard")
     assert resp.status_code == 200
     body = resp.text
-    assert "Measured performance" in body  # hero eyebrow
+    assert "Provider &amp; model performance" in body
     assert "rolling benchmark set of up to 10,000 samples" in body
     assert "p50 TTFT" in body  # table header
     assert "Effective throughput" in body
@@ -109,7 +109,7 @@ def test_leaderboard_page_separates_config_exclusions_from_errors() -> None:
     resp = client.get("/leaderboard")
 
     assert resp.status_code == 200
-    assert "Config excluded" in resp.text
+    assert "Excluded from provider availability" in resp.text
     assert "unsupported_route" in resp.text
     assert "Unsupported route and probe-configuration rows" in resp.text
 

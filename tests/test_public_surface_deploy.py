@@ -38,6 +38,9 @@ BASE_ENV = {
     "TR_GCP_PROJECT_ID": "quill-cloud-proxy",
     "TR_REGIONS": "us-central1,us-east4,europe-west4,southamerica-east1",
     "TR_PRIMARY_REGION": "us-central1",
+    "TR_SYNTHETIC_STATUS_PROBE_TYPES": (
+        "gateway_authorize,gateway_settle,provider_fallback,openai_sdk_pong,responses_pong"
+    ),
     "TR_STORAGE_BACKEND": "spanner-bigtable",
     "TR_SPANNER_INSTANCE_ID": "trusted-router-nam6",
     "TR_SPANNER_DATABASE_ID": "trusted-router",
@@ -201,6 +204,9 @@ def test_exact_emitted_public_settings_validate_and_reject_control_secrets(
         kwargs = _settings_kwargs(call)
         settings = Settings(**kwargs)
         assert settings.service_surface == "public"
+        assert "gateway_settle" in settings.synthetic_status_probe_types
+        assert settings.internal_gateway_token is None
+        assert settings.synthetic_monitor_api_key is None
         for forbidden_name, forbidden_value in (
             ("internal_gateway_token", "gateway-" + "g" * 32),
             ("stripe_secret_key", "sk_live_forbidden"),

@@ -125,12 +125,12 @@ gc compute ssh "$NAME" \
     . /etc/tr-clickhouse-ingest.env
     set +a
     count=\$(/usr/bin/clickhouse-client --user tr --password \"\$CH_PASSWORD\" \
-      --database tr --query \"SELECT uniqExact(name) FROM public_analytics_snapshots FINAL WHERE generated_at >= now() - INTERVAL 10 MINUTE AND name IN ('\''leaderboard'\'', '\''apps'\'', '\''video_leaderboard'\'', '\''status_inputs'\'') FORMAT TSVRaw\")
-    if [ \"\$count\" != 4 ]; then
+      --database tr --query \"SELECT uniqExact(name) FROM public_analytics_snapshots FINAL WHERE generated_at >= now() - INTERVAL 10 MINUTE AND name IN ('\''leaderboard'\'', '\''leaderboard_evidence'\'', '\''apps'\'', '\''video_leaderboard'\'', '\''status_inputs'\'') FORMAT TSVRaw\")
+    if [ \"\$count\" != 5 ]; then
       rollback
       exit 1
     fi
     rm -rf \"\$previous\" \"\$previous_builder\" \"\$stage\"
   '"
 
-log "public analytics snapshot worker is current and publishing all four products"
+log "public analytics snapshot worker is current and publishing all five products"

@@ -175,7 +175,8 @@ def test_public_snapshot_worker_swap_is_verified_and_rollbackable() -> None:
     assert "tr-clickhouse-public-snapshots.service" in script
     assert "previous_builder=" in script
     assert "rollback()" in script
-    assert r"if [ \"\$count\" != 4 ]; then" in script
+    assert r"if [ \"\$count\" != 5 ]; then" in script
+    assert "leaderboard_evidence" in script
     assert r"mv \"\$previous_builder\" \"\$builder\"" in script
     # Upload first, then swap (#1080): the archive must not be streamed over
     # SSH stdin. Asserted by behaviour rather than by one exact spelling, so

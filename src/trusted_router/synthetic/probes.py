@@ -1003,7 +1003,9 @@ async def client_telemetry_canary_probe(
         policy = payload.get("policy") if isinstance(payload, dict) else None
         accepted_events = data.get("accepted_events") if isinstance(data, dict) else None
         pause_seconds = policy.get("pause_seconds") if isinstance(policy, dict) else None
-        paused = response.status_code == 202 and isinstance(pause_seconds, int) and pause_seconds > 0
+        paused = (
+            response.status_code == 202 and isinstance(pause_seconds, int) and pause_seconds > 0
+        )
         ok = response.status_code == 202 and accepted_events == 1 and not paused
         return _sample(
             "client_telemetry_ingest",
@@ -1180,7 +1182,9 @@ async def openai_chat_pong_probe(
     try:
         payload = await sdk.request("POST", "/chat/completions", json=body)
     except Exception as exc:  # noqa: BLE001 - every SDK failure is a classified sample
-        return _sdk_failure_sample("openai_sdk_pong", target, monitor_region, url, exc, started, model)
+        return _sdk_failure_sample(
+            "openai_sdk_pong", target, monitor_region, url, exc, started, model
+        )
     latency_ms = _elapsed_ms(started)
     ok = _pong_matches(_chat_text(httpx.Response(200, json=payload)))
     return _sample(
@@ -1289,7 +1293,9 @@ async def responses_pong_probe(
     try:
         payload = await sdk.request("POST", "/responses", json=body)
     except Exception as exc:  # noqa: BLE001 - every SDK failure is a classified sample
-        return _sdk_failure_sample("responses_pong", target, monitor_region, url, exc, started, model)
+        return _sdk_failure_sample(
+            "responses_pong", target, monitor_region, url, exc, started, model
+        )
     latency_ms = _elapsed_ms(started)
     ok = _pong_matches(_responses_text(httpx.Response(200, json=payload)))
     return _sample(
@@ -2042,6 +2048,9 @@ def rotation_candidates() -> dict[str, list[str]]:
 
     pool: dict[str, list[str]] = {}
     for endpoint in MODEL_ENDPOINTS.values():
+        if endpoint.provider in {"openrouter", "trustedrouter"}:
+            # Router names are not callable provider.only targets.
+            continue
         if not endpoint.catalog_is_current():
             continue
         if endpoint.usage_type != "Credits":
@@ -2358,8 +2367,12 @@ def _rotation_error_type(
         )
     ):
         return "monitor_account_unavailable"
-    if raw_type in _UNSUPPORTED_ROUTE_ERROR_TYPES or any(
-        marker in raw_message for marker in _UNSUPPORTED_ROUTE_MESSAGE_MARKERS
+    # A 503 "service unavailable" is downtime, not a missing catalog model.
+    # Only explicit model error types or client-side validation responses
+    # justify removing an attempt from provider availability.
+    if raw_type in _UNSUPPORTED_ROUTE_ERROR_TYPES or (
+        status in {400, 404, 422}
+        and any(marker in raw_message for marker in _UNSUPPORTED_ROUTE_MESSAGE_MARKERS)
     ):
         return "unsupported_route"
     if raw_type in _PROBE_CONFIG_ERROR_TYPES or (
@@ -2469,6 +2482,11 @@ async def provider_rotation_probe(
             elapsed_ms=observation.elapsed_milliseconds,
             error_status=None,
             error_type=error_type,
+            error_message=(
+                f"probe_budget_exhausted max_tokens={body['max_tokens']}"
+                if observation.finish_reason == "length"
+                else None
+            ),
         )
     return ProviderBenchmarkSample(
         id=f"bench-{uuid.uuid4().hex}",
@@ -2665,17 +2683,32 @@ def _benchmark_route_cost_microdollars(
 
 
 def _rotation_max_tokens(provider: str, model: str) -> int:
-    provider_l = provider.lower()
     model_l = model.lower()
-    if provider_l == "openai" and (
-        "/o1" in model_l or "/o3" in model_l or "/o4" in model_l or "/gpt-5" in model_l
-    ):
+    if "/o1" in model_l or "/o3" in model_l or "/o4" in model_l or "/gpt-5" in model_l:
         return 512
     if "gemini-2.5" in model_l or "gemini-3" in model_l:
         # Gemini thinks before visible content; hidden thinking consumes the
         # budget but is absent from usage, so 16 yields empty_stream. Live
         # verification on 2026-07-19 showed 2048 works; keep generous headroom.
         return 2048
+    # Publisher/model capability is independent of the hosting provider.
+    # These families exhausted 16 tokens with finish_reason=length in real
+    # probes. One shared bounded budget avoids host-by-host special cases.
+    if any(
+        family in model_l
+        for family in (
+            "qwen3",
+            "qwen-3",
+            "deepseek-v4",
+            "deepseek-r1",
+            "kimi-k3",
+            "gemma-4",
+            "minimax-m",
+            "mercury",
+            "fugu",
+        )
+    ):
+        return 512
     if (
         "gpt-oss" in model_l
         or "glm-4.6" in model_l
@@ -2704,10 +2737,7 @@ def _rotation_omits_temperature(provider: str, model: str) -> bool:
     model_l = model.lower()
     return (
         (provider_l == "kimi" and "kimi-k2." in model_l)
-        or (
-            provider_l == "openai"
-            and ("/o1" in model_l or "/o3" in model_l or "/o4" in model_l or "/gpt-5" in model_l)
-        )
+        or ("/o1" in model_l or "/o3" in model_l or "/o4" in model_l or "/gpt-5" in model_l)
         or (
             provider_l == "anthropic"
             and ("claude-opus-4.7" in model_l or "claude-opus-4.8" in model_l)

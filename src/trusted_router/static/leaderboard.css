@@ -1,0 +1,58 @@
+.lb-hero { padding: 32px 0 20px; }
+.lb-hero h1 { font-size: 32px; line-height: 1.2; margin: 0 0 12px; }
+.lb-hero p { max-width: 760px; }
+.lb-muted, .lb-explorer small { color: var(--text-muted); font-size: 12px; }
+.lb-explorer { width: 100%; min-width: 0; }
+.lb-explorer [hidden] { display: none !important; }
+.lb-overview { display: flex; flex-wrap: wrap; gap: 12px 24px; padding: 16px 0; border-block: 1px solid var(--border-default); font-variant-numeric: tabular-nums; }
+.lb-overview strong { color: var(--text-display); }
+.lb-overview a { margin-left: auto; }
+.lb-windows, .lb-tabs { display: flex; gap: 8px; }
+.lb-windows { padding-top: 16px; }
+.lb-windows a, .lb-tabs button { padding: 8px 12px; border-bottom: 2px solid transparent; color: var(--text-body); }
+.lb-windows [aria-current], .lb-tabs [aria-selected="true"] { border-color: var(--text-accent); color: var(--text-display); }
+.lb-tabs button { background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; min-height: 44px; }
+.lb-methodology { padding: 16px 0; max-width: 900px; }
+.lb-methodology summary, .lb-details summary { cursor: pointer; color: var(--text-accent); }
+.lb-methodology p { font-size: 14px; line-height: 1.6; }
+.lb-controls { display: grid; grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(140px, 1fr)); gap: 12px; padding: 8px 0 20px; }
+.lb-tabs { grid-column: 1 / -1; }
+.lb-controls label { display: grid; gap: 6px; min-width: 0; font-size: 12px; }
+.lb-controls input, .lb-controls select { width: 100%; min-width: 0; min-height: 44px; margin: 0; font-size: 14px; }
+.lb-panel h2 { font-size: 20px; margin: 12px 0; }
+.lb-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.lb-table th, .lb-table td { padding: 14px 10px; vertical-align: top; text-align: left; overflow-wrap: anywhere; border-bottom: 1px solid var(--border-default); }
+.lb-table th { color: var(--text-muted); font-size: 12px; font-weight: 500; }
+.lb-table th:first-child { width: 34px; }
+.lb-table th:nth-child(2) { width: 28%; }
+.lb-table th:last-child { width: 80px; }
+.lb-table small { display: block; margin-top: 5px; }
+.lb-table .provider-identity { display: inline-flex; max-width: 100%; }
+.lb-table img { width: 24px; height: 24px; flex-shrink: 0; }
+.lb-model { display: block; margin-bottom: 8px; color: var(--text-display); }
+.lb-badge { display: inline-block; margin: 6px 4px 0 0; padding: 2px 5px; font-size: 11px; color: var(--text-muted); border: 1px solid var(--border-default); border-radius: 4px; }
+.lb-warning { color: var(--status-pending); }
+.lb-detail-cell { position: relative; }
+.lb-details dl { position: absolute; z-index: 5; right: 0; top: 42px; width: 290px; max-width: calc(100vw - 48px); padding: 16px; background: var(--surface-raised); border: 1px solid var(--border-strong); border-radius: 6px; box-shadow: 0 6px 20px rgb(0 0 0 / 20%); }
+.lb-details dt { font-size: 12px; color: var(--text-muted); margin-top: 10px; }
+.lb-details dt:first-child { margin-top: 0; }
+.lb-details dd { margin: 3px 0 0; overflow-wrap: anywhere; }
+.lb-empty { padding: 24px 0; color: var(--text-muted); }
+.lb-pagination { display: flex; align-items: center; gap: 8px; padding: 20px 0; }
+.lb-pagination output { margin-right: auto; font-size: 13px; }
+.lb-pagination button { width: 44px; height: 44px; padding: 0; border-radius: 4px; }
+
+@media (width <= 700px) {
+  .lb-hero h1 { font-size: 28px; }
+  .lb-overview { gap: 10px 20px; }
+  .lb-overview a { margin-left: 0; }
+  .lb-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lb-search { grid-column: 1 / -1; }
+  .lb-table, .lb-table tbody { display: block; }
+  .lb-table thead, .lb-table .lb-rank { display: none; }
+  .lb-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 12px 0; border-bottom: 1px solid var(--border-default); }
+  .lb-table td { border: 0; padding: 8px 4px; }
+  .lb-identity, .lb-detail-cell { grid-column: 1 / -1; }
+  .lb-table [data-label]::before { content: attr(data-label); display: block; color: var(--text-muted); font-size: 11px; margin-bottom: 4px; }
+  .lb-details dl { position: static; width: 100%; max-width: none; box-shadow: none; margin-bottom: 0; }
+}

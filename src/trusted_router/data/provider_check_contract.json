@@ -229,7 +229,7 @@
     "model_id_pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$",
     "owner_pattern": "^[a-z0-9][a-z0-9._-]*$"
   },
-  "contract_version": "c045dbaea94b324b61e345a5e240e69c89e9552c78d2d13574d64596d3855f19",
+  "contract_version": "abf10fb4e4b68f1e188f87c1dd6d7bde6ae3e8b82a48eb9bb7ef8cff12966faf",
   "decision_tables": [
     {
       "max_tokens": 512,
@@ -346,9 +346,9 @@
       "provider": "anthropic"
     },
     {
-      "max_tokens": 16,
+      "max_tokens": 512,
       "model": "openai/gpt-5.1",
-      "omits_temperature": false,
+      "omits_temperature": true,
       "provider": "generic"
     },
     {
@@ -3795,7 +3795,7 @@
           "status": null
         },
         "name": "unsupported_message:does not exist",
-        "result": "unsupported_route"
+        "result": "provider_error"
       },
       {
         "input": {
@@ -3805,7 +3805,7 @@
           "status": null
         },
         "name": "unsupported_message:does not support",
-        "result": "unsupported_route"
+        "result": "provider_error"
       },
       {
         "input": {
@@ -3815,7 +3815,7 @@
           "status": null
         },
         "name": "unsupported_message:invalid model",
-        "result": "unsupported_route"
+        "result": "provider_error"
       },
       {
         "input": {
@@ -3825,7 +3825,7 @@
           "status": null
         },
         "name": "unsupported_message:model does not exist",
-        "result": "unsupported_route"
+        "result": "provider_error"
       },
       {
         "input": {
@@ -3835,7 +3835,7 @@
           "status": null
         },
         "name": "unsupported_message:model not found",
-        "result": "unsupported_route"
+        "result": "provider_error"
       },
       {
         "input": {
@@ -3845,7 +3845,7 @@
           "status": null
         },
         "name": "unsupported_message:model_not_found",
-        "result": "unsupported_route"
+        "result": "provider_error"
       },
       {
         "input": {
@@ -3855,7 +3855,7 @@
           "status": null
         },
         "name": "unsupported_message:no endpoint",
-        "result": "unsupported_route"
+        "result": "provider_error"
       },
       {
         "input": {
@@ -3865,7 +3865,7 @@
           "status": null
         },
         "name": "unsupported_message:no route",
-        "result": "unsupported_route"
+        "result": "provider_error"
       },
       {
         "input": {
@@ -3875,7 +3875,7 @@
           "status": null
         },
         "name": "unsupported_message:no such model",
-        "result": "unsupported_route"
+        "result": "provider_error"
       },
       {
         "input": {
@@ -3885,7 +3885,7 @@
           "status": null
         },
         "name": "unsupported_message:not authorized",
-        "result": "unsupported_route"
+        "result": "provider_error"
       },
       {
         "input": {
@@ -3895,7 +3895,7 @@
           "status": null
         },
         "name": "unsupported_message:not available",
-        "result": "unsupported_route"
+        "result": "provider_error"
       },
       {
         "input": {
@@ -3905,7 +3905,7 @@
           "status": null
         },
         "name": "unsupported_message:not enabled",
-        "result": "unsupported_route"
+        "result": "provider_error"
       },
       {
         "input": {
@@ -3915,7 +3915,7 @@
           "status": null
         },
         "name": "unsupported_message:not permitted",
-        "result": "unsupported_route"
+        "result": "provider_error"
       },
       {
         "input": {
@@ -3925,7 +3925,7 @@
           "status": null
         },
         "name": "unsupported_message:not supported",
-        "result": "unsupported_route"
+        "result": "provider_error"
       },
       {
         "input": {
@@ -3935,7 +3935,7 @@
           "status": null
         },
         "name": "unsupported_message:unavailable",
-        "result": "unsupported_route"
+        "result": "provider_error"
       },
       {
         "input": {
@@ -3945,7 +3945,7 @@
           "status": null
         },
         "name": "unsupported_message:unknown model",
-        "result": "unsupported_route"
+        "result": "provider_error"
       },
       {
         "input": {
@@ -3955,7 +3955,7 @@
           "status": null
         },
         "name": "unsupported_message:unsupported",
-        "result": "unsupported_route"
+        "result": "provider_error"
       },
       {
         "input": {
@@ -4328,7 +4328,7 @@
     "leaderboard._excluded_from_uptime": "6e673fe96aa8f6e317a2db774aa9f46de1a3c38ba958245e3d4e1527f2eb61a5",
     "leaderboard._percentile": "f400388aa9334b49eef0e7005a79478c39c5c7868c2b0a6a3909b1f443f95742",
     "leaderboard._sort_key": "ce505ca4b7d577416f080b19c67feb6791f7f3e446374677e402f5f8a10891b4",
-    "leaderboard.aggregate_leaderboard": "773c03374c2209a5bd971650658ca2deb722236969e79d51489ecd3330a5f0dd",
+    "leaderboard.aggregate_leaderboard": "650cbe204f0fd8302030fa7cb1929cb44816b3205f4f27e801b6b4f4d979257d",
     "probes._chat_text": "d93e2345277c7fc9f2f201a308768f3cc42b2d53a9715a5cfe7801e3a0f2a3bb",
     "probes._elapsed_ms_with_clock": "ffe5c0dcede88715e77c5e15672aee78b2b3eb40731a98cbce277642d82a22a4",
     "probes._first_int": "29a2c84649a74c53afb4bfe4d017f9b799908bcd08704a26d1e4d2b7ac46c64a",
@@ -4336,9 +4336,9 @@
     "probes._pong_matches": "998237bb5709cb6804b12310face8e43876dd189fa179eed2802df8871716b0b",
     "probes._response_error": "b99b11a62e9d331e655f65b612fb6dbab94885c3accb3dd30989311baa469d13",
     "probes._responses_text": "99429cf72be3c5cd8dadd9569a08bfe1c17a6c42318309a376f4bf12d31bf1fa",
-    "probes._rotation_error_type": "54584b9ec26edb80f372d63f7b3a08916b1947b99b632e009a6b46e442ff3a76",
-    "probes._rotation_max_tokens": "99b68643eeec2f398dae3a920eea77bdf04644884e015c61ae01e57d0a19653e",
-    "probes._rotation_omits_temperature": "cd342f2c4d36ce49f57acad9b8a21b7515ebbbdeec42e53b7cc514b827c04980",
+    "probes._rotation_error_type": "1847553b85e456bf3b73b9aac0752f0a8340094e06bda4837e20dd8bc4a22b44",
+    "probes._rotation_max_tokens": "54ae8b8d5204212bb00401c7886ec3ae97790d103418829147c45bc8483698e2",
+    "probes._rotation_omits_temperature": "fb885a166e3411caf17a956362426bd672ad8a74a9beb15baa627d8a4a9df758",
     "probes._sse_line_error": "bc5e36f9addbf54b9f4045d0817d41e4818a9e78de53769be58e36cc3eee5b33",
     "probes._sse_line_finish_reason": "90dfa40b8825eb4346522c1537f4a118feaa8c80e7f7b163883933748d096144",
     "probes._sse_line_has_content": "5e5e660c7a34a0f8ab529fc0462b9972a2b973723c05e4025c45bfa4c0201d64",
