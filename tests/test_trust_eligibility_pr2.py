@@ -45,6 +45,9 @@ def arm_store(store: Any, db: Any) -> Settings:
         db.typed.setdefault("tr_trust_backfill", {})[
             (provider, marker.account_id, "test", marker.source, marker.source_version)
         ] = row
+    from trusted_router.trust_owner_budget import recompute_owner_budget
+
+    recompute_owner_budget(store, environment=settings.environment)
     return settings
 
 
@@ -132,6 +135,9 @@ def test_gate_other_preconditions(condition: str, monkeypatch: pytest.MonkeyPatc
         monkeypatch.setattr(
             type(store), "_owner_shard_counts_tx", lambda *_: (["workspace"], [3000])
         )
+        from trusted_router.trust_owner_budget import recompute_owner_budget
+
+        recompute_owner_budget(store, environment=settings.environment)
     elif condition == "stale":
         marker["closed_through"] = datetime.now(UTC) - timedelta(seconds=3601)
     elif condition == "future":
@@ -330,6 +336,10 @@ def test_regional_record_race_refunds_bigtable_hold_and_retires(
             current["trust_reconciled_through"] = None
         elif change == "gate":
             db.typed["tr_trust_backfill"].clear()
+            from trusted_router.trust_eligibility import _caches
+
+            # The next admission refreshes outside its transaction after TTL.
+            object.__setattr__(_caches[store].verdict, "expires_monotonic", 0)
         else:
             for (kind, _id), record in db.rows.items():
                 if kind == "regional_quota_lease":
@@ -804,7 +814,7 @@ def test_flag_off_regional_payload_is_byte_identical() -> None:
     assert _regional_json_body(lease).encode() == json_body(before).encode()
 
 
-def test_startup_alerts_for_unarmed_flag_and_runtime_can_recover(
+def test_startup_does_not_evaluate_gate_and_runtime_can_recover(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from trusted_router.main import create_app
@@ -818,7 +828,12 @@ def test_startup_alerts_for_unarmed_flag_and_runtime_can_recover(
     messages: list[str] = []
     monkeypatch.setattr(alerts, "ops_alert", lambda message, **_kw: messages.append(message))
     create_app(settings, configure_store_arg=False, init_observability=False)
+    assert messages == []
+    assert lease_eligibility(store, settings, "workspace")[1] == "trust_gate_unarmed"
     assert any("trust.gate_unarmed" in message for message in messages)
+    from trusted_router.trust_eligibility import _caches
+
+    _caches.pop(store)
     arm_store(store, db)
     workspace_state(db)
     assert lease_eligibility(store, settings, "workspace") == (3, None)
@@ -1015,6 +1030,12 @@ def test_authoritative_mint_rechecks_after_candidate_preparation(change: str, re
         row["billing_pause_causes"] = ["abuse"]
     else:
         db.typed["tr_trust_backfill"].clear()
+        # Prepared callbacks never refresh global evidence in a transaction.
+        # A delayed plan must refuse once its captured verdict expires.
+        from trusted_router.trust_eligibility import _caches
+
+        verdict = _caches[store].verdict
+        object.__setattr__(verdict, "expires_monotonic", 0)
     outcome, authorization = _authorize_store(store, key.hash, plan)
     if change == "pause":
         assert (outcome, authorization) == ("billing_paused", None)

@@ -6152,11 +6152,18 @@ class SpannerBigtableStore:
             return None, None
         expected_trust_tier: int | None = None
         if trust_eligibility_enabled:
-            from trusted_router.trust_eligibility import lease_eligibility, spend_cap
+            from trusted_router.trust_eligibility import (
+                global_trust_verdict,
+                lease_eligibility,
+                spend_cap,
+            )
             trust_settings = self.trust_settings
             if trust_settings is None or not trust_settings.spend_lease_trust_eligibility_enabled:
                 return None, "trust_gate_unarmed"
-            expected_trust_tier, reason = lease_eligibility(self, trust_settings, workspace_id)
+            global_verdict = global_trust_verdict(self, trust_settings)
+            expected_trust_tier, reason = lease_eligibility(
+                self, trust_settings, workspace_id, global_verdict=global_verdict
+            )
             if reason:
                 return None, reason
             max_microdollars = spend_cap(trust_settings, expected_trust_tier)
@@ -6270,7 +6277,7 @@ class SpannerBigtableStore:
                             trust_max_age_seconds=(self.trust_settings.trust_reconcile_max_age_seconds
                                                    if trust_eligibility_enabled else 3600),
                             trust_gate=(lambda tx: lease_eligibility(self, self.trust_settings,
-                                        workspace_id, reader=tx)[1]) if trust_eligibility_enabled else None,
+                                        workspace_id, reader=tx, global_verdict=global_verdict)[1]) if trust_eligibility_enabled else None,
                         ),
                         None,
                     )
@@ -6329,7 +6336,7 @@ class SpannerBigtableStore:
                             trust_max_age_seconds=(self.trust_settings.trust_reconcile_max_age_seconds
                                                    if trust_eligibility_enabled else 3600),
                             trust_gate=(lambda tx: lease_eligibility(self, self.trust_settings,
-                                        workspace_id, reader=tx)[1]) if trust_eligibility_enabled else None,
+                                        workspace_id, reader=tx, global_verdict=global_verdict)[1]) if trust_eligibility_enabled else None,
             ),
             None,
         )
@@ -6456,10 +6463,13 @@ class SpannerBigtableStore:
 
         expected_trust_tier: int | None = None
         if trust_eligibility_enabled:
-            from trusted_router.trust_eligibility import lease_eligibility
+            from trusted_router.trust_eligibility import global_trust_verdict, lease_eligibility
             if self.trust_settings is None:
                 return None, "hold_refused", None
-            expected_trust_tier, reason = lease_eligibility(self, self.trust_settings, workspace_id)
+            global_verdict = global_trust_verdict(self, self.trust_settings)
+            expected_trust_tier, reason = lease_eligibility(
+                self, self.trust_settings, workspace_id, global_verdict=global_verdict
+            )
             if reason:
                 return None, "hold_refused", None
             from trusted_router.trust_eligibility import artifact_trust_tier
@@ -6521,7 +6531,7 @@ class SpannerBigtableStore:
                 trust_max_age_seconds=(self.trust_settings.trust_reconcile_max_age_seconds
                                        if trust_eligibility_enabled else 3600),
                 trust_gate=(lambda tx: lease_eligibility(self, self.trust_settings,
-                            workspace_id, reader=tx)[1]) if trust_eligibility_enabled else None,
+                            workspace_id, reader=tx, global_verdict=global_verdict)[1]) if trust_eligibility_enabled else None,
             ),
             None,
             None,
