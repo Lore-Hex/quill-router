@@ -10,10 +10,10 @@
   },
   "akashml": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 7,
     "name": "AkashML",
     "privacy": "Policy documented",
-    "route_count": 8,
+    "route_count": 7,
     "route_mode": "Prepaid",
     "slug": "akashml"
   },
