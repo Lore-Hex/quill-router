@@ -164,10 +164,8 @@ def _assert_workspace_ops(calls: Any, workspace: str) -> None:
     reads = [(sql, params) for _, sql, params in calls]
     assert ("SELECT body FROM tr_entities WHERE kind=@kind AND id=@id",
             {"kind": "credit", "id": workspace}) in reads
-    assert ("SELECT shard FROM tr_credit_balance WHERE workspace_id=@ws ORDER BY shard",
-            {"ws": workspace}) in reads
-    assert ("SELECT trust_tier, trust_latched_at, billing_pause_causes, pause_epoch, "
-            "trust_reconciled_through FROM tr_credit_balance WHERE workspace_id=@ws",
+    assert ("SELECT shard, trust_tier, trust_latched_at, billing_pause_causes, pause_epoch, "
+            "trust_reconciled_through FROM tr_credit_balance WHERE workspace_id=@ws ORDER BY shard",
             {"ws": workspace}) in reads
 
 
@@ -180,7 +178,7 @@ def test_regional_authorize_transactions_never_evaluate_global_gate(armed: Any, 
     assert result == "accepted" and authorization is not None
     _assert_workspace_ops(calls, key.workspace_id)
     # Both grant and record must independently perform the workspace check.
-    shard_readers = {id(reader) for reader, sql, _ in calls if sql.startswith("SELECT shard FROM")}
+    shard_readers = {id(reader) for reader, sql, _ in calls if sql.startswith("SELECT shard, trust_tier,")}
     assert len(shard_readers) == 2
     assert not any("tr_owner_workspace" in sql for sql in db.snapshot_sql)
     _assert_global_read_contents(db, 1)
@@ -284,7 +282,7 @@ def test_workspace_checks_use_exact_caller_transaction(armed: Any, monkeypatch: 
     _assert_workspace_ops(calls, "workspace")
     assert all(reader is readers[0] for reader, _, _ in calls)
     assert db.snapshot_execute_sql_calls == before
-    assert len(calls) == 3
+    assert len(calls) == 2
 
 
 def test_transaction_without_global_verdict_refuses_without_io(armed: Any, caplog: Any) -> None:
