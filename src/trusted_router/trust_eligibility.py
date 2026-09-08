@@ -96,6 +96,10 @@ def read_lease_trust(
             param_types=types,
         )
     )
+    return _lease_trust_from_rows(rows)
+
+
+def _lease_trust_from_rows(rows: list[Any]) -> LeaseTrustState | None:
     if not rows or any(tuple(row) != tuple(rows[0]) for row in rows):
         return None
     tier, latch, causes, epoch, through = rows[0]
@@ -105,6 +109,31 @@ def read_lease_trust(
         str(causes or ""),
         int(epoch or 0),
         through,
+    )
+
+
+@dataclass(frozen=True)
+class WorkspaceLeaseTrust:
+    shards: tuple[int, ...]
+    billing_paused: bool
+    state: LeaseTrustState | None
+
+
+def read_workspace_lease_trust(
+    reader: Any, pt: Any, workspace_id: str
+) -> WorkspaceLeaseTrust:
+    """Read workspace-wide evidence once; never substitute for a shard-scoped read."""
+    rows = list(reader.execute_sql(
+        "SELECT shard, trust_tier, trust_latched_at, billing_pause_causes, pause_epoch, "
+        "trust_reconciled_through FROM tr_credit_balance WHERE workspace_id=@ws ORDER BY shard",
+        params={"ws": workspace_id},
+        param_types={"ws": pt.STRING},
+    ))
+    return WorkspaceLeaseTrust(
+        shards=tuple(int(row[0]) for row in rows),
+        billing_paused=any(str(row[3] or "") not in ("", "[]") for row in rows),
+        # Shard identifiers legitimately differ; only trust columns must agree.
+        state=_lease_trust_from_rows([row[1:] for row in rows]),
     )
 
 
@@ -341,6 +370,7 @@ def lease_eligibility(
     reader: Any = None,
     now: datetime | None = None,
     global_verdict: GlobalTrustVerdict | None = None,
+    workspace_trust: WorkspaceLeaseTrust | None = None,
 ) -> tuple[int | None, str | None]:
     if not settings.spend_lease_trust_eligibility_enabled:
         return None, None
@@ -377,18 +407,14 @@ def lease_eligibility(
     from trusted_router.storage_models import CreditAccount
 
     account = store._read_entity_tx(reader, "credit", workspace_id, CreditAccount)
-    shards = list(
-        reader.execute_sql(
-            "SELECT shard FROM tr_credit_balance WHERE workspace_id=@ws ORDER BY shard",
-            params={"ws": workspace_id},
-            param_types={"ws": store._param_types.STRING},
-        )
-    )
-    if account is None or sorted(int(row[0]) for row in shards) != list(
+    # Reuse only evidence read for this workspace in this caller's transaction.
+    if workspace_trust is None:
+        workspace_trust = read_workspace_lease_trust(reader, store._param_types, workspace_id)
+    if account is None or sorted(workspace_trust.shards) != list(
         range(credit_shard_count(account))
     ):
         return None, "reconciliation_stale"
-    state = read_lease_trust(reader, store._param_types, workspace_id)
+    state = workspace_trust.state
     if state is None:
         return None, "reconciliation_stale"
     return state.tier, state.refusal(

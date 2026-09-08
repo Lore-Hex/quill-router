@@ -717,15 +717,26 @@ def record_regional_gateway_authorization(
                 if existing["idempotency_fingerprint"] != idempotency_fingerprint:
                     return {"outcome": "idempotency_mismatch"}
                 return replay(existing)
-        from trusted_router.trust_eligibility import billing_paused_tx, lease_eligibility, tier_cap
-        reason = "billing_paused" if armed and billing_paused_tx(transaction, store._param_types, authorization.workspace_id) else None
+        from trusted_router.trust_eligibility import (
+            lease_eligibility,
+            read_workspace_lease_trust,
+            tier_cap,
+        )
+        workspace_trust = (
+            read_workspace_lease_trust(transaction, store._param_types, authorization.workspace_id)
+            if armed else None
+        )
+        reason = "billing_paused" if workspace_trust is not None and workspace_trust.billing_paused else None
         current = None
         if armed or reason:
             current = store._read_entity_tx(transaction, _LEASE_KIND,
                 _lease_entity_id(authorization.workspace_id, str(authorization.region),
                                  str(authorization.regional_lease_id)), GlobalRegionalQuotaLease)
         if armed:
-            tier, gate_reason = lease_eligibility(store, settings, authorization.workspace_id, reader=transaction, global_verdict=global_verdict)
+            tier, gate_reason = lease_eligibility(
+                store, settings, authorization.workspace_id, reader=transaction,
+                global_verdict=global_verdict, workspace_trust=workspace_trust,
+            )
             reason = reason or gate_reason
             if reason is None:
                 cap = tier_cap(settings, tier or 0)
