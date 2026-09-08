@@ -788,8 +788,31 @@ ENV_VARS=(
   # key is in the cohort. Clearing this list is the later fleet-expansion step,
   # not part of arming.
   "TR_STAGE_D_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d,91d7810e-93b2-4c37-b1bd-ba9227585416"
-  # Trust eligibility remains inert; its arm gate validates the completed program.
-  "TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=false"
+  # Decisions 75-76. The first attempt at this flip (#1131) was reverted the same
+  # day: the arm gate evaluated the whole owner inventory inside the authorize
+  # transaction, hit the RPC bound and returned 503 at 20.02s. #1133 moved that
+  # fan-out into the tier job behind a persisted verdict, so admission now costs
+  # a handful of point reads once per 15s. Do not re-arm without it.
+  #
+  # Conditions verified against production immediately before this flip:
+  # typed Spanner settlement (TR_STORAGE_BACKEND=spanner-bigtable,
+  # TR_REQUEST_RECORD_WRITE_MODE=typed) on the serving revision in all four
+  # regions; stripe and x402 markers complete, zero unmatched, zero semantic
+  # mismatches, 900 s consistency delay; the Stripe account pin reaching the
+  # router; the pilot workspace tier 2, unlatched, on all 16 shards with no null
+  # reconciliation; and the owner-budget verdict written by the tier job from
+  # this same image, scan_complete with no violating owners and a maximum
+  # fan-out of 420 against the 20,000 budget.
+  #
+  # NEW RUNTIME DEPENDENCY: the gate reads what the tier job persists. If that
+  # job stops running, the verdict goes stale after
+  # TR_TRUST_RECONCILE_MAX_AGE_SECONDS and admission fails closed, refusing
+  # leases rather than issuing them. TR_TRUST_JOBS_DEPLOY=1 keeps the job image
+  # in step with main so it cannot drift.
+  #
+  # Settings.spend_lease_trust_eligibility_enabled stays False so only a deployed
+  # router is armed. Rollback is the reverse one-line edit to false.
+  "TR_SPEND_LEASE_TRUST_ELIGIBILITY_ENABLED=true"
   "TR_TRUST_STRIPE_ACCOUNT_ID=${TR_TRUST_STRIPE_ACCOUNT_ID}"
   "TR_TRUST_QUALIFYING_PROVIDERS=stripe,x402"
   "TR_TRUST_RECONCILE_INTERVAL_SECONDS=900"
