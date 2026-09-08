@@ -68,6 +68,25 @@ independent local-source copies, not cross-cloud secret reads.
 Do not merge the new mandatory refresh-secret coordinate before provisioning it.
 Do not treat the initial test key as evidence of production capacity or SLA.
 
+### GCP Secret Creation Bootstrap
+
+An authenticated project IAM administrator can grant the deployment identity
+only `secretmanager.secrets.create` using the dry-run-by-default helper:
+
+```sh
+bash scripts/deploy/provider_secret_creator_iam.sh
+bash scripts/deploy/provider_secret_creator_iam.sh --apply
+```
+
+This creates/binds `trustedRouterProviderSecretCreator` for `tr-deploy`. It does
+not grant secret reads, version writes, deletes, or IAM management. Provision a
+secret container first; an administrator must grant the deployment identity
+`roles/secretmanager.secretVersionAdder` and `roles/secretmanager.secretAccessor`
+on that specific secret, plus accessor for the intended workload identity,
+before uploading the value with the existing helper. Never grant project-wide
+Secret Manager Admin to fix a provider onboarding failure. This bootstrap is
+deliberately not part of the deployment workflow: deploy cannot grant itself IAM.
+
 ## Sources
 
 - Provider artwork: the official `https://confidential.ai/icon.png`, vendored
