@@ -266,6 +266,9 @@ def trust_gate_failure(
 
 
 GLOBAL_TRUST_TTL_SECONDS = 15
+# Leave time for the regional grant and authorization transactions to consume
+# successful evidence. This is a refresh margin, not an extension of validity.
+GLOBAL_TRUST_REFRESH_MARGIN_SECONDS = 5
 
 
 def _global_key(store: Any, settings: Settings) -> tuple[Any, ...]:
@@ -321,8 +324,10 @@ def global_trust_verdict(
 ) -> GlobalTrustVerdict:
     """Lazy single-flight refresh outside transactions; cache refusals too.
 
-    Evidence deadlines are checked again at consumption, so a TTL never extends
-    a marker's max age. Configuration changes get a separate evaluation.
+    Refresh successful evidence before it gets too close to expiry to survive
+    normal transaction latency. Refusals retain their full cache TTL. Evidence
+    deadlines are checked again at consumption, so a TTL never extends a marker's
+    max age. Configuration changes get a separate evaluation.
     """
     with _caches_lock:
         cache = _caches.setdefault(store, _GlobalCache())
@@ -331,7 +336,9 @@ def global_trust_verdict(
         if (
             cache.verdict is not None
             and cache.verdict.key == key
-            and time.monotonic() < cache.verdict.expires_monotonic
+            and time.monotonic() < cache.verdict.expires_monotonic - (
+                GLOBAL_TRUST_REFRESH_MARGIN_SECONDS if cache.verdict.failure is None else 0
+            )
         ):
             return cache.verdict
         evaluated_at = now or datetime.now(UTC)

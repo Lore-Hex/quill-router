@@ -34,7 +34,9 @@
         "stop",
         "seed"
       ],
-      "routable": true,
+      "routable": false,
+      "routable_reason": "provider-canary-failed",
+      "missing_since": "2026-09-08",
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 280000,
       "cached_input_token_price_per_m": 20000

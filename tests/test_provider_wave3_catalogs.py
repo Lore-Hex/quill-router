@@ -169,6 +169,20 @@ def test_failed_live_canaries_stay_dark() -> None:
     )
 
 
+def test_akash_missing_deepseek_route_stays_dark_without_disabling_other_routes() -> None:
+    # Direct /models plus an SSE model_not_found response confirmed the removal
+    # on September 8. Do not confuse HTTP 200 transport with a working model.
+    assert not any(
+        endpoint.provider == "akashml" and endpoint.model_id == "deepseek/deepseek-v4-flash-0731"
+        for endpoint in MODEL_ENDPOINTS.values()
+    )
+    assert any(endpoint.provider == "akashml" for endpoint in MODEL_ENDPOINTS.values())
+    assert any(
+        endpoint.provider != "akashml" for endpoint in endpoints_for_model("deepseek/deepseek-v4-flash-0731")
+    )
+    assert "deepseek/deepseek-v4-flash-0731" not in akashml.CATALOG.spec.expected_models
+
+
 def test_upstage_parser_reads_all_three_first_party_price_axes() -> None:
     source = (FIXTURE_DIR / "upstage.html").read_text(encoding="utf-8")
     assert upstage._parse_pricing(source)["upstage/solar-pro4"] == ModelPrice(

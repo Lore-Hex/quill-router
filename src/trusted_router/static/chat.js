@@ -2876,8 +2876,18 @@
                         renderThread();
                         return;
                     }
+                    let ev;
                     try {
-                        const ev = JSON.parse(payload);
+                        ev = JSON.parse(payload);
+                    } catch (_) {
+                        continue;
+                    }
+                    if (ev && ev.error) {
+                        await reader.cancel().catch(() => {});
+                        throw new Error(typeof ev.error.message === "string"
+                            ? ev.error.message : "Upstream provider error");
+                    }
+                    try {
                         const delta =
                             ev.choices && ev.choices[0] && ev.choices[0].delta;
                         if (delta && typeof delta.content === "string") {
@@ -2945,11 +2955,9 @@
                     }
                 }
             }
-            // Stream ended without an explicit [DONE] — still clear
-            // the caret and persist.
-            patchAssistantBubble(assistantMsg, respSlot, { streaming: false });
-            saveState();
-            renderThread();
+            // EOF is not proof of completion. Preserve partial text, but let
+            // the existing error path show Retry instead of a successful answer.
+            throw new Error("Upstream connection interrupted before completion");
         } finally {
             STREAMS.delete(streamKey);
             saveState();
