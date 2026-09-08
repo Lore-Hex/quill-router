@@ -41,6 +41,7 @@ class _TrustTierStore(Protocol):
 class TrustTierJobResult:
     attempted: int
     failed: tuple[str, ...] = field(default_factory=tuple)
+    owner_budget_failed: bool = False
 
     @property
     def succeeded(self) -> int:
@@ -93,7 +94,21 @@ def run(
         except Exception:
             failed.append(workspace_id)
             log.exception("trust.tier_job_workspace_failed workspace_id=%s", workspace_id)
-    return TrustTierJobResult(attempted=len(workspace_ids), failed=tuple(failed))
+    owner_budget_failed = False
+    # Only typed Spanner can arm lease trust. Legacy backends have no fleet
+    # proof consumer, but continue their existing tier/watermark work.
+    if hasattr(store, "_owner_shard_counts_tx"):
+        from trusted_router.trust_owner_budget import recompute_owner_budget
+
+        try:
+            verdict = recompute_owner_budget(store, environment=environment, now=computed_at)
+            owner_budget_failed = not verdict["scan_complete"] or bool(verdict["violating_owners"])
+        except Exception:
+            owner_budget_failed = True
+            log.exception("trust.owner_budget_persist_failed")
+    return TrustTierJobResult(
+        attempted=len(workspace_ids), failed=tuple(failed), owner_budget_failed=owner_budget_failed
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -113,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
         len(result.failed),
         args.environment,
     )
-    if result.failed:
+    if result.failed or result.owner_budget_failed:
         log.error("trust.tier_job_failures workspace_ids=%s", ",".join(result.failed))
         return 1
     return 0

@@ -266,6 +266,12 @@ def grant_regional_quota_lease(
     entity_id = _lease_entity_id(workspace_id, region, lease_id)
     fence_id = _fence_entity_id(workspace_id, region, quota_shard)
 
+    from trusted_router.trust_eligibility import global_trust_verdict
+
+    settings: Any = getattr(store, "trust_settings", None)
+    armed = settings is not None and settings.spend_lease_trust_eligibility_enabled
+    global_verdict = global_trust_verdict(store, settings) if armed else None
+
     def txn(transaction: Any) -> GlobalRegionalQuotaLease | None:
         fence = store._read_entity_tx(
             transaction,
@@ -279,13 +285,11 @@ def grant_regional_quota_lease(
         if fence is not None and fence.active_lease_id is not None:
             return None
         from trusted_router.trust_eligibility import lease_eligibility, tier_cap
-        settings: Any = getattr(store, "trust_settings", None)
         tier = None
         cap = None
         tx_grant = grant
-        armed = settings is not None and settings.spend_lease_trust_eligibility_enabled
         if armed:
-            tier, reason = lease_eligibility(store, settings, workspace_id, reader=transaction)
+            tier, reason = lease_eligibility(store, settings, workspace_id, reader=transaction, global_verdict=global_verdict)
             if reason:
                 log.info("regional_quota.no_lease_reason=%s workspace_id=%s", reason, workspace_id)
                 return None
@@ -696,6 +700,12 @@ def record_regional_gateway_authorization(
             "authorization_id": existing["authorization_id"],
         }
 
+    from trusted_router.trust_eligibility import global_trust_verdict
+
+    settings: Any = getattr(store, "trust_settings", None)
+    armed = settings is not None and settings.spend_lease_trust_eligibility_enabled
+    global_verdict = global_trust_verdict(store, settings) if armed else None
+
     def txn(transaction: Any) -> dict[str, Any]:
         if idempotency_scope is not None:
             existing = read_reservation_by_idempotency(
@@ -708,8 +718,6 @@ def record_regional_gateway_authorization(
                     return {"outcome": "idempotency_mismatch"}
                 return replay(existing)
         from trusted_router.trust_eligibility import billing_paused_tx, lease_eligibility, tier_cap
-        settings: Any = getattr(store, "trust_settings", None)
-        armed = settings is not None and settings.spend_lease_trust_eligibility_enabled
         reason = "billing_paused" if armed and billing_paused_tx(transaction, store._param_types, authorization.workspace_id) else None
         current = None
         if armed or reason:
@@ -717,7 +725,7 @@ def record_regional_gateway_authorization(
                 _lease_entity_id(authorization.workspace_id, str(authorization.region),
                                  str(authorization.regional_lease_id)), GlobalRegionalQuotaLease)
         if armed:
-            tier, gate_reason = lease_eligibility(store, settings, authorization.workspace_id, reader=transaction)
+            tier, gate_reason = lease_eligibility(store, settings, authorization.workspace_id, reader=transaction, global_verdict=global_verdict)
             reason = reason or gate_reason
             if reason is None:
                 cap = tier_cap(settings, tier or 0)
