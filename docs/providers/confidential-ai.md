@@ -30,7 +30,8 @@ Exact decimal conversion, shared price-spike guards, canaries, manifest expiry,
 and discovery coverage checks remain enabled. Hardware-hour price tables are
 ignored. A model on the price page alone never creates a route.
 
-M3 remains an `awaiting-price` manifest row. When its exact price is published,
+M3 remains under an explicit missing-price hold, so this reviewed gap does not
+block other providers' refreshes. When its exact price is published,
 the same refresh can price and canary it without a manual enable switch.
 The documented Flash 0731 release maps to the public Flash price; future dated
 releases do not automatically inherit that price.

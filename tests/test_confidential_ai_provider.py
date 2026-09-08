@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from bs4 import BeautifulSoup
 
+from scripts import check_price_coverage
 from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
 from scripts.pricing.base import ModelPrice
 from scripts.pricing.providers import _direct_openai, confidential_ai
@@ -115,7 +116,7 @@ def test_discovery_publishes_only_available_priced_canary_and_preserves_pending(
     assert rows[FLASH].get("routable") is not False
     assert rows[FLASH]["cached_input_token_price_per_m"] == 18_000
     assert rows[M3]["routable"] is False
-    assert rows[M3]["routable_reason"] == "awaiting-price"
+    assert rows[M3]["routable_reason"] == "price-unavailable"
     assert "moonshotai/kimi-k3" not in rows  # Public waitlist is not availability.
 
 
@@ -133,9 +134,39 @@ def test_new_priced_model_is_automatically_discovered(tmp_path, monkeypatch):
 
 
 def test_m3_becomes_eligible_only_when_provider_publishes_price(tmp_path, monkeypatch):
+    catalog = _catalog(tmp_path, monkeypatch)
+    catalog.write_provider_manifest(catalog.fetch())
     html = PRICES.replace("Kimi K3", "MiniMax M3")
     catalog = _catalog(tmp_path, monkeypatch, html=html)
-    assert set(catalog.fetch().prices) == {FLASH, M3}
+    result = catalog.fetch()
+    assert set(result.prices) == {FLASH, M3}
+    catalog.write_provider_manifest(result)
+    row = next(r for r in json.loads(catalog.manifest_path.read_text())["models"] if r["id"] == M3)
+    assert row["routable"] is True
+    assert "routable_reason" not in row
+
+
+def test_new_price_does_not_clear_hold_without_successful_canary(tmp_path, monkeypatch):
+    catalog = _catalog(tmp_path, monkeypatch)
+    catalog.write_provider_manifest(catalog.fetch())
+    catalog = _catalog(
+        tmp_path, monkeypatch, healthy=False, html=PRICES.replace("Kimi K3", "MiniMax M3")
+    )
+    catalog.write_provider_manifest(catalog.fetch())
+    row = next(r for r in json.loads(catalog.manifest_path.read_text())["models"] if r["id"] == M3)
+    assert row["routable"] is False
+    assert row["routable_reason"] == "provider-canary-failed"
+
+
+def test_explicit_operator_hold_is_never_cleared_by_a_published_price(tmp_path, monkeypatch):
+    catalog = _catalog(tmp_path, monkeypatch, html=PRICES.replace("Kimi K3", "MiniMax M3"))
+    catalog.spec = replace(
+        catalog.spec, operator_hold_reasons={M3: "operator-hold: account disabled"}
+    )
+    catalog.write_provider_manifest(catalog.fetch())
+    row = next(r for r in json.loads(catalog.manifest_path.read_text())["models"] if r["id"] == M3)
+    assert row["routable"] is False
+    assert row["routable_reason"] == "operator-hold: account disabled"
 
 
 def test_missing_key_and_unpriced_only_catalog_fail_closed(tmp_path, monkeypatch):
@@ -157,6 +188,21 @@ def test_provider_privacy_and_discovery_contracts() -> None:
     assert "confidential_ai" in PROVIDER_SLUGS
     assert confidential_ai.SLUG in {row[0] for row in _DISCOVERABLE_MANIFEST_PROVIDERS}
     assert default_provider_secret_ref(confidential_ai.SLUG) == "env://CONFIDENTIAL_AI_API_KEY"
+
+
+def test_reviewed_missing_price_does_not_block_other_provider_refreshes(monkeypatch):
+    monkeypatch.setattr(check_price_coverage, "_GLM_DISCOVERABLE_PROVIDER_APIS", ())
+    monkeypatch.setattr(
+        check_price_coverage,
+        "_DISCOVERABLE_MANIFEST_PROVIDERS",
+        tuple(row for row in _DISCOVERABLE_MANIFEST_PROVIDERS if row[0] == confidential_ai.SLUG),
+    )
+    warnings, _info = check_price_coverage._model_discovery_audit(
+        fetch_text=lambda _url: "GLM-5.3",
+        fetch_json=lambda _url, _env: {"data": ROWS},
+        published_model_ids={FLASH, M3, "z-ai/glm-5.3"},
+    )
+    assert not any(warning.startswith("confidential-ai:") for warning in warnings)
 
 
 def test_live_manifest_builds_credits_route_with_cache_billing_and_zdr_not_e2e() -> None:
