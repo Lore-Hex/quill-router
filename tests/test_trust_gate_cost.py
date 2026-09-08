@@ -101,6 +101,50 @@ def test_global_verdict_ttl_bounds_refusal_recovery() -> None:
     assert 0 < gate.GLOBAL_TRUST_TTL_SECONDS <= 15
 
 
+def test_near_expiry_verdict_refreshes_before_normal_transaction_delay(armed: Any, monkeypatch: Any) -> None:
+    store, db, settings = armed
+    clock = [100.0]
+    monkeypatch.setattr(gate.time, "monotonic", lambda: clock[0])
+    now = datetime.now(UTC)
+    db.snapshot_sql.clear()
+    db.snapshot_sql_params.clear()
+    first = gate.global_trust_verdict(store, settings, now=now)
+    clock[0] = 114.0
+    next_request = gate.global_trust_verdict(store, settings, now=now)
+    # A normal cross-region grant/record delay must not consume nearly-expired
+    # cached evidence. Refresh before entering the transaction, never inside it.
+    clock[0] = 117.0
+    before = db.snapshot_execute_sql_calls
+    result = store._run_in_transaction(lambda tx: gate.lease_eligibility(
+        store, settings, "workspace", reader=tx, global_verdict=next_request, now=now,
+    ))
+    assert result == (3, None)
+    assert next_request is not first
+    assert first.refusal(store, settings, now) == "global_verdict_expired"
+    assert next_request.expires_monotonic == 129.0
+    assert db.snapshot_execute_sql_calls == before
+    _assert_global_read_contents(db, 2)
+
+
+def test_near_expiry_refresh_is_single_flight_and_never_uses_stale_success(armed: Any, monkeypatch: Any) -> None:
+    store, db, settings = armed
+    clock = [100.0]
+    monkeypatch.setattr(gate.time, "monotonic", lambda: clock[0])
+    db.snapshot_sql.clear()
+    db.snapshot_sql_params.clear()
+    first = gate.global_trust_verdict(store, settings)
+    clock[0] = 109.999
+    assert gate.global_trust_verdict(store, settings) is first
+    del db.rows[(OWNER_BUDGET_KIND, owner_budget_id("test"))]
+    clock[0] = 110.0
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        verdicts = list(executor.map(lambda _: gate.global_trust_verdict(store, settings), range(32)))
+    assert all(verdict is verdicts[0] for verdict in verdicts)
+    assert verdicts[0].failure == "owner_budget_missing"
+    assert verdicts[0] is not first
+    _assert_global_read_contents(db, 2)
+
+
 def test_cached_refusal_recovers_after_ttl(armed: Any, monkeypatch: Any, caplog: Any) -> None:
     store, db, settings = armed
     clock = [100.0]

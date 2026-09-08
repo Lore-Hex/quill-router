@@ -15,7 +15,9 @@ CATALOG = DirectOpenAIProvider(
         base_url=BASE_URL,
         api_key_env="AKASHML_API_KEY",
         explicit_model_map={},
-        expected_models=("deepseek/deepseek-v4-flash-0731", "qwen/qwen3.8-27b"),
+        # DeepSeek was absent from /models and returned model_not_found on
+        # 2026-09-08. Requiring it would pin every refresh to the stale catalog.
+        expected_models=("qwen/qwen3.8-27b",),
     ),
     manifest_path=MANIFEST_PATH,
 )
