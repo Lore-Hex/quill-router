@@ -134,6 +134,15 @@
     "route_mode": "Prepaid + BYOK",
     "slug": "cohere"
   },
+  "confidential-ai": {
+    "card_version": 2,
+    "model_count": 1,
+    "name": "Confidential AI",
+    "privacy": "Zero retention",
+    "route_count": 1,
+    "route_mode": "Prepaid",
+    "slug": "confidential-ai"
+  },
   "crusoe": {
     "card_version": 2,
     "model_count": 15,

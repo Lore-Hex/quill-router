@@ -68,6 +68,8 @@ Do not treat the initial test key as evidence of production capacity or SLA.
 
 ## Sources
 
+- Provider artwork: the official `https://confidential.ai/icon.png`, vendored
+  locally; its social card uses the shared provider-card generator.
 - [API reference](https://confidential.ai/docs/inference-api/reference)
 - [Pricing](https://confidential.ai/pricing)
 - [Privacy policy](https://confidential.ai/legal/privacy-policy)
