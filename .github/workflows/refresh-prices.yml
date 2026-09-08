@@ -166,6 +166,7 @@ jobs:
                       STREAMLAKE_API_KEY:trustedrouter-streamlake-api-key \
                       NEUROMETRIC_API_KEY:trustedrouter-neurometric-api-key \
                       ENGY_API_KEY:trustedrouter-engy-api-key \
+                      CONFIDENTIAL_AI_API_KEY:trustedrouter-confidential-ai-api-key \
                       PEARL_RESEARCH_API_KEY:trustedrouter-pearl-api-key \
                       STEPFUN_API_KEY:trustedrouter-stepfun-api-key \
                       RELACE_API_KEY:trustedrouter-relace-api-key \

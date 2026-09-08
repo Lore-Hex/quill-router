@@ -43,6 +43,7 @@ from scripts.pricing.providers import (
     akashml,
     arcee,
     bfl,
+    confidential_ai,
     decart,
     fal,
     featherless,
@@ -500,6 +501,7 @@ _DIRECT_OPENAI_DISCOVERY_MODULES = (
 # the runtime-only set so a missing workflow secret is a deployment error, not
 # an intentionally skipped discovery check.
 _CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
+    confidential_ai,
     perplexity,
     scaleway,
     featherless,

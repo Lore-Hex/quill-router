@@ -153,6 +153,7 @@ PROVIDER_SLUGS = [
     "jina",
     "wandb",
     "nscale",
+    "confidential_ai",
     "perplexity",
     "krea",
     "fal",
@@ -171,6 +172,7 @@ PROVIDER_SLUGS = [
 # cache affinity, and settlement records remain separate. This alias is applied
 # only at catalog-refresh time; runtime routing never collapses the providers.
 _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
+    "confidential_ai": ("confidential-ai",),
     "gemini": ("google-ai-studio", "google-vertex"),
     "cloudflare_workers_ai": ("cloudflare-workers-ai",),
     "atlas_cloud": ("atlas-cloud",),

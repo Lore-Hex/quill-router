@@ -314,6 +314,10 @@ def _public_model_matches_filters(shape: dict[str, Any], request: Request) -> bo
         if modality.strip()
     }
     if requested_output_modalities:
+        if "image" in requested_output_modalities and not endpoints_for_model(
+            str(shape.get("id") or "")
+        ):
+            return False
         architecture = shape.get("architecture")
         output_modalities = (
             architecture.get("output_modalities", []) if isinstance(architecture, dict) else []

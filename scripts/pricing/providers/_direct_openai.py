@@ -64,6 +64,9 @@ class DirectOpenAIProviderSpec:
     # the shared fetcher prevents a healthy PONG from making a deliberately
     # dark route live during a refactor or manifest rebuild.
     operator_hold_reasons: dict[str, str] = field(default_factory=dict)
+    # Reviewed missing-price cases stay classified without freezing unrelated
+    # providers. A fresh price removes this hold, but still requires a canary.
+    reviewed_unpriced_model_ids: frozenset[str] = frozenset()
     canary_max_tokens: int = 16
     canary_expected_content: str | None = None
     canary_endpoint_path: str = "/chat/completions"
@@ -131,6 +134,16 @@ class DirectOpenAIProvider:
             return prices
         return self.spec.static_prices or None
 
+    def _operator_holds(self, prices: dict[str, ModelPrice]) -> dict[str, str]:
+        return {
+            **{
+                model: "price-unavailable"
+                for model in self.spec.reviewed_unpriced_model_ids
+                if model not in prices
+            },
+            **self.spec.operator_hold_reasons,
+        }
+
     def fetch(self) -> ProviderPricingResult:
         self._fetched = False
         api_key = self._api_key()
@@ -168,7 +181,9 @@ class DirectOpenAIProvider:
                 explicit_map=explicit_model_map,
                 upstream_id_map=self.upstream_id_map,
                 include=self.spec.include,
-                preserve_unpriced_model_ids=self.spec.preserve_unpriced_model_ids,
+                preserve_unpriced_model_ids=(
+                    self.spec.preserve_unpriced_model_ids | self.spec.reviewed_unpriced_model_ids
+                ),
             )
             prices = {
                 model_id: joined_prices[model_id]
@@ -196,17 +211,25 @@ class DirectOpenAIProvider:
             if isinstance(native_id, str):
                 self.upstream_id_map.setdefault(model_id, native_id)
 
+        operator_holds = self._operator_holds(prices)
         checked = models_requiring_canary(
             self.manifest_path,
-            (set(discovered) & set(prices)) - self.spec.operator_hold_reasons.keys(),
+            (set(discovered) & set(prices)) - operator_holds.keys(),
         )
         # A preserved unpriced row has never passed a paid-path canary.
         if self.spec.preserve_unpriced_model_ids:
             checked |= models_requiring_canary(
                 self.manifest_path,
                 (set(discovered) & set(prices) & self.spec.preserve_unpriced_model_ids)
-                - self.spec.operator_hold_reasons.keys(),
+                - operator_holds.keys(),
                 failure_reason="awaiting-price",
+            )
+        if self.spec.reviewed_unpriced_model_ids:
+            checked |= models_requiring_canary(
+                self.manifest_path,
+                (set(discovered) & set(prices) & self.spec.reviewed_unpriced_model_ids)
+                - operator_holds.keys(),
+                failure_reason="price-unavailable",
             )
         healthy = {
             model_id
@@ -226,7 +249,7 @@ class DirectOpenAIProvider:
             checked_model_ids=checked,
             healthy_model_ids=healthy,
         )
-        for model_id, reason in self.spec.operator_hold_reasons.items():
+        for model_id, reason in operator_holds.items():
             row = discovered.get(model_id)
             if row is None:
                 continue
@@ -259,5 +282,5 @@ class DirectOpenAIProvider:
             discovered_rows=self.discovered_rows,
             source_url=self.spec.catalog_url or f"{self.spec.base_url.rstrip('/')}/models",
             pricing_source_url=self.spec.pricing_source_url,
-            operator_hold_reasons=self.spec.operator_hold_reasons,
+            operator_hold_reasons=self._operator_holds(result.prices),
         )
