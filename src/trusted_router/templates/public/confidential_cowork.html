@@ -2,42 +2,39 @@
 
 {% block hero %}
 <section class="cc-hero" aria-labelledby="confidential-cowork-title">
+  <img src="/static/tr-confidential-cowork-icon.png" alt="TR Confidential Cowork app icon" width="96" height="96">
   <div class="kicker">Confidential Cowork by TrustedRouter</div>
-  <h1 id="confidential-cowork-title">Confidential Cowork</h1>
-  <p class="lead">A native agent for code, documents, research, and team workflows where confidential routing is a requirement, not a preference.</p>
+  <h1 id="confidential-cowork-title">TR Confidential Cowork</h1>
+  <p class="lead">A terminal coding agent built on Pi, with TrustedRouter confidential inference selected by default. Work with local files, run tools, and keep control of your sessions.</p>
   <div class="hero-actions">
-    <a class="btn primary" href="https://github.com/Lore-Hex/QuillCode/releases/download/confidential-cowork-latest/Confidential-Cowork-macOS-universal.dmg">Download for macOS</a>
+    <a class="btn primary" href="https://github.com/Lore-Hex/trpi/releases/download/confidential-cowork-v0.84.4/TR-Confidential-Cowork-macOS-universal.dmg">Download for macOS</a>
     <button class="btn" type="button" data-action="open-signin">Start with TrustedRouter</button>
     <a class="btn" href="mailto:support@trustedrouter.com?subject=Confidential%20Cowork%20enterprise">Enterprise deployment <span aria-hidden="true">→</span></a>
   </div>
-  <p class="cc-platform-note">One universal download for Apple silicon and Intel Macs. OpenAI compatible API.</p>
-  <figure class="cc-product-shot">
-    <img src="/static/confidential-cowork-desktop.png" alt="Confidential Cowork desktop app showing its native workspace, confidential model route, and Auto safety mode" width="1094" height="768" loading="eager" fetchpriority="high">
-    <figcaption>Every LLM request carries the confidential provider policy. The app cannot silently fall back to an ordinary route.</figcaption>
-  </figure>
+  <p class="cc-platform-note">Signed and notarized for Apple silicon and Intel Macs running macOS 13 or newer. Opens in Terminal.</p>
+  <p><a href="https://github.com/Lore-Hex/trpi">Source code and setup guide</a>. This is the TRPi terminal app, replacing the earlier QuillCode download. Install it directly rather than using the older app's updater.</p>
 </section>
 {% endblock %}
 
 {% block body %}
 <section class="public-proof-strip cc-proof" aria-label="Confidential Cowork guarantees">
   <div><strong>Fail closed</strong><span>No eligible confidential provider means no model request.</span></div>
-  <div><strong>US or EU</strong><span>Select the required processing jurisdiction in the app.</span></div>
-  <div><strong>Whole-agent policy</strong><span>Primary model, safety reviewer, summaries, and model search share one boundary.</span></div>
-  <div><strong>Native Swift</strong><span>Fast macOS app, local projects, terminal, tools, and Computer Use.</span></div>
+  <div><strong>TrustedRouter default</strong><span>Start with trustedrouter/confidential, without configuring a gateway.</span></div>
+  <div><strong>Local sessions</strong><span>Your conversation history stays on your Mac unless you choose to share it.</span></div>
+  <div><strong>Built on Pi</strong><span>Terminal interface, local files, shell tools, and extensions.</span></div>
 </section>
 
 <section class="marketing-split cc-explanation" aria-labelledby="boundary-heading">
   <div class="marketing-copy">
     <div class="kicker">A product boundary users can see</div>
-    <h2 id="boundary-heading">Confidentiality cannot be clicked away</h2>
-    <p>Confidential Cowork removes unsafe custom routing controls while keeping a searchable catalog of specific models and providers that meet the Confidential tier. <code>trustedrouter/confidential</code> is the default.</p>
-    <p>Every selection carries data collection denied and a minimum privacy tier of confidential. Choose the approved model your work needs without creating an accidental route around policy.</p>
+    <h2 id="boundary-heading">Confidential inference by default</h2>
+    <p><code>trustedrouter/confidential</code> is the default route. Every TrustedRouter request carries data collection denied and a minimum privacy tier of confidential, including when you select a specific model.</p>
+    <p>Other explicitly configured providers remain available. Their privacy terms are separate. Local tools run with your user permissions; this app is not a filesystem sandbox. <a href="/trust">Verify TrustedRouter attestation</a> before sending sensitive work.</p>
   </div>
   <div class="cc-policy-ledger" aria-label="Enforced routing policy">
     <span>Default route</span><strong>trustedrouter/confidential</strong>
     <span>Data collection</span><strong>deny</strong>
     <span>Minimum privacy</span><strong>confidential</strong>
-    <span>Jurisdiction</span><strong>United States or European Union</strong>
     <span>Fallback</span><strong>Confidential only, otherwise stop</strong>
   </div>
 </section>
@@ -51,7 +48,7 @@
     <div class="marketing-card"><span class="card-label">Financial services</span><h3>Analysis inside policy</h3><p>Work across models, code, reports, and internal tools while requiring an approved confidential route.</p></div>
     <div class="marketing-card"><span class="card-label">Biotech</span><h3>Research without casual disclosure</h3><p>Keep experimental notes, scripts, and document workflows behind one enforceable inference boundary.</p></div>
     <div class="marketing-card"><span class="card-label">Legal</span><h3>Privilege-aware workflows</h3><p>Reduce accidental provider drift when people summarize matters, review documents, and automate repetitive work.</p></div>
-    <div class="marketing-card"><span class="card-label">Enterprise engineering</span><h3>Agent utility, governed centrally</h3><p>Use local tools and repositories with a model route that cannot be weakened by an individual setting.</p></div>
+    <div class="marketing-card"><span class="card-label">Enterprise engineering</span><h3>Work in your repository</h3><p>Read files, review changes, and run local tools with confidential TrustedRouter inference.</p></div>
   </div>
 </section>
 
@@ -61,9 +58,9 @@
     <h2 id="start-heading">Self-serve in minutes. Enterprise controls when you need them.</h2>
   </div>
   <ol class="flow-steps cc-flow">
-    <li><span>1</span><strong>Download</strong><p>Install the signed macOS app and open a local project.</p></li>
-    <li><span>2</span><strong>Sign in</strong><p>Use TrustedRouter OAuth. No custom gateway can replace the confidential boundary.</p></li>
-    <li><span>3</span><strong>Choose a region</strong><p>Require United States or European Union processing, then start working.</p></li>
+    <li><span>1</span><strong>Download</strong><p>Drag TR Confidential Cowork into Applications, then open it to start Terminal.</p></li>
+    <li><span>2</span><strong>Add your key</strong><p>Use /login, select TrustedRouter, and enter your TrustedRouter API key.</p></li>
+    <li><span>3</span><strong>Start working</strong><p>Check that trustedrouter/confidential is selected, then give the agent a task.</p></li>
   </ol>
 </section>
 
