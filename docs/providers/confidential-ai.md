@@ -43,10 +43,12 @@ training on customer data. Operational/billing metadata are retained. Routes
 qualify for ZDR, not the strict `e2e` / `confidential` filter.
 
 The live attestation advertised schema version 2, scope
-`launch-or-admission-only`, and `operationalStatus: not-verified`. We did not
-independently cryptographically verify it. The current adapter uses ordinary
-HTTPS, not a measurement-pinned attested transport. No end-to-end verification
-claim should be made for this integration.
+`launch-or-admission-only`, and `operationalStatus: not-verified`. A subsequent
+[independent audit](confidential-ai-e2e-audit-2026-09-08.md) verified CPU evidence,
+the front-door TLS binding and sealed policy, and eight Blackwell GPU reports.
+Full reviewed-release and downstream request-path verification remains open.
+The current adapter uses ordinary HTTPS, not a measurement-pinned attested
+transport. No end-to-end verification claim should be made for this integration.
 
 ## Release Order
 
