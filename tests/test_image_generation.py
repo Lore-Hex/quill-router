@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.catalog import endpoints_for_model
@@ -80,6 +81,18 @@ def test_image_catalog_is_machine_readable_and_matches_general_filter(
     assert filtered.status_code == 200, filtered.text
     assert {model["id"] for model in filtered.json()["data"]} == public_image_ids
     assert MODELS["google/gemini-3.1-flash-image"].supports_chat is False
+
+
+def test_image_filters_exclude_models_without_active_routes(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from trusted_router.routes import catalog as catalog_routes
+
+    monkeypatch.setattr(catalog_routes, "endpoints_for_model", lambda _model_id: [])
+    dedicated = client.get("/v1/images/models")
+    filtered = client.get("/v1/models", params={"output_modalities": "image"})
+    assert dedicated.status_code == filtered.status_code == 200
+    assert dedicated.json()["data"] == filtered.json()["data"] == []
 
 
 def test_image_endpoint_catalog_reports_resolution_prices(client: TestClient) -> None:
