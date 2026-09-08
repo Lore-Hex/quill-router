@@ -408,6 +408,7 @@ FORMAT JSON
     def public_snapshot(self, name: str) -> dict[str, Any] | None:
         if name not in {
             "leaderboard",
+            "leaderboard_evidence",
             "apps",
             "video_leaderboard",
             "status_inputs",
