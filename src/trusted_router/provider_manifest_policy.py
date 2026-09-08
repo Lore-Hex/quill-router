@@ -40,6 +40,7 @@ EXPIRING_PROVIDER_MANIFEST_SLUGS = RUNTIME_ONLY_PROVIDER_MANIFEST_SLUGS | frozen
         "sakana",
         "jina",
         "near-ai",
+        "confidential-ai",
         "nvidia-nim",
         "wandb",
         "nscale",

@@ -1,0 +1,51 @@
+{
+  "provider": "confidential-ai",
+  "models": [
+    {
+      "display_name": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "title": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "upstream_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "routable": true,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 18000
+    },
+    {
+      "display_name": "MiniMaxAI/MiniMax-M3-MXFP8",
+      "title": "MiniMaxAI/MiniMax-M3-MXFP8",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m3",
+      "upstream_id": "MiniMaxAI/MiniMax-M3-MXFP8",
+      "routable": false,
+      "routable_reason": "awaiting-price",
+      "unresolved_since": "2026-09-08"
+    }
+  ],
+  "source": "https://api.confidential.ai/v1/models",
+  "pricing_source": "https://confidential.ai/pricing",
+  "generated_at": "2026-09-08T15:46:07Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 2
+}

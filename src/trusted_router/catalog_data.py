@@ -1248,6 +1248,27 @@ PROVIDERS: dict[str, Provider] = {
         # https://wandb.ai/site/terms/
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "confidential-ai": Provider(
+        slug="confidential-ai",
+        name="Confidential AI",
+        supports_chat=True,
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_confidential_compute=True,
+        provider_e2ee=False,
+        provider_policy=(
+            "Confidential AI (Inexorable, Inc.) publishes zero prompt/completion "
+            "retention and no training on customer data. Operational and billing "
+            "metadata are retained. Inference is served in the US and El Salvador. "
+            "Its public attestation covers launch/admission, not verified GPU state. "
+            "TrustedRouter uses its HTTPS API; these routes are ZDR, not verified "
+            "end-to-end confidential inference and are excluded from the e2e filter."
+        ),
+        provider_policy_url="https://confidential.ai/legal/privacy-policy",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
     "nscale": Provider(
         slug="nscale",
         name="Nscale",
@@ -2037,6 +2058,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "decart",
         "wandb",
         "nscale",
+        "confidential-ai",
         "databricks",
         "zero-g",
         "upstage",

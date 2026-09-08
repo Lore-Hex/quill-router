@@ -114,6 +114,7 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     # W&B Serverless Inference, hosted on CoreWeave infrastructure.
     "wandb": (("WANDB_API_KEY",), "https://api.inference.wandb.ai/v1"),
     "nscale": (("NSCALE_API_KEY",), "https://inference.api.nscale.com/v1"),
+    "confidential-ai": (("CONFIDENTIAL_AI_API_KEY",), "https://api.confidential.ai/v1"),
     "nvidia-nim": (("NVIDIA_NIM_API_KEY",), "https://integrate.api.nvidia.com/v1"),
 }
 
