@@ -26,6 +26,24 @@ async function send(page) {
   await page.getByRole("button", { name: "Send message", exact: true }).click();
 }
 
+for (const failure of ["error event", "truncated stream"]) {
+  test(`chat reports ${failure} without retrying or accepting a partial answer`, async ({ page, context }) => {
+    await setup(page, context);
+    let calls = 0;
+    await page.route("**/v1/chat/completions", (route) => {
+      calls++;
+      let body = 'data: {"choices":[{"delta":{"content":"Partial answer"}}]}\n\n';
+      if (failure === "error event") body += 'data: {"error":{"message":"Upstream connection interrupted","code":502}}\n\ndata: [DONE]\n\n';
+      return route.fulfill({ contentType: "text/event-stream", body });
+    });
+    await page.goto(`/chat?model=${MODEL}`);
+    await send(page);
+    await expect(page.locator(".chat-msg-error")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeVisible();
+    expect(calls).toBe(1);
+  });
+}
+
 test("chat and picker show full names with composer in viewport on desktop and mobile", async ({ page, context }, testInfo) => {
   await setup(page, context);
   for (const width of [1280, 390, 320]) {

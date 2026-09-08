@@ -9,6 +9,10 @@ upstream status + headers (minus hop-by-hop) preserved.
 """
 from __future__ import annotations
 
+import gzip
+import logging
+from collections.abc import AsyncIterator
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -72,6 +76,78 @@ class _AsyncStream(httpx.AsyncByteStream):
 
     async def aclose(self) -> None:
         pass
+
+
+class _BrokenStream(httpx.AsyncByteStream):
+    def __init__(self, prefix: bytes = b"") -> None:
+        self.prefix = prefix
+        self.closed = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        if self.prefix:
+            yield self.prefix
+        raise httpx.RemoteProtocolError("private-upstream-error-must-not-be-logged")
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.parametrize("prefix", [b"", b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'])
+def test_chat_proxy_stream_failure_is_explicit_attributed_and_never_replayed(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, prefix: bytes,
+) -> None:
+    stream = _BrokenStream(prefix)
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, stream=stream, headers={"content-type": "text/event-stream"})
+
+    _install_upstream(monkeypatch, handler)
+    client, raw_key = _authenticated_client(settings)
+    caplog.set_level(logging.INFO, logger="trusted_router.routes.chat_proxy")
+    response = client.post(
+        "/chat-proxy/v1/chat/completions", json={"messages": [{"content": "private-prompt-canary"}]},
+        headers={"Authorization": f"Bearer {raw_key}", "X-TrustedRouter-Request-Id": "abcdef0123456789abcdef0123456789"},
+    )
+    assert response.status_code == (200 if prefix else 502)
+    if prefix:
+        import json
+
+        assert response.content.startswith(prefix)
+        error = json.loads(response.text.split("data: ")[-1])["error"]
+        assert error["type"] == "bad_gateway"
+        assert error["code"] == 502
+        assert "[DONE]" not in response.text
+    else:
+        assert response.json()["error"]["type"] == "bad_gateway"
+    assert len(calls) == 1
+    request_id = response.headers["x-trustedrouter-request-id"]
+    assert calls[0].headers["x-trustedrouter-request-id"] == request_id
+    assert stream.closed
+    starts = [r for r in caplog.records if r.message.startswith("chat_proxy.request_start")]
+    ends = [r for r in caplog.records if r.message.startswith("chat_proxy.request_end")]
+    assert len(starts) == len(ends) == 1
+    key = STORE.get_key_by_raw(raw_key)
+    assert key is not None
+    assert key.workspace_id in ends[0].message
+    assert key.hash in ends[0].message
+    assert request_id in ends[0].message
+    assert "RemoteProtocolError" in ends[0].message
+    assert all(secret not in caplog.text + response.text for secret in (
+        raw_key, "private-prompt-canary", "private-upstream-error-must-not-be-logged",
+    ))
+
+
+def test_chat_proxy_preserves_compression_header_with_opaque_bytes(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    body = b'{"choices":[]}'
+    _install_upstream(monkeypatch, lambda request: _streaming_response(
+        status_code=200, content=gzip.compress(body), headers={"content-encoding": "gzip"},
+    ))
+    client, raw_key = _authenticated_client(settings)
+    response = client.post("/chat-proxy/v1/chat/completions", json={}, headers={"Authorization": f"Bearer {raw_key}"})
+    assert response.content == body
+    assert response.headers["content-encoding"] == "gzip"
 
 
 def _streaming_response(

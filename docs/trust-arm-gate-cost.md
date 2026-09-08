@@ -12,8 +12,13 @@ startup probe. This document is the contract that replaced it.
 full-primary-key reads, then reads one owner-budget entity by its complete
 `(kind, id)` key. No owner or workspace inventory scan occurs on admission.
 A process-local, store-scoped cache serializes cold refreshes and caches both
-passes and refusals for 15 seconds. Configuration/database identity changes
-invalidate the cache. There is no refresh thread.
+passes and refusals with a 15-second validity ceiling. Successful verdicts are
+refreshed lazily when five seconds or less remain, before entering a transaction;
+refusals retain the full TTL. This prevents ordinary cross-region grant/record
+latency from consuming nearly-expired evidence. Refresh remains single-flight,
+reads exactly four global records, and never extends the original verdict or
+evidence deadlines. Configuration/database identity changes invalidate the
+cache. There is no refresh thread.
 
 `lease_eligibility` with a caller-supplied reader requires a precomputed
 `GlobalTrustVerdict`. Absence, expiration, configuration mismatch, or evidence
