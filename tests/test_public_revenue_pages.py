@@ -250,7 +250,7 @@ def test_confidential_cowork_is_self_serve_and_fail_closed(client: TestClient) -
     assert "Confidential Cowork by TrustedRouter" in response.text
     assert "Confidential-Cowork-macOS-universal.dmg" in response.text
     assert "trustedrouter/confidential" in response.text
-    assert "https://github.com/Lore-Hex/trpi/releases/download/v0.84.4/TR-Confidential-Cowork-macOS-universal.dmg" in response.text
+    assert "https://github.com/Lore-Hex/trpi/releases/download/v0.84.5/TR-Confidential-Cowork-macOS-universal.dmg" in response.text
     assert "Lore-Hex/QuillCode/releases" not in response.text
     assert "Opens in Terminal" in response.text
     assert "Other explicitly configured providers remain available" in response.text
