@@ -21,6 +21,13 @@ PYTHON_SDK_REPO = "https://github.com/Lore-Hex/trusted-router-py"
 JAVASCRIPT_SDK_REPO = "https://github.com/Lore-Hex/trusted-router-js"
 PROVIDER_CHECK_REPO = "https://github.com/Lore-Hex/trustedrouter-provider-check"
 
+TRUST_AGENT_PROMPT = (
+    "Verify https://trustedrouter.com using https://trust.trustedrouter.com. "
+    "Check fresh, TLS-bound attestation and trace the running build to published "
+    "source and build provenance. Separate router protections from model-provider "
+    "privacy claims. Report verified evidence, failures, and anything you cannot verify."
+)
+
 
 NOT_CONFIGURED = "not-configured"
 
@@ -387,6 +394,7 @@ def trust_html(
     python_sdk_repo = html.escape(PYTHON_SDK_REPO)
     javascript_sdk_repo = html.escape(JAVASCRIPT_SDK_REPO)
     provider_check_repo = html.escape(PROVIDER_CHECK_REPO)
+    agent_prompt = html.escape(TRUST_AGENT_PROMPT)
     if release_metadata_status == "stale":
         release_warning = (
             '<section class="panel warn"><h2>Release record temporarily stale</h2>'
@@ -456,6 +464,17 @@ def trust_html(
     .mark {{ width:30px; height:30px; border-radius:7px; background:linear-gradient(135deg,#2c6ecb,#19a06d); display:grid; place-items:center; font-size:13px; color:#fff; }}
     .links {{ display:flex; gap:14px; flex-wrap:wrap; font-size:14px; }}
     .wrap {{ max-width:1120px; margin:0 auto; padding:34px 22px 56px; display:grid; gap:18px; }}
+    .agent-verify {{ padding:0 0 18px; border-bottom:1px solid var(--line); min-width:0; }}
+    .agent-verify-head {{ display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; min-height:44px; margin-bottom:14px; }}
+    .agent-verify-head h2 {{ font-size:22px; line-height:1.3; margin:0; text-wrap:balance; }}
+    .agent-prompt {{ margin:0; border-left:3px solid var(--green); padding:4px 0 4px 18px; }}
+    .agent-prompt p {{ color:var(--ink); margin:0; font-size:17px; line-height:1.65; overflow-wrap:anywhere; }}
+    .copy-prompt {{ display:inline-flex; flex-shrink:0; align-items:center; justify-content:center; gap:8px; min-height:44px; padding:10px 16px; border:1px solid var(--green); border-radius:6px; background:var(--green); color:#fff; font:inherit; font-weight:600; cursor:pointer; }}
+    .copy-prompt[hidden] {{ display:none; }}
+    .copy-prompt:hover {{ background:#0d5a3c; }}
+    .copy-prompt:focus-visible {{ outline:3px solid var(--blue); outline-offset:3px; }}
+    .copy-prompt:disabled {{ cursor:wait; }}
+    .copy-status {{ display:block; min-height:24px; margin-top:8px; color:var(--muted); font-size:14px; line-height:1.5; }}
     .hero {{ display:grid; grid-template-columns:minmax(0,1.15fr) minmax(300px,.85fr); gap:20px; align-items:start; }}
     h1 {{ font-size:42px; line-height:1.08; margin:0 0 12px; letter-spacing:0; }}
     h2 {{ font-size:17px; margin:0 0 12px; letter-spacing:0; }}
@@ -482,6 +501,7 @@ def trust_html(
       h1 {{ font-size:31px; }}
     }}
   </style>
+  <script src="/static/trust-prompt.js" defer></script>
 </head>
 <body>
   <header>
@@ -491,6 +511,14 @@ def trust_html(
     </nav>
   </header>
   <main class="wrap">
+    <section class="agent-verify" aria-labelledby="agent-verify-title">
+      <div class="agent-verify-head">
+        <h2 id="agent-verify-title">Ask your agent to verify TrustedRouter</h2>
+        <button class="copy-prompt" id="copy-trust-prompt" type="button" aria-controls="trust-agent-prompt" title="Copy verification prompt" hidden><img src="/static/copy-icon.svg" width="18" height="18" alt=""><span>Copy prompt</span></button>
+      </div>
+      <blockquote class="agent-prompt"><p id="trust-agent-prompt">{agent_prompt}</p></blockquote>
+      <span class="copy-status" id="trust-copy-status" role="status" aria-live="polite" aria-atomic="true"></span>
+    </section>
     {release_warning}
     <section class="hero">
       <div class="panel">
