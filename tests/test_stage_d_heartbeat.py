@@ -1155,7 +1155,7 @@ def test_literal_deferred_and_terminal_disposition_responses_match_router_helper
     assert _json("refund_response_finalized.json")["data"]["disposition"] == "finalized"
 
 
-def test_reaper_flag_defaults_off_and_rollout_pins_it_off() -> None:
+def test_reaper_flag_defaults_off_and_rollout_pins_it_on() -> None:
     assert Settings(environment="test").reap_snapshot_booking_enabled is False
     rollout = (Path(__file__).parents[1] / "scripts" / "deploy" / "rollout.sh").read_text()
-    assert '"TR_REAP_SNAPSHOT_BOOKING_ENABLED=false"' in rollout
+    assert '"TR_REAP_SNAPSHOT_BOOKING_ENABLED=true"' in rollout
