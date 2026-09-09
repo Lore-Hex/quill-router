@@ -2480,20 +2480,21 @@ US_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
 #   1. Privacy and jurisdiction requirements are applied before authorization;
 #      an incompatible leading model is skipped rather than silently weakening
 #      a caller's requested policy.
-#   2. The ladder spans MORE THAN ONE provider. The 0813 leader itself has
-#      release-pinned first-party and Baseten routes, and it is followed by
-#      independent model/provider families.
+#   2. The ladder spans MORE THAN ONE provider. The GLM leaders have multiple
+#      serving providers and are followed by independent model families.
 #
-# Order: strongest current DeepSeek release first, then cheap qualifying
-# fallbacks. Privacy and jurisdiction requirements are still applied before
-# any candidate is authorized.
+# Order: GLM 5.3 Flash, GLM 5.3, then the existing independent fallbacks.
+# Privacy and jurisdiction requirements still apply before authorization.
 #
 # Anthropic sits at the BOTTOM deliberately. Its endpoints are currently
 # PRIVACY_TIER_STANDARD (not yet zero-retention), so it is filtered out of any
 # request that demands ZDR — but it remains a capable last-resort fallback for
 # requests with no privacy floor, and it moves up on its own merits the moment
 # its endpoint tier is raised.
+GLM_5_3_RECOMMENDED_MODEL_IDS = ("z-ai/glm-5.3-flash", "z-ai/glm-5.3")
+
 DEFAULT_AUTO_MODEL_ORDER = [
+    *GLM_5_3_RECOMMENDED_MODEL_IDS,
     DEEPSEEK_V4_PRO_0813_MODEL_ID,
     "deepseek/deepseek-v4-flash-0731",
     "moonshotai/kimi-k3",

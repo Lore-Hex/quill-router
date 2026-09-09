@@ -35,6 +35,14 @@
   <p style="margin-top:12px">Rejected field names and status codes are emitted as bounded operational metadata so compatibility demand can be measured. Field values, request bodies, prompts, and outputs are excluded, and Sentry remains outside the enclave.</p>
 </section>
 
+<section class="status-section" style="margin-top:48px" id="recommended-models">
+  <div class="status-section-head"><div>
+    <h2>Recommended automatic routes</h2>
+    <p><code>trustedrouter/auto</code> starts with <a href="/models/z-ai/glm-5.3-flash">GLM 5.3 Flash</a>, then <a href="/models/z-ai/glm-5.3">GLM 5.3</a>, followed by DeepSeek, Kimi, and the rest of the fallback pool. Your provider, privacy, and capability requirements still determine which routes qualify.</p>
+    <p><code>trustedrouter/cheap</code> includes both GLM models alongside lower-cost alternatives. It orders the pool by published input plus output token prices, so GLM 5.3 remains a higher-cost fallback. Set <code>provider.max_price</code> to enforce your per-token price ceiling.</p>
+  </div></div>
+</section>
+
 <section class="status-section" style="margin-top:48px" id="fields">
   <div class="status-section-head">
     <div>
