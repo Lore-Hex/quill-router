@@ -5,14 +5,14 @@
   <img src="/static/tr-confidential-cowork-icon.png" alt="TR Confidential Cowork app icon" width="96" height="96">
   <div class="kicker">Confidential Cowork by TrustedRouter</div>
   <h1 id="confidential-cowork-title">TR Confidential Cowork</h1>
-  <p class="lead">A terminal coding agent built on Pi, with TrustedRouter confidential inference selected by default. Work with local files, run tools, and keep control of your sessions.</p>
+  <p class="lead">A desktop agent built on Pi, with TrustedRouter confidential inference selected by default. Work with local files, run tools, and keep control of your sessions.</p>
   <div class="hero-actions">
-    <a class="btn primary" href="https://github.com/Lore-Hex/trpi/releases/download/v0.84.5/TR-Confidential-Cowork-macOS-universal.dmg">Download for macOS</a>
+    <a class="btn primary" href="https://github.com/Lore-Hex/confidential-cowork-desktop/releases/download/v0.2.0-alpha/TR-Confidential-Cowork-Desktop-universal.dmg">Download for macOS</a>
     <button class="btn" type="button" data-action="open-signin">Start with TrustedRouter</button>
     <a class="btn" href="mailto:support@trustedrouter.com?subject=Confidential%20Cowork%20enterprise">Enterprise deployment <span aria-hidden="true">→</span></a>
   </div>
-  <p class="cc-platform-note">Signed and notarized for Apple silicon and Intel Macs running macOS 13 or newer. Opens in Terminal. Uses TrustedRouter's OpenAI compatible API.</p>
-  <p><a href="https://github.com/Lore-Hex/trpi">Source code and setup guide</a>. This is the TRPi terminal app, replacing the earlier QuillCode download. Install it directly rather than using the older app's updater.</p>
+  <p class="cc-platform-note">Signed and notarized for Apple silicon and Intel Macs running macOS 13 or newer. A desktop app with browser sign-in. Uses TrustedRouter's OpenAI compatible API.</p>
+  <p><a href="https://github.com/Lore-Hex/confidential-cowork-desktop">Source code and setup guide</a>. This desktop app replaces the earlier terminal launcher and QuillCode downloads. Install it directly rather than using the older app's updater.</p>
 </section>
 {% endblock %}
 
@@ -21,7 +21,7 @@
   <div><strong>Fail closed</strong><span>No eligible confidential provider means no model request.</span></div>
   <div><strong>TrustedRouter default</strong><span>Start with trustedrouter/confidential, without configuring a gateway.</span></div>
   <div><strong>Local sessions</strong><span>Your conversation history stays on your Mac unless you choose to share it.</span></div>
-  <div><strong>Built on Pi</strong><span>Terminal interface, local files, shell tools, and extensions.</span></div>
+  <div><strong>Built on Pi</strong><span>Desktop interface, local files, shell tools, and extensions.</span></div>
 </section>
 
 <section class="marketing-split cc-explanation" aria-labelledby="boundary-heading">
@@ -29,7 +29,7 @@
     <div class="kicker">A product boundary users can see</div>
     <h2 id="boundary-heading">Confidential inference by default</h2>
     <p><code>trustedrouter/confidential</code> is the default route. Every TrustedRouter request carries data collection denied and a minimum privacy tier of confidential, including when you select a specific model.</p>
-    <p>Other explicitly configured providers remain available. Their privacy terms are separate. Local tools run with your user permissions; this app is not a filesystem sandbox. <a href="/trust">Verify TrustedRouter attestation</a> before sending sensitive work.</p>
+    <p>Choose an eligible confidential model by name or use the default route. Local tools run with your user permissions; this app is not a filesystem sandbox. <a href="/trust">Verify TrustedRouter attestation</a> before sending sensitive work.</p>
   </div>
   <div class="cc-policy-ledger" aria-label="Enforced routing policy">
     <span>Default route</span><strong>trustedrouter/confidential</strong>
@@ -58,8 +58,8 @@
     <h2 id="start-heading">Self-serve in minutes. Enterprise controls when you need them.</h2>
   </div>
   <ol class="flow-steps cc-flow">
-    <li><span>1</span><strong>Download</strong><p>Drag TR Confidential Cowork into Applications, then open it to start Terminal.</p></li>
-    <li><span>2</span><strong>Add your key</strong><p>Use /login, select TrustedRouter, and enter your TrustedRouter API key.</p></li>
+    <li><span>1</span><strong>Download</strong><p>Drag TR Confidential Cowork into Applications, then open the app.</p></li>
+    <li><span>2</span><strong>Sign in</strong><p>Select Sign in with TrustedRouter and authorize in your browser. API key entry is also available.</p></li>
     <li><span>3</span><strong>Start working</strong><p>Check that trustedrouter/confidential is selected, then give the agent a task.</p></li>
   </ol>
 </section>
