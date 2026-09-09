@@ -28,7 +28,7 @@ from trusted_router.config import Settings
 from trusted_router.routing import chat_route_endpoint_candidates
 from trusted_router.routing_candidates import auto_candidate_models
 
-# The models the default route should reach for after the global 0813 leader.
+# The leading models that can satisfy a US zero-retention request.
 QUALIFYING_LEAD_MODELS = 3
 
 
@@ -76,8 +76,10 @@ def test_auto_ladder_spans_more_than_one_provider() -> None:
     assert len(providers) > 1, f"the leading auto candidates share one provider: {providers}"
 
 
-def test_current_release_then_cheap_qualifying_models_lead_the_ladder() -> None:
-    assert DEFAULT_AUTO_MODEL_ORDER[:4] == [
+def test_glm53_recommendations_preserve_independent_fallbacks() -> None:
+    assert DEFAULT_AUTO_MODEL_ORDER[:6] == [
+        "z-ai/glm-5.3-flash",
+        "z-ai/glm-5.3",
         "deepseek/deepseek-v4-pro-0813",
         "deepseek/deepseek-v4-flash-0731",
         "moonshotai/kimi-k3",

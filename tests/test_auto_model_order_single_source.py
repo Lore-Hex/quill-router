@@ -36,10 +36,10 @@ def test_documented_ladder_survives_catalog_filtering() -> None:
     assert len(auto_candidate_models(None)) >= 3
 
 
-def test_auto_leads_with_the_current_deepseek_release() -> None:
-    """The global ladder must start with the explicitly pinned 0813 release."""
-    assert DEFAULT_AUTO_MODEL_ORDER[0] == "deepseek/deepseek-v4-pro-0813"
-    assert auto_candidate_models(None)[0].id == "deepseek/deepseek-v4-pro-0813"
+def test_auto_leads_with_glm53_flash_then_glm53() -> None:
+    expected = ["z-ai/glm-5.3-flash", "z-ai/glm-5.3"]
+    assert DEFAULT_AUTO_MODEL_ORDER[:2] == expected
+    assert [model.id for model in auto_candidate_models(None)[:2]] == expected
 
 
 def test_explicit_override_still_wins() -> None:

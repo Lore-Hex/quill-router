@@ -24,6 +24,7 @@ from trusted_router.catalog_data import (
     FREE_MODEL_ID,
     FUSION_CODE_MODEL_ID,
     FUSION_MODEL_ID,
+    GLM_5_3_RECOMMENDED_MODEL_IDS,
     IRIS_1_0_MODEL_ID,
     IRIS_2_0_MODEL_ID,
     IRIS_3_0_MODEL_ID,
@@ -146,6 +147,17 @@ def free_candidate_models(limit: int = 16) -> list[Model]:
 
 
 def cheap_candidate_models(limit: int = 8) -> list[Model]:
+    if limit <= 0:
+        return []
+    # Keep the current general-purpose recommendations as available fallbacks,
+    # even when an older, cheaper model wins their family's catalog slot.
+    # Final ordering remains by price; recommendation is not a price override.
+    recommended = [
+        model
+        for model_id in GLM_5_3_RECOMMENDED_MODEL_IDS
+        if (model := MODELS.get(model_id)) is not None and _is_regular_chat_model(model)
+    ][: max(0, limit - 1)]
+    recommended_ids = {model.id for model in recommended}
     by_provider: dict[str, Model] = {}
     for model in MODELS.values():
         if not _is_regular_chat_model(model) or model.id.endswith(":free"):
@@ -153,7 +165,12 @@ def cheap_candidate_models(limit: int = 8) -> list[Model]:
         current = by_provider.get(model.provider)
         if current is None or _price_sort_key(model) < _price_sort_key(current):
             by_provider[model.provider] = model
-    return sorted(by_provider.values(), key=_price_sort_key)[:limit]
+    remaining = [
+        model
+        for model in sorted(by_provider.values(), key=_price_sort_key)
+        if model.id not in recommended_ids
+    ][: limit - len(recommended)]
+    return sorted([*recommended, *remaining], key=_price_sort_key)
 
 
 FAST_MODEL_ORDER = (
