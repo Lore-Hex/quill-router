@@ -39,6 +39,10 @@ def test_agent_verification_prompt_is_first_on_both_trust_surfaces(url: str) -> 
     assert button.get("type") == "button"
     assert button.get("aria-controls") == "trust-agent-prompt"
     assert button.get("onclick") is None
+    icon = button.find("img")
+    assert icon is not None
+    assert icon.get("alt") == "Copy"
+    assert icon.get("aria-hidden") == "true"
     assert first.find(id="trust-copy-status").get("role") == "status"
     script = page.find("script", src="/static/trust-prompt.js")
     assert script is not None

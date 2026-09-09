@@ -514,7 +514,7 @@ def trust_html(
     <section class="agent-verify" aria-labelledby="agent-verify-title">
       <div class="agent-verify-head">
         <h2 id="agent-verify-title">Ask your agent to verify TrustedRouter</h2>
-        <button class="copy-prompt" id="copy-trust-prompt" type="button" aria-controls="trust-agent-prompt" title="Copy verification prompt" hidden><img src="/static/copy-icon.svg" width="18" height="18" alt=""><span>Copy prompt</span></button>
+        <button class="copy-prompt" id="copy-trust-prompt" type="button" aria-controls="trust-agent-prompt" title="Copy verification prompt" hidden><img src="/static/copy-icon.svg" width="18" height="18" alt="Copy" aria-hidden="true"><span>Copy prompt</span></button>
       </div>
       <blockquote class="agent-prompt"><p id="trust-agent-prompt">{agent_prompt}</p></blockquote>
       <span class="copy-status" id="trust-copy-status" role="status" aria-live="polite" aria-atomic="true"></span>
