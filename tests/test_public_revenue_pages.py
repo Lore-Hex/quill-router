@@ -78,7 +78,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/gpt-oss-120b-api": "gpt-oss-120b, served fast on Cerebras and attested down to the image digest.",
         "/eu-ai-act-llm-compliance": "Your EU AI Act compliance file depends on facts from your LLM API vendor, and attestation makes those facts checkable.",
         "/x402-llm-api": "Your agent gets a 402, signs a payment, retries the call, and reads the completion.",
-        "/confidential-cowork": "Confidentiality cannot be clicked away",
+        "/confidential-cowork": "Confidential inference by default",
     }
 
     for path, marker in markers.items():
