@@ -41,6 +41,13 @@ stale, not that you broke it.
 
 ## Deploys
 
+Joseph's default is to deploy production-bound changes, not stop at local fixes
+or an open PR, unless he explicitly asks to hold deployment. Use the reviewed
+release workflows and keep their CI, attestation, and rollout gates intact.
+Verify the changed behavior and production health after deployment. If a gate
+blocks release, investigate it and report the exact blocker; never call a queued
+or partially completed rollout deployed.
+
 Pushing to `main` **auto-deploys the control plane to Cloud Run**. It triggers only on:
 `src/**`, `scripts/deploy/**`, `frontend/src/**`, `Dockerfile`, `.gcloudignore`,
 `pyproject.toml`, `uv.lock`, `.github/workflows/deploy.yml`. Docs-only changes do not deploy.
