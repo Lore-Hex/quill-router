@@ -551,6 +551,7 @@ def test_postgres_route_health_batch_read_uses_one_partitioned_query() -> None:
     "snapshot_name",
     [
         "leaderboard",
+        "leaderboard_evidence",
         "apps",
         "video_leaderboard",
         "status_inputs",
