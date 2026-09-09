@@ -1559,23 +1559,23 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "confidential-cowork": PublicPage(
         template="public/confidential_cowork.html",
-        title="Confidential Cowork",
+        title="TR Confidential Cowork",
         description=(
-            "A native coding and knowledge-work agent that requires confidential "
-            "LLM routing, fails closed, and lets each team select US or EU processing."
+            "Download the Pi-based terminal coding agent for macOS. TrustedRouter "
+            "confidential inference is the default, with local tools and local sessions."
         ),
         faq_items=(
             (
                 "Can Confidential Cowork fall back to a normal model provider?",
-                "No. The confidential edition attaches a deny-data-collection, "
-                "minimum-confidentiality provider policy to every model request. "
-                "If no eligible provider is available, the request fails closed.",
+                "TrustedRouter requests deny data collection and require confidential "
+                "providers. If no eligible provider is available, they fail closed. "
+                "Other providers can be explicitly configured; their privacy terms are separate.",
             ),
             (
-                "Can we choose where requests are processed?",
-                "Yes. Each installation can require United States or European Union "
-                "processing. The same restriction covers the primary model, safety "
-                "review, summaries, and model-assisted search.",
+                "Is this the earlier QuillCode desktop app?",
+                "No. This release is built on TRPi and opens in Terminal. Install the new "
+                "signed app directly, then use /login to add your TrustedRouter API key. "
+                "It does not use the earlier app's updater.",
             ),
             (
                 "Can an enterprise use its own models and token capacity?",
@@ -1584,7 +1584,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
                 "identity controls, and organization policy.",
             ),
         ),
-        og_alt="Confidential Cowork desktop app with enforced confidential routing controls",
+        og_alt="TR Confidential Cowork terminal coding agent",
     ),
     "security": PublicPage(
         template="public/security.html",
