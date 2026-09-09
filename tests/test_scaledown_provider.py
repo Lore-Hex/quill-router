@@ -261,3 +261,43 @@ def test_public_pages_and_usage_examples(client):
         page = client.get(f"/models/scaledown/{task}")
         assert page.status_code == 200
         assert "input-only" in page.text.lower()
+
+
+@pytest.mark.parametrize("task", scaledown.TASKS)
+def test_free_output_is_visible_in_all_model_prices(task):
+    from trusted_router.catalog import MODELS
+    from trusted_router.dashboard import _model_detail_view, _model_route_evidence, _model_view
+
+    model = MODELS[f"scaledown/{task}"]
+    listing = _model_view(model, test_mode=True)
+    detail = _model_detail_view(model, test_mode=True)
+    evidence = _model_route_evidence(model, test_mode=True)
+    assert listing["completion_price"] == "$0/1M"
+    assert listing["completion_price_sort"] == 0
+    assert detail["completion_price"] == "$0/1M"
+    assert all(endpoint["completion_price"] == "$0/1M" for endpoint in detail["endpoints"])
+    assert evidence["lowest_completion_price"] == "$0/1M"
+
+
+def test_unknown_zero_prices_still_mean_selected_route():
+    from dataclasses import replace
+
+    from trusted_router.catalog import endpoints_for_model
+    from trusted_router.dashboard import _endpoint_price_range, _price
+
+    endpoint = endpoints_for_model("scaledown/compress")[0]
+    attr = "completion_price_microdollars_per_million_tokens"
+    assert _price(0) == "selected route"
+    assert _price(-1, include_zero=True) == "selected route"
+    assert _endpoint_price_range((replace(endpoint, provider="unknown"),), attr) == "selected route"
+    assert _endpoint_price_range((replace(endpoint, model_id="unknown"),), attr) == "selected route"
+    assert (
+        _endpoint_price_range(
+            (
+                endpoint,
+                replace(endpoint, completion_price_microdollars_per_million_tokens=1_000_000),
+            ),
+            attr,
+        )
+        == "$0/1M to $1/1M"
+    )
