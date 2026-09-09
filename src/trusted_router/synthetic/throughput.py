@@ -40,7 +40,9 @@ def throughput_candidates(*, limit: int = 200) -> list[tuple[str, str]]:
 
     from trusted_router.routing import _THROUGHPUT_RANK
 
-    pool = rotation_candidates()
+    # Input-only task APIs have no metered output-token stream to benchmark.
+    # They remain covered by the normal availability rotation.
+    pool = rotation_candidates(include_input_only=False)
     routes = [(provider, model) for provider, models in pool.items() for model in models]
     if not routes:
         return []

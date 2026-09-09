@@ -21,6 +21,7 @@ from trusted_router.money import (
     TOKENS_PER_MILLION,
     dollars_to_microdollars,
 )
+from trusted_router.provider_contracts import INPUT_ONLY_PROVIDER_MODELS
 
 
 @dataclass(frozen=True)
@@ -533,6 +534,17 @@ def provider_manifest_price_profile_is_valid(raw_model: object) -> bool:
         return False
     prompt = _provider_manifest_exact_integer(raw_model.get("input_token_price_per_m"))
     completion = _provider_manifest_exact_integer(raw_model.get("output_token_price_per_m"))
+    model_id = raw_model.get("id")
+    if isinstance(model_id, str) and ("scaledown", model_id) in INPUT_ONLY_PROVIDER_MODELS:
+        # The native adapter reports billable input only. A new paid output or
+        # tiered contract requires an adapter review, not an automatic price edit.
+        return (
+            prompt is not None
+            and prompt > 0
+            and completion == 0
+            and "price_tiers" not in raw_model
+            and "cached_input_token_price_per_m" not in raw_model
+        )
     if prompt is None or completion is None or prompt <= 0 or completion <= 0:
         return False
     cached_present = "cached_input_token_price_per_m" in raw_model

@@ -13,6 +13,14 @@ EXACT_GLOBAL_SETTLEMENT_PROVIDER_MODELS = frozenset(
         ("sakana", SAKANA_FUGU_MODEL_ID),
     }
 )
+
+# Native task meters include provider-side preprocessing. Preserve the exact
+# reported input count, and do not apply the generic output-token price floor.
+INPUT_ONLY_PROVIDER_MODELS = frozenset(
+    ("scaledown", f"scaledown/{task}")
+    for task in ("compress", "summarize", "extract", "classify")
+)
+EXACT_GLOBAL_SETTLEMENT_PROVIDER_MODELS |= INPUT_ONLY_PROVIDER_MODELS
 PASSTHROUGH_RETAIL_PROVIDER_MODELS = frozenset(
     {
         # Match the public Fugu price used by other router marketplaces while

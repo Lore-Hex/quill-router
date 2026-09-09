@@ -1269,6 +1269,29 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://confidential.ai/legal/privacy-policy",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "scaledown": Provider(
+        slug="scaledown",
+        name="ScaleDown",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Carbon ScaleDown, Inc. serves compression, summarization, extraction, "
+            "and classification tasks. Its public DPA commits to volatile-memory "
+            "processing, zero retention of customer inputs and outputs, no model "
+            "training on customer data, and US-only processing. Content-free "
+            "operational logs may be retained for up to 90 days. These are ZDR "
+            "routes, not attested confidential-compute or E2EE routes. Input "
+            "tokens are billable; output tokens are free."
+        ),
+        provider_policy_url="https://scaledown.ai/dpa",
+        # Carbon ScaleDown, Inc., Delaware corporation; provider onboarding
+        # attestation and the public DPA identify the US operating entity.
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
     "nscale": Provider(
         slug="nscale",
         name="Nscale",
@@ -2059,6 +2082,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "wandb",
         "nscale",
         "confidential-ai",
+        "scaledown",
         "databricks",
         "zero-g",
         "upstage",
@@ -3521,6 +3545,16 @@ MODEL_ORIGINS: dict[str, ModelOrigin] = {
             "The official API documentation identifies Aion Labs as the model "
             "publisher but does not name a legal entity or country. It is not "
             "treated as the unrelated pharma venture studio at aionlabs.com."
+        ),
+    ),
+    "scaledown": ModelOrigin(
+        country="US",
+        lab_name="ScaleDown",
+        source_url="https://scaledown.ai/dpa",
+        note=(
+            "Carbon ScaleDown, Inc., a Delaware corporation, publishes these "
+            "task-specific models. This identifies the publisher, not a claim "
+            "that its undisclosed underlying model weights are open or US-origin."
         ),
     ),
     "neurometric": ModelOrigin(

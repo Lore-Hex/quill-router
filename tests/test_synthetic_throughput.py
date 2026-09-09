@@ -37,7 +37,7 @@ class _ChunkStream(httpx.AsyncByteStream):
 def test_top_200_throughput_routes_are_deterministic_and_provider_complete() -> None:
     first = throughput_candidates(limit=200)
     second = throughput_candidates(limit=200)
-    pool = rotation_candidates()
+    pool = rotation_candidates(include_input_only=False)
 
     assert first == second
     assert len(first) == min(200, sum(len(models) for models in pool.values()))

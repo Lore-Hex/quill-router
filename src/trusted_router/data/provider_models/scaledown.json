@@ -1,0 +1,138 @@
+{
+  "provider": "scaledown",
+  "models": [
+    {
+      "display_name": "ScaleDown Classify",
+      "title": "classify",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "scaledown/classify",
+      "upstream_id": "classify",
+      "context_length": 1000000,
+      "supported_features": [
+        "chat",
+        "completion"
+      ],
+      "documentation": {
+        "description": "Classify source text against caller-defined labels and rubrics. Input-only billing; no output-token charge.",
+        "input_format": "Send the native task JSON object as the content of one user message. Summarize also accepts plain text. Text only; tools, chat history, response_format, and image blocks are not supported by this adapter.",
+        "output_format": "A JSON object in choices[0].message.content, including native task results. Stream responses deliver the completed result together, not incremental upstream tokens. Usage reports the provider's billable input tokens; completion_tokens is zero.",
+        "example_input": "{\n  \"text\": \"My invoice has an incorrect tax amount.\",\n  \"labels\": [\n    {\n      \"name\": \"billing\",\n      \"rubric\": \"Is the request about an invoice?\"\n    },\n    {\n      \"name\": \"technical\",\n      \"rubric\": \"Is the request about broken software?\"\n    }\n  ]\n}",
+        "example_output": "{\n  \"top_label\": \"billing\",\n  \"scores\": {\n    \"billing\": 0.99,\n    \"technical\": 0.01\n  }\n}"
+      },
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "ScaleDown Compress",
+      "title": "compress",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "scaledown/compress",
+      "upstream_id": "compress",
+      "context_length": 1000000,
+      "supported_features": [
+        "chat",
+        "completion"
+      ],
+      "documentation": {
+        "description": "Compress source text for a specific query. Input-only billing; no output-token charge.",
+        "input_format": "Send the native task JSON object as the content of one user message. Summarize also accepts plain text. Text only; tools, chat history, response_format, and image blocks are not supported by this adapter.",
+        "output_format": "A JSON object in choices[0].message.content, including native task results. Stream responses deliver the completed result together, not incremental upstream tokens. Usage reports the provider's billable input tokens; completion_tokens is zero.",
+        "example_input": "{\n  \"context\": \"Acme launched Monday. Feedback will be reviewed Friday.\",\n  \"prompt\": \"When will feedback be reviewed?\",\n  \"scaledown\": {\n    \"rate\": \"auto\"\n  }\n}",
+        "example_output": "{\n  \"results\": {\n    \"compressed_prompt\": \"Feedback will be reviewed Friday.\"\n  }\n}"
+      },
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "ScaleDown Extract",
+      "title": "extract",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "scaledown/extract",
+      "upstream_id": "extract",
+      "context_length": 1000000,
+      "supported_features": [
+        "chat",
+        "completion"
+      ],
+      "documentation": {
+        "description": "Extract entities described in natural language from source text. Input-only billing; no output-token charge.",
+        "input_format": "Send the native task JSON object as the content of one user message. Summarize also accepts plain text. Text only; tools, chat history, response_format, and image blocks are not supported by this adapter.",
+        "output_format": "A JSON object in choices[0].message.content, including native task results. Stream responses deliver the completed result together, not incremental upstream tokens. Usage reports the provider's billable input tokens; completion_tokens is zero.",
+        "example_input": "{\n  \"text\": \"Acme launched Monday.\",\n  \"entities\": {\n    \"company\": \"The company name\"\n  }\n}",
+        "example_output": "{\n  \"entities\": [\n    {\n      \"text\": \"Acme\",\n      \"type\": \"company\",\n      \"confidence\": 1.0,\n      \"start\": 0,\n      \"end\": 4\n    }\n  ]\n}"
+      },
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    },
+    {
+      "display_name": "ScaleDown Summarize",
+      "title": "summarize",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "scaledown/summarize",
+      "upstream_id": "summarize",
+      "context_length": 1000000,
+      "supported_features": [
+        "chat",
+        "completion"
+      ],
+      "documentation": {
+        "description": "Summarize documents, transcripts, or other source text. Input-only billing; no output-token charge.",
+        "input_format": "Send the native task JSON object as the content of one user message. Summarize also accepts plain text. Text only; tools, chat history, response_format, and image blocks are not supported by this adapter.",
+        "output_format": "A JSON object in choices[0].message.content, including native task results. Stream responses deliver the completed result together, not incremental upstream tokens. Usage reports the provider's billable input tokens; completion_tokens is zero.",
+        "example_input": "{\n  \"text\": \"Acme launched Monday. Feedback will be reviewed Friday.\",\n  \"instructions\": \"One short sentence.\",\n  \"max_tokens\": 64\n}",
+        "example_output": "{\n  \"summary\": \"Acme launched Monday and will review feedback Friday.\"\n}"
+      },
+      "routable": true,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 0
+    }
+  ],
+  "source": "https://docs.scaledown.ai/quickstart",
+  "pricing_source": "https://scaledown.ai/#pricing",
+  "generated_at": "2026-09-09T18:23:20Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 4
+}
