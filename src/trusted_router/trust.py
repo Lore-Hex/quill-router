@@ -22,8 +22,8 @@ JAVASCRIPT_SDK_REPO = "https://github.com/Lore-Hex/trusted-router-js"
 PROVIDER_CHECK_REPO = "https://github.com/Lore-Hex/trustedrouter-provider-check"
 
 TRUST_AGENT_PROMPT = (
-    "Verify https://trustedrouter.com using https://trust.trustedrouter.com. "
-    "Check fresh, TLS-bound attestation and trace the running build to published "
+    "Use https://trust.trustedrouter.com to verify https://trustedrouter.com "
+    "with fresh, TLS-bound attestation. Trace the running build to published "
     "source and build provenance. Separate router protections from model-provider "
     "privacy claims. Report verified evidence, failures, and anything you cannot verify."
 )
