@@ -96,6 +96,7 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_EXAMPLE,
     PROVIDER_MODEL_DOCUMENTATION_EXAMPLE,
 )
+from trusted_router.provider_contracts import INPUT_ONLY_PROVIDER_MODELS
 from trusted_router.provider_lifecycle import provider_pricing_schedule
 from trusted_router.seo_catalog import seo_catalog_evidence
 from trusted_router.seo_meta import (
@@ -4954,7 +4955,7 @@ def _minimum_model_price(
     endpoints: Sequence[ModelEndpoint],
     attr: str,
 ) -> int | None:
-    values = [getattr(endpoint, attr) for endpoint in endpoints if getattr(endpoint, attr) > 0]
+    values = _endpoint_price_values(endpoints, attr)
     if values:
         return min(values)
     model_value = getattr(model, attr)
@@ -5170,8 +5171,8 @@ def _model_detail_view(
                 "provider_logo_url": provider_logo_url(endpoint.provider),
                 "prompt_price": _price(endpoint.prompt_price_microdollars_per_million_tokens),
                 "cached_prompt_price": _cached_prompt_price_range((endpoint,)),
-                "completion_price": _price(
-                    endpoint.completion_price_microdollars_per_million_tokens
+                "completion_price": _endpoint_price_range(
+                    (endpoint,), "completion_price_microdollars_per_million_tokens"
                 ),
                 "prompt_microdollars_per_million_tokens": endpoint.prompt_price_microdollars_per_million_tokens,
                 "completion_microdollars_per_million_tokens": endpoint.completion_price_microdollars_per_million_tokens,
@@ -5219,7 +5220,10 @@ def _model_detail_view(
         "cached_prompt_price": (
             "selected route" if is_meta else _cached_prompt_price_range(endpoints)
         ),
-        "completion_price": _price(model.completion_price_microdollars_per_million_tokens),
+        "completion_price": _price(
+            model.completion_price_microdollars_per_million_tokens,
+            include_zero=(model.provider, model.id) in INPUT_ONLY_PROVIDER_MODELS,
+        ),
         "minimum_charge": (
             format_money_precise(model.minimum_charge_microdollars)
             if model.minimum_charge_microdollars
@@ -5607,7 +5611,12 @@ def _model_route_evidence(
     return {
         "lowest_prompt_price": _price(lowest_prompt) if lowest_prompt is not None else None,
         "lowest_completion_price": (
-            _price(lowest_completion) if lowest_completion is not None else None
+            _price(
+                lowest_completion,
+                include_zero=(model.provider, model.id) in INPUT_ONLY_PROVIDER_MODELS,
+            )
+            if lowest_completion is not None
+            else None
         ),
         "fastest_ttft_ms": fastest_ttft_ms,
         "fastest_ttft": (
@@ -6061,11 +6070,26 @@ def _model_service_node(settings: Settings, model: Model, site_url: str) -> dict
     }
 
 
+def _endpoint_price_values(endpoints: Sequence[ModelEndpoint], attr: str) -> list[int]:
+    """Include free output only when the pinned contract makes zero authoritative."""
+    values = []
+    for endpoint in endpoints:
+        value = getattr(endpoint, attr)
+        free_output = (
+            value == 0
+            and attr == "completion_price_microdollars_per_million_tokens"
+            and (endpoint.provider, endpoint.model_id) in INPUT_ONLY_PROVIDER_MODELS
+        )
+        if value > 0 or free_output:
+            values.append(value)
+    return values
+
+
 def _endpoint_price_range(endpoints: Sequence[ModelEndpoint], attr: str) -> str:
-    values = [getattr(ep, attr) for ep in endpoints if getattr(ep, attr) > 0]
+    values = _endpoint_price_values(endpoints, attr)
     if not values:
         return _price(0)
-    return _price_values_range(values)
+    return _price_values_range(values, include_zero=True)
 
 
 def _price_values_range(values: Sequence[int], *, include_zero: bool = False) -> str:
@@ -6093,8 +6117,8 @@ def _price_range(models: list[Model], attr: str) -> str:
     return f"{_price(low)} to {_price(high)}"
 
 
-def _price(microdollars_per_million: int) -> str:
-    if microdollars_per_million <= 0:
+def _price(microdollars_per_million: int, *, include_zero: bool = False) -> str:
+    if microdollars_per_million < 0 or (microdollars_per_million == 0 and not include_zero):
         return "selected route"
     value = Decimal(microdollars_per_million) / Decimal(MICRODOLLARS_PER_DOLLAR)
     return f"${value.normalize():f}/1M"
