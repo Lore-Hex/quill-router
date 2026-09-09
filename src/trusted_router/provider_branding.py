@@ -84,6 +84,7 @@ PROVIDER_BRANDS: dict[str, ProviderBrand] = {
     "novita": ProviderBrand("https://novita.ai/"),
     "nscale": ProviderBrand("https://www.nscale.com/"),
     "confidential-ai": ProviderBrand("https://confidential.ai/"),
+    "scaledown": ProviderBrand("https://scaledown.ai/"),
     "near-ai": ProviderBrand("https://near.ai/"),
     "openai": ProviderBrand("https://openai.com/"),
     "ovhcloud": ProviderBrand("https://www.ovhcloud.com/"),

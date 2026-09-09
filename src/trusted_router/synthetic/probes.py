@@ -26,6 +26,7 @@ from trustedrouter import AsyncTrustedRouter
 
 from trusted_router.config import Settings, parse_gateway_region_targets
 from trusted_router.enclave_regions import ENCLAVE_REGIONS
+from trusted_router.provider_contracts import INPUT_ONLY_PROVIDER_MODELS
 from trusted_router.provider_reliability import model_deadlines
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.security import lookup_hash_api_key
@@ -2039,7 +2040,7 @@ async def gateway_fallback_probe(
 # ---------------------------------------------------------------------------
 
 
-def rotation_candidates() -> dict[str, list[str]]:
+def rotation_candidates(*, include_input_only: bool = True) -> dict[str, list[str]]:
     """Map each provider to the model IDs it serves via a prepaid (Credits)
     endpoint. Iterates ENDPOINTS rather than Model.prepaid_available (a catalog
     dedup marker) so supplemental provider-native models are covered too."""
@@ -2054,6 +2055,11 @@ def rotation_candidates() -> dict[str, list[str]]:
         if not endpoint.catalog_is_current():
             continue
         if endpoint.usage_type != "Credits":
+            continue
+        if (
+            not include_input_only
+            and (endpoint.provider, endpoint.model_id) in INPUT_ONLY_PROVIDER_MODELS
+        ):
             continue
         if provider_model_retired(
             endpoint.provider,
@@ -2387,6 +2393,19 @@ def _rotation_error_type(
     return error_type
 
 
+def _rotation_prompt(provider: str, model: str) -> str:
+    if (provider, model) not in INPUT_ONLY_PROVIDER_MODELS:
+        return PONG_PROMPT
+    from trusted_router.catalog import MODELS
+
+    # Task APIs cannot answer arbitrary chat prompts. Reuse their reviewed
+    # catalog example so availability probes exercise the actual contract.
+    documentation = MODELS[model].documentation
+    if documentation is None or not documentation.example_input:
+        raise ValueError(f"Missing task probe input for {model}")
+    return documentation.example_input
+
+
 async def provider_rotation_probe(
     client: httpx.AsyncClient,
     target: SyntheticTarget,
@@ -2407,7 +2426,7 @@ async def provider_rotation_probe(
     url = _api_url(target.api_base_url, "/chat/completions")
     body = {
         "model": model,
-        "messages": [{"role": "user", "content": PONG_PROMPT}],
+        "messages": [{"role": "user", "content": _rotation_prompt(provider, model)}],
         "max_tokens": _rotation_max_tokens(provider, model),
         "stream": True,
         "provider": {"only": [provider]},

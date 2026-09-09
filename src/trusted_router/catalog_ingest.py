@@ -47,12 +47,14 @@ from trusted_router.pricing import (
     _provider_manifest_price_tiers,
     _read_pricing_tiers,
     customer_fixed_price_microdollars,
+    provider_manifest_price_profile_is_valid,
 )
 from trusted_router.provider_contract import (
     PROVIDER_MODEL_DOCUMENTATION_FIELDS,
     PROVIDER_MODEL_DOCUMENTATION_MAX_LENGTHS,
 )
 from trusted_router.provider_contracts import (
+    INPUT_ONLY_PROVIDER_MODELS,
     provider_model_operator_held,
     provider_model_uses_passthrough_retail_price,
 )
@@ -235,6 +237,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "engy",
         "pearl",
         "confidential-ai",
+        "scaledown",
         "stepfun",
         "relace",
         "recraft",
@@ -914,6 +917,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "engy",
         "pearl",
         "confidential-ai",
+        "scaledown",
         "stepfun",
         "relace",
         "recraft",
@@ -1046,6 +1050,11 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                     # A malformed pricing tier is an accounting ambiguity. Do
                     # not create a route at the cheaper headline price.
                     continue
+            if (provider_slug, model_id) in INPUT_ONLY_PROVIDER_MODELS:
+                if not provider_manifest_price_profile_is_valid(raw_model):
+                    continue
+                completion_price = 0
+                tiers = _flat_tier(prompt_price, 0)
             publisher = (
                 _author_provider(model_id, [{"tr_provider_slug": provider_slug}]) or provider_slug
             )

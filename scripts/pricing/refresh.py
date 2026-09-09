@@ -154,6 +154,7 @@ PROVIDER_SLUGS = [
     "wandb",
     "nscale",
     "confidential_ai",
+    "scaledown",
     "perplexity",
     "krea",
     "fal",

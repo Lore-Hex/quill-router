@@ -63,6 +63,7 @@ from scripts.pricing.providers import (
     sail_research,
     sakana,
     sambanova,
+    scaledown,
     scaleway,
     stepfun,
     upstage,
@@ -524,6 +525,7 @@ _STALE_MANIFEST_PROVIDER_MODULES = (
     recraft,
     relace,
     stepfun,
+    scaledown,
 )
 
 _STALE_MANIFEST_PROVIDER_MODULE_BY_SLUG = {

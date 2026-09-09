@@ -92,6 +92,7 @@ from trusted_router.catalog_privacy import (
     endpoint_privacy_tier as _endpoint_privacy_tier,
 )
 from trusted_router.catalog_registry import MODEL_ENDPOINTS, MODELS
+from trusted_router.provider_contracts import INPUT_ONLY_PROVIDER_MODELS
 
 # Compatibility re-export. Privacy remains the leaf implementation; older
 # callers import this symbol from routing_candidates and rely on object identity.
@@ -99,7 +100,7 @@ endpoint_privacy_tier = _endpoint_privacy_tier
 
 
 class InvalidAutoModelOrder(ValueError):
-    """Raised when TR_AUTO_MODEL_ORDER includes a router/orchestration model."""
+    """Raised when TR_AUTO_MODEL_ORDER includes a non-general-chat model."""
 
 
 def validate_auto_model_order(order: str | None = None) -> None:
@@ -114,6 +115,15 @@ def validate_auto_model_order(order: str | None = None) -> None:
         raise InvalidAutoModelOrder(
             "TR_AUTO_MODEL_ORDER cannot include TrustedRouter meta or orchestration "
             f"models: {joined}. Use regular provider/model IDs only."
+        )
+    task_ids = [
+        model_id
+        for model_id in raw_ids
+        if any(model_id == task_id for _, task_id in INPUT_ONLY_PROVIDER_MODELS)
+    ]
+    if task_ids:
+        raise InvalidAutoModelOrder(
+            "TR_AUTO_MODEL_ORDER cannot include task-specific models: " + ", ".join(task_ids)
         )
 
 
@@ -497,7 +507,11 @@ def _meta_route_kind(model_id: str) -> str:
 
 
 def _is_regular_chat_model(model: Model) -> bool:
-    return model.id not in META_MODEL_IDS and model.supports_chat
+    return (
+        model.id not in META_MODEL_IDS
+        and model.supports_chat
+        and (model.provider, model.id) not in INPUT_ONLY_PROVIDER_MODELS
+    )
 
 
 def _price_sort_key(model: Model) -> tuple[int, str, str]:

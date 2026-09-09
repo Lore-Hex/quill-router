@@ -665,6 +665,15 @@
     "route_mode": "Catalog profile",
     "slug": "sambanova"
   },
+  "scaledown": {
+    "card_version": 2,
+    "model_count": 4,
+    "name": "ScaleDown",
+    "privacy": "Zero retention",
+    "route_count": 4,
+    "route_mode": "Prepaid",
+    "slug": "scaledown"
+  },
   "scaleway": {
     "card_version": 2,
     "model_count": 12,
