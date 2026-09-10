@@ -799,7 +799,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         validator=validated_azure_metadata,
         embedded=embedded_azure_metadata,
     )
-    receipt_key_global_cache: list[ReceiptKey] | None = None
+    # The unfiltered page cache keeps the phase-tagged cursor vector WITH its
+    # records: a cached page that crossed from versioned into legacy rows must
+    # hand back `l.<id>` for those rows, never a reconstructed `v.` cursor.
+    receipt_key_global_cache: tuple[list[ReceiptKey], list[str]] | None = None
     receipt_key_cache: OrderedDict[str, list[ReceiptKey]] = OrderedDict()
 
     async def _mirrored(
@@ -2228,7 +2231,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 cursors = [_receipt_key_cursor(record) for record in records]
             if cursor is None:
                 if kid is None:
-                    receipt_key_global_cache = records
+                    receipt_key_global_cache = (records, list(cursors))
                 else:
                     _remember_receipt_key_records(receipt_key_cache, kid, records)
         except Exception:
@@ -2240,19 +2243,11 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                     headers={"x-trustedrouter-key-log-status": "degraded"},
                 ) from None
             degraded = True
-            records = (
-                receipt_key_global_cache or []
-                if kid is None
-                else receipt_key_cache.get(kid, [])
-            )
-            cursors = [
-                (
-                    f"v.{record.kid}.{record.att_sha256}"
-                    if kid is None
-                    else _receipt_key_cursor(record)
-                )
-                for record in records
-            ]
+            if kid is None:
+                records, cursors = receipt_key_global_cache or ([], [])
+            else:
+                records = receipt_key_cache.get(kid, [])
+                cursors = [_receipt_key_cursor(record) for record in records]
             log.exception("receipt_key_log_read_degraded_serving_cached")
         generated_at = iso_now()
         keys: list[dict[str, Any]] = []

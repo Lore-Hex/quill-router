@@ -1566,3 +1566,48 @@ def test_scheduler_route_fails_without_heartbeat_when_collection_has_errors(
     assert response.status_code == 503
     assert response.json()["error"]["type"] == "service_unavailable"
     assert heartbeats == []
+
+
+def test_degraded_cache_keeps_phase_tagged_cursors_for_mixed_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cached first page that crossed from versioned into legacy rows must hand back
+    the legacy row's `l.` cursor while degraded, not a reconstructed `v.` cursor that
+    would replay the page after recovery."""
+    versioned = _public_records(1)
+    legacy = _public_records(7)[1:]          # six legacy rows, ids distinct from the versioned one
+    legacy = sorted(legacy, key=lambda record: record.kid)
+    configure_store(InMemoryStore())
+    monkeypatch.setattr(public_routes, "_RECEIPT_KEY_PUBLIC_PAGE_SIZE", 3)
+
+    def list_records(_self, *, limit, kid=None, after=None, phase=None, legacy_after=None, **_kwargs):
+        assert kid is None
+        if phase == "v":
+            return [] if after is not None else versioned[:limit]
+        rows = [row for row in legacy if legacy_after is None or row.kid > legacy_after]
+        return rows[:limit]
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", list_records)
+    client = TestClient(
+        create_app(Settings(environment="test"), configure_store_arg=False, init_observability=False)
+    )
+    live = client.get("/trust/receipt-keys.json")
+    assert live.status_code == 200
+    live_cursor = live.json()["next_cursor"]
+    assert live_cursor == f"l.{legacy[1].kid}", live_cursor   # page = [v, l0, l1]
+
+    def unavailable(_self, **_kwargs):
+        raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", unavailable)
+    degraded = client.get("/trust/receipt-keys.json")
+    assert degraded.status_code == 200 and degraded.json()["degraded"] is True
+    assert degraded.json()["next_cursor"] == live_cursor, (
+        "the cached page must carry the cursor it was served with"
+    )
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", list_records)
+    following = client.get("/trust/receipt-keys.json", params={"cursor": degraded.json()["next_cursor"]})
+    assert [key["kid"] for key in following.json()["keys"]] == [row.kid for row in legacy[2:5]], (
+        "following the degraded page's cursor must continue, never replay"
+    )
