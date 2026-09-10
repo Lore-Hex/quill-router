@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-09-10T13:13:16Z",
+  "generated_at": "2026-09-10T17:53:52Z",
   "model_count": 156,
   "models": [
     {
@@ -1628,7 +1628,9 @@
       ],
       "status": 1,
       "upstream_id": "openai/gpt-oss-120b",
-      "missing_since": "2026-09-10"
+      "missing_since": "2026-09-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "openai/gpt-oss-20b",
@@ -1658,7 +1660,9 @@
       ],
       "status": 1,
       "upstream_id": "openai/gpt-oss-20b",
-      "missing_since": "2026-09-10"
+      "missing_since": "2026-09-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "paddlepaddle/paddleocr-vl",

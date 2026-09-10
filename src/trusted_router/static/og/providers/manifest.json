@@ -316,10 +316,10 @@
   },
   "io-net": {
     "card_version": 2,
-    "model_count": 33,
+    "model_count": 34,
     "name": "IO Intelligence",
     "privacy": "Policy documented",
-    "route_count": 33,
+    "route_count": 34,
     "route_mode": "Prepaid",
     "slug": "io-net"
   },
@@ -487,10 +487,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 120,
+    "model_count": 118,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 222,
+    "route_count": 218,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -505,10 +505,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 11,
+    "model_count": 10,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 11,
+    "route_count": 10,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },

@@ -34,7 +34,26 @@
       "replacement_model_id": null,
       "routable": true,
       "input_token_price_per_m": 50000,
-      "output_token_price_per_m": 100000
+      "output_token_price_per_m": 100000,
+      "reliability": {
+        "first_token_timeout_seconds": 60.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "global"
+      },
+      "provider_reliability": {
+        "provider_id": "neurometric",
+        "status_url": "https://status.neurometric.ai",
+        "support_contact": "mailto:support@neurometric.ai",
+        "incident_contact": "mailto:support@neurometric.ai",
+        "regions": [
+          "us-west"
+        ],
+        "request_id_header": "x-request-id",
+        "account_quota_error_codes": [
+          "account_quota_exceeded"
+        ]
+      }
     },
     {
       "display_name": "Qwen3-VL-8B-Instruct",
@@ -67,7 +86,26 @@
       "replacement_model_id": null,
       "routable": true,
       "input_token_price_per_m": 105000,
-      "output_token_price_per_m": 410000
+      "output_token_price_per_m": 410000,
+      "reliability": {
+        "first_token_timeout_seconds": 60.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "global"
+      },
+      "provider_reliability": {
+        "provider_id": "neurometric",
+        "status_url": "https://status.neurometric.ai",
+        "support_contact": "mailto:support@neurometric.ai",
+        "incident_contact": "mailto:support@neurometric.ai",
+        "regions": [
+          "us-west"
+        ],
+        "request_id_header": "x-request-id",
+        "account_quota_error_codes": [
+          "account_quota_exceeded"
+        ]
+      }
     },
     {
       "display_name": "Qwen3-VL-8B-Thinking",
@@ -101,7 +139,26 @@
       "replacement_model_id": null,
       "routable": true,
       "input_token_price_per_m": 162000,
-      "output_token_price_per_m": 1890000
+      "output_token_price_per_m": 1890000,
+      "reliability": {
+        "first_token_timeout_seconds": 60.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "global"
+      },
+      "provider_reliability": {
+        "provider_id": "neurometric",
+        "status_url": "https://status.neurometric.ai",
+        "support_contact": "mailto:support@neurometric.ai",
+        "incident_contact": "mailto:support@neurometric.ai",
+        "regions": [
+          "us-west"
+        ],
+        "request_id_header": "x-request-id",
+        "account_quota_error_codes": [
+          "account_quota_exceeded"
+        ]
+      }
     },
     {
       "display_name": "gemma-4-12B-it",
@@ -134,7 +191,26 @@
       "replacement_model_id": null,
       "routable": true,
       "input_token_price_per_m": 10000,
-      "output_token_price_per_m": 120000
+      "output_token_price_per_m": 120000,
+      "reliability": {
+        "first_token_timeout_seconds": 60.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "global"
+      },
+      "provider_reliability": {
+        "provider_id": "neurometric",
+        "status_url": "https://status.neurometric.ai",
+        "support_contact": "mailto:support@neurometric.ai",
+        "incident_contact": "mailto:support@neurometric.ai",
+        "regions": [
+          "us-west"
+        ],
+        "request_id_header": "x-request-id",
+        "account_quota_error_codes": [
+          "account_quota_exceeded"
+        ]
+      }
     },
     {
       "display_name": "gemma-4-E2B-it",
@@ -167,7 +243,8 @@
       "replacement_model_id": null,
       "routable": true,
       "input_token_price_per_m": 20000,
-      "output_token_price_per_m": 120000
+      "output_token_price_per_m": 120000,
+      "missing_since": "2026-09-10"
     },
     {
       "display_name": "diffusiongemma-26B-A4B-it",
@@ -201,7 +278,26 @@
       "replacement_model_id": null,
       "routable": true,
       "input_token_price_per_m": 50000,
-      "output_token_price_per_m": 120000
+      "output_token_price_per_m": 120000,
+      "reliability": {
+        "first_token_timeout_seconds": 60.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "global"
+      },
+      "provider_reliability": {
+        "provider_id": "neurometric",
+        "status_url": "https://status.neurometric.ai",
+        "support_contact": "mailto:support@neurometric.ai",
+        "incident_contact": "mailto:support@neurometric.ai",
+        "regions": [
+          "us-west"
+        ],
+        "request_id_header": "x-request-id",
+        "account_quota_error_codes": [
+          "account_quota_exceeded"
+        ]
+      }
     },
     {
       "display_name": "tool-choice",
@@ -237,7 +333,26 @@
       "output_token_price_per_m": 100000,
       "supported_parameters": [
         "tool_choice"
-      ]
+      ],
+      "reliability": {
+        "first_token_timeout_seconds": 60.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "global"
+      },
+      "provider_reliability": {
+        "provider_id": "neurometric",
+        "status_url": "https://status.neurometric.ai",
+        "support_contact": "mailto:support@neurometric.ai",
+        "incident_contact": "mailto:support@neurometric.ai",
+        "regions": [
+          "us-west"
+        ],
+        "request_id_header": "x-request-id",
+        "account_quota_error_codes": [
+          "account_quota_exceeded"
+        ]
+      }
     },
     {
       "display_name": "Document Structured Extraction",
@@ -277,6 +392,25 @@
         "output_format": "A JSON object containing the requested fields; with response_format, it follows the supplied schema.",
         "example_input": "Invoice #A-1042. Total due: $87.25",
         "example_output": "{\"invoice_number\":\"A-1042\",\"total_usd\":87.25}"
+      },
+      "reliability": {
+        "first_token_timeout_seconds": 60.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "global"
+      },
+      "provider_reliability": {
+        "provider_id": "neurometric",
+        "status_url": "https://status.neurometric.ai",
+        "support_contact": "mailto:support@neurometric.ai",
+        "incident_contact": "mailto:support@neurometric.ai",
+        "regions": [
+          "us-west"
+        ],
+        "request_id_header": "x-request-id",
+        "account_quota_error_codes": [
+          "account_quota_exceeded"
+        ]
       }
     },
     {
@@ -317,7 +451,26 @@
         "example_output": "{\"request_1\":\"billing\"}"
       },
       "input_token_price_per_m": 10000,
-      "output_token_price_per_m": 100000
+      "output_token_price_per_m": 100000,
+      "reliability": {
+        "first_token_timeout_seconds": 60.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "global"
+      },
+      "provider_reliability": {
+        "provider_id": "neurometric",
+        "status_url": "https://status.neurometric.ai",
+        "support_contact": "mailto:support@neurometric.ai",
+        "incident_contact": "mailto:support@neurometric.ai",
+        "regions": [
+          "us-west"
+        ],
+        "request_id_header": "x-request-id",
+        "account_quota_error_codes": [
+          "account_quota_exceeded"
+        ]
+      }
     },
     {
       "display_name": "Conversation Summary",
@@ -357,7 +510,26 @@
         "example_output": "{\n  \"decision\": \"The launch is moved to Friday.\",\n  \"current_status\": \"Launch date updated to Friday.\",\n  \"open_items\": [\n    {\"action\": \"Update the release calendar\", \"owner\": \"Bob\", \"due_date\": null},\n    {\"action\": \"Notify support\", \"owner\": \"Alice\", \"due_date\": null}\n  ],\n  \"risks\": []\n}"
       },
       "input_token_price_per_m": 10000,
-      "output_token_price_per_m": 100000
+      "output_token_price_per_m": 100000,
+      "reliability": {
+        "first_token_timeout_seconds": 60.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "global"
+      },
+      "provider_reliability": {
+        "provider_id": "neurometric",
+        "status_url": "https://status.neurometric.ai",
+        "support_contact": "mailto:support@neurometric.ai",
+        "incident_contact": "mailto:support@neurometric.ai",
+        "regions": [
+          "us-west"
+        ],
+        "request_id_header": "x-request-id",
+        "account_quota_error_codes": [
+          "account_quota_exceeded"
+        ]
+      }
     },
     {
       "display_name": "Grounded Document QA",
@@ -397,9 +569,28 @@
         "example_output": "{\n  \"answer\": \"October 15, 2026\",\n  \"citations\": [\"1\"]\n}"
       },
       "input_token_price_per_m": 10000,
-      "output_token_price_per_m": 100000
+      "output_token_price_per_m": 100000,
+      "reliability": {
+        "first_token_timeout_seconds": 60.0,
+        "completion_timeout_seconds": 300.0,
+        "stream_idle_timeout_seconds": 60.0,
+        "capacity_scope": "global"
+      },
+      "provider_reliability": {
+        "provider_id": "neurometric",
+        "status_url": "https://status.neurometric.ai",
+        "support_contact": "mailto:support@neurometric.ai",
+        "incident_contact": "mailto:support@neurometric.ai",
+        "regions": [
+          "us-west"
+        ],
+        "request_id_header": "x-request-id",
+        "account_quota_error_codes": [
+          "account_quota_exceeded"
+        ]
+      }
     }
   ],
-  "generated_at": "2026-09-10T13:13:16Z",
+  "generated_at": "2026-09-10T17:53:52Z",
   "model_count": 11
 }
