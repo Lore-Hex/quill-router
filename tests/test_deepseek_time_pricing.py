@@ -52,13 +52,14 @@ def test_deepseek_parser_uses_off_peak_as_static_schedule_baseline() -> None:
 
 
 def test_deepseek_parser_fallback_keeps_announced_off_peak_baseline() -> None:
+    # Flash baseline: https://api-docs.deepseek.com/quick_start/pricing/ (2026-09-10).
     assert deepseek_parser.parse(
         "<p>Available models: deepseek-v4-flash and deepseek-v4-pro</p>"
     ) == {
         _FLASH: {
-            "prompt_micro_per_m": 220_000,
-            "completion_micro_per_m": 660_000,
-            "prompt_cached_micro_per_m": 7_000,
+            "prompt_micro_per_m": 150_000,
+            "completion_micro_per_m": 600_000,
+            "prompt_cached_micro_per_m": 3_000,
         },
         _PRO: {
             "prompt_micro_per_m": 660_000,

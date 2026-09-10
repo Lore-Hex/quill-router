@@ -11,22 +11,26 @@ from bs4 import BeautifulSoup
 _NAME_TO_OR_ID = {
     "deepseek-flash": "deepseek/deepseek-flash",
     "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
+    "deepseek-v4.1-flash": "deepseek/deepseek-v4.1-flash",
     "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
     "deepseek-chat": "deepseek/deepseek-chat",
     "deepseek-reasoner": "deepseek/deepseek-reasoner",
 }
 
-# Known public DeepSeek pricing for the current model lineup. V4 entries use
-# the announced off-peak baseline effective 2026-08-16 16:00 UTC; the runtime
-# pricing schedule keeps the old rate before that instant and doubles these
-# rates during the two daily peak windows. Used as a fallback when the page does not include
+# Announced off-peak baselines from https://api-docs.deepseek.com/quick_start/pricing/
+# (2026-09-10): Flash is now 0.15 / 0.60 / 0.003; Pro remains
+# 0.66 / 1.98 / 0.022. The September-14 routing notice is not a Pro price row.
+# Runtime pricing overlays peak windows independently.
+# Used as a fallback when the page does not include
 # a machine-parseable pricing table (e.g. when the refresh scraper lands
 # on the "Your First API Call" page instead of "Models & Pricing"), so
 # downstream validation doesn't see an empty dict.
 # Values are USD per 1M tokens (cache-miss input, output, cached input).
+_FLASH_BASELINE = ("0.15", "0.60", "0.003")
 _FALLBACK_PRICES = {
-    "deepseek-flash": ("0.22", "0.66", "0.007"),
-    "deepseek-v4-flash": ("0.22", "0.66", "0.007"),
+    "deepseek-flash": _FLASH_BASELINE,
+    "deepseek-v4-flash": _FLASH_BASELINE,
+    "deepseek-v4.1-flash": _FLASH_BASELINE,
     "deepseek-v4-pro": ("0.66", "1.98", "0.022"),
     "deepseek-chat": ("0.27", "1.10", None),
     "deepseek-reasoner": ("0.55", "2.19", None),
@@ -34,7 +38,8 @@ _FALLBACK_PRICES = {
 
 _DOLLAR_RE = re.compile(r"\$\s*([\d]+(?:\.[\d]+)?)")
 _FOOTNOTE_RE = re.compile(r"\s*\(\d+\)\s*$")
-_MODEL_TOKEN_RE = re.compile(r"deepseek-[a-z0-9]+(?:-[a-z0-9]+)*", re.IGNORECASE)
+_MODEL_TOKEN_RE = re.compile(r"\bdeepseek-[a-z0-9]+(?:[.-][a-z0-9]+)*", re.IGNORECASE)
+_FLASH_NAMES = ("deepseek-flash", "deepseek-v4-flash", "deepseek-v4.1-flash")
 
 
 def _decimal_to_micro_per_m(value: str) -> int | None:
@@ -157,28 +162,24 @@ def _parse_pricing_tables(soup) -> dict:
     return out
 
 
-def _parse_inline_prices(text: str) -> dict:
-    """Fallback: look for inline patterns like
-    'deepseek-v4-flash ... input $0.14 ... output $0.28'."""
-    out = {}
-    lowered = text.lower()
-    for native, or_id in _NAME_TO_OR_ID.items():
-        idx = lowered.find(native)
-        if idx < 0:
+def _add_flash_price_aliases(out: dict, text: str) -> dict:
+    # The 2026-09-10 page above identifies deepseek-flash as DeepSeek-V4.1-Flash
+    # and explicitly bills the legacy v4-flash name at that same Flash price.
+    # Follow providers/deepseek.py's rolling flash <-> v4-flash convention.
+    # Also emit the discovery key v4.1-flash as a pricing alias, not an assertion
+    # that it is a callable or immutable API ID. Pro is NEVER a Flash alias,
+    # regardless of the future-routing notice elsewhere on the page.
+    mentioned = _mentioned_models(text)
+    if "deepseek-v4.1-flash" in mentioned:
+        mentioned.append("deepseek-flash")
+    for native in _FLASH_NAMES:
+        price = out.get(_NAME_TO_OR_ID.get(native))
+        if price is None:
             continue
-        window = lowered[idx : idx + 800]
-        # Find $-amounts within the window.
-        dollars = _DOLLAR_RE.findall(window)
-        if len(dollars) < 2:
-            continue
-        prompt = _decimal_to_micro_per_m(dollars[0])
-        completion = _decimal_to_micro_per_m(dollars[-1])
-        if prompt is None or completion is None:
-            continue
-        out[or_id] = {
-            "prompt_micro_per_m": prompt,
-            "completion_micro_per_m": completion,
-        }
+        for alias in mentioned:
+            if alias in _FLASH_NAMES:
+                out.setdefault(_NAME_TO_OR_ID[alias], dict(price))
+        break
     return out
 
 
@@ -195,15 +196,13 @@ def _mentioned_models(text: str) -> list:
 
 def parse(html: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
+    text = soup.get_text(" ", strip=True)
     out = _parse_pricing_tables(soup)
     if out:
-        return out
+        return _add_flash_price_aliases(out, text)
 
-    text = soup.get_text(" ", strip=True)
-    out = _parse_inline_prices(text)
-    if out:
-        return out
-
+    # Do not infer prices from dollar amounts near a model mention: routing
+    # notices can mention Pro immediately before Flash's prices.
     # Final fallback: if the page mentions any of the known DeepSeek
     # models by name, emit the last-known-good public pricing so the
     # refresh pipeline retains coverage until the pricing page itself
