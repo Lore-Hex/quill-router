@@ -163,7 +163,19 @@
           <td>{{ endpoint.completion_price }}</td>
           <td>
             {% if endpoint.pricing_schedule %}
-            DeepSeek direct authorization-time pricing. New rates begin 2026-08-16 16:00 UTC. Weekday peak windows are 01:00–04:00 UTC and 06:00–10:00 UTC. Weekends are off-peak all day in Beijing time beginning 2026-08-23.
+            {% set schedule = endpoint.pricing_schedule %}
+            {{ endpoint.provider }} authorization-time pricing. Rates effective {{ schedule.effective_at }}.
+            {% if schedule.kind == 'time_of_day' %}
+            Weekday peak windows are {% for window in schedule.peak_windows %}{{ window.start }}–{{ window.end }} UTC{% if not loop.last %} and {% endif %}{% endfor %}.
+            {% if schedule.weekend_off_peak.timezone == 'UTC' %}
+            Weekends are off-peak all day in UTC.
+            {% else %}
+            Weekends are off-peak all day in Beijing time beginning 2026-08-23.
+            {% endif %}
+            {% endif %}
+            {% if schedule.upstream_redirect %}
+            {{ schedule.upstream_redirect.reason }}. Billed at Flash prices.
+            {% endif %}
             {% else %}
             Flat
             {% endif %}

@@ -48,6 +48,7 @@ CEREBRAS_GEMMA4_SHARED_RETIREMENT_AT = datetime(2026, 9, 3, 0, 0, tzinfo=UTC)
 NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
+DEEPSEEK_V41_FLASH_EFFECTIVE_AT = datetime(2026, 9, 10, 4, 0, tzinfo=UTC)
 DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT = datetime(
     2026, 8, 22, 16, 0, tzinfo=UTC
 )
@@ -79,6 +80,7 @@ class ProviderPrice:
 
 _DEEPSEEK_V4_FLASH_MODEL_IDS = frozenset(
     {
+        "deepseek/deepseek-flash",
         "deepseek/deepseek-v4-flash",
         # This TrustedRouter alias resolves to the same first-party
         # `deepseek-v4-flash` upstream id and therefore the same bill.
@@ -97,6 +99,10 @@ _DEEPSEEK_V4_PRICES = {
         "peak": ProviderPrice(1_320_000, 3_960_000, 44_000),
     },
 }
+_DEEPSEEK_V41_FLASH_PRICES = {
+    "off_peak": ProviderPrice(150_000, 600_000, 3_000),
+    "peak": ProviderPrice(300_000, 1_200_000, 6_000),
+}
 
 _FIREWORKS_DSV4_FLASH_0731_MODEL_ID = "deepseek/deepseek-v4-flash-0731"
 _FIREWORKS_DSV4_FLASH_0731_PRICES = {
@@ -114,6 +120,18 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # The first-party rolling aliases cease to identify these exact weights.
+    # Retire only the dated leaves, not the rolling aliases or other providers.
+    # Published combo versions stay frozen; never replace their Pro with Flash.
+    _Retirement(
+        provider="deepseek",
+        model_ids=frozenset({
+            "deepseek/deepseek-v4-pro-0813",
+            "deepseek/deepseek-v4-flash-0731",
+        }),
+        upstream_ids=frozenset(),
+        effective_at=DEEPSEEK_V41_FLASH_EFFECTIVE_AT,
+    ),
     # Friendli's September 4 notice specifies September 6 00:00 UTC
     # (September 5 17:00 PDT). Only the shared Model API is retiring;
     # dedicated endpoints and equivalent models on other providers survive.
@@ -664,7 +682,7 @@ def _deepseek_v4_family(provider_slug: str, model_id: str) -> str | None:
         return None
     if model_id in _DEEPSEEK_V4_FLASH_MODEL_IDS:
         return "flash"
-    if model_id == "deepseek/deepseek-v4-pro":
+    if model_id in {"deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-pro-0813"}:
         return "pro"
     return None
 
@@ -672,10 +690,12 @@ def _deepseek_v4_family(provider_slug: str, model_id: str) -> str | None:
 def _deepseek_v4_period(effective_at: datetime) -> str:
     if effective_at < DEEPSEEK_V4_PRICING_EFFECTIVE_AT:
         return "legacy"
+    if effective_at >= DEEPSEEK_V41_FLASH_EFFECTIVE_AT and effective_at.weekday() >= 5:
+        return "off_peak"
     # DeepSeek's published schedule applies the off-peak rate throughout
     # Saturdays and Sundays in Beijing time from 2026-08-23 onward.
     if (
-        effective_at >= DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT
+        DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT <= effective_at < DEEPSEEK_V41_FLASH_EFFECTIVE_AT
         and effective_at.astimezone(_BEIJING_TIME).weekday() >= 5
     ):
         return "off_peak"
@@ -688,6 +708,26 @@ def _deepseek_v4_period(effective_at: datetime) -> str:
     ):
         return "peak"
     return "off_peak"
+
+
+def _deepseek_prices(model_id: str, effective_at: datetime) -> dict[str, ProviderPrice] | None:
+    family = _deepseek_v4_family("deepseek", model_id)
+    if family is None:
+        return None
+    if effective_at >= DEEPSEEK_V41_FLASH_EFFECTIVE_AT:
+        return _DEEPSEEK_V41_FLASH_PRICES
+    return _DEEPSEEK_V4_PRICES[family]
+
+
+def deepseek_off_peak_price(
+    model_id: str, *, at: datetime | str | None = None,
+) -> ProviderPrice | None:
+    """Stable refresh baseline; runtime selects the actual authorization period."""
+    effective_at = _effective_time(at)
+    prices = _deepseek_prices(model_id, effective_at)
+    if prices is None:
+        return None
+    return prices["legacy" if _deepseek_v4_period(effective_at) == "legacy" else "off_peak"]
 
 
 def provider_pricing_schedule(
@@ -725,10 +765,13 @@ def provider_pricing_schedule(
     def clock(seconds: int) -> str:
         return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}"
 
-    return {
+    v41 = effective_at >= DEEPSEEK_V41_FLASH_EFFECTIVE_AT
+    schedule: dict[str, object] = {
         "kind": "time_of_day",
         "timezone": "UTC",
-        "effective_at": DEEPSEEK_V4_PRICING_EFFECTIVE_AT.isoformat().replace("+00:00", "Z"),
+        "effective_at": (
+            DEEPSEEK_V41_FLASH_EFFECTIVE_AT if v41 else DEEPSEEK_V4_PRICING_EFFECTIVE_AT
+        ).isoformat().replace("+00:00", "Z"),
         "current_period": _deepseek_v4_period(effective_at),
         "peak_multiplier": 2,
         "peak_windows": [
@@ -736,16 +779,22 @@ def provider_pricing_schedule(
             for start, end in DEEPSEEK_V4_PEAK_WINDOWS_UTC
         ],
         "weekend_off_peak": {
-            "effective_at": DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT.isoformat().replace(
-                "+00:00", "Z"
-            ),
-            "timezone": "Asia/Shanghai",
+            "effective_at": (
+                DEEPSEEK_V41_FLASH_EFFECTIVE_AT if v41 else DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT
+            ).isoformat().replace("+00:00", "Z"),
+            "timezone": "UTC" if v41 else "Asia/Shanghai",
             "days": ["Saturday", "Sunday"],
         },
         # Authorization time, not settlement time, selects the period so a
         # long stream cannot change price midway through the request.
         "rate_locked_at": "authorization",
     }
+    if v41 and model_id == "deepseek/deepseek-v4-pro":
+        schedule["upstream_redirect"] = {
+            "model": "deepseek/deepseek-flash",
+            "reason": "DeepSeek replaces Pro with V4.1 Flash until V4.1 Pro launches",
+        }
+    return schedule
 
 
 def provider_price_microdollars(
@@ -760,9 +809,10 @@ def provider_price_microdollars(
     early and makes the exact advertised transition deterministic.
     """
     effective_at = _effective_time(at)
-    family = _deepseek_v4_family(provider_slug, model_id)
-    if family is not None:
-        return _DEEPSEEK_V4_PRICES[family][_deepseek_v4_period(effective_at)]
+    if provider_slug == "deepseek":
+        prices = _deepseek_prices(model_id, effective_at)
+        if prices is not None:
+            return prices[_deepseek_v4_period(effective_at)]
 
     if (
         provider_slug == "fireworks"

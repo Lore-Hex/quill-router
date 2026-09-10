@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 
 # Native model id → OR-canonical id.
 _NAME_TO_OR_ID = {
+    "deepseek-flash": "deepseek/deepseek-flash",
     "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
     "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
     "deepseek-chat": "deepseek/deepseek-chat",
@@ -24,6 +25,7 @@ _NAME_TO_OR_ID = {
 # downstream validation doesn't see an empty dict.
 # Values are USD per 1M tokens (cache-miss input, output, cached input).
 _FALLBACK_PRICES = {
+    "deepseek-flash": ("0.22", "0.66", "0.007"),
     "deepseek-v4-flash": ("0.22", "0.66", "0.007"),
     "deepseek-v4-pro": ("0.66", "1.98", "0.022"),
     "deepseek-chat": ("0.27", "1.10", None),
@@ -80,14 +82,21 @@ def _parse_pricing_tables(soup) -> dict:
         input_prices_by_period: dict[str, list[str]] = {}
         cached_prices_by_period: dict[str, list[str]] = {}
         output_prices_by_period: dict[str, list[str]] = {}
+        price_label = ""
         for row in rows[header_idx + 1 :]:
             cells = [td.get_text(" ", strip=True) for td in row.find_all(["td", "th"])]
             if not cells:
                 continue
-            label_text = " ".join(cells[: min(2, len(cells))]).upper()
             if len(cells) < len(header_models):
                 continue
             value_cells = cells[-len(header_models) :]
+            label_text = " ".join(cells[:-len(header_models)]).upper()
+            # The official table rowspans the token category across off-peak
+            # and peak rows. Only carry the category, never the prior period.
+            if "INPUT" in label_text or "OUTPUT" in label_text:
+                price_label = label_text.replace("OFF-PEAK", "").replace("OFF PEAK", "").replace("PEAK", "")
+            elif "PEAK" in label_text:
+                label_text = price_label + " " + label_text
             # The scheduled-pricing table contains both OFF-PEAK and PEAK
             # rows. The generated provider manifest needs one stable baseline;
             # runtime billing overlays the exact UTC period independently.
