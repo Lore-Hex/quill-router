@@ -784,12 +784,13 @@ ENV_VARS=(
   # heartbeats only where QUILL_USAGE_HEARTBEAT=on, which rolls region by region
   # after this lands.
   "TR_STAGE_D_ELIGIBILITY_ENABLED=true"
-  # Decision 77 (d): the spend-lease pilot plus the dedicated Stage D probe
-  # workspace (provisioned 2026-09-06, heartbeat-capable local typed key).
-  # The probe is deliberately NOT on the regional-quota path so the roll gate's
-  # key is in the cohort. Clearing this list is the later fleet-expansion step,
-  # not part of arming.
-  "TR_STAGE_D_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d,91d7810e-93b2-4c37-b1bd-ba9227585416"
+  # Decision 77 (d): an empty list puts every workspace in the Stage D cohort.
+  # Heartbeat has been live in all three regions since 2026-09-09 21:35Z.
+  # Merge precondition: wait for a clean day of heartbeat on the secondaries;
+  # hold this change even when CI is green until that precondition is met.
+  # Rollback: restore the two pilot IDs below and redeploy:
+  # 45819281-0ce9-4811-a0cd-c660ab3a116d,91d7810e-93b2-4c37-b1bd-ba9227585416
+  "TR_STAGE_D_PILOT_WORKSPACE_IDS="
   # Decisions 75-76. The first attempt at this flip (#1131) was reverted the same
   # day: the arm gate evaluated the whole owner inventory inside the authorize
   # transaction, hit the RPC bound and returned 503 at 20.02s. #1133 moved that
