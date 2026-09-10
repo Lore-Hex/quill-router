@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
+from scripts import check_price_spike
 from scripts.check_price_spike import _load_provider_manifests, _summary_line, check
 
 ROOT = Path(__file__).parents[1]
@@ -1194,4 +1196,164 @@ def test_confirmed_digitalocean_official_price_transitions_are_allowed() -> None
 
     assert failures == []
     assert len(changes) == len(before)
+    assert removed == []
+
+
+# Exact failing-run 34384146856 values; E-notation independently pins the
+# positional Decimals in the production approval set.
+CONFIRMED_REFRESH_TRANSITIONS = [
+    (
+        "deepseek/deepseek-v4-flash-0731 "
+        "[siliconflow:siliconflow/fp8:deepseek-ai/DeepSeek-V4-Flash-0731]",
+        "completion", "2.8E-7", "6.6E-7",
+    ),
+    (
+        "deepseek/deepseek-v4-flash-0731 "
+        "[siliconflow:siliconflow:deepseek-ai/DeepSeek-V4-Flash-0731]",
+        "completion", "2.8E-7", "6.6E-7",
+    ),
+    (
+        "deepseek/deepseek-v4-flash-vision-exp "
+        "[siliconflow:siliconflow/fp8:deepseek-ai/DeepSeek-V4-Flash-Vision-Exp]",
+        "prompt", "1.3E-7", "4.4E-7",
+    ),
+    (
+        "deepseek/deepseek-v4-flash-vision-exp "
+        "[siliconflow:siliconflow/fp8:deepseek-ai/DeepSeek-V4-Flash-Vision-Exp]",
+        "completion", "2.8E-7", "1.32E-6",
+    ),
+    (
+        "deepseek/deepseek-v4-flash-vision-exp "
+        "[siliconflow:siliconflow:deepseek-ai/DeepSeek-V4-Flash-Vision-Exp]",
+        "prompt", "1.3E-7", "4.4E-7",
+    ),
+    (
+        "deepseek/deepseek-v4-flash-vision-exp "
+        "[siliconflow:siliconflow:deepseek-ai/DeepSeek-V4-Flash-Vision-Exp]",
+        "completion", "2.8E-7", "1.32E-6",
+    ),
+    (
+        "z-ai/glm-5.3-flash "
+        "[novita:novita/fp8:z-ai/glm-5.3-flash]",
+        "prompt", "7.5E-8", "1.5E-7",
+    ),
+    (
+        "z-ai/glm-5.3-flash "
+        "[novita:novita/fp8:z-ai/glm-5.3-flash]",
+        "completion", "2.5E-7", "5E-7",
+    ),
+    (
+        "z-ai/glm-5.3-flash "
+        "[novita:novita:zai-org/glm-5.3-flash]",
+        "prompt", "7.5E-8", "1.5E-7",
+    ),
+    (
+        "z-ai/glm-5.3-flash "
+        "[novita:novita:zai-org/glm-5.3-flash]",
+        "completion", "2.5E-7", "5E-7",
+    ),
+    (
+        "z-ai/glm-5.3-flash "
+        "[novita:novita:zai-org/glm-5.3-flash] cached-input",
+        "prompt", "1.5E-8", "3E-8",
+    ),
+    (
+        "z-ai/glm-5.3-flash "
+        "[telnyx:telnyx:zai-org/GLM-5.3-Flash]",
+        "prompt", "7.5E-8", "1.5E-7",
+    ),
+    (
+        "z-ai/glm-5.3-flash "
+        "[telnyx:telnyx:zai-org/GLM-5.3-Flash]",
+        "completion", "2.5E-7", "5E-7",
+    ),
+    (
+        "z-ai/glm-5.3-flash "
+        "[telnyx:telnyx:zai-org/GLM-5.3-Flash] cached-input",
+        "prompt", "1.5E-8", "3E-8",
+    ),
+]
+
+
+def _confirmed_refresh_prices(
+    transitions: list[tuple[str, str, str, str]],
+) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]]:
+    before: dict[str, dict[str, str]] = {}
+    after: dict[str, dict[str, str]] = {}
+    for route, dimension, old, new in transitions:
+        before.setdefault(route, {"prompt": "0", "completion": "0"})[dimension] = old
+        after.setdefault(route, {"prompt": "0", "completion": "0"})[dimension] = new
+    return before, after
+
+
+@pytest.mark.parametrize(("route", "dimension", "old", "new"), CONFIRMED_REFRESH_TRANSITIONS)
+def test_confirmed_refresh_transition_is_allowed(
+    route: str, dimension: str, old: str, new: str,
+) -> None:
+    before, after = _confirmed_refresh_prices([(route, dimension, old, new)])
+
+    failures, changes, removed = check(before, after)
+
+    assert failures == []
+    assert len(changes) == 1
+    assert removed == []
+    # Decimal equality confirms both positional literals equal the run's E-notation.
+    assert (route, dimension, Decimal(old), Decimal(new)) in (
+        check_price_spike.APPROVED_ENDPOINT_PRICE_TRANSITIONS
+    )
+
+
+def test_all_fourteen_confirmed_refresh_transitions_are_allowed() -> None:
+    assert len(CONFIRMED_REFRESH_TRANSITIONS) == 14
+    before, after = _confirmed_refresh_prices(CONFIRMED_REFRESH_TRANSITIONS)
+
+    failures, changes, removed = check(before, after)
+
+    assert failures == []
+    assert len(changes) == len(before) == 9
+    assert removed == []
+
+
+@pytest.mark.parametrize(("route", "dimension", "old", "new"), CONFIRMED_REFRESH_TRANSITIONS)
+@pytest.mark.parametrize("mutation", ["remove-approval", "after-price", "endpoint-tag"])
+def test_confirmed_refresh_mutations_still_block(
+    monkeypatch: pytest.MonkeyPatch,
+    route: str, dimension: str, old: str, new: str, mutation: str,
+) -> None:
+    if mutation == "remove-approval":
+        approval = (route, dimension, Decimal(old), Decimal(new))
+        monkeypatch.setattr(
+            check_price_spike,
+            "APPROVED_ENDPOINT_PRICE_TRANSITIONS",
+            check_price_spike.APPROVED_ENDPOINT_PRICE_TRANSITIONS - {approval},
+        )
+    elif mutation == "after-price":
+        # Increase only the final digit, keeping every mutation above the 2x gate.
+        new = format(Decimal(new), "f")
+        new = new[:-1] + str(int(new[-1]) + 1)
+    else:
+        # Change the tag in BOTH snapshots so this remains a continuing endpoint.
+        model_provider, tag, upstream = route.split(":", 2)
+        tag = tag.replace("/fp8", "/fp16") if "/fp8" in tag else f"{tag}/fp16"
+        route = f"{model_provider}:{tag}:{upstream}"
+    before, after = _confirmed_refresh_prices([(route, dimension, old, new)])
+
+    failures, _changes, _removed = check(before, after)
+
+    assert len(failures) == 1
+    assert failures[0].startswith(f"{route} {dimension}:")
+
+
+def test_fifteenth_unapproved_refresh_transition_still_blocks() -> None:
+    route = "other/model [siliconflow:siliconflow/fp8:other/model]"
+    before, after = _confirmed_refresh_prices([
+        *CONFIRMED_REFRESH_TRANSITIONS,
+        (route, "prompt", "1E-7", "2E-7"),
+    ])
+
+    failures, changes, removed = check(before, after)
+
+    assert len(failures) == 1
+    assert failures[0].startswith(f"{route} prompt:")
+    assert len(changes) == 10
     assert removed == []

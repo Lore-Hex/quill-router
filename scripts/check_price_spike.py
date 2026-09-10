@@ -308,6 +308,116 @@ APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
             Decimal("0.00000003"),
             Decimal("0.000000075"),
         ),
+        # SiliconFlow's public prices, verified 2026-09-09, per million
+        # tokens (input / cached input / output): Flash-0731 0.22 / 0.014 / 0.66;
+        # Flash-Vision-Exp 0.44 / 0.028 / 1.32. Pin only these observed spikes:
+        # https://siliconflow.com/pricing
+        # These rates match the DeepSeek first-party schedule effective
+        # 2026-08-16 used for the existing GMI approvals:
+        # https://api-docs.deepseek.com/quick_start/pricing/
+        (
+            "deepseek/deepseek-v4-flash-0731 "
+            "[siliconflow:siliconflow/fp8:deepseek-ai/DeepSeek-V4-Flash-0731]",
+            "completion",
+            Decimal("0.00000028"),
+            Decimal("0.00000066"),
+        ),
+        (
+            "deepseek/deepseek-v4-flash-0731 "
+            "[siliconflow:siliconflow:deepseek-ai/DeepSeek-V4-Flash-0731]",
+            "completion",
+            Decimal("0.00000028"),
+            Decimal("0.00000066"),
+        ),
+        (
+            "deepseek/deepseek-v4-flash-vision-exp "
+            "[siliconflow:siliconflow/fp8:deepseek-ai/DeepSeek-V4-Flash-Vision-Exp]",
+            "prompt",
+            Decimal("0.00000013"),
+            Decimal("0.00000044"),
+        ),
+        (
+            "deepseek/deepseek-v4-flash-vision-exp "
+            "[siliconflow:siliconflow/fp8:deepseek-ai/DeepSeek-V4-Flash-Vision-Exp]",
+            "completion",
+            Decimal("0.00000028"),
+            Decimal("0.00000132"),
+        ),
+        (
+            "deepseek/deepseek-v4-flash-vision-exp "
+            "[siliconflow:siliconflow:deepseek-ai/DeepSeek-V4-Flash-Vision-Exp]",
+            "prompt",
+            Decimal("0.00000013"),
+            Decimal("0.00000044"),
+        ),
+        (
+            "deepseek/deepseek-v4-flash-vision-exp "
+            "[siliconflow:siliconflow:deepseek-ai/DeepSeek-V4-Flash-Vision-Exp]",
+            "completion",
+            Decimal("0.00000028"),
+            Decimal("0.00000132"),
+        ),
+        # Z.ai's public GLM-5.3-Flash list prices, verified 2026-09-09:
+        # $0.15 input / $0.03 cached input / $0.50 output per million tokens.
+        # Novita and Telnyx ended a 50% promotion; the new rates equal list.
+        # Pin each exact endpoint, including the separate cached-input keys:
+        # https://docs.z.ai/guides/overview/pricing
+        (
+            "z-ai/glm-5.3-flash "
+            "[novita:novita/fp8:z-ai/glm-5.3-flash]",
+            "prompt",
+            Decimal("0.000000075"),
+            Decimal("0.00000015"),
+        ),
+        (
+            "z-ai/glm-5.3-flash "
+            "[novita:novita/fp8:z-ai/glm-5.3-flash]",
+            "completion",
+            Decimal("0.00000025"),
+            Decimal("0.0000005"),
+        ),
+        (
+            "z-ai/glm-5.3-flash "
+            "[novita:novita:zai-org/glm-5.3-flash]",
+            "prompt",
+            Decimal("0.000000075"),
+            Decimal("0.00000015"),
+        ),
+        (
+            "z-ai/glm-5.3-flash "
+            "[novita:novita:zai-org/glm-5.3-flash]",
+            "completion",
+            Decimal("0.00000025"),
+            Decimal("0.0000005"),
+        ),
+        (
+            "z-ai/glm-5.3-flash "
+            "[novita:novita:zai-org/glm-5.3-flash] cached-input",
+            "prompt",
+            Decimal("0.000000015"),
+            Decimal("0.00000003"),
+        ),
+        (
+            "z-ai/glm-5.3-flash "
+            "[telnyx:telnyx:zai-org/GLM-5.3-Flash]",
+            "prompt",
+            Decimal("0.000000075"),
+            Decimal("0.00000015"),
+        ),
+        (
+            "z-ai/glm-5.3-flash "
+            "[telnyx:telnyx:zai-org/GLM-5.3-Flash]",
+            "completion",
+            Decimal("0.00000025"),
+            Decimal("0.0000005"),
+        ),
+        (
+            "z-ai/glm-5.3-flash "
+            "[telnyx:telnyx:zai-org/GLM-5.3-Flash] cached-input",
+            "prompt",
+            Decimal("0.000000015"),
+            Decimal("0.00000003"),
+        ),
     }
 )
 
