@@ -836,7 +836,7 @@ def test_anthropic_opus_41_is_never_prepaid_during_retirement_transition() -> No
 
 
 def test_deepseek_v4_pro_release_routes_are_keyed_and_credits_only() -> None:
-    from trusted_router.provider_lifecycle import DEEPSEEK_V41_FLASH_EFFECTIVE_AT
+    from trusted_router.provider_lifecycle import DEEPSEEK_V4_PRO_FLASH_REDIRECT_EFFECTIVE_AT
 
     old_routes = endpoints_for_model(DEEPSEEK_V4_PRO_0423_MODEL_ID)
     current_routes = endpoints_for_model(DEEPSEEK_V4_PRO_0813_MODEL_ID)
@@ -849,7 +849,7 @@ def test_deepseek_v4_pro_release_routes_are_keyed_and_credits_only() -> None:
     )
     assert current_routes
     assert all(endpoint.usage_type == "Credits" for endpoint in current_routes)
-    direct_is_pro = catalog_predates(DEEPSEEK_V41_FLASH_EFFECTIVE_AT)
+    direct_is_pro = catalog_predates(DEEPSEEK_V4_PRO_FLASH_REDIRECT_EFFECTIVE_AT)
     assert {endpoint.provider for endpoint in current_routes} == (
         {"baseten", "fireworks"} | ({"deepseek"} if direct_is_pro else set())
     )

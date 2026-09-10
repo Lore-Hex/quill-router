@@ -174,7 +174,12 @@
             {% endif %}
             {% endif %}
             {% if schedule.upstream_redirect %}
+            {% if schedule.effective_at < schedule.upstream_redirect.effective_at %}
+            From {{ schedule.upstream_redirect.effective_at }}: {{ schedule.upstream_redirect.reason }}.
+            Flash prices will apply from that date.
+            {% else %}
             {{ schedule.upstream_redirect.reason }}. Billed at Flash prices.
+            {% endif %}
             {% endif %}
             {% else %}
             Flat

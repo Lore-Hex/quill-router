@@ -49,6 +49,11 @@ NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
 DEEPSEEK_V41_FLASH_EFFECTIVE_AT = datetime(2026, 9, 10, 4, 0, tzinfo=UTC)
+# https://api-docs.deepseek.com/quick_start/pricing/ note (2):
+# "From 12:00 Beijing Time on September 14, 2026, and until V4.1 Pro is released
+# in the future, requests to deepseek-v4-pro will all be routed to V4.1 Flash
+# and billed at the V4.1 Flash price."
+DEEPSEEK_V4_PRO_FLASH_REDIRECT_EFFECTIVE_AT = datetime(2026, 9, 14, 4, 0, tzinfo=UTC)
 DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT = datetime(
     2026, 8, 22, 16, 0, tzinfo=UTC
 )
@@ -126,11 +131,16 @@ _RETIREMENTS = (
     _Retirement(
         provider="deepseek",
         model_ids=frozenset({
-            "deepseek/deepseek-v4-pro-0813",
             "deepseek/deepseek-v4-flash-0731",
         }),
         upstream_ids=frozenset(),
         effective_at=DEEPSEEK_V41_FLASH_EFFECTIVE_AT,
+    ),
+    _Retirement(
+        provider="deepseek",
+        model_ids=frozenset({"deepseek/deepseek-v4-pro-0813"}),
+        upstream_ids=frozenset(),
+        effective_at=DEEPSEEK_V4_PRO_FLASH_REDIRECT_EFFECTIVE_AT,
     ),
     # Friendli's September 4 notice specifies September 6 00:00 UTC
     # (September 5 17:00 PDT). Only the shared Model API is retiring;
@@ -727,7 +737,11 @@ def _deepseek_prices(model_id: str, effective_at: datetime) -> dict[str, Provide
     family = _deepseek_v4_family("deepseek", model_id)
     if family is None:
         return None
-    if effective_at >= DEEPSEEK_V41_FLASH_EFFECTIVE_AT:
+    flash_price_effective_at = (
+        DEEPSEEK_V4_PRO_FLASH_REDIRECT_EFFECTIVE_AT
+        if family == "pro" else DEEPSEEK_V41_FLASH_EFFECTIVE_AT
+    )
+    if effective_at >= flash_price_effective_at:
         return _DEEPSEEK_V41_FLASH_PRICES
     return _DEEPSEEK_V4_PRICES[family]
 
@@ -772,18 +786,24 @@ def provider_pricing_schedule(
             "rate_locked_at": "authorization",
         }
 
-    if _deepseek_v4_family(provider_slug, model_id) is None:
+    family = _deepseek_v4_family(provider_slug, model_id)
+    if family is None:
         return None
 
     def clock(seconds: int) -> str:
         return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}"
 
     v41 = effective_at >= DEEPSEEK_V41_FLASH_EFFECTIVE_AT
+    flash_price_effective_at = (
+        DEEPSEEK_V4_PRO_FLASH_REDIRECT_EFFECTIVE_AT
+        if family == "pro" else DEEPSEEK_V41_FLASH_EFFECTIVE_AT
+    )
     schedule: dict[str, object] = {
         "kind": "time_of_day",
         "timezone": "UTC",
         "effective_at": (
-            DEEPSEEK_V41_FLASH_EFFECTIVE_AT if v41 else DEEPSEEK_V4_PRICING_EFFECTIVE_AT
+            flash_price_effective_at
+            if effective_at >= flash_price_effective_at else DEEPSEEK_V4_PRICING_EFFECTIVE_AT
         ).isoformat().replace("+00:00", "Z"),
         "current_period": _deepseek_v4_period(effective_at),
         "peak_multiplier": 2,
@@ -805,6 +825,9 @@ def provider_pricing_schedule(
     if v41 and model_id == "deepseek/deepseek-v4-pro":
         schedule["upstream_redirect"] = {
             "model": "deepseek/deepseek-flash",
+            "effective_at": DEEPSEEK_V4_PRO_FLASH_REDIRECT_EFFECTIVE_AT.isoformat().replace(
+                "+00:00", "Z"
+            ),
             "reason": "DeepSeek replaces Pro with V4.1 Flash until V4.1 Pro launches",
         }
     return schedule

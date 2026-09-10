@@ -13,6 +13,7 @@ from trusted_router.provider_lifecycle import (
     DEEPSEEK_V4_PRICING_EFFECTIVE_AT,
     DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT,
     ProviderPrice,
+    deepseek_off_peak_price,
     provider_price_microdollars,
     provider_pricing_schedule,
 )
@@ -355,3 +356,9 @@ def test_gateway_settlement_uses_authorization_time_for_deepseek_price(
     )
     assert settled.status_code == 200, settled.text
     assert settled.json()["data"]["cost_microdollars"] == 19_897
+
+
+def test_pro_refresh_baseline_stays_pro_priced_before_september_14() -> None:
+    assert deepseek_off_peak_price(_PRO, at="2026-09-10T13:40:00Z") == ProviderPrice(
+        660_000, 1_980_000, 22_000,
+    )

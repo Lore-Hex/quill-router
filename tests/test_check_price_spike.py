@@ -1357,3 +1357,55 @@ def test_fifteenth_unapproved_refresh_transition_still_blocks() -> None:
     assert failures[0].startswith(f"{route} prompt:")
     assert len(changes) == 10
     assert removed == []
+
+
+def test_deepseek_pro_early_cut_restoration_passes_manifest_guard(tmp_path: Path) -> None:
+    rates = []
+    for name, prompt, completion, cached in [
+        ("before", 150_000, 600_000, 3_000),
+        ("after", 660_000, 1_980_000, 22_000),
+    ]:
+        directory = tmp_path / name
+        directory.mkdir()
+        _write(directory, "deepseek.json", {
+            "provider": "deepseek",
+            "models": [{
+                "id": "deepseek/deepseek-v4-pro",
+                "upstream_id": "deepseek-v4-pro",
+                "input_token_price_per_m": prompt,
+                "output_token_price_per_m": completion,
+                "cached_input_token_price_per_m": cached,
+            }],
+        })
+        rates.append(_load_provider_manifests(directory))
+    route = "deepseek/deepseek-v4-pro [deepseek:deepseek:deepseek-v4-pro]"
+    assert rates[0].keys() == {route, f"{route} cached-input"}
+    failures, changes, removed = check(*rates)
+    assert failures == []
+    assert len(changes) == 2
+    assert removed == []
+
+
+@pytest.mark.parametrize(("suffix", "dimension", "old", "new"), [
+    ("", "prompt", "0.00000015", "0.00000066"),
+    ("", "completion", "0.0000006", "0.00000198"),
+    (" cached-input", "prompt", "0.000000003", "0.000000022"),
+])
+@pytest.mark.parametrize("mismatch", ["route", "dimension", "old", "new"])
+def test_deepseek_pro_restoration_approval_is_exact(
+    suffix: str, dimension: str, old: str, new: str, mismatch: str,
+) -> None:
+    route = f"deepseek/deepseek-v4-pro [deepseek:deepseek:deepseek-v4-pro]{suffix}"
+    if mismatch == "route":
+        route = route.replace("[deepseek:deepseek:", "[baseten:baseten:")
+    elif mismatch == "dimension":
+        dimension = "completion" if dimension == "prompt" else "prompt"
+    elif mismatch == "old":
+        old = str(Decimal(old) / 2)
+    else:
+        new = str(Decimal(new) * 2)
+    before = {"prompt": "0", "completion": "0", dimension: old}
+    after = {"prompt": "0", "completion": "0", dimension: new}
+    failures, _, _ = check({route: before}, {route: after})
+    assert len(failures) == 1
+    assert f"{route} {dimension}" in failures[0]
