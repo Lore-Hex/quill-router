@@ -125,7 +125,7 @@ def fetch() -> ProviderPricingResult:
         row.setdefault("context_length", 1_048_576)
         row["supported_features"] = ["function-calling", "json-mode", "reasoning-effort"]
         if row["id"] == "deepseek/deepseek-flash":
-            row["display_name"] = "DeepSeek Flash (rolling)"
+            row["display_name"] = "DeepSeek V4.1 Flash (rolling)"
     _DISCOVERED_MANIFEST_ROWS = discovered
     result.source = "api"
     result.fetched_url = MODELS_URL
