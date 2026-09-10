@@ -190,6 +190,8 @@ def _observe_record(
     outcome = store.observe_receipt_key(record, refresh_last_seen=refresh_last_seen)
     if outcome in {"appended", "refreshed"}:
         result[outcome] += 1
+    elif outcome == "unchanged":
+        result["unchanged"] += 1
     else:
         result["skipped"] += 1
 
@@ -278,6 +280,7 @@ def collect_receipt_keys(
         "fetched": 0,
         "appended": 0,
         "refreshed": 0,
+        "unchanged": 0,
         "skipped": 0,
         "errors": 0,
     }

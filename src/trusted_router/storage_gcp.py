@@ -7712,32 +7712,59 @@ class SpannerBigtableStore:
         kid: str | None = None,
     ) -> list[ReceiptKey]:
         bounded = max(0, min(limit, 10_000))
-        where = "kind=@kind"
         params: dict[str, Any] = {"kind": RECEIPT_KEY_KIND, "limit": bounded}
         param_types = {
             "kind": self._param_types.STRING,
             "limit": self._param_types.INT64,
         }
-        if kid is not None:
-            # Include the one possible legacy row whose projection is NULL.
-            # Once backfilled, the kid predicate can use the version index.
-            where += " AND (kid=@kid OR (kid IS NULL AND id=@kid))"
+        queries: tuple[tuple[str, dict[str, Any], dict[str, Any]], ...]
+        if kid is None:
+            queries = (
+                (
+                    "SELECT body FROM tr_entities WHERE kind=@kind "
+                    "ORDER BY updated_at DESC, id DESC LIMIT @limit",
+                    params,
+                    param_types,
+                ),
+            )
+        else:
             params["kid"] = kid
             param_types["kid"] = self._param_types.STRING
-        with self._database.snapshot() as snapshot:
-            raw_rows = snapshot.execute_sql(
-                f"SELECT body FROM tr_entities WHERE {where} "  # noqa: S608 - predicates are fixed; values are bound.
-                "ORDER BY updated_at DESC, id DESC LIMIT @limit",
-                params=params,
-                param_types=param_types,
+            # Force the filtered version read through the ready index. The
+            # possible legacy row is an exact primary-key lookup rather than
+            # an OR that permits a full scan of tr_entities.
+            queries = (
+                (
+                    "SELECT body FROM tr_entities@{FORCE_INDEX=tr_receipt_key_versions} "
+                    "WHERE kid=@kid AND att_sha256 IS NOT NULL AND kind=@kind "
+                    "ORDER BY updated_at DESC, id DESC LIMIT @limit",
+                    params,
+                    param_types,
+                ),
+                (
+                    "SELECT body FROM tr_entities WHERE kind=@kind AND id=@kid "
+                    "AND kid IS NULL LIMIT 1",
+                    {"kind": RECEIPT_KEY_KIND, "kid": kid},
+                    {
+                        "kind": self._param_types.STRING,
+                        "kid": self._param_types.STRING,
+                    },
+                ),
             )
+        with self._database.snapshot(multi_use=True) as snapshot:
             rows = []
             known = {field.name for field in dataclasses.fields(ReceiptKey)}
-            for raw_row in raw_rows:
-                data = json.loads(raw_row[0])
-                rows.append(
-                    ReceiptKey(**{key: value for key, value in data.items() if key in known})
+            for query, query_params, query_param_types in queries:
+                raw_rows = snapshot.execute_sql(
+                    query,
+                    params=query_params,
+                    param_types=query_param_types,
                 )
+                for raw_row in raw_rows:
+                    data = json.loads(raw_row[0])
+                    rows.append(
+                        ReceiptKey(**{key: value for key, value in data.items() if key in known})
+                    )
         versions: dict[tuple[str, str], ReceiptKey] = {}
         for row in rows:
             row = with_receipt_attestation_sha256(row)

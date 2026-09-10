@@ -62,6 +62,9 @@ CREATE INDEX IF NOT EXISTS tr_entities_monitor_recent
     ON tr_entities (kind, index_monitor_region, indexed_at, id);
 CREATE INDEX IF NOT EXISTS tr_entities_period_recent
     ON tr_entities (kind, index_period, indexed_at, id);
+CREATE INDEX IF NOT EXISTS tr_receipt_key_versions
+    ON tr_entities (kid, att_sha256)
+    WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL;
 CREATE TABLE IF NOT EXISTS tr_credit_balance (
     workspace_id TEXT NOT NULL,
     shard BIGINT NOT NULL DEFAULT 0,

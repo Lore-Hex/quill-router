@@ -814,20 +814,39 @@ class PostgresStore:
         bounded = max(0, min(limit, 10_000))
 
         def operation(conn: Any) -> list[ReceiptKey]:
-            query = "SELECT body FROM tr_entities WHERE kind = %s"
-            params: list[Any] = [RECEIPT_KEY_KIND]
-            if kid is not None:
-                # The id predicate retains a pre-migration row whose projected
-                # kid is NULL.  All values remain bound parameters.
-                query += " AND (kid = %s OR (kid IS NULL AND id = %s))"
-                params.extend((kid, kid))
-            query += " ORDER BY updated_at DESC, id DESC LIMIT %s"
-            params.append(bounded)
+            queries: tuple[tuple[str, tuple[Any, ...]], ...]
+            if kid is None:
+                query = (
+                    "SELECT body FROM tr_entities WHERE kind = %s "
+                    "ORDER BY updated_at DESC, id DESC LIMIT %s"
+                )
+                queries = ((query, (RECEIPT_KEY_KIND, bounded)),)
+            else:
+                # Keep the partial-index predicate literal so Postgres-family
+                # planners can prove tr_receipt_key_versions applies. Read the
+                # sole pre-migration row separately through the primary key;
+                # an OR across the two shapes can degrade into a table scan.
+                indexed = (
+                    "SELECT body FROM tr_entities WHERE kid = %s "
+                    "AND att_sha256 IS NOT NULL AND kind = %s "
+                    "ORDER BY updated_at DESC, id DESC LIMIT %s"
+                )
+                legacy = (
+                    "SELECT body FROM tr_entities WHERE kind = %s AND id = %s "
+                    "AND kid IS NULL LIMIT 1"
+                )
+                queries = (
+                    (indexed, (kid, RECEIPT_KEY_KIND, bounded)),
+                    (legacy, (RECEIPT_KEY_KIND, kid)),
+                )
             result: list[ReceiptKey] = []
-            for (raw,) in conn.execute(query, tuple(params)).fetchall():
-                data = json.loads(raw) if isinstance(raw, str) else dict(raw)
-                known = {field.name for field in dataclasses.fields(ReceiptKey)}
-                result.append(ReceiptKey(**{key: value for key, value in data.items() if key in known}))
+            known = {field.name for field in dataclasses.fields(ReceiptKey)}
+            for query, params in queries:
+                for (raw,) in conn.execute(query, params).fetchall():
+                    data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                    result.append(
+                        ReceiptKey(**{key: value for key, value in data.items() if key in known})
+                    )
             return result
 
         rows = self._run_transaction(operation)

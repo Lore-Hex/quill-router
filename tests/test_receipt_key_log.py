@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import dataclasses
 import hashlib
 import json
 import logging
@@ -496,6 +497,47 @@ def test_history_never_refreshes_over_the_current_document(
     assert rows[0] == current_row
 
 
+def test_six_thousand_historical_refreshes_are_no_writes_and_keep_current_first() -> None:
+    jwk = _jwk()
+    kid = _kid(jwk)
+    history_payload = _gcp_payload(jwk, marker="history")
+    current_payload = _gcp_payload(jwk, marker="current")
+    history = ReceiptKey(
+        kid=kid,
+        jwk=jwk,
+        att=_att(history_payload),
+        att_kind="gcp-cs-jwt",
+        plane="api.example",
+        first_seen="2026-08-26T00:00:00Z",
+        last_seen="2026-08-26T00:00:00Z",
+        verified=True,
+    )
+    current = ReceiptKey(
+        kid=kid,
+        jwk=jwk,
+        att=_att(current_payload),
+        att_kind="gcp-cs-jwt",
+        plane="api.example",
+        first_seen="2026-08-26T00:00:01Z",
+        last_seen="2026-08-26T00:00:01Z",
+        verified=True,
+    )
+    store = InMemoryStore()
+    assert store.observe_receipt_key(history, refresh_last_seen=False) == "appended"
+    assert store.observe_receipt_key(current) == "appended"
+
+    outcomes = {
+        store.observe_receipt_key(
+            dataclasses.replace(history, last_seen=f"2099-01-01T00:{index // 60:02d}:{index % 60:02d}Z"),
+            refresh_last_seen=False,
+        )
+        for index in range(6_000)
+    }
+
+    assert outcomes == {"unchanged"}
+    assert store.list_receipt_keys(kid=kid)[0].att == current.att
+
+
 def test_collector_accepts_an_expired_but_authentic_history_document(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -702,9 +744,11 @@ def test_durable_receipt_key_reads_filter_and_limit_in_the_database(
     monkeypatch.setattr(pg, "_list_entities", forbidden)
 
     assert pg.list_receipt_keys(kid="missing-kid", limit=7) == []
-    assert "kid = %s" in pg_calls[0][0]
+    assert "WHERE kid = %s AND att_sha256 IS NOT NULL" in pg_calls[0][0]
     assert "LIMIT %s" in pg_calls[0][0]
-    assert pg_calls[0][1] == ("receipt_key", "missing-kid", "missing-kid", 7)
+    assert pg_calls[0][1] == ("missing-kid", "receipt_key", 7)
+    assert "WHERE kind = %s AND id = %s AND kid IS NULL LIMIT 1" in pg_calls[1][0]
+    assert pg_calls[1][1] == ("receipt_key", "missing-kid")
 
     spanner_calls: list[tuple[str, dict[str, object]]] = []
 
@@ -716,7 +760,8 @@ def test_durable_receipt_key_reads_filter_and_limit_in_the_database(
 
     class Database:
         @contextmanager
-        def snapshot(self):
+        def snapshot(self, *, multi_use: bool):
+            assert multi_use is True
             yield Snapshot()
 
     spanner = SpannerBigtableStore.__new__(SpannerBigtableStore)
@@ -725,13 +770,18 @@ def test_durable_receipt_key_reads_filter_and_limit_in_the_database(
     monkeypatch.setattr(spanner, "_list_entities", forbidden)
 
     assert spanner.list_receipt_keys(kid="missing-kid", limit=7) == []
-    assert "kid=@kid" in spanner_calls[0][0]
+    assert (
+        "tr_entities@{FORCE_INDEX=tr_receipt_key_versions}" in spanner_calls[0][0]
+    )
+    assert "kid=@kid AND att_sha256 IS NOT NULL" in spanner_calls[0][0]
     assert "LIMIT @limit" in spanner_calls[0][0]
     assert spanner_calls[0][1] == {
         "kind": "receipt_key",
         "kid": "missing-kid",
         "limit": 7,
     }
+    assert "WHERE kind=@kind AND id=@kid AND kid IS NULL LIMIT 1" in spanner_calls[1][0]
+    assert spanner_calls[1][1] == {"kind": "receipt_key", "kid": "missing-kid"}
 
 
 def test_public_routes_list_versions_with_hash_and_filter_by_kid(
@@ -842,6 +892,91 @@ def test_public_routes_list_versions_with_hash_and_filter_by_kid(
     assert degraded.status_code == 200
     assert degraded.json()["degraded"] is True
     assert degraded.json()["keys"] == payload["keys"]
+
+
+def _public_records(count: int, *, attestation_bytes: int = 0) -> list[ReceiptKey]:
+    records = []
+    for index in range(count):
+        jwk = _jwk(f"public-page-{index}".encode())
+        att = f"att-{index}-" + ("x" * attestation_bytes)
+        records.append(
+            ReceiptKey(
+                kid=_kid(jwk),
+                jwk=jwk,
+                att=att,
+                att_kind="gcp-cs-jwt",
+                plane="api.example",
+                first_seen=f"2026-08-26T00:00:00.{index:05d}Z",
+                last_seen=f"2026-08-26T00:00:00.{index:05d}Z",
+                verified=True,
+            )
+        )
+    return records
+
+
+def test_unfiltered_receipt_key_pages_walk_all_five_thousand_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = _public_records(5_000)
+    configure_store(InMemoryStore())
+
+    def list_records(_self, *, limit: int, kid: str | None = None):
+        assert kid is None
+        return records[:limit]
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", list_records)
+    client = TestClient(
+        create_app(
+            Settings(environment="test"),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+    cursor: str | None = None
+    seen: list[str] = []
+    while True:
+        params = {} if cursor is None else {"cursor": cursor}
+        response = client.get("/.well-known/inference-receipt-keys", params=params)
+        assert response.status_code == 200
+        assert len(response.content) <= 1024 * 1024
+        payload = response.json()
+        assert payload["page_size"] == 250
+        assert len(payload["keys"]) <= payload["page_size"]
+        seen.extend(item["kid"] for item in payload["keys"])
+        cursor = payload["next_cursor"]
+        if cursor is None:
+            break
+
+    assert len(seen) == 5_000
+    assert len(set(seen)) == 5_000
+    assert set(seen) == {record.kid for record in records}
+
+
+def test_unfiltered_five_thousand_key_response_obeys_byte_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = _public_records(5_000, attestation_bytes=8 * 1024)
+    configure_store(InMemoryStore())
+
+    def list_records(_self, *, limit: int, kid: str | None = None):
+        assert kid is None
+        return records[:limit]
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", list_records)
+    client = TestClient(
+        create_app(
+            Settings(environment="test"),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    response = client.get("/trust/receipt-keys.json")
+
+    assert response.status_code == 200
+    assert len(response.content) <= 1024 * 1024
+    assert len(response.json()["keys"]) < 250
+    assert response.json()["next_cursor"] is not None
 
 
 def test_public_route_rejects_noncanonical_kids_before_storage(
@@ -960,3 +1095,46 @@ def test_scheduler_route_collects_and_records_heartbeat(
     assert response.status_code == 200
     assert response.json()["appended"] == 1
     assert heartbeats == ["job:receipt-key-collector"]
+
+
+def test_scheduler_route_fails_without_heartbeat_when_collection_has_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.routes.internal import gateway
+
+    heartbeats: list[str] = []
+    monkeypatch.setattr(
+        gateway,
+        "collect_receipt_keys",
+        lambda _settings: {
+            "discovered": 2,
+            "fetched": 1,
+            "appended": 1,
+            "refreshed": 0,
+            "unchanged": 0,
+            "skipped": 0,
+            "errors": 1,
+        },
+    )
+    monkeypatch.setattr(
+        gateway,
+        "record_heartbeat",
+        lambda name, *, settings: heartbeats.append(name),
+    )
+    token = "receipt-collector-test-token"  # noqa: S105
+    client = TestClient(
+        create_app(
+            Settings(environment="test", internal_gateway_token=token),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    response = client.post(
+        "/v1/internal/gateway/receipt-keys/collect",
+        headers={"x-trustedrouter-internal-token": token},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["type"] == "service_unavailable"
+    assert heartbeats == []

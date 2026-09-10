@@ -4314,6 +4314,26 @@ def _execute_sql(
             rows = rows[: int(params["limit"])]
         cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
         return [[(eid if c == "id" else body) for c in cols] for eid, body in rows]
+    if "FORCE_INDEX=tr_receipt_key_versions" in sql:
+        _require_pred(sql, "kid=@kid", "receipt-key version kid")
+        _require_pred(
+            sql,
+            "att_sha256 IS NOT NULL",
+            "receipt-key version partial-index predicate",
+        )
+        rows: list[tuple[int, str, str]] = []
+        for (row_kind, entity_id), row in db.rows.items():
+            if row_kind != kind:
+                continue
+            body = json.loads(row.body)
+            if body.get("kid") != params["kid"] or not body.get("att_sha256"):
+                continue
+            rows.append((row.version, entity_id, row.body))
+        rows.sort(reverse=True)
+        return [[body] for _, _, body in rows[: int(params["limit"])]]
+    if "WHERE kind=@kind AND id=@kid AND kid IS NULL LIMIT 1" in sql:
+        row = db.rows.get((kind, str(params["kid"])))
+        return [] if row is None else [[row.body]]
     if "AND id=@id" in sql:
         entity_id = params["id"]
         if txn is not None:

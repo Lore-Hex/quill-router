@@ -38,7 +38,9 @@ _GCP_JWKS_CACHE_SECONDS = 3600
 _GCP_JWKS_CACHE: tuple[float, dict[str, Any]] | None = None
 _GCP_JWKS_LOCK = threading.Lock()
 
-ReceiptKeyWriteOutcome = Literal["appended", "refreshed", "conflict", "invalid"]
+ReceiptKeyWriteOutcome = Literal[
+    "appended", "refreshed", "unchanged", "conflict", "invalid"
+]
 
 
 def b64url_encode(value: bytes) -> str:
@@ -341,6 +343,13 @@ def merge_receipt_key_observation(
         )
         return existing, "conflict"
 
+    # Historical evidence has no trustworthy observation time. Once its
+    # immutable document is present, even an otherwise harmless upsert would
+    # refresh the database's physical updated_at column and move old evidence
+    # ahead of live keys in bounded newest-first reads.
+    if not refresh_last_seen:
+        return existing, "unchanged"
+
     # A document row is immutable. Never change its attestation, first_seen,
     # plane, or revocation state; and never let a transient verifier failure
     # downgrade a prior success.
@@ -348,11 +357,7 @@ def merge_receipt_key_observation(
         dataclasses.replace(
             existing,
             jwk=existing_jwk,
-            last_seen=(
-                max(existing.last_seen, observed.last_seen)
-                if refresh_last_seen
-                else existing.last_seen
-            ),
+            last_seen=max(existing.last_seen, observed.last_seen),
             verified=existing.verified or observed.verified,
         ),
         "refreshed",

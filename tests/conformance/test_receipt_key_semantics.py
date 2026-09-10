@@ -90,6 +90,12 @@ def test_receipt_key_log_keeps_every_attestation_version(
         last_seen="2026-08-26T00:10:00Z",
         verified=True,
     )
+    assert (
+        store.observe_receipt_key(same_document, refresh_last_seen=False)
+        == "unchanged"
+    )
+    assert store.list_receipt_keys(kid=kid) == rows
+
     assert store.observe_receipt_key(same_document) == "refreshed"
     rows = store.list_receipt_keys(kid=kid)
     assert len(rows) == 2

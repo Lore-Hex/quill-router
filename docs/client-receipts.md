@@ -12,11 +12,16 @@ GET /.well-known/inference-receipt-keys
 GET /trust/receipt-keys.json
 ```
 
-The two routes mirror the same bounded, append-only log. Each row is one
-attestation re-mint, identified by `(kid, att_sha256)`, and contains its Ed25519
-public JWK, the attestation in wire-format form, the serving plane, first/last
-observation times, revocation state, and `verified`. Pass `?kid=<kid>` to fetch
-every retained attestation version for one signing key.
+The two routes mirror the same view. Without a query parameter they return the
+newest observed attestation version for each `kid`, in pages of at most 250 keys
+and at most 1 MiB. Follow `next_cursor` by passing it as `?cursor=<next_cursor>`
+until it is null. Each row is identified by `(kid, att_sha256)` and contains its
+Ed25519 public JWK, the attestation in wire-format form, the serving plane,
+first/last observation times, revocation state, and `verified`.
+
+Pass `?kid=<kid>` to fetch every retained attestation version for exactly one
+signing key. That filtered lookup is not reduced to the newest version and does
+not use the unfiltered listing's cursor pagination.
 
 `verified=true` currently means the GCP Confidential Space JWT signature,
 issuer, validity window, audience, and non-debug state were checked against

@@ -137,11 +137,12 @@ const claims = await verifyReceipt(compactReceipt, {
       <tbody>
         <tr><td><code>GET /receipt-attestation</code></td><td>This instance's raw key-binding attestation document</td></tr>
         <tr><td><code>GET /receipt-key</code></td><td>This instance's current <code>{kid, jwk, att, att_kind, att_sha256, att_history}</code> envelope — match a compact receipt's <code>kid</code> and pinned attestation hash</td></tr>
-        <tr><td><code>GET /.well-known/inference-receipt-keys</code></td><td>The append-only key log: every observed attestation re-mint for every signing key, so compact receipts stay verifiable after a newer document replaces the instance's current one</td></tr>
+        <tr><td><code>GET /.well-known/inference-receipt-keys</code></td><td>The newest observed attestation version for each <code>kid</code>, in pages of at most 250 keys and capped at 1 MiB per response; follow <code>next_cursor</code> with <code>?cursor=…</code></td></tr>
+        <tr><td><code>GET /.well-known/inference-receipt-keys?kid=&lt;kid&gt;</code></td><td>Every retained attestation version for exactly one signing key, including older re-mints needed by compact receipts</td></tr>
       </tbody>
     </table>
   </div>
-  <p style="margin-top:12px">Streaming receipts embed the attestation, so nothing extra is fetched and they verify forever from the captured bytes alone. For compact receipts, keys are per-instance while attestations re-mint during the boot, and routing is DNS-based, so fetch deterministically: resolve the gateway hostname's A records and ask each instance directly (pin Host/SNI to the hostname while connecting by IP) for its <code>/receipt-key</code> until both <code>kid</code> and <code>att_sha256</code> match. The key log retains every observed re-mint after it stops being current or its instance is gone.</p>
+  <p style="margin-top:12px">Streaming receipts embed the attestation, so nothing extra is fetched and they verify forever from the captured bytes alone. For compact receipts, keys are per-instance while attestations re-mint during the boot, and routing is DNS-based, so fetch deterministically: resolve the gateway hostname's A records and ask each instance directly (pin Host/SNI to the hostname while connecting by IP) for its <code>/receipt-key</code> until both <code>kid</code> and <code>att_sha256</code> match. The key log retains every observed re-mint after it stops being current or its instance is gone; retrieve those versions with the exact <code>?kid=&lt;kid&gt;</code> lookup.</p>
   <p><strong>Archive the attestation with the receipt.</strong> If a receipt matters to you — an audit trail, a dispute, an eval run — store the matching attestation document (and for streams, the captured wire bytes) next to it at verification time. That bundle verifies offline forever with no dependency on TrustedRouter, the signing instance, or the key log being reachable.</p>
 </section>
 

@@ -107,16 +107,20 @@ def test_spanner_migration_times_out_waiting_for_unready_existing_index(
     ) in run.stdout
 
 
-def test_postgres_runtime_schema_only_adds_nullable_receipt_version_projections() -> None:
+def test_postgres_runtime_schema_migrates_nullable_receipt_version_index() -> None:
     schema = (ROOT / "src/trusted_router/storage_postgres_schema.sql").read_text()
 
     assert "ALTER TABLE tr_entities ADD COLUMN IF NOT EXISTS kid TEXT;" in schema
     assert "ALTER TABLE tr_entities ADD COLUMN IF NOT EXISTS att_sha256 TEXT;" in schema
-    # A production Postgres index must be applied by the deployment owner with
-    # its backend's non-blocking DDL.  Building it from every process startup
-    # would lock the shared entity table, and a non-partial index would retain
-    # millions of irrelevant all-NULL rows.
-    assert "tr_receipt_key_versions" not in schema
+    index = (
+        "CREATE INDEX IF NOT EXISTS tr_receipt_key_versions\n"
+        "    ON tr_entities (kid, att_sha256)\n"
+        "    WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL;"
+    )
+    assert index in schema
+    assert schema.index("ALTER TABLE tr_entities ADD COLUMN IF NOT EXISTS att_sha256 TEXT;") < (
+        schema.index(index)
+    )
     assert "kid TEXT NOT NULL" not in schema
     assert "att_sha256 TEXT NOT NULL" not in schema
 
@@ -135,3 +139,16 @@ def test_receipt_docs_require_ddl_before_the_new_writer() -> None:
     assert "Apply that DDL before\nstarting this router revision" in docs
     assert "writer names the physical `kid`\nand `att_sha256` columns" in docs
     assert "safe to run\nbefore or after the compatible router" not in docs
+
+
+def test_public_receipt_docs_match_listing_and_version_lookup_contracts() -> None:
+    docs = (ROOT / "docs/client-receipts.md").read_text()
+    page = (ROOT / "src/trusted_router/templates/public/receipts.html").read_text()
+
+    assert "newest observed attestation version for each `kid`" in docs
+    assert "pages of at most 250 keys\nand at most 1 MiB" in docs
+    assert "every retained attestation version for exactly one\nsigning key" in docs
+    assert "newest observed attestation version for each <code>kid</code>" in page
+    assert "pages of at most 250 keys and capped at 1 MiB per response" in page
+    assert "Every retained attestation version for exactly one signing key" in page
+    assert "every observed attestation re-mint for every signing key" not in page
