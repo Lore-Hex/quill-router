@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-09-10T02:54:06Z",
+  "generated_at": "2026-09-10T13:13:16Z",
   "model_count": 119,
   "models": [
     {
@@ -2031,10 +2031,11 @@
       "status": 1,
       "id": "minimax/minimax-m3",
       "upstream_id": "minimaxai/minimax-m3",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "missing_since": "2026-09-10"
+      "missing_since": "2026-09-10",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "nv-mistralai/mistral-nemo-12b-instruct",

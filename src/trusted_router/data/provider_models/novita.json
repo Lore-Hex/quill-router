@@ -3,8 +3,8 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-09-10T02:54:06Z",
-  "model_count": 153,
+  "generated_at": "2026-09-10T13:13:16Z",
+  "model_count": 156,
   "models": [
     {
       "id": "Sao10K/L3-8B-Stheno-v3.2",
@@ -1627,7 +1627,8 @@
         "batch-api"
       ],
       "status": 1,
-      "upstream_id": "openai/gpt-oss-120b"
+      "upstream_id": "openai/gpt-oss-120b",
+      "missing_since": "2026-09-10"
     },
     {
       "id": "openai/gpt-oss-20b",
@@ -1656,7 +1657,8 @@
         "completions"
       ],
       "status": 1,
-      "upstream_id": "openai/gpt-oss-20b"
+      "upstream_id": "openai/gpt-oss-20b",
+      "missing_since": "2026-09-10"
     },
     {
       "id": "paddlepaddle/paddleocr-vl",
@@ -4355,12 +4357,104 @@
         "anthropic",
         "responses"
       ],
-      "status": 1,
+      "status": 4,
       "created": 1788936242,
       "context_length": 1048576,
       "max_output_tokens": 393216,
       "routable": false,
       "routable_reason": "zero-price-unbillable"
+    },
+    {
+      "id": "deepseek/deepseek-v4.1-flash",
+      "upstream_id": "deepseek/deepseek-v4.1-flash",
+      "display_name": "DeepSeek V4.1 Flash",
+      "title": "deepseek/deepseek-v4.1-flash",
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling",
+        "structured-outputs",
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "anthropic",
+        "responses"
+      ],
+      "status": 1,
+      "created": 1789024319,
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "input_token_price_per_m": 3000,
+      "output_token_price_per_m": 12000,
+      "cached_input_token_price_per_m": 60
+    },
+    {
+      "id": "hermes/mercury-oss-120b",
+      "upstream_id": "hermes/mercury-oss-120b",
+      "display_name": "hermes/mercury-oss-120b",
+      "title": "hermes/mercury-oss-120b",
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "reasoning",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "completions",
+        "batch-api"
+      ],
+      "status": 1,
+      "created": 1754438873,
+      "context_length": 131072,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 500,
+      "output_token_price_per_m": 2500
+    },
+    {
+      "id": "hermes/mercury-oss-20b",
+      "upstream_id": "hermes/mercury-oss-20b",
+      "display_name": "hermes/mercury-oss-20b",
+      "title": "hermes/mercury-oss-20b",
+      "model_type": "chat",
+      "features": [
+        "structured-outputs",
+        "reasoning",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions",
+        "completions"
+      ],
+      "status": 1,
+      "created": 1754438961,
+      "context_length": 131072,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 400,
+      "output_token_price_per_m": 1500
     }
   ]
 }

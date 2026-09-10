@@ -181,28 +181,28 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 99,
+    "model_count": 100,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 192,
+    "route_count": 194,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
   "deepseek": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 6,
     "name": "DeepSeek",
     "privacy": "Policy documented",
-    "route_count": 9,
+    "route_count": 11,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepseek"
   },
   "digitalocean": {
     "card_version": 2,
-    "model_count": 18,
+    "model_count": 14,
     "name": "DigitalOcean Gradient AI",
     "privacy": "Policy documented",
-    "route_count": 36,
+    "route_count": 28,
     "route_mode": "Prepaid + BYOK",
     "slug": "digitalocean"
   },
@@ -253,10 +253,10 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 72,
+    "model_count": 73,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 78,
+    "route_count": 79,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
@@ -487,10 +487,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 117,
+    "model_count": 120,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 216,
+    "route_count": 222,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -505,10 +505,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 12,
+    "model_count": 11,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 11,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -775,10 +775,10 @@
   },
   "venice": {
     "card_version": 2,
-    "model_count": 58,
+    "model_count": 59,
     "name": "Venice",
     "privacy": "Policy documented",
-    "route_count": 99,
+    "route_count": 101,
     "route_mode": "Prepaid + BYOK",
     "slug": "venice"
   },

@@ -2,7 +2,7 @@
   "_about": "Provider-native DigitalOcean Gradient AI serverless catalog. Availability comes from /v1/models and rates from DigitalOcean's official pricing documentation.",
   "provider": "digitalocean",
   "source": "https://inference.do-ai.run/v1/models",
-  "generated_at": "2026-09-10T02:54:06Z",
+  "generated_at": "2026-09-10T13:13:16Z",
   "price_scale": "microdollars_per_million",
   "model_count": 23,
   "models": [
@@ -226,7 +226,9 @@
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 2700000,
       "cached_input_token_price_per_m": 203000,
-      "missing_since": "2026-09-10"
+      "missing_since": "2026-09-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Kimi K2.6",
@@ -292,7 +294,9 @@
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 650000,
       "cached_input_token_price_per_m": 60000,
-      "missing_since": "2026-09-10"
+      "missing_since": "2026-09-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Nemotron 3 Ultra",
@@ -475,7 +479,9 @@
       "input_token_price_per_m": 1000000,
       "output_token_price_per_m": 3200000,
       "cached_input_token_price_per_m": 200000,
-      "missing_since": "2026-09-10"
+      "missing_since": "2026-09-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GLM-5.1",
@@ -498,7 +504,9 @@
       "input_token_price_per_m": 1300000,
       "output_token_price_per_m": 4300000,
       "cached_input_token_price_per_m": 260000,
-      "missing_since": "2026-09-10"
+      "missing_since": "2026-09-10",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GLM-5.2",
