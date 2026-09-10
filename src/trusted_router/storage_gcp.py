@@ -7766,8 +7766,9 @@ class SpannerBigtableStore:
                 "SELECT body FROM versioned UNION ALL SELECT body FROM legacy"
             )
         else:
-            # GoogleSQL structs have no ordering comparisons, so spell out the
-            # same lexicographic tuple predicate that Postgres writes directly.
+            # GoogleSQL structs have no ordering comparisons, and Spanner's
+            # PostgreSQL dialect rejects row-value comparisons (RowCompareExpr),
+            # so both backends spell out the same lexicographic predicate.
             query = (
                 "WITH versioned AS (SELECT body FROM "
                 "tr_entities@{FORCE_INDEX=tr_receipt_key_versions} "
