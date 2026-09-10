@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -279,8 +280,8 @@ def test_app_markup_and_receipt_fee_remain_in_stage_d_cohort(
 
 
 def test_stage_d_eligibility_kill_switch_declares_nothing_eligible() -> None:
-    """The code default is off; production pins eligibility on for exactly the
-    two-workspace cohort. The kill switch declares nothing eligible when disabled.
+    """The code default is off; production opens the cohort to every workspace.
+    The kill switch declares nothing eligible when disabled.
     """
     from trusted_router.routes.internal.gateway import _stage_d_eligibility_reason
 
@@ -289,7 +290,7 @@ def test_stage_d_eligibility_kill_switch_declares_nothing_eligible() -> None:
     for literal in (
         '"TR_STAGE_D_ELIGIBILITY_ENABLED=true"',
         '"TR_STAGE_D_HEARTBEAT_ENABLED=true"',
-        '"TR_STAGE_D_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d,91d7810e-93b2-4c37-b1bd-ba9227585416"',
+        '"TR_STAGE_D_PILOT_WORKSPACE_IDS="',
         '"TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="',
         '"TR_REAP_SNAPSHOT_BOOKING_ENABLED=false"',
     ):
@@ -304,6 +305,35 @@ def test_stage_d_eligibility_kill_switch_declares_nothing_eligible() -> None:
         settlement_backend=True,
     )
     assert reason == "stage_d_disabled"
+
+
+def test_stage_d_deploy_cohort_is_empty() -> None:
+    rollout = (Path(__file__).parents[1] / "scripts" / "deploy" / "rollout.sh").read_text()
+    assert re.findall(r'^\s*"TR_STAGE_D_PILOT_WORKSPACE_IDS=([^"\n]*)"', rollout, re.M) == [""]
+
+
+@pytest.mark.parametrize("route_type", ["chat.completions", "responses"])
+@pytest.mark.parametrize(
+    ("pilot_workspace_ids", "expected_reason"),
+    [("", "ok"), ("other-workspace", "workspace_not_pilot")],
+)
+def test_stage_d_empty_cohort_admits_arbitrary_workspace(
+    route_type: str, pilot_workspace_ids: str, expected_reason: str
+) -> None:
+    settings = Settings(environment="test", stage_d_pilot_workspace_ids=pilot_workspace_ids)
+    assert _stage_d_eligibility_reason(
+        eligibility_enabled=True,
+        workspace_id="arbitrary-workspace",
+        pilot_workspace_ids=settings.stage_d_pilot_workspaces,
+        heartbeat_enabled=True,
+        boot_accepted=True,
+        stream=True,
+        route_type=route_type,
+        endpoint_candidates=[_credit_candidate()],
+        standard_endpoint_pricing=True,
+        service_tier=None,
+        settlement_backend=True,
+    ) == expected_reason
 
 
 def test_stage_d_replay_is_always_ineligible_and_echoes_stored_nonce(
