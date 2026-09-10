@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS tr_entities (
     index_probe_type TEXT,
     index_monitor_region TEXT,
     index_period TEXT,
+    kid TEXT,
+    att_sha256 TEXT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (kind, id)
 );
@@ -18,6 +20,8 @@ ALTER TABLE tr_entities ADD COLUMN IF NOT EXISTS index_target TEXT;
 ALTER TABLE tr_entities ADD COLUMN IF NOT EXISTS index_probe_type TEXT;
 ALTER TABLE tr_entities ADD COLUMN IF NOT EXISTS index_monitor_region TEXT;
 ALTER TABLE tr_entities ADD COLUMN IF NOT EXISTS index_period TEXT;
+ALTER TABLE tr_entities ADD COLUMN IF NOT EXISTS kid TEXT;
+ALTER TABLE tr_entities ADD COLUMN IF NOT EXISTS att_sha256 TEXT;
 
 -- Index sort order is deliberately ASCENDING everywhere.
 --
@@ -58,6 +62,8 @@ CREATE INDEX IF NOT EXISTS tr_entities_monitor_recent
     ON tr_entities (kind, index_monitor_region, indexed_at, id);
 CREATE INDEX IF NOT EXISTS tr_entities_period_recent
     ON tr_entities (kind, index_period, indexed_at, id);
+CREATE INDEX IF NOT EXISTS tr_receipt_key_versions
+    ON tr_entities (kid, att_sha256);
 
 CREATE TABLE IF NOT EXISTS tr_credit_balance (
     workspace_id TEXT NOT NULL,

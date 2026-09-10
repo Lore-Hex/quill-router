@@ -1,4 +1,4 @@
-"""Scheduled, fail-closed collection of per-boot enclave receipt keys."""
+"""Scheduled, fail-closed collection of per-re-mint enclave receipt evidence."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from trusted_router.receipt_keys import (
     GCP_ATTESTATION_KIND,
     attestation_commits_to_jwk,
     normalize_receipt_jwk,
+    receipt_attestation_sha256,
     receipt_kid,
     verify_gcp_attestation_chain,
 )
@@ -135,6 +136,10 @@ def _record_from_payload(payload: dict[str, Any], *, plane: str, seen_at: str) -
         raise ValueError("receipt-key kid does not match JWK x")
     if not attestation_commits_to_jwk(att, att_kind, narrowed_jwk):
         raise ValueError("receipt-key attestation does not contain the key commitment")
+    att_sha256 = receipt_attestation_sha256(att, att_kind)
+    claimed_att_sha256 = payload.get("att_sha256")
+    if claimed_att_sha256 is not None and claimed_att_sha256 != att_sha256:
+        raise ValueError("receipt-key attestation hash does not match document bytes")
 
     verified = False
     if att_kind == GCP_ATTESTATION_KIND:
@@ -148,8 +153,61 @@ def _record_from_payload(payload: dict[str, Any], *, plane: str, seen_at: str) -
         plane=plane,
         first_seen=seen_at,
         last_seen=seen_at,
+        att_sha256=att_sha256,
         verified=verified,
     )
+
+
+def _observe_record(store: Store, record: ReceiptKey, result: dict[str, int]) -> None:
+    outcome = store.observe_receipt_key(record)
+    if outcome in {"appended", "refreshed"}:
+        result[outcome] += 1
+    else:
+        result["skipped"] += 1
+
+
+def _collect_history(
+    payload: dict[str, Any],
+    *,
+    plane: str,
+    seen_at: str,
+    store: Store,
+    result: dict[str, int],
+    target: ReceiptKeyTarget,
+) -> None:
+    if "att_history" not in payload:
+        return
+    history = payload.get("att_history")
+    if not isinstance(history, list):
+        result["skipped"] += 1
+        logger.warning(
+            "receipt_key_history_skipped host=%s ip=%s index=all error=not-a-list",
+            target.host,
+            target.connect_ip,
+        )
+        return
+    for index, item in enumerate(history):
+        try:
+            if not isinstance(item, dict):
+                raise ValueError("history entry is not an object")
+            history_payload = {
+                "kid": payload.get("kid"),
+                "jwk": payload.get("jwk"),
+                "att": item.get("att"),
+                "att_kind": item.get("att_kind"),
+                "att_sha256": item.get("att_sha256"),
+            }
+            record = _record_from_payload(history_payload, plane=plane, seen_at=seen_at)
+            _observe_record(store, record, result)
+        except Exception as exc:
+            result["skipped"] += 1
+            logger.warning(
+                "receipt_key_history_skipped host=%s ip=%s index=%d error=%s",
+                target.host,
+                target.connect_ip,
+                index,
+                exc,
+            )
 
 
 def collect_receipt_keys(
@@ -176,12 +234,17 @@ def collect_receipt_keys(
                 verify_tls=not settings.synthetic_canonical_attested,
             )
             result["fetched"] += 1
-            record = _record_from_payload(payload, plane=plane, seen_at=iso_now())
-            outcome = store.observe_receipt_key(record)
-            if outcome in {"appended", "refreshed"}:
-                result[outcome] += 1
-            else:
-                result["skipped"] += 1
+            seen_at = iso_now()
+            record = _record_from_payload(payload, plane=plane, seen_at=seen_at)
+            _observe_record(store, record, result)
+            _collect_history(
+                payload,
+                plane=plane,
+                seen_at=seen_at,
+                store=store,
+                result=result,
+                target=target,
+            )
         except Exception as exc:
             # One bad or unreachable instance cannot suppress observations
             # from its siblings, but its key must fail closed.

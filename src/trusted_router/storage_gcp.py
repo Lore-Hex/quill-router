@@ -42,6 +42,9 @@ from trusted_router.receipt_keys import (
     RECEIPT_KEY_KIND,
     ReceiptKeyWriteOutcome,
     merge_receipt_key_observation,
+    receipt_key_entity_id,
+    receipt_key_kid_collides,
+    with_receipt_attestation_sha256,
 )
 from trusted_router.routable_payouts import (
     EARNINGS_CASHOUT_EXTERNAL_KIND,
@@ -7666,20 +7669,81 @@ class SpannerBigtableStore:
         return None
 
     def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
+        same_kid = self.list_receipt_keys(limit=1, kid=record.kid)
+        if same_kid and receipt_key_kid_collides(same_kid[0], record):
+            return "conflict"
+        validated, outcome = merge_receipt_key_observation(None, record)
+        if validated is None or outcome != "appended":
+            return outcome
+        entity_id = receipt_key_entity_id(validated.kid, validated.att_sha256)
+
         def txn(transaction: Any) -> ReceiptKeyWriteOutcome:
-            existing = self._read_entity_tx(transaction, RECEIPT_KEY_KIND, record.kid, ReceiptKey)
-            merged, outcome = merge_receipt_key_observation(existing, record)
+            legacy = self._read_entity_tx(
+                transaction, RECEIPT_KEY_KIND, validated.kid, ReceiptKey
+            )
+            if legacy is not None:
+                legacy = with_receipt_attestation_sha256(legacy)
+                legacy_id = receipt_key_entity_id(legacy.kid, legacy.att_sha256)
+                self._write_receipt_key_tx(transaction, legacy_id, legacy)
+                self._delete_entities_tx(transaction, RECEIPT_KEY_KIND, [validated.kid])
+            existing = self._read_entity_tx(
+                transaction, RECEIPT_KEY_KIND, entity_id, ReceiptKey
+            )
+            merged, outcome = merge_receipt_key_observation(existing, validated)
             if merged is not None and outcome in {"appended", "refreshed"}:
-                self._write_entity_tx(transaction, RECEIPT_KEY_KIND, record.kid, merged)
+                self._write_receipt_key_tx(transaction, entity_id, merged)
             return outcome
 
         return cast(ReceiptKeyWriteOutcome, self._run_in_transaction(txn))
 
-    def list_receipt_keys(self, *, limit: int = 5_000) -> list[ReceiptKey]:
-        return self._list_entities(
+    def list_receipt_keys(
+        self,
+        *,
+        limit: int = 5_000,
+        kid: str | None = None,
+    ) -> list[ReceiptKey]:
+        rows = self._list_entities(
             RECEIPT_KEY_KIND,
             cls=ReceiptKey,
-            limit=max(0, min(limit, 10_000)),
+        )
+        versions: dict[tuple[str, str], ReceiptKey] = {}
+        for row in rows:
+            row = with_receipt_attestation_sha256(row)
+            if kid is not None and row.kid != kid:
+                continue
+            identity = (row.kid, row.att_sha256)
+            existing = versions.get(identity)
+            if existing is not None:
+                merged, _ = merge_receipt_key_observation(existing, row)
+                if merged is not None:
+                    row = merged
+            versions[identity] = row
+        ordered = sorted(
+            versions.values(),
+            key=lambda row: (row.last_seen, row.kid, row.att_sha256),
+            reverse=True,
+        )
+        return ordered[: max(0, min(limit, 10_000))]
+
+    def _write_receipt_key_tx(
+        self,
+        transaction: Any,
+        entity_id: str,
+        value: ReceiptKey,
+    ) -> None:
+        transaction.insert_or_update(
+            table=self.entity_table,
+            columns=("kind", "id", "body", "kid", "att_sha256", "updated_at"),
+            values=[
+                (
+                    RECEIPT_KEY_KIND,
+                    entity_id,
+                    _json_body(value),
+                    value.kid,
+                    value.att_sha256,
+                    self._spanner.COMMIT_TIMESTAMP,
+                )
+            ],
         )
 
     def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot:

@@ -142,6 +142,7 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_SCHEMA,
 )
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
+from trusted_router.receipt_keys import with_receipt_attestation_sha256
 from trusted_router.request_limits import normalized_client_identity
 from trusted_router.routes.mcp import MCP_PROTOCOL_VERSION
 from trusted_router.scopes import KNOWN_SCOPES
@@ -687,7 +688,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         validator=validated_azure_metadata,
         embedded=embedded_azure_metadata,
     )
-    receipt_key_cache: list[ReceiptKey] | None = None
+    receipt_key_cache: dict[str | None, list[ReceiptKey]] = {}
 
     async def _mirrored(
         resolver: TrustReleaseResolver, embedded: Callable[[Settings], Mapping[str, Any]]
@@ -2060,20 +2061,21 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/.well-known/inference-receipt-keys", include_in_schema=False)
     @app.get("/trust/receipt-keys.json", include_in_schema=False)
-    async def inference_receipt_keys() -> JSONResponse:
-        """Bounded public projection of the durable, append-only key log."""
+    async def inference_receipt_keys(kid: str | None = None) -> JSONResponse:
+        """Every observed attestation re-mint, optionally filtered by signing key."""
 
         nonlocal receipt_key_cache
         degraded = False
         try:
             records = await asyncio.wait_for(
-                run_in_threadpool(STORE.list_receipt_keys, limit=5_000),
+                run_in_threadpool(STORE.list_receipt_keys, limit=5_000, kid=kid),
                 timeout=3.0,
             )
-            receipt_key_cache = records
+            records = [with_receipt_attestation_sha256(record) for record in records]
+            receipt_key_cache[kid] = records
         except Exception:
             degraded = True
-            records = receipt_key_cache or []
+            records = receipt_key_cache.get(kid, [])
             log.exception("receipt_key_log_read_degraded_serving_cached")
         keys = [
             {
@@ -2085,6 +2087,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 },
                 "att": record.att,
                 "att_kind": record.att_kind,
+                "att_sha256": record.att_sha256,
                 "plane": record.plane,
                 "first_seen": record.first_seen,
                 "last_seen": record.last_seen,

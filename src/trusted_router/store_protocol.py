@@ -1070,7 +1070,12 @@ class Store(Protocol):
 
     # Append-only inference-receipt key log ---------------------------------
     def observe_receipt_key(self, record: ReceiptKey) -> str: ...
-    def list_receipt_keys(self, *, limit: int = ...) -> list[ReceiptKey]: ...
+    def list_receipt_keys(
+        self,
+        *,
+        limit: int = ...,
+        kid: str | None = ...,
+    ) -> list[ReceiptKey]: ...
 
     # Stage A spend-lease boot identity + monotonic grant generation --------
     def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot: ...

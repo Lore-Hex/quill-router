@@ -54,6 +54,9 @@ from trusted_router.receipt_keys import (
     RECEIPT_KEY_KIND,
     ReceiptKeyWriteOutcome,
     merge_receipt_key_observation,
+    receipt_key_entity_id,
+    receipt_key_kid_collides,
+    with_receipt_attestation_sha256,
 )
 from trusted_router.routable_payouts import (
     EARNINGS_CASHOUT_EXTERNAL_KIND,
@@ -737,44 +740,127 @@ class PostgresStore:
         return self._run_transaction(lambda conn: self._read_entity_tx(conn, kind, entity_id, cls))
 
     def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
+        same_kid = self.list_receipt_keys(limit=1, kid=record.kid)
+        if same_kid and receipt_key_kid_collides(same_kid[0], record):
+            return "conflict"
+        validated, outcome = merge_receipt_key_observation(None, record)
+        if validated is None or outcome != "appended":
+            return outcome
+        entity_id = receipt_key_entity_id(validated.kid, validated.att_sha256)
+
         def operation(conn: Any) -> ReceiptKeyWriteOutcome:
-            existing = self._read_entity_tx(
+            legacy = self._read_entity_tx(
                 conn,
                 RECEIPT_KEY_KIND,
-                record.kid,
+                validated.kid,
                 ReceiptKey,
                 for_update=True,
             )
-            candidate, outcome = merge_receipt_key_observation(existing, record)
+            if legacy is not None:
+                legacy = with_receipt_attestation_sha256(legacy)
+                legacy_id = receipt_key_entity_id(legacy.kid, legacy.att_sha256)
+                self._write_receipt_key_tx(conn, legacy_id, legacy)
+                self._delete_entity_tx(conn, RECEIPT_KEY_KIND, validated.kid)
+            existing = self._read_entity_tx(
+                conn,
+                RECEIPT_KEY_KIND,
+                entity_id,
+                ReceiptKey,
+                for_update=True,
+            )
+            candidate, outcome = merge_receipt_key_observation(existing, validated)
             if candidate is None or outcome in {"conflict", "invalid"}:
                 return outcome
             if existing is None:
-                if self._insert_entity_once_tx(conn, RECEIPT_KEY_KIND, record.kid, candidate):
+                if self._insert_receipt_key_once_tx(conn, entity_id, candidate):
                     return "appended"
-                # A concurrent transaction inserted this kid after our absent
+                # A concurrent transaction inserted this document after our absent
                 # read. Lock its now-committed verdict before comparing.
                 existing = self._read_entity_tx(
                     conn,
                     RECEIPT_KEY_KIND,
-                    record.kid,
+                    entity_id,
                     ReceiptKey,
                     for_update=True,
                 )
                 if existing is None:  # pragma: no cover - database invariant
                     raise StoreConflict("receipt key insert conflict lost its row")
-                candidate, outcome = merge_receipt_key_observation(existing, record)
+                candidate, outcome = merge_receipt_key_observation(existing, validated)
             if candidate is not None and outcome == "refreshed":
-                self._write_entity_tx(conn, RECEIPT_KEY_KIND, record.kid, candidate)
+                self._write_receipt_key_tx(conn, entity_id, candidate)
             return outcome
 
         return self._run_transaction(operation)
 
-    def list_receipt_keys(self, *, limit: int = 5_000) -> list[ReceiptKey]:
-        return self._list_entities(
+    def list_receipt_keys(
+        self,
+        *,
+        limit: int = 5_000,
+        kid: str | None = None,
+    ) -> list[ReceiptKey]:
+        rows = self._list_entities(
             RECEIPT_KEY_KIND,
             ReceiptKey,
-            limit=max(0, min(limit, 10_000)),
         )
+        versions: dict[tuple[str, str], ReceiptKey] = {}
+        for row in rows:
+            row = with_receipt_attestation_sha256(row)
+            if kid is not None and row.kid != kid:
+                continue
+            identity = (row.kid, row.att_sha256)
+            existing = versions.get(identity)
+            if existing is not None:
+                merged, _ = merge_receipt_key_observation(existing, row)
+                if merged is not None:
+                    row = merged
+            versions[identity] = row
+        ordered = sorted(
+            versions.values(),
+            key=lambda row: (row.last_seen, row.kid, row.att_sha256),
+            reverse=True,
+        )
+        return ordered[: max(0, min(limit, 10_000))]
+
+    def _write_receipt_key_tx(
+        self,
+        conn: Any,
+        entity_id: str,
+        value: ReceiptKey,
+    ) -> None:
+        conn.execute(
+            "INSERT INTO tr_entities (kind, id, body, kid, att_sha256, updated_at) "
+            "VALUES (%s, %s, %s::jsonb, %s, %s, CURRENT_TIMESTAMP) "
+            "ON CONFLICT (kind, id) DO UPDATE SET body = EXCLUDED.body, "
+            "kid = EXCLUDED.kid, att_sha256 = EXCLUDED.att_sha256, "
+            "updated_at = EXCLUDED.updated_at",
+            (
+                RECEIPT_KEY_KIND,
+                entity_id,
+                json_body(value),
+                value.kid,
+                value.att_sha256,
+            ),
+        )
+
+    def _insert_receipt_key_once_tx(
+        self,
+        conn: Any,
+        entity_id: str,
+        value: ReceiptKey,
+    ) -> bool:
+        cursor = conn.execute(
+            "INSERT INTO tr_entities (kind, id, body, kid, att_sha256, updated_at) "
+            "VALUES (%s, %s, %s::jsonb, %s, %s, CURRENT_TIMESTAMP) "
+            "ON CONFLICT (kind, id) DO NOTHING",
+            (
+                RECEIPT_KEY_KIND,
+                entity_id,
+                json_body(value),
+                value.kid,
+                value.att_sha256,
+            ),
+        )
+        return cursor.rowcount == 1
 
     def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot:
         def operation(conn: Any) -> SpendLeaseBoot:

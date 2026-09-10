@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
+from typing import cast
 
 import cbor2
 import pytest
@@ -16,6 +18,7 @@ from trusted_router.receipt_keys import (
     GCP_AUDIENCE,
     GCP_ISSUER,
     b64url_encode,
+    receipt_attestation_sha256,
     receipt_key_commitment,
     verify_gcp_attestation_chain,
 )
@@ -34,6 +37,10 @@ def _jwk(seed: bytes = b"receipt-key") -> dict[str, str]:
 
 def _kid(jwk: dict[str, str]) -> str:
     return collector.receipt_kid(jwk)
+
+
+def _att(payload: dict[str, object]) -> str:
+    return cast(str, payload["att"])
 
 
 def _jwt(payload: dict[str, object]) -> str:
@@ -75,12 +82,16 @@ def _gcp_payload(
     *,
     kid: str | None = None,
     include_commitment: bool = True,
+    marker: str | None = None,
 ) -> dict[str, object]:
     nonces = [receipt_key_commitment(jwk).hex()] if include_commitment else ["00" * 32]
+    att_payload: dict[str, object] = {"eat_nonce": nonces}
+    if marker is not None:
+        att_payload["marker"] = marker
     return {
         "kid": kid or _kid(jwk),
         "jwk": jwk,
-        "att": _jwt({"eat_nonce": nonces}),
+        "att": _jwt(att_payload),
         "att_kind": "gcp-cs-jwt",
     }
 
@@ -307,21 +318,165 @@ def test_good_key_appends_once_and_reobservation_only_advances_last_seen(
     assert row.verified is True
 
 
-def test_public_routes_narrow_receipt_key_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_attestation_hash_uses_raw_decoded_document_bytes() -> None:
+    raw_document = b"known raw attestation bytes\x00\xff"
+    encoded_document = b64url_encode(raw_document)
+
+    assert receipt_attestation_sha256(encoded_document, "aws-nitro-cose") == b64url_encode(
+        hashlib.sha256(raw_document).digest()
+    )
+    assert receipt_attestation_sha256(encoded_document, "aws-nitro-cose") != b64url_encode(
+        hashlib.sha256(encoded_document.encode()).digest()
+    )
+
+
+def test_collector_observes_current_and_every_history_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _one_target(monkeypatch)
     jwk = _jwk()
-    record = ReceiptKey(
+    current = _gcp_payload(jwk, marker="current")
+    history = [_gcp_payload(jwk, marker=f"history-{index}") for index in range(3)]
+    current["att_history"] = [
+        {
+            "att": _att(item),
+            "att_kind": item["att_kind"],
+            "att_sha256": receipt_attestation_sha256(
+                _att(item), str(item["att_kind"])
+            ),
+        }
+        for item in history
+    ]
+    monkeypatch.setattr(collector, "_fetch_receipt_key", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr(collector, "verify_gcp_attestation_chain", lambda _att: None)
+    store = InMemoryStore()
+
+    result = collector.collect_receipt_keys(
+        Settings(environment="test", api_base_url="https://api.example/v1"),
+        store=store,
+    )
+
+    assert result["appended"] == 4
+    assert result["errors"] == 0
+    assert len(store.list_receipt_keys(kid=_kid(jwk))) == 4
+
+
+def test_collector_skips_one_bad_history_document_without_losing_current(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _one_target(monkeypatch)
+    jwk = _jwk()
+    current = _gcp_payload(jwk, marker="current")
+    bad = _gcp_payload(_jwk(b"different-key"), marker="bad-history")
+    current["att_history"] = [
+        {
+            "att": _att(bad),
+            "att_kind": bad["att_kind"],
+            "att_sha256": receipt_attestation_sha256(_att(bad), str(bad["att_kind"])),
+        }
+    ]
+    monkeypatch.setattr(collector, "_fetch_receipt_key", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr(collector, "verify_gcp_attestation_chain", lambda _att: None)
+    store = InMemoryStore()
+
+    with caplog.at_level(logging.WARNING, logger=collector.__name__):
+        result = collector.collect_receipt_keys(
+            Settings(environment="test", api_base_url="https://api.example/v1"),
+            store=store,
+        )
+
+    assert result["appended"] == 1
+    assert result["skipped"] == 1
+    assert result["errors"] == 0
+    assert len(store.list_receipt_keys(kid=_kid(jwk))) == 1
+    assert "receipt_key_history_skipped" in caplog.text
+
+
+def test_collector_without_att_history_remains_compatible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _one_target(monkeypatch)
+    payload = _gcp_payload(_jwk(), marker="legacy-enclave")
+    monkeypatch.setattr(collector, "_fetch_receipt_key", lambda *_args, **_kwargs: payload)
+    monkeypatch.setattr(collector, "verify_gcp_attestation_chain", lambda _att: None)
+    store = InMemoryStore()
+
+    result = collector.collect_receipt_keys(
+        Settings(environment="test", api_base_url="https://api.example/v1"),
+        store=store,
+    )
+
+    assert result["appended"] == 1
+    assert result["errors"] == 0
+    assert len(store.list_receipt_keys()) == 1
+
+
+def test_legacy_row_is_served_with_lazy_attestation_hash() -> None:
+    jwk = _jwk()
+    att = _att(_gcp_payload(jwk, marker="legacy"))
+    legacy = ReceiptKey(
         kid=_kid(jwk),
-        jwk={**jwk, "d": "private-material-must-not-escape"},
-        att="public-attestation",
+        jwk=jwk,
+        att=att,
         att_kind="gcp-cs-jwt",
         plane="api.example",
         first_seen="2026-08-26T00:00:00Z",
         last_seen="2026-08-26T00:05:00Z",
-        verified=True,
     )
     store = InMemoryStore()
+    store.receipt_keys[legacy.kid] = legacy
+
+    row = store.list_receipt_keys()[0]
+
+    assert row.att_sha256 == receipt_attestation_sha256(att, legacy.att_kind)
+
+
+def test_public_routes_list_versions_with_hash_and_filter_by_kid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jwk = _jwk()
+    other_jwk = _jwk(b"other-key")
+    records = [
+        ReceiptKey(
+            kid=_kid(jwk),
+            jwk={**jwk, "d": "private-material-must-not-escape"},
+            att=_att(_gcp_payload(jwk, marker="newest")),
+            att_kind="gcp-cs-jwt",
+            plane="api.example",
+            first_seen="2026-08-26T00:05:00Z",
+            last_seen="2026-08-26T00:10:00Z",
+            verified=True,
+        ),
+        ReceiptKey(
+            kid=_kid(jwk),
+            jwk=jwk,
+            att=_att(_gcp_payload(jwk, marker="older")),
+            att_kind="gcp-cs-jwt",
+            plane="api.example",
+            first_seen="2026-08-26T00:00:00Z",
+            last_seen="2026-08-26T00:05:00Z",
+            verified=True,
+        ),
+        ReceiptKey(
+            kid=_kid(other_jwk),
+            jwk=other_jwk,
+            att=_att(_gcp_payload(other_jwk, marker="other")),
+            att_kind="gcp-cs-jwt",
+            plane="api.example",
+            first_seen="2026-08-26T00:00:00Z",
+            last_seen="2026-08-26T00:01:00Z",
+            verified=True,
+        ),
+    ]
+    store = InMemoryStore()
     configure_store(store)
-    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", lambda _self, *, limit: [record])
+
+    def list_records(_self, *, limit: int, kid: str | None = None):
+        selected = [record for record in records if kid is None or record.kid == kid]
+        return selected[:limit]
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", list_records)
     client = TestClient(
         create_app(
             Settings(environment="test"),
@@ -339,11 +494,13 @@ def test_public_routes_narrow_receipt_key_shape(monkeypatch: pytest.MonkeyPatch)
     assert payload["spec"] == "inference-receipt/1"
     assert payload["degraded"] is False
     assert payload["keys"] == mirror.json()["keys"]
+    assert len(payload["keys"]) == 3
     assert set(payload["keys"][0]) == {
         "kid",
         "jwk",
         "att",
         "att_kind",
+        "att_sha256",
         "plane",
         "first_seen",
         "last_seen",
@@ -351,8 +508,16 @@ def test_public_routes_narrow_receipt_key_shape(monkeypatch: pytest.MonkeyPatch)
         "verified",
     }
     assert payload["keys"][0]["jwk"] == jwk
+    assert [item["att_sha256"] for item in payload["keys"][:2]] == [
+        receipt_attestation_sha256(str(record.att), record.att_kind) for record in records[:2]
+    ]
 
-    def unavailable(_self, *, limit: int):
+    filtered = client.get("/trust/receipt-keys.json", params={"kid": _kid(jwk)})
+    assert filtered.status_code == 200
+    assert len(filtered.json()["keys"]) == 2
+    assert {item["kid"] for item in filtered.json()["keys"]} == {_kid(jwk)}
+
+    def unavailable(_self, *, limit: int, kid: str | None = None):
         raise RuntimeError(f"storage unavailable at limit {limit}")
 
     monkeypatch.setattr(InMemoryStore, "list_receipt_keys", unavailable)
