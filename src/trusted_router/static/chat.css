@@ -1480,6 +1480,65 @@
     opacity: 1;
 }
 
+.chat-msg:focus-within .chat-msg-actions {
+    opacity: 1;
+}
+
+.chat-msg-actions[hidden] {
+    display: none;
+}
+
+@media (hover: none) {
+    .chat-msg-actions {
+        opacity: 1;
+        flex-wrap: wrap;
+    }
+}
+
+.chat-response-edit-action,
+.chat-assistant-editor button {
+    min-height: 40px;
+}
+
+.chat-response-edit-action:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.chat-response-edit-action {
+    width: 40px;
+    display: inline-grid;
+    place-items: center;
+}
+
+.chat-pencil-icon {
+    width: 16px;
+    height: 16px;
+    background: currentcolor;
+    mask: url('/static/icons/lucide-pencil.svg') center / contain no-repeat;
+}
+
+.chat-msg-edited {
+    display: block;
+    color: var(--chat-muted);
+    font-size: 11px;
+    margin-top: 8px;
+}
+
+.chat-assistant-editor .chat-msg-edit {
+    box-sizing: border-box;
+    max-height: 45vh;
+    padding: 8px;
+    border: 1px solid var(--chat-border);
+    border-radius: 4px;
+    min-height: 100px;
+}
+
+.chat-assistant-editor .chat-msg-edit:focus-visible {
+    outline: 2px solid var(--chat-primary);
+    outline-offset: 2px;
+}
+
 .chat-msg-action {
     background: var(--chat-bg);
     border: 1px solid var(--chat-border);
@@ -1988,6 +2047,15 @@
     gap: 4px;
 }
 
+.chat-dd-toggle input[type="checkbox"] {
+    flex: 0 0 18px;
+    width: 18px;
+    height: 18px;
+    min-height: 0;
+    margin: 0 6px 0 0;
+    padding: 0;
+}
+
 .chat-settings-preset {
     background: var(--chat-hover);
     padding: 3px 4px 3px 10px;
@@ -2491,6 +2559,26 @@
 .chat-dd-routing-select:focus {
     border-color: var(--chat-primary);
     outline: none;
+}
+
+.chat-request-controls .chat-dd-sys-label {
+    display: block;
+    min-width: 0;
+}
+
+.chat-request-controls .chat-dd-routing-select {
+    box-sizing: border-box;
+    min-height: 40px;
+    max-width: 100%;
+}
+
+.chat-request-controls :disabled {
+    opacity: 0.55;
+}
+
+.chat-controls-status {
+    font-size: 12px;
+    color: var(--chat-muted);
 }
 
 /* ── Streaming caret + tool-use display + code-copy button ────── */

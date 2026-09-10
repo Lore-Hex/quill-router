@@ -26,6 +26,7 @@
 (function () {
     // ── Constants ─────────────────────────────────────────────────────
     const CHAT_CONFIG = window.__TR_CHAT__ || {};
+    const CONTROLS = window.TrustedRouterChatControls;
     const LOCKED_MODEL_ID = (CHAT_CONFIG.lockedModelId || "").trim();
     const LOCKED_MODEL_LABEL = (CHAT_CONFIG.lockedModelLabel || "Custom model").trim();
     const STORAGE_KEY = CHAT_CONFIG.storageKey || "tr_chat_state_v1";
@@ -93,6 +94,7 @@
     function buildParamsForRequest(slot) {
         const out = {};
         for (const k of Object.keys(slot.params)) {
+            if (k === "seed") continue; // validated against the selected endpoints
             const v = slot.params[k];
             const def = DEFAULT_PARAMS[k];
             if (v === def) continue;
@@ -139,6 +141,7 @@
     let MODELS_LOADING = false;
     /** @type {Map<string, AbortController>} active stream cancellation handles */
     const STREAMS = new Map();
+    const MODEL_ENDPOINTS = new Map();
     let AUTH_SCOPE_PROMISE = null;
     let BOOTSTRAP_RAW_KEY = null;
 
@@ -197,6 +200,11 @@
         const chat = ensureActiveChat();
         const slot = chat.models[0] || _defaultSlot();
         chat.models[0] = slot;
+        if (slot.model_id !== URL_MODEL_ID) {
+            slot.provider_preferences = {};
+            slot.reasoning_mode = "default";
+            delete slot.params.seed;
+        }
         slot.model_id = URL_MODEL_ID;
         slot.enabled = true;
         chat.updated_at = isoNow();
@@ -229,12 +237,15 @@
         // If healing the models list killed every slot, fall back to one
         // default model so the chat is still usable.
         if (out.models.length === 0) out.models = [_defaultSlot()];
+        for (const slot of out.models) ensureSlotId(slot);
+        CONTROLS.linkLegacyResponses(out);
         return out;
     }
 
     function _healSlotShape(slot) {
         if (!slot || typeof slot !== "object") return null;
         return {
+            slot_id: typeof slot.slot_id === "string" ? slot.slot_id : newMsgId(),
             model_id: typeof slot.model_id === "string" && slot.model_id
                 ? slot.model_id
                 : DEFAULT_MODEL_ID,
@@ -244,9 +255,8 @@
                 : { ...DEFAULT_PARAMS },
             enabled: slot.enabled !== false,
             label: typeof slot.label === "string" ? slot.label : "",
-            provider_preferences: slot.provider_preferences && typeof slot.provider_preferences === "object"
-                ? slot.provider_preferences
-                : undefined,
+            provider_preferences: CONTROLS.preferences(slot.provider_preferences),
+            reasoning_mode: CONTROLS.mode(slot),
         };
     }
 
@@ -265,6 +275,10 @@
     }
 
     function saveState() {
+        for (const chat of Object.values(STATE.chats || {})) {
+            for (const slot of chat.models || []) ensureSlotId(slot);
+            CONTROLS.linkLegacyResponses(chat);
+        }
         try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(stateForStorage()));
         } catch (e) {
@@ -272,6 +286,31 @@
             // — the chat continues working in-memory for this session.
             console.warn("chat: localStorage save failed:", e);
         }
+    }
+
+    function ensureSlotId(slot) {
+        if (!slot.slot_id) slot.slot_id = newMsgId();
+        return slot.slot_id;
+    }
+
+    async function modelEndpoints(modelId) {
+        const cached = MODEL_ENDPOINTS.get(modelId);
+        if (cached && Date.now() - cached.created < 300000) return cached.promise;
+        const abort = new AbortController();
+        const timer = setTimeout(() => abort.abort(), 5000);
+        const promise = fetch("/v1/models/" + modelId.split("/").map(encodeURIComponent).join("/") + "/endpoints", {
+            credentials: "omit", signal: abort.signal,
+        }).then(async (response) => {
+            if (!response.ok) throw new Error("Provider settings are unavailable. Try again.");
+            const payload = await response.json();
+            if (!Array.isArray(payload.data)) throw new Error("Provider settings are unavailable. Try again.");
+            return payload.data.filter((endpoint) => typeof endpoint.provider === "string");
+        }).catch((error) => {
+            MODEL_ENDPOINTS.delete(modelId);
+            throw error;
+        }).finally(() => clearTimeout(timer));
+        MODEL_ENDPOINTS.set(modelId, { created: Date.now(), promise });
+        return promise;
     }
 
     function stateForStorage() {
@@ -811,6 +850,7 @@
         const chat = ensureActiveChat();
         if (LOCKED_MODEL_ID) {
             chat.models = [{
+                ...chat.models[0],
                 model_id: LOCKED_MODEL_ID,
                 system_prompt: "",
                 params: chat.models[0] ? { ...DEFAULT_PARAMS, ...chat.models[0].params } : { ...DEFAULT_PARAMS },
@@ -973,32 +1013,7 @@
             escapeHtml(slot.system_prompt || "") +
             "</textarea></label>" +
             "</div>" +
-            '<div class="chat-dd-row">' +
-            '<label class="chat-dd-sys-label">Routing</label>' +
-            '<select class="chat-dd-routing-select" data-action="set-routing-sort" data-slot-idx="' +
-            idx +
-            '">' +
-            '<option value="">Auto (TR picks best)</option>' +
-            '<option value="latency"' +
-            (slot.provider_preferences &&
-            slot.provider_preferences.sort_by === "latency"
-                ? " selected"
-                : "") +
-            ">Fastest provider</option>" +
-            '<option value="cost"' +
-            (slot.provider_preferences &&
-            slot.provider_preferences.sort_by === "cost"
-                ? " selected"
-                : "") +
-            ">Cheapest provider</option>" +
-            '<option value="uptime"' +
-            (slot.provider_preferences &&
-            slot.provider_preferences.sort_by === "uptime"
-                ? " selected"
-                : "") +
-            ">Most reliable provider</option>" +
-            "</select>" +
-            "</div>" +
+            '<div class="chat-request-controls"></div>' +
             '<div class="chat-dd-row chat-dd-presets-row">' +
             '<label class="chat-dd-sys-label">Presets</label>' +
             '<div class="chat-dd-presets">' +
@@ -1075,21 +1090,116 @@
                 renderModelsBar();
                 return;
             }
-            if (target.dataset.action === "set-routing-sort") {
-                if (!targetSlot.provider_preferences) {
-                    targetSlot.provider_preferences = {};
-                }
-                if (target.value) {
-                    targetSlot.provider_preferences.sort_by = target.value;
-                } else {
-                    delete targetSlot.provider_preferences.sort_by;
-                }
-                chat.updated_at = isoNow();
-                saveState();
-            }
         });
 
+        setupRequestControls(dd, chat, slot, idx);
         return dd;
+    }
+
+    function setupRequestControls(dropdown, chat, slot, idx) {
+        const host = dropdown.querySelector(".chat-request-controls");
+        const prefs = CONTROLS.preferences(slot.provider_preferences);
+        slot.provider_preferences = prefs;
+        const select = (name, action, options, value) => {
+            const label = document.createElement("label");
+            label.className = "chat-dd-sys-label chat-dd-row";
+            label.textContent = name;
+            const control = document.createElement("select");
+            control.className = "chat-dd-routing-select";
+            control.setAttribute("aria-label", name);
+            control.dataset.action = action;
+            control.dataset.slotIdx = String(idx);
+            for (const [id, text] of options) control.add(new Option(text, id));
+            control.value = value;
+            label.appendChild(control);
+            host.appendChild(label);
+            return control;
+        };
+        const provider = select("Provider", "set-provider", [["", "Auto"]], "");
+        provider.title = "A selected provider is pinned. No fallback to another provider.";
+        provider.disabled = true;
+        const sort = select("Routing", "set-routing-sort", [["", "Auto"], ["latency", "Fastest provider"], ["price", "Cheapest provider"], ["throughput", "Highest throughput"]], prefs.sort || "");
+        const reasoning = select("Reasoning", "set-reasoning", [["default", "Default"], ["off", "Off"], ["on", "On"]], CONTROLS.mode(slot));
+        reasoning.title = "Controls provider reasoning, not whether Thinking is expanded.";
+        reasoning.disabled = true;
+        const label = document.createElement("label");
+        label.className = "chat-dd-sys-label chat-dd-row";
+        label.textContent = "Seed (optional)";
+        const seed = document.createElement("input");
+        seed.className = "chat-dd-routing-select chat-seed-input";
+        seed.setAttribute("aria-label", "Seed (optional)");
+        seed.type = "number";
+        seed.min = "0";
+        seed.max = "2147483647";
+        seed.step = "1";
+        seed.placeholder = "Default";
+        seed.value = slot.params.seed ?? "";
+        seed.title = "Best-effort repeatability where supported; not a guarantee of identical answers.";
+        seed.disabled = true;
+        label.appendChild(seed);
+        host.appendChild(label);
+        const message = document.createElement("div");
+        message.className = "chat-controls-status";
+        message.setAttribute("role", "status");
+        message.textContent = "Loading providers...";
+        host.appendChild(message);
+        let endpoints = [];
+        function refresh() {
+            const available = CONTROLS.eligible(slot, endpoints, "default");
+            reasoning.disabled = false;
+            for (const option of reasoning.options) {
+                option.disabled = option.value !== "default" && !available.some((endpoint) => endpoint.trustedrouter?.reasoning_modes?.includes(option.value));
+            }
+            seed.disabled = slot.params.seed == null && !available.some((endpoint) => endpoint.supported_parameters?.includes("seed"));
+            sort.disabled = !!CONTROLS.pin(slot);
+            const temperature = dropdown.querySelector('[data-param="temperature"]');
+            if (temperature) {
+                const selected = CONTROLS.eligible(slot, endpoints);
+                temperature.disabled = selected.length > 0 && selected.every((endpoint) =>
+                    (endpoint.provider === "kimi" && endpoint.trustedrouter?.reasoning_modes?.length) ||
+                    (endpoint.provider === "deepseek" && CONTROLS.mode(slot) === "on"),
+                );
+                temperature.title = temperature.disabled ? "This provider does not apply temperature in this reasoning mode." : "";
+            }
+        }
+        const persist = () => { chat.updated_at = isoNow(); saveState(); refresh(); };
+        provider.addEventListener("change", () => {
+            if (provider.value) {
+                prefs.only = [provider.value];
+                prefs.allow_fallbacks = false;
+            } else {
+                delete prefs.only;
+                delete prefs.allow_fallbacks;
+            }
+            persist();
+        });
+        reasoning.addEventListener("change", () => { slot.reasoning_mode = reasoning.value; persist(); });
+        sort.addEventListener("change", () => {
+            if (sort.value) prefs.sort = sort.value;
+            else delete prefs.sort;
+            persist();
+        });
+        seed.addEventListener("change", () => {
+            if (seed.validity.badInput) slot.params.seed = "invalid";
+            else if (seed.value === "") delete slot.params.seed;
+            else slot.params.seed = Number(seed.value);
+            persist();
+            if (!seed.checkValidity()) seed.reportValidity();
+        });
+        modelEndpoints(slot.model_id).then((rows) => {
+            if (!host.isConnected) return;
+            endpoints = rows;
+            const providers = new Map(rows.map((endpoint) => [endpoint.provider, endpoint.provider_name || endpoint.name || endpoint.provider]));
+            const pinned = CONTROLS.pin(slot);
+            if (pinned && !providers.has(pinned)) providers.set(pinned, pinned + " (unavailable)");
+            for (const [id, name] of providers) provider.add(new Option(name, id));
+            provider.value = pinned;
+            provider.disabled = false;
+            message.textContent = "";
+            refresh();
+        }).catch(() => {
+            if (host.isConnected) message.textContent = "Provider settings unavailable. Reopen to retry.";
+        });
     }
 
     function addModel() {
@@ -1122,6 +1232,8 @@
             params: { ...src.params },
             enabled: true,
             label: src.label,
+            reasoning_mode: CONTROLS.mode(src),
+            provider_preferences: CONTROLS.preferences(src.provider_preferences),
         });
         chat.updated_at = isoNow();
         saveState();
@@ -1487,7 +1599,7 @@
             // If we have a key in STREAMS for this slot but no content
             // yet, render an animated dots indicator so the user sees
             // "waiting on the model" rather than a silent empty bubble.
-            const inFlightKey = msg.id + ":" + resp.model_id + ":" + (resp.slot_label || "");
+            const inFlightKey = msg.id + ":" + resp.slot_id;
             if (STREAMS.has(inFlightKey) && (!resp.content || resp.content.length === 0)) {
                 const dots = document.createElement("div");
                 dots.className = "chat-msg-dots";
@@ -1556,6 +1668,13 @@
             }
             const acts = document.createElement("div");
             acts.className = "chat-msg-actions chat-msg-col-actions";
+            if (resp.edited_at) {
+                const edited = document.createElement("span");
+                edited.className = "chat-msg-edited";
+                edited.textContent = "Edited";
+                edited.title = "Edited locally. Usage reflects the original generated response.";
+                bubble.appendChild(edited);
+            }
             acts.appendChild(
                 makeAction("Copy", () => {
                     navigator.clipboard.writeText(resp.content || "");
@@ -1563,6 +1682,19 @@
                 }),
             );
             acts.appendChild(makeAction("Regenerate", () => regenerateResponse(chat, msg, respIdx)));
+            if (resp.content && !resp.error) {
+                const edit = makeAction("Edit response", () => editAssistantResponse(chat, msg, respIdx));
+                edit.classList.add("chat-response-edit-action");
+                edit.setAttribute("aria-label", "Edit response");
+                edit.textContent = "";
+                const icon = document.createElement("span");
+                icon.className = "chat-pencil-icon";
+                icon.setAttribute("aria-hidden", "true");
+                edit.appendChild(icon);
+                edit.disabled = STREAMS.size > 0;
+                edit.title = "Edit assistant response";
+                acts.appendChild(edit);
+            }
             col.appendChild(bubble);
             col.appendChild(acts);
             grid.appendChild(col);
@@ -1661,6 +1793,9 @@
                 params: { ...m.params },
                 enabled: m.enabled,
                 label: m.label,
+                slot_id: ensureSlotId(m),
+                reasoning_mode: CONTROLS.mode(m),
+                provider_preferences: CONTROLS.preferences(m.provider_preferences),
             })),
             shared_system_prompt: chat.shared_system_prompt,
             messages: chat.messages.slice(0, idx + 1).map((m) => ({
@@ -1681,6 +1816,7 @@
     }
 
     async function continueAssistant(chat, msg) {
+        if (STREAMS.size || hasPendingResponseEdit()) return;
         // Synthesize a user "continue" turn, then re-stream. The model
         // sees the existing assistant content in history (already
         // appended via the per-model history builder) and a user
@@ -1903,7 +2039,76 @@
         renderThread();
     }
 
+    function hasPendingResponseEdit() {
+        const editor = document.querySelector("[data-assistant-editor]");
+        if (!editor) return false;
+        showToast("Save or cancel the response edit first");
+        editor.querySelector("textarea").focus();
+        return true;
+    }
+
+    function editAssistantResponse(chat, msg, respIdx) {
+        if (STREAMS.size || hasPendingResponseEdit()) return;
+        const resp = msg.responses[respIdx];
+        if (!resp || !resp.content || resp.error) return;
+        const col = document.querySelector('[data-msg-id="' + msg.id + '"] [data-resp-idx="' + respIdx + '"]');
+        if (!col) return;
+        const bubble = col.querySelector(".chat-msg-bubble");
+        const form = document.createElement("form");
+        form.dataset.assistantEditor = "";
+        form.className = "chat-assistant-editor";
+        const ta = document.createElement("textarea");
+        ta.className = "chat-msg-edit";
+        ta.setAttribute("aria-label", "Edit assistant response");
+        ta.value = resp.content;
+        ta.required = true;
+        ta.rows = Math.max(3, Math.min(10, resp.content.split("\n").length + 1));
+        const row = document.createElement("div");
+        row.className = "chat-msg-edit-row";
+        const save = document.createElement("button");
+        save.type = "submit";
+        save.className = "chat-msg-edit-save";
+        save.textContent = "Save edit";
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "chat-msg-edit-cancel";
+        cancel.textContent = "Cancel";
+        function close() {
+            renderThread();
+            document.querySelector('[data-msg-id="' + msg.id + '"] [data-resp-idx="' + respIdx + '"] .chat-response-edit-action')?.focus();
+        }
+        form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            if (!ta.value.trim()) {
+                ta.setCustomValidity("The response cannot be empty.");
+                ta.reportValidity();
+                return;
+            }
+            if (CONTROLS.editResponse(resp, ta.value, isoNow())) {
+                chat.updated_at = isoNow();
+                saveState();
+            }
+            close();
+        });
+        ta.addEventListener("input", () => ta.setCustomValidity(""));
+        cancel.addEventListener("click", close);
+        ta.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") { event.preventDefault(); close(); }
+            else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                form.requestSubmit();
+            }
+        });
+        row.append(save, cancel);
+        form.append(ta, row);
+        bubble.replaceChildren(form);
+        col.querySelector(".chat-msg-col-actions").hidden = true;
+        ta.focus();
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+    }
+
     function editUserMessage(chat, msg) {
+        if (STREAMS.size || hasPendingResponseEdit()) return;
         // Inline edit: replace the bubble with a textarea + Save/Cancel
         // row. On Save we update the message content AND remove the
         // next assistant message so a re-Send (also wired) regenerates
@@ -2010,11 +2215,15 @@
     }
 
     async function regenerateResponse(chat, msg, respIdx) {
+        if (STREAMS.size || hasPendingResponseEdit()) return;
         // Strip just this response, leave others, re-stream into the
         // emptied slot. For multi-model use, regenerate ONE column
         // while leaving the others' responses intact.
         if (!msg.responses || !msg.responses[respIdx]) return;
         const resp = msg.responses[respIdx];
+        delete resp.edited_at;
+        delete resp.reasoning;
+        delete resp.tool_calls;
         resp.content = "";
         resp.tokens_in = 0;
         resp.tokens_out = 0;
@@ -2030,6 +2239,7 @@
             const key = await ensureBrowserKey();
             // Find the matching slot for this response.
             const slot =
+                chat.models.find((m) => resp.slot_id && m.slot_id === resp.slot_id) ||
                 chat.models.find(
                     (m) =>
                         m.model_id === resp.model_id &&
@@ -2465,7 +2675,12 @@
         if (LOCKED_MODEL_ID) return;
         const chat = ensureActiveChat();
         const slot = chat.models[pickerTargetSlot] || chat.models[0];
-        if (slot) slot.model_id = modelId;
+        if (slot && slot.model_id !== modelId) {
+            slot.model_id = modelId;
+            slot.reasoning_mode = "default";
+            slot.provider_preferences = {};
+            delete slot.params.seed;
+        }
         chat.updated_at = isoNow();
         STATE.preferences.lastModelId = modelId;
         rememberRecentModel(modelId);
@@ -2632,6 +2847,7 @@
 
     async function handleSendClick(event) {
         event.preventDefault();
+        if (hasPendingResponseEdit()) return;
         // If any stream is active, the Send button is now Stop.
         if (STREAMS.size > 0) {
             stopAllStreams();
@@ -2745,6 +2961,7 @@
     }
 
     async function streamCompletion(key, chat, slot, assistantMsg, respIdx) {
+        assistantMsg.responses[respIdx].slot_id = ensureSlotId(slot);
         // Build the OpenAI-shaped request body.
         const messages = [];
         const sys = slot.system_prompt || chat.shared_system_prompt || "";
@@ -2768,12 +2985,14 @@
                     messages.push({ role: "user", content: m.content });
                 }
             } else if (m.role === "assistant" && m.responses && m.responses.length) {
-                let mine =
-                    m.responses.find(
+                const identified = m.responses.find((r) => r.slot_id === slot.slot_id);
+                const legacy = m.responses.filter((r) => !r.slot_id);
+                const mine = identified ||
+                    legacy.find(
                         (r) =>
                             r.model_id === slot.model_id &&
                             (r.slot_label || "") === (slot.label || ""),
-                    ) || m.responses[0];
+                    ) || legacy[0];
                 if (mine && mine.content) {
                     messages.push({ role: "assistant", content: mine.content });
                 }
@@ -2787,16 +3006,13 @@
             stream_options: { include_usage: true },
             ...params,
         };
-        if (
-            slot.provider_preferences &&
-            Object.keys(slot.provider_preferences).length > 0
-        ) {
-            body.provider = { ...slot.provider_preferences };
-        }
+        const needsEndpoints = CONTROLS.mode(slot) !== "default" || CONTROLS.pin(slot) || slot.params.seed != null;
+        const endpoints = needsEndpoints ? await modelEndpoints(slot.model_id) : [];
+        Object.assign(body, CONTROLS.overrides(slot, endpoints));
         const abort = new AbortController();
         // Unique key per (assistantMsg, model) so multi-model parallel
         // sends each get an independently abortable handle.
-        const streamKey = assistantMsg.id + ":" + slot.model_id + ":" + (slot.label || "");
+        const streamKey = assistantMsg.id + ":" + slot.slot_id;
         STREAMS.set(streamKey, abort);
         updateSendButtonMode();
         // Self-healing on stale browser key: if the first attempt 401s
@@ -3055,6 +3271,9 @@
         '<rect x="4" y="4" width="8" height="8" rx="1.5" />' +
         "</svg>";
     function updateSendButtonMode() {
+        document.querySelectorAll(".chat-response-edit-action").forEach((edit) => {
+            edit.disabled = STREAMS.size > 0;
+        });
         const btn = document.querySelector("[data-chat-send]");
         if (!btn) return;
         if (STREAMS.size > 0) {
@@ -3306,7 +3525,7 @@
             params: { ...DEFAULT_PARAMS, temperature: 1.0, top_p: 0.95 },
         },
         {
-            name: "Deterministic",
+            name: "Low randomness",
             params: { ...DEFAULT_PARAMS, temperature: 0, top_p: 1 },
         },
         {

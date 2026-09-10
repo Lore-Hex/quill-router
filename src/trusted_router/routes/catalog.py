@@ -35,6 +35,7 @@ from trusted_router.catalog_capabilities import (
     provider_extension_parameters,
     union_supported_parameters,
 )
+from trusted_router.chat_capabilities import reasoning_modes
 from trusted_router.image_generation import (
     IMAGE_MODEL_ID_SET,
     image_input_modalities,
@@ -531,6 +532,7 @@ def register_catalog_routes(router: APIRouter) -> None:
                         )
                     ),
                     "trustedrouter": {
+                        "reasoning_modes": reasoning_modes(endpoint.provider, endpoint.model_id),
                         "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,
                         "stores_content": endpoint_stores_content(endpoint),
                         "provider_zero_data_retention": endpoint_zero_data_retention(endpoint),
