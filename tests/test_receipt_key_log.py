@@ -1007,6 +1007,38 @@ def test_public_route_rejects_noncanonical_kids_before_storage(
     assert calls == 0
 
 
+def test_malformed_or_conflicting_cursor_is_rejected_before_the_store(monkeypatch) -> None:
+    """A cursor is a kid: the same canonical-shape gate applies, and a cursor with a
+    kid filter is a contradiction, so neither may reach the store."""
+    store = InMemoryStore()
+    configure_store(store)
+    calls = 0
+
+    def list_records(_self, *, limit: int, kid: str | None = None, **_kw):
+        nonlocal calls
+        del limit, kid
+        calls += 1
+        return []
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", list_records)
+    client = TestClient(
+        create_app(
+            Settings(environment="test"),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    for malformed in ("short", f"{_kid(_jwk())}=", "!" * 43):
+        response = client.get("/trust/receipt-keys.json", params={"cursor": malformed})
+        assert response.status_code == 400, malformed
+    good = _kid(_jwk())
+    response = client.get("/trust/receipt-keys.json", params={"cursor": good, "kid": good})
+    assert response.status_code == 400
+    assert calls == 0
+
+
+
 def test_per_kid_receipt_cache_ignores_unknowns_and_is_bounded() -> None:
     cache: OrderedDict[str, list[ReceiptKey]] = OrderedDict()
     public_routes._remember_receipt_key_records(cache, _kid(_jwk(b"unknown")), [])
