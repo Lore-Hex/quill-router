@@ -190,10 +190,10 @@
   },
   "deepseek": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 5,
     "name": "DeepSeek",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 9,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepseek"
   },
