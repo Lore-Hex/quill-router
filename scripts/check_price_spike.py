@@ -40,6 +40,27 @@ DEFAULT_SPIKE_RATIO = 2.0  # 100% increase = ≥2× the previous value
 # route, dimension, old value, or new value still fails closed.
 APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
     {
+        # Launch-day docs defer Pro's Flash redirect to September 14.
+        # Restore the exact Pro rates incorrectly lowered by the earlier notice.
+        # https://api-docs.deepseek.com/quick_start/pricing/ (2026-09-10)
+        (
+            "deepseek/deepseek-v4-pro [deepseek:deepseek:deepseek-v4-pro]",
+            "prompt",
+            Decimal("0.00000015"),
+            Decimal("0.00000066"),
+        ),
+        (
+            "deepseek/deepseek-v4-pro [deepseek:deepseek:deepseek-v4-pro]",
+            "completion",
+            Decimal("0.0000006"),
+            Decimal("0.00000198"),
+        ),
+        (
+            "deepseek/deepseek-v4-pro [deepseek:deepseek:deepseek-v4-pro] cached-input",
+            "prompt",
+            Decimal("0.000000003"),
+            Decimal("0.000000022"),
+        ),
         # DeepSeek's first-party schedule effective 2026-08-16. The public
         # pricing table is the source of truth for both off-peak baselines:
         # https://api-docs.deepseek.com/quick_start/pricing/

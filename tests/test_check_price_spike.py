@@ -24,6 +24,25 @@ AZURE_OPENROUTER_ABSENT_IDS = frozenset(
 AZURE_SPIKE_TARGET = "x-ai/grok-4.20-reasoning"
 
 
+@pytest.mark.parametrize(("suffix", "dimension", "old", "new"), [
+    ("", "prompt", "0.00000015", "0.00000066"),
+    ("", "completion", "0.0000006", "0.00000198"),
+    (" cached-input", "prompt", "0.000000003", "0.000000022"),
+])
+def test_deepseek_pro_launch_day_correction_is_exactly_scoped(suffix, dimension, old, new):
+    route = "deepseek/deepseek-v4-pro [deepseek:deepseek:deepseek-v4-pro]" + suffix
+    before = {route: {"prompt": "1", "completion": "1", dimension: old}}
+    after = {route: {**before[route], dimension: new}}
+    assert check(before, after)[0] == []
+    after[route][dimension] = str(Decimal(new) + Decimal("0.000000000001"))
+    assert check(before, after)[0]
+    wrong_provider = route.replace("[deepseek:deepseek:", "[baseten:baseten:")
+    assert check(
+        {wrong_provider: before[route]},
+        {wrong_provider: {**before[route], dimension: new}},
+    )[0]
+
+
 def _make_snapshot(prices: dict[str, tuple[str, str]]) -> dict:
     return {
         "model_count": len(prices),
