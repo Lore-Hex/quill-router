@@ -8,6 +8,7 @@ drain worker, and frozen-cost finalize primitive land in later increments.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 
 import pytest
@@ -111,7 +112,18 @@ def test_mark_done_settles_and_drops_out_of_due() -> None:
     assert done.next_attempt_at is None
 
 
-def test_mark_failure_backs_off_then_dies_at_max_attempts() -> None:
+def test_mark_failure_backs_off_then_dies_at_max_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+    import trusted_router.storage_gcp_settle_outbox as outbox_module
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            return now.replace(tzinfo=None) if tz is None else now.astimezone(tz)
+
+    # Exercise the retry boundaries without racing the runner's wall clock.
+    monkeypatch.setattr(outbox_module, "datetime", FrozenDatetime)
     store, _db, _ = make_fake_store()
     ob = _outbox(store)
     ob.enqueue(_row("gwa-7"))
@@ -119,11 +131,20 @@ def test_mark_failure_backs_off_then_dies_at_max_attempts() -> None:
     assert ob.mark("gwa-7", "settle", done=False, error="boom", max_attempts=3) == "pending"
     got = ob.get("gwa-7", "settle")
     assert got.status == "pending" and got.attempts == 1 and got.last_error == "boom"
+    assert got.next_attempt_at == "2026-01-01T00:00:01Z"
     assert ob.due() == []  # backed off
+    now += timedelta(seconds=1)
+    assert [row.authorization_id for row in ob.due()] == ["gwa-7"]
     # Drive to max_attempts -> dead (which FREEZES the hold for a human).
     assert ob.mark("gwa-7", "settle", done=False, max_attempts=3) == "pending"
+    assert ob.get("gwa-7", "settle").next_attempt_at == "2026-01-01T00:00:03Z"
+    now += timedelta(seconds=1)
+    assert ob.due() == []
+    now += timedelta(seconds=1)
+    assert [row.authorization_id for row in ob.due()] == ["gwa-7"]
     assert ob.mark("gwa-7", "settle", done=False, max_attempts=3) == "dead"
     assert ob.get("gwa-7", "settle").status == "dead"
+    assert ob.due() == []
 
 
 def test_mark_rejects_a_lost_lease() -> None:
