@@ -839,10 +839,10 @@ class PostgresStore:
                 query = (
                     "SELECT body FROM tr_entities WHERE kid IS NOT NULL "
                     "AND att_sha256 IS NOT NULL AND kind = %s "
-                    "AND (kid, att_sha256) > (%s, %s) "
+                    "AND (kid > %s OR (kid = %s AND att_sha256 > %s)) "
                     "ORDER BY kid, att_sha256 LIMIT %s"
                 )
-                params = (RECEIPT_KEY_KIND, *after_pair, bounded)
+                params = (RECEIPT_KEY_KIND, after_pair[0], after_pair[0], after_pair[1], bounded)
             elif phase == "l":
                 query = (
                     "SELECT body FROM tr_entities WHERE kind = %s "
@@ -856,7 +856,7 @@ class PostgresStore:
                 query = (
                     "WITH versioned AS (SELECT body FROM tr_entities "
                     "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL AND kind = %s "
-                    "AND (kid, att_sha256) > (%s, %s) "
+                    "AND (kid > %s OR (kid = %s AND att_sha256 > %s)) "
                     "ORDER BY kid, att_sha256 LIMIT %s), "
                     "legacy AS (SELECT body FROM tr_entities WHERE kind = %s "
                     "AND (kid IS NULL OR att_sha256 IS NULL) AND id >= %s "
@@ -865,7 +865,9 @@ class PostgresStore:
                 )
                 params = (
                     RECEIPT_KEY_KIND,
-                    *after_pair,
+                    after_pair[0],
+                    after_pair[0],
+                    after_pair[1],
                     bounded,
                     RECEIPT_KEY_KIND,
                     after_pair[0],
@@ -876,7 +878,7 @@ class PostgresStore:
                     "WITH versioned AS (SELECT body FROM tr_entities "
                     "WHERE kid = %s AND kid IS NOT NULL "
                     "AND att_sha256 IS NOT NULL AND kind = %s "
-                    "AND (kid, att_sha256) > (%s, %s) "
+                    "AND (kid > %s OR (kid = %s AND att_sha256 > %s)) "
                     "ORDER BY kid, att_sha256 LIMIT %s), "
                     "legacy AS (SELECT body FROM tr_entities WHERE kind = %s AND id = %s "
                     "AND (kid IS NULL OR att_sha256 IS NULL) LIMIT %s) "
@@ -885,7 +887,9 @@ class PostgresStore:
                 params = (
                     kid,
                     RECEIPT_KEY_KIND,
-                    *after_pair,
+                    after_pair[0],
+                    after_pair[0],
+                    after_pair[1],
                     bounded,
                     RECEIPT_KEY_KIND,
                     kid,

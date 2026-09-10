@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pathlib
+
 import base64
 import dataclasses
 import hashlib
@@ -748,7 +750,7 @@ def test_durable_receipt_key_reads_filter_and_limit_in_the_database(
     assert "WITH versioned AS" in pg_calls[0][0]
     assert "WHERE kid = %s AND kid IS NOT NULL" in pg_calls[0][0]
     assert "att_sha256 IS NOT NULL AND kind = %s" in pg_calls[0][0]
-    assert "(kid, att_sha256) > (%s, %s)" in pg_calls[0][0]
+    assert "(kid > %s OR (kid = %s AND att_sha256 > %s))" in pg_calls[0][0]
     assert "ORDER BY kid, att_sha256" in pg_calls[0][0]
     assert "LIMIT %s" in pg_calls[0][0]
     assert "legacy AS" in pg_calls[0][0]
@@ -758,7 +760,9 @@ def test_durable_receipt_key_reads_filter_and_limit_in_the_database(
     assert pg_calls[0][1] == (
         "missing-kid",
         "receipt_key",
-        *after,
+        after[0],
+        after[0],
+        after[1],
         7,
         "receipt_key",
         "missing-kid",
@@ -766,9 +770,9 @@ def test_durable_receipt_key_reads_filter_and_limit_in_the_database(
     )
     assert pg.list_receipt_keys(after=after, limit=7, phase="v") == []
     assert "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL" in pg_calls[1][0]
-    assert "(kid, att_sha256) > (%s, %s)" in pg_calls[1][0]
+    assert "(kid > %s OR (kid = %s AND att_sha256 > %s))" in pg_calls[1][0]
     assert "legacy" not in pg_calls[1][0]
-    assert pg_calls[1][1] == ("receipt_key", *after, 7)
+    assert pg_calls[1][1] == ("receipt_key", after[0], after[0], after[1], 7)
     assert pg.list_receipt_keys(legacy_after=after[0], limit=7, phase="l") == []
     assert "AND id > %s" in pg_calls[2][0]
     assert "ORDER BY id LIMIT %s" in pg_calls[2][0]
@@ -949,15 +953,19 @@ def _two_phase_store(backend: str):
 
     def selected_rows(query: str, params: object) -> list[tuple[str]]:
         if "tr_receipt_key_versions" in query or (
-            "att_sha256 IS NOT NULL" in query and "id >" not in query
+            # "kid > %s" contains the substring "id >", so key the legacy
+            # phase off its ORDER BY instead.
+            "att_sha256 IS NOT NULL" in query and "ORDER BY id" not in query
         ):
             if isinstance(params, dict):
                 after = (str(params["after_kid"]), str(params["after_att_sha256"]))
                 limit = int(params["limit"])
             else:
+                # Postgres feeds the expanded, portable predicate:
+                # (kind, kid, kid, att_sha256, limit)
                 values = cast(tuple[object, ...], params)
-                after = (str(values[1]), str(values[2]))
-                limit = int(values[3])
+                after = (str(values[1]), str(values[3]))
+                limit = int(values[4])
             rows = [row for row in versioned if (row.kid, row.att_sha256) > after]
         else:
             if isinstance(params, dict):
@@ -1611,3 +1619,12 @@ def test_degraded_cache_keeps_phase_tagged_cursors_for_mixed_pages(
     assert [key["kid"] for key in following.json()["keys"]] == [row.kid for row in legacy[2:5]], (
         "following the degraded page's cursor must continue, never replay"
     )
+
+
+def test_postgres_pagination_avoids_row_value_comparisons() -> None:
+    """Spanner's PostgreSQL dialect rejects `(a, b) > (x, y)` (RowCompareExpr), which
+    CI's spanner-pg conformance backend exercises and local runs skip. The cursor
+    predicate must be the expanded, portable form on every Postgres query."""
+    source = pathlib.Path("src/trusted_router/storage_postgres.py").read_text(encoding="utf-8")
+    assert "(kid, att_sha256) >" not in source
+    assert source.count("(kid > %s OR (kid = %s AND att_sha256 > %s))") == 3
