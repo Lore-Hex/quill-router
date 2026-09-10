@@ -45,7 +45,7 @@ def test_spanner_receipt_key_version_migration_is_additive_and_idempotent(
     ]
 
 
-def test_spanner_migration_does_not_wait_for_an_existing_creating_index(
+def test_spanner_migration_existing_read_write_index_is_a_noop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -58,7 +58,10 @@ def test_spanner_migration_does_not_wait_for_an_existing_creating_index(
                 "SPANNER_INSTANCE_ID": "test-instance",
                 "SPANNER_DATABASE_ID": "test-database",
             },
-            responses=((r"INFORMATION_SCHEMA\.(COLUMNS|INDEXES)", "1"),),
+            responses=(
+                (r"INDEX_STATE FROM INFORMATION_SCHEMA.INDEXES", "READ_WRITE"),
+                (r"INFORMATION_SCHEMA\.(COLUMNS|INDEXES)", "1"),
+            ),
         ),
     )
 
@@ -67,6 +70,41 @@ def test_spanner_migration_does_not_wait_for_an_existing_creating_index(
     assert run.returncode == 0, run.stderr
     assert _ddls(run) == []
     assert not any(call[0] == "sleep" for call in run.calls)
+
+
+@pytest.mark.parametrize("state", ["CREATING", "WRITE_ONLY"])
+def test_spanner_migration_times_out_waiting_for_unready_existing_index(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+) -> None:
+    monkeypatch.setitem(
+        SCRIPT_FIXTURES,
+        SCRIPT,
+        ScriptFixture(
+            env={
+                "GCP_PROJECT_ID": "test-project",
+                "SPANNER_INSTANCE_ID": "test-instance",
+                "SPANNER_DATABASE_ID": "test-database",
+                "RECEIPT_KEY_INDEX_WAIT_ATTEMPTS": "3",
+                "RECEIPT_KEY_INDEX_WAIT_SECONDS": "0",
+            },
+            responses=(
+                (r"INDEX_STATE FROM INFORMATION_SCHEMA.INDEXES", state),
+                (r"INFORMATION_SCHEMA\.(COLUMNS|INDEXES)", "1"),
+            ),
+        ),
+    )
+
+    run = DeployScriptHarness(tmp_path).run(SCRIPT)
+
+    assert run.returncode != 0
+    assert _ddls(run) == []
+    assert sum(call[0] == "sleep" for call in run.calls) == 3
+    assert (
+        "ERROR: timed out waiting for tr_receipt_key_versions to become READ_WRITE "
+        f"after 3 attempts (last state={state})"
+    ) in run.stdout
 
 
 def test_postgres_runtime_schema_only_adds_nullable_receipt_version_projections() -> None:
