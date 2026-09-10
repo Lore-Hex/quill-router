@@ -241,10 +241,11 @@
       "deprecation_at": null,
       "retirement_at": null,
       "replacement_model_id": null,
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 20000,
       "output_token_price_per_m": 120000,
-      "missing_since": "2026-09-10"
+      "missing_since": "2026-09-10",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "diffusiongemma-26B-A4B-it",
@@ -387,11 +388,11 @@
       "input_token_price_per_m": 10000,
       "output_token_price_per_m": 100000,
       "documentation": {
-        "description": "Extract named fields from document text into structured JSON.",
-        "input_format": "Send document text and explicitly name the fields to extract. Use response_format with a JSON Schema when a fixed contract is required.",
-        "output_format": "A JSON object containing the requested fields; with response_format, it follows the supplied schema.",
-        "example_input": "Invoice #A-1042. Total due: $87.25",
-        "example_output": "{\"invoice_number\":\"A-1042\",\"total_usd\":87.25}"
+        "description": "Extracts caller-selected fields from invoices, contracts, forms, tickets, and other document text into typed JSON.",
+        "input_format": "Put one JSON object in the user message with document containing the source text and output_schema mapping every requested field to its expected type, such as string, number, boolean, or string|null. Explicitly request every field you need. Missing nullable values are returned as null.",
+        "output_format": "Returns only one JSON object containing exactly the requested fields and types. Source text is copied exactly unless a number or boolean is requested. Requested fields that are absent are returned as null.",
+        "example_input": "{\n    \"document\": \"INVOICE A-1042. Vendor: Acme Supply. Total due: USD 87.25.\",\n    \"output_schema\": {\n      \"invoice_number\": \"string\",\n      \"vendor\": \"string\",\n      \"total\": \"number\",\n      \"currency\": \"string\"\n    }\n  }",
+        "example_output": "{\n    \"invoice_number\": \"A-1042\",\n    \"vendor\": \"Acme Supply\",\n    \"total\": 87.25,\n    \"currency\": \"USD\"\n  }"
       },
       "reliability": {
         "first_token_timeout_seconds": 60.0,
@@ -444,11 +445,11 @@
       "replacement_model_id": null,
       "routable": true,
       "documentation": {
-        "description": "Classify one or more requests into caller-provided route labels.",
-        "input_format": "Provide the allowed labels and the request or requests to classify.",
-        "output_format": "A JSON object mapping each request identifier to one allowed label.",
-        "example_input": "Classify this request as exactly one of billing, technical, or sales: My invoice contains the wrong tax amount.",
-        "example_output": "{\"request_1\":\"billing\"}"
+        "description": "Classifies one or more requests against a caller-defined taxonomy and uses an explicit fallback when no supplied label applies.",
+        "input_format": "Put one JSON object in the user message with taxonomy_id, labels, fallback_label, and requests. labels maps each allowed label to its meaning. requests is an array of objects containing id and text. Every request ID is classified exactly once.",
+        "output_format": "Returns only one JSON object mapping each supplied request ID to exactly one supplied label. No labels outside the taxonomy are generated. The fallback label is used only when no described category applies.",
+        "example_input": "{\n    \"taxonomy_id\": \"support\",\n    \"labels\": {\n      \"Billing\": \"Charges, payments, or refunds\",\n      \"Technical\": \"Errors, outages, or product malfunctions\",\n      \"Other\": \"No other label applies\"\n    },\n    \"fallback_label\": \"Other\",\n    \"requests\": [\n      {\n        \"id\": \"REQ-1\",\n        \"text\": \"Please refund this duplicate charge.\"\n      },\n      {\n        \"id\": \"REQ-2\",\n        \"text\": \"The API returns a 502 error.\"\n      },\n      {\n        \"id\": \"REQ-3\",\n        \"text\": \"What is your office address?\"\n      }\n    ]\n  }",
+        "example_output": "{\n    \"REQ-1\": \"Billing\",\n    \"REQ-2\": \"Technical\",\n    \"REQ-3\": \"Other\"\n  }"
       },
       "input_token_price_per_m": 10000,
       "output_token_price_per_m": 100000,
@@ -503,11 +504,11 @@
       "replacement_model_id": null,
       "routable": true,
       "documentation": {
-        "description": "Turn a conversation transcript into a structured operational summary.",
-        "input_format": "Send a transcript with speakers clearly labeled. Include dates and owners in the transcript when they should be retained.",
-        "output_format": "A JSON object with decision, current_status, open_items, and risks; open items include action, owner, and due_date.",
-        "example_input": "Summarize this conversation:\nAlice: The launch moves to Friday.\nBob: I will update the release calendar.\nAlice: Please notify support.",
-        "example_output": "{\n  \"decision\": \"The launch is moved to Friday.\",\n  \"current_status\": \"Launch date updated to Friday.\",\n  \"open_items\": [\n    {\"action\": \"Update the release calendar\", \"owner\": \"Bob\", \"due_date\": null},\n    {\"action\": \"Notify support\", \"owner\": \"Alice\", \"due_date\": null}\n  ],\n  \"risks\": []\n}"
+        "description": "Converts a labeled business conversation into a structured current-state summary of the final decision, status, open actions, owners, deadlines, and risks.",
+        "input_format": "Send the conversation as text in the user message. Prefix facts with FINAL DECISION, CURRENT STATUS, OPEN ACTION, OWNER, DUE, and MATERIAL RISK. Mark outdated statements superseded and completed actions completed. These labels are required for reliable extraction.",
+        "output_format": "Returns only JSON with decision, current_status, open_items, and risks. Each open item contains action, owner, and due_date. Absent scalar values are null, absent collections are empty arrays, and completed or superseded information is excluded.",
+        "example_input": "FINAL DECISION: Launch the new customer portal.\n\n  CURRENT STATUS: Waiting for security approval.\n\n  OPEN ACTION: Send the approval packet.\n  OWNER: Amina.\n  DUE: 2026-09-10.\n\n  MATERIAL RISK: Security review may delay the launch.",
+        "example_output": "{\n    \"decision\": \"Launch the new customer portal\",\n    \"current_status\": \"Waiting for security approval\",\n    \"open_items\": [\n      {\n        \"action\": \"Send the approval packet\",\n        \"owner\": \"Amina\",\n        \"due_date\": \"2026-09-10\"\n      }\n    ],\n    \"risks\": [\n      \"Security review may delay the launch\"\n    ]\n  }"
       },
       "input_token_price_per_m": 10000,
       "output_token_price_per_m": 100000,
@@ -562,11 +563,11 @@
       "replacement_model_id": null,
       "routable": true,
       "documentation": {
-        "description": "Answer questions from supplied document text and return citations grounded in that text.",
-        "input_format": "Send the source document and question in the user message. Number passages when stable citation identifiers matter.",
-        "output_format": "A JSON object with answer and citations fields; citations identify the supporting source passages.",
-        "example_input": "Document:\n[1] The Acme renewal date is October 15, 2026.\n\nQuestion: What is the Acme renewal date? Answer only from the document.",
-        "example_output": "{\n  \"answer\": \"October 15, 2026\",\n  \"citations\": [\"1\"]\n}"
+        "description": "Answers questions only from supplied document chunks, cites the supporting chunk, and abstains when the answer is not present.",
+        "input_format": "Put one JSON object in the user message with an optional request_id, a chunks array, and question. Each chunk needs a stable id, text, and status. Mark current sources authoritative and outdated sources superseded. The model will not use outside knowledge.",
+        "output_format": "Returns only JSON with answer and citations. answer is the shortest exact supporting text span or null when the documents do not contain the answer. citations contains only supporting chunk IDs and is empty when answer is null.",
+        "example_input": "{\n    \"chunks\": [\n      {\n        \"id\": \"DOC-1\",\n        \"status\": \"authoritative\",\n        \"text\": \"The Acme renewal date is October 15, 2026.\"\n      }\n    ],\n    \"question\": \"What is the Acme renewal date?\"\n  }",
+        "example_output": "{\n    \"answer\": \"October 15, 2026\",\n    \"citations\": [\"DOC-1\"]\n  }"
       },
       "input_token_price_per_m": 10000,
       "output_token_price_per_m": 100000,
@@ -589,8 +590,66 @@
           "account_quota_exceeded"
         ]
       }
+    },
+    {
+      "display_name": "neurometric/text-to-sql",
+      "title": "neurometric/text-to-sql",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "neurometric/text-to-sql",
+      "upstream_id": "neurometric/text-to-sql",
+      "context_length": 32768,
+      "max_output_tokens": 16384,
+      "supported_features": [
+        "chat",
+        "completion",
+        "json_mode",
+        "structured_outputs"
+      ],
+      "lifecycle_status": "active",
+      "deprecation_at": null,
+      "retirement_at": null,
+      "replacement_model_id": null,
+      "routable": true,
+      "documentation": {
+        "description": "Converts a natural-language question into one read-only SQL query using only the database dialect and schema supplied by the caller.",
+        "input_format": "Put plain text in the user message with three labeled sections: DIALECT, SCHEMA, and QUESTION. DIALECT identifies the SQL engine. SCHEMA contains the relevant tables, columns, keys, and relationships. QUESTION states the requested result, including exact output columns and ordering when required.",
+        "output_format": "Returns SQL text only. The output is exactly one read-only SELECT or WITH statement grounded in the supplied schema. Write operations and multiple statements are rejected. Applications should still validate the query and execute it using read-only database credentials.",
+        "example_input": "DIALECT: SQLite\n\nSCHEMA:\nCREATE TABLE customers (\n    id INTEGER PRIMARY KEY,\n    name TEXT,\n    plan TEXT\n  );\n\nQUESTION:\nHow many enterprise customers are there?",
+        "example_output": "SELECT COUNT(*) AS enterprise_customer_count\n  FROM customers\n  WHERE plan = 'enterprise'"
+      },
+      "reliability": {
+        "first_token_timeout_seconds": 15.0,
+        "completion_timeout_seconds": 45.0,
+        "stream_idle_timeout_seconds": 15.0,
+        "capacity_scope": "global"
+      },
+      "provider_reliability": {
+        "provider_id": "neurometric",
+        "status_url": "https://status.neurometric.ai",
+        "support_contact": "mailto:support@neurometric.ai",
+        "incident_contact": "mailto:support@neurometric.ai",
+        "regions": [
+          "us-west"
+        ],
+        "request_id_header": "x-request-id",
+        "account_quota_error_codes": [
+          "account_quota_exceeded"
+        ]
+      },
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 120000
     }
   ],
-  "generated_at": "2026-09-10T17:53:52Z",
-  "model_count": 11
+  "generated_at": "2026-09-10T21:46:44Z",
+  "model_count": 12
 }
