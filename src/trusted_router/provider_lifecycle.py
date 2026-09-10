@@ -647,6 +647,19 @@ def latest_scheduled_cutover() -> datetime:
     )
 
 
+def provider_catalog_revision() -> tuple[int, str]:
+    """Invalidate public projections only at a scheduled change or price period."""
+    now = _utc_now()
+    cutovers = {
+        DEEPSEEK_V4_PRICING_EFFECTIVE_AT,
+        DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT,
+        FIREWORKS_DSV4_FLASH_0731_PRICING_EFFECTIVE_AT,
+        PHALA_JULY_2026_EFFECTIVE_AT,
+        *(retirement.effective_at for retirement in _RETIREMENTS),
+    }
+    return sum(now >= cutover for cutover in cutovers), _deepseek_v4_period(now)
+
+
 def _effective_time(at: datetime | str | None) -> datetime:
     if at is None:
         return _utc_now()

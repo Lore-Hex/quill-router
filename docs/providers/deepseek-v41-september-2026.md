@@ -45,6 +45,9 @@ Re-check the response model after launch before claiming the Pro redirect is liv
   are unavailable at the cutoff, even in an already-running process. Other
   providers and frozen combo definitions are unchanged.
 - Pro's public pricing schedule explicitly discloses the upstream Flash redirect.
+- Public catalog/picker projections invalidate at scheduled cutovers and peak
+  boundaries rather than keeping startup prices indefinitely. Existing HTTP
+  cache lifetimes still apply; billing always quotes at authorization time.
 - Existing billing markup and cached-input minimum remain unchanged. These
   are provider rates, not an assertion that retail cached input costs $0.003/M.
 - 44 new regression cases were run against unchanged implementation: all failed.

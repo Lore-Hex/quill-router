@@ -47,7 +47,7 @@ from trusted_router.openai_service_tiers import (
     OPENAI_SERVICE_TIERS,
     openai_priority_pricing,
 )
-from trusted_router.provider_lifecycle import provider_pricing_schedule
+from trusted_router.provider_lifecycle import provider_catalog_revision, provider_pricing_schedule
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.routing import catalog_endpoint_candidates, provider_route_preferences
 
@@ -115,7 +115,7 @@ def _picker_model_shape(shape: dict[str, Any]) -> dict[str, Any]:
 
 
 @lru_cache(maxsize=1)
-def _public_catalog_payload() -> _PublicCatalogPayload:
+def _public_catalog_payload(revision: tuple[int, str]) -> _PublicCatalogPayload:
     shapes: list[dict[str, Any]] = []
     for model in MODELS.values():
         shape = model_to_openrouter_shape(model)
@@ -139,6 +139,10 @@ def _public_catalog_payload() -> _PublicCatalogPayload:
         picker_gzip_body=picker_gzip_body,
         picker_gzip_etag=_content_etag(picker_gzip_body),
     )
+
+
+def _current_catalog_payload() -> _PublicCatalogPayload:
+    return _public_catalog_payload(provider_catalog_revision())
 
 
 def _cached_json_response(
@@ -400,10 +404,10 @@ def _image_endpoint_shape(model: Any, endpoint: ModelEndpoint) -> dict[str, Any]
 
 
 def register_catalog_routes(router: APIRouter) -> None:
-    # Catalog inputs are immutable for the life of a release. Pay the expensive
-    # endpoint/policy projection once while the app is starting, rather than on
-    # the first request handled by a shared event loop.
-    catalog_payload = _public_catalog_payload()
+    # Prewarm the projection. Scheduled retirements/prices can change without
+    # a release, so handlers retrieve the cached current revision, not a closure
+    # over startup prices. Ordinary requests still share the prebuilt payload.
+    _current_catalog_payload()
 
     @router.get("/embeddings/models")
     async def embeddings_models() -> dict[str, list[dict[str, Any]]]:
@@ -446,6 +450,7 @@ def register_catalog_routes(router: APIRouter) -> None:
         # routing pools, not user-selectable. The shape itself carries
         # the flag; filter it BEFORE handing to callers so SDKs +
         # chat playground don't accidentally surface them.
+        catalog_payload = _current_catalog_payload()
         if request is None:
             return list(catalog_payload.shapes)
         return [
@@ -465,6 +470,7 @@ def register_catalog_routes(router: APIRouter) -> None:
         openapi_extra={"servers": [{"url": "https://api.trustedrouter.com"}]},
     )
     async def models(request: Request) -> Response:
+        catalog_payload = _current_catalog_payload()
         if not _has_public_model_filters(request):
             return _cached_json_response(
                 request,
@@ -489,6 +495,7 @@ def register_catalog_routes(router: APIRouter) -> None:
 
     @router.get("/models/picker")
     async def models_picker(request: Request) -> Response:
+        catalog_payload = _current_catalog_payload()
         return _cached_json_response(
             request,
             catalog_payload.picker_body,
@@ -632,4 +639,4 @@ def register_authenticated_catalog_routes(router: APIRouter) -> None:
     async def models_user(
         _principal: ManagementPrincipal,
     ) -> dict[str, list[dict[str, Any]]]:
-        return {"data": list(_public_catalog_payload().shapes)}
+        return {"data": list(_current_catalog_payload().shapes)}

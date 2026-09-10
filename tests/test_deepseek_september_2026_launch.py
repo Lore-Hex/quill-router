@@ -199,3 +199,20 @@ def test_flash_route_can_authorize_locally_and_advertises_tools(
     })
     assert authorized.status_code == 200, authorized.text
     assert "tools" in catalog.MODELS[FLASH].supported_parameters
+
+
+@pytest.mark.parametrize("path", ["/v1/models", "/v1/models/picker"])
+def test_public_catalog_revalidates_across_scheduled_price_cutover(
+    monkeypatch: pytest.MonkeyPatch, path: str,
+) -> None:
+    from trusted_router.routes import catalog as catalog_routes
+
+    catalog_routes._public_catalog_payload.cache_clear()
+    monkeypatch.setattr(lifecycle, "_utc_now", lambda: CUTOVER - timedelta(seconds=1))
+    client = TestClient(create_app(Settings(environment="test"), init_observability=False))
+    before = client.get(path)
+    monkeypatch.setattr(lifecycle, "_utc_now", lambda: CUTOVER)
+    after = client.get(path, headers={"if-none-match": before.headers["etag"]})
+    assert after.status_code == 200
+    flash = next(row for row in after.json()["data"] if row["id"] == FLASH)
+    assert flash["pricing"]["completion"] == "0.000000633"
