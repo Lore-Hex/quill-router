@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import copy
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
+from markupsafe import escape
 
 from scripts.check_price_coverage import _DISCOVERABLE_MANIFEST_PROVIDERS
 from scripts.pricing.provider_contract_catalog import (
@@ -13,10 +15,12 @@ from scripts.pricing.provider_contract_catalog import (
 )
 from scripts.pricing.providers import neurometric
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS, model_open_weights
+from trusted_router.catalog_data import ModelDocumentation
 from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_EXAMPLE,
     PROVIDER_MODEL_DOCUMENTATION_EXAMPLE,
 )
+from trusted_router.routes import catalog as catalog_routes
 
 
 def _model_row(
@@ -62,6 +66,15 @@ def _model_row(
 
 def _payload(*rows: dict[str, Any]) -> dict[str, Any]:
     return {"object": "list", "data": list(rows)}
+
+
+def _published_task_documentation() -> dict[str, dict[str, str]]:
+    manifest = json.loads(neurometric.MANIFEST_PATH.read_text(encoding="utf-8"))
+    return {
+        row["id"]: row["documentation"]
+        for row in manifest["models"]
+        if row.get("documentation") and row.get("routable", True)
+    }
 
 
 def test_canonical_contract_parser_preserves_exact_price_and_capabilities() -> None:
@@ -181,9 +194,11 @@ def test_canonical_contract_parser_excludes_retired_models() -> None:
     assert discovered == {}
 
 
+@pytest.mark.parametrize("provider_documentation", [False, True])
 def test_neurometric_fetch_discovers_new_models_and_runs_canary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    provider_documentation: bool,
 ) -> None:
     document_extraction = _model_row(neurometric.DOCUMENT_STRUCTURED_EXTRACTION_MODEL)
     document_extraction.update(
@@ -208,6 +223,13 @@ def test_neurometric_fetch_discovers_new_models_and_runs_canary(
         _model_row("neurometric/tool-choice"),
         _model_row("qwen/qwen3-vl-8b-instruct"),
     ]
+    expected_documentation = copy.deepcopy(neurometric.TASK_DOCUMENTATION)
+    if provider_documentation:
+        for row in rows:
+            if row["id"] in expected_documentation:
+                documentation = expected_documentation[row["id"]]
+                documentation["description"] = "Updated provider instructions for " + row["id"]
+                row["documentation"] = documentation
 
     class FakeResponse:
         def raise_for_status(self) -> None:
@@ -271,9 +293,9 @@ def test_neurometric_fetch_discovers_new_models_and_runs_canary(
     extraction_price = result.prices[neurometric.DOCUMENT_STRUCTURED_EXTRACTION_MODEL]
     assert extraction_price.prompt_micro_per_m == 10_000
     assert extraction_price.completion_micro_per_m == 100_000
-    for model_id in neurometric.TASK_DOCUMENTATION:
+    for model_id, documentation in expected_documentation.items():
         assert neurometric._DISCOVERED_MANIFEST_ROWS[model_id]["documentation"] == (
-            neurometric.TASK_DOCUMENTATION[model_id]
+            documentation
         )
     assert neurometric._LIVE_CANARY_OK is True
 
@@ -433,10 +455,13 @@ def test_neurometric_public_api_exposes_provider_and_exact_endpoint(client: Any)
     models = {
         row["id"]: row for row in client.get("/v1/models").json()["data"]
     }
-    for model_id, documentation in neurometric.TASK_DOCUMENTATION.items():
+    # Provider-authored guidance overrides our legacy fallback text. Verify
+    # passthrough from the committed manifest, not wording that refresh may change.
+    for model_id, documentation in _published_task_documentation().items():
         published = models[model_id]
         assert published["description"] == documentation["description"]
         assert published["trustedrouter"]["documentation"] == documentation
+    for model_id in neurometric.TASK_DOCUMENTATION:
         task_endpoint = client.get(f"/v1/models/{model_id}/endpoints")
         assert task_endpoint.status_code == 200
         route = next(
@@ -451,14 +476,63 @@ def test_neurometric_public_api_exposes_provider_and_exact_endpoint(client: Any)
 
 
 def test_neurometric_task_model_page_shows_usage_guidance(client: Any) -> None:
-    response = client.get("/models/neurometric/grounded-document-qa")
+    for model_id, documentation in _published_task_documentation().items():
+        response = client.get(f"/models/{model_id}")
+        assert response.status_code == 200
+        assert f"How to use {escape(MODELS[model_id].name)}" in response.text
+        assert "Example input" in response.text
+        assert "Example output" in response.text
+        for value in documentation.values():
+            assert str(escape(value)) in response.text
 
+
+def test_neurometric_page_and_api_follow_updated_guidance(client, monkeypatch) -> None:
+    model_id = neurometric.GROUNDED_DOCUMENT_QA_MODEL
+    documentation = ModelDocumentation(
+        description="Provider revision two <script>alert(1)</script>",
+        input_format="Provide source <chunks> & a question.",
+        output_format="Only cited answers, or null.",
+        example_input='{"question":"What changed?", "chunks":[]}',
+        example_output='{"answer":null,"citations":[]}',
+    )
+    monkeypatch.setitem(MODELS, model_id, replace(MODELS[model_id], documentation=documentation))
+    # Model edits are deployed in a new process; bypass the old projection
+    # without caching this test-only catalog in the shared test process.
+    monkeypatch.setattr(
+        catalog_routes, "_public_catalog_payload", catalog_routes._public_catalog_payload.__wrapped__
+    )
+    page = client.get(f"/models/{model_id}")
+    assert page.status_code == 200
+    for value in documentation.to_dict().values():
+        assert str(escape(value)) in page.text
+    assert "<script>alert(1)</script>" not in page.text
+    models = {row["id"]: row for row in client.get("/v1/models").json()["data"]}
+    assert models[model_id]["description"] == documentation.description
+    assert models[model_id]["trustedrouter"]["documentation"] == documentation.to_dict()
+
+
+def test_neurometric_text_to_sql_is_published_with_exact_pricing(client: Any) -> None:
+    model_id = "neurometric/text-to-sql"
+    endpoint = MODEL_ENDPOINTS[f"{model_id}@neurometric/prepaid"]
+    assert endpoint.upstream_id == model_id
+    assert endpoint.usage_type == "Credits"
+    assert MODELS[model_id].context_length == 32768
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 52750
+    assert endpoint.completion_price_microdollars_per_million_tokens == 126600
+    response = client.get(f"/v1/models/{model_id}/endpoints")
     assert response.status_code == 200
-    assert "How to use Grounded Document QA" in response.text
-    assert "Answer questions from supplied document text" in response.text
-    assert "Example input" in response.text
-    assert "The Acme renewal date is October 15, 2026." in response.text
-    assert "&#34;citations&#34;" in response.text
+    assert len(response.json()["data"]) == 1
+    published = response.json()["data"][0]
+    assert published["pricing"]["prompt"] == "0.00000005275"
+    assert published["pricing"]["completion"] == "0.0000001266"
+    assert "tools" not in published["supported_parameters"]
+    assert "response_format" in published["supported_parameters"]
+    page = client.get(f"/models/{model_id}")
+    assert page.status_code == 200
+    assert "DIALECT" in page.text
+    assert "SCHEMA" in page.text
+    assert "QUESTION" in page.text
+    assert "enterprise_customer_count" in page.text
 
 
 def test_neurometric_hourly_refresh_and_secret_wiring_are_complete() -> None:
