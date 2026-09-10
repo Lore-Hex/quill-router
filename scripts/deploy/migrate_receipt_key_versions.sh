@@ -36,21 +36,6 @@ index_exists() {
   [ "${count:-0}" != "0" ]
 }
 
-wait_index_read_write() {
-  local state=""
-  for _ in $(seq 1 360); do
-    state=$(sql_value "SELECT INDEX_STATE FROM INFORMATION_SCHEMA.INDEXES
-      WHERE index_name='tr_receipt_key_versions'" || true)
-    if [ "$state" = "READ_WRITE" ]; then
-      log "tr_receipt_key_versions is read-write"
-      return 0
-    fi
-    sleep 5
-  done
-  log "timed out waiting for tr_receipt_key_versions (state=${state:-unknown})"
-  return 1
-}
-
 if ! column_exists kid; then
   apply_ddl "ALTER TABLE tr_entities ADD COLUMN kid STRING(43)"
 fi
@@ -60,5 +45,8 @@ fi
 if ! index_exists; then
   apply_ddl "CREATE NULL_FILTERED INDEX tr_receipt_key_versions ON tr_entities (kid, att_sha256)"
 fi
-wait_index_read_write
+# Spanner continues an accepted index build after the initiating gcloud process
+# exits.  A later rollout must not turn that durable asynchronous operation into
+# a 30-minute deployment failure by polling its transient CREATING state.  The
+# read path is correct without the index while Spanner finishes the build.
 log "receipt-key version schema is ready"

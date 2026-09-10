@@ -314,7 +314,12 @@ class InMemoryStore:
     def readiness_check(self) -> None:
         """The in-memory backend has no external serving dependency."""
 
-    def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
+    def observe_receipt_key(
+        self,
+        record: ReceiptKey,
+        *,
+        refresh_last_seen: bool = True,
+    ) -> ReceiptKeyWriteOutcome:
         with self._lock:
             same_kid = [row for row in self.receipt_keys.values() if row.kid == record.kid]
             if same_kid and receipt_key_kid_collides(same_kid[0], record):
@@ -329,7 +334,9 @@ class InMemoryStore:
                 self.receipt_keys[legacy_id] = legacy
             entity_id = receipt_key_entity_id(validated.kid, validated.att_sha256)
             merged, outcome = merge_receipt_key_observation(
-                self.receipt_keys.get(entity_id), validated
+                self.receipt_keys.get(entity_id),
+                validated,
+                refresh_last_seen=refresh_last_seen,
             )
             if merged is not None and outcome in {"appended", "refreshed"}:
                 self.receipt_keys[entity_id] = merged

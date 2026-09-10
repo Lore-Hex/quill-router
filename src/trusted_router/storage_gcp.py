@@ -7668,7 +7668,12 @@ class SpannerBigtableStore:
             return str(email_user["user_id"])
         return None
 
-    def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
+    def observe_receipt_key(
+        self,
+        record: ReceiptKey,
+        *,
+        refresh_last_seen: bool = True,
+    ) -> ReceiptKeyWriteOutcome:
         same_kid = self.list_receipt_keys(limit=1, kid=record.kid)
         if same_kid and receipt_key_kid_collides(same_kid[0], record):
             return "conflict"
@@ -7689,7 +7694,11 @@ class SpannerBigtableStore:
             existing = self._read_entity_tx(
                 transaction, RECEIPT_KEY_KIND, entity_id, ReceiptKey
             )
-            merged, outcome = merge_receipt_key_observation(existing, validated)
+            merged, outcome = merge_receipt_key_observation(
+                existing,
+                validated,
+                refresh_last_seen=refresh_last_seen,
+            )
             if merged is not None and outcome in {"appended", "refreshed"}:
                 self._write_receipt_key_tx(transaction, entity_id, merged)
             return outcome
@@ -7702,10 +7711,33 @@ class SpannerBigtableStore:
         limit: int = 5_000,
         kid: str | None = None,
     ) -> list[ReceiptKey]:
-        rows = self._list_entities(
-            RECEIPT_KEY_KIND,
-            cls=ReceiptKey,
-        )
+        bounded = max(0, min(limit, 10_000))
+        where = "kind=@kind"
+        params: dict[str, Any] = {"kind": RECEIPT_KEY_KIND, "limit": bounded}
+        param_types = {
+            "kind": self._param_types.STRING,
+            "limit": self._param_types.INT64,
+        }
+        if kid is not None:
+            # Include the one possible legacy row whose projection is NULL.
+            # Once backfilled, the kid predicate can use the version index.
+            where += " AND (kid=@kid OR (kid IS NULL AND id=@kid))"
+            params["kid"] = kid
+            param_types["kid"] = self._param_types.STRING
+        with self._database.snapshot() as snapshot:
+            raw_rows = snapshot.execute_sql(
+                f"SELECT body FROM tr_entities WHERE {where} "  # noqa: S608 - predicates are fixed; values are bound.
+                "ORDER BY updated_at DESC, id DESC LIMIT @limit",
+                params=params,
+                param_types=param_types,
+            )
+            rows = []
+            known = {field.name for field in dataclasses.fields(ReceiptKey)}
+            for raw_row in raw_rows:
+                data = json.loads(raw_row[0])
+                rows.append(
+                    ReceiptKey(**{key: value for key, value in data.items() if key in known})
+                )
         versions: dict[tuple[str, str], ReceiptKey] = {}
         for row in rows:
             row = with_receipt_attestation_sha256(row)

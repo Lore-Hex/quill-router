@@ -92,3 +92,13 @@ def test_every_post_is_still_listed(client: TestClient) -> None:
 
     for slug in BLOG_POSTS_BY_SLUG:
         assert f'href="/blog/{slug}"' in html, slug
+
+
+def test_receipt_post_distinguishes_commitment_checks_from_chain_verification() -> None:
+    body = BLOG_POSTS_BY_SLUG["every-response-can-prove-itself"].body_html
+
+    assert (
+        "commitment-checked before recording and fully chain-verified where supported"
+        in body
+    )
+    assert "verified before it is recorded" not in body

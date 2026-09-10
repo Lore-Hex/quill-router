@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import hashlib
 import html
 import json
 import logging
@@ -142,7 +143,10 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_SCHEMA,
 )
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
-from trusted_router.receipt_keys import with_receipt_attestation_sha256
+from trusted_router.receipt_keys import (
+    is_canonical_receipt_kid,
+    with_receipt_attestation_sha256,
+)
 from trusted_router.request_limits import normalized_client_identity
 from trusted_router.routes.mcp import MCP_PROTOCOL_VERSION
 from trusted_router.scopes import KNOWN_SCOPES
@@ -369,6 +373,7 @@ _INQUIRY_GLOBAL_HITS: list[float] = []
 _INQUIRY_WINDOW_SECONDS = 3600.0
 _INQUIRY_MAX_PER_WINDOW = 5
 _INQUIRY_GLOBAL_MAX_PER_WINDOW = 60
+_RECEIPT_KEY_CACHE_MAX_KIDS = 128
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _SUPPORT_CATEGORIES = {
     "api": "API and routing",
@@ -378,6 +383,21 @@ _SUPPORT_CATEGORIES = {
     "feature": "Feature request",
     "other": "Other",
 }
+
+
+def _remember_receipt_key_records(
+    cache: OrderedDict[str, list[ReceiptKey]],
+    kid: str,
+    records: list[ReceiptKey],
+) -> None:
+    """Cache only known kids in a fixed-size least-recently-written map."""
+
+    cache.pop(kid, None)
+    if not records:
+        return
+    cache[kid] = records
+    while len(cache) > _RECEIPT_KEY_CACHE_MAX_KIDS:
+        cache.popitem(last=False)
 
 
 def _inquiry_rate_ok(client_ip: str, *, now: float | None = None) -> bool:
@@ -688,7 +708,8 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         validator=validated_azure_metadata,
         embedded=embedded_azure_metadata,
     )
-    receipt_key_cache: dict[str | None, list[ReceiptKey]] = {}
+    receipt_key_global_cache: list[ReceiptKey] | None = None
+    receipt_key_cache: OrderedDict[str, list[ReceiptKey]] = OrderedDict()
 
     async def _mirrored(
         resolver: TrustReleaseResolver, embedded: Callable[[Settings], Mapping[str, Any]]
@@ -2061,10 +2082,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/.well-known/inference-receipt-keys", include_in_schema=False)
     @app.get("/trust/receipt-keys.json", include_in_schema=False)
-    async def inference_receipt_keys(kid: str | None = None) -> JSONResponse:
+    async def inference_receipt_keys(
+        request: Request, kid: str | None = None
+    ) -> Response:
         """Every observed attestation re-mint, optionally filtered by signing key."""
 
-        nonlocal receipt_key_cache
+        nonlocal receipt_key_global_cache
+        if kid is not None and not is_canonical_receipt_kid(kid):
+            raise HTTPException(status_code=400, detail="kid must be canonical base64url")
         degraded = False
         try:
             records = await asyncio.wait_for(
@@ -2072,10 +2097,22 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 timeout=3.0,
             )
             records = [with_receipt_attestation_sha256(record) for record in records]
-            receipt_key_cache[kid] = records
+            if kid is None:
+                newest_by_kid: dict[str, ReceiptKey] = {}
+                for record in records:
+                    newest_by_kid.setdefault(record.kid, record)
+                records = list(newest_by_kid.values())
+            if kid is None:
+                receipt_key_global_cache = records
+            else:
+                _remember_receipt_key_records(receipt_key_cache, kid, records)
         except Exception:
             degraded = True
-            records = receipt_key_cache.get(kid, [])
+            records = (
+                receipt_key_global_cache or []
+                if kid is None
+                else receipt_key_cache.get(kid, [])
+            )
             log.exception("receipt_key_log_read_degraded_serving_cached")
         keys = [
             {
@@ -2096,17 +2133,32 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             }
             for record in records
         ]
+        semantic_payload = {
+            "spec": "inference-receipt/1",
+            "degraded": degraded,
+            "keys": keys,
+        }
+        semantic_bytes = json.dumps(
+            semantic_payload, sort_keys=True, separators=(",", ":")
+        ).encode()
+        # generated_at is intentionally outside this weak validator: clients
+        # care whether the key evidence changed, not which revalidation emitted
+        # an otherwise equivalent representation.
+        etag = f'W/"{hashlib.sha256(semantic_bytes).hexdigest()}"'
+        headers = {
+            "cache-control": "public, max-age=60, s-maxage=300, must-revalidate",
+            "etag": etag,
+            "link": (
+                f'<{canonical_public_url(settings, "/.well-known/inference-receipt-keys")}>; '
+                'rel="canonical"'
+            ),
+            "x-trustedrouter-key-log-status": "degraded" if degraded else "live",
+        }
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers=headers)
         return JSONResponse(
-            {
-                "spec": "inference-receipt/1",
-                "generated_at": iso_now(),
-                "degraded": degraded,
-                "keys": keys,
-            },
-            headers={
-                **public_document_headers("/.well-known/inference-receipt-keys"),
-                "x-trustedrouter-key-log-status": "degraded" if degraded else "live",
-            },
+            {**semantic_payload, "generated_at": iso_now()},
+            headers=headers,
         )
 
     @app.get("/trust/gcp-release.json")

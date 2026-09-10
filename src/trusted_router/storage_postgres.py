@@ -739,7 +739,12 @@ class PostgresStore:
     def _read_entity(self, kind: str, entity_id: str, cls: type[T]) -> T | None:
         return self._run_transaction(lambda conn: self._read_entity_tx(conn, kind, entity_id, cls))
 
-    def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
+    def observe_receipt_key(
+        self,
+        record: ReceiptKey,
+        *,
+        refresh_last_seen: bool = True,
+    ) -> ReceiptKeyWriteOutcome:
         same_kid = self.list_receipt_keys(limit=1, kid=record.kid)
         if same_kid and receipt_key_kid_collides(same_kid[0], record):
             return "conflict"
@@ -768,7 +773,11 @@ class PostgresStore:
                 ReceiptKey,
                 for_update=True,
             )
-            candidate, outcome = merge_receipt_key_observation(existing, validated)
+            candidate, outcome = merge_receipt_key_observation(
+                existing,
+                validated,
+                refresh_last_seen=refresh_last_seen,
+            )
             if candidate is None or outcome in {"conflict", "invalid"}:
                 return outcome
             if existing is None:
@@ -785,7 +794,11 @@ class PostgresStore:
                 )
                 if existing is None:  # pragma: no cover - database invariant
                     raise StoreConflict("receipt key insert conflict lost its row")
-                candidate, outcome = merge_receipt_key_observation(existing, validated)
+                candidate, outcome = merge_receipt_key_observation(
+                    existing,
+                    validated,
+                    refresh_last_seen=refresh_last_seen,
+                )
             if candidate is not None and outcome == "refreshed":
                 self._write_receipt_key_tx(conn, entity_id, candidate)
             return outcome
@@ -798,10 +811,26 @@ class PostgresStore:
         limit: int = 5_000,
         kid: str | None = None,
     ) -> list[ReceiptKey]:
-        rows = self._list_entities(
-            RECEIPT_KEY_KIND,
-            ReceiptKey,
-        )
+        bounded = max(0, min(limit, 10_000))
+
+        def operation(conn: Any) -> list[ReceiptKey]:
+            query = "SELECT body FROM tr_entities WHERE kind = %s"
+            params: list[Any] = [RECEIPT_KEY_KIND]
+            if kid is not None:
+                # The id predicate retains a pre-migration row whose projected
+                # kid is NULL.  All values remain bound parameters.
+                query += " AND (kid = %s OR (kid IS NULL AND id = %s))"
+                params.extend((kid, kid))
+            query += " ORDER BY updated_at DESC, id DESC LIMIT %s"
+            params.append(bounded)
+            result: list[ReceiptKey] = []
+            for (raw,) in conn.execute(query, tuple(params)).fetchall():
+                data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                known = {field.name for field in dataclasses.fields(ReceiptKey)}
+                result.append(ReceiptKey(**{key: value for key, value in data.items() if key in known}))
+            return result
+
+        rows = self._run_transaction(operation)
         versions: dict[tuple[str, str], ReceiptKey] = {}
         for row in rows:
             row = with_receipt_attestation_sha256(row)

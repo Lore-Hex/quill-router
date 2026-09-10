@@ -44,9 +44,11 @@ rewrites that legacy row under its `(kid, att_sha256)` identity. The additive
 database migration must keep `att_sha256` nullable while those rows remain and
 add a non-unique index on `(kid, att_sha256)`. For Postgres-family deployments,
 apply the equivalent nullable column and index in the deployment-owned schema.
-GCP uses `scripts/deploy/migrate_receipt_key_versions.sh`; it is safe to run
-before or after the compatible router because the runtime remains read-compatible
-with rows lacking the column projection.
+GCP uses `scripts/deploy/migrate_receipt_key_versions.sh`. Apply that DDL before
+starting this router revision: its receipt-key writer names the physical `kid`
+and `att_sha256` columns, so collection fails until they exist. The migration is
+safe to re-run, and readers remain compatible with legacy rows whose projections
+are null.
 
 ## 2026-09-10 version-retention defect and rollout order
 

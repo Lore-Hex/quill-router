@@ -55,6 +55,18 @@ def b64url_decode(value: str) -> bytes:
         raise ValueError("invalid base64url value") from exc
 
 
+def is_canonical_receipt_kid(value: str) -> bool:
+    """Return whether value is the canonical unpadded encoding of 32 bytes."""
+
+    if len(value) != 43:
+        return False
+    try:
+        decoded = b64url_decode(value)
+    except ValueError:
+        return False
+    return len(decoded) == 32 and b64url_encode(decoded) == value
+
+
 def normalize_receipt_jwk(jwk: Mapping[str, Any]) -> dict[str, str]:
     normalized = {
         "kty": jwk.get("kty"),
@@ -280,6 +292,8 @@ def validate_receipt_key_observation(record: ReceiptKey) -> ReceiptKey:
 def merge_receipt_key_observation(
     existing: ReceiptKey | None,
     observed: ReceiptKey,
+    *,
+    refresh_last_seen: bool = True,
 ) -> tuple[ReceiptKey | None, ReceiptKeyWriteOutcome]:
     """Apply the only state transition allowed for one receipt document."""
 
@@ -334,7 +348,11 @@ def merge_receipt_key_observation(
         dataclasses.replace(
             existing,
             jwk=existing_jwk,
-            last_seen=max(existing.last_seen, observed.last_seen),
+            last_seen=(
+                max(existing.last_seen, observed.last_seen)
+                if refresh_last_seen
+                else existing.last_seen
+            ),
             verified=existing.verified or observed.verified,
         ),
         "refreshed",
@@ -387,6 +405,7 @@ def verify_gcp_attestation_chain(
     *,
     now: float | None = None,
     jwks: Mapping[str, Any] | None = None,
+    allow_expired: bool = False,
 ) -> None:
     """Verify the minimal GCP Confidential Space JWT trust chain."""
 
@@ -429,7 +448,7 @@ def verify_gcp_attestation_chain(
     issued_at = payload.get("iat")
     if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)):
         raise ValueError("GCP attestation JWT has no numeric exp")
-    if current > float(expires_at) + GCP_CLOCK_SKEW_SECONDS:
+    if not allow_expired and current > float(expires_at) + GCP_CLOCK_SKEW_SECONDS:
         raise ValueError("GCP attestation JWT is expired")
     for claim_name, claim_value in (("nbf", not_before), ("iat", issued_at)):
         if claim_value is not None and (
