@@ -291,7 +291,7 @@ def test_stage_d_eligibility_kill_switch_declares_nothing_eligible() -> None:
         '"TR_STAGE_D_HEARTBEAT_ENABLED=true"',
         '"TR_STAGE_D_PILOT_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d,91d7810e-93b2-4c37-b1bd-ba9227585416"',
         '"TR_SPEND_LEASE_ACCEPTED_GCP_IMAGE_DIGESTS="',
-        '"TR_REAP_SNAPSHOT_BOOKING_ENABLED=false"',
+        '"TR_REAP_SNAPSHOT_BOOKING_ENABLED=true"',
     ):
         assert literal in rollout
     reason = _stage_d_eligibility_reason(

@@ -689,9 +689,11 @@ ENV_VARS=(
   # Flipped 2026-07-04 with Joseph's authorization. Remove to revert — the
   # flag-off settle path is byte-identical.
   "TR_SETTLE_OUTBOX_ENABLED=true"
-  # Stage D decision 70 is an explicit billing-policy switch. Keep snapshot
-  # booking dark until Joseph approves the dedicated rollout step.
-  "TR_REAP_SNAPSHOT_BOOKING_ENABLED=false"
+  # Stage D decision 70 books snapshot usage of reaped authorizations instead
+  # of discarding it. This waited for the usage heartbeat in all three GCP
+  # regions: live as of 2026-09-09 21:35Z (proxy #317 + #325), heartbeat_seq = 1
+  # proven in us-central1, europe-west4 and us-east4. Rollback: edit true to false.
+  "TR_REAP_SNAPSHOT_BOOKING_ENABLED=true"
   # Provider benchmark events use their own best-effort durable queue. Tenant
   # activity is different: its operational outbox insert is part of the typed
   # settlement transaction, so a charge and its delivery intent cannot split.
