@@ -13,7 +13,8 @@ GET /trust/receipt-keys.json
 ```
 
 The two routes mirror the same view. Without a query parameter they return every
-observed attestation version ordered by immutable `(kid, att_sha256)`, in pages
+observed attestation version. Projected versions are ordered by immutable `(kid, att_sha256)`
+first and transitional legacy rows are ordered by immutable id second, in pages
 of at most 250 versions and at most 1 MiB. Follow `next_cursor` by passing it as
 `?cursor=<next_cursor>` until it is null. Each row is identified by
 `(kid, att_sha256)` and contains its

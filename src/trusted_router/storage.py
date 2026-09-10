@@ -348,9 +348,32 @@ class InMemoryStore:
         limit: int = 5_000,
         kid: str | None = None,
         after: tuple[str, str] | None = None,
+        phase: str | None = None,
+        legacy_after: str | None = None,
     ) -> list[ReceiptKey]:
         bounded = max(0, min(limit, 10_000))
         with self._lock:
+            if phase == "v":
+                rows = [
+                    with_receipt_attestation_sha256(row)
+                    for entity_id, row in self.receipt_keys.items()
+                    if entity_id != row.kid
+                ]
+                if after is not None:
+                    rows = [row for row in rows if (row.kid, row.att_sha256) > after]
+                rows.sort(key=lambda row: (row.kid, row.att_sha256))
+                return rows[:bounded]
+            if phase == "l":
+                legacy_rows = [
+                    (entity_id, with_receipt_attestation_sha256(row))
+                    for entity_id, row in self.receipt_keys.items()
+                    if entity_id == row.kid
+                    and (legacy_after is None or entity_id > legacy_after)
+                ]
+                legacy_rows.sort(key=lambda item: item[0])
+                return [row for _, row in legacy_rows[:bounded]]
+            if phase is not None:
+                raise ValueError(f"unknown receipt-key pagination phase: {phase!r}")
             backfilled: dict[str, ReceiptKey] = {}
             for row in self.receipt_keys.values():
                 row = with_receipt_attestation_sha256(row)

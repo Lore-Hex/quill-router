@@ -1078,6 +1078,8 @@ class Store(Protocol):
         limit: int = ...,
         kid: str | None = ...,
         after: tuple[str, str] | None = ...,
+        phase: str | None = ...,
+        legacy_after: str | None = ...,
     ) -> list[ReceiptKey]: ...
 
     # Stage A spend-lease boot identity + monotonic grant generation --------

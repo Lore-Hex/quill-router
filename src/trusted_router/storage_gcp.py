@@ -7712,6 +7712,8 @@ class SpannerBigtableStore:
         limit: int = 5_000,
         kid: str | None = None,
         after: tuple[str, str] | None = None,
+        phase: str | None = None,
+        legacy_after: str | None = None,
     ) -> list[ReceiptKey]:
         bounded = max(0, min(limit, 10_000))
         params: dict[str, Any] = {"kind": RECEIPT_KEY_KIND, "limit": bounded}
@@ -7720,14 +7722,36 @@ class SpannerBigtableStore:
             "limit": self._param_types.INT64,
         }
         after_pair = after or ("", "")
-        params.update({"after_kid": after_pair[0], "after_att_sha256": after_pair[1]})
-        param_types.update(
-            {
-                "after_kid": self._param_types.STRING,
-                "after_att_sha256": self._param_types.STRING,
-            }
-        )
-        if kid is not None:
+        if phase != "l":
+            params.update(
+                {"after_kid": after_pair[0], "after_att_sha256": after_pair[1]}
+            )
+            param_types.update(
+                {
+                    "after_kid": self._param_types.STRING,
+                    "after_att_sha256": self._param_types.STRING,
+                }
+            )
+        if phase == "v":
+            query = (
+                "SELECT body FROM "
+                "tr_entities@{FORCE_INDEX=tr_receipt_key_versions} "
+                "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL AND kind=@kind AND "
+                "(kid>@after_kid OR "
+                "(kid=@after_kid AND att_sha256>@after_att_sha256)) "
+                "ORDER BY kid, att_sha256 LIMIT @limit"
+            )
+        elif phase == "l":
+            params["legacy_after"] = legacy_after or ""
+            param_types["legacy_after"] = self._param_types.STRING
+            query = (
+                "SELECT body FROM tr_entities WHERE kind=@kind "
+                "AND id>@legacy_after AND (kid IS NULL OR att_sha256 IS NULL) "
+                "ORDER BY id LIMIT @limit"
+            )
+        elif phase is not None:
+            raise ValueError(f"unknown receipt-key pagination phase: {phase!r}")
+        elif kid is not None:
             params["kid"] = kid
             param_types["kid"] = self._param_types.STRING
             query = (
@@ -7765,7 +7789,12 @@ class SpannerBigtableStore:
                 rows.append(
                     ReceiptKey(**{key: value for key, value in data.items() if key in known})
                 )
-        return ordered_receipt_key_page(rows, limit=bounded, kid=kid, after=after)
+        return ordered_receipt_key_page(
+            rows,
+            limit=bounded,
+            kid=kid,
+            after=after if phase != "l" else None,
+        )
 
     def backfill_receipt_key_versions_page(
         self,

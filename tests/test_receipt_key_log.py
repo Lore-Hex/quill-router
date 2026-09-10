@@ -764,12 +764,15 @@ def test_durable_receipt_key_reads_filter_and_limit_in_the_database(
         "missing-kid",
         7,
     )
-    assert pg.list_receipt_keys(after=after, limit=7) == []
+    assert pg.list_receipt_keys(after=after, limit=7, phase="v") == []
     assert "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL" in pg_calls[1][0]
     assert "(kid, att_sha256) > (%s, %s)" in pg_calls[1][0]
-    assert "AND id >= %s" in pg_calls[1][0]
-    assert "ORDER BY id LIMIT %s" in pg_calls[1][0]
-    assert pg_calls[1][1] == ("receipt_key", *after, 7, "receipt_key", after[0], 7)
+    assert "legacy" not in pg_calls[1][0]
+    assert pg_calls[1][1] == ("receipt_key", *after, 7)
+    assert pg.list_receipt_keys(legacy_after=after[0], limit=7, phase="l") == []
+    assert "AND id > %s" in pg_calls[2][0]
+    assert "ORDER BY id LIMIT %s" in pg_calls[2][0]
+    assert pg_calls[2][1] == ("receipt_key", after[0], 7)
 
     spanner_calls: list[tuple[str, dict[str, object]]] = []
 
@@ -811,15 +814,24 @@ def test_durable_receipt_key_reads_filter_and_limit_in_the_database(
         "after_kid": "after-kid",
         "after_att_sha256": "after-hash",
     }
-    assert spanner.list_receipt_keys(after=after, limit=7) == []
+    assert spanner.list_receipt_keys(after=after, limit=7, phase="v") == []
     assert "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL" in spanner_calls[1][0]
-    assert "AND id>=@after_kid" in spanner_calls[1][0]
-    assert "ORDER BY id LIMIT @limit" in spanner_calls[1][0]
+    assert "legacy" not in spanner_calls[1][0]
     assert spanner_calls[1][1] == {
         "kind": "receipt_key",
         "limit": 7,
         "after_kid": "after-kid",
         "after_att_sha256": "after-hash",
+    }
+    assert (
+        spanner.list_receipt_keys(legacy_after=after[0], limit=7, phase="l") == []
+    )
+    assert "AND id>@legacy_after" in spanner_calls[2][0]
+    assert "ORDER BY id LIMIT @limit" in spanner_calls[2][0]
+    assert spanner_calls[2][1] == {
+        "kind": "receipt_key",
+        "limit": 7,
+        "legacy_after": "after-kid",
     }
 
 
@@ -887,6 +899,155 @@ def test_durable_receipt_key_reads_union_legacy_and_versioned_rows() -> None:
         assert store.list_receipt_keys(kid=legacy.kid) == expected
 
 
+def _two_phase_rows() -> tuple[list[tuple[str, ReceiptKey]], list[ReceiptKey]]:
+    legacy: list[tuple[str, ReceiptKey]] = []
+    for index in range(6):
+        kid = b64url_encode(index.to_bytes(32, "big"))
+        legacy.append(
+            (
+                kid,
+                ReceiptKey(
+                    kid=kid,
+                    jwk=_jwk(f"k{index:02d}".encode()),
+                    att=f"legacy-k{index:02d}",
+                    att_kind="gcp-cs-jwt",
+                    plane="api.example",
+                    first_seen="2026-08-26T00:00:00Z",
+                    last_seen="2026-08-26T00:01:00Z",
+                ),
+            )
+        )
+    versioned_kid = b64url_encode((6).to_bytes(32, "big"))
+    versioned_att = "versioned-k06"
+    versioned = [
+        ReceiptKey(
+            kid=versioned_kid,
+            jwk=_jwk(b"k06"),
+            att=versioned_att,
+            att_kind="gcp-cs-jwt",
+            plane="api.example",
+            first_seen="2026-08-26T00:00:00Z",
+            last_seen="2026-08-26T00:01:00Z",
+            att_sha256=receipt_attestation_sha256(versioned_att, "gcp-cs-jwt"),
+        )
+    ]
+    return legacy, versioned
+
+
+def _two_phase_store(backend: str):
+    legacy, versioned = _two_phase_rows()
+    if backend == "memory":
+        store = InMemoryStore()
+        store.receipt_keys = {
+            **{entity_id: row for entity_id, row in legacy},
+            **{
+                f"{row.kid}#{row.att_sha256}": row
+                for row in versioned
+            },
+        }
+        return store
+
+    def selected_rows(query: str, params: object) -> list[tuple[str]]:
+        if "tr_receipt_key_versions" in query or (
+            "att_sha256 IS NOT NULL" in query and "id >" not in query
+        ):
+            if isinstance(params, dict):
+                after = (str(params["after_kid"]), str(params["after_att_sha256"]))
+                limit = int(params["limit"])
+            else:
+                values = cast(tuple[object, ...], params)
+                after = (str(values[1]), str(values[2]))
+                limit = int(values[3])
+            rows = [row for row in versioned if (row.kid, row.att_sha256) > after]
+        else:
+            if isinstance(params, dict):
+                after_id = str(params["legacy_after"])
+                limit = int(params["limit"])
+                inclusive = "id>=@legacy_after" in query
+            else:
+                values = cast(tuple[object, ...], params)
+                after_id = str(values[1])
+                limit = int(values[2])
+                inclusive = "id >= %s" in query
+            rows = [
+                row
+                for entity_id, row in legacy
+                if (entity_id >= after_id if inclusive else entity_id > after_id)
+            ]
+        return [(json.dumps(dataclasses.asdict(row)),) for row in rows[:limit]]
+
+    if backend == "postgres":
+        class PgCursor:
+            def __init__(self, rows: list[tuple[str]]) -> None:
+                self._rows = rows
+
+            def fetchall(self) -> list[tuple[str]]:
+                return self._rows
+
+        class PgConn:
+            def execute(self, query: str, params: tuple[object, ...]) -> PgCursor:
+                return PgCursor(selected_rows(query, params))
+
+        store = PostgresStore.__new__(PostgresStore)
+        store._run_transaction = lambda operation: operation(PgConn())  # type: ignore[method-assign]
+        return store
+
+    class Snapshot:
+        def execute_sql(self, query: str, *, params, param_types) -> list[tuple[str]]:
+            del param_types
+            return selected_rows(query, params)
+
+    class Database:
+        @contextmanager
+        def snapshot(self):
+            yield Snapshot()
+
+    store = SpannerBigtableStore.__new__(SpannerBigtableStore)
+    store._database = Database()
+    store._param_types = SimpleNamespace(STRING="STRING", INT64="INT64")
+    return store
+
+
+@pytest.mark.parametrize("backend", ["memory", "postgres", "spanner"])
+def test_two_phase_pages_visit_legacy_rows_once_after_versioned(backend: str) -> None:
+    legacy, versioned = _two_phase_rows()
+    configure_store(_two_phase_store(backend))
+    cursor = None
+    seen: list[str] = []
+    page_cursors: list[str] = []
+    while True:
+        rows, cursors = public_routes._unfiltered_receipt_key_page(  # noqa: SLF001
+            limit=3,
+            after=cursor,
+        )
+        seen.extend(row.kid for row in rows)
+        if len(rows) < 3:
+            break
+        page_cursors.append(cursors[-1])
+        cursor = public_routes._parse_unfiltered_receipt_key_cursor(  # noqa: SLF001
+            cursors[-1]
+        )
+        assert cursor is not None
+
+    assert seen == [versioned[0].kid, *(entity_id for entity_id, _ in legacy)]
+    assert len(seen) == len(set(seen)) == 7
+    assert page_cursors[0] == f"l.{legacy[1][0]}"
+
+
+@pytest.mark.parametrize("backend", ["memory", "postgres", "spanner"])
+def test_legacy_phase_cursor_is_strict_on_every_store(backend: str) -> None:
+    legacy, _ = _two_phase_rows()
+    configure_store(_two_phase_store(backend))
+    cursor = public_routes._UnfilteredReceiptKeyCursor("l", legacy[2][0])  # noqa: SLF001
+
+    rows, _ = public_routes._unfiltered_receipt_key_page(  # noqa: SLF001
+        limit=3,
+        after=cursor,
+    )
+
+    assert [row.kid for row in rows] == [entity_id for entity_id, _ in legacy[3:6]]
+
+
 def test_public_routes_list_versions_with_hash_and_filter_by_kid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -927,7 +1088,11 @@ def test_public_routes_list_versions_with_hash_and_filter_by_kid(
     store = InMemoryStore()
     configure_store(store)
 
-    def list_records(_self, *, limit: int, kid: str | None = None):
+    def list_records(
+        _self, *, limit: int, kid: str | None = None, phase: str | None = None, **_kwargs
+    ):
+        if phase == "l":
+            return []
         selected = [record for record in records if kid is None or record.kid == kid]
         return selected[:limit]
 
@@ -1075,8 +1240,12 @@ def test_unfiltered_five_thousand_key_response_obeys_byte_ceiling(
     records = _public_records(5_000, attestation_bytes=8 * 1024)
     configure_store(InMemoryStore())
 
-    def list_records(_self, *, limit: int, kid: str | None = None):
+    def list_records(
+        _self, *, limit: int, kid: str | None = None, phase: str | None = None, **_kwargs
+    ):
         assert kid is None
+        if phase == "l":
+            return []
         return records[:limit]
 
     monkeypatch.setattr(InMemoryStore, "list_receipt_keys", list_records)
@@ -1108,8 +1277,12 @@ def test_degraded_receipt_key_cache_only_serves_requests_without_cursor(
         limit: int,
         kid: str | None = None,
         after: tuple[str, str] | None = None,
+        phase: str | None = None,
+        **_kwargs,
     ):
         assert kid is None
+        if phase == "l":
+            return []
         return records[:limit] if after is None else records[limit:]
 
     monkeypatch.setattr(InMemoryStore, "list_receipt_keys", list_records)
@@ -1198,6 +1371,11 @@ def test_malformed_or_kid_mismatched_cursor_is_rejected_before_the_store(monkeyp
     for malformed in ("short", f"{_kid(_jwk())}=", "!" * 43):
         response = client.get("/trust/receipt-keys.json", params={"cursor": malformed})
         assert response.status_code == 400, malformed
+    response = client.get(
+        "/trust/receipt-keys.json",
+        params={"cursor": "l.not-a-canonical-kid"},
+    )
+    assert response.status_code == 400
     good_part = _kid(_jwk())
     good = f"{good_part}.{good_part}"
     response = client.get(

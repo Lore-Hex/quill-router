@@ -432,6 +432,65 @@ def _parse_receipt_key_cursor(value: str) -> tuple[str, str] | None:
     return parts[0], parts[1]
 
 
+@dataclass(frozen=True)
+class _UnfilteredReceiptKeyCursor:
+    phase: str
+    kid: str
+    att_sha256: str = ""
+
+
+def _parse_unfiltered_receipt_key_cursor(
+    value: str,
+) -> _UnfilteredReceiptKeyCursor | None:
+    parts = value.split(".")
+    if (
+        len(parts) == 3
+        and parts[0] == "v"
+        and is_canonical_receipt_kid(parts[1])
+        and is_canonical_receipt_kid(parts[2])
+    ):
+        return _UnfilteredReceiptKeyCursor("v", parts[1], parts[2])
+    if len(parts) == 2 and parts[0] == "l" and is_canonical_receipt_kid(parts[1]):
+        return _UnfilteredReceiptKeyCursor("l", parts[1])
+    return None
+
+
+def _unfiltered_receipt_key_page(
+    *,
+    limit: int,
+    after: _UnfilteredReceiptKeyCursor | None,
+) -> tuple[list[ReceiptKey], list[str]]:
+    """Read projected versions first, then legacy ids, without mixing cursors."""
+
+    records: list[ReceiptKey] = []
+    cursors: list[str] = []
+    if after is None or after.phase == "v":
+        version_after = None if after is None else (after.kid, after.att_sha256)
+        versioned = [
+            with_receipt_attestation_sha256(record)
+            for record in STORE.list_receipt_keys(
+                limit=limit,
+                after=version_after,
+                phase="v",
+            )
+        ]
+        records.extend(versioned)
+        cursors.extend(f"v.{record.kid}.{record.att_sha256}" for record in versioned)
+    if len(records) < limit:
+        legacy_after = after.kid if after is not None and after.phase == "l" else None
+        legacy = [
+            with_receipt_attestation_sha256(record)
+            for record in STORE.list_receipt_keys(
+                limit=limit - len(records),
+                phase="l",
+                legacy_after=legacy_after,
+            )
+        ]
+        records.extend(legacy)
+        cursors.extend(f"l.{record.kid}" for record in legacy)
+    return records, cursors
+
+
 def _inquiry_rate_ok(client_ip: str, *, now: float | None = None) -> bool:
     now = time.time() if now is None else now
     cutoff = now - _INQUIRY_WINDOW_SECONDS
@@ -2124,34 +2183,56 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         nonlocal receipt_key_global_cache
         if kid is not None and not is_canonical_receipt_kid(kid):
             raise HTTPException(status_code=400, detail="kid must be canonical base64url")
-        after = _parse_receipt_key_cursor(cursor) if cursor is not None else None
-        if cursor is not None and after is None:
+        filtered_after = (
+            _parse_receipt_key_cursor(cursor)
+            if cursor is not None and kid is not None
+            else None
+        )
+        unfiltered_after = (
+            _parse_unfiltered_receipt_key_cursor(cursor)
+            if cursor is not None and kid is None
+            else None
+        )
+        if cursor is not None and filtered_after is None and unfiltered_after is None:
             raise HTTPException(status_code=400, detail="cursor is invalid")
-        if kid is not None and after is not None and after[0] != kid:
+        if kid is not None and filtered_after is not None and filtered_after[0] != kid:
             raise HTTPException(status_code=400, detail="cursor does not match kid")
+        cursors: list[str] = []
         degraded = False
         try:
-            list_kwargs: dict[str, Any] = {
-                "limit": _RECEIPT_KEY_PUBLIC_PAGE_SIZE,
-                "kid": kid,
-            }
-            if after is not None:
-                list_kwargs["after"] = after
-            records = await asyncio.wait_for(
-                run_in_threadpool(
-                    STORE.list_receipt_keys,
-                    **list_kwargs,
-                ),
-                timeout=3.0,
-            )
+            if kid is None:
+                records, cursors = await asyncio.wait_for(
+                    run_in_threadpool(
+                        _unfiltered_receipt_key_page,
+                        limit=_RECEIPT_KEY_PUBLIC_PAGE_SIZE,
+                        after=unfiltered_after,
+                    ),
+                    timeout=3.0,
+                )
+            else:
+                list_kwargs: dict[str, Any] = {
+                    "limit": _RECEIPT_KEY_PUBLIC_PAGE_SIZE,
+                    "kid": kid,
+                }
+                if filtered_after is not None:
+                    list_kwargs["after"] = filtered_after
+                records = await asyncio.wait_for(
+                    run_in_threadpool(
+                        STORE.list_receipt_keys,
+                        **list_kwargs,
+                    ),
+                    timeout=3.0,
+                )
             records = [with_receipt_attestation_sha256(record) for record in records]
-            if after is None:
+            if kid is not None:
+                cursors = [_receipt_key_cursor(record) for record in records]
+            if cursor is None:
                 if kid is None:
                     receipt_key_global_cache = records
                 else:
                     _remember_receipt_key_records(receipt_key_cache, kid, records)
         except Exception:
-            if after is not None:
+            if cursor is not None:
                 log.exception("receipt_key_log_read_degraded_cursor_unavailable")
                 raise HTTPException(
                     status_code=503,
@@ -2164,6 +2245,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 if kid is None
                 else receipt_key_cache.get(kid, [])
             )
+            cursors = [
+                (
+                    f"v.{record.kid}.{record.att_sha256}"
+                    if kid is None
+                    else _receipt_key_cursor(record)
+                )
+                for record in records
+            ]
             log.exception("receipt_key_log_read_degraded_serving_cached")
         generated_at = iso_now()
         keys: list[dict[str, Any]] = []
@@ -2177,7 +2266,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 "spec": "inference-receipt/1",
                 "degraded": degraded,
                 "page_size": _RECEIPT_KEY_PUBLIC_PAGE_SIZE,
-                "next_cursor": _receipt_key_cursor(record) if has_more else None,
+                "next_cursor": cursors[index] if has_more else None,
                 "keys": keys,
                 "generated_at": generated_at,
             }
@@ -2195,7 +2284,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             "degraded": degraded,
             "page_size": _RECEIPT_KEY_PUBLIC_PAGE_SIZE,
             "next_cursor": (
-                f"{keys[-1]['kid']}.{keys[-1]['att_sha256']}" if keys and has_more else None
+                cursors[len(keys) - 1] if keys and has_more else None
             ),
             "keys": keys,
         }

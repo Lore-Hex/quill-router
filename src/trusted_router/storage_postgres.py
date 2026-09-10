@@ -827,13 +827,32 @@ class PostgresStore:
         limit: int = 5_000,
         kid: str | None = None,
         after: tuple[str, str] | None = None,
+        phase: str | None = None,
+        legacy_after: str | None = None,
     ) -> list[ReceiptKey]:
         bounded = max(0, min(limit, 10_000))
 
         def operation(conn: Any) -> list[ReceiptKey]:
             after_pair = after or ("", "")
             params: tuple[Any, ...]
-            if kid is None:
+            if phase == "v":
+                query = (
+                    "SELECT body FROM tr_entities WHERE kid IS NOT NULL "
+                    "AND att_sha256 IS NOT NULL AND kind = %s "
+                    "AND (kid, att_sha256) > (%s, %s) "
+                    "ORDER BY kid, att_sha256 LIMIT %s"
+                )
+                params = (RECEIPT_KEY_KIND, *after_pair, bounded)
+            elif phase == "l":
+                query = (
+                    "SELECT body FROM tr_entities WHERE kind = %s "
+                    "AND (kid IS NULL OR att_sha256 IS NULL) AND id > %s "
+                    "ORDER BY id LIMIT %s"
+                )
+                params = (RECEIPT_KEY_KIND, legacy_after or "", bounded)
+            elif phase is not None:
+                raise ValueError(f"unknown receipt-key pagination phase: {phase!r}")
+            elif kid is None:
                 query = (
                     "WITH versioned AS (SELECT body FROM tr_entities "
                     "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL AND kind = %s "
@@ -885,7 +904,7 @@ class PostgresStore:
             self._run_transaction(operation),
             limit=bounded,
             kid=kid,
-            after=after,
+            after=after if phase != "l" else None,
         )
 
     def backfill_receipt_key_versions_page(

@@ -137,7 +137,7 @@ const claims = await verifyReceipt(compactReceipt, {
       <tbody>
         <tr><td><code>GET /receipt-attestation</code></td><td>This instance's raw key-binding attestation document</td></tr>
         <tr><td><code>GET /receipt-key</code></td><td>This instance's current <code>{kid, jwk, att, att_kind, att_sha256, att_history}</code> envelope — match a compact receipt's <code>kid</code> and pinned attestation hash</td></tr>
-        <tr><td><code>GET /.well-known/inference-receipt-keys</code></td><td>Every observed attestation version ordered by immutable <code>(kid, att_sha256)</code>, in pages of at most 250 versions and capped at 1 MiB per response; follow <code>next_cursor</code> with <code>?cursor=…</code></td></tr>
+        <tr><td><code>GET /.well-known/inference-receipt-keys</code></td><td>Every observed attestation version, with projected versions ordered by immutable <code>(kid, att_sha256)</code> first and transitional legacy rows ordered by immutable entity id second, in pages of at most 250 versions and capped at 1 MiB per response; follow <code>next_cursor</code> with <code>?cursor=…</code></td></tr>
         <tr><td><code>GET /.well-known/inference-receipt-keys?kid=&lt;kid&gt;</code></td><td>Every retained attestation version for exactly one signing key, with the same page and byte ceilings; follow <code>next_cursor</code> with both <code>?kid=…&amp;cursor=…</code></td></tr>
       </tbody>
     </table>
