@@ -745,17 +745,31 @@ def test_durable_receipt_key_reads_filter_and_limit_in_the_database(
 
     after = ("after-kid", "after-hash")
     assert pg.list_receipt_keys(kid="missing-kid", after=after, limit=7) == []
+    assert "WITH versioned AS" in pg_calls[0][0]
     assert "WHERE kid = %s AND kid IS NOT NULL" in pg_calls[0][0]
     assert "att_sha256 IS NOT NULL AND kind = %s" in pg_calls[0][0]
     assert "(kid, att_sha256) > (%s, %s)" in pg_calls[0][0]
     assert "ORDER BY kid, att_sha256" in pg_calls[0][0]
     assert "LIMIT %s" in pg_calls[0][0]
-    assert pg_calls[0][1] == ("missing-kid", "receipt_key", *after, 7)
+    assert "legacy AS" in pg_calls[0][0]
+    assert "kind = %s AND id = %s" in pg_calls[0][0]
+    assert "kid IS NULL OR att_sha256 IS NULL" in pg_calls[0][0]
+    assert "UNION ALL" in pg_calls[0][0]
+    assert pg_calls[0][1] == (
+        "missing-kid",
+        "receipt_key",
+        *after,
+        7,
+        "receipt_key",
+        "missing-kid",
+        7,
+    )
     assert pg.list_receipt_keys(after=after, limit=7) == []
     assert "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL" in pg_calls[1][0]
     assert "(kid, att_sha256) > (%s, %s)" in pg_calls[1][0]
-    assert "ORDER BY kid, att_sha256 LIMIT %s" in pg_calls[1][0]
-    assert pg_calls[1][1] == ("receipt_key", *after, 7)
+    assert "AND id >= %s" in pg_calls[1][0]
+    assert "ORDER BY id LIMIT %s" in pg_calls[1][0]
+    assert pg_calls[1][1] == ("receipt_key", *after, 7, "receipt_key", after[0], 7)
 
     spanner_calls: list[tuple[str, dict[str, object]]] = []
 
@@ -786,6 +800,10 @@ def test_durable_receipt_key_reads_filter_and_limit_in_the_database(
     )
     assert "ORDER BY kid, att_sha256" in spanner_calls[0][0]
     assert "LIMIT @limit" in spanner_calls[0][0]
+    assert "legacy AS" in spanner_calls[0][0]
+    assert "kind=@kind AND id=@kid" in spanner_calls[0][0]
+    assert "kid IS NULL OR att_sha256 IS NULL" in spanner_calls[0][0]
+    assert "UNION ALL" in spanner_calls[0][0]
     assert spanner_calls[0][1] == {
         "kind": "receipt_key",
         "kid": "missing-kid",
@@ -795,13 +813,78 @@ def test_durable_receipt_key_reads_filter_and_limit_in_the_database(
     }
     assert spanner.list_receipt_keys(after=after, limit=7) == []
     assert "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL" in spanner_calls[1][0]
-    assert "ORDER BY kid, att_sha256 LIMIT @limit" in spanner_calls[1][0]
+    assert "AND id>=@after_kid" in spanner_calls[1][0]
+    assert "ORDER BY id LIMIT @limit" in spanner_calls[1][0]
     assert spanner_calls[1][1] == {
         "kind": "receipt_key",
         "limit": 7,
         "after_kid": "after-kid",
         "after_att_sha256": "after-hash",
     }
+
+
+def test_durable_receipt_key_reads_union_legacy_and_versioned_rows() -> None:
+    legacy_jwk = _jwk(b"legacy-durable-reader")
+    legacy = ReceiptKey(
+        kid=_kid(legacy_jwk),
+        jwk=legacy_jwk,
+        att="legacy-attestation",
+        att_kind="gcp-cs-jwt",
+        plane="api.example",
+        first_seen="2026-08-26T00:00:00Z",
+        last_seen="2026-08-26T00:01:00Z",
+    )
+    current = dataclasses.replace(
+        legacy,
+        att="versioned-attestation",
+        att_sha256=receipt_attestation_sha256(
+            "versioned-attestation", "gcp-cs-jwt"
+        ),
+    )
+    raw_rows = [
+        (json.dumps(dataclasses.asdict(current)),),
+        (json.dumps(dataclasses.asdict(legacy)),),
+    ]
+
+    class PgCursor:
+        def fetchall(self) -> list[tuple[str]]:
+            return raw_rows
+
+    class PgConn:
+        def execute(self, query: str, params: tuple[object, ...]) -> PgCursor:
+            assert "UNION ALL" in query
+            del params
+            return PgCursor()
+
+    pg = PostgresStore.__new__(PostgresStore)
+    pg._run_transaction = lambda operation: operation(PgConn())  # type: ignore[method-assign]
+
+    class Snapshot:
+        def execute_sql(self, query: str, *, params, param_types) -> list[tuple[str]]:
+            assert "UNION ALL" in query
+            del params, param_types
+            return raw_rows
+
+    class Database:
+        @contextmanager
+        def snapshot(self):
+            yield Snapshot()
+
+    spanner = SpannerBigtableStore.__new__(SpannerBigtableStore)
+    spanner._database = Database()
+    spanner._param_types = SimpleNamespace(STRING="STRING", INT64="INT64")
+
+    legacy_expected = dataclasses.replace(
+        legacy,
+        att_sha256=receipt_attestation_sha256(legacy.att, legacy.att_kind),
+    )
+    expected = sorted(
+        [legacy_expected, current],
+        key=lambda row: (row.kid, row.att_sha256),
+    )
+    for store in (pg, spanner):
+        assert store.list_receipt_keys() == expected
+        assert store.list_receipt_keys(kid=legacy.kid) == expected
 
 
 def test_public_routes_list_versions_with_hash_and_filter_by_kid(
@@ -1011,6 +1094,56 @@ def test_unfiltered_five_thousand_key_response_obeys_byte_ceiling(
     assert len(response.content) <= 1024 * 1024
     assert len(response.json()["keys"]) < 250
     assert response.json()["next_cursor"] is not None
+
+
+def test_degraded_receipt_key_cache_only_serves_requests_without_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = _public_records(251)
+    configure_store(InMemoryStore())
+
+    def list_records(
+        _self,
+        *,
+        limit: int,
+        kid: str | None = None,
+        after: tuple[str, str] | None = None,
+    ):
+        assert kid is None
+        return records[:limit] if after is None else records[limit:]
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", list_records)
+    client = TestClient(
+        create_app(
+            Settings(environment="test"),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+    first = client.get("/trust/receipt-keys.json")
+    cursor = first.json()["next_cursor"]
+    assert first.status_code == 200
+    assert cursor is not None
+    second = client.get("/trust/receipt-keys.json", params={"cursor": cursor})
+    assert second.status_code == 200
+    assert len(second.json()["keys"]) == 1
+
+    def unavailable(_self, **_kwargs):
+        raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", unavailable)
+    degraded_first = client.get("/trust/receipt-keys.json")
+    assert degraded_first.status_code == 200
+    assert degraded_first.headers["x-trustedrouter-key-log-status"] == "degraded"
+    assert degraded_first.json()["degraded"] is True
+    assert degraded_first.json()["keys"] == first.json()["keys"]
+
+    degraded_later = client.get(
+        "/trust/receipt-keys.json",
+        params={"cursor": cursor},
+    )
+    assert degraded_later.status_code == 503
+    assert degraded_later.headers["x-trustedrouter-key-log-status"] == "degraded"
 
 
 def test_public_route_rejects_noncanonical_kids_before_storage(

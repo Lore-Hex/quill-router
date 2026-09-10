@@ -44,17 +44,19 @@ replaces stored key material.
 
 ## Storage migration
 
-Legacy receipt-key rows have no `att_sha256`. Readers compute the b64url-unpadded
-SHA-256 from the raw decoded attestation document, and the next observation
+Legacy receipt-key rows have no `kid` or `att_sha256` projection columns.
+Readers union those rows with projected versions and compute the b64url-unpadded
+SHA-256 from the raw decoded attestation document. The next observation still
 rewrites that legacy row under its `(kid, att_sha256)` identity. The additive
 database migration must keep `att_sha256` nullable while those rows remain and
 add a non-unique index on `(kid, att_sha256)`. For Postgres-family deployments,
 apply the equivalent nullable column and index in the deployment-owned schema.
-GCP uses `scripts/deploy/migrate_receipt_key_versions.sh`. Apply that DDL before
-starting this router revision: its receipt-key writer names the physical `kid`
-and `att_sha256` columns, so collection fails until they exist. The migration is
-safe to re-run, and readers remain compatible with legacy rows whose projections
-are null.
+GCP uses `scripts/deploy/migrate_receipt_key_versions.sh`, followed by the
+bounded, resumable `trusted_router.receipt_key_backfill_cli` command. Apply that DDL and
+backfill before starting this router revision: its receipt-key writer names the physical `kid`
+and `att_sha256` columns, so collection fails until they exist. Both steps are safe to re-run,
+and readers remain compatible with legacy rows whose projections are null while the backfill
+is still running.
 
 ## 2026-09-10 version-retention defect and rollout order
 

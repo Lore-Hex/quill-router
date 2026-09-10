@@ -2145,11 +2145,19 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 timeout=3.0,
             )
             records = [with_receipt_attestation_sha256(record) for record in records]
-            if kid is None:
-                receipt_key_global_cache = records
-            else:
-                _remember_receipt_key_records(receipt_key_cache, kid, records)
+            if after is None:
+                if kid is None:
+                    receipt_key_global_cache = records
+                else:
+                    _remember_receipt_key_records(receipt_key_cache, kid, records)
         except Exception:
+            if after is not None:
+                log.exception("receipt_key_log_read_degraded_cursor_unavailable")
+                raise HTTPException(
+                    status_code=503,
+                    detail="receipt-key log pagination is temporarily unavailable",
+                    headers={"x-trustedrouter-key-log-status": "degraded"},
+                ) from None
             degraded = True
             records = (
                 receipt_key_global_cache or []

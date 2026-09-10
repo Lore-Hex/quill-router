@@ -42,6 +42,7 @@ from trusted_router.receipt_keys import (
     RECEIPT_KEY_KIND,
     ReceiptKeyWriteOutcome,
     merge_receipt_key_observation,
+    ordered_receipt_key_page,
     receipt_key_entity_id,
     receipt_key_kid_collides,
     with_receipt_attestation_sha256,
@@ -7730,21 +7731,30 @@ class SpannerBigtableStore:
             params["kid"] = kid
             param_types["kid"] = self._param_types.STRING
             query = (
-                "SELECT body FROM tr_entities@{FORCE_INDEX=tr_receipt_key_versions} "
+                "WITH versioned AS (SELECT body FROM "
+                "tr_entities@{FORCE_INDEX=tr_receipt_key_versions} "
                 "WHERE kid=@kid AND kid IS NOT NULL AND att_sha256 IS NOT NULL "
                 "AND kind=@kind AND (kid>@after_kid OR "
                 "(kid=@after_kid AND att_sha256>@after_att_sha256)) "
-                "ORDER BY kid, att_sha256 LIMIT @limit"
+                "ORDER BY kid, att_sha256 LIMIT @limit), "
+                "legacy AS (SELECT body FROM tr_entities WHERE kind=@kind AND id=@kid "
+                "AND (kid IS NULL OR att_sha256 IS NULL) LIMIT @limit) "
+                "SELECT body FROM versioned UNION ALL SELECT body FROM legacy"
             )
         else:
             # GoogleSQL structs have no ordering comparisons, so spell out the
             # same lexicographic tuple predicate that Postgres writes directly.
             query = (
-                "SELECT body FROM tr_entities@{FORCE_INDEX=tr_receipt_key_versions} "
+                "WITH versioned AS (SELECT body FROM "
+                "tr_entities@{FORCE_INDEX=tr_receipt_key_versions} "
                 "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL AND kind=@kind AND "
                 "(kid>@after_kid OR "
                 "(kid=@after_kid AND att_sha256>@after_att_sha256)) "
-                "ORDER BY kid, att_sha256 LIMIT @limit"
+                "ORDER BY kid, att_sha256 LIMIT @limit), "
+                "legacy AS (SELECT body FROM tr_entities WHERE kind=@kind "
+                "AND id>=@after_kid AND (kid IS NULL OR att_sha256 IS NULL) "
+                "ORDER BY id LIMIT @limit) "
+                "SELECT body FROM versioned UNION ALL SELECT body FROM legacy"
             )
         with self._database.snapshot() as snapshot:
             rows: list[ReceiptKey] = []
@@ -7755,7 +7765,45 @@ class SpannerBigtableStore:
                 rows.append(
                     ReceiptKey(**{key: value for key, value in data.items() if key in known})
                 )
-        return [with_receipt_attestation_sha256(row) for row in rows]
+        return ordered_receipt_key_page(rows, limit=bounded, kid=kid, after=after)
+
+    def backfill_receipt_key_versions_page(
+        self,
+        *,
+        after: str | None = None,
+        limit: int = 100,
+    ) -> list[str]:
+        """Populate one transactionally bounded page of legacy projections."""
+
+        bounded = max(1, min(limit, 1_000))
+
+        def txn(transaction: Any) -> list[str]:
+            rows = transaction.execute_sql(
+                "SELECT id, body FROM tr_entities WHERE kind=@kind AND id>@after "
+                "AND (kid IS NULL OR att_sha256 IS NULL) ORDER BY id LIMIT @limit",
+                params={
+                    "kind": RECEIPT_KEY_KIND,
+                    "after": after or "",
+                    "limit": bounded,
+                },
+                param_types={
+                    "kind": self._param_types.STRING,
+                    "after": self._param_types.STRING,
+                    "limit": self._param_types.INT64,
+                },
+            )
+            known = {field.name for field in dataclasses.fields(ReceiptKey)}
+            updated: list[str] = []
+            for entity_id, raw in rows:
+                data = json.loads(raw)
+                record = with_receipt_attestation_sha256(
+                    ReceiptKey(**{key: value for key, value in data.items() if key in known})
+                )
+                self._write_receipt_key_tx(transaction, str(entity_id), record)
+                updated.append(str(entity_id))
+            return updated
+
+        return cast(list[str], self._run_in_transaction(txn))
 
     def _write_receipt_key_tx(
         self,

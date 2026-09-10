@@ -9,7 +9,7 @@ import json
 import logging
 import threading
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -121,6 +121,35 @@ def with_receipt_attestation_sha256(record: ReceiptKey) -> ReceiptKey:
     if record.att_sha256 and record.att_sha256 != computed:
         raise ValueError("receipt attestation hash does not match document bytes")
     return dataclasses.replace(record, att_sha256=computed)
+
+
+def ordered_receipt_key_page(
+    records: Iterable[ReceiptKey],
+    *,
+    limit: int,
+    kid: str | None = None,
+    after: tuple[str, str] | None = None,
+) -> list[ReceiptKey]:
+    """Normalize and page a bounded union of projected and legacy rows.
+
+    Durable readers can order projected rows in their secondary index, but a
+    pre-migration row has no projected attestation hash.  Each query therefore
+    takes at most ``limit`` candidates from each representation; this helper
+    computes legacy hashes, reapplies the exact immutable cursor, and merges
+    the two bounded streams.
+    """
+
+    bounded = max(0, min(limit, 10_000))
+    normalized: dict[tuple[str, str], ReceiptKey] = {}
+    for record in records:
+        record = with_receipt_attestation_sha256(record)
+        identity = (record.kid, record.att_sha256)
+        if kid is not None and record.kid != kid:
+            continue
+        if after is not None and identity <= after:
+            continue
+        normalized.setdefault(identity, record)
+    return [normalized[identity] for identity in sorted(normalized)[:bounded]]
 
 
 def receipt_key_entity_id(kid: str, att_sha256: str) -> str:

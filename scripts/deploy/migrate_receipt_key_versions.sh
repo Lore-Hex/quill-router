@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Add nullable receipt-version projections to the generic entity table.
-# Existing JSON rows remain readable and are populated on their next observation.
+# Existing JSON rows remain readable; the deploy workflow backfills their
+# projections immediately after this DDL becomes readable.
 set -euo pipefail
 
 INSTANCE="${SPANNER_INSTANCE_ID:?set SPANNER_INSTANCE_ID}"

@@ -169,16 +169,19 @@ def test_receipt_version_index_ddl_is_exact_for_postgres_and_dsql() -> None:
 def test_deploy_applies_receipt_version_schema_before_router_rollout() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
     migrate = workflow.index("scripts/deploy/migrate_receipt_key_versions.sh")
+    backfill = workflow.index("python -m trusted_router.receipt_key_backfill_cli")
     deploy = workflow.index("\n  deploy:\n")
 
-    assert migrate < deploy
+    assert migrate < backfill < deploy
+    assert "TR_STORAGE_BACKEND: spanner-clickhouse" in workflow[migrate:backfill]
 
 
 def test_receipt_docs_require_ddl_before_the_new_writer() -> None:
     docs = (ROOT / "docs/client-receipts.md").read_text()
 
-    assert "Apply that DDL before\nstarting this router revision" in docs
+    assert "Apply that DDL and\nbackfill before starting this router revision" in docs
     assert "writer names the physical `kid`\nand `att_sha256` columns" in docs
+    assert "bounded, resumable `trusted_router.receipt_key_backfill_cli`" in docs
     assert "safe to run\nbefore or after the compatible router" not in docs
 
 

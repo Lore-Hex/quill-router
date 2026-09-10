@@ -54,6 +54,7 @@ from trusted_router.receipt_keys import (
     RECEIPT_KEY_KIND,
     ReceiptKeyWriteOutcome,
     merge_receipt_key_observation,
+    ordered_receipt_key_page,
     receipt_key_entity_id,
     receipt_key_kid_collides,
     with_receipt_attestation_sha256,
@@ -834,20 +835,43 @@ class PostgresStore:
             params: tuple[Any, ...]
             if kid is None:
                 query = (
-                    "SELECT body FROM tr_entities WHERE kid IS NOT NULL "
-                    "AND att_sha256 IS NOT NULL AND kind = %s "
+                    "WITH versioned AS (SELECT body FROM tr_entities "
+                    "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL AND kind = %s "
                     "AND (kid, att_sha256) > (%s, %s) "
-                    "ORDER BY kid, att_sha256 LIMIT %s"
+                    "ORDER BY kid, att_sha256 LIMIT %s), "
+                    "legacy AS (SELECT body FROM tr_entities WHERE kind = %s "
+                    "AND (kid IS NULL OR att_sha256 IS NULL) AND id >= %s "
+                    "ORDER BY id LIMIT %s) "
+                    "SELECT body FROM versioned UNION ALL SELECT body FROM legacy"
                 )
-                params = (RECEIPT_KEY_KIND, *after_pair, bounded)
+                params = (
+                    RECEIPT_KEY_KIND,
+                    *after_pair,
+                    bounded,
+                    RECEIPT_KEY_KIND,
+                    after_pair[0],
+                    bounded,
+                )
             else:
                 query = (
-                    "SELECT body FROM tr_entities WHERE kid = %s AND kid IS NOT NULL "
+                    "WITH versioned AS (SELECT body FROM tr_entities "
+                    "WHERE kid = %s AND kid IS NOT NULL "
                     "AND att_sha256 IS NOT NULL AND kind = %s "
                     "AND (kid, att_sha256) > (%s, %s) "
-                    "ORDER BY kid, att_sha256 LIMIT %s"
+                    "ORDER BY kid, att_sha256 LIMIT %s), "
+                    "legacy AS (SELECT body FROM tr_entities WHERE kind = %s AND id = %s "
+                    "AND (kid IS NULL OR att_sha256 IS NULL) LIMIT %s) "
+                    "SELECT body FROM versioned UNION ALL SELECT body FROM legacy"
                 )
-                params = (kid, RECEIPT_KEY_KIND, *after_pair, bounded)
+                params = (
+                    kid,
+                    RECEIPT_KEY_KIND,
+                    *after_pair,
+                    bounded,
+                    RECEIPT_KEY_KIND,
+                    kid,
+                    bounded,
+                )
             result: list[ReceiptKey] = []
             known = {field.name for field in dataclasses.fields(ReceiptKey)}
             for (raw,) in conn.execute(query, params).fetchall():
@@ -857,7 +881,41 @@ class PostgresStore:
                 )
             return result
 
-        return [with_receipt_attestation_sha256(row) for row in self._run_transaction(operation)]
+        return ordered_receipt_key_page(
+            self._run_transaction(operation),
+            limit=bounded,
+            kid=kid,
+            after=after,
+        )
+
+    def backfill_receipt_key_versions_page(
+        self,
+        *,
+        after: str | None = None,
+        limit: int = 100,
+    ) -> list[str]:
+        """Populate one transactionally bounded page of legacy projections."""
+
+        bounded = max(1, min(limit, 1_000))
+
+        def operation(conn: Any) -> list[str]:
+            rows = conn.execute(
+                "SELECT id, body FROM tr_entities WHERE kind = %s AND id > %s "
+                "AND (kid IS NULL OR att_sha256 IS NULL) ORDER BY id LIMIT %s FOR UPDATE",
+                (RECEIPT_KEY_KIND, after or "", bounded),
+            ).fetchall()
+            known = {field.name for field in dataclasses.fields(ReceiptKey)}
+            updated: list[str] = []
+            for entity_id, raw in rows:
+                data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                record = with_receipt_attestation_sha256(
+                    ReceiptKey(**{key: value for key, value in data.items() if key in known})
+                )
+                self._write_receipt_key_tx(conn, str(entity_id), record)
+                updated.append(str(entity_id))
+            return updated
+
+        return self._run_transaction(operation)
 
     def _write_receipt_key_tx(
         self,

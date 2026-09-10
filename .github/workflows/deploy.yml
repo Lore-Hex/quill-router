@@ -269,6 +269,13 @@ jobs:
           SPANNER_INSTANCE_ID: trusted-router-nam6
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/migrate_receipt_key_versions.sh
+      - name: Backfill legacy receipt attestation version projections
+        env:
+          TR_STORAGE_BACKEND: spanner-clickhouse
+          TR_GCP_PROJECT_ID: quill-cloud-proxy
+          TR_SPANNER_INSTANCE_ID: trusted-router-nam6
+          TR_SPANNER_DATABASE_ID: trusted-router
+        run: uv run python -m trusted_router.receipt_key_backfill_cli
       - name: Apply bounded generation-record schema
         run: scripts/deploy/migrate_generation_records.sh --apply
       - name: Apply provider analytics outbox schema
