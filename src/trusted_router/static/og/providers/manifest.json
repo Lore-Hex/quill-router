@@ -739,10 +739,10 @@
   },
   "tinfoil": {
     "card_version": 2,
-    "model_count": 8,
+    "model_count": 7,
     "name": "Tinfoil",
     "privacy": "E2EE + confidential",
-    "route_count": 16,
+    "route_count": 14,
     "route_mode": "Prepaid + BYOK",
     "slug": "tinfoil"
   },
