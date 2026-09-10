@@ -29,6 +29,7 @@ BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 TINFOIL_KIMI_K26_RETIREMENT_AT = datetime(2026, 8, 3, 0, 0, tzinfo=UTC)
 TINFOIL_GLM52_RETIREMENT_AT = datetime(2026, 9, 10, 0, 0, tzinfo=UTC)
 NEAR_AI_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 11, 13, 0, tzinfo=UTC)
+NEAR_AI_DEEPSEEK_V4_FLASH_RETIREMENT_AT = datetime(2026, 9, 17, 13, 0, tzinfo=UTC)
 PARASAIL_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
 FRIENDLI_QWEN3_235B_RETIREMENT_AT = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
 FRIENDLI_K_EXAONE_236B_RETIREMENT_AT = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
@@ -159,6 +160,15 @@ _RETIREMENTS = (
         model_ids=frozenset({"z-ai/glm-5.1", "z-ai/glm-5.2"}),
         upstream_ids=frozenset({"zai-org/GLM-5.1-FP8", "z-ai/glm-5.2"}),
         effective_at=NEAR_AI_SEPTEMBER_2026_RETIREMENT_AT,
+    ),
+    # NEAR's separate DeepSeek notice specifies September 17 at 13:00 UTC.
+    # Its GLM migration recommendation is not a same-model alias and cannot
+    # inherit the retired workload's attestation pins.
+    _Retirement(
+        provider="near-ai",
+        model_ids=frozenset({"deepseek/deepseek-v4-flash"}),
+        upstream_ids=frozenset({"deepseek-ai/DeepSeek-V4-Flash"}),
+        effective_at=NEAR_AI_DEEPSEEK_V4_FLASH_RETIREMENT_AT,
     ),
     # Xiaomi announced that the limited-beta MiMo V2.5 Pro UltraSpeed Model
     # API ends on 2026-09-08 in UTC+08. No exact hour or replacement was

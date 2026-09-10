@@ -17,6 +17,8 @@
       "status": 1,
       "id": "deepseek/deepseek-v4-flash",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Flash",
+      "retirement_at": "2026-09-17T13:00:00Z",
+      "replacement_model_id": "z-ai/glm-5.3-flash",
       "confidential_compute": true,
       "context_length": 1048576,
       "input_token_price_per_m": 170000,

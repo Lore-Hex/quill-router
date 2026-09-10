@@ -246,13 +246,14 @@ def test_near_ai_manifest_and_catalog_are_attested_prepaid_only() -> None:
 
 
 def test_near_ai_is_e2e_eligible_but_never_satisfies_zdr_or_deny() -> None:
+    model_id = "openai/gpt-oss-120b"
     e2e_ids = {model.id for model in e2e_candidate_models(limit=100)}
-    assert "deepseek/deepseek-v4-flash" in e2e_ids
+    assert model_id in e2e_ids
 
     settings = Settings(environment="test")
     e2e = chat_route_endpoint_candidates(
         {
-            "model": "deepseek/deepseek-v4-flash",
+            "model": model_id,
             "provider": {"only": ["near-ai"], "min_privacy": "e2e"},
         },
         settings,
@@ -265,7 +266,7 @@ def test_near_ai_is_e2e_eligible_but_never_satisfies_zdr_or_deny() -> None:
     ):
         with pytest.raises(HTTPException) as exc_info:
             chat_route_endpoint_candidates(
-                {"model": "deepseek/deepseek-v4-flash", "provider": provider_filter},
+                {"model": model_id, "provider": provider_filter},
                 settings,
             )
         assert getattr(exc_info.value, "status_code", None) == 400
@@ -279,7 +280,10 @@ def test_near_ai_hourly_refresh_secret_and_authority_wiring_are_complete() -> No
     url, env_names, normalize = discoverable["near-ai"]
     assert url == near_ai.CATALOG_URL
     assert env_names == ("NEAR_API_KEY",)
-    assert normalize("deepseek-ai/DeepSeek-V4-Flash") == "deepseek/deepseek-v4-flash"
+    expected = None if provider_lifecycle.provider_model_retired(
+        "near-ai", "deepseek/deepseek-v4-flash", at=CATALOG_CLOCK,
+    ) else "deepseek/deepseek-v4-flash"
+    assert normalize("deepseek-ai/DeepSeek-V4-Flash") == expected
     assert normalize("unreviewed/model") is None
     assert "near_ai" in PROVIDER_SLUGS
     assert "near-ai" in _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS
