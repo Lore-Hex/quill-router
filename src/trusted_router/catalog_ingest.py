@@ -683,6 +683,10 @@ def _author_provider(model_id: str, endpoints: list[dict[str, Any]]) -> str | No
     return None
 
 
+def _context_window(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
 def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelEndpoint]]:
     """Read the OpenRouter snapshot and return (models, endpoints) dicts.
     Pricing is run through `_customer_price_from_dollars_per_token` so the
@@ -753,23 +757,30 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
         # headline rate above).
         cheapest_tiers = next(t for p, _c, t, _s, _e in per_endpoint_prices if p == cheapest_prompt)
 
-        # Model-level context is advertised, so like the price above it must
-        # not lie. `max()` over every endpoint takes the most optimistic
-        # number any reseller published, and resellers get this wrong:
-        # z-ai/glm-5.3-flash carries 1310720 on six third-party endpoints
-        # while Z.AI's own endpoint -- and upstream's `top_provider` -- say
-        # 1048576. Prefer `top_provider`, which is upstream's canonical
-        # capability summary for the model, and fall back to the endpoints
-        # only when it is absent.
+        # Advertise a window the publisher serves (#966): resellers report
+        # 1310720 for z-ai/glm-5.3-flash, but Z.AI's own endpoint says 1048576.
+        # top_provider is a ranking, not a capability summary: on 2026-09-10
+        # glm-5.2 flapped to 202752 (Ambient) and 1024000 (StreamLake) while
+        # Z.AI still reported 1048576. Prefer the largest positive publisher
+        # endpoint window, then top_provider, then the historical max fallback.
+        context_length = max(
+            (
+                _context_window(ep.get("context_length"))
+                for ep in raw_endpoints
+                if ep.get("tr_provider_slug") == publisher
+            ),
+            default=0,
+        )
         top_provider = raw_model.get("top_provider")
         if not isinstance(top_provider, dict):
             top_provider = {}
-        context_length = int(top_provider.get("context_length") or 0)
+        if not context_length:
+            context_length = _context_window(top_provider.get("context_length"))
         if not context_length:
             ctx_candidates = [
-                int(raw_model.get("context_length") or 0),
+                _context_window(raw_model.get("context_length")),
                 *(
-                    int(ep.get("context_length") or 0)
+                    _context_window(ep.get("context_length"))
                     for _p, _c, _t, _s, ep in per_endpoint_prices
                 ),
             ]

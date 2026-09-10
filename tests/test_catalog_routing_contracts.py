@@ -2314,10 +2314,9 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     baseten = MODEL_ENDPOINTS["z-ai/glm-5.2@baseten/prepaid"]
 
     assert model.provider == "zai"
-    # catalog_ingest.py:767 prefers top_provider.context_length. OpenRouter on
-    # 2026-09-10 reports 1048576 model-level and 1000000 for top_provider;
-    # Z.ai says "1M" (https://docs.z.ai/guides/llm/glm-5.2). Accept both spellings.
-    assert model.context_length in {1_000_000, 1_048_576}
+    # The context window comes from Z.AI's own endpoint, independent of
+    # whichever reseller OpenRouter ranks as top_provider at refresh time.
+    assert model.context_length == 1_048_576
     assert model.supports_chat
     assert prepaid.upstream_id == "glm-5.2"
     assert byok.upstream_id == "glm-5.2"
@@ -2347,11 +2346,15 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
         assert gmi.completion_price_microdollars_per_million_tokens > 0
 
 
-@pytest.mark.parametrize("context_length", [131_072, 262_144])
-def test_glm_52_context_contract_rejects_smaller_windows(context_length: int) -> None:
+@pytest.mark.parametrize("context_length", [131_072, 262_144, 1_000_000])
+def test_glm_52_context_contract_rejects_smaller_windows(
+    monkeypatch: pytest.MonkeyPatch, context_length: int
+) -> None:
+    monkeypatch.setitem(
+        MODELS, "z-ai/glm-5.2", replace(MODELS["z-ai/glm-5.2"], context_length=context_length)
+    )
     with pytest.raises(AssertionError):
-        model = replace(MODELS["z-ai/glm-5.2"], context_length=context_length)
-        assert model.context_length in {1_000_000, 1_048_576}
+        test_glm_52_supplements_publish_current_model_across_providers()
 
 
 def test_parasail_qwen_397b_uses_working_native_upstream_id() -> None:
