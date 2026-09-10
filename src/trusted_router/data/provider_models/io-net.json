@@ -50,9 +50,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 1430100,
-      "output_token_price_per_m": 2406300,
-      "cached_input_token_price_per_m": 715050
+      "input_token_price_per_m": 1486100,
+      "output_token_price_per_m": 2658300,
+      "cached_input_token_price_per_m": 743050
     },
     {
       "display_name": "DeepSeek: DeepSeek V4 Flash",
@@ -106,9 +106,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 256400,
-      "output_token_price_per_m": 719200,
-      "cached_input_token_price_per_m": 128200
+      "input_token_price_per_m": 277840,
+      "output_token_price_per_m": 823520,
+      "cached_input_token_price_per_m": 138920
     },
     {
       "display_name": "DeepSeek: DeepSeek V4 Pro",
@@ -134,9 +134,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 1736000,
-      "output_token_price_per_m": 3474000,
-      "cached_input_token_price_per_m": 868000
+      "input_token_price_per_m": 1746000,
+      "output_token_price_per_m": 3494000,
+      "cached_input_token_price_per_m": 873000
     },
     {
       "display_name": "Google: Gemma 4 26B A4B",
@@ -161,9 +161,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 110000,
-      "output_token_price_per_m": 408000,
-      "cached_input_token_price_per_m": 55000
+      "input_token_price_per_m": 122000,
+      "output_token_price_per_m": 420000,
+      "cached_input_token_price_per_m": 61000
     },
     {
       "display_name": "Intel: Qwen3 Coder 480B A35B Instruct INT4 Mixed AR",
@@ -261,9 +261,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 288000,
-      "output_token_price_per_m": 1126000,
-      "cached_input_token_price_per_m": 144000
+      "input_token_price_per_m": 348000,
+      "output_token_price_per_m": 1366000,
+      "cached_input_token_price_per_m": 174000
     },
     {
       "display_name": "DeepSeek: DeepSeek V4 Flash 0731",
@@ -290,9 +290,9 @@
       ],
       "routable": false,
       "routable_reason": "provider-canary-failed",
-      "input_token_price_per_m": 470000,
-      "output_token_price_per_m": 1760000,
-      "cached_input_token_price_per_m": 235000
+      "input_token_price_per_m": 404000,
+      "output_token_price_per_m": 1496000,
+      "cached_input_token_price_per_m": 202000
     },
     {
       "display_name": "Mistral: Mistral Nemo Instruct 2407",
@@ -425,9 +425,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 748440,
-      "output_token_price_per_m": 3354360,
-      "cached_input_token_price_per_m": 374220
+      "input_token_price_per_m": 655200,
+      "output_token_price_per_m": 3065920,
+      "cached_input_token_price_per_m": 327600
     },
     {
       "display_name": "MoonshotAI: Kimi K2.7 Code",
@@ -453,9 +453,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 874400,
-      "output_token_price_per_m": 3818000,
-      "cached_input_token_price_per_m": 437200
+      "input_token_price_per_m": 1072000,
+      "output_token_price_per_m": 4650000,
+      "cached_input_token_price_per_m": 536000
     },
     {
       "display_name": "MoonshotAI: Kimi K3",
@@ -481,9 +481,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 3360000,
-      "output_token_price_per_m": 16350000,
-      "cached_input_token_price_per_m": 1680000
+      "input_token_price_per_m": 3280000,
+      "output_token_price_per_m": 16400000,
+      "cached_input_token_price_per_m": 1640000
     },
     {
       "display_name": "OpenAI: gpt-oss-120b",
@@ -508,9 +508,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 188000,
-      "output_token_price_per_m": 700000,
-      "cached_input_token_price_per_m": 94000
+      "input_token_price_per_m": 178000,
+      "output_token_price_per_m": 680000,
+      "cached_input_token_price_per_m": 89000
     },
     {
       "display_name": "OpenAI: gpt-oss-20b",
@@ -534,9 +534,9 @@
         "reasoning"
       ],
       "routable": true,
-      "input_token_price_per_m": 57000,
-      "output_token_price_per_m": 198000,
-      "cached_input_token_price_per_m": 28500
+      "input_token_price_per_m": 65000,
+      "output_token_price_per_m": 200000,
+      "cached_input_token_price_per_m": 32500
     },
     {
       "display_name": "Qwen: Qwen3 Next 80B A3B Instruct",
@@ -618,7 +618,7 @@
       ],
       "routable": true,
       "input_token_price_per_m": 167200,
-      "output_token_price_per_m": 1096750,
+      "output_token_price_per_m": 1106750,
       "cached_input_token_price_per_m": 83600
     },
     {
@@ -647,9 +647,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 320000,
-      "output_token_price_per_m": 2800000,
-      "cached_input_token_price_per_m": 160000
+      "input_token_price_per_m": 342800,
+      "output_token_price_per_m": 2860000,
+      "cached_input_token_price_per_m": 171400
     },
     {
       "display_name": "Xiaomi: MiMo-V2.5",
@@ -837,9 +837,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 1332000,
-      "output_token_price_per_m": 4312000,
-      "cached_input_token_price_per_m": 666000
+      "input_token_price_per_m": 1326000,
+      "output_token_price_per_m": 4220000,
+      "cached_input_token_price_per_m": 663000
     },
     {
       "display_name": "Z.ai: GLM 5.2",
@@ -865,9 +865,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 1384000,
-      "output_token_price_per_m": 4356000,
-      "cached_input_token_price_per_m": 692000
+      "input_token_price_per_m": 1820000,
+      "output_token_price_per_m": 5720000,
+      "cached_input_token_price_per_m": 910000
     },
     {
       "display_name": "Z.ai: GLM 5.3",
@@ -893,9 +893,9 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 1362000,
+      "input_token_price_per_m": 1320000,
       "output_token_price_per_m": 4312000,
-      "cached_input_token_price_per_m": 681000
+      "cached_input_token_price_per_m": 660000
     },
     {
       "display_name": "Z.ai: GLM 5.3 Flash",
@@ -922,13 +922,13 @@
         "prompt_cache"
       ],
       "routable": true,
-      "input_token_price_per_m": 147997,
-      "output_token_price_per_m": 493990,
-      "cached_input_token_price_per_m": 73999
+      "input_token_price_per_m": 149997,
+      "output_token_price_per_m": 499990,
+      "cached_input_token_price_per_m": 74999
     }
   ],
   "source": "https://api.intelligence.io.solutions/api/v1/models",
-  "generated_at": "2026-09-07T09:05:12Z",
+  "generated_at": "2026-09-10T02:54:06Z",
   "price_scale": "microdollars_per_million",
   "model_count": 34
 }

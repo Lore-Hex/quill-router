@@ -662,11 +662,12 @@
       "cached_input_token_price_per_m": 44000
     },
     {
-      "display_name": "zai-org/GLM-5.3-Flash",
+      "display_name": "Z.AI GLM 5.3 Flash",
       "title": "z-ai/glm-5.3-flash",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -678,12 +679,13 @@
       "id": "z-ai/glm-5.3-flash",
       "routable": false,
       "routable_reason": "operator-hold: W&B has not published a GLM 5.3 Flash price (docs.wandb.ai/inference/models and wandb.ai/site/pricing/inference/ checked 2026-09-06); remove this hold when the price is published",
-      "upstream_id": "zai-org/GLM-5.3-Flash"
+      "upstream_id": "zai-org/GLM-5.3-Flash",
+      "context_length": 1048576
     }
   ],
   "source": "https://api.inference.wandb.ai/v1/models",
   "pricing_source": "https://wandb.ai/site/pricing/inference/",
-  "generated_at": "2026-09-07T09:05:12Z",
+  "generated_at": "2026-09-10T02:54:06Z",
   "price_scale": "microdollars_per_million",
   "model_count": 31
 }

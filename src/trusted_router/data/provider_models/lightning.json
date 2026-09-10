@@ -886,10 +886,30 @@
       "context_length": 262144,
       "input_token_price_per_m": 400000,
       "output_token_price_per_m": 3000000
+    },
+    {
+      "display_name": "gpt-6-astra",
+      "title": "openai/gpt-6-astra",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-6-astra",
+      "upstream_id": "openai/gpt-6-astra",
+      "context_length": 1050000,
+      "input_token_price_per_m": 10000000,
+      "output_token_price_per_m": 49999999
     }
   ],
   "source": "https://lightning.ai/api/v1/models",
-  "generated_at": "2026-09-07T09:05:12Z",
+  "generated_at": "2026-09-10T02:54:06Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 44
+  "model_count": 45
 }
