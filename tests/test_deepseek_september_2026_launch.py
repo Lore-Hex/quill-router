@@ -15,13 +15,14 @@ from trusted_router.provider_lifecycle import ProviderPrice
 from trusted_router.routes.internal.gateway import _endpoint_cost_microdollars
 
 CUTOVER = datetime(2026, 9, 10, 4, tzinfo=UTC)
+PRO_CUTOVER = datetime(2026, 9, 14, 4, tzinfo=UTC)
 FLASH = "deepseek/deepseek-flash"
 PRO = "deepseek/deepseek-v4-pro"
 DATED_PRO = "deepseek/deepseek-v4-pro-0813"
 DATED_FLASH = "deepseek/deepseek-v4-flash-0731"
 
 
-@pytest.mark.parametrize("model", [FLASH, "deepseek/deepseek-v4-flash", PRO])
+@pytest.mark.parametrize("model", [FLASH, "deepseek/deepseek-v4-flash"])
 @pytest.mark.parametrize(("at", "peak"), [
     (CUTOVER, False),
     (datetime(2026, 9, 10, 5, 59, 59, tzinfo=UTC), False),
@@ -57,29 +58,29 @@ def test_no_early_price_cut_and_historical_pro_billing_is_preserved() -> None:
     )
 
 
-@pytest.mark.parametrize(("model", "upstream"), [
-    (DATED_PRO, "deepseek-v4-pro"), (DATED_FLASH, "deepseek-v4-flash"),
+@pytest.mark.parametrize(("model", "upstream", "cutover"), [
+    (DATED_PRO, "deepseek-v4-pro", PRO_CUTOVER), (DATED_FLASH, "deepseek-v4-flash", CUTOVER),
 ])
 def test_dated_routes_cannot_silently_follow_upstream_flash_redirect(
-    model: str, upstream: str,
+    model: str, upstream: str, cutover: datetime,
 ) -> None:
-    assert not lifecycle.provider_model_retired("deepseek", model, upstream, at=CUTOVER - timedelta(seconds=1))
-    assert lifecycle.provider_model_retired("deepseek", model, upstream, at=CUTOVER)
-    assert not lifecycle.provider_model_retired("baseten", model, upstream, at=CUTOVER)
-    assert not lifecycle.provider_model_retired("deepseek", PRO, "deepseek-v4-pro", at=CUTOVER)
+    assert not lifecycle.provider_model_retired("deepseek", model, upstream, at=cutover - timedelta(seconds=1))
+    assert lifecycle.provider_model_retired("deepseek", model, upstream, at=cutover)
+    assert not lifecycle.provider_model_retired("baseten", model, upstream, at=cutover)
+    assert not lifecycle.provider_model_retired("deepseek", PRO, "deepseek-v4-pro", at=cutover)
 
 
 def test_stale_process_filters_dated_pro_without_changing_other_providers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(lifecycle, "_utc_now", lambda: CUTOVER)
+    monkeypatch.setattr(lifecycle, "_utc_now", lambda: PRO_CUTOVER)
     routes = catalog.endpoints_for_model(DATED_PRO)
     assert {route.provider for route in routes} == {"baseten", "fireworks"}
 
 
 def test_schedule_discloses_pro_redirect_and_new_effective_time() -> None:
-    schedule = lifecycle.provider_pricing_schedule("deepseek", PRO, at=CUTOVER)
-    assert schedule["effective_at"] == "2026-09-10T04:00:00Z"
+    schedule = lifecycle.provider_pricing_schedule("deepseek", PRO, at=PRO_CUTOVER)
+    assert schedule["effective_at"] == "2026-09-14T04:00:00Z"
     assert schedule["upstream_redirect"] == {
         "model": FLASH, "reason": "DeepSeek replaces Pro with V4.1 Flash until V4.1 Pro launches",
     }
@@ -97,7 +98,7 @@ def test_discovery_recognizes_live_deepseek_flash_rename(monkeypatch: pytest.Mon
     })
     result = deepseek.fetch()
     assert result.prices[FLASH] == ModelPrice(150_000, 600_000, prompt_cached_micro_per_m=3_000)
-    assert result.prices[PRO] == result.prices[FLASH]
+    assert result.prices[PRO] == ModelPrice(660_000, 1_980_000, prompt_cached_micro_per_m=22_000)
     assert deepseek._DISCOVERED_MANIFEST_ROWS[FLASH]["upstream_id"] == "deepseek-flash"
     assert deepseek._DISCOVERED_MANIFEST_ROWS[FLASH]["context_length"] == 1_048_576
     assert "function-calling" in deepseek._DISCOVERED_MANIFEST_ROWS[FLASH]["supported_features"]
@@ -132,7 +133,7 @@ def test_runtime_required_models_do_not_break_discovery_after_cutover(
     finally:
         base.configure_runtime_required_models({})
     assert FLASH in result.prices
-    assert (DATED_PRO in result.prices) is not after
+    assert DATED_PRO in result.prices
     assert (DATED_FLASH in result.prices) is not after
 
 
@@ -157,8 +158,8 @@ def test_settlement_uses_authorization_quote_across_launch() -> None:
     endpoint = catalog.MODEL_ENDPOINTS[f"{PRO}@deepseek/prepaid"]
     # Published customer prices retain the existing markup and minimum rate.
     for at, prompt, cached, output in [
-        (CUTOVER - timedelta(seconds=1), 1_392_600, 46_420, 4_177_800),
-        (CUTOVER, 158_250, 10_000, 633_000),
+        (PRO_CUTOVER - timedelta(seconds=1), 1_392_600, 46_420, 4_177_800),
+        (PRO_CUTOVER, 158_250, 10_000, 633_000),
     ]:
         assert _endpoint_cost_microdollars(
             endpoint, 100_000, 200_000, cache_read_tokens=900_000, effective_at=at,
@@ -166,7 +167,7 @@ def test_settlement_uses_authorization_quote_across_launch() -> None:
 
 
 def test_public_new_flash_route_and_pro_redirect_pricing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(lifecycle, "_utc_now", lambda: CUTOVER)
+    monkeypatch.setattr(lifecycle, "_utc_now", lambda: PRO_CUTOVER)
     client = TestClient(create_app(Settings(environment="test"), init_observability=False))
     response = client.get(f"/v1/models/{FLASH}/endpoints")
     assert response.status_code == 200
@@ -177,7 +178,7 @@ def test_public_new_flash_route_and_pro_redirect_pricing(monkeypatch: pytest.Mon
     }
     page = client.get(f"/models/{PRO}/pricing")
     assert page.status_code == 200
-    assert "2026-09-10T04:00:00Z" in page.text
+    assert "2026-09-14T04:00:00Z" in page.text
     assert "DeepSeek replaces Pro with V4.1 Flash" in page.text
     assert "Weekends are off-peak all day in UTC" in page.text
 

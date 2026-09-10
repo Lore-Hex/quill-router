@@ -3540,9 +3540,9 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.00000015",
-        "completion": "0.0000006",
-        "input_cache_read": "0.000000003"
+        "prompt": "0.00000066",
+        "completion": "0.00000198",
+        "input_cache_read": "0.000000022"
       },
       "top_provider": {
         "context_length": 1024000,
@@ -3805,9 +3805,9 @@
           "tr_provider_slug": "deepseek",
           "context_length": 1048576,
           "pricing": {
-            "prompt": "0.00000015",
-            "completion": "0.0000006",
-            "input_cache_read": "0.000000003"
+            "prompt": "0.00000066",
+            "completion": "0.00000198",
+            "input_cache_read": "0.000000022"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],

@@ -43,9 +43,9 @@
       "status": 1,
       "id": "deepseek/deepseek-v4-pro",
       "upstream_id": "deepseek-v4-pro",
-      "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 600000,
-      "cached_input_token_price_per_m": 3000,
+      "input_token_price_per_m": 660000,
+      "output_token_price_per_m": 1980000,
+      "cached_input_token_price_per_m": 22000,
       "context_length": 1048576,
       "supported_features": [
         "function-calling",
@@ -54,7 +54,7 @@
       ]
     },
     {
-      "display_name": "DeepSeek Flash (rolling)",
+      "display_name": "DeepSeek V4.1 Flash (rolling)",
       "title": "deepseek-flash",
       "model_type": "chat",
       "input_modalities": [
@@ -81,7 +81,7 @@
     }
   ],
   "source": "https://api.deepseek.com/models",
-  "generated_at": "2026-09-10T13:13:16Z",
+  "generated_at": "2026-09-10T15:16:49Z",
   "price_scale": "microdollars_per_million",
   "model_count": 3
 }

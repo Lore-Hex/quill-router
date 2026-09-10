@@ -49,6 +49,9 @@ NOVITA_LING_30_TINY_RETIREMENT_AT = datetime(2026, 8, 13, 15, 0, tzinfo=UTC)
 ALIBABA_OCTOBER_2026_RETIREMENT_AT = datetime(2026, 10, 9, 16, 0, tzinfo=UTC)
 DEEPSEEK_V4_PRICING_EFFECTIVE_AT = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
 DEEPSEEK_V41_FLASH_EFFECTIVE_AT = datetime(2026, 9, 10, 4, 0, tzinfo=UTC)
+# The launch-day pricing page supersedes the earlier email: Pro remains
+# V4 Pro 0813 at its own prices until September 14, 12:00 Beijing time.
+DEEPSEEK_V4_PRO_REDIRECT_AT = datetime(2026, 9, 14, 4, 0, tzinfo=UTC)
 DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT = datetime(
     2026, 8, 22, 16, 0, tzinfo=UTC
 )
@@ -126,11 +129,16 @@ _RETIREMENTS = (
     _Retirement(
         provider="deepseek",
         model_ids=frozenset({
-            "deepseek/deepseek-v4-pro-0813",
             "deepseek/deepseek-v4-flash-0731",
         }),
         upstream_ids=frozenset(),
         effective_at=DEEPSEEK_V41_FLASH_EFFECTIVE_AT,
+    ),
+    _Retirement(
+        provider="deepseek",
+        model_ids=frozenset({"deepseek/deepseek-v4-pro-0813"}),
+        upstream_ids=frozenset(),
+        effective_at=DEEPSEEK_V4_PRO_REDIRECT_AT,
     ),
     # Friendli's September 4 notice specifies September 6 00:00 UTC
     # (September 5 17:00 PDT). Only the shared Model API is retiring;
@@ -723,11 +731,19 @@ def _deepseek_v4_period(effective_at: datetime) -> str:
     return "off_peak"
 
 
+def _deepseek_v41_effective_at(model_id: str) -> datetime:
+    return (
+        DEEPSEEK_V4_PRO_REDIRECT_AT
+        if _deepseek_v4_family("deepseek", model_id) == "pro"
+        else DEEPSEEK_V41_FLASH_EFFECTIVE_AT
+    )
+
+
 def _deepseek_prices(model_id: str, effective_at: datetime) -> dict[str, ProviderPrice] | None:
     family = _deepseek_v4_family("deepseek", model_id)
     if family is None:
         return None
-    if effective_at >= DEEPSEEK_V41_FLASH_EFFECTIVE_AT:
+    if effective_at >= _deepseek_v41_effective_at(model_id):
         return _DEEPSEEK_V41_FLASH_PRICES
     return _DEEPSEEK_V4_PRICES[family]
 
@@ -778,12 +794,14 @@ def provider_pricing_schedule(
     def clock(seconds: int) -> str:
         return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}"
 
-    v41 = effective_at >= DEEPSEEK_V41_FLASH_EFFECTIVE_AT
+    v41_at = _deepseek_v41_effective_at(model_id)
+    v41 = effective_at >= v41_at
+    utc_weekends = effective_at >= DEEPSEEK_V41_FLASH_EFFECTIVE_AT
     schedule: dict[str, object] = {
         "kind": "time_of_day",
         "timezone": "UTC",
         "effective_at": (
-            DEEPSEEK_V41_FLASH_EFFECTIVE_AT if v41 else DEEPSEEK_V4_PRICING_EFFECTIVE_AT
+            v41_at if v41 else DEEPSEEK_V4_PRICING_EFFECTIVE_AT
         ).isoformat().replace("+00:00", "Z"),
         "current_period": _deepseek_v4_period(effective_at),
         "peak_multiplier": 2,
@@ -793,9 +811,9 @@ def provider_pricing_schedule(
         ],
         "weekend_off_peak": {
             "effective_at": (
-                DEEPSEEK_V41_FLASH_EFFECTIVE_AT if v41 else DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT
+                DEEPSEEK_V41_FLASH_EFFECTIVE_AT if utc_weekends else DEEPSEEK_WEEKEND_OFF_PEAK_EFFECTIVE_AT
             ).isoformat().replace("+00:00", "Z"),
-            "timezone": "UTC" if v41 else "Asia/Shanghai",
+            "timezone": "UTC" if utc_weekends else "Asia/Shanghai",
             "days": ["Saturday", "Sunday"],
         },
         # Authorization time, not settlement time, selects the period so a
