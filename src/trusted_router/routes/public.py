@@ -376,7 +376,6 @@ _INQUIRY_GLOBAL_MAX_PER_WINDOW = 60
 _RECEIPT_KEY_CACHE_MAX_KIDS = 128
 _RECEIPT_KEY_PUBLIC_PAGE_SIZE = 250
 _RECEIPT_KEY_PUBLIC_MAX_BYTES = 1024 * 1024
-_RECEIPT_KEY_STORE_LIMIT = 5_000
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _SUPPORT_CATEGORIES = {
     "api": "API and routing",
@@ -420,6 +419,17 @@ def _public_receipt_key(record: ReceiptKey) -> dict[str, Any]:
         "revoked": record.revoked,
         "verified": record.verified,
     }
+
+
+def _receipt_key_cursor(record: ReceiptKey) -> str:
+    return f"{record.kid}.{record.att_sha256}"
+
+
+def _parse_receipt_key_cursor(value: str) -> tuple[str, str] | None:
+    parts = value.split(".")
+    if len(parts) != 2 or not all(is_canonical_receipt_kid(part) for part in parts):
+        return None
+    return parts[0], parts[1]
 
 
 def _inquiry_rate_ok(client_ip: str, *, now: float | None = None) -> bool:
@@ -2109,39 +2119,32 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         kid: str | None = None,
         cursor: str | None = None,
     ) -> Response:
-        """Newest version per key, or every version for one requested key."""
+        """Immutable, cursor-paged receipt-key attestation-version log."""
 
         nonlocal receipt_key_global_cache
         if kid is not None and not is_canonical_receipt_kid(kid):
             raise HTTPException(status_code=400, detail="kid must be canonical base64url")
-        if cursor is not None and kid is not None:
-            raise HTTPException(status_code=400, detail="cursor is only valid without kid")
-        if cursor is not None and not is_canonical_receipt_kid(cursor):
+        after = _parse_receipt_key_cursor(cursor) if cursor is not None else None
+        if cursor is not None and after is None:
             raise HTTPException(status_code=400, detail="cursor is invalid")
+        if kid is not None and after is not None and after[0] != kid:
+            raise HTTPException(status_code=400, detail="cursor does not match kid")
         degraded = False
         try:
+            list_kwargs: dict[str, Any] = {
+                "limit": _RECEIPT_KEY_PUBLIC_PAGE_SIZE,
+                "kid": kid,
+            }
+            if after is not None:
+                list_kwargs["after"] = after
             records = await asyncio.wait_for(
                 run_in_threadpool(
                     STORE.list_receipt_keys,
-                    limit=_RECEIPT_KEY_STORE_LIMIT,
-                    kid=kid,
+                    **list_kwargs,
                 ),
                 timeout=3.0,
             )
             records = [with_receipt_attestation_sha256(record) for record in records]
-            if kid is None:
-                newest_by_kid: dict[str, ReceiptKey] = {}
-                for record in records:
-                    newest_by_kid.setdefault(record.kid, record)
-                records = sorted(
-                    newest_by_kid.values(),
-                    key=lambda record: (
-                        record.last_seen,
-                        record.kid,
-                        record.att_sha256,
-                    ),
-                    reverse=True,
-                )
             if kid is None:
                 receipt_key_global_cache = records
             else:
@@ -2155,51 +2158,39 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             )
             log.exception("receipt_key_log_read_degraded_serving_cached")
         generated_at = iso_now()
-        if kid is not None:
-            semantic_payload: dict[str, Any] = {
-                "spec": "inference-receipt/1",
-                "degraded": degraded,
-                "keys": [_public_receipt_key(record) for record in records],
-            }
-        else:
-            start = 0
-            if cursor is not None:
-                try:
-                    start = next(
-                        index + 1
-                        for index, record in enumerate(records)
-                        if record.kid == cursor
-                    )
-                except StopIteration as exc:
-                    raise HTTPException(status_code=400, detail="cursor is no longer valid") from exc
-            keys: list[dict[str, Any]] = []
-            for record in records[start : start + _RECEIPT_KEY_PUBLIC_PAGE_SIZE]:
-                keys.append(_public_receipt_key(record))
-                has_more = start + len(keys) < len(records)
-                candidate = {
-                    "spec": "inference-receipt/1",
-                    "degraded": degraded,
-                    "page_size": _RECEIPT_KEY_PUBLIC_PAGE_SIZE,
-                    "next_cursor": record.kid if has_more else None,
-                    "keys": keys,
-                    "generated_at": generated_at,
-                }
-                if len(_json_body(candidate)) > _RECEIPT_KEY_PUBLIC_MAX_BYTES:
-                    keys.pop()
-                    break
-            if not keys and start < len(records):
-                raise HTTPException(
-                    status_code=500,
-                    detail="receipt-key record exceeds public response byte ceiling",
-                )
-            has_more = start + len(keys) < len(records)
-            semantic_payload = {
+        keys: list[dict[str, Any]] = []
+        for index, record in enumerate(records):
+            keys.append(_public_receipt_key(record))
+            has_more = (
+                index + 1 < len(records)
+                or len(records) == _RECEIPT_KEY_PUBLIC_PAGE_SIZE
+            )
+            candidate = {
                 "spec": "inference-receipt/1",
                 "degraded": degraded,
                 "page_size": _RECEIPT_KEY_PUBLIC_PAGE_SIZE,
-                "next_cursor": keys[-1]["kid"] if keys and has_more else None,
+                "next_cursor": _receipt_key_cursor(record) if has_more else None,
                 "keys": keys,
+                "generated_at": generated_at,
             }
+            if len(_json_body(candidate)) > _RECEIPT_KEY_PUBLIC_MAX_BYTES:
+                keys.pop()
+                break
+        if not keys and records:
+            raise HTTPException(
+                status_code=500,
+                detail="receipt-key record exceeds public response byte ceiling",
+            )
+        has_more = len(keys) < len(records) or len(records) == _RECEIPT_KEY_PUBLIC_PAGE_SIZE
+        semantic_payload: dict[str, Any] = {
+            "spec": "inference-receipt/1",
+            "degraded": degraded,
+            "page_size": _RECEIPT_KEY_PUBLIC_PAGE_SIZE,
+            "next_cursor": (
+                f"{keys[-1]['kid']}.{keys[-1]['att_sha256']}" if keys and has_more else None
+            ),
+            "keys": keys,
+        }
         semantic_bytes = json.dumps(
             semantic_payload, sort_keys=True, separators=(",", ":")
         ).encode()
@@ -2219,7 +2210,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         if request.headers.get("if-none-match") == etag:
             return Response(status_code=304, headers=headers)
         body = _json_body({**semantic_payload, "generated_at": generated_at})
-        if kid is None and len(body) > _RECEIPT_KEY_PUBLIC_MAX_BYTES:  # pragma: no cover
+        if len(body) > _RECEIPT_KEY_PUBLIC_MAX_BYTES:  # pragma: no cover
             raise RuntimeError("receipt-key response exceeded byte ceiling")
         return Response(
             content=body,

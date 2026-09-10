@@ -7710,6 +7710,7 @@ class SpannerBigtableStore:
         *,
         limit: int = 5_000,
         kid: str | None = None,
+        after: tuple[str, str] | None = None,
     ) -> list[ReceiptKey]:
         bounded = max(0, min(limit, 10_000))
         params: dict[str, Any] = {"kind": RECEIPT_KEY_KIND, "limit": bounded}
@@ -7717,72 +7718,44 @@ class SpannerBigtableStore:
             "kind": self._param_types.STRING,
             "limit": self._param_types.INT64,
         }
-        queries: tuple[tuple[str, dict[str, Any], dict[str, Any]], ...]
-        if kid is None:
-            queries = (
-                (
-                    "SELECT body FROM tr_entities WHERE kind=@kind "
-                    "ORDER BY updated_at DESC, id DESC LIMIT @limit",
-                    params,
-                    param_types,
-                ),
-            )
-        else:
+        after_pair = after or ("", "")
+        params.update({"after_kid": after_pair[0], "after_att_sha256": after_pair[1]})
+        param_types.update(
+            {
+                "after_kid": self._param_types.STRING,
+                "after_att_sha256": self._param_types.STRING,
+            }
+        )
+        if kid is not None:
             params["kid"] = kid
             param_types["kid"] = self._param_types.STRING
-            # Force the filtered version read through the ready index. The
-            # possible legacy row is an exact primary-key lookup rather than
-            # an OR that permits a full scan of tr_entities.
-            queries = (
-                (
-                    "SELECT body FROM tr_entities@{FORCE_INDEX=tr_receipt_key_versions} "
-                    "WHERE kid=@kid AND att_sha256 IS NOT NULL AND kind=@kind "
-                    "ORDER BY updated_at DESC, id DESC LIMIT @limit",
-                    params,
-                    param_types,
-                ),
-                (
-                    "SELECT body FROM tr_entities WHERE kind=@kind AND id=@kid "
-                    "AND kid IS NULL LIMIT 1",
-                    {"kind": RECEIPT_KEY_KIND, "kid": kid},
-                    {
-                        "kind": self._param_types.STRING,
-                        "kid": self._param_types.STRING,
-                    },
-                ),
+            query = (
+                "SELECT body FROM tr_entities@{FORCE_INDEX=tr_receipt_key_versions} "
+                "WHERE kid=@kid AND kid IS NOT NULL AND att_sha256 IS NOT NULL "
+                "AND kind=@kind AND (kid>@after_kid OR "
+                "(kid=@after_kid AND att_sha256>@after_att_sha256)) "
+                "ORDER BY kid, att_sha256 LIMIT @limit"
             )
-        with self._database.snapshot(multi_use=True) as snapshot:
-            rows = []
+        else:
+            # GoogleSQL structs have no ordering comparisons, so spell out the
+            # same lexicographic tuple predicate that Postgres writes directly.
+            query = (
+                "SELECT body FROM tr_entities@{FORCE_INDEX=tr_receipt_key_versions} "
+                "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL AND kind=@kind AND "
+                "(kid>@after_kid OR "
+                "(kid=@after_kid AND att_sha256>@after_att_sha256)) "
+                "ORDER BY kid, att_sha256 LIMIT @limit"
+            )
+        with self._database.snapshot() as snapshot:
+            rows: list[ReceiptKey] = []
             known = {field.name for field in dataclasses.fields(ReceiptKey)}
-            for query, query_params, query_param_types in queries:
-                raw_rows = snapshot.execute_sql(
-                    query,
-                    params=query_params,
-                    param_types=query_param_types,
+            raw_rows = snapshot.execute_sql(query, params=params, param_types=param_types)
+            for raw_row in raw_rows:
+                data = json.loads(raw_row[0])
+                rows.append(
+                    ReceiptKey(**{key: value for key, value in data.items() if key in known})
                 )
-                for raw_row in raw_rows:
-                    data = json.loads(raw_row[0])
-                    rows.append(
-                        ReceiptKey(**{key: value for key, value in data.items() if key in known})
-                    )
-        versions: dict[tuple[str, str], ReceiptKey] = {}
-        for row in rows:
-            row = with_receipt_attestation_sha256(row)
-            if kid is not None and row.kid != kid:
-                continue
-            identity = (row.kid, row.att_sha256)
-            existing = versions.get(identity)
-            if existing is not None:
-                merged, _ = merge_receipt_key_observation(existing, row)
-                if merged is not None:
-                    row = merged
-            versions[identity] = row
-        ordered = sorted(
-            versions.values(),
-            key=lambda row: (row.last_seen, row.kid, row.att_sha256),
-            reverse=True,
-        )
-        return ordered[: max(0, min(limit, 10_000))]
+        return [with_receipt_attestation_sha256(row) for row in rows]
 
     def _write_receipt_key_tx(
         self,

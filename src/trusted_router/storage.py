@@ -347,6 +347,7 @@ class InMemoryStore:
         *,
         limit: int = 5_000,
         kid: str | None = None,
+        after: tuple[str, str] | None = None,
     ) -> list[ReceiptKey]:
         bounded = max(0, min(limit, 10_000))
         with self._lock:
@@ -362,10 +363,9 @@ class InMemoryStore:
                 backfilled[entity_id] = row
             self.receipt_keys = backfilled
             rows = [row for row in backfilled.values() if kid is None or row.kid == kid]
-            rows.sort(
-                key=lambda row: (row.last_seen, row.kid, row.att_sha256),
-                reverse=True,
-            )
+            if after is not None:
+                rows = [row for row in rows if (row.kid, row.att_sha256) > after]
+            rows.sort(key=lambda row: (row.kid, row.att_sha256))
             return rows[:bounded]
 
     def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot:

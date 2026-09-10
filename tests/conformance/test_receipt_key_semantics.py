@@ -72,13 +72,17 @@ def test_receipt_key_log_keeps_every_attestation_version(
 
     rows = store.list_receipt_keys(kid=kid)
     assert len(rows) == 2
-    assert [row.att for row in rows] == [second_version.att, first.att]
-    assert [row.att_sha256 for row in rows] == [
-        receipt_attestation_sha256(second_version.att, second_version.att_kind),
-        receipt_attestation_sha256(first.att, first.att_kind),
-    ]
-    assert rows[0].first_seen == second_version.first_seen
-    assert rows[1].first_seen == first.first_seen
+    expected_hashes = sorted(
+        [
+            receipt_attestation_sha256(first.att, first.att_kind),
+            receipt_attestation_sha256(second_version.att, second_version.att_kind),
+        ]
+    )
+    assert [row.att_sha256 for row in rows] == expected_hashes
+    assert {row.first_seen for row in rows} == {
+        first.first_seen,
+        second_version.first_seen,
+    }
 
     same_document = ReceiptKey(
         kid=kid,
@@ -99,7 +103,7 @@ def test_receipt_key_log_keeps_every_attestation_version(
     assert store.observe_receipt_key(same_document) == "refreshed"
     rows = store.list_receipt_keys(kid=kid)
     assert len(rows) == 2
-    refreshed = rows[0]
+    refreshed = next(row for row in rows if row.att == first.att)
     assert refreshed.att == first.att
     assert refreshed.jwk == jwk
     assert refreshed.plane == first.plane

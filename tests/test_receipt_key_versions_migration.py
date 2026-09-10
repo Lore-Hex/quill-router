@@ -3,10 +3,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import psycopg
 import pytest
 
 from tests.deploy_script_harness import SCRIPT_FIXTURES, DeployScriptHarness, ScriptFixture
 from tests.test_spend_lease_migration import _ddls
+from trusted_router.storage_postgres import PostgresStore, _split_sql_statements
 
 ROOT = Path(__file__).parents[1]
 SCRIPT = "scripts/deploy/migrate_receipt_key_versions.sh"
@@ -125,6 +127,45 @@ def test_postgres_runtime_schema_migrates_nullable_receipt_version_index() -> No
     assert "att_sha256 TEXT NOT NULL" not in schema
 
 
+def test_receipt_version_index_ddl_is_exact_for_postgres_and_dsql() -> None:
+    schema = (ROOT / "src/trusted_router/storage_postgres_schema.sql").read_text()
+    statement = next(
+        item
+        for item in _split_sql_statements(schema)
+        if item.startswith("CREATE INDEX IF NOT EXISTS tr_receipt_key_versions")
+    )
+    stock_expected = (
+        "CREATE INDEX IF NOT EXISTS tr_receipt_key_versions\n"
+        "    ON tr_entities (kid, att_sha256)\n"
+        "    WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL"
+    )
+    dsql_expected = (
+        "CREATE INDEX ASYNC IF NOT EXISTS tr_receipt_key_versions\n"
+        "    ON tr_entities (kid, att_sha256)"
+    )
+    assert statement == stock_expected
+
+    class Connection:
+        def __init__(self, *, dsql: bool) -> None:
+            self.dsql = dsql
+            self.calls: list[tuple[str, bool]] = []
+
+        def execute(self, ddl: str, *, prepare: bool) -> None:
+            self.calls.append((ddl, prepare))
+            if self.dsql and len(self.calls) == 1:
+                raise psycopg.errors.FeatureNotSupported(
+                    "unsupported mode. please use CREATE INDEX ASYNC."
+                )
+
+    stock = Connection(dsql=False)
+    PostgresStore._execute_ddl(stock, statement)
+    assert stock.calls == [(stock_expected, False)]
+
+    dsql = Connection(dsql=True)
+    PostgresStore._execute_ddl(dsql, statement)
+    assert dsql.calls == [(stock_expected, False), (dsql_expected, False)]
+
+
 def test_deploy_applies_receipt_version_schema_before_router_rollout() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text()
     migrate = workflow.index("scripts/deploy/migrate_receipt_key_versions.sh")
@@ -145,10 +186,12 @@ def test_public_receipt_docs_match_listing_and_version_lookup_contracts() -> Non
     docs = (ROOT / "docs/client-receipts.md").read_text()
     page = (ROOT / "src/trusted_router/templates/public/receipts.html").read_text()
 
-    assert "newest observed attestation version for each `kid`" in docs
-    assert "pages of at most 250 keys\nand at most 1 MiB" in docs
+    assert "ordered by immutable `(kid, att_sha256)`" in docs
+    assert "pages\nof at most 250 versions and at most 1 MiB" in docs
     assert "every retained attestation version for exactly one\nsigning key" in docs
-    assert "newest observed attestation version for each <code>kid</code>" in page
-    assert "pages of at most 250 keys and capped at 1 MiB per response" in page
+    assert "ordered by immutable <code>(kid, att_sha256)</code>" in page
+    assert "pages of at most 250 versions and capped at 1 MiB per response" in page
     assert "Every retained attestation version for exactly one signing key" in page
+    assert "The same byte and page ceilings apply" in docs
+    assert "with the same page and byte ceilings" in page
     assert "every observed attestation re-mint for every signing key" not in page

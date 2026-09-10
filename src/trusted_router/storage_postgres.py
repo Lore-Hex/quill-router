@@ -500,6 +500,12 @@ def _split_sql_statements(schema: str) -> list[str]:
     return [stmt.strip() for stmt in without_comments.split(";") if stmt.strip()]
 
 
+_DSQL_RECEIPT_KEY_VERSIONS_INDEX = (
+    "CREATE INDEX ASYNC IF NOT EXISTS tr_receipt_key_versions\n"
+    "    ON tr_entities (kid, att_sha256)"
+)
+
+
 def _video_due_id(job: VideoJob) -> str:
     """Ordering key for the video due-index: `<next_poll_at>#<job_id>`.
 
@@ -679,7 +685,16 @@ class PostgresStore:
             head = statement.lstrip()[:12].upper()
             if not head.startswith("CREATE INDEX"):
                 raise
-        conn.execute(statement.replace("CREATE INDEX", "CREATE INDEX ASYNC", 1), prepare=False)
+        if statement.lstrip().startswith(
+            "CREATE INDEX IF NOT EXISTS tr_receipt_key_versions"
+        ):
+            # DSQL has no partial indexes. The same runtime signal that requires
+            # ASYNC also selects its plain nullable-column index; the public
+            # query still excludes NULL rows on every dialect.
+            async_statement = _DSQL_RECEIPT_KEY_VERSIONS_INDEX
+        else:
+            async_statement = statement.replace("CREATE INDEX", "CREATE INDEX ASYNC", 1)
+        conn.execute(async_statement, prepare=False)
 
     # Generic entity IO ------------------------------------------------------
 
@@ -810,64 +825,39 @@ class PostgresStore:
         *,
         limit: int = 5_000,
         kid: str | None = None,
+        after: tuple[str, str] | None = None,
     ) -> list[ReceiptKey]:
         bounded = max(0, min(limit, 10_000))
 
         def operation(conn: Any) -> list[ReceiptKey]:
-            queries: tuple[tuple[str, tuple[Any, ...]], ...]
+            after_pair = after or ("", "")
+            params: tuple[Any, ...]
             if kid is None:
                 query = (
-                    "SELECT body FROM tr_entities WHERE kind = %s "
-                    "ORDER BY updated_at DESC, id DESC LIMIT %s"
-                )
-                queries = ((query, (RECEIPT_KEY_KIND, bounded)),)
-            else:
-                # Keep the partial-index predicate literal so Postgres-family
-                # planners can prove tr_receipt_key_versions applies. Read the
-                # sole pre-migration row separately through the primary key;
-                # an OR across the two shapes can degrade into a table scan.
-                indexed = (
-                    "SELECT body FROM tr_entities WHERE kid = %s "
+                    "SELECT body FROM tr_entities WHERE kid IS NOT NULL "
                     "AND att_sha256 IS NOT NULL AND kind = %s "
-                    "ORDER BY updated_at DESC, id DESC LIMIT %s"
+                    "AND (kid, att_sha256) > (%s, %s) "
+                    "ORDER BY kid, att_sha256 LIMIT %s"
                 )
-                legacy = (
-                    "SELECT body FROM tr_entities WHERE kind = %s AND id = %s "
-                    "AND kid IS NULL LIMIT 1"
+                params = (RECEIPT_KEY_KIND, *after_pair, bounded)
+            else:
+                query = (
+                    "SELECT body FROM tr_entities WHERE kid = %s AND kid IS NOT NULL "
+                    "AND att_sha256 IS NOT NULL AND kind = %s "
+                    "AND (kid, att_sha256) > (%s, %s) "
+                    "ORDER BY kid, att_sha256 LIMIT %s"
                 )
-                queries = (
-                    (indexed, (kid, RECEIPT_KEY_KIND, bounded)),
-                    (legacy, (RECEIPT_KEY_KIND, kid)),
-                )
+                params = (kid, RECEIPT_KEY_KIND, *after_pair, bounded)
             result: list[ReceiptKey] = []
             known = {field.name for field in dataclasses.fields(ReceiptKey)}
-            for query, params in queries:
-                for (raw,) in conn.execute(query, params).fetchall():
-                    data = json.loads(raw) if isinstance(raw, str) else dict(raw)
-                    result.append(
-                        ReceiptKey(**{key: value for key, value in data.items() if key in known})
-                    )
+            for (raw,) in conn.execute(query, params).fetchall():
+                data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                result.append(
+                    ReceiptKey(**{key: value for key, value in data.items() if key in known})
+                )
             return result
 
-        rows = self._run_transaction(operation)
-        versions: dict[tuple[str, str], ReceiptKey] = {}
-        for row in rows:
-            row = with_receipt_attestation_sha256(row)
-            if kid is not None and row.kid != kid:
-                continue
-            identity = (row.kid, row.att_sha256)
-            existing = versions.get(identity)
-            if existing is not None:
-                merged, _ = merge_receipt_key_observation(existing, row)
-                if merged is not None:
-                    row = merged
-            versions[identity] = row
-        ordered = sorted(
-            versions.values(),
-            key=lambda row: (row.last_seen, row.kid, row.att_sha256),
-            reverse=True,
-        )
-        return ordered[: max(0, min(limit, 10_000))]
+        return [with_receipt_attestation_sha256(row) for row in self._run_transaction(operation)]
 
     def _write_receipt_key_tx(
         self,

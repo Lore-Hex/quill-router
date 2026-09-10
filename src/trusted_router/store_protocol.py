@@ -1077,6 +1077,7 @@ class Store(Protocol):
         *,
         limit: int = ...,
         kid: str | None = ...,
+        after: tuple[str, str] | None = ...,
     ) -> list[ReceiptKey]: ...
 
     # Stage A spend-lease boot identity + monotonic grant generation --------

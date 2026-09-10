@@ -743,12 +743,19 @@ def test_durable_receipt_key_reads_filter_and_limit_in_the_database(
     pg._run_transaction = lambda operation: operation(PgConn())  # type: ignore[method-assign]
     monkeypatch.setattr(pg, "_list_entities", forbidden)
 
-    assert pg.list_receipt_keys(kid="missing-kid", limit=7) == []
-    assert "WHERE kid = %s AND att_sha256 IS NOT NULL" in pg_calls[0][0]
+    after = ("after-kid", "after-hash")
+    assert pg.list_receipt_keys(kid="missing-kid", after=after, limit=7) == []
+    assert "WHERE kid = %s AND kid IS NOT NULL" in pg_calls[0][0]
+    assert "att_sha256 IS NOT NULL AND kind = %s" in pg_calls[0][0]
+    assert "(kid, att_sha256) > (%s, %s)" in pg_calls[0][0]
+    assert "ORDER BY kid, att_sha256" in pg_calls[0][0]
     assert "LIMIT %s" in pg_calls[0][0]
-    assert pg_calls[0][1] == ("missing-kid", "receipt_key", 7)
-    assert "WHERE kind = %s AND id = %s AND kid IS NULL LIMIT 1" in pg_calls[1][0]
-    assert pg_calls[1][1] == ("receipt_key", "missing-kid")
+    assert pg_calls[0][1] == ("missing-kid", "receipt_key", *after, 7)
+    assert pg.list_receipt_keys(after=after, limit=7) == []
+    assert "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL" in pg_calls[1][0]
+    assert "(kid, att_sha256) > (%s, %s)" in pg_calls[1][0]
+    assert "ORDER BY kid, att_sha256 LIMIT %s" in pg_calls[1][0]
+    assert pg_calls[1][1] == ("receipt_key", *after, 7)
 
     spanner_calls: list[tuple[str, dict[str, object]]] = []
 
@@ -760,8 +767,7 @@ def test_durable_receipt_key_reads_filter_and_limit_in_the_database(
 
     class Database:
         @contextmanager
-        def snapshot(self, *, multi_use: bool):
-            assert multi_use is True
+        def snapshot(self):
             yield Snapshot()
 
     spanner = SpannerBigtableStore.__new__(SpannerBigtableStore)
@@ -769,19 +775,33 @@ def test_durable_receipt_key_reads_filter_and_limit_in_the_database(
     spanner._param_types = SimpleNamespace(STRING="STRING", INT64="INT64")
     monkeypatch.setattr(spanner, "_list_entities", forbidden)
 
-    assert spanner.list_receipt_keys(kid="missing-kid", limit=7) == []
+    assert spanner.list_receipt_keys(kid="missing-kid", after=after, limit=7) == []
     assert (
         "tr_entities@{FORCE_INDEX=tr_receipt_key_versions}" in spanner_calls[0][0]
     )
-    assert "kid=@kid AND att_sha256 IS NOT NULL" in spanner_calls[0][0]
+    assert "kid=@kid AND kid IS NOT NULL AND att_sha256 IS NOT NULL" in spanner_calls[0][0]
+    assert (
+        "kid>@after_kid OR (kid=@after_kid AND att_sha256>@after_att_sha256)"
+        in spanner_calls[0][0]
+    )
+    assert "ORDER BY kid, att_sha256" in spanner_calls[0][0]
     assert "LIMIT @limit" in spanner_calls[0][0]
     assert spanner_calls[0][1] == {
         "kind": "receipt_key",
         "kid": "missing-kid",
         "limit": 7,
+        "after_kid": "after-kid",
+        "after_att_sha256": "after-hash",
     }
-    assert "WHERE kind=@kind AND id=@kid AND kid IS NULL LIMIT 1" in spanner_calls[1][0]
-    assert spanner_calls[1][1] == {"kind": "receipt_key", "kid": "missing-kid"}
+    assert spanner.list_receipt_keys(after=after, limit=7) == []
+    assert "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL" in spanner_calls[1][0]
+    assert "ORDER BY kid, att_sha256 LIMIT @limit" in spanner_calls[1][0]
+    assert spanner_calls[1][1] == {
+        "kind": "receipt_key",
+        "limit": 7,
+        "after_kid": "after-kid",
+        "after_att_sha256": "after-hash",
+    }
 
 
 def test_public_routes_list_versions_with_hash_and_filter_by_kid(
@@ -846,7 +866,7 @@ def test_public_routes_list_versions_with_hash_and_filter_by_kid(
     assert payload["spec"] == "inference-receipt/1"
     assert payload["degraded"] is False
     assert payload["keys"] == mirror.json()["keys"]
-    assert len(payload["keys"]) == 2
+    assert len(payload["keys"]) == 3
     assert set(payload["keys"][0]) == {
         "kid",
         "jwk",
@@ -863,7 +883,9 @@ def test_public_routes_list_versions_with_hash_and_filter_by_kid(
     assert payload["keys"][0]["att_sha256"] == receipt_attestation_sha256(
         str(records[0].att), records[0].att_kind
     )
-    assert len({item["kid"] for item in payload["keys"]}) == len(payload["keys"])
+    assert len({(item["kid"], item["att_sha256"]) for item in payload["keys"]}) == len(
+        payload["keys"]
+    )
     assert "s-maxage=300" in well_known.headers["cache-control"]
     assert "s-maxage=3600" not in well_known.headers["cache-control"]
     assert well_known.headers["etag"].startswith('W/"')
@@ -914,17 +936,11 @@ def _public_records(count: int, *, attestation_bytes: int = 0) -> list[ReceiptKe
     return records
 
 
-def test_unfiltered_receipt_key_pages_walk_all_five_thousand_keys(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    records = _public_records(5_000)
-    configure_store(InMemoryStore())
-
-    def list_records(_self, *, limit: int, kid: str | None = None):
-        assert kid is None
-        return records[:limit]
-
-    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", list_records)
+def test_unfiltered_receipt_key_pages_walk_5001_keys_once_despite_refreshes() -> None:
+    records = _public_records(5_001)
+    store = InMemoryStore()
+    store.receipt_keys = {f"raw-{index}": record for index, record in enumerate(records)}
+    configure_store(store)
     client = TestClient(
         create_app(
             Settings(environment="test"),
@@ -933,7 +949,8 @@ def test_unfiltered_receipt_key_pages_walk_all_five_thousand_keys(
         )
     )
     cursor: str | None = None
-    seen: list[str] = []
+    seen: list[tuple[str, str]] = []
+    refreshed = False
     while True:
         params = {} if cursor is None else {"cursor": cursor}
         response = client.get("/.well-known/inference-receipt-keys", params=params)
@@ -942,14 +959,31 @@ def test_unfiltered_receipt_key_pages_walk_all_five_thousand_keys(
         payload = response.json()
         assert payload["page_size"] == 250
         assert len(payload["keys"]) <= payload["page_size"]
-        seen.extend(item["kid"] for item in payload["keys"])
+        seen.extend((item["kid"], item["att_sha256"]) for item in payload["keys"])
         cursor = payload["next_cursor"]
+        if cursor is not None and not refreshed:
+            # Change the mutable field that used to control pagination on both
+            # sides of the cursor. Immutable tuple order must make this inert.
+            store.receipt_keys = {
+                entity_id: dataclasses.replace(
+                    record,
+                    last_seen=f"2099-01-01T00:00:00.{index:05d}Z",
+                )
+                for index, (entity_id, record) in enumerate(
+                    reversed(list(store.receipt_keys.items()))
+                )
+            }
+            refreshed = True
         if cursor is None:
             break
 
-    assert len(seen) == 5_000
-    assert len(set(seen)) == 5_000
-    assert set(seen) == {record.kid for record in records}
+    expected = sorted(
+        (record.kid, receipt_attestation_sha256(record.att, record.att_kind))
+        for record in records
+    )
+    assert len(seen) == 5_001
+    assert len(set(seen)) == 5_001
+    assert seen == expected
 
 
 def test_unfiltered_five_thousand_key_response_obeys_byte_ceiling(
@@ -1007,9 +1041,8 @@ def test_public_route_rejects_noncanonical_kids_before_storage(
     assert calls == 0
 
 
-def test_malformed_or_conflicting_cursor_is_rejected_before_the_store(monkeypatch) -> None:
-    """A cursor is a kid: the same canonical-shape gate applies, and a cursor with a
-    kid filter is a contradiction, so neither may reach the store."""
+def test_malformed_or_kid_mismatched_cursor_is_rejected_before_the_store(monkeypatch) -> None:
+    """Both immutable cursor components are canonical and match a kid filter."""
     store = InMemoryStore()
     configure_store(store)
     calls = 0
@@ -1032,10 +1065,62 @@ def test_malformed_or_conflicting_cursor_is_rejected_before_the_store(monkeypatc
     for malformed in ("short", f"{_kid(_jwk())}=", "!" * 43):
         response = client.get("/trust/receipt-keys.json", params={"cursor": malformed})
         assert response.status_code == 400, malformed
-    good = _kid(_jwk())
-    response = client.get("/trust/receipt-keys.json", params={"cursor": good, "kid": good})
+    good_part = _kid(_jwk())
+    good = f"{good_part}.{good_part}"
+    response = client.get(
+        "/trust/receipt-keys.json",
+        params={"cursor": good, "kid": _kid(_jwk(b"other"))},
+    )
     assert response.status_code == 400
     assert calls == 0
+
+
+def test_filtered_versions_obey_byte_ceiling_and_are_all_cursor_reachable() -> None:
+    jwk = _jwk(b"many-large-versions")
+    kid = _kid(jwk)
+    records = [
+        ReceiptKey(
+            kid=kid,
+            jwk=jwk,
+            att=f"att-{index}-" + ("x" * (20 * 1024)),
+            att_kind="gcp-cs-jwt",
+            plane="api.example",
+            first_seen=f"2026-08-26T00:00:00.{index:05d}Z",
+            last_seen=f"2026-08-26T00:00:00.{index:05d}Z",
+            verified=True,
+        )
+        for index in range(64)
+    ]
+    store = InMemoryStore()
+    store.receipt_keys = {f"raw-{index}": record for index, record in enumerate(records)}
+    configure_store(store)
+    client = TestClient(
+        create_app(
+            Settings(environment="test"),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    cursor: str | None = None
+    seen: list[str] = []
+    while True:
+        params = {"kid": kid}
+        if cursor is not None:
+            params["cursor"] = cursor
+        response = client.get("/trust/receipt-keys.json", params=params)
+        assert response.status_code == 200
+        assert len(response.content) <= 1024 * 1024
+        payload = response.json()
+        assert payload["page_size"] == 250
+        seen.extend(item["att_sha256"] for item in payload["keys"])
+        cursor = payload["next_cursor"]
+        if cursor is None:
+            break
+
+    assert seen == sorted(
+        receipt_attestation_sha256(record.att, record.att_kind) for record in records
+    )
 
 
 
