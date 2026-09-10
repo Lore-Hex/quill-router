@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 import base64
+import dataclasses
 import hashlib
 import json
+import logging
+import pathlib
+from collections import OrderedDict
+from contextlib import contextmanager
+from types import SimpleNamespace
+from typing import cast
 
 import cbor2
 import pytest
@@ -16,12 +23,16 @@ from trusted_router.receipt_keys import (
     GCP_AUDIENCE,
     GCP_ISSUER,
     b64url_encode,
+    receipt_attestation_sha256,
     receipt_key_commitment,
     verify_gcp_attestation_chain,
 )
+from trusted_router.routes import public as public_routes
 from trusted_router.services import receipt_key_collector as collector
 from trusted_router.storage import InMemoryStore, configure_store
+from trusted_router.storage_gcp import SpannerBigtableStore
 from trusted_router.storage_models import ReceiptKey
+from trusted_router.storage_postgres import PostgresStore
 
 
 def _jwk(seed: bytes = b"receipt-key") -> dict[str, str]:
@@ -34,6 +45,10 @@ def _jwk(seed: bytes = b"receipt-key") -> dict[str, str]:
 
 def _kid(jwk: dict[str, str]) -> str:
     return collector.receipt_kid(jwk)
+
+
+def _att(payload: dict[str, object]) -> str:
+    return cast(str, payload["att"])
 
 
 def _jwt(payload: dict[str, object]) -> str:
@@ -75,12 +90,16 @@ def _gcp_payload(
     *,
     kid: str | None = None,
     include_commitment: bool = True,
+    marker: str | None = None,
 ) -> dict[str, object]:
     nonces = [receipt_key_commitment(jwk).hex()] if include_commitment else ["00" * 32]
+    att_payload: dict[str, object] = {"eat_nonce": nonces}
+    if marker is not None:
+        att_payload["marker"] = marker
     return {
         "kid": kid or _kid(jwk),
         "jwk": jwk,
-        "att": _jwt({"eat_nonce": nonces}),
+        "att": _jwt(att_payload),
         "att_kind": "gcp-cs-jwt",
     }
 
@@ -159,13 +178,15 @@ def test_instance_fetch_connects_by_ip_with_gateway_sni_and_host(
     captured: dict[str, object] = {}
 
     class Response:
-        content = b'{"kid":"sample"}'
-
         def raise_for_status(self) -> None:
             return None
 
-        def json(self) -> dict[str, str]:
-            return {"kid": "sample"}
+        def iter_bytes(self, *, chunk_size: int):
+            assert chunk_size == 64 * 1024
+            yield b'{"kid":"sample"}'
+
+        def close(self) -> None:
+            captured["closed"] = True
 
     class Client:
         def __init__(self, **kwargs) -> None:
@@ -181,7 +202,8 @@ def test_instance_fetch_connects_by_ip_with_gateway_sni_and_host(
             captured.update({"method": method, "url": url, **kwargs})
             return object()
 
-        def send(self, _request: object) -> Response:
+        def send(self, _request: object, *, stream: bool) -> Response:
+            assert stream is True
             return Response()
 
     monkeypatch.setattr(collector.httpx, "Client", Client)
@@ -193,6 +215,57 @@ def test_instance_fetch_connects_by_ip_with_gateway_sni_and_host(
     assert captured["url"] == "https://192.0.2.10/receipt-key"
     assert captured["headers"] == {"Host": "api.example", "Accept": "application/json"}
     assert captured["extensions"] == {"sni_hostname": "api.example"}
+    assert captured["closed"] is True
+
+
+def test_instance_fetch_enforces_size_limit_while_streaming(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chunks_read = 0
+
+    class Response:
+        @property
+        def content(self) -> bytes:
+            raise AssertionError("response must not be buffered")
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_bytes(self, *, chunk_size: int):
+            nonlocal chunks_read
+            assert chunk_size == 64 * 1024
+            for _ in range(100):
+                chunks_read += 1
+                yield b"x" * chunk_size
+
+        def close(self) -> None:
+            return None
+
+    class Client:
+        def __init__(self, **_kwargs) -> None:
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def build_request(self, *_args, **_kwargs) -> object:
+            return object()
+
+        def send(self, _request: object, *, stream: bool) -> Response:
+            assert stream is True
+            return Response()
+
+    monkeypatch.setattr(collector.httpx, "Client", Client)
+
+    with pytest.raises(ValueError, match="exceeds size limit"):
+        collector._fetch_receipt_key(  # noqa: SLF001 - transport contract
+            collector.ReceiptKeyTarget("api.example", "192.0.2.10"),
+            verify_tls=True,
+        )
+    assert chunks_read == 33
 
 
 @pytest.mark.parametrize(
@@ -209,7 +282,9 @@ def test_collector_rejects_bad_key_material(
 ) -> None:
     _one_target(monkeypatch)
     monkeypatch.setattr(collector, "_fetch_receipt_key", lambda *_args, **_kwargs: payload)
-    monkeypatch.setattr(collector, "verify_gcp_attestation_chain", lambda _att: None)
+    monkeypatch.setattr(
+        collector, "verify_gcp_attestation_chain", lambda _att, **_kwargs: None
+    )
     store = InMemoryStore()
 
     result = collector.collect_receipt_keys(
@@ -288,7 +363,9 @@ def test_good_key_appends_once_and_reobservation_only_advances_last_seen(
     _one_target(monkeypatch)
     payload = _gcp_payload(_jwk())
     monkeypatch.setattr(collector, "_fetch_receipt_key", lambda *_args, **_kwargs: payload)
-    monkeypatch.setattr(collector, "verify_gcp_attestation_chain", lambda _att: None)
+    monkeypatch.setattr(
+        collector, "verify_gcp_attestation_chain", lambda _att, **_kwargs: None
+    )
     seen = iter(["2026-08-26T00:00:00Z", "2026-08-26T00:05:00Z"])
     monkeypatch.setattr(collector, "iso_now", lambda: next(seen))
     store = InMemoryStore()
@@ -307,21 +384,726 @@ def test_good_key_appends_once_and_reobservation_only_advances_last_seen(
     assert row.verified is True
 
 
-def test_public_routes_narrow_receipt_key_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_attestation_hash_uses_raw_decoded_document_bytes() -> None:
+    raw_document = b"known raw attestation bytes\x00\xff"
+    encoded_document = b64url_encode(raw_document)
+
+    assert receipt_attestation_sha256(encoded_document, "aws-nitro-cose") == b64url_encode(
+        hashlib.sha256(raw_document).digest()
+    )
+    assert receipt_attestation_sha256(encoded_document, "aws-nitro-cose") != b64url_encode(
+        hashlib.sha256(encoded_document.encode()).digest()
+    )
+
+
+def test_collector_observes_current_and_every_history_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _one_target(monkeypatch)
     jwk = _jwk()
-    record = ReceiptKey(
+    current = _gcp_payload(jwk, marker="current")
+    history = [_gcp_payload(jwk, marker=f"history-{index}") for index in range(3)]
+    current["att_history"] = [
+        {
+            "att": _att(item),
+            "att_kind": item["att_kind"],
+            "att_sha256": receipt_attestation_sha256(
+                _att(item), str(item["att_kind"])
+            ),
+        }
+        for item in history
+    ]
+    monkeypatch.setattr(collector, "_fetch_receipt_key", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr(
+        collector, "verify_gcp_attestation_chain", lambda _att, **_kwargs: None
+    )
+    store = InMemoryStore()
+
+    result = collector.collect_receipt_keys(
+        Settings(environment="test", api_base_url="https://api.example/v1"),
+        store=store,
+    )
+
+    assert result["appended"] == 4
+    assert result["errors"] == 0
+    assert len(store.list_receipt_keys(kid=_kid(jwk))) == 4
+
+
+def test_collector_processes_at_most_64_history_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _one_target(monkeypatch)
+    jwk = _jwk()
+    current = _gcp_payload(jwk, marker="current")
+    history = [_gcp_payload(jwk, marker=f"history-{index}") for index in range(65)]
+    current["att_history"] = [
+        {
+            "att": _att(item),
+            "att_kind": item["att_kind"],
+            "att_sha256": receipt_attestation_sha256(
+                _att(item), str(item["att_kind"])
+            ),
+        }
+        for item in history
+    ]
+    monkeypatch.setattr(collector, "_fetch_receipt_key", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr(
+        collector, "verify_gcp_attestation_chain", lambda _att, **_kwargs: None
+    )
+    store = InMemoryStore()
+
+    result = collector.collect_receipt_keys(
+        Settings(environment="test", api_base_url="https://api.example/v1"),
+        store=store,
+    )
+
+    assert result["appended"] == 65
+    assert result["skipped"] == 1
+    assert len(store.list_receipt_keys(kid=_kid(jwk))) == 65
+
+
+def test_history_never_refreshes_over_the_current_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _one_target(monkeypatch)
+    jwk = _jwk()
+    current = _gcp_payload(jwk, marker="current")
+    history = _gcp_payload(jwk, marker="history")
+    current["att_history"] = [
+        {
+            "att": _att(history),
+            "att_kind": history["att_kind"],
+            "att_sha256": receipt_attestation_sha256(
+                _att(history), str(history["att_kind"])
+            ),
+        }
+    ]
+    monkeypatch.setattr(collector, "_fetch_receipt_key", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr(
+        collector, "verify_gcp_attestation_chain", lambda _att, **_kwargs: None
+    )
+    times = iter(["2026-08-26T00:00:10Z", "2026-08-26T00:05:00Z"])
+    monkeypatch.setattr(collector, "iso_now", lambda: next(times))
+    store = InMemoryStore()
+    settings = Settings(environment="test", api_base_url="https://api.example/v1")
+
+    collector.collect_receipt_keys(settings, store=store)
+    collector.collect_receipt_keys(settings, store=store)
+
+    rows = store.list_receipt_keys(kid=_kid(jwk))
+    current_row = next(row for row in rows if row.att == _att(current))
+    history_row = next(row for row in rows if row.att == _att(history))
+    assert current_row.last_seen == "2026-08-26T00:05:00Z"
+    assert history_row.last_seen == "2026-08-26T00:00:09Z"
+    assert rows[0] == current_row
+
+
+def test_six_thousand_historical_refreshes_are_no_writes_and_keep_current_first() -> None:
+    jwk = _jwk()
+    kid = _kid(jwk)
+    history_payload = _gcp_payload(jwk, marker="history")
+    current_payload = _gcp_payload(jwk, marker="current")
+    history = ReceiptKey(
+        kid=kid,
+        jwk=jwk,
+        att=_att(history_payload),
+        att_kind="gcp-cs-jwt",
+        plane="api.example",
+        first_seen="2026-08-26T00:00:00Z",
+        last_seen="2026-08-26T00:00:00Z",
+        verified=True,
+    )
+    current = ReceiptKey(
+        kid=kid,
+        jwk=jwk,
+        att=_att(current_payload),
+        att_kind="gcp-cs-jwt",
+        plane="api.example",
+        first_seen="2026-08-26T00:00:01Z",
+        last_seen="2026-08-26T00:00:01Z",
+        verified=True,
+    )
+    store = InMemoryStore()
+    assert store.observe_receipt_key(history, refresh_last_seen=False) == "appended"
+    assert store.observe_receipt_key(current) == "appended"
+
+    outcomes = {
+        store.observe_receipt_key(
+            dataclasses.replace(history, last_seen=f"2099-01-01T00:{index // 60:02d}:{index % 60:02d}Z"),
+            refresh_last_seen=False,
+        )
+        for index in range(6_000)
+    }
+
+    assert outcomes == {"unchanged"}
+    assert store.list_receipt_keys(kid=kid)[0].att == current.att
+
+
+def test_collector_accepts_an_expired_but_authentic_history_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _one_target(monkeypatch)
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwk = _jwk()
+    now = 1_777_000_000
+    common_claims: dict[str, object] = {
+        "iss": GCP_ISSUER,
+        "aud": GCP_AUDIENCE,
+        "iat": now - 600,
+        "nbf": now - 600,
+        "dbgstat": "disabled-since-boot",
+        "eat_nonce": [receipt_key_commitment(jwk).hex()],
+    }
+    current_att, jwks = _signed_gcp_jwt(
+        private_key, {**common_claims, "exp": now + 60}
+    )
+    historical_att, _ = _signed_gcp_jwt(
+        private_key, {**common_claims, "exp": now - 301}
+    )
+    payload: dict[str, object] = {
+        "kid": _kid(jwk),
+        "jwk": jwk,
+        "att": current_att,
+        "att_kind": "gcp-cs-jwt",
+        "att_history": [
+            {
+                "att": historical_att,
+                "att_kind": "gcp-cs-jwt",
+                "att_sha256": receipt_attestation_sha256(
+                    historical_att, "gcp-cs-jwt"
+                ),
+            }
+        ],
+    }
+
+    def verify(att: str, *, allow_expired: bool = False) -> None:
+        verify_gcp_attestation_chain(
+            att,
+            now=now,
+            jwks=jwks,
+            allow_expired=allow_expired,
+        )
+
+    monkeypatch.setattr(collector, "_fetch_receipt_key", lambda *_args, **_kwargs: payload)
+    monkeypatch.setattr(collector, "verify_gcp_attestation_chain", verify)
+    store = InMemoryStore()
+
+    result = collector.collect_receipt_keys(
+        Settings(environment="test", api_base_url="https://api.example/v1"),
+        store=store,
+    )
+
+    assert result["appended"] == 2
+    assert result["errors"] == 0
+    rows = store.list_receipt_keys(kid=_kid(jwk))
+    assert len(rows) == 2
+    assert all(row.verified for row in rows)
+
+
+def test_collector_skips_one_bad_history_document_without_losing_current(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _one_target(monkeypatch)
+    jwk = _jwk()
+    current = _gcp_payload(jwk, marker="current")
+    bad = _gcp_payload(_jwk(b"different-key"), marker="bad-history")
+    current["att_history"] = [
+        {
+            "att": _att(bad),
+            "att_kind": bad["att_kind"],
+            "att_sha256": receipt_attestation_sha256(_att(bad), str(bad["att_kind"])),
+        }
+    ]
+    monkeypatch.setattr(collector, "_fetch_receipt_key", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr(
+        collector, "verify_gcp_attestation_chain", lambda _att, **_kwargs: None
+    )
+    store = InMemoryStore()
+
+    with caplog.at_level(logging.WARNING, logger=collector.__name__):
+        result = collector.collect_receipt_keys(
+            Settings(environment="test", api_base_url="https://api.example/v1"),
+            store=store,
+        )
+
+    assert result["appended"] == 1
+    assert result["skipped"] == 1
+    assert result["errors"] == 0
+    assert len(store.list_receipt_keys(kid=_kid(jwk))) == 1
+    assert "receipt_key_history_skipped" in caplog.text
+
+
+def test_history_store_failure_is_counted_as_a_target_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _one_target(monkeypatch)
+    jwk = _jwk()
+    current = _gcp_payload(jwk, marker="current")
+    history = _gcp_payload(jwk, marker="history")
+    current["att_history"] = [
+        {
+            "att": _att(history),
+            "att_kind": history["att_kind"],
+            "att_sha256": receipt_attestation_sha256(
+                _att(history), str(history["att_kind"])
+            ),
+        }
+    ]
+    monkeypatch.setattr(collector, "_fetch_receipt_key", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr(
+        collector, "verify_gcp_attestation_chain", lambda _att, **_kwargs: None
+    )
+
+    class StoreFailsOnHistory(InMemoryStore):
+        observations = 0
+
+        def observe_receipt_key(
+            self,
+            record: ReceiptKey,
+            *,
+            refresh_last_seen: bool = True,
+        ):
+            self.observations += 1
+            if self.observations > 1:
+                raise RuntimeError("database unavailable")
+            return super().observe_receipt_key(
+                record, refresh_last_seen=refresh_last_seen
+            )
+
+    store = StoreFailsOnHistory()
+
+    result = collector.collect_receipt_keys(
+        Settings(environment="test", api_base_url="https://api.example/v1"),
+        store=store,
+    )
+
+    assert result["appended"] == 1
+    assert result["skipped"] == 0
+    assert result["errors"] == 1
+    assert len(store.list_receipt_keys()) == 1
+
+
+def test_collector_without_att_history_remains_compatible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _one_target(monkeypatch)
+    payload = _gcp_payload(_jwk(), marker="legacy-enclave")
+    monkeypatch.setattr(collector, "_fetch_receipt_key", lambda *_args, **_kwargs: payload)
+    monkeypatch.setattr(collector, "verify_gcp_attestation_chain", lambda _att: None)
+    store = InMemoryStore()
+
+    result = collector.collect_receipt_keys(
+        Settings(environment="test", api_base_url="https://api.example/v1"),
+        store=store,
+    )
+
+    assert result["appended"] == 1
+    assert result["errors"] == 0
+    assert len(store.list_receipt_keys()) == 1
+
+
+def test_legacy_row_is_served_with_lazy_attestation_hash() -> None:
+    jwk = _jwk()
+    att = _att(_gcp_payload(jwk, marker="legacy"))
+    legacy = ReceiptKey(
         kid=_kid(jwk),
-        jwk={**jwk, "d": "private-material-must-not-escape"},
-        att="public-attestation",
+        jwk=jwk,
+        att=att,
         att_kind="gcp-cs-jwt",
         plane="api.example",
         first_seen="2026-08-26T00:00:00Z",
         last_seen="2026-08-26T00:05:00Z",
-        verified=True,
     )
     store = InMemoryStore()
+    store.receipt_keys[legacy.kid] = legacy
+
+    row = store.list_receipt_keys()[0]
+
+    assert row.att_sha256 == receipt_attestation_sha256(att, legacy.att_kind)
+
+
+def test_durable_receipt_key_reads_filter_and_limit_in_the_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(*_args, **_kwargs) -> None:
+        pytest.fail("unbounded entity scan")
+
+    pg_calls: list[tuple[str, tuple[object, ...]]] = []
+
+    class PgCursor:
+        def fetchall(self) -> list[tuple[object]]:
+            return []
+
+    class PgConn:
+        def execute(self, query: str, params: tuple[object, ...]) -> PgCursor:
+            pg_calls.append((query, params))
+            return PgCursor()
+
+    pg = PostgresStore.__new__(PostgresStore)
+    pg._run_transaction = lambda operation: operation(PgConn())  # type: ignore[method-assign]
+    monkeypatch.setattr(pg, "_list_entities", forbidden)
+
+    after = ("after-kid", "after-hash")
+    assert pg.list_receipt_keys(kid="missing-kid", after=after, limit=7) == []
+    assert "WITH versioned AS" in pg_calls[0][0]
+    assert "WHERE kid = %s AND kid IS NOT NULL" in pg_calls[0][0]
+    assert "att_sha256 IS NOT NULL AND kind = %s" in pg_calls[0][0]
+    assert "(kid > %s OR (kid = %s AND att_sha256 > %s))" in pg_calls[0][0]
+    assert "ORDER BY kid, att_sha256" in pg_calls[0][0]
+    assert "LIMIT %s" in pg_calls[0][0]
+    assert "legacy AS" in pg_calls[0][0]
+    assert "kind = %s AND id = %s" in pg_calls[0][0]
+    assert "kid IS NULL OR att_sha256 IS NULL" in pg_calls[0][0]
+    assert "UNION ALL" in pg_calls[0][0]
+    assert pg_calls[0][1] == (
+        "missing-kid",
+        "receipt_key",
+        after[0],
+        after[0],
+        after[1],
+        7,
+        "receipt_key",
+        "missing-kid",
+        7,
+    )
+    assert pg.list_receipt_keys(after=after, limit=7, phase="v") == []
+    assert "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL" in pg_calls[1][0]
+    assert "(kid > %s OR (kid = %s AND att_sha256 > %s))" in pg_calls[1][0]
+    assert "legacy" not in pg_calls[1][0]
+    assert pg_calls[1][1] == ("receipt_key", after[0], after[0], after[1], 7)
+    assert pg.list_receipt_keys(legacy_after=after[0], limit=7, phase="l") == []
+    assert "AND id > %s" in pg_calls[2][0]
+    assert "ORDER BY id LIMIT %s" in pg_calls[2][0]
+    assert pg_calls[2][1] == ("receipt_key", after[0], 7)
+
+    spanner_calls: list[tuple[str, dict[str, object]]] = []
+
+    class Snapshot:
+        def execute_sql(self, query: str, *, params, param_types) -> list[tuple[object]]:
+            del param_types
+            spanner_calls.append((query, params))
+            return []
+
+    class Database:
+        @contextmanager
+        def snapshot(self):
+            yield Snapshot()
+
+    spanner = SpannerBigtableStore.__new__(SpannerBigtableStore)
+    spanner._database = Database()
+    spanner._param_types = SimpleNamespace(STRING="STRING", INT64="INT64")
+    monkeypatch.setattr(spanner, "_list_entities", forbidden)
+
+    assert spanner.list_receipt_keys(kid="missing-kid", after=after, limit=7) == []
+    assert (
+        "tr_entities@{FORCE_INDEX=tr_receipt_key_versions}" in spanner_calls[0][0]
+    )
+    assert "kid=@kid AND kid IS NOT NULL AND att_sha256 IS NOT NULL" in spanner_calls[0][0]
+    assert (
+        "kid>@after_kid OR (kid=@after_kid AND att_sha256>@after_att_sha256)"
+        in spanner_calls[0][0]
+    )
+    assert "ORDER BY kid, att_sha256" in spanner_calls[0][0]
+    assert "LIMIT @limit" in spanner_calls[0][0]
+    assert "legacy AS" in spanner_calls[0][0]
+    assert "kind=@kind AND id=@kid" in spanner_calls[0][0]
+    assert "kid IS NULL OR att_sha256 IS NULL" in spanner_calls[0][0]
+    assert "UNION ALL" in spanner_calls[0][0]
+    assert spanner_calls[0][1] == {
+        "kind": "receipt_key",
+        "kid": "missing-kid",
+        "limit": 7,
+        "after_kid": "after-kid",
+        "after_att_sha256": "after-hash",
+    }
+    assert spanner.list_receipt_keys(after=after, limit=7, phase="v") == []
+    assert "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL" in spanner_calls[1][0]
+    assert "legacy" not in spanner_calls[1][0]
+    assert spanner_calls[1][1] == {
+        "kind": "receipt_key",
+        "limit": 7,
+        "after_kid": "after-kid",
+        "after_att_sha256": "after-hash",
+    }
+    assert (
+        spanner.list_receipt_keys(legacy_after=after[0], limit=7, phase="l") == []
+    )
+    assert "AND id>@legacy_after" in spanner_calls[2][0]
+    assert "ORDER BY id LIMIT @limit" in spanner_calls[2][0]
+    assert spanner_calls[2][1] == {
+        "kind": "receipt_key",
+        "limit": 7,
+        "legacy_after": "after-kid",
+    }
+
+
+def test_durable_receipt_key_reads_union_legacy_and_versioned_rows() -> None:
+    legacy_jwk = _jwk(b"legacy-durable-reader")
+    legacy = ReceiptKey(
+        kid=_kid(legacy_jwk),
+        jwk=legacy_jwk,
+        att="legacy-attestation",
+        att_kind="gcp-cs-jwt",
+        plane="api.example",
+        first_seen="2026-08-26T00:00:00Z",
+        last_seen="2026-08-26T00:01:00Z",
+    )
+    current = dataclasses.replace(
+        legacy,
+        att="versioned-attestation",
+        att_sha256=receipt_attestation_sha256(
+            "versioned-attestation", "gcp-cs-jwt"
+        ),
+    )
+    raw_rows = [
+        (json.dumps(dataclasses.asdict(current)),),
+        (json.dumps(dataclasses.asdict(legacy)),),
+    ]
+
+    class PgCursor:
+        def fetchall(self) -> list[tuple[str]]:
+            return raw_rows
+
+    class PgConn:
+        def execute(self, query: str, params: tuple[object, ...]) -> PgCursor:
+            assert "UNION ALL" in query
+            del params
+            return PgCursor()
+
+    pg = PostgresStore.__new__(PostgresStore)
+    pg._run_transaction = lambda operation: operation(PgConn())  # type: ignore[method-assign]
+
+    class Snapshot:
+        def execute_sql(self, query: str, *, params, param_types) -> list[tuple[str]]:
+            assert "UNION ALL" in query
+            del params, param_types
+            return raw_rows
+
+    class Database:
+        @contextmanager
+        def snapshot(self):
+            yield Snapshot()
+
+    spanner = SpannerBigtableStore.__new__(SpannerBigtableStore)
+    spanner._database = Database()
+    spanner._param_types = SimpleNamespace(STRING="STRING", INT64="INT64")
+
+    legacy_expected = dataclasses.replace(
+        legacy,
+        att_sha256=receipt_attestation_sha256(legacy.att, legacy.att_kind),
+    )
+    expected = sorted(
+        [legacy_expected, current],
+        key=lambda row: (row.kid, row.att_sha256),
+    )
+    for store in (pg, spanner):
+        assert store.list_receipt_keys() == expected
+        assert store.list_receipt_keys(kid=legacy.kid) == expected
+
+
+def _two_phase_rows() -> tuple[list[tuple[str, ReceiptKey]], list[ReceiptKey]]:
+    legacy: list[tuple[str, ReceiptKey]] = []
+    for index in range(6):
+        kid = b64url_encode(index.to_bytes(32, "big"))
+        legacy.append(
+            (
+                kid,
+                ReceiptKey(
+                    kid=kid,
+                    jwk=_jwk(f"k{index:02d}".encode()),
+                    att=f"legacy-k{index:02d}",
+                    att_kind="gcp-cs-jwt",
+                    plane="api.example",
+                    first_seen="2026-08-26T00:00:00Z",
+                    last_seen="2026-08-26T00:01:00Z",
+                ),
+            )
+        )
+    versioned_kid = b64url_encode((6).to_bytes(32, "big"))
+    versioned_att = "versioned-k06"
+    versioned = [
+        ReceiptKey(
+            kid=versioned_kid,
+            jwk=_jwk(b"k06"),
+            att=versioned_att,
+            att_kind="gcp-cs-jwt",
+            plane="api.example",
+            first_seen="2026-08-26T00:00:00Z",
+            last_seen="2026-08-26T00:01:00Z",
+            att_sha256=receipt_attestation_sha256(versioned_att, "gcp-cs-jwt"),
+        )
+    ]
+    return legacy, versioned
+
+
+def _two_phase_store(backend: str):
+    legacy, versioned = _two_phase_rows()
+    if backend == "memory":
+        store = InMemoryStore()
+        store.receipt_keys = {
+            **{entity_id: row for entity_id, row in legacy},
+            **{
+                f"{row.kid}#{row.att_sha256}": row
+                for row in versioned
+            },
+        }
+        return store
+
+    def selected_rows(query: str, params: object) -> list[tuple[str]]:
+        if "tr_receipt_key_versions" in query or (
+            # "kid > %s" contains the substring "id >", so key the legacy
+            # phase off its ORDER BY instead.
+            "att_sha256 IS NOT NULL" in query and "ORDER BY id" not in query
+        ):
+            if isinstance(params, dict):
+                after = (str(params["after_kid"]), str(params["after_att_sha256"]))
+                limit = int(params["limit"])
+            else:
+                # Postgres feeds the expanded, portable predicate:
+                # (kind, kid, kid, att_sha256, limit)
+                values = cast(tuple[object, ...], params)
+                after = (str(values[1]), str(values[3]))
+                limit = int(values[4])
+            rows = [row for row in versioned if (row.kid, row.att_sha256) > after]
+        else:
+            if isinstance(params, dict):
+                after_id = str(params["legacy_after"])
+                limit = int(params["limit"])
+                inclusive = "id>=@legacy_after" in query
+            else:
+                values = cast(tuple[object, ...], params)
+                after_id = str(values[1])
+                limit = int(values[2])
+                inclusive = "id >= %s" in query
+            rows = [
+                row
+                for entity_id, row in legacy
+                if (entity_id >= after_id if inclusive else entity_id > after_id)
+            ]
+        return [(json.dumps(dataclasses.asdict(row)),) for row in rows[:limit]]
+
+    if backend == "postgres":
+        class PgCursor:
+            def __init__(self, rows: list[tuple[str]]) -> None:
+                self._rows = rows
+
+            def fetchall(self) -> list[tuple[str]]:
+                return self._rows
+
+        class PgConn:
+            def execute(self, query: str, params: tuple[object, ...]) -> PgCursor:
+                return PgCursor(selected_rows(query, params))
+
+        store = PostgresStore.__new__(PostgresStore)
+        store._run_transaction = lambda operation: operation(PgConn())  # type: ignore[method-assign]
+        return store
+
+    class Snapshot:
+        def execute_sql(self, query: str, *, params, param_types) -> list[tuple[str]]:
+            del param_types
+            return selected_rows(query, params)
+
+    class Database:
+        @contextmanager
+        def snapshot(self):
+            yield Snapshot()
+
+    store = SpannerBigtableStore.__new__(SpannerBigtableStore)
+    store._database = Database()
+    store._param_types = SimpleNamespace(STRING="STRING", INT64="INT64")
+    return store
+
+
+@pytest.mark.parametrize("backend", ["memory", "postgres", "spanner"])
+def test_two_phase_pages_visit_legacy_rows_once_after_versioned(backend: str) -> None:
+    legacy, versioned = _two_phase_rows()
+    configure_store(_two_phase_store(backend))
+    cursor = None
+    seen: list[str] = []
+    page_cursors: list[str] = []
+    while True:
+        rows, cursors = public_routes._unfiltered_receipt_key_page(  # noqa: SLF001
+            limit=3,
+            after=cursor,
+        )
+        seen.extend(row.kid for row in rows)
+        if len(rows) < 3:
+            break
+        page_cursors.append(cursors[-1])
+        cursor = public_routes._parse_unfiltered_receipt_key_cursor(  # noqa: SLF001
+            cursors[-1]
+        )
+        assert cursor is not None
+
+    assert seen == [versioned[0].kid, *(entity_id for entity_id, _ in legacy)]
+    assert len(seen) == len(set(seen)) == 7
+    assert page_cursors[0] == f"l.{legacy[1][0]}"
+
+
+@pytest.mark.parametrize("backend", ["memory", "postgres", "spanner"])
+def test_legacy_phase_cursor_is_strict_on_every_store(backend: str) -> None:
+    legacy, _ = _two_phase_rows()
+    configure_store(_two_phase_store(backend))
+    cursor = public_routes._UnfilteredReceiptKeyCursor("l", legacy[2][0])  # noqa: SLF001
+
+    rows, _ = public_routes._unfiltered_receipt_key_page(  # noqa: SLF001
+        limit=3,
+        after=cursor,
+    )
+
+    assert [row.kid for row in rows] == [entity_id for entity_id, _ in legacy[3:6]]
+
+
+def test_public_routes_list_versions_with_hash_and_filter_by_kid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jwk = _jwk()
+    other_jwk = _jwk(b"other-key")
+    records = [
+        ReceiptKey(
+            kid=_kid(jwk),
+            jwk={**jwk, "d": "private-material-must-not-escape"},
+            att=_att(_gcp_payload(jwk, marker="newest")),
+            att_kind="gcp-cs-jwt",
+            plane="api.example",
+            first_seen="2026-08-26T00:05:00Z",
+            last_seen="2026-08-26T00:10:00Z",
+            verified=True,
+        ),
+        ReceiptKey(
+            kid=_kid(jwk),
+            jwk=jwk,
+            att=_att(_gcp_payload(jwk, marker="older")),
+            att_kind="gcp-cs-jwt",
+            plane="api.example",
+            first_seen="2026-08-26T00:00:00Z",
+            last_seen="2026-08-26T00:05:00Z",
+            verified=True,
+        ),
+        ReceiptKey(
+            kid=_kid(other_jwk),
+            jwk=other_jwk,
+            att=_att(_gcp_payload(other_jwk, marker="other")),
+            att_kind="gcp-cs-jwt",
+            plane="api.example",
+            first_seen="2026-08-26T00:00:00Z",
+            last_seen="2026-08-26T00:01:00Z",
+            verified=True,
+        ),
+    ]
+    store = InMemoryStore()
     configure_store(store)
-    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", lambda _self, *, limit: [record])
+
+    def list_records(
+        _self, *, limit: int, kid: str | None = None, phase: str | None = None, **_kwargs
+    ):
+        if phase == "l":
+            return []
+        selected = [record for record in records if kid is None or record.kid == kid]
+        return selected[:limit]
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", list_records)
     client = TestClient(
         create_app(
             Settings(environment="test"),
@@ -339,11 +1121,13 @@ def test_public_routes_narrow_receipt_key_shape(monkeypatch: pytest.MonkeyPatch)
     assert payload["spec"] == "inference-receipt/1"
     assert payload["degraded"] is False
     assert payload["keys"] == mirror.json()["keys"]
+    assert len(payload["keys"]) == 3
     assert set(payload["keys"][0]) == {
         "kid",
         "jwk",
         "att",
         "att_kind",
+        "att_sha256",
         "plane",
         "first_seen",
         "last_seen",
@@ -351,8 +1135,33 @@ def test_public_routes_narrow_receipt_key_shape(monkeypatch: pytest.MonkeyPatch)
         "verified",
     }
     assert payload["keys"][0]["jwk"] == jwk
+    assert payload["keys"][0]["att_sha256"] == receipt_attestation_sha256(
+        str(records[0].att), records[0].att_kind
+    )
+    assert len({(item["kid"], item["att_sha256"]) for item in payload["keys"]}) == len(
+        payload["keys"]
+    )
+    assert "s-maxage=300" in well_known.headers["cache-control"]
+    assert "s-maxage=3600" not in well_known.headers["cache-control"]
+    assert well_known.headers["etag"].startswith('W/"')
 
-    def unavailable(_self, *, limit: int):
+    revalidated = client.get(
+        "/.well-known/inference-receipt-keys",
+        headers={"if-none-match": well_known.headers["etag"]},
+    )
+    assert revalidated.status_code == 304
+    assert revalidated.headers["etag"] == well_known.headers["etag"]
+
+    filtered = client.get("/trust/receipt-keys.json", params={"kid": _kid(jwk)})
+    assert filtered.status_code == 200
+    assert len(filtered.json()["keys"]) == 2
+    assert {item["kid"] for item in filtered.json()["keys"]} == {_kid(jwk)}
+    assert [item["att_sha256"] for item in filtered.json()["keys"]] == [
+        receipt_attestation_sha256(str(record.att), record.att_kind)
+        for record in records[:2]
+    ]
+
+    def unavailable(_self, *, limit: int, kid: str | None = None):
         raise RuntimeError(f"storage unavailable at limit {limit}")
 
     monkeypatch.setattr(InMemoryStore, "list_receipt_keys", unavailable)
@@ -360,6 +1169,308 @@ def test_public_routes_narrow_receipt_key_shape(monkeypatch: pytest.MonkeyPatch)
     assert degraded.status_code == 200
     assert degraded.json()["degraded"] is True
     assert degraded.json()["keys"] == payload["keys"]
+
+
+def _public_records(count: int, *, attestation_bytes: int = 0) -> list[ReceiptKey]:
+    records = []
+    for index in range(count):
+        jwk = _jwk(f"public-page-{index}".encode())
+        att = f"att-{index}-" + ("x" * attestation_bytes)
+        records.append(
+            ReceiptKey(
+                kid=_kid(jwk),
+                jwk=jwk,
+                att=att,
+                att_kind="gcp-cs-jwt",
+                plane="api.example",
+                first_seen=f"2026-08-26T00:00:00.{index:05d}Z",
+                last_seen=f"2026-08-26T00:00:00.{index:05d}Z",
+                verified=True,
+            )
+        )
+    return records
+
+
+def test_unfiltered_receipt_key_pages_walk_5001_keys_once_despite_refreshes() -> None:
+    records = _public_records(5_001)
+    store = InMemoryStore()
+    store.receipt_keys = {f"raw-{index}": record for index, record in enumerate(records)}
+    configure_store(store)
+    client = TestClient(
+        create_app(
+            Settings(environment="test"),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+    cursor: str | None = None
+    seen: list[tuple[str, str]] = []
+    refreshed = False
+    while True:
+        params = {} if cursor is None else {"cursor": cursor}
+        response = client.get("/.well-known/inference-receipt-keys", params=params)
+        assert response.status_code == 200
+        assert len(response.content) <= 1024 * 1024
+        payload = response.json()
+        assert payload["page_size"] == 250
+        assert len(payload["keys"]) <= payload["page_size"]
+        seen.extend((item["kid"], item["att_sha256"]) for item in payload["keys"])
+        cursor = payload["next_cursor"]
+        if cursor is not None and not refreshed:
+            # Change the mutable field that used to control pagination on both
+            # sides of the cursor. Immutable tuple order must make this inert.
+            store.receipt_keys = {
+                entity_id: dataclasses.replace(
+                    record,
+                    last_seen=f"2099-01-01T00:00:00.{index:05d}Z",
+                )
+                for index, (entity_id, record) in enumerate(
+                    reversed(list(store.receipt_keys.items()))
+                )
+            }
+            refreshed = True
+        if cursor is None:
+            break
+
+    expected = sorted(
+        (record.kid, receipt_attestation_sha256(record.att, record.att_kind))
+        for record in records
+    )
+    assert len(seen) == 5_001
+    assert len(set(seen)) == 5_001
+    assert seen == expected
+
+
+def test_unfiltered_five_thousand_key_response_obeys_byte_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = _public_records(5_000, attestation_bytes=8 * 1024)
+    configure_store(InMemoryStore())
+
+    def list_records(
+        _self, *, limit: int, kid: str | None = None, phase: str | None = None, **_kwargs
+    ):
+        assert kid is None
+        if phase == "l":
+            return []
+        return records[:limit]
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", list_records)
+    client = TestClient(
+        create_app(
+            Settings(environment="test"),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    response = client.get("/trust/receipt-keys.json")
+
+    assert response.status_code == 200
+    assert len(response.content) <= 1024 * 1024
+    assert len(response.json()["keys"]) < 250
+    assert response.json()["next_cursor"] is not None
+
+
+def test_degraded_receipt_key_cache_only_serves_requests_without_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = _public_records(251)
+    configure_store(InMemoryStore())
+
+    def list_records(
+        _self,
+        *,
+        limit: int,
+        kid: str | None = None,
+        after: tuple[str, str] | None = None,
+        phase: str | None = None,
+        **_kwargs,
+    ):
+        assert kid is None
+        if phase == "l":
+            return []
+        return records[:limit] if after is None else records[limit:]
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", list_records)
+    client = TestClient(
+        create_app(
+            Settings(environment="test"),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+    first = client.get("/trust/receipt-keys.json")
+    cursor = first.json()["next_cursor"]
+    assert first.status_code == 200
+    assert cursor is not None
+    second = client.get("/trust/receipt-keys.json", params={"cursor": cursor})
+    assert second.status_code == 200
+    assert len(second.json()["keys"]) == 1
+
+    def unavailable(_self, **_kwargs):
+        raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", unavailable)
+    degraded_first = client.get("/trust/receipt-keys.json")
+    assert degraded_first.status_code == 200
+    assert degraded_first.headers["x-trustedrouter-key-log-status"] == "degraded"
+    assert degraded_first.json()["degraded"] is True
+    assert degraded_first.json()["keys"] == first.json()["keys"]
+
+    degraded_later = client.get(
+        "/trust/receipt-keys.json",
+        params={"cursor": cursor},
+    )
+    assert degraded_later.status_code == 503
+    assert degraded_later.headers["x-trustedrouter-key-log-status"] == "degraded"
+
+
+def test_public_route_rejects_noncanonical_kids_before_storage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryStore()
+    configure_store(store)
+    calls = 0
+
+    def list_records(_self, *, limit: int, kid: str | None = None):
+        nonlocal calls
+        del limit, kid
+        calls += 1
+        return []
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", list_records)
+    client = TestClient(
+        create_app(
+            Settings(environment="test"),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    for malformed in ("short", f"{_kid(_jwk())}=", "!" * 43):
+        response = client.get("/trust/receipt-keys.json", params={"kid": malformed})
+        assert response.status_code == 400
+    assert calls == 0
+
+
+def test_malformed_or_kid_mismatched_cursor_is_rejected_before_the_store(monkeypatch) -> None:
+    """Both immutable cursor components are canonical and match a kid filter."""
+    store = InMemoryStore()
+    configure_store(store)
+    calls = 0
+
+    def list_records(_self, *, limit: int, kid: str | None = None, **_kw):
+        nonlocal calls
+        del limit, kid
+        calls += 1
+        return []
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", list_records)
+    client = TestClient(
+        create_app(
+            Settings(environment="test"),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    for malformed in ("short", f"{_kid(_jwk())}=", "!" * 43):
+        response = client.get("/trust/receipt-keys.json", params={"cursor": malformed})
+        assert response.status_code == 400, malformed
+    response = client.get(
+        "/trust/receipt-keys.json",
+        params={"cursor": "l.not-a-canonical-kid"},
+    )
+    assert response.status_code == 400
+    good_part = _kid(_jwk())
+    good = f"{good_part}.{good_part}"
+    response = client.get(
+        "/trust/receipt-keys.json",
+        params={"cursor": good, "kid": _kid(_jwk(b"other"))},
+    )
+    assert response.status_code == 400
+    assert calls == 0
+
+
+def test_filtered_versions_obey_byte_ceiling_and_are_all_cursor_reachable() -> None:
+    jwk = _jwk(b"many-large-versions")
+    kid = _kid(jwk)
+    records = [
+        ReceiptKey(
+            kid=kid,
+            jwk=jwk,
+            att=f"att-{index}-" + ("x" * (20 * 1024)),
+            att_kind="gcp-cs-jwt",
+            plane="api.example",
+            first_seen=f"2026-08-26T00:00:00.{index:05d}Z",
+            last_seen=f"2026-08-26T00:00:00.{index:05d}Z",
+            verified=True,
+        )
+        for index in range(64)
+    ]
+    store = InMemoryStore()
+    store.receipt_keys = {f"raw-{index}": record for index, record in enumerate(records)}
+    configure_store(store)
+    client = TestClient(
+        create_app(
+            Settings(environment="test"),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    cursor: str | None = None
+    seen: list[str] = []
+    while True:
+        params = {"kid": kid}
+        if cursor is not None:
+            params["cursor"] = cursor
+        response = client.get("/trust/receipt-keys.json", params=params)
+        assert response.status_code == 200
+        assert len(response.content) <= 1024 * 1024
+        payload = response.json()
+        assert payload["page_size"] == 250
+        seen.extend(item["att_sha256"] for item in payload["keys"])
+        cursor = payload["next_cursor"]
+        if cursor is None:
+            break
+
+    assert seen == sorted(
+        receipt_attestation_sha256(record.att, record.att_kind) for record in records
+    )
+
+
+
+def test_per_kid_receipt_cache_ignores_unknowns_and_is_bounded() -> None:
+    cache: OrderedDict[str, list[ReceiptKey]] = OrderedDict()
+    public_routes._remember_receipt_key_records(cache, _kid(_jwk(b"unknown")), [])
+    assert cache == {}
+
+    first_kid = ""
+    for index in range(public_routes._RECEIPT_KEY_CACHE_MAX_KIDS + 1):
+        jwk = _jwk(f"cache-{index}".encode())
+        kid = _kid(jwk)
+        if index == 0:
+            first_kid = kid
+        public_routes._remember_receipt_key_records(
+            cache,
+            kid,
+            [
+                ReceiptKey(
+                    kid=kid,
+                    jwk=jwk,
+                    att=_att(_gcp_payload(jwk)),
+                    att_kind="gcp-cs-jwt",
+                    plane="api.example",
+                    first_seen="2026-08-26T00:00:00Z",
+                    last_seen="2026-08-26T00:00:00Z",
+                )
+            ],
+        )
+
+    assert len(cache) == public_routes._RECEIPT_KEY_CACHE_MAX_KIDS
+    assert first_kid not in cache
 
 
 def test_scheduler_route_rejects_anonymous() -> None:
@@ -419,3 +1530,100 @@ def test_scheduler_route_collects_and_records_heartbeat(
     assert response.status_code == 200
     assert response.json()["appended"] == 1
     assert heartbeats == ["job:receipt-key-collector"]
+
+
+def test_scheduler_route_fails_without_heartbeat_when_collection_has_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.routes.internal import gateway
+
+    heartbeats: list[str] = []
+    monkeypatch.setattr(
+        gateway,
+        "collect_receipt_keys",
+        lambda _settings: {
+            "discovered": 2,
+            "fetched": 1,
+            "appended": 1,
+            "refreshed": 0,
+            "unchanged": 0,
+            "skipped": 0,
+            "errors": 1,
+        },
+    )
+    monkeypatch.setattr(
+        gateway,
+        "record_heartbeat",
+        lambda name, *, settings: heartbeats.append(name),
+    )
+    token = "receipt-collector-test-token"  # noqa: S105
+    client = TestClient(
+        create_app(
+            Settings(environment="test", internal_gateway_token=token),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    response = client.post(
+        "/v1/internal/gateway/receipt-keys/collect",
+        headers={"x-trustedrouter-internal-token": token},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["type"] == "service_unavailable"
+    assert heartbeats == []
+
+
+def test_degraded_cache_keeps_phase_tagged_cursors_for_mixed_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cached first page that crossed from versioned into legacy rows must hand back
+    the legacy row's `l.` cursor while degraded, not a reconstructed `v.` cursor that
+    would replay the page after recovery."""
+    versioned = _public_records(1)
+    legacy = _public_records(7)[1:]          # six legacy rows, ids distinct from the versioned one
+    legacy = sorted(legacy, key=lambda record: record.kid)
+    configure_store(InMemoryStore())
+    monkeypatch.setattr(public_routes, "_RECEIPT_KEY_PUBLIC_PAGE_SIZE", 3)
+
+    def list_records(_self, *, limit, kid=None, after=None, phase=None, legacy_after=None, **_kwargs):
+        assert kid is None
+        if phase == "v":
+            return [] if after is not None else versioned[:limit]
+        rows = [row for row in legacy if legacy_after is None or row.kid > legacy_after]
+        return rows[:limit]
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", list_records)
+    client = TestClient(
+        create_app(Settings(environment="test"), configure_store_arg=False, init_observability=False)
+    )
+    live = client.get("/trust/receipt-keys.json")
+    assert live.status_code == 200
+    live_cursor = live.json()["next_cursor"]
+    assert live_cursor == f"l.{legacy[1].kid}", live_cursor   # page = [v, l0, l1]
+
+    def unavailable(_self, **_kwargs):
+        raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", unavailable)
+    degraded = client.get("/trust/receipt-keys.json")
+    assert degraded.status_code == 200 and degraded.json()["degraded"] is True
+    assert degraded.json()["next_cursor"] == live_cursor, (
+        "the cached page must carry the cursor it was served with"
+    )
+
+    monkeypatch.setattr(InMemoryStore, "list_receipt_keys", list_records)
+    following = client.get("/trust/receipt-keys.json", params={"cursor": degraded.json()["next_cursor"]})
+    assert [key["kid"] for key in following.json()["keys"]] == [row.kid for row in legacy[2:5]], (
+        "following the degraded page's cursor must continue, never replay"
+    )
+
+
+def test_postgres_pagination_avoids_row_value_comparisons() -> None:
+    """Spanner's PostgreSQL dialect rejects `(a, b) > (x, y)` (RowCompareExpr), which
+    CI's spanner-pg conformance backend exercises and local runs skip. The cursor
+    predicate must be the expanded, portable form on every Postgres query."""
+    source = pathlib.Path("src/trusted_router/storage_postgres.py").read_text(encoding="utf-8")
+    assert "(kid, att_sha256) >" not in source
+    assert source.count("(kid > %s OR (kid = %s AND att_sha256 > %s))") == 3

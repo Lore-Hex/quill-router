@@ -2420,6 +2420,16 @@ def register(router: APIRouter) -> None:
 
         require_internal_gateway(request, settings)
         result = await run_in_threadpool(collect_receipt_keys, settings)
+        if int(result.get("errors", 0)):
+            logger.error(
+                "receipt_key.collection_incomplete",
+                extra={key: int(value) for key, value in result.items()},
+            )
+            raise api_error(
+                503,
+                "Receipt-key collection is incomplete",
+                ErrorType.SERVICE_UNAVAILABLE,
+            )
         await run_in_threadpool(
             record_heartbeat,
             "job:receipt-key-collector",

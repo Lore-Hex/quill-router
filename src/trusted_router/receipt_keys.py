@@ -9,7 +9,7 @@ import json
 import logging
 import threading
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -38,7 +38,9 @@ _GCP_JWKS_CACHE_SECONDS = 3600
 _GCP_JWKS_CACHE: tuple[float, dict[str, Any]] | None = None
 _GCP_JWKS_LOCK = threading.Lock()
 
-ReceiptKeyWriteOutcome = Literal["appended", "refreshed", "conflict", "invalid"]
+ReceiptKeyWriteOutcome = Literal[
+    "appended", "refreshed", "unchanged", "conflict", "invalid"
+]
 
 
 def b64url_encode(value: bytes) -> str:
@@ -53,6 +55,18 @@ def b64url_decode(value: str) -> bytes:
         return base64.b64decode(padded, altchars=b"-_", validate=True)
     except (ValueError, TypeError) as exc:
         raise ValueError("invalid base64url value") from exc
+
+
+def is_canonical_receipt_kid(value: str) -> bool:
+    """Return whether value is the canonical unpadded encoding of 32 bytes."""
+
+    if len(value) != 43:
+        return False
+    try:
+        decoded = b64url_decode(value)
+    except ValueError:
+        return False
+    return len(decoded) == 32 and b64url_encode(decoded) == value
 
 
 def normalize_receipt_jwk(jwk: Mapping[str, Any]) -> dict[str, str]:
@@ -83,6 +97,84 @@ def receipt_kid(jwk: Mapping[str, Any]) -> str:
 def receipt_key_commitment(jwk: Mapping[str, Any]) -> bytes:
     public_key = b64url_decode(normalize_receipt_jwk(jwk)["x"])
     return hashlib.sha256(RECEIPT_KEY_COMMITMENT_DOMAIN + b"\x00" + public_key).digest()
+
+
+def receipt_attestation_sha256(att: str, att_kind: str) -> str:
+    """Hash the provider's raw attestation document, never its wire encoding."""
+
+    if att_kind == AWS_ATTESTATION_KIND:
+        raw_document = b64url_decode(att)
+    elif att_kind in {GCP_ATTESTATION_KIND, AZURE_ATTESTATION_KIND}:
+        try:
+            raw_document = att.encode("ascii")
+        except UnicodeEncodeError as exc:
+            raise ValueError("attestation JWT must be ASCII") from exc
+    else:
+        raise ValueError(f"unsupported receipt attestation kind: {att_kind!r}")
+    return b64url_encode(hashlib.sha256(raw_document).digest())
+
+
+def with_receipt_attestation_sha256(record: ReceiptKey) -> ReceiptKey:
+    """Return a legacy or current row with its document identity populated."""
+
+    computed = receipt_attestation_sha256(record.att, record.att_kind)
+    if record.att_sha256 and record.att_sha256 != computed:
+        raise ValueError("receipt attestation hash does not match document bytes")
+    return dataclasses.replace(record, att_sha256=computed)
+
+
+def ordered_receipt_key_page(
+    records: Iterable[ReceiptKey],
+    *,
+    limit: int,
+    kid: str | None = None,
+    after: tuple[str, str] | None = None,
+) -> list[ReceiptKey]:
+    """Normalize and page a bounded union of projected and legacy rows.
+
+    Durable readers can order projected rows in their secondary index, but a
+    pre-migration row has no projected attestation hash.  Each query therefore
+    takes at most ``limit`` candidates from each representation; this helper
+    computes legacy hashes, reapplies the exact immutable cursor, and merges
+    the two bounded streams.
+    """
+
+    bounded = max(0, min(limit, 10_000))
+    normalized: dict[tuple[str, str], ReceiptKey] = {}
+    for record in records:
+        record = with_receipt_attestation_sha256(record)
+        identity = (record.kid, record.att_sha256)
+        if kid is not None and record.kid != kid:
+            continue
+        if after is not None and identity <= after:
+            continue
+        normalized.setdefault(identity, record)
+    return [normalized[identity] for identity in sorted(normalized)[:bounded]]
+
+
+def receipt_key_entity_id(kid: str, att_sha256: str) -> str:
+    """Encode the receipt-version identity into the generic entity key."""
+
+    return f"{kid}#{att_sha256}"
+
+
+def receipt_key_kid_collides(existing: ReceiptKey, observed: ReceiptKey) -> bool:
+    """Alarm when one claimed kid is paired with different public material."""
+
+    try:
+        existing_jwk = normalize_receipt_jwk(existing.jwk)
+        observed_jwk = normalize_receipt_jwk(observed.jwk)
+    except ValueError:
+        return False
+    if existing_jwk == observed_jwk:
+        return False
+    logger.error(
+        "ALERT receipt_key_kid_collision kid=%s existing_plane=%s observed_plane=%s",
+        observed.kid,
+        existing.plane,
+        observed.plane,
+    )
+    return True
 
 
 def _parse_jwt(token: str) -> tuple[dict[str, Any], dict[str, Any], bytes, bytes]:
@@ -225,32 +317,19 @@ def validate_receipt_key_observation(record: ReceiptKey) -> ReceiptKey:
         raise ValueError("receipt key plane must be non-empty")
     if not attestation_commits_to_jwk(record.att, record.att_kind, jwk):
         raise ValueError("attestation does not commit to the receipt JWK")
-    return dataclasses.replace(record, jwk=jwk)
+    return with_receipt_attestation_sha256(dataclasses.replace(record, jwk=jwk))
 
 
 def merge_receipt_key_observation(
     existing: ReceiptKey | None,
     observed: ReceiptKey,
+    *,
+    refresh_last_seen: bool = True,
 ) -> tuple[ReceiptKey | None, ReceiptKeyWriteOutcome]:
-    """Apply the only state transition allowed for one receipt ``kid``."""
+    """Apply the only state transition allowed for one receipt document."""
 
-    if existing is not None:
-        try:
-            existing_jwk = normalize_receipt_jwk(existing.jwk)
-            observed_jwk = normalize_receipt_jwk(observed.jwk)
-        except ValueError:
-            # The full validator below emits the more useful malformed-record
-            # alarm. Persisted rows have already passed this check.
-            pass
-        else:
-            if existing_jwk != observed_jwk:
-                logger.error(
-                    "ALERT receipt_key_kid_collision kid=%s existing_plane=%s observed_plane=%s",
-                    observed.kid,
-                    existing.plane,
-                    observed.plane,
-                )
-                return existing, "conflict"
+    if existing is not None and receipt_key_kid_collides(existing, observed):
+        return existing, "conflict"
 
     try:
         observed = validate_receipt_key_observation(observed)
@@ -264,6 +343,25 @@ def merge_receipt_key_observation(
     if existing is None:
         return observed, "appended"
 
+    try:
+        existing = with_receipt_attestation_sha256(existing)
+    except ValueError as exc:
+        logger.error(
+            "receipt_key_invalid_existing_row kid=%s reason=%s",
+            existing.kid,
+            exc,
+        )
+        return existing, "conflict"
+
+    if existing.att_sha256 != observed.att_sha256:
+        logger.error(
+            "receipt_key_document_identity_mismatch kid=%s existing=%s observed=%s",
+            observed.kid,
+            existing.att_sha256,
+            observed.att_sha256,
+        )
+        return existing, "conflict"
+
     existing_jwk = normalize_receipt_jwk(existing.jwk)
     if existing.att_kind != observed.att_kind:
         logger.error(
@@ -274,15 +372,20 @@ def merge_receipt_key_observation(
         )
         return existing, "conflict"
 
-    # The incoming attestation was checked against this exact JWK above, so it
-    # is safe to refresh.  Never change first_seen, plane, or revocation state;
-    # and never let a transient verifier failure downgrade a prior success.
-    advances_clock = observed.last_seen >= existing.last_seen
+    # Historical evidence has no trustworthy observation time. Once its
+    # immutable document is present, even an otherwise harmless upsert would
+    # refresh the database's physical updated_at column and move old evidence
+    # ahead of live keys in bounded newest-first reads.
+    if not refresh_last_seen:
+        return existing, "unchanged"
+
+    # A document row is immutable. Never change its attestation, first_seen,
+    # plane, or revocation state; and never let a transient verifier failure
+    # downgrade a prior success.
     return (
         dataclasses.replace(
             existing,
             jwk=existing_jwk,
-            att=observed.att if advances_clock else existing.att,
             last_seen=max(existing.last_seen, observed.last_seen),
             verified=existing.verified or observed.verified,
         ),
@@ -336,6 +439,7 @@ def verify_gcp_attestation_chain(
     *,
     now: float | None = None,
     jwks: Mapping[str, Any] | None = None,
+    allow_expired: bool = False,
 ) -> None:
     """Verify the minimal GCP Confidential Space JWT trust chain."""
 
@@ -378,7 +482,7 @@ def verify_gcp_attestation_chain(
     issued_at = payload.get("iat")
     if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)):
         raise ValueError("GCP attestation JWT has no numeric exp")
-    if current > float(expires_at) + GCP_CLOCK_SKEW_SECONDS:
+    if not allow_expired and current > float(expires_at) + GCP_CLOCK_SKEW_SECONDS:
         raise ValueError("GCP attestation JWT is expired")
     for claim_name, claim_value in (("nbf", not_before), ("iat", issued_at)):
         if claim_value is not None and (

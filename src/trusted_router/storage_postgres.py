@@ -54,6 +54,10 @@ from trusted_router.receipt_keys import (
     RECEIPT_KEY_KIND,
     ReceiptKeyWriteOutcome,
     merge_receipt_key_observation,
+    ordered_receipt_key_page,
+    receipt_key_entity_id,
+    receipt_key_kid_collides,
+    with_receipt_attestation_sha256,
 )
 from trusted_router.routable_payouts import (
     EARNINGS_CASHOUT_EXTERNAL_KIND,
@@ -497,6 +501,12 @@ def _split_sql_statements(schema: str) -> list[str]:
     return [stmt.strip() for stmt in without_comments.split(";") if stmt.strip()]
 
 
+_DSQL_RECEIPT_KEY_VERSIONS_INDEX = (
+    "CREATE INDEX ASYNC IF NOT EXISTS tr_receipt_key_versions\n"
+    "    ON tr_entities (kid, att_sha256)"
+)
+
+
 def _video_due_id(job: VideoJob) -> str:
     """Ordering key for the video due-index: `<next_poll_at>#<job_id>`.
 
@@ -676,7 +686,16 @@ class PostgresStore:
             head = statement.lstrip()[:12].upper()
             if not head.startswith("CREATE INDEX"):
                 raise
-        conn.execute(statement.replace("CREATE INDEX", "CREATE INDEX ASYNC", 1), prepare=False)
+        if statement.lstrip().startswith(
+            "CREATE INDEX IF NOT EXISTS tr_receipt_key_versions"
+        ):
+            # DSQL has no partial indexes. The same runtime signal that requires
+            # ASYNC also selects its plain nullable-column index; the public
+            # query still excludes NULL rows on every dialect.
+            async_statement = _DSQL_RECEIPT_KEY_VERSIONS_INDEX
+        else:
+            async_statement = statement.replace("CREATE INDEX", "CREATE INDEX ASYNC", 1)
+        conn.execute(async_statement, prepare=False)
 
     # Generic entity IO ------------------------------------------------------
 
@@ -736,45 +755,231 @@ class PostgresStore:
     def _read_entity(self, kind: str, entity_id: str, cls: type[T]) -> T | None:
         return self._run_transaction(lambda conn: self._read_entity_tx(conn, kind, entity_id, cls))
 
-    def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
+    def observe_receipt_key(
+        self,
+        record: ReceiptKey,
+        *,
+        refresh_last_seen: bool = True,
+    ) -> ReceiptKeyWriteOutcome:
+        same_kid = self.list_receipt_keys(limit=1, kid=record.kid)
+        if same_kid and receipt_key_kid_collides(same_kid[0], record):
+            return "conflict"
+        validated, outcome = merge_receipt_key_observation(None, record)
+        if validated is None or outcome != "appended":
+            return outcome
+        entity_id = receipt_key_entity_id(validated.kid, validated.att_sha256)
+
         def operation(conn: Any) -> ReceiptKeyWriteOutcome:
-            existing = self._read_entity_tx(
+            legacy = self._read_entity_tx(
                 conn,
                 RECEIPT_KEY_KIND,
-                record.kid,
+                validated.kid,
                 ReceiptKey,
                 for_update=True,
             )
-            candidate, outcome = merge_receipt_key_observation(existing, record)
+            if legacy is not None:
+                legacy = with_receipt_attestation_sha256(legacy)
+                legacy_id = receipt_key_entity_id(legacy.kid, legacy.att_sha256)
+                self._write_receipt_key_tx(conn, legacy_id, legacy)
+                self._delete_entity_tx(conn, RECEIPT_KEY_KIND, validated.kid)
+            existing = self._read_entity_tx(
+                conn,
+                RECEIPT_KEY_KIND,
+                entity_id,
+                ReceiptKey,
+                for_update=True,
+            )
+            candidate, outcome = merge_receipt_key_observation(
+                existing,
+                validated,
+                refresh_last_seen=refresh_last_seen,
+            )
             if candidate is None or outcome in {"conflict", "invalid"}:
                 return outcome
             if existing is None:
-                if self._insert_entity_once_tx(conn, RECEIPT_KEY_KIND, record.kid, candidate):
+                if self._insert_receipt_key_once_tx(conn, entity_id, candidate):
                     return "appended"
-                # A concurrent transaction inserted this kid after our absent
+                # A concurrent transaction inserted this document after our absent
                 # read. Lock its now-committed verdict before comparing.
                 existing = self._read_entity_tx(
                     conn,
                     RECEIPT_KEY_KIND,
-                    record.kid,
+                    entity_id,
                     ReceiptKey,
                     for_update=True,
                 )
                 if existing is None:  # pragma: no cover - database invariant
                     raise StoreConflict("receipt key insert conflict lost its row")
-                candidate, outcome = merge_receipt_key_observation(existing, record)
+                candidate, outcome = merge_receipt_key_observation(
+                    existing,
+                    validated,
+                    refresh_last_seen=refresh_last_seen,
+                )
             if candidate is not None and outcome == "refreshed":
-                self._write_entity_tx(conn, RECEIPT_KEY_KIND, record.kid, candidate)
+                self._write_receipt_key_tx(conn, entity_id, candidate)
             return outcome
 
         return self._run_transaction(operation)
 
-    def list_receipt_keys(self, *, limit: int = 5_000) -> list[ReceiptKey]:
-        return self._list_entities(
-            RECEIPT_KEY_KIND,
-            ReceiptKey,
-            limit=max(0, min(limit, 10_000)),
+    def list_receipt_keys(
+        self,
+        *,
+        limit: int = 5_000,
+        kid: str | None = None,
+        after: tuple[str, str] | None = None,
+        phase: str | None = None,
+        legacy_after: str | None = None,
+    ) -> list[ReceiptKey]:
+        bounded = max(0, min(limit, 10_000))
+
+        def operation(conn: Any) -> list[ReceiptKey]:
+            after_pair = after or ("", "")
+            params: tuple[Any, ...]
+            if phase == "v":
+                query = (
+                    "SELECT body FROM tr_entities WHERE kid IS NOT NULL "
+                    "AND att_sha256 IS NOT NULL AND kind = %s "
+                    "AND (kid > %s OR (kid = %s AND att_sha256 > %s)) "
+                    "ORDER BY kid, att_sha256 LIMIT %s"
+                )
+                params = (RECEIPT_KEY_KIND, after_pair[0], after_pair[0], after_pair[1], bounded)
+            elif phase == "l":
+                query = (
+                    "SELECT body FROM tr_entities WHERE kind = %s "
+                    "AND (kid IS NULL OR att_sha256 IS NULL) AND id > %s "
+                    "ORDER BY id LIMIT %s"
+                )
+                params = (RECEIPT_KEY_KIND, legacy_after or "", bounded)
+            elif phase is not None:
+                raise ValueError(f"unknown receipt-key pagination phase: {phase!r}")
+            elif kid is None:
+                query = (
+                    "WITH versioned AS (SELECT body FROM tr_entities "
+                    "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL AND kind = %s "
+                    "AND (kid > %s OR (kid = %s AND att_sha256 > %s)) "
+                    "ORDER BY kid, att_sha256 LIMIT %s), "
+                    "legacy AS (SELECT body FROM tr_entities WHERE kind = %s "
+                    "AND (kid IS NULL OR att_sha256 IS NULL) AND id >= %s "
+                    "ORDER BY id LIMIT %s) "
+                    "SELECT body FROM versioned UNION ALL SELECT body FROM legacy"
+                )
+                params = (
+                    RECEIPT_KEY_KIND,
+                    after_pair[0],
+                    after_pair[0],
+                    after_pair[1],
+                    bounded,
+                    RECEIPT_KEY_KIND,
+                    after_pair[0],
+                    bounded,
+                )
+            else:
+                query = (
+                    "WITH versioned AS (SELECT body FROM tr_entities "
+                    "WHERE kid = %s AND kid IS NOT NULL "
+                    "AND att_sha256 IS NOT NULL AND kind = %s "
+                    "AND (kid > %s OR (kid = %s AND att_sha256 > %s)) "
+                    "ORDER BY kid, att_sha256 LIMIT %s), "
+                    "legacy AS (SELECT body FROM tr_entities WHERE kind = %s AND id = %s "
+                    "AND (kid IS NULL OR att_sha256 IS NULL) LIMIT %s) "
+                    "SELECT body FROM versioned UNION ALL SELECT body FROM legacy"
+                )
+                params = (
+                    kid,
+                    RECEIPT_KEY_KIND,
+                    after_pair[0],
+                    after_pair[0],
+                    after_pair[1],
+                    bounded,
+                    RECEIPT_KEY_KIND,
+                    kid,
+                    bounded,
+                )
+            result: list[ReceiptKey] = []
+            known = {field.name for field in dataclasses.fields(ReceiptKey)}
+            for (raw,) in conn.execute(query, params).fetchall():
+                data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                result.append(
+                    ReceiptKey(**{key: value for key, value in data.items() if key in known})
+                )
+            return result
+
+        return ordered_receipt_key_page(
+            self._run_transaction(operation),
+            limit=bounded,
+            kid=kid,
+            after=after if phase != "l" else None,
         )
+
+    def backfill_receipt_key_versions_page(
+        self,
+        *,
+        after: str | None = None,
+        limit: int = 100,
+    ) -> list[str]:
+        """Populate one transactionally bounded page of legacy projections."""
+
+        bounded = max(1, min(limit, 1_000))
+
+        def operation(conn: Any) -> list[str]:
+            rows = conn.execute(
+                "SELECT id, body FROM tr_entities WHERE kind = %s AND id > %s "
+                "AND (kid IS NULL OR att_sha256 IS NULL) ORDER BY id LIMIT %s FOR UPDATE",
+                (RECEIPT_KEY_KIND, after or "", bounded),
+            ).fetchall()
+            known = {field.name for field in dataclasses.fields(ReceiptKey)}
+            updated: list[str] = []
+            for entity_id, raw in rows:
+                data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                record = with_receipt_attestation_sha256(
+                    ReceiptKey(**{key: value for key, value in data.items() if key in known})
+                )
+                self._write_receipt_key_tx(conn, str(entity_id), record)
+                updated.append(str(entity_id))
+            return updated
+
+        return self._run_transaction(operation)
+
+    def _write_receipt_key_tx(
+        self,
+        conn: Any,
+        entity_id: str,
+        value: ReceiptKey,
+    ) -> None:
+        conn.execute(
+            "INSERT INTO tr_entities (kind, id, body, kid, att_sha256, updated_at) "
+            "VALUES (%s, %s, %s::jsonb, %s, %s, CURRENT_TIMESTAMP) "
+            "ON CONFLICT (kind, id) DO UPDATE SET body = EXCLUDED.body, "
+            "kid = EXCLUDED.kid, att_sha256 = EXCLUDED.att_sha256, "
+            "updated_at = EXCLUDED.updated_at",
+            (
+                RECEIPT_KEY_KIND,
+                entity_id,
+                json_body(value),
+                value.kid,
+                value.att_sha256,
+            ),
+        )
+
+    def _insert_receipt_key_once_tx(
+        self,
+        conn: Any,
+        entity_id: str,
+        value: ReceiptKey,
+    ) -> bool:
+        cursor = conn.execute(
+            "INSERT INTO tr_entities (kind, id, body, kid, att_sha256, updated_at) "
+            "VALUES (%s, %s, %s::jsonb, %s, %s, CURRENT_TIMESTAMP) "
+            "ON CONFLICT (kind, id) DO NOTHING",
+            (
+                RECEIPT_KEY_KIND,
+                entity_id,
+                json_body(value),
+                value.kid,
+                value.att_sha256,
+            ),
+        )
+        return cursor.rowcount == 1
 
     def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot:
         def operation(conn: Any) -> SpendLeaseBoot:

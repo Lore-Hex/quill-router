@@ -108,11 +108,13 @@ def _is_expired(expires_at: str | None) -> bool:
 
 @dataclass(frozen=True)
 class ReceiptKey:
-    """One durable, public receipt-signing key observation.
+    """One durable, public receipt-attestation document observation.
 
-    Receipt keys are generated per enclave boot.  The backing entity is
-    append-only by ``kid``: only ``last_seen``, a key-bound refreshed
-    attestation, and a monotonic ``verified`` upgrade may change later.
+    Receipt keys are generated per enclave boot and their attestations are
+    re-minted while that boot remains live.  The backing entity is append-only
+    by ``(kid, att_sha256)``: only ``last_seen`` and a monotonic ``verified``
+    upgrade may change later.  The empty hash is the read-compatible shape of
+    a legacy row and is filled from ``att`` before the record is served.
     """
 
     kid: str
@@ -122,6 +124,7 @@ class ReceiptKey:
     plane: str
     first_seen: str
     last_seen: str
+    att_sha256: str = ""
     revoked: bool = False
     verified: bool = False
 

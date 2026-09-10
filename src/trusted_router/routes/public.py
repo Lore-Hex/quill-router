@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import hashlib
 import html
 import json
 import logging
@@ -142,6 +143,10 @@ from trusted_router.provider_contract import (
     PROVIDER_CATALOG_V2_SCHEMA,
 )
 from trusted_router.public_analytics_snapshots import current_public_analytics_snapshot
+from trusted_router.receipt_keys import (
+    is_canonical_receipt_kid,
+    with_receipt_attestation_sha256,
+)
 from trusted_router.request_limits import normalized_client_identity
 from trusted_router.routes.mcp import MCP_PROTOCOL_VERSION
 from trusted_router.scopes import KNOWN_SCOPES
@@ -368,6 +373,9 @@ _INQUIRY_GLOBAL_HITS: list[float] = []
 _INQUIRY_WINDOW_SECONDS = 3600.0
 _INQUIRY_MAX_PER_WINDOW = 5
 _INQUIRY_GLOBAL_MAX_PER_WINDOW = 60
+_RECEIPT_KEY_CACHE_MAX_KIDS = 128
+_RECEIPT_KEY_PUBLIC_PAGE_SIZE = 250
+_RECEIPT_KEY_PUBLIC_MAX_BYTES = 1024 * 1024
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _SUPPORT_CATEGORIES = {
     "api": "API and routing",
@@ -377,6 +385,110 @@ _SUPPORT_CATEGORIES = {
     "feature": "Feature request",
     "other": "Other",
 }
+
+
+def _remember_receipt_key_records(
+    cache: OrderedDict[str, list[ReceiptKey]],
+    kid: str,
+    records: list[ReceiptKey],
+) -> None:
+    """Cache only known kids in a fixed-size least-recently-written map."""
+
+    cache.pop(kid, None)
+    if not records:
+        return
+    cache[kid] = records
+    while len(cache) > _RECEIPT_KEY_CACHE_MAX_KIDS:
+        cache.popitem(last=False)
+
+
+def _public_receipt_key(record: ReceiptKey) -> dict[str, Any]:
+    return {
+        "kid": record.kid,
+        "jwk": {
+            "kty": record.jwk.get("kty"),
+            "crv": record.jwk.get("crv"),
+            "x": record.jwk.get("x"),
+        },
+        "att": record.att,
+        "att_kind": record.att_kind,
+        "att_sha256": record.att_sha256,
+        "plane": record.plane,
+        "first_seen": record.first_seen,
+        "last_seen": record.last_seen,
+        "revoked": record.revoked,
+        "verified": record.verified,
+    }
+
+
+def _receipt_key_cursor(record: ReceiptKey) -> str:
+    return f"{record.kid}.{record.att_sha256}"
+
+
+def _parse_receipt_key_cursor(value: str) -> tuple[str, str] | None:
+    parts = value.split(".")
+    if len(parts) != 2 or not all(is_canonical_receipt_kid(part) for part in parts):
+        return None
+    return parts[0], parts[1]
+
+
+@dataclass(frozen=True)
+class _UnfilteredReceiptKeyCursor:
+    phase: str
+    kid: str
+    att_sha256: str = ""
+
+
+def _parse_unfiltered_receipt_key_cursor(
+    value: str,
+) -> _UnfilteredReceiptKeyCursor | None:
+    parts = value.split(".")
+    if (
+        len(parts) == 3
+        and parts[0] == "v"
+        and is_canonical_receipt_kid(parts[1])
+        and is_canonical_receipt_kid(parts[2])
+    ):
+        return _UnfilteredReceiptKeyCursor("v", parts[1], parts[2])
+    if len(parts) == 2 and parts[0] == "l" and is_canonical_receipt_kid(parts[1]):
+        return _UnfilteredReceiptKeyCursor("l", parts[1])
+    return None
+
+
+def _unfiltered_receipt_key_page(
+    *,
+    limit: int,
+    after: _UnfilteredReceiptKeyCursor | None,
+) -> tuple[list[ReceiptKey], list[str]]:
+    """Read projected versions first, then legacy ids, without mixing cursors."""
+
+    records: list[ReceiptKey] = []
+    cursors: list[str] = []
+    if after is None or after.phase == "v":
+        version_after = None if after is None else (after.kid, after.att_sha256)
+        versioned = [
+            with_receipt_attestation_sha256(record)
+            for record in STORE.list_receipt_keys(
+                limit=limit,
+                after=version_after,
+                phase="v",
+            )
+        ]
+        records.extend(versioned)
+        cursors.extend(f"v.{record.kid}.{record.att_sha256}" for record in versioned)
+    if len(records) < limit:
+        legacy_after = after.kid if after is not None and after.phase == "l" else None
+        legacy = [
+            with_receipt_attestation_sha256(record)
+            for record in STORE.list_receipt_keys(
+                limit=limit - len(records),
+                phase="l",
+                legacy_after=legacy_after,
+            )
+        ]
+        records.extend(legacy)
+        cursors.extend(f"l.{record.kid}" for record in legacy)
+    return records, cursors
 
 
 def _inquiry_rate_ok(client_ip: str, *, now: float | None = None) -> bool:
@@ -687,7 +799,11 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         validator=validated_azure_metadata,
         embedded=embedded_azure_metadata,
     )
-    receipt_key_cache: list[ReceiptKey] | None = None
+    # The unfiltered page cache keeps the phase-tagged cursor vector WITH its
+    # records: a cached page that crossed from versioned into legacy rows must
+    # hand back `l.<id>` for those rows, never a reconstructed `v.` cursor.
+    receipt_key_global_cache: tuple[list[ReceiptKey], list[str]] | None = None
+    receipt_key_cache: OrderedDict[str, list[ReceiptKey]] = OrderedDict()
 
     async def _mirrored(
         resolver: TrustReleaseResolver, embedded: Callable[[Settings], Mapping[str, Any]]
@@ -2060,50 +2176,138 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/.well-known/inference-receipt-keys", include_in_schema=False)
     @app.get("/trust/receipt-keys.json", include_in_schema=False)
-    async def inference_receipt_keys() -> JSONResponse:
-        """Bounded public projection of the durable, append-only key log."""
+    async def inference_receipt_keys(
+        request: Request,
+        kid: str | None = None,
+        cursor: str | None = None,
+    ) -> Response:
+        """Immutable, cursor-paged receipt-key attestation-version log."""
 
-        nonlocal receipt_key_cache
+        nonlocal receipt_key_global_cache
+        if kid is not None and not is_canonical_receipt_kid(kid):
+            raise HTTPException(status_code=400, detail="kid must be canonical base64url")
+        filtered_after = (
+            _parse_receipt_key_cursor(cursor)
+            if cursor is not None and kid is not None
+            else None
+        )
+        unfiltered_after = (
+            _parse_unfiltered_receipt_key_cursor(cursor)
+            if cursor is not None and kid is None
+            else None
+        )
+        if cursor is not None and filtered_after is None and unfiltered_after is None:
+            raise HTTPException(status_code=400, detail="cursor is invalid")
+        if kid is not None and filtered_after is not None and filtered_after[0] != kid:
+            raise HTTPException(status_code=400, detail="cursor does not match kid")
+        cursors: list[str] = []
         degraded = False
         try:
-            records = await asyncio.wait_for(
-                run_in_threadpool(STORE.list_receipt_keys, limit=5_000),
-                timeout=3.0,
-            )
-            receipt_key_cache = records
+            if kid is None:
+                records, cursors = await asyncio.wait_for(
+                    run_in_threadpool(
+                        _unfiltered_receipt_key_page,
+                        limit=_RECEIPT_KEY_PUBLIC_PAGE_SIZE,
+                        after=unfiltered_after,
+                    ),
+                    timeout=3.0,
+                )
+            else:
+                list_kwargs: dict[str, Any] = {
+                    "limit": _RECEIPT_KEY_PUBLIC_PAGE_SIZE,
+                    "kid": kid,
+                }
+                if filtered_after is not None:
+                    list_kwargs["after"] = filtered_after
+                records = await asyncio.wait_for(
+                    run_in_threadpool(
+                        STORE.list_receipt_keys,
+                        **list_kwargs,
+                    ),
+                    timeout=3.0,
+                )
+            records = [with_receipt_attestation_sha256(record) for record in records]
+            if kid is not None:
+                cursors = [_receipt_key_cursor(record) for record in records]
+            if cursor is None:
+                if kid is None:
+                    receipt_key_global_cache = (records, list(cursors))
+                else:
+                    _remember_receipt_key_records(receipt_key_cache, kid, records)
         except Exception:
+            if cursor is not None:
+                log.exception("receipt_key_log_read_degraded_cursor_unavailable")
+                raise HTTPException(
+                    status_code=503,
+                    detail="receipt-key log pagination is temporarily unavailable",
+                    headers={"x-trustedrouter-key-log-status": "degraded"},
+                ) from None
             degraded = True
-            records = receipt_key_cache or []
+            if kid is None:
+                records, cursors = receipt_key_global_cache or ([], [])
+            else:
+                records = receipt_key_cache.get(kid, [])
+                cursors = [_receipt_key_cursor(record) for record in records]
             log.exception("receipt_key_log_read_degraded_serving_cached")
-        keys = [
-            {
-                "kid": record.kid,
-                "jwk": {
-                    "kty": record.jwk.get("kty"),
-                    "crv": record.jwk.get("crv"),
-                    "x": record.jwk.get("x"),
-                },
-                "att": record.att,
-                "att_kind": record.att_kind,
-                "plane": record.plane,
-                "first_seen": record.first_seen,
-                "last_seen": record.last_seen,
-                "revoked": record.revoked,
-                "verified": record.verified,
-            }
-            for record in records
-        ]
-        return JSONResponse(
-            {
+        generated_at = iso_now()
+        keys: list[dict[str, Any]] = []
+        for index, record in enumerate(records):
+            keys.append(_public_receipt_key(record))
+            has_more = (
+                index + 1 < len(records)
+                or len(records) == _RECEIPT_KEY_PUBLIC_PAGE_SIZE
+            )
+            candidate = {
                 "spec": "inference-receipt/1",
-                "generated_at": iso_now(),
                 "degraded": degraded,
+                "page_size": _RECEIPT_KEY_PUBLIC_PAGE_SIZE,
+                "next_cursor": cursors[index] if has_more else None,
                 "keys": keys,
-            },
-            headers={
-                **public_document_headers("/.well-known/inference-receipt-keys"),
-                "x-trustedrouter-key-log-status": "degraded" if degraded else "live",
-            },
+                "generated_at": generated_at,
+            }
+            if len(_json_body(candidate)) > _RECEIPT_KEY_PUBLIC_MAX_BYTES:
+                keys.pop()
+                break
+        if not keys and records:
+            raise HTTPException(
+                status_code=500,
+                detail="receipt-key record exceeds public response byte ceiling",
+            )
+        has_more = len(keys) < len(records) or len(records) == _RECEIPT_KEY_PUBLIC_PAGE_SIZE
+        semantic_payload: dict[str, Any] = {
+            "spec": "inference-receipt/1",
+            "degraded": degraded,
+            "page_size": _RECEIPT_KEY_PUBLIC_PAGE_SIZE,
+            "next_cursor": (
+                cursors[len(keys) - 1] if keys and has_more else None
+            ),
+            "keys": keys,
+        }
+        semantic_bytes = json.dumps(
+            semantic_payload, sort_keys=True, separators=(",", ":")
+        ).encode()
+        # generated_at is intentionally outside this weak validator: clients
+        # care whether the key evidence changed, not which revalidation emitted
+        # an otherwise equivalent representation.
+        etag = f'W/"{hashlib.sha256(semantic_bytes).hexdigest()}"'
+        headers = {
+            "cache-control": "public, max-age=60, s-maxage=300, must-revalidate",
+            "etag": etag,
+            "link": (
+                f'<{canonical_public_url(settings, "/.well-known/inference-receipt-keys")}>; '
+                'rel="canonical"'
+            ),
+            "x-trustedrouter-key-log-status": "degraded" if degraded else "live",
+        }
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers=headers)
+        body = _json_body({**semantic_payload, "generated_at": generated_at})
+        if len(body) > _RECEIPT_KEY_PUBLIC_MAX_BYTES:  # pragma: no cover
+            raise RuntimeError("receipt-key response exceeded byte ceiling")
+        return Response(
+            content=body,
+            media_type="application/json",
+            headers=headers,
         )
 
     @app.get("/trust/gcp-release.json")

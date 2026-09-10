@@ -31,6 +31,9 @@ from trusted_router.operational_analytics_freshness import (
 from trusted_router.receipt_keys import (
     ReceiptKeyWriteOutcome,
     merge_receipt_key_observation,
+    receipt_key_entity_id,
+    receipt_key_kid_collides,
+    with_receipt_attestation_sha256,
 )
 from trusted_router.routable_payouts import (
     ROUTABLE_PAID_STATUSES,
@@ -311,19 +314,82 @@ class InMemoryStore:
     def readiness_check(self) -> None:
         """The in-memory backend has no external serving dependency."""
 
-    def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
+    def observe_receipt_key(
+        self,
+        record: ReceiptKey,
+        *,
+        refresh_last_seen: bool = True,
+    ) -> ReceiptKeyWriteOutcome:
         with self._lock:
+            same_kid = [row for row in self.receipt_keys.values() if row.kid == record.kid]
+            if same_kid and receipt_key_kid_collides(same_kid[0], record):
+                return "conflict"
+            validated, outcome = merge_receipt_key_observation(None, record)
+            if validated is None or outcome != "appended":
+                return outcome
+            legacy = self.receipt_keys.pop(record.kid, None)
+            if legacy is not None:
+                legacy = with_receipt_attestation_sha256(legacy)
+                legacy_id = receipt_key_entity_id(legacy.kid, legacy.att_sha256)
+                self.receipt_keys[legacy_id] = legacy
+            entity_id = receipt_key_entity_id(validated.kid, validated.att_sha256)
             merged, outcome = merge_receipt_key_observation(
-                self.receipt_keys.get(record.kid), record
+                self.receipt_keys.get(entity_id),
+                validated,
+                refresh_last_seen=refresh_last_seen,
             )
             if merged is not None and outcome in {"appended", "refreshed"}:
-                self.receipt_keys[record.kid] = merged
+                self.receipt_keys[entity_id] = merged
             return outcome
 
-    def list_receipt_keys(self, *, limit: int = 5_000) -> list[ReceiptKey]:
+    def list_receipt_keys(
+        self,
+        *,
+        limit: int = 5_000,
+        kid: str | None = None,
+        after: tuple[str, str] | None = None,
+        phase: str | None = None,
+        legacy_after: str | None = None,
+    ) -> list[ReceiptKey]:
         bounded = max(0, min(limit, 10_000))
         with self._lock:
-            return [self.receipt_keys[kid] for kid in sorted(self.receipt_keys)[:bounded]]
+            if phase == "v":
+                rows = [
+                    with_receipt_attestation_sha256(row)
+                    for entity_id, row in self.receipt_keys.items()
+                    if entity_id != row.kid
+                ]
+                if after is not None:
+                    rows = [row for row in rows if (row.kid, row.att_sha256) > after]
+                rows.sort(key=lambda row: (row.kid, row.att_sha256))
+                return rows[:bounded]
+            if phase == "l":
+                legacy_rows = [
+                    (entity_id, with_receipt_attestation_sha256(row))
+                    for entity_id, row in self.receipt_keys.items()
+                    if entity_id == row.kid
+                    and (legacy_after is None or entity_id > legacy_after)
+                ]
+                legacy_rows.sort(key=lambda item: item[0])
+                return [row for _, row in legacy_rows[:bounded]]
+            if phase is not None:
+                raise ValueError(f"unknown receipt-key pagination phase: {phase!r}")
+            backfilled: dict[str, ReceiptKey] = {}
+            for row in self.receipt_keys.values():
+                row = with_receipt_attestation_sha256(row)
+                entity_id = receipt_key_entity_id(row.kid, row.att_sha256)
+                existing = backfilled.get(entity_id)
+                if existing is not None:
+                    merged, _ = merge_receipt_key_observation(existing, row)
+                    if merged is not None:
+                        row = merged
+                backfilled[entity_id] = row
+            self.receipt_keys = backfilled
+            rows = [row for row in backfilled.values() if kid is None or row.kid == kid]
+            if after is not None:
+                rows = [row for row in rows if (row.kid, row.att_sha256) > after]
+            rows.sort(key=lambda row: (row.kid, row.att_sha256))
+            return rows[:bounded]
 
     def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot:
         with self._lock:

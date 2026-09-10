@@ -1,12 +1,14 @@
-"""Scheduled, fail-closed collection of per-boot enclave receipt keys."""
+"""Scheduled, fail-closed collection of per-re-mint enclave receipt evidence."""
 
 from __future__ import annotations
 
 import ipaddress
+import json
 import logging
 import socket
 import ssl
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -17,6 +19,7 @@ from trusted_router.receipt_keys import (
     GCP_ATTESTATION_KIND,
     attestation_commits_to_jwk,
     normalize_receipt_jwk,
+    receipt_attestation_sha256,
     receipt_kid,
     verify_gcp_attestation_chain,
 )
@@ -28,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 RECEIPT_KEY_FETCH_TIMEOUT_SECONDS = 10.0
 RECEIPT_KEY_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+RECEIPT_KEY_MAX_HISTORY_ENTRIES = 64
 RECEIPT_KEY_MAX_TARGETS = 128
 
 
@@ -107,17 +111,29 @@ def _fetch_receipt_key(target: ReceiptKeyTarget, *, verify_tls: bool) -> dict[st
             headers={"Host": target.host, "Accept": "application/json"},
             extensions={"sni_hostname": target.host},
         )
-        response = client.send(request)
-        response.raise_for_status()
-        if len(response.content) > RECEIPT_KEY_MAX_RESPONSE_BYTES:
-            raise ValueError("receipt-key response exceeds size limit")
-        payload = response.json()
+        response = client.send(request, stream=True)
+        try:
+            response.raise_for_status()
+            body = bytearray()
+            for chunk in response.iter_bytes(chunk_size=64 * 1024):
+                body.extend(chunk)
+                if len(body) > RECEIPT_KEY_MAX_RESPONSE_BYTES:
+                    raise ValueError("receipt-key response exceeds size limit")
+            payload = json.loads(body)
+        finally:
+            response.close()
     if not isinstance(payload, dict):
         raise ValueError("receipt-key response is not an object")
     return payload
 
 
-def _record_from_payload(payload: dict[str, Any], *, plane: str, seen_at: str) -> ReceiptKey:
+def _record_from_payload(
+    payload: dict[str, Any],
+    *,
+    plane: str,
+    seen_at: str,
+    history: bool = False,
+) -> ReceiptKey:
     kid = payload.get("kid")
     jwk = payload.get("jwk")
     att = payload.get("att")
@@ -135,10 +151,21 @@ def _record_from_payload(payload: dict[str, Any], *, plane: str, seen_at: str) -
         raise ValueError("receipt-key kid does not match JWK x")
     if not attestation_commits_to_jwk(att, att_kind, narrowed_jwk):
         raise ValueError("receipt-key attestation does not contain the key commitment")
+    att_sha256 = receipt_attestation_sha256(att, att_kind)
+    claimed_att_sha256 = payload.get("att_sha256")
+    if claimed_att_sha256 is not None and claimed_att_sha256 != att_sha256:
+        raise ValueError("receipt-key attestation hash does not match document bytes")
 
     verified = False
     if att_kind == GCP_ATTESTATION_KIND:
-        verify_gcp_attestation_chain(att)
+        if history:
+            # History exists specifically to preserve past documents through a
+            # collector outage.  Verify its issuer signature, chain, claims,
+            # debug state, and key commitment exactly as current evidence, but
+            # do not reject it merely because its validity window has ended.
+            verify_gcp_attestation_chain(att, allow_expired=True)
+        else:
+            verify_gcp_attestation_chain(att)
         verified = True
     return ReceiptKey(
         kid=kid,
@@ -148,8 +175,96 @@ def _record_from_payload(payload: dict[str, Any], *, plane: str, seen_at: str) -
         plane=plane,
         first_seen=seen_at,
         last_seen=seen_at,
+        att_sha256=att_sha256,
         verified=verified,
     )
+
+
+def _observe_record(
+    store: Store,
+    record: ReceiptKey,
+    result: dict[str, int],
+    *,
+    refresh_last_seen: bool = True,
+) -> None:
+    outcome = store.observe_receipt_key(record, refresh_last_seen=refresh_last_seen)
+    if outcome in {"appended", "refreshed"}:
+        result[outcome] += 1
+    elif outcome == "unchanged":
+        result["unchanged"] += 1
+    else:
+        result["skipped"] += 1
+
+
+def _collect_history(
+    payload: dict[str, Any],
+    *,
+    plane: str,
+    seen_at: str,
+    store: Store,
+    result: dict[str, int],
+    target: ReceiptKeyTarget,
+) -> None:
+    if "att_history" not in payload:
+        return
+    history = payload.get("att_history")
+    if not isinstance(history, list):
+        result["skipped"] += 1
+        logger.warning(
+            "receipt_key_history_skipped host=%s ip=%s index=all error=not-a-list",
+            target.host,
+            target.connect_ip,
+        )
+        return
+    if len(history) > RECEIPT_KEY_MAX_HISTORY_ENTRIES:
+        result["skipped"] += 1
+        logger.warning(
+            "receipt_key_history_truncated host=%s ip=%s count=%d limit=%d",
+            target.host,
+            target.connect_ip,
+            len(history),
+            RECEIPT_KEY_MAX_HISTORY_ENTRIES,
+        )
+        history = history[:RECEIPT_KEY_MAX_HISTORY_ENTRIES]
+    # The enclave history contains documents that stopped being current before
+    # this response.  It does not carry an observation timestamp, so reserve
+    # the immediately preceding second for newly discovered history.  More
+    # importantly, do not refresh historical last_seen on every poll: otherwise
+    # thousands of old versions can tie with and evict a live current document
+    # from a bounded newest-first read.
+    history_seen_at = (
+        datetime.fromisoformat(seen_at.replace("Z", "+00:00")) - timedelta(seconds=1)
+    ).isoformat().replace("+00:00", "Z")
+    for index, item in enumerate(history):
+        try:
+            if not isinstance(item, dict):
+                raise ValueError("history entry is not an object")
+            history_payload = {
+                "kid": payload.get("kid"),
+                "jwk": payload.get("jwk"),
+                "att": item.get("att"),
+                "att_kind": item.get("att_kind"),
+                "att_sha256": item.get("att_sha256"),
+            }
+            record = _record_from_payload(
+                history_payload,
+                plane=plane,
+                seen_at=history_seen_at,
+                history=True,
+            )
+        except ValueError as exc:
+            result["skipped"] += 1
+            logger.warning(
+                "receipt_key_history_skipped host=%s ip=%s index=%d error=%s",
+                target.host,
+                target.connect_ip,
+                index,
+                exc,
+            )
+            continue
+        # Storage faults are target failures, just as they are for the current
+        # document.  Do not mislabel them as malformed enclave history.
+        _observe_record(store, record, result, refresh_last_seen=False)
 
 
 def collect_receipt_keys(
@@ -165,6 +280,7 @@ def collect_receipt_keys(
         "fetched": 0,
         "appended": 0,
         "refreshed": 0,
+        "unchanged": 0,
         "skipped": 0,
         "errors": 0,
     }
@@ -176,12 +292,17 @@ def collect_receipt_keys(
                 verify_tls=not settings.synthetic_canonical_attested,
             )
             result["fetched"] += 1
-            record = _record_from_payload(payload, plane=plane, seen_at=iso_now())
-            outcome = store.observe_receipt_key(record)
-            if outcome in {"appended", "refreshed"}:
-                result[outcome] += 1
-            else:
-                result["skipped"] += 1
+            seen_at = iso_now()
+            record = _record_from_payload(payload, plane=plane, seen_at=seen_at)
+            _observe_record(store, record, result)
+            _collect_history(
+                payload,
+                plane=plane,
+                seen_at=seen_at,
+                store=store,
+                result=result,
+                target=target,
+            )
         except Exception as exc:
             # One bad or unreachable instance cannot suppress observations
             # from its siblings, but its key must fail closed.

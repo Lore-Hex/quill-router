@@ -7,7 +7,11 @@ import hashlib
 import json
 import logging
 
-from trusted_router.receipt_keys import b64url_encode, receipt_key_commitment
+from trusted_router.receipt_keys import (
+    b64url_encode,
+    receipt_attestation_sha256,
+    receipt_key_commitment,
+)
 from trusted_router.storage_models import ReceiptKey
 from trusted_router.store_protocol import Store
 
@@ -35,7 +39,7 @@ def _gcp_att(jwk: dict[str, str], marker: str) -> str:
     return f"{header}.{payload}.c2ln"
 
 
-def test_receipt_key_log_is_append_only(
+def test_receipt_key_log_keeps_every_attestation_version(
     store: Store,
     unique: str,
     caplog,
@@ -52,7 +56,7 @@ def test_receipt_key_log_is_append_only(
         last_seen="2026-08-26T00:00:00Z",
         verified=False,
     )
-    refreshed = ReceiptKey(
+    second_version = ReceiptKey(
         kid=kid,
         jwk={**jwk, "d": "must-never-be-stored"},
         att=_gcp_att(jwk, "refreshed"),
@@ -64,15 +68,48 @@ def test_receipt_key_log_is_append_only(
     )
 
     assert store.observe_receipt_key(first) == "appended"
-    assert store.observe_receipt_key(refreshed) == "refreshed"
+    assert store.observe_receipt_key(second_version) == "appended"
 
-    row = next(item for item in store.list_receipt_keys() if item.kid == kid)
-    assert row.jwk == jwk
-    assert row.att == refreshed.att
-    assert row.plane == first.plane
-    assert row.first_seen == first.first_seen
-    assert row.last_seen == refreshed.last_seen
-    assert row.verified is True
+    rows = store.list_receipt_keys(kid=kid)
+    assert len(rows) == 2
+    expected_hashes = sorted(
+        [
+            receipt_attestation_sha256(first.att, first.att_kind),
+            receipt_attestation_sha256(second_version.att, second_version.att_kind),
+        ]
+    )
+    assert [row.att_sha256 for row in rows] == expected_hashes
+    assert {row.first_seen for row in rows} == {
+        first.first_seen,
+        second_version.first_seen,
+    }
+
+    same_document = ReceiptKey(
+        kid=kid,
+        jwk={**jwk, "d": "must-never-be-stored"},
+        att=first.att,
+        att_kind=first.att_kind,
+        plane="attacker.example",
+        first_seen="2099-01-01T00:00:00Z",
+        last_seen="2026-08-26T00:10:00Z",
+        verified=True,
+    )
+    assert (
+        store.observe_receipt_key(same_document, refresh_last_seen=False)
+        == "unchanged"
+    )
+    assert store.list_receipt_keys(kid=kid) == rows
+
+    assert store.observe_receipt_key(same_document) == "refreshed"
+    rows = store.list_receipt_keys(kid=kid)
+    assert len(rows) == 2
+    refreshed = next(row for row in rows if row.att == first.att)
+    assert refreshed.att == first.att
+    assert refreshed.jwk == jwk
+    assert refreshed.plane == first.plane
+    assert refreshed.first_seen == first.first_seen
+    assert refreshed.last_seen == same_document.last_seen
+    assert refreshed.verified is True
 
     collision = ReceiptKey(
         kid=kid,
@@ -86,4 +123,4 @@ def test_receipt_key_log_is_append_only(
     with caplog.at_level(logging.ERROR, logger="trusted_router.receipt_keys"):
         assert store.observe_receipt_key(collision) == "conflict"
     assert "ALERT receipt_key_kid_collision" in caplog.text
-    assert next(item for item in store.list_receipt_keys() if item.kid == kid) == row
+    assert store.list_receipt_keys(kid=kid) == rows

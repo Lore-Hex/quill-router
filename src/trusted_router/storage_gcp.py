@@ -42,6 +42,10 @@ from trusted_router.receipt_keys import (
     RECEIPT_KEY_KIND,
     ReceiptKeyWriteOutcome,
     merge_receipt_key_observation,
+    ordered_receipt_key_page,
+    receipt_key_entity_id,
+    receipt_key_kid_collides,
+    with_receipt_attestation_sha256,
 )
 from trusted_router.routable_payouts import (
     EARNINGS_CASHOUT_EXTERNAL_KIND,
@@ -7665,21 +7669,190 @@ class SpannerBigtableStore:
             return str(email_user["user_id"])
         return None
 
-    def observe_receipt_key(self, record: ReceiptKey) -> ReceiptKeyWriteOutcome:
+    def observe_receipt_key(
+        self,
+        record: ReceiptKey,
+        *,
+        refresh_last_seen: bool = True,
+    ) -> ReceiptKeyWriteOutcome:
+        same_kid = self.list_receipt_keys(limit=1, kid=record.kid)
+        if same_kid and receipt_key_kid_collides(same_kid[0], record):
+            return "conflict"
+        validated, outcome = merge_receipt_key_observation(None, record)
+        if validated is None or outcome != "appended":
+            return outcome
+        entity_id = receipt_key_entity_id(validated.kid, validated.att_sha256)
+
         def txn(transaction: Any) -> ReceiptKeyWriteOutcome:
-            existing = self._read_entity_tx(transaction, RECEIPT_KEY_KIND, record.kid, ReceiptKey)
-            merged, outcome = merge_receipt_key_observation(existing, record)
+            legacy = self._read_entity_tx(
+                transaction, RECEIPT_KEY_KIND, validated.kid, ReceiptKey
+            )
+            if legacy is not None:
+                legacy = with_receipt_attestation_sha256(legacy)
+                legacy_id = receipt_key_entity_id(legacy.kid, legacy.att_sha256)
+                self._write_receipt_key_tx(transaction, legacy_id, legacy)
+                self._delete_entities_tx(transaction, RECEIPT_KEY_KIND, [validated.kid])
+            existing = self._read_entity_tx(
+                transaction, RECEIPT_KEY_KIND, entity_id, ReceiptKey
+            )
+            merged, outcome = merge_receipt_key_observation(
+                existing,
+                validated,
+                refresh_last_seen=refresh_last_seen,
+            )
             if merged is not None and outcome in {"appended", "refreshed"}:
-                self._write_entity_tx(transaction, RECEIPT_KEY_KIND, record.kid, merged)
+                self._write_receipt_key_tx(transaction, entity_id, merged)
             return outcome
 
         return cast(ReceiptKeyWriteOutcome, self._run_in_transaction(txn))
 
-    def list_receipt_keys(self, *, limit: int = 5_000) -> list[ReceiptKey]:
-        return self._list_entities(
-            RECEIPT_KEY_KIND,
-            cls=ReceiptKey,
-            limit=max(0, min(limit, 10_000)),
+    def list_receipt_keys(
+        self,
+        *,
+        limit: int = 5_000,
+        kid: str | None = None,
+        after: tuple[str, str] | None = None,
+        phase: str | None = None,
+        legacy_after: str | None = None,
+    ) -> list[ReceiptKey]:
+        bounded = max(0, min(limit, 10_000))
+        params: dict[str, Any] = {"kind": RECEIPT_KEY_KIND, "limit": bounded}
+        param_types = {
+            "kind": self._param_types.STRING,
+            "limit": self._param_types.INT64,
+        }
+        after_pair = after or ("", "")
+        if phase != "l":
+            params.update(
+                {"after_kid": after_pair[0], "after_att_sha256": after_pair[1]}
+            )
+            param_types.update(
+                {
+                    "after_kid": self._param_types.STRING,
+                    "after_att_sha256": self._param_types.STRING,
+                }
+            )
+        if phase == "v":
+            query = (
+                "SELECT body FROM "
+                "tr_entities@{FORCE_INDEX=tr_receipt_key_versions} "
+                "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL AND kind=@kind AND "
+                "(kid>@after_kid OR "
+                "(kid=@after_kid AND att_sha256>@after_att_sha256)) "
+                "ORDER BY kid, att_sha256 LIMIT @limit"
+            )
+        elif phase == "l":
+            params["legacy_after"] = legacy_after or ""
+            param_types["legacy_after"] = self._param_types.STRING
+            query = (
+                "SELECT body FROM tr_entities WHERE kind=@kind "
+                "AND id>@legacy_after AND (kid IS NULL OR att_sha256 IS NULL) "
+                "ORDER BY id LIMIT @limit"
+            )
+        elif phase is not None:
+            raise ValueError(f"unknown receipt-key pagination phase: {phase!r}")
+        elif kid is not None:
+            params["kid"] = kid
+            param_types["kid"] = self._param_types.STRING
+            query = (
+                "WITH versioned AS (SELECT body FROM "
+                "tr_entities@{FORCE_INDEX=tr_receipt_key_versions} "
+                "WHERE kid=@kid AND kid IS NOT NULL AND att_sha256 IS NOT NULL "
+                "AND kind=@kind AND (kid>@after_kid OR "
+                "(kid=@after_kid AND att_sha256>@after_att_sha256)) "
+                "ORDER BY kid, att_sha256 LIMIT @limit), "
+                "legacy AS (SELECT body FROM tr_entities WHERE kind=@kind AND id=@kid "
+                "AND (kid IS NULL OR att_sha256 IS NULL) LIMIT @limit) "
+                "SELECT body FROM versioned UNION ALL SELECT body FROM legacy"
+            )
+        else:
+            # GoogleSQL structs have no ordering comparisons, so spell out the
+            # same lexicographic tuple predicate that Postgres writes directly.
+            query = (
+                "WITH versioned AS (SELECT body FROM "
+                "tr_entities@{FORCE_INDEX=tr_receipt_key_versions} "
+                "WHERE kid IS NOT NULL AND att_sha256 IS NOT NULL AND kind=@kind AND "
+                "(kid>@after_kid OR "
+                "(kid=@after_kid AND att_sha256>@after_att_sha256)) "
+                "ORDER BY kid, att_sha256 LIMIT @limit), "
+                "legacy AS (SELECT body FROM tr_entities WHERE kind=@kind "
+                "AND id>=@after_kid AND (kid IS NULL OR att_sha256 IS NULL) "
+                "ORDER BY id LIMIT @limit) "
+                "SELECT body FROM versioned UNION ALL SELECT body FROM legacy"
+            )
+        with self._database.snapshot() as snapshot:
+            rows: list[ReceiptKey] = []
+            known = {field.name for field in dataclasses.fields(ReceiptKey)}
+            raw_rows = snapshot.execute_sql(query, params=params, param_types=param_types)
+            for raw_row in raw_rows:
+                data = json.loads(raw_row[0])
+                rows.append(
+                    ReceiptKey(**{key: value for key, value in data.items() if key in known})
+                )
+        return ordered_receipt_key_page(
+            rows,
+            limit=bounded,
+            kid=kid,
+            after=after if phase != "l" else None,
+        )
+
+    def backfill_receipt_key_versions_page(
+        self,
+        *,
+        after: str | None = None,
+        limit: int = 100,
+    ) -> list[str]:
+        """Populate one transactionally bounded page of legacy projections."""
+
+        bounded = max(1, min(limit, 1_000))
+
+        def txn(transaction: Any) -> list[str]:
+            rows = transaction.execute_sql(
+                "SELECT id, body FROM tr_entities WHERE kind=@kind AND id>@after "
+                "AND (kid IS NULL OR att_sha256 IS NULL) ORDER BY id LIMIT @limit",
+                params={
+                    "kind": RECEIPT_KEY_KIND,
+                    "after": after or "",
+                    "limit": bounded,
+                },
+                param_types={
+                    "kind": self._param_types.STRING,
+                    "after": self._param_types.STRING,
+                    "limit": self._param_types.INT64,
+                },
+            )
+            known = {field.name for field in dataclasses.fields(ReceiptKey)}
+            updated: list[str] = []
+            for entity_id, raw in rows:
+                data = json.loads(raw)
+                record = with_receipt_attestation_sha256(
+                    ReceiptKey(**{key: value for key, value in data.items() if key in known})
+                )
+                self._write_receipt_key_tx(transaction, str(entity_id), record)
+                updated.append(str(entity_id))
+            return updated
+
+        return cast(list[str], self._run_in_transaction(txn))
+
+    def _write_receipt_key_tx(
+        self,
+        transaction: Any,
+        entity_id: str,
+        value: ReceiptKey,
+    ) -> None:
+        transaction.insert_or_update(
+            table=self.entity_table,
+            columns=("kind", "id", "body", "kid", "att_sha256", "updated_at"),
+            values=[
+                (
+                    RECEIPT_KEY_KIND,
+                    entity_id,
+                    _json_body(value),
+                    value.kid,
+                    value.att_sha256,
+                    self._spanner.COMMIT_TIMESTAMP,
+                )
+            ],
         )
 
     def observe_spend_lease_boot(self, record: SpendLeaseBoot) -> SpendLeaseBoot:

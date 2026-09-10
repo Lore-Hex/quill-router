@@ -4314,6 +4314,35 @@ def _execute_sql(
             rows = rows[: int(params["limit"])]
         cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
         return [[(eid if c == "id" else body) for c in cols] for eid, body in rows]
+    if "FORCE_INDEX=tr_receipt_key_versions" in sql:
+        _require_pred(
+            sql,
+            "kid IS NOT NULL",
+            "receipt-key version partial-index predicate",
+        )
+        _require_pred(
+            sql,
+            "att_sha256 IS NOT NULL",
+            "receipt-key version partial-index predicate",
+        )
+        _require_pred(sql, "ORDER BY kid, att_sha256", "receipt-key version order")
+        after = (str(params.get("after_kid", "")), str(params.get("after_att_sha256", "")))
+        rows: list[tuple[str, str, str]] = []
+        for (row_kind, _entity_id), row in db.rows.items():
+            if row_kind != kind:
+                continue
+            body = json.loads(row.body)
+            identity = (str(body.get("kid", "")), str(body.get("att_sha256", "")))
+            if not all(identity) or identity <= after:
+                continue
+            if "kid" in params and identity[0] != params["kid"]:
+                continue
+            rows.append((*identity, row.body))
+        rows.sort()
+        return [[body] for _, _, body in rows[: int(params["limit"])]]
+    if "WHERE kind=@kind AND id=@kid AND kid IS NULL LIMIT 1" in sql:
+        row = db.rows.get((kind, str(params["kid"])))
+        return [] if row is None else [[row.body]]
     if "AND id=@id" in sql:
         entity_id = params["id"]
         if txn is not None:
