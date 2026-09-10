@@ -1,0 +1,27 @@
+<!doctype html>
+<!-- Synthetic regression fixture, NOT a raw capture.
+     Source: https://api-docs.deepseek.com/quick_start/pricing/ (2026-09-10).
+     Prices and notices supplied in the task and confirmed via web reader.
+     Raw HTML capture was blocked by shell DNS; preserve this provenance. -->
+<html lang="en"><body>
+<h1>Models &amp; Pricing</h1>
+<p>The prices listed below are in units of per 1M tokens.</p>
+<table>
+  <tr><td colspan="3">MODEL</td><td>deepseek-flash<sup>(1)</sup></td><td>deepseek-v4-pro<sup>(2)</sup></td></tr>
+  <tr><td colspan="3">MODEL VERSION</td><td>DeepSeek-V4.1-Flash</td><td>DeepSeek-V4-Pro-0813</td></tr>
+  <tr><td rowspan="6">PRICING<sup>(3)</sup></td><td rowspan="2">1M INPUT TOKENS<br>(CACHE HIT)</td><td>OFF-PEAK</td><td>$0.003</td><td>$0.022</td></tr>
+  <tr><td>PEAK</td><td>$0.006</td><td>$0.044</td></tr>
+  <tr><td rowspan="2">1M INPUT TOKENS<br>(CACHE MISS)</td><td>OFF-PEAK</td><td>$0.15</td><td>$0.66</td></tr>
+  <tr><td>PEAK</td><td>$0.30</td><td>$1.32</td></tr>
+  <tr><td rowspan="2">1M OUTPUT TOKENS</td><td>OFF-PEAK</td><td>$0.60</td><td>$1.98</td></tr>
+  <tr><td>PEAK</td><td>$1.20</td><td>$3.96</td></tr>
+</table>
+<p>(1) Use <code>deepseek-flash</code> as the model name. The legacy names
+<code>deepseek-v4-flash</code> and <code>deepseek-v4-flash-vision-exp</code>
+are still accepted, but the corresponding models have been retired, their requests
+are served by the DeepSeek-V4.1-Flash model and billed at the Flash price.</p>
+<p>(2) From 12:00 Beijing Time on September 14, 2026, and until V4.1 Pro is released in the future,
+requests to <code>deepseek-v4-pro</code> will all be routed to V4.1 Flash and billed at the V4.1 Flash price.</p>
+<p>(3) Off-peak rates are half of the peak rates. Peak hours are
+01:00 - 04:00 and 06:00 - 10:00 UTC, Monday through Friday (all other hours are off-peak).</p>
+</body></html>
