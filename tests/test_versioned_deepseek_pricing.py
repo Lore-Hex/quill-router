@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -84,6 +85,11 @@ def test_siliconflow_discovers_dated_model_and_reuses_family_price(
 def test_deepseek_dated_model_uses_official_family_price_and_native_alias(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # This first-party mapping was valid only before the September 10 redirect.
+    monkeypatch.setattr(
+        "trusted_router.provider_lifecycle._utc_now",
+        lambda: datetime(2026, 9, 9, 12, tzinfo=UTC),
+    )
     fixture = (_FIXTURE_DIR / "deepseek.html").read_text(encoding="utf-8")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.setattr(deepseek, "UPSTREAM_ID_MAP", {})

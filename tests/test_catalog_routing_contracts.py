@@ -835,6 +835,8 @@ def test_anthropic_opus_41_is_never_prepaid_during_retirement_transition() -> No
 
 
 def test_deepseek_v4_pro_release_routes_are_keyed_and_credits_only() -> None:
+    from trusted_router.provider_lifecycle import DEEPSEEK_V41_FLASH_EFFECTIVE_AT
+
     old_routes = endpoints_for_model(DEEPSEEK_V4_PRO_0423_MODEL_ID)
     current_routes = endpoints_for_model(DEEPSEEK_V4_PRO_0813_MODEL_ID)
 
@@ -846,17 +848,16 @@ def test_deepseek_v4_pro_release_routes_are_keyed_and_credits_only() -> None:
     )
     assert current_routes
     assert all(endpoint.usage_type == "Credits" for endpoint in current_routes)
-    assert {endpoint.provider for endpoint in current_routes} == {
-        "deepseek",
-        "baseten",
-        "fireworks",
-    }
+    direct_is_pro = catalog_predates(DEEPSEEK_V41_FLASH_EFFECTIVE_AT)
+    assert {endpoint.provider for endpoint in current_routes} == (
+        {"baseten", "fireworks"} | ({"deepseek"} if direct_is_pro else set())
+    )
     assert {endpoint.provider for endpoint in current_routes} <= GATEWAY_PREPAID_PROVIDER_SLUGS
     assert [
         (endpoint.provider, endpoint.upstream_id)
         for endpoint in current_routes
         if endpoint.provider == "deepseek"
-    ] == [("deepseek", "deepseek-v4-pro")]
+    ] == ([("deepseek", "deepseek-v4-pro")] if direct_is_pro else [])
     assert [
         (endpoint.provider, endpoint.upstream_id)
         for endpoint in current_routes
