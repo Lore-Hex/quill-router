@@ -248,15 +248,15 @@ def test_confidential_cowork_is_self_serve_and_fail_closed(client: TestClient) -
 
     assert response.status_code == 200
     assert "Confidential Cowork by TrustedRouter" in response.text
-    assert "Confidential-Cowork-macOS-universal.dmg" in response.text
+    assert "Confidential-Cowork-Desktop-universal.dmg" in response.text
     assert "trustedrouter/confidential" in response.text
-    assert "https://github.com/Lore-Hex/trpi/releases/download/v0.84.5/TR-Confidential-Cowork-macOS-universal.dmg" in response.text
+    assert "https://github.com/Lore-Hex/confidential-cowork-desktop/releases/download/v0.2.0-alpha/TR-Confidential-Cowork-Desktop-universal.dmg" in response.text
     assert "Lore-Hex/QuillCode/releases" not in response.text
-    assert "Opens in Terminal" in response.text
-    assert "Other explicitly configured providers remain available" in response.text
+    assert "Opens in Terminal" not in response.text
+    assert "Choose an eligible confidential model by name" in response.text
     assert "Default route</span><strong>trustedrouter/confidential" in response.text
     assert "Data collection</span><strong>deny" in response.text
-    assert "Use /login, select TrustedRouter" in response.text
+    assert "Sign in with TrustedRouter and authorize in your browser" in response.text
     assert "No eligible confidential provider means no model request" in response.text
     assert "Plan an enterprise deployment" in response.text
     assert "/static/confidential-cowork-desktop.png" not in response.text
