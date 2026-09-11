@@ -1,7 +1,7 @@
 .token-exchange .public-wrap { max-width: none; width: 100%; padding: 0; margin: 0; }
 .token-exchange { --tm-rule: var(--border-default, #29302a); }
-html[data-theme=light] .token-exchange { --text-muted: #58634f; }
-html[data-theme=light] .token-exchange .site-footer .ghost { color: var(--text-body); }
+html[data-theme="light"] .token-exchange { --text-muted: #58634f; }
+html[data-theme="light"] .token-exchange .site-footer .ghost { color: var(--text-body); }
 .token-exchange * { letter-spacing: 0; }
 .tm-inner { width: min(100%, 1184px); margin-inline: auto; padding-inline: 32px; box-sizing: border-box; }
 .token-exchange h1, .token-exchange h2 { font-family: "Spectral", Georgia, serif; font-weight: 300; line-height: 1.1; text-wrap: balance; margin: 0; }
@@ -72,18 +72,19 @@ html[data-theme=light] .token-exchange .site-footer .ghost { color: var(--text-b
 .tm-document-label span:not(.tm-document-icon) { font-size: 13px; color: var(--text-muted); }
 .tm-document-icon { flex: 0 0 44px; height: 58px; display: grid; place-items: center; border: 1px solid var(--text-muted); color: var(--text-accent); font: 12px "IBM Plex Mono", monospace; border-radius: 2px; }
 .tm-download-tool label { display: block; font-size: 15px; font-weight: 500; color: var(--text-display); margin-bottom: 10px; }
-.tm-download-tool input[type=email] { width: 100%; min-height: 50px; padding: 12px 14px; border: 1px solid var(--text-muted); border-radius: 3px; background: var(--surface-page); color: var(--text-display); font: 16px "Archivo", sans-serif; box-sizing: border-box; }
+.tm-download-tool input[type="email"] { width: 100%; min-height: 50px; padding: 12px 14px; border: 1px solid var(--text-muted); border-radius: 3px; background: var(--surface-page); color: var(--text-display); font: 16px "Archivo", sans-serif; box-sizing: border-box; }
 .tm-download-tool input::placeholder { color: var(--text-muted); }
 .tm-download-tool button { width: 100%; margin-top: 16px; }
 .tm-download-tool .tm-form-note { font-size: 13px; line-height: 1.7; color: var(--text-muted); margin: 16px 0 0; }
 .tm-form-note a { text-decoration: underline; }
 .tm-download-tool .tm-form-status { margin: 14px 0 0; font-size: 14px; min-height: 48px; color: var(--text-accent); }
-.tm-form-status[data-state=error] { color: #e9aa98; }
-html[data-theme=light] .tm-form-status[data-state=error] { color: #a32616; }
+.tm-form-status[data-state="error"] { color: #e9aa98; }
+html[data-theme="light"] .tm-form-status[data-state="error"] { color: #a32616; }
 .tm-honeypot { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .tm-final-band { background: var(--surface-raised); border-block: 1px solid var(--tm-rule); }
 .tm-final-band .tm-inner { display: flex; align-items: center; justify-content: space-between; gap: 32px; padding-block: 56px; }
 .tm-final-band h2 { font-size: 36px; }
+
 @media (max-width: 900px) {
   .token-exchange h1 { font-size: 52px; }
   .token-exchange h2 { font-size: 38px; }
@@ -97,6 +98,7 @@ html[data-theme=light] .tm-form-status[data-state=error] { color: #a32616; }
   .tm-case-stat { padding-left: 30px; }
   .tm-case-stat strong { font-size: 50px; }
 }
+
 @media (max-width: 640px) {
   .token-exchange .charter-nav { flex-direction: row; align-items: center; gap: 16px; }
   .tm-inner { padding-inline: 22px; }
@@ -126,4 +128,5 @@ html[data-theme=light] .tm-form-status[data-state=error] { color: #a32616; }
   .tm-final-band .tm-inner { flex-direction: column; align-items: flex-start; }
   .tm-final-band h2 { font-size: 32px; }
 }
+
 @media (prefers-reduced-motion: reduce) { .tm-button { transition: none; } }
