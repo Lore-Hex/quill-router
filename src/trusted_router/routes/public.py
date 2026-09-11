@@ -18,6 +18,7 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse
 
 import httpx
+from email_validator import EmailNotValidError, validate_email
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import (
@@ -32,6 +33,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response
 from starlette.types import Scope
 
+from trusted_router.acquisition import log_browser_funnel_event
 from trusted_router.ai_iq import ai_iq_catalog_payload
 from trusted_router.apps import aggregate_apps
 from trusted_router.benchmark_reports import monthly_benchmark_report
@@ -770,8 +772,96 @@ async def _handle_support_inquiry(settings: Settings, request: Request) -> JSONR
     return JSONResponse({"ok": True})
 
 
+_ENTERPRISE_BRIEF = (
+    Path(__file__).parents[1] / "data" / "enterprise" / "TrustedRouter-Enterprise-Brief.pdf"
+)
+_BRIEF_HEADERS = {"Cache-Control": "private, no-store", "X-Robots-Tag": "noindex, nofollow"}
+
+
+async def _handle_enterprise_brief(settings: Settings, request: Request) -> Response:
+    """Deliver the original brief only after SES has accepted the sales inquiry."""
+    def error(code: str, status: int) -> JSONResponse:
+        return JSONResponse({"ok": False, "error": code}, status_code=status, headers=_BRIEF_HEADERS)
+
+    origin = request.headers.get("origin")
+    try:
+        parsed_origin = urlparse(origin) if origin is not None else None
+    except ValueError:
+        return error("invalid_origin", 403)
+    if request.headers.get("sec-fetch-site") == "cross-site" or (
+        parsed_origin is not None
+        and (
+            parsed_origin.scheme not in {"http", "https"}
+            or parsed_origin.netloc != request.url.netloc
+        )
+    ):
+        return error("invalid_origin", 403)
+    if request.headers.get("content-type", "").split(";", 1)[0] != "application/json":
+        return error("invalid_request", 415)
+
+    # Bound this tiny form independently of the much larger API upload budget.
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > 4096:
+            return error("request_too_large", 413)
+        body.extend(chunk)
+    try:
+        payload = json.loads(body)
+    except (ValueError, RecursionError):
+        return error("invalid_request", 400)
+    if not isinstance(payload, dict):
+        return error("invalid_request", 400)
+    if payload.get("website"):
+        return JSONResponse({"ok": True}, headers=_BRIEF_HEADERS)
+    email = payload.get("email")
+    if not isinstance(email, str) or len(email) > 320:
+        return error("invalid_email", 422)
+    try:
+        address = validate_email(
+            email.strip(), check_deliverability=False, allow_smtputf8=False
+        )
+        email = address.ascii_email or address.normalized
+    except EmailNotValidError:
+        return error("invalid_email", 422)
+
+    client_ip = _inquiry_client_identity(request, settings)
+    if not _inquiry_rate_ok(f"enterprise-brief:{client_ip}"):
+        return error("rate_limited", 429)
+    if not _ENTERPRISE_BRIEF.is_file():
+        log.error("enterprise_brief.asset_unavailable")
+        return error("delivery_unavailable", 503)
+
+    message = EmailMessage(
+        to=settings.partner_inquiry_email or "enterprise@trustedrouter.com",
+        reply_to=email,
+        subject="Enterprise brief requested | TrustedRouter token exchange",
+        text_body=(
+            "An enterprise visitor requested the TrustedRouter Enterprise Brief.\n\n"
+            f"Email: {email}\n"
+            "Page: https://trustedrouter.com/token-exchange\n\n"
+            "The form permits follow-up about enterprise AI. It does not subscribe "
+            "the visitor to a newsletter. Reply directly to discuss their requirements.\n"
+        ),
+        mail_class="enterprise_brief",
+    )
+    try:
+        sent = await run_in_threadpool(get_email_service(settings).send, message)
+    except Exception:  # noqa: BLE001 - never expose submitted identity in exception logs
+        sent = False
+    if not sent:
+        log.error("enterprise_brief.delivery_unavailable")
+        return error("delivery_unavailable", 503)
+    log_browser_funnel_event(request, "enterprise_brief_delivered")
+    return FileResponse(
+        _ENTERPRISE_BRIEF,
+        media_type="application/pdf",
+        filename="TrustedRouter-Enterprise-Brief.pdf",
+        headers=_BRIEF_HEADERS,
+    )
+
+
 def register_public_action_routes(app: FastAPI, settings: Settings) -> None:
-    """Register the two anonymous actions on their credential-minimal bulkhead."""
+    """Register anonymous actions on their credential-minimal bulkhead."""
 
     @app.post("/trustedos/inquiry", include_in_schema=False)
     async def trustedos_inquiry(request: Request) -> JSONResponse:
@@ -780,6 +870,10 @@ def register_public_action_routes(app: FastAPI, settings: Settings) -> None:
     @app.post("/support/inquiry", include_in_schema=False)
     async def support_inquiry(request: Request) -> JSONResponse:
         return await _handle_support_inquiry(settings, request)
+
+    @app.post("/token-exchange/brief", include_in_schema=False)
+    async def enterprise_brief(request: Request) -> Response:
+        return await _handle_enterprise_brief(settings, request)
 
 
 def register_public_routes(app: FastAPI, settings: Settings) -> None:
@@ -1490,6 +1584,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/resources")
     async def resources() -> str:
         return public_page_html(settings, "resources")
+
+    @public_html_route("/token-exchange")
+    async def token_exchange() -> str:
+        return public_page_html(settings, "token-exchange")
 
     @public_html_route("/customers/robot-robot-human")
     async def customer_robot_robot_human() -> str:

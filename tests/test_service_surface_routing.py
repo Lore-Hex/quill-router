@@ -375,6 +375,11 @@ def test_anonymous_actions_leave_the_public_renderer(path: str) -> None:
     assert URL_MAP.route_surface(path.removesuffix("/inquiry")) == "public"
 
 
+def test_enterprise_download_is_an_action_not_a_static_asset() -> None:
+    assert URL_MAP.route_surface("/token-exchange") == "public"
+    assert URL_MAP.route_surface("/token-exchange/brief") == "actions"
+
+
 def test_entire_group_buy_stays_on_the_t2_legacy_control_slot() -> None:
     assert URL_MAP.route_surface("/bedrock-group-buy") == "control"
     assert URL_MAP.route_surface("/bedrock-group-buy/") == "control"

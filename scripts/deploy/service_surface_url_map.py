@@ -44,6 +44,7 @@ PUBLIC_PATH_PATTERNS = (
 
 ACTIONS_PATH_PATTERNS = (
     "/support/inquiry",
+    "/token-exchange/brief",
     "/trustedos/inquiry",
 )
 

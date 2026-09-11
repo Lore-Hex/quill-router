@@ -1,0 +1,107 @@
+{% extends "public/_base.html" %}
+{% block body_attributes %}class="token-exchange"{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/token-exchange.css?v={{ static_version }}">
+<link rel="preload" as="image" href="/static/enterprise/token-exchange-hero.webp">
+{% endblock %}
+{% block hero %}
+<section class="tm-hero" aria-labelledby="marketplace-title">
+  <img class="tm-hero-art" src="/static/enterprise/token-exchange-hero.webp" alt="Multiple compute providers connected through one TrustedRouter gateway, illustrated as an open exchange." width="1536" height="1024" fetchpriority="high">
+  <div class="tm-inner tm-hero-copy">
+    <p class="tm-eyebrow">TrustedRouter for enterprise</p>
+    <h1 id="marketplace-title">The token exchange.</h1>
+    <p class="tm-lead">Hundreds of AI models. Competing providers. One API.<br class="tm-desktop-break"> Enterprise AI, bought on your terms. Privacy with proof.</p>
+    <div class="tm-actions">
+      <a class="tm-button tm-primary" href="#enterprise-brief">Get the enterprise brief <span aria-hidden="true">↓</span></a>
+      <a class="tm-button tm-secondary" href="https://calendly.com/joseph-perla/15min">Talk to sales <span aria-hidden="true">↗</span></a>
+    </div>
+  </div>
+</section>
+{% endblock %}
+{% block body %}
+<div class="tm-proof-strip">
+  <div class="tm-inner">
+    <a href="/models">Hundreds of models</a>
+    <a href="/docs">OpenAI-compatible API</a>
+    <a href="/trust">Privacy with proof</a>
+    <a href="https://github.com/Lore-Hex/quill-router">Open source infrastructure</a>
+  </div>
+</div>
+
+<section class="tm-section tm-inner" aria-labelledby="choice-title">
+  <div class="tm-section-heading">
+    <p class="tm-eyebrow">A better way to buy AI</p>
+    <h2 id="choice-title">Your requirements.<br>Your choice of supply.</h2>
+    <p>Price matters. So do intelligence, capacity and where your data goes. Compare the providers that meet your requirements, then buy through one connection.</p>
+  </div>
+  <div class="tm-benefits">
+    <article><span class="tm-index">01 / COST</span><h3>Let providers compete.</h3><p>See published model and provider prices. Test a lower-cost route against your own workload before moving production traffic.</p><a href="/models">Compare models <span aria-hidden="true">↗</span></a></article>
+    <article><span class="tm-index">02 / CONTROL</span><h3>Set the terms of each request.</h3><p>Choose provider allowlists, region and privacy requirements. Keep your policy attached to the request as you change models.</p><a href="/docs/provider-routing">Explore routing controls <span aria-hidden="true">↗</span></a></article>
+    <article><span class="tm-index">03 / CONTINUITY</span><h3>Keep more supply available.</h3><p>Use eligible fallback routes when a provider has trouble. Compare measured latency and reliability alongside price.</p><a href="/leaderboard">See provider performance <span aria-hidden="true">↗</span></a></article>
+  </div>
+</section>
+
+<section class="tm-band" aria-labelledby="exchange-title">
+  <div class="tm-inner tm-section">
+    <div class="tm-section-heading">
+      <p class="tm-eyebrow">One connection to the market</p>
+      <h2 id="exchange-title">Keep your application.<br>Expand your options.</h2>
+      <p>Connect through the OpenAI-compatible API. Your team keeps its existing workflow while gaining a common way to choose models, compare supply and enforce routing requirements.</p>
+    </div>
+    <div class="tm-flow" aria-label="Enterprise applications connect through TrustedRouter to eligible model providers">
+      <div class="tm-flow-end"><span class="tm-index">YOUR TEAM</span><strong>Apps &amp; agents</strong><span>Your workflows and evals</span></div>
+      <span class="tm-flow-arrow" aria-hidden="true">→</span>
+      <div class="tm-flow-router"><span class="tm-index">ONE INTERFACE</span><strong>TrustedRouter</strong><span>Model · Price · Privacy · Region</span></div>
+      <span class="tm-flow-arrow" aria-hidden="true">→</span>
+      <div class="tm-flow-end"><span class="tm-index">YOUR SUPPLY</span><strong>Eligible providers</strong><span>Routes that meet your policy</span></div>
+    </div>
+    <div class="tm-inline-links"><a href="/docs/migrate-from-openrouter">Read the integration guide <span aria-hidden="true">↗</span></a><a href="/providers/marketplace">Have capacity to sell? Join as a provider <span aria-hidden="true">↗</span></a></div>
+  </div>
+</section>
+
+<section class="tm-section tm-inner" aria-labelledby="privacy-title">
+  <div class="tm-section-heading">
+    <p class="tm-eyebrow">Built for the security review</p>
+    <h2 id="privacy-title">Privacy with proof.<br>Know what is protected.</h2>
+    <p>Your source code, strategy and client data deserve a clear answer. Inspect the source, verify gateway attestation, and choose the downstream privacy requirements your work needs.</p>
+  </div>
+  <dl class="tm-privacy-list">
+    <div><dt><span class="tm-index">ROUTER</span>Attested gateway</dt><dd>Verify the running gateway's hardware evidence and published image digest. TrustedRouter keeps prompts and outputs out of its durable logs. <a href="/trust">Verify the gateway ↗</a></dd></div>
+    <div><dt><span class="tm-index">PROVIDER POLICY</span>Zero data retention</dt><dd>Choose routes with a documented retention policy. ZDR is a provider commitment, distinct from hardware verification. <a href="/providers">Review provider policies ↗</a></dd></div>
+    <div><dt><span class="tm-index">CONFIDENTIAL INFERENCE</span>End-to-end protection</dt><dd>Require a verified confidential provider route for protection through model execution. Gateway attestation alone does not make every downstream provider confidential. <a href="/docs#privacy-filters">Explore privacy levels ↗</a></dd></div>
+  </dl>
+  <div class="tm-procurement"><span>For your procurement team</span><a href="/legal/dpa">DPA</a><a href="/legal/baa">BAA</a><a href="/legal/subprocessors">Subprocessors</a><a href="/legal/soc2-readiness">SOC 2 readiness</a></div>
+</section>
+
+<section class="tm-case-band" aria-labelledby="case-title">
+  <div class="tm-inner tm-case">
+    <div><p class="tm-eyebrow">In production / Legal AI</p><h2 id="case-title">Built for work that<br>has to stay private.</h2><p>Robot, Robot &amp; Human used TrustedRouter for a production legal AI workflow processing 170,974 litigation documents.</p><a href="/customers/robot-robot-human">Read the customer story <span aria-hidden="true">↗</span></a></div>
+    <div class="tm-case-stat"><strong>170,974</strong><span>litigation documents</span><span>Robot, Robot &amp; Human</span></div>
+  </div>
+</section>
+
+<section id="enterprise-brief" class="tm-section tm-inner tm-download" aria-labelledby="brief-title">
+  <div class="tm-download-copy">
+    <p class="tm-eyebrow">Take it to your team</p>
+    <h2 id="brief-title">A clearer way<br>to buy AI.</h2>
+    <p>Get the two-page enterprise brief. Share the architecture, procurement approach and privacy controls with your engineering, security and finance teams.</p>
+    <ul><li>How the token exchange works</li><li>Attestation, provider choice and data controls</li><li>Integration and getting started</li></ul>
+    <p class="tm-direct-contact">Prefer a conversation?<br><a href="mailto:enterprise@trustedrouter.com">enterprise@trustedrouter.com</a></p>
+  </div>
+  <div class="tm-download-tool">
+    <div class="tm-document-label"><span class="tm-document-icon" aria-hidden="true">PDF</span><div><strong>TrustedRouter for enterprise</strong><span>Enterprise brief · 2 pages</span></div></div>
+    <form id="enterprise-brief-form" action="/token-exchange/brief" method="post">
+      <label for="brief-email">Work email</label>
+      <input id="brief-email" name="email" type="email" autocomplete="email" inputmode="email" maxlength="320" placeholder="you@company.com" required aria-describedby="brief-privacy brief-status">
+      <div class="tm-honeypot" aria-hidden="true"><label for="brief-website">Website</label><input id="brief-website" name="website" type="text" tabindex="-1" autocomplete="off"></div>
+      <button class="tm-button tm-primary" type="submit" disabled>Download the brief <span aria-hidden="true">↓</span></button>
+      <p id="brief-privacy" class="tm-form-note">We'll use your email to follow up about enterprise AI. By requesting the brief, you agree to this contact. <a href="/privacy">Privacy policy</a>.</p>
+      <p id="brief-status" class="tm-form-status" role="status" aria-live="polite" aria-atomic="true"></p>
+      <noscript><p>Email <a href="mailto:enterprise@trustedrouter.com?subject=Enterprise%20brief">enterprise@trustedrouter.com</a> to request your copy.</p></noscript>
+    </form>
+  </div>
+</section>
+
+<section class="tm-final-band"><div class="tm-inner"><div><p class="tm-eyebrow">Start with your workload</p><h2>Bring your requirements.<br>Let's find your route.</h2></div><a class="tm-button tm-primary" href="https://calendly.com/joseph-perla/15min">Talk to sales <span aria-hidden="true">↗</span></a></div></section>
+{% endblock %}
+{% block body_scripts %}<script src="/static/token-exchange.js?v={{ static_version }}" defer></script>{% endblock %}

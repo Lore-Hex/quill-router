@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import copy
 import json
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -245,20 +246,39 @@ def test_near_ai_manifest_and_catalog_are_attested_prepaid_only() -> None:
     assert all(endpoint_stores_content(endpoint) for endpoint in endpoints)
 
 
-def test_near_ai_is_e2e_eligible_but_never_satisfies_zdr_or_deny() -> None:
+@pytest.mark.parametrize("expired", [False, True])
+def test_near_ai_is_e2e_eligible_but_never_satisfies_zdr_or_deny(
+    monkeypatch: pytest.MonkeyPatch, expired: bool,
+) -> None:
     model_id = "openai/gpt-oss-120b"
+    # Exercise routing policy independently of the live manifest's refresh age.
+    # Expired evidence must still fail closed, even for a pinned E2E provider.
+    endpoint = next(
+        row for row in MODEL_ENDPOINTS.values()
+        if row.provider == "near-ai" and row.model_id == model_id
+    )
+    monkeypatch.setitem(
+        MODEL_ENDPOINTS, endpoint.id,
+        replace(
+            endpoint,
+            catalog_valid_until=datetime.now(UTC) + timedelta(days=-1 if expired else 1),
+        ),
+    )
     e2e_ids = {model.id for model in e2e_candidate_models(limit=100)}
     assert model_id in e2e_ids
 
     settings = Settings(environment="test")
-    e2e = chat_route_endpoint_candidates(
-        {
-            "model": model_id,
-            "provider": {"only": ["near-ai"], "min_privacy": "e2e"},
-        },
-        settings,
-    )
-    assert {endpoint.provider for _model, endpoint in e2e} == {"near-ai"}
+    request = {
+        "model": model_id,
+        "provider": {"only": ["near-ai"], "min_privacy": "e2e"},
+    }
+    if expired:
+        with pytest.raises(HTTPException) as exc_info:
+            chat_route_endpoint_candidates(request, settings)
+        assert exc_info.value.status_code == 400
+    else:
+        e2e = chat_route_endpoint_candidates(request, settings)
+        assert {endpoint.provider for _model, endpoint in e2e} == {"near-ai"}
 
     for provider_filter in (
         {"only": ["near-ai"], "min_privacy": "zdr"},
