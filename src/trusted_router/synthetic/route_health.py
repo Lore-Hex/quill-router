@@ -121,23 +121,9 @@ def evaluate_route_health(
                     )
 
         if sample_count < min_samples or failure_count / sample_count < failure_threshold:
-            recent.sort(key=lambda pair: pair[0], reverse=True)
-            streak = []
-            for pair in recent:
-                if pair[1].status == "success":
-                    break
-                streak.append(pair)
-            if (
-                len(streak) >= min_samples
-                and now - streak[0][0] <= dt.timedelta(hours=6)
-                and streak[0][0] - streak[-1][0] >= dt.timedelta(minutes=30)
-            ):
-                flags.append(RouteHealthFlag(
-                    provider=provider, model=model, samples=len(streak),
-                    failures=len(streak), failure_rate=1.0,
-                    newest_error_type=streak[0][1].error_type,
-                    newest_error_message=None, kind="availability",
-                ))
+            availability = _availability_flag(provider, model, recent, now, min_samples)
+            if availability is not None:
+                flags.append(availability)
             continue
         failure_rate = failure_count / sample_count
         flags.append(
@@ -154,6 +140,45 @@ def evaluate_route_health(
     return flags
 
 
+def _availability_flag(
+    provider: str,
+    model: str,
+    recent: list[tuple[dt.datetime, ProviderBenchmarkSample]],
+    now: dt.datetime,
+    min_samples: int,
+) -> RouteHealthFlag | None:
+    recent.sort(key=lambda pair: pair[0], reverse=True)
+    streak = []
+    for pair in recent:
+        if pair[1].status == "success":
+            break
+        streak.append(pair)
+    if (
+        len(streak) >= min_samples
+        and now - streak[0][0] <= dt.timedelta(hours=6)
+        and streak[0][0] - streak[-1][0] >= dt.timedelta(minutes=30)
+    ):
+        measured, errors, kind = streak, streak, "availability"
+    else:
+        measured = [pair for pair in recent if now - pair[0] <= dt.timedelta(hours=2)]
+        errors = [pair for pair in measured if pair[1].status == "error"]
+        if (
+            len(measured) < max(12, min_samples)
+            or len(errors) < 4
+            or len(errors) / len(measured) < 0.25
+            or now - measured[0][0] > dt.timedelta(minutes=30)
+            or measured[0][0] - measured[-1][0] < dt.timedelta(minutes=30)
+            or all(pair[1].status == "success" for pair in measured[:6])
+        ):
+            return None
+        kind = "degradation"
+    return RouteHealthFlag(
+        provider=provider, model=model, samples=len(measured), failures=len(errors),
+        failure_rate=len(errors) / len(measured), newest_error_type=errors[0][1].error_type,
+        newest_error_message=None, kind=kind,
+    )
+
+
 def report_route_health(flags: list[RouteHealthFlag]) -> None:
     """Emit one grouped Sentry message for each unhealthy route."""
     if not flags:
@@ -164,12 +189,17 @@ def report_route_health(flags: list[RouteHealthFlag]) -> None:
         return
 
     for flag in flags:
-        if flag.kind == "availability":
+        if flag.kind in {"availability", "degradation"}:
             from trusted_router.synthetic.alerts import ops_alert
 
+            detail = (
+                f"failed {flag.failures} consecutive probes over at least 30 minutes"
+                if flag.kind == "availability"
+                else f"failed {flag.failures}/{flag.samples} probes ({flag.failure_rate:.0%}) "
+                "over at least 30 minutes within the last two hours"
+            )
             ops_alert(
-                f"route-availability: {flag.provider}/{flag.model} failed "
-                f"{flag.failures} consecutive probes over at least 30 minutes",
+                f"route-{flag.kind}: {flag.provider}/{flag.model} {detail}",
                 fingerprint=["route-availability", flag.provider, flag.model],
                 tags={"route_provider": flag.provider, "route_model": flag.model},
             )

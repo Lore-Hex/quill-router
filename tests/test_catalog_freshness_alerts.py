@@ -1,6 +1,8 @@
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
+
 from trusted_router.synthetic import route_health
 
 
@@ -23,10 +25,11 @@ def test_expiring_catalog_alerts_are_provider_grouped_and_metadata_only(monkeypa
     assert "expires" in events[1][0]
 
 
-def test_sustained_availability_alert_does_not_include_provider_text(monkeypatch):
+@pytest.mark.parametrize("kind", ["availability", "degradation"])
+def test_sustained_availability_alert_does_not_include_provider_text(monkeypatch, kind):
     events = []
     monkeypatch.setattr("trusted_router.synthetic.alerts.ops_alert", lambda message, **kw: events.append((message, kw)))
-    flag = route_health.RouteHealthFlag("near-ai", "m", 6, 6, 1.0, "error", "PRIVATE", "availability")
+    flag = route_health.RouteHealthFlag("near-ai", "m", 6, 6, 1.0, "error", "PRIVATE", kind)
     route_health.report_route_health([flag])
     assert len(events) == 1
     assert "PRIVATE" not in repr(events)
@@ -39,6 +42,7 @@ def test_availability_alerts_never_quarantine_routes(monkeypatch):
 
     flags = [
         route_health.RouteHealthFlag("near-ai", "m", 6, 6, 1.0, "timeout", None, "availability"),
+        route_health.RouteHealthFlag("degraded", "m", 24, 6, 0.25, "timeout", None, "degradation"),
         route_health.RouteHealthFlag("broken", "n", 6, 6, 1.0, "not_found", None),
     ]
     monkeypatch.setattr(route_health, "evaluate_route_health", lambda _store: flags)

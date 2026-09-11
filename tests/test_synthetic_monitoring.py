@@ -4395,6 +4395,40 @@ def test_evaluate_route_health_ignores_transient_failures() -> None:
     assert len(flags) == 1 and flags[0].failure_rate == 1.0
 
 
+@pytest.mark.parametrize("failure_stride", [3, 4])
+def test_route_health_pages_sustained_partial_degradation_but_not_recovery(
+    failure_stride: int,
+) -> None:
+    now = dt.datetime.now(dt.UTC)
+    samples = []
+    for index in range(24):
+        sample = _route_health_sample(
+            f"partial-{index}", provider="confidential-ai", model="m",
+            status="error" if index % failure_stride == 0 else "success",
+            error_type="provider_error", error_status=502,
+            error_message="PRIVATE payload",
+        )
+        sample.created_at = (now - dt.timedelta(minutes=3 * index + 1)).isoformat()
+        samples.append(sample)
+    flags = evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("confidential-ai", "m")]
+    )
+    assert len(flags) == 1
+    assert flags[0].kind == "degradation"
+    assert flags[0].failure_rate == 1 / failure_stride
+    assert flags[0].newest_error_message is None
+
+    for index in range(6):
+        sample = _route_health_sample(
+            f"recovered-{index}", provider="confidential-ai", model="m", status="success",
+        )
+        sample.created_at = (now - dt.timedelta(seconds=index)).isoformat()
+        samples.append(sample)
+    assert evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("confidential-ai", "m")]
+    ) == []
+
+
 def test_evaluate_route_health_flags_dead_route_but_not_healthy_or_thin_routes() -> None:
     samples = [
         _route_health_sample(
