@@ -832,7 +832,7 @@ async def _handle_enterprise_brief(settings: Settings, request: Request) -> Resp
         return error("delivery_unavailable", 503)
 
     message = EmailMessage(
-        to="enterprise@trustedrouter.com",
+        to=settings.partner_inquiry_email or "enterprise@trustedrouter.com",
         reply_to=email,
         subject="Enterprise brief requested | TrustedRouter token exchange",
         text_body=(

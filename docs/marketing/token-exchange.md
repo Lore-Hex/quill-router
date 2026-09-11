@@ -14,9 +14,10 @@ and shared footer.
   split-surface deployments. GET/HEAD rendering remains public.
 - JSON contains `email` and the optional `website` honeypot. Email validation
   checks syntax, not mailbox ownership. The body is limited to 4 KiB.
-- The existing SES service sends one inquiry to `enterprise@trustedrouter.com`,
-  with the visitor as Reply-To. That mailbox must receive or forward company
-  email. The existing default SES sender/configuration set is used.
+- The existing SES service sends one inquiry to `TR_PARTNER_INQUIRY_EMAIL`
+  (already `joseph@jperla.com` in production), with the visitor as Reply-To.
+  Unconfigured environments fall back to the brief's published contact,
+  `enterprise@trustedrouter.com`. The default SES sender/configuration set is used.
 - The download is returned only after SES accepts that inquiry. A failed send
   returns a retryable error and never silently loses the lead. SES acceptance
   alone does not prove inbox delivery; verify forwarding in a production smoke.

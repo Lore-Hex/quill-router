@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
+from trusted_router.config import Settings
 from trusted_router.routes import public as public_routes
 from trusted_router.services.email import EmailMessage
 
@@ -121,6 +122,12 @@ def test_international_domain_uses_ses_compatible_ascii(client: TestClient, sent
     response = client.post("/token-exchange/brief", json={"email": "ada@b\u00fccher.de"})
     assert response.status_code == 200
     assert sent_messages[0].reply_to == "ada@xn--bcher-kva.de"
+
+
+def test_configured_enterprise_inbox_receives_the_lead(client: TestClient, test_settings: Settings, sent_messages: list[EmailMessage]) -> None:
+    test_settings.partner_inquiry_email = "sales@example.com"
+    assert client.post("/token-exchange/brief", json={"email": "ada@example.com"}).status_code == 200
+    assert sent_messages[0].to == "sales@example.com"
 
 
 def test_bounded_body_and_json_only(client: TestClient, sent_messages: list[EmailMessage]) -> None:
