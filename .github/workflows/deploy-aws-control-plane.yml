@@ -59,7 +59,7 @@ jobs:
       # The account's GitHub OIDC provider is pre-existing; this role is the
       # quill-router deploy grant (the TR_AWS_* repo secrets are dead - the
       # first dispatch failed on them with "security token invalid").
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::330422590279:role/tr-router-github-deploy
           aws-region: eu-west-3
