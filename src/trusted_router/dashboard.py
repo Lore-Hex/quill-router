@@ -191,6 +191,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/trust",
     "/eu",
     "/trustedos",
+    "/token-exchange",
     "/legal",
     "/privacy",
     "/terms",
@@ -1971,6 +1972,16 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "here. Opt-in by construction and privacy-safe: names and counts "
             "only, never prompts or keys."
         ),
+    ),
+    "token-exchange": PublicPage(
+        template="public/token_exchange.html",
+        title="AI Token Exchange for Enterprise",
+        description=(
+            "Buy AI on your terms. Compare models and providers, control your privacy "
+            "requirements, and connect through one API. Download the enterprise brief."
+        ),
+        og_card="token-exchange.png",
+        og_alt="TrustedRouter: the AI token exchange for enterprise",
     ),
     "resources": PublicPage(
         template="public/resources.html",
