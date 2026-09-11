@@ -24,6 +24,10 @@
   Both observed deployment identities passed full CPU, GPU, nonce/TLS binding,
   and reviewed deployment evidence checks; three real same-connection streaming
   PONG calls passed locally (3.65, 7.23 and 4.23 seconds).
+- A final review found missing quote boot-register comparisons. Publication is
+  gated on the follow-up enclave fix: independently derived dstack firmware,
+  VM, kernel and initrd pins, plus runtime-event replay, on both CPU quotes.
+  Both GLM pool members pass these additional cryptographic checks.
 - Qwen TCB failures and DeepSeek TLS failures remain operator holds. A successful
   pricing refresh cannot clear them. No ordinary/unattested fallback is used.
 - Sustained availability failures (six consecutive probes spanning at least
@@ -46,3 +50,8 @@ fails closed and needs review, even when it is operationally benign.
 
 Local Claude CLI Opus review was attempted, but its OAuth session was expired.
 No API-key-based Claude fallback was used.
+
+The alert paths are covered by tests, but direct Sentry delivery verification
+was blocked by the operator identity's missing access to the Sentry DSN secret.
+No secret-access permission was granted and no Sentry email-delivery claim is
+made. The existing production synthetic job uses its own runtime secret binding.
