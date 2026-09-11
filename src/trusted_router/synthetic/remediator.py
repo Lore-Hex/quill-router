@@ -144,6 +144,8 @@ def _detect_route_quarantine(settings: Settings) -> list[Decision]:
 
     decisions = []
     for flag in evaluate_route_health(STORE):
+        if flag.kind != "structural":
+            continue
         decisions.append(
             Decision(
                 playbook="route-quarantine",

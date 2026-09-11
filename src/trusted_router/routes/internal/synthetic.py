@@ -38,6 +38,7 @@ from trusted_router.synthetic.probes import (
 from trusted_router.synthetic.remediator import run_remediator_pass
 from trusted_router.synthetic.route_health import (
     evaluate_route_health,
+    report_catalog_freshness,
     report_image_generation_failures,
     report_route_health,
     report_video_generation_failures,
@@ -530,6 +531,7 @@ def register(router: APIRouter) -> None:
         require_internal_gateway(request, settings)
         slot = _admit_operation("route_health")
         try:
+            await run_in_threadpool(report_catalog_freshness)
             flags = await run_in_threadpool(evaluate_route_health, STORE)
             await run_in_threadpool(report_route_health, flags)
             return {"data": {"flagged": [asdict(flag) for flag in flags]}}

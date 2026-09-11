@@ -60,8 +60,10 @@ def test_near_ai_runtime_cutoff_without_catalog_reload(
 
 
 def test_near_ai_imported_catalog_matches_cutoff() -> None:
+    rows = {row["id"]: row for row in json.loads(near_ai.MANIFEST_PATH.read_text())["models"]}
     for model_id, _native_id, cutoff in _RETIRING:
-        assert (f"{model_id}@near-ai/prepaid" in catalog.MODEL_ENDPOINTS) is catalog_predates(cutoff)
+        expected = catalog_predates(cutoff) and rows[model_id].get("routable") is not False
+        assert (f"{model_id}@near-ai/prepaid" in catalog.MODEL_ENDPOINTS) is expected
 
 
 @pytest.mark.parametrize("after_cutoff", [False, True])
@@ -80,9 +82,10 @@ def test_near_ai_refresh_cutoff_and_missing_price_guard(
         lambda: now,
     )
     retiring_ids = [native for _model, native, _cutoff in _RETIRING]
-    # A stale direct registry may still advertise retired endpoints after their
-    # pricing rows disappear. Only retired models may bypass that safety gate.
-    rows = [_catalog_row(_SURVIVOR), _catalog_row("z-ai/glm-5.3-flash")]
+    # Missing prices hold only the affected row; retirement removes it even if
+    # the stale direct registry and price API still advertise it.
+    replacement = "z-ai/glm-5.3-flash"
+    rows = [_catalog_row(_SURVIVOR), _catalog_row(replacement), _catalog_row("unreviewed/model")]
     rows.extend(
         _catalog_row(native) for _model, native, model_cutoff in _RETIRING
         if price_rows_present or model_cutoff != cutoff
@@ -101,26 +104,34 @@ def test_near_ai_refresh_cutoff_and_missing_price_guard(
     monkeypatch.setattr(near_ai, "_DISCOVERED_MANIFEST_ROWS", {})
     monkeypatch.setattr(near_ai, "UPSTREAM_ID_MAP", dict(near_ai.UPSTREAM_ID_MAP))
     monkeypatch.setattr(near_ai, "MANIFEST_PATH", tmp_path / "near-ai.json")
-    if not after_cutoff and not price_rows_present:
-        with pytest.raises(RuntimeError, match="endpoint remains published without a pricing row"):
-            near_ai.fetch()
-        return
+    monkeypatch.setattr(near_ai, "_OPERATOR_HOLD_REASONS", {})
+    monkeypatch.setattr(near_ai, "_VERIFIED_DIRECT_MODELS", {
+        native: pair for native, pair in near_ai._VERIFIED_DIRECT_MODELS.items()
+        if native in {*retiring_ids, _SURVIVOR, replacement}
+    })
 
     result = near_ai.fetch()
-    expected = {_SURVIVOR_MODEL} | {
+    expected = {_SURVIVOR_MODEL, replacement} | {
         model for model, _native, model_cutoff in _RETIRING if now < model_cutoff
     }
-    assert set(result.prices) == expected
+    missing = {
+        model for model, _native, model_cutoff in _RETIRING
+        if now < model_cutoff and not price_rows_present and model_cutoff == cutoff
+    }
+    assert set(result.prices) == expected - missing
     assert set(near_ai._DISCOVERED_MANIFEST_ROWS) == expected
     for model_id, native_id, model_cutoff in _RETIRING:
         if now < model_cutoff:
             assert near_ai._DISCOVERED_MANIFEST_ROWS[model_id]["upstream_id"] == native_id
-    # The replacement must pass separate attestation review, not inherit pins
-    # from either retired model just because the upstream suggests migration.
-    assert "z-ai/glm-5.3-flash" not in result.prices
+    assert "unreviewed/model" not in result.prices
     near_ai.write_provider_manifest(result)
     manifest = json.loads(near_ai.MANIFEST_PATH.read_text())
     assert {row["id"] for row in manifest["models"]} == expected
+    for row in manifest["models"]:
+        if row["id"] in missing:
+            assert row["routable"] is False
+            assert row["routable_reason"] == "price-unavailable"
+            assert "input_token_price_per_m" not in row
 
 
 def test_near_ai_stale_price_result_cannot_restore_retired_deepseek(monkeypatch) -> None:

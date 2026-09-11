@@ -4327,6 +4327,30 @@ def _route_health_sample(
     )
 
 
+@pytest.mark.parametrize("error_status", [429, 502, 503, 504, None])
+def test_route_health_reports_sustained_unavailability_not_recovered_outages(
+    error_status: int | None,
+) -> None:
+    samples = [
+        _route_health_sample(
+            f"near-{i}", provider="near-ai", model="m", status="error",
+            age_hours=i, error_type="ConnectError", error_status=error_status,
+            error_message="PRIVATE provider payload must not reach Sentry",
+        )
+        for i in range(6)
+    ]
+    flags = evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("near-ai", "m")]
+    )
+    assert len(flags) == 1
+    assert flags[0].kind == "availability"
+    assert flags[0].newest_error_message is None
+    samples.append(_route_health_sample("recovered", provider="near-ai", model="m", status="success"))
+    assert evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("near-ai", "m")]
+    ) == []
+
+
 def test_evaluate_route_health_ignores_transient_failures() -> None:
     # A route that is 100% failing on transient/capacity errors (rate limit,
     # gateway/no-upstream, timeout) is NOT alert-worthy — it may recover and

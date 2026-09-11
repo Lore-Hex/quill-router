@@ -8,6 +8,7 @@ row alone can therefore never create an unverified route.
 
 from __future__ import annotations
 
+import json
 import os
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
@@ -55,6 +56,7 @@ _VERIFIED_DIRECT_MODELS = {
     ),
     "zai-org/GLM-5.1-FP8": ("z-ai/glm-5.1", "glm-5-1.completions.near.ai"),
     "z-ai/glm-5.2": ("z-ai/glm-5.2", "glm-5-2.completions.near.ai"),
+    "z-ai/glm-5.3-flash": ("z-ai/glm-5.3-flash", "glm-5-3-flash.completions.near.ai"),
     "openai/gpt-oss-120b": (
         "openai/gpt-oss-120b",
         "gpt-oss-120b.completions.near.ai",
@@ -81,11 +83,21 @@ _VERIFIED_DIRECT_MODELS = {
     ),
 }
 
-EXPECTED_MODELS = ["deepseek/deepseek-v4-flash", "z-ai/glm-5.2"]
+# A retired flagship must not prevent other release-pinned models refreshing.
+EXPECTED_MODELS: list[str] = []
 UPSTREAM_ID_MAP = {
     canonical: native for native, (canonical, _domain) in _VERIFIED_DIRECT_MODELS.items()
 }
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
+
+# September 11 direct Intel PCS verification: these hosts report an OutOfDate
+# TDX module. Catalog/pricing success cannot clear an attestation safety hold.
+_OPERATOR_HOLD_REASONS = dict.fromkeys(
+    ("qwen/qwen3.6-35b-a3b", "qwen/qwen3.8-27b", "qwen/qwen3-vl-30b-a3b-instruct"),
+    "attestation-tcb-out-of-date",
+)
+# The direct TLS endpoint stopped handshaking during the same incident.
+_OPERATOR_HOLD_REASONS["deepseek/deepseek-v4-flash"] = "direct-endpoint-unavailable"
 
 
 def canonical_model_id(native_id: str) -> str | None:
@@ -157,6 +169,7 @@ def _modalities(source: dict[str, Any], key: str, fallback: list[str]) -> list[s
 def fetch() -> ProviderPricingResult:
     global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
 
+    _DISCOVERED_MANIFEST_ROWS = {}
     api_key = os.environ.get("NEAR_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("near-ai: NEAR_API_KEY is required for catalog discovery")
@@ -231,36 +244,56 @@ def fetch() -> ProviderPricingResult:
             row["context_length"] = context_length
         discovered[model_id] = row
 
-    live_endpoints_without_prices = sorted(
-        native_id
-        for native_id, (model_id, pinned_domain) in active_direct_models.items()
-        if domains.get(native_id) == pinned_domain and model_id not in prices
-    )
-    if live_endpoints_without_prices:
-        raise RuntimeError(
-            "near-ai: pinned direct endpoint remains published without a pricing row: "
-            + ", ".join(live_endpoints_without_prices)
+    # Explicitly hold missing/invalid rows. Omitting them would leave stale
+    # prices routable during the shared writer's tombstone grace period.
+    for native_id, (model_id, pinned_domain) in active_direct_models.items():
+        if model_id in prices:
+            continue
+        reason = (
+            "price-unavailable" if domains.get(native_id) == pinned_domain
+            else "direct-endpoint-mismatch"
         )
+        discovered[model_id] = {
+            "id": model_id, "upstream_id": native_id,
+            "routable": False, "routable_reason": reason,
+        }
+        notes.append(f"held {native_id}: {reason}")
 
-    _DISCOVERED_MANIFEST_ROWS = discovered
-    active_model_ids = {model_id for model_id, _domain in active_direct_models.values()}
-    errors = validate(prices, [model_id for model_id in EXPECTED_MODELS if model_id in active_model_ids])
+    errors = validate(prices, EXPECTED_MODELS)
     if errors:
         raise RuntimeError("; ".join(errors))
+    _DISCOVERED_MANIFEST_ROWS = discovered
     return ProviderPricingResult(
         slug=SLUG,
         prices=prices,
         source="api",
         fetched_url=CATALOG_URL,
-        notes=[f"discovered {len(discovered)} fully attested direct models", *notes],
+        notes=[f"priced {len(prices)} release-pinned direct models", *notes],
     )
 
 
 def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
+    discovered = {key: dict(row) for key, row in _DISCOVERED_MANIFEST_ROWS.items()}
+    if MANIFEST_PATH.exists():
+        for old in json.loads(MANIFEST_PATH.read_text())["models"]:
+            model_id = old.get("id")
+            if model_id in result.prices and old.get("routable_reason") == "direct-endpoint-mismatch":
+                discovered[model_id]["routable"] = True
+    holds = {
+        model_id: row["routable_reason"] for model_id, row in discovered.items()
+        if row.get("routable") is False
+    }
+    holds.update(_OPERATOR_HOLD_REASONS)
+    holds.update({
+        model_id: "retired-upstream"
+        for native_id, (model_id, _domain) in _VERIFIED_DIRECT_MODELS.items()
+        if provider_model_retired(SLUG, model_id, native_id)
+    })
     return write_discovered_chat_manifest(
         result,
         manifest_path=MANIFEST_PATH,
-        discovered_rows=_DISCOVERED_MANIFEST_ROWS,
+        discovered_rows=discovered,
+        operator_hold_reasons=holds,
         source_url=ENDPOINTS_URL,
         pricing_source_url=CATALOG_URL,
     )

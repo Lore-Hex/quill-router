@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Iterable
 from dataclasses import dataclass
 
+from trusted_router.catalog_data import ModelEndpoint
 from trusted_router.storage_models import ProviderBenchmarkSample, SyntheticProbeSample
 from trusted_router.store_protocol import Store
 from trusted_router.synthetic.probes import rotation_candidates
@@ -14,7 +16,8 @@ _BATCH_SAMPLE_LIMIT = 100_000
 # it". Transient/capacity failures (rate limits, gateway/no-upstream, timeouts,
 # dropped connections) are NOT actionable that way: the model may recover, and
 # quarantining it would stop us ever re-probing it. They still count toward the
-# public leaderboard's uptime display (a separate path); they just don't page.
+# public leaderboard's uptime display. Sustained outages page separately and
+# must never become automatic quarantine decisions.
 # Structural failures — 4xx model-not-found / bad-request / auth (except 429) —
 # do page.
 _TRANSIENT_ERROR_TYPES = frozenset(
@@ -48,6 +51,7 @@ class RouteHealthFlag:
     failure_rate: float
     newest_error_type: str | None
     newest_error_message: str | None
+    kind: str = "structural"
 
 
 def evaluate_route_health(
@@ -59,7 +63,8 @@ def evaluate_route_health(
     failure_threshold: float = 0.95,
 ) -> list[RouteHealthFlag]:
     """Return provider/model routes whose recent failure rate is too high."""
-    cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(hours=window_hours)
+    now = dt.datetime.now(dt.UTC)
+    cutoff = now - dt.timedelta(hours=window_hours)
     if routes is None:
         routes = [
             (provider, model)
@@ -88,6 +93,7 @@ def evaluate_route_health(
         sample_count = 0
         failure_count = 0
         newest_error: tuple[dt.datetime, str | None, str | None] | None = None
+        recent: list[tuple[dt.datetime, ProviderBenchmarkSample]] = []
         for sample in samples_by_route[(provider, model)]:
             if sample.source != "synthetic":
                 continue
@@ -96,6 +102,9 @@ def evaluate_route_health(
                 continue
             if sample.status not in {"error", "success"}:
                 continue
+            if created_at > now:
+                continue
+            recent.append((created_at, sample))
             # Transient/capacity failures don't page (and don't dilute the
             # denominator) — they aren't a "quarantine me" signal.
             if sample.status == "error" and _is_transient_failure(sample):
@@ -111,11 +120,26 @@ def evaluate_route_health(
                         sample.error_message,
                     )
 
-        if sample_count < min_samples:
+        if sample_count < min_samples or failure_count / sample_count < failure_threshold:
+            recent.sort(key=lambda pair: pair[0], reverse=True)
+            streak = []
+            for pair in recent:
+                if pair[1].status == "success":
+                    break
+                streak.append(pair)
+            if (
+                len(streak) >= min_samples
+                and now - streak[0][0] <= dt.timedelta(hours=6)
+                and streak[0][0] - streak[-1][0] >= dt.timedelta(minutes=30)
+            ):
+                flags.append(RouteHealthFlag(
+                    provider=provider, model=model, samples=len(streak),
+                    failures=len(streak), failure_rate=1.0,
+                    newest_error_type=streak[0][1].error_type,
+                    newest_error_message=None, kind="availability",
+                ))
             continue
         failure_rate = failure_count / sample_count
-        if failure_rate < failure_threshold:
-            continue
         flags.append(
             RouteHealthFlag(
                 provider=provider,
@@ -140,6 +164,16 @@ def report_route_health(flags: list[RouteHealthFlag]) -> None:
         return
 
     for flag in flags:
+        if flag.kind == "availability":
+            from trusted_router.synthetic.alerts import ops_alert
+
+            ops_alert(
+                f"route-availability: {flag.provider}/{flag.model} failed "
+                f"{flag.failures} consecutive probes over at least 30 minutes",
+                fingerprint=["route-availability", flag.provider, flag.model],
+                tags={"route_provider": flag.provider, "route_model": flag.model},
+            )
+            continue
         latest = (
             " ".join(part for part in (flag.newest_error_type, flag.newest_error_message) if part)
             or "unknown error"
@@ -154,6 +188,33 @@ def report_route_health(flags: list[RouteHealthFlag]) -> None:
             scope.set_tag("route_model", flag.model)
             scope.set_tag("failure_rate", f"{flag.failure_rate:.4f}")
             sentry_sdk.capture_message(message, level="error")
+
+
+def report_catalog_freshness(
+    *, endpoints: Iterable[ModelEndpoint] | None = None, now: dt.datetime | None = None,
+) -> list[str]:
+    """Alert before runtime expiry hides a provider, without reading request data."""
+    from trusted_router.catalog import MODEL_ENDPOINTS
+    from trusted_router.synthetic.alerts import ops_alert
+
+    now = now or dt.datetime.now(dt.UTC)
+    deadlines: dict[str, dt.datetime] = {}
+    for endpoint in MODEL_ENDPOINTS.values() if endpoints is None else endpoints:
+        deadline = endpoint.catalog_valid_until
+        if deadline is not None:
+            deadlines[endpoint.provider] = min(deadlines.get(endpoint.provider, deadline), deadline)
+    flagged = []
+    for provider, deadline in sorted(deadlines.items()):
+        if deadline > now + dt.timedelta(hours=48):
+            continue
+        state = "expired" if deadline <= now else "expires within 48 hours"
+        ops_alert(
+            f"catalog-freshness: {provider} {state}; deadline={deadline.isoformat()}. "
+            "Repair discovery before fail-closed routing removes its models.",
+            fingerprint=["catalog-freshness", provider], tags={"route_provider": provider},
+        )
+        flagged.append(provider)
+    return flagged
 
 
 def report_image_generation_failures(samples: list[SyntheticProbeSample]) -> None:
