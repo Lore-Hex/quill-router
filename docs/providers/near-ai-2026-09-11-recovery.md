@@ -34,9 +34,10 @@
   30 minutes, newest within six hours) page separately from structural failures.
   They never enter the remediator's quarantine decisions.
 - Partial degradation also alerts: at least 12 probes spanning 30 minutes in
-  the last two hours, at least four failures and a 25% failure rate, a fresh
+  the last 24 hours, at least four failures and a 25% failure rate, a fresh
   sample within 30 minutes, and no six-probe healthy recovery. This covers
-  sustained 75% provider uptime without calling it a total outage.
+  sustained 75% provider uptime without calling it a total outage. The window
+  accommodates hourly route probes, without increasing the bounded query size.
 - The scheduled route-health pass alerts 48 hours before catalog expiry, grouped
   by provider. Both new alert paths contain metadata only, no provider payloads.
 

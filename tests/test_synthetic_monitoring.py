@@ -4396,8 +4396,9 @@ def test_evaluate_route_health_ignores_transient_failures() -> None:
 
 
 @pytest.mark.parametrize("failure_stride", [3, 4])
+@pytest.mark.parametrize("sample_interval_minutes", [3, 30, 60])
 def test_route_health_pages_sustained_partial_degradation_but_not_recovery(
-    failure_stride: int,
+    failure_stride: int, sample_interval_minutes: int,
 ) -> None:
     now = dt.datetime.now(dt.UTC)
     samples = []
@@ -4408,7 +4409,9 @@ def test_route_health_pages_sustained_partial_degradation_but_not_recovery(
             error_type="provider_error", error_status=502,
             error_message="PRIVATE payload",
         )
-        sample.created_at = (now - dt.timedelta(minutes=3 * index + 1)).isoformat()
+        sample.created_at = (
+            now - dt.timedelta(minutes=sample_interval_minutes * index + 1)
+        ).isoformat()
         samples.append(sample)
     flags = evaluate_route_health(  # type: ignore[arg-type]
         _RouteHealthStore(samples), routes=[("confidential-ai", "m")]
@@ -4424,6 +4427,18 @@ def test_route_health_pages_sustained_partial_degradation_but_not_recovery(
         )
         sample.created_at = (now - dt.timedelta(seconds=index)).isoformat()
         samples.append(sample)
+    assert evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples), routes=[("confidential-ai", "m")]
+    ) == []
+
+    # A new probe must not resurrect failures outside the degradation window.
+    for sample in samples:
+        sample.created_at = (
+            dt.datetime.fromisoformat(sample.created_at) - dt.timedelta(hours=25)
+        ).isoformat()
+    samples.append(_route_health_sample(
+        "new-day", provider="confidential-ai", model="m", status="success",
+    ))
     assert evaluate_route_health(  # type: ignore[arg-type]
         _RouteHealthStore(samples), routes=[("confidential-ai", "m")]
     ) == []

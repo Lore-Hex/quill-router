@@ -11,6 +11,7 @@ from trusted_router.synthetic.probes import rotation_candidates
 
 _SAMPLES_PER_ROUTE_LIMIT = 48
 _BATCH_SAMPLE_LIMIT = 100_000
+_DEGRADATION_WINDOW_HOURS = 24
 
 # A route-health alert means "this route is structurally broken — quarantine
 # it". Transient/capacity failures (rate limits, gateway/no-upstream, timeouts,
@@ -160,7 +161,12 @@ def _availability_flag(
     ):
         measured, errors, kind = streak, streak, "availability"
     else:
-        measured = [pair for pair in recent if now - pair[0] <= dt.timedelta(hours=2)]
+        # Hourly route probes cannot meet the sample floor in a two-hour window.
+        # Reuse the bounded query; freshness and recovery checks still apply.
+        measured = [
+            pair for pair in recent
+            if now - pair[0] <= dt.timedelta(hours=_DEGRADATION_WINDOW_HOURS)
+        ]
         errors = [pair for pair in measured if pair[1].status == "error"]
         if (
             len(measured) < max(12, min_samples)
@@ -196,7 +202,7 @@ def report_route_health(flags: list[RouteHealthFlag]) -> None:
                 f"failed {flag.failures} consecutive probes over at least 30 minutes"
                 if flag.kind == "availability"
                 else f"failed {flag.failures}/{flag.samples} probes ({flag.failure_rate:.0%}) "
-                "over at least 30 minutes within the last two hours"
+                f"over at least 30 minutes within the last {_DEGRADATION_WINDOW_HOURS} hours"
             )
             ops_alert(
                 f"route-{flag.kind}: {flag.provider}/{flag.model} {detail}",
