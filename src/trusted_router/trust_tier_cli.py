@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
@@ -64,12 +65,32 @@ def run(
     ``failed`` is non-empty.
     """
 
+    started = time.monotonic()
     computed_at = now or datetime.now(UTC)
+    owner_budget_failed = False
+    # Global admission evidence must not wait behind the fleet-sized workspace
+    # sweep: a platform timeout would otherwise starve every owner's leases.
+    # Only typed Spanner consumes this proof; legacy tier work stays unchanged.
+    if hasattr(store, "_owner_shard_counts_tx"):
+        from trusted_router.trust_owner_budget import recompute_owner_budget
+
+        try:
+            # Let the scan stamp its own start, never the end of the tier pass.
+            verdict = recompute_owner_budget(store, environment=environment, now=now)
+            owner_budget_failed = not verdict["scan_complete"] or bool(verdict["violating_owners"])
+        except Exception:
+            owner_budget_failed = True
+            log.exception("trust.owner_budget_persist_failed")
+        log.info(
+            "trust.owner_budget_phase_complete failed=%s elapsed_seconds=%.3f",
+            owner_budget_failed, time.monotonic() - started,
+        )
     if hasattr(store, "list_stale_trust_inbox"):
         alert_stale_trust_inbox(store, now=computed_at)
     workspace_ids = store.list_trust_tier_workspace_ids()
     failed: list[str] = []
-    for workspace_id in workspace_ids:
+    log.info("trust.tier_job_started workspaces=%d environment=%s", len(workspace_ids), environment)
+    for completed, workspace_id in enumerate(workspace_ids, start=1):
         try:
             replicated, reconciled_through = replicate_tier_job_watermark(
                 store,
@@ -94,18 +115,11 @@ def run(
         except Exception:
             failed.append(workspace_id)
             log.exception("trust.tier_job_workspace_failed workspace_id=%s", workspace_id)
-    owner_budget_failed = False
-    # Only typed Spanner can arm lease trust. Legacy backends have no fleet
-    # proof consumer, but continue their existing tier/watermark work.
-    if hasattr(store, "_owner_shard_counts_tx"):
-        from trusted_router.trust_owner_budget import recompute_owner_budget
-
-        try:
-            verdict = recompute_owner_budget(store, environment=environment, now=computed_at)
-            owner_budget_failed = not verdict["scan_complete"] or bool(verdict["violating_owners"])
-        except Exception:
-            owner_budget_failed = True
-            log.exception("trust.owner_budget_persist_failed")
+        if completed % 100 == 0 or completed == len(workspace_ids):
+            log.info(
+                "trust.tier_job_progress completed=%d total=%d failed=%d elapsed_seconds=%.3f",
+                completed, len(workspace_ids), len(failed), time.monotonic() - started,
+            )
     return TrustTierJobResult(
         attempted=len(workspace_ids), failed=tuple(failed), owner_budget_failed=owner_budget_failed
     )
