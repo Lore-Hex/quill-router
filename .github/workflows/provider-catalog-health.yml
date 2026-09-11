@@ -1,0 +1,27 @@
+name: Provider catalog health
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# Provider/catalog freshness is operational telemetry, not a deploy gate.
+# CI still enforces parsing, privacy, expiry refusal, billing and fallback.
+jobs:
+  catalog-health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --frozen
+      - name: Check time-sensitive provider state
+        run: uv run pytest -q tests/test_provider_branding.py -m provider_health
+      - name: Explain the monitoring result
+        if: always()
+        run: |
+          echo '## Provider catalog health' >> "$GITHUB_STEP_SUMMARY"
+          echo 'This workflow reports catalog freshness separately from release CI. A failure does not block deployments or change provider eligibility. Inspect the failed checks and the hourly price refresh; never extend expired evidence just to clear this report.' >> "$GITHUB_STEP_SUMMARY"

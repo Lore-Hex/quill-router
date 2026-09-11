@@ -75,3 +75,14 @@ failure/retry, overflow, loaded imagery, JavaScript errors and exact PDF bytes.
 Do not install the fake sender into production. After deployment, submit one
 clearly identified company test address, confirm the PDF and inbox receipt,
 and verify homepage, status, page assets and the core sitemap.
+
+## Release checks versus provider health
+
+Release CI retains deterministic tests for routing, expired-catalog refusal,
+privacy policy, billing, fallback, page rendering and downloads. A provider's
+current model count or refresh availability is operational health, not evidence
+that a website change is unsafe to ship. Time-sensitive tests carry the
+`provider_health` marker and run hourly in `provider-catalog-health.yml`,
+separately from the same-commit CI gate. Their failures remain visible in GitHub
+Actions and never extend a provider's eligibility deadline. Social-card
+structure, privacy labels and renderer idempotence remain release checks.

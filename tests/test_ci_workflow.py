@@ -61,3 +61,18 @@ def test_ci_runs_the_suite_again_past_every_scheduled_cutover() -> None:
     # Derived from _RETIREMENTS at run time, never a hard-coded date that would
     # silently stop being in the future.
     assert "latest_scheduled_cutover" in workflow
+
+
+def test_provider_health_is_monitored_separately_from_release_correctness() -> None:
+    ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    monitor = (ROOT / ".github/workflows/provider-catalog-health.yml").read_text(
+        encoding="utf-8",
+    )
+    deploy = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    assert ci.count('-m "not provider_health"') == 2
+    assert "schedule:" in monitor
+    assert "workflow_dispatch:" in monitor
+    assert "-m provider_health" in monitor
+    assert "continue-on-error" not in monitor
+    assert "provider-catalog-health.yml" not in deploy
+    assert "--workflow ci.yml" in deploy

@@ -147,6 +147,7 @@ jobs:
         # suite. The `coverage` job below combines them and enforces once.
         run: >-
           uv run pytest -q -n 4 --dist loadgroup
+          -m "not provider_health"
           --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
           --cov=trusted_router --cov-report=
@@ -268,6 +269,7 @@ jobs:
       - name: Tests with every scheduled cutover already past
         run: >-
           uv run pytest -q -n 4 --dist loadgroup
+          -m "not provider_health"
           --splits ${{ env.TEST_SHARDS }} --group ${{ matrix.shard }}
           --splitting-algorithm least_duration
 

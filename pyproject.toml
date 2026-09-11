@@ -72,6 +72,9 @@ timeout_method = "thread"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "provider_health: time-sensitive external provider/catalog state; monitored separately from release correctness",
+]
 
 [tool.coverage.run]
 branch = true
