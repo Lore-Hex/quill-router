@@ -52,7 +52,7 @@ jobs:
       # credentials file into the workspace ROOT, and the deploy script
       # refuses a dirty tree ("a dirty tree deploys unvalidated code").
       # Keeping the repo one level down keeps the tree clean.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: src
 
