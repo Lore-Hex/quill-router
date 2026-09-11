@@ -52,7 +52,7 @@ gc run jobs "$mutation" "$JOB_NAME" \
   --set-env-vars "$set_env_vars" \
   --update-secrets="TR_SENTRY_DSN=trustedrouter-sentry-dsn:latest" \
   --max-retries=0 \
-  --task-timeout=10m \
+  --task-timeout=14m \
   --cpu=1 \
   --memory=512Mi \
   --quiet >/dev/null
