@@ -157,6 +157,12 @@ let token = try await oauth.authenticate(
   <p class="sdk-stack-note">Sign in with TrustedRouter is built into the official <a href="https://github.com/Lore-Hex/trusted-router-py">Python</a>, <a href="https://github.com/Lore-Hex/trusted-router-js">TypeScript</a>, and <a href="https://github.com/jperla/trusted-router-swift">Swift</a> SDKs. PKCE <code>S256</code> works on every platform with no client secret. Desktop and CLI apps use the loopback flow (<code>http://localhost:3000/callback</code>). Full reference: <a href="https://github.com/Lore-Hex/quill-router/blob/main/docs/sign-in-with-trustedrouter.md">Sign in with TrustedRouter docs</a>.</p>
 </section>
 
+<section class="sdk-stack" id="company-affiliations" aria-label="Company directory affiliations">
+  <div class="section-head"><h2>Company context, with sources.</h2></div>
+  <p>Apps with profile permission can receive company directory affiliations for an exact verified email-domain match: the funding organization, company domain, founding year when known, and the source listing. Directories include Y Combinator, StartX, and ten venture firms.</p>
+  <p>A directory match is not employment verification, investor endorsement, or sign-in through an investor. Missing or stale evidence produces no claim. <a href="https://github.com/Lore-Hex/quill-router/blob/main/docs/sign-in-with-trustedrouter.md#company-directory-affiliations">Read the affiliation contract</a>.</p>
+</section>
+
 <section class="compare-matrix" aria-label="Roll your own vs Sign in with TrustedRouter">
   <div class="matrix-row matrix-head">
     <span></span><strong>Roll your own</strong><strong>Sign in with TrustedRouter</strong>

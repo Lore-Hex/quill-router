@@ -30,13 +30,13 @@ from trusted_router.money import (
 from trusted_router.oauth_app_policy import oauth_app_can_authorize
 from trusted_router.routes.helpers import enforce_rate_limit, json_body
 from trusted_router.schemas import CheckoutRequest
-from trusted_router.scopes import DEFAULT_DELEGATED_SCOPES, KNOWN_SCOPES
+from trusted_router.scopes import DEFAULT_DELEGATED_SCOPES, KNOWN_SCOPES, SCOPE_PROFILE
 from trusted_router.serialization import key_shape
 from trusted_router.services.stripe_billing import create_checkout_session
 from trusted_router.storage import STORE, ConsentRequest, OAuthApp, OAuthAuthorizationCode
 from trusted_router.typed_balance import live_credit_summary
 from trusted_router.types import ErrorType
-from trusted_router.verification import identity_payload
+from trusted_router.verification import enriched_identity_payload, identity_payload
 from trusted_router.views import render_template
 
 PKCE_METHODS = {"S256", "plain"}
@@ -272,9 +272,10 @@ def register_oauth_key_routes(router: APIRouter) -> None:
             {
                 "key": raw_key,
                 "user_id": code.user_id,
-                "identity": identity_payload(user, code.workspace_id),
+                "identity": await enriched_identity_payload(user, code.workspace_id),
                 "data": key_shape(key),
-            }
+            },
+            headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
         )
 
     @router.post("/oauth/token")
@@ -312,7 +313,12 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         )
         user = STORE.get_user(code.user_id) if code.user_id else None
         identity = identity_payload(user, code.workspace_id) or {"verification_level": "none"}
-        return JSONResponse({"access_token": raw_key, "token_type": "bearer", "scope": " ".join(code.scopes), "trustedrouter": {"verification_level": identity["verification_level"], "app_id": code.client_app_id, "workspace_id": code.workspace_id}}, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
+        metadata = {"verification_level": identity["verification_level"], "app_id": code.client_app_id, "workspace_id": code.workspace_id}
+        if SCOPE_PROFILE in code.scopes:
+            profile = await enriched_identity_payload(user, code.workspace_id) or {}
+            if profile.get("company_affiliations"):
+                metadata["company_affiliations"] = profile["company_affiliations"]
+        return JSONResponse({"access_token": raw_key, "token_type": "bearer", "scope": " ".join(code.scopes), "trustedrouter": metadata}, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
 
 
 def _create_code(

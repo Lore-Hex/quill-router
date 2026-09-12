@@ -77,6 +77,13 @@ class Store(Protocol):
     # Lifecycle ---------------------------------------------------------------
     def reset(self) -> None: ...
 
+    def get_company_affiliation_document(self, document_id: str) -> dict[str, Any] | None: ...
+
+    def get_company_affiliation_directory(self) -> Any: ...
+    def publish_company_affiliation_documents(
+        self, documents: dict[str, dict[str, Any]], *, expected_revision: str | None,
+    ) -> None: ...
+
     #: False on a backend whose key writes are unimplemented. Callers that
     #: mutate keys check this BEFORE writing: discovering the gap by catching
     #: the raise mid-sequence cannot distinguish "nothing was written" from

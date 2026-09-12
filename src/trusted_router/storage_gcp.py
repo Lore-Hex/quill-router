@@ -7977,6 +7977,33 @@ class SpannerBigtableStore:
 
         return cast(SpendLeaseArtifact, self._run_in_transaction(txn))
 
+    def get_company_affiliation_document(self, document_id: str) -> dict[str, Any] | None:
+        from trusted_router.company_affiliations import ENTITY_KIND
+
+        return self._read_entity(ENTITY_KIND, document_id, dict)
+
+    def get_company_affiliation_directory(self) -> Any:
+        from trusted_router.company_affiliations import directory_for_store
+
+        return directory_for_store(self)
+
+    def publish_company_affiliation_documents(
+        self, documents: dict[str, dict[str, Any]], *, expected_revision: str | None,
+    ) -> None:
+        from trusted_router.company_affiliations import ENTITY_KIND, validate_documents
+
+        validate_documents(documents)
+
+        def txn(transaction: Any) -> None:
+            current = self._read_entity_tx(transaction, ENTITY_KIND, "current", dict) or {}
+            if current.get("revision") != expected_revision:
+                raise StoreConflict("Company affiliation directory changed during import")
+            for document_id, document in documents.items():
+                self._write_entity_tx(transaction, ENTITY_KIND, document_id, document)
+
+        run_in_transaction_with_retry(self._database, txn)
+        self._company_affiliation_directory = None
+
     def _read_entity(self, kind: str, entity_id: str, cls: type[T]) -> T | None:
         # This generic helper serves membership, key, and workspace authorization
         # reads as well as display reads, so weakening it globally is unsafe.
