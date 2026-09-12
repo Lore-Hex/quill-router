@@ -115,9 +115,11 @@ def classify_sdk_failure(exc: BaseException) -> SdkFailure:
     * a transport failure arrives as ``InternalError(503)`` raised ``from``
       the httpx exception. The cause chain, not the status, tells it apart
       from a real 503, and the httpx class name is kept;
-    * any other ``TrustedRouterError`` is a response the probe could not
-      accept: ``pong_mismatch`` with the status the SDK saw. A 2xx whose JSON
-      is not an object lands here too, status intact;
+    * a ``TrustedRouterError`` with the gateway's explicit ``error.source``
+      retains that attribution as ``provider_error`` or ``router_error``.
+      HTTP status alone is not enough to excuse a failed deployment probe;
+    * any unclassified response is ``pong_mismatch`` with the status the SDK
+      saw. A 2xx whose JSON is not an object lands here too, status intact;
     * a successful body that is not JSON surfaces as the bare ``ValueError``;
       this path is only reached after ``response.is_success``, and these two
       gateway endpoints' success contract is 200, so the old status is kept;
@@ -129,6 +131,11 @@ def classify_sdk_failure(exc: BaseException) -> SdkFailure:
     if transport is not None:
         return SdkFailure(type(transport).__name__, None, False)
     if isinstance(exc, TrustedRouterError):
+        payload = exc.payload
+        error = payload.get("error") if isinstance(payload, dict) else None
+        source = error.get("source") if isinstance(error, dict) else None
+        if exc.status_code >= 400 and isinstance(source, str) and source in {"provider", "router"}:
+            return SdkFailure(f"{source}_error", exc.status_code, True)
         return SdkFailure("pong_mismatch", exc.status_code, True)
     if isinstance(exc, ValueError):
         return SdkFailure("pong_mismatch", 200, True)
