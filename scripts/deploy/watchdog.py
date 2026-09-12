@@ -61,6 +61,21 @@ from trusted_router.enclave_regions import ENCLAVE_REGIONS  # noqa: E402
 SEVERITY = {"up": 0, "degraded": 1, "trust_degraded": 2, "down": 2}
 # Statuses that count toward the consecutive-failure rollback counter.
 ROLLBACK_STATUSES = frozenset({"down", "trust_degraded"})
+# Keep the legacy payload fallback scoped just like the SLO-aware path.
+# This script runs with stdlib Python in CI, without application dependencies.
+SLO_PROBES = {
+    "router_core": frozenset(
+        {
+            "tls_health",
+            "attestation_nonce",
+            "gateway_authorize",
+            "gateway_settle",
+            "gateway_authorize_settle",
+            "provider_fallback",
+        }
+    ),
+    "control_plane": frozenset({"control_plane_health"}),
+}
 
 
 def normalize_watchdog_status(status: object) -> str:
@@ -118,6 +133,10 @@ def fetch_per_region(
     # reads very differently from an unreachable region).
     worst: dict[str, str] = {}
     for check in checks:
+        if not isinstance(check, dict) or check.get("probe_type") not in SLO_PROBES.get(
+            slo_class, ()
+        ):
+            continue
         target = (check or {}).get("target_region")
         status = normalize_watchdog_status(
             (check or {}).get("effective_status") or (check or {}).get("status")

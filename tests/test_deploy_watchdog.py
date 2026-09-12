@@ -71,8 +71,16 @@ def test_watchdog_falls_back_to_current_checks_and_normalizes_degraded(monkeypat
         "data": {
             "current": {
                 "checks": [
-                    {"target_region": "us-central1", "effective_status": "routing_degraded"},
-                    {"target_region": "europe-west4", "effective_status": "up"},
+                    {
+                        "target_region": "us-central1",
+                        "probe_type": "tls_health",
+                        "effective_status": "routing_degraded",
+                    },
+                    {
+                        "target_region": "europe-west4",
+                        "probe_type": "tls_health",
+                        "effective_status": "up",
+                    },
                 ]
             }
         }
@@ -102,8 +110,16 @@ def test_trust_degraded_is_preserved_not_folded_into_degraded(monkeypatch) -> No
         "data": {
             "current": {
                 "checks": [
-                    {"target_region": "eu-west-3", "effective_status": "trust_degraded"},
-                    {"target_region": "us-central1", "effective_status": "up"},
+                    {
+                        "target_region": "eu-west-3",
+                        "probe_type": "attestation_nonce",
+                        "effective_status": "trust_degraded",
+                    },
+                    {
+                        "target_region": "us-central1",
+                        "probe_type": "tls_health",
+                        "effective_status": "up",
+                    },
                 ]
             }
         }
@@ -130,6 +146,88 @@ def test_rollback_statuses_cover_down_and_trust_degraded() -> None:
     assert "unknown" not in watchdog.ROLLBACK_STATUSES
 
 
+@pytest.mark.parametrize(
+    "slo_class,core_probe",
+    [
+        ("router_core", "tls_health"),
+        ("control_plane", "control_plane_health"),
+    ],
+)
+@pytest.mark.parametrize(
+    "other_probe",
+    [
+        "openai_sdk_pong",
+        "responses_pong",
+        "image_generation",
+        "video_generation",
+        "provider_benchmark",
+        "",
+        "future_probe",
+    ],
+)
+def test_legacy_watchdog_does_not_blend_other_probes_into_release_health(
+    monkeypatch,
+    slo_class: str,
+    core_probe: str,
+    other_probe: str,
+) -> None:
+    watchdog = _load_watchdog()
+    payload = {
+        "data": {
+            "current": {
+                "checks": [
+                    {"target_region": "us-central1", "probe_type": core_probe, "status": "up"},
+                    {"target_region": "us-central1", "probe_type": other_probe, "status": "down"},
+                    {"target_region": "europe-west4", "probe_type": other_probe, "status": "down"},
+                ]
+            }
+        }
+    }
+    monkeypatch.setattr(
+        watchdog.urllib.request,
+        "urlopen",
+        lambda *_a, **_k: _FakeResponse(json.dumps(payload).encode()),
+    )
+    assert watchdog.fetch_per_region(
+        "https://status.example", ["us-central1", "europe-west4"], slo_class=slo_class
+    ) == {
+        "us-central1": "up",
+        "europe-west4": "unknown",
+    }
+
+
+@pytest.mark.parametrize(
+    "probe",
+    [
+        "tls_health",
+        "attestation_nonce",
+        "gateway_authorize",
+        "gateway_settle",
+        "gateway_authorize_settle",
+        "provider_fallback",
+    ],
+)
+def test_legacy_watchdog_keeps_router_failures_blocking(monkeypatch, probe: str) -> None:
+    watchdog = _load_watchdog()
+    payload = {
+        "data": {
+            "current": {
+                "checks": [
+                    {"target_region": "us-central1", "probe_type": probe, "status": "down"},
+                ]
+            }
+        }
+    }
+    monkeypatch.setattr(
+        watchdog.urllib.request,
+        "urlopen",
+        lambda *_a, **_k: _FakeResponse(json.dumps(payload).encode()),
+    )
+    assert watchdog.fetch_per_region("https://status.example", ["us-central1"]) == {
+        "us-central1": "down"
+    }
+
+
 def test_normalize_maps_routing_degraded_but_not_trust_degraded() -> None:
     watchdog = _load_watchdog()
     assert watchdog.normalize_watchdog_status("routing_degraded") == "degraded"
@@ -153,9 +251,7 @@ def test_watchdog_baseline_artifact_round_trips_atomically(tmp_path: Path) -> No
         {"us-central1": "up", "europe-west4": "down"},
     )
 
-    assert watchdog.read_baseline(
-        str(artifact), ["us-central1", "europe-west4", "us-east4"]
-    ) == {
+    assert watchdog.read_baseline(str(artifact), ["us-central1", "europe-west4", "us-east4"]) == {
         "us-central1": "up",
         "europe-west4": "down",
         "us-east4": "unknown",
@@ -347,8 +443,7 @@ def test_private_ingress_skips_runapp_probe_and_keeps_watchdog_gate(
     traffic_calls = [
         call
         for call in calls
-        if call.startswith("gcloud run services update-traffic")
-        and "--to-revisions=" in call
+        if call.startswith("gcloud run services update-traffic") and "--to-revisions=" in call
     ]
     assert any("--to-revisions=new-rev=10,old-rev=90" in call for call in traffic_calls)
     assert any("--to-revisions=new-rev=50,old-rev=50" in call for call in traffic_calls)
@@ -422,13 +517,7 @@ esac
 
     call_log.write_text("")
     service_json.write_text(
-        json.dumps(
-            {
-                "status": {
-                    "traffic": [{"percent": 100, "revisionName": "old-rev"}]
-                }
-            }
-        )
+        json.dumps({"status": {"traffic": [{"percent": 100, "revisionName": "old-rev"}]}})
     )
     unresolved = subprocess.run(  # noqa: S603 - fixed shell with stubbed gcloud
         ["/bin/bash", "-c", command],
@@ -515,9 +604,7 @@ def test_staged_legacy_probe_uses_regional_origin_and_classifies_results(
     curl_calls = [call for call in calls if call.startswith("curl ")]
     assert curl_calls
     assert all(
-        call.startswith(
-            "curl https://staged-probe---trusted-router-hash-uc.a.run.app/"
-        )
+        call.startswith("curl https://staged-probe---trusted-router-hash-uc.a.run.app/")
         for call in curl_calls
     )
     assert any(
@@ -526,9 +613,7 @@ def test_staged_legacy_probe_uses_regional_origin_and_classifies_results(
         if call.startswith("gcloud run services update-traffic")
     )
     assert any(
-        "--format=json" in call
-        for call in calls
-        if call.startswith("gcloud run services describe")
+        "--format=json" in call for call in calls if call.startswith("gcloud run services describe")
     )
     assert not any("status.traffic[?tag=" in call for call in calls)
     assert not any("status.traffic[?" in call for call in calls)
@@ -623,14 +708,12 @@ def test_failed_traffic_shift_restores_the_old_desired_revision(tmp_path: Path) 
     traffic_calls = [
         call
         for call in calls
-        if call.startswith("gcloud run services update-traffic")
-        and "--to-revisions=" in call
+        if call.startswith("gcloud run services update-traffic") and "--to-revisions=" in call
     ]
     assert any("--to-revisions=new-rev=10,old-rev=90" in call for call in traffic_calls)
     assert any("--to-revisions=old-rev=100" in call for call in traffic_calls)
     assert "ROLLBACK" in run.stdout
     assert "traffic update to 10% failed" in run.stdout
-
 
 
 def test_staged_ramp_rolls_back_when_the_watchdog_reports_unhealthy(
@@ -684,9 +767,5 @@ def test_watchdog_gate_releases_only_after_the_traffic_shift(
         if call.startswith("gcloud run services update-traffic")
         and "--to-revisions=new-rev=10" in call
     )
-    first_gate = next(
-        index for index, call in enumerate(calls) if "gate-released" in call
-    )
-    assert first_gate > first_shift, (
-        "the watchdog gate was released before the first traffic shift"
-    )
+    first_gate = next(index for index, call in enumerate(calls) if "gate-released" in call)
+    assert first_gate > first_shift, "the watchdog gate was released before the first traffic shift"

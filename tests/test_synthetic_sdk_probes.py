@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable, Iterator
+from dataclasses import asdict
 from typing import Any
 
 import httpx
@@ -184,6 +185,41 @@ async def test_real_sdk_pong_probes_restore_httpx_transport_error_taxonomy(
         assert sample.output_match is False
         assert sample.latency_milliseconds is not None
         assert sample.ttfb_milliseconds is None
+
+
+@pytest.mark.parametrize("status", [401, 429, 500, 502, 503, 504])
+@pytest.mark.parametrize("source", ["provider", "router", None, "unknown"])
+@pytest.mark.asyncio
+async def test_pong_failures_preserve_explicit_gateway_error_source(
+    telemetry_requests: list[httpx.Request],
+    status: int,
+    source: str | None,
+) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status,
+            json={"error": {"source": source, "message": "private failure detail"}},
+        )
+
+    samples = await _run_pair(handler)
+
+    for sample in samples:
+        assert sample.status == "down"
+        assert sample.http_status == status
+        assert sample.error_type == (
+            f"{source}_error" if source in {"provider", "router"} else "pong_mismatch"
+        )
+        assert "private failure detail" not in str(asdict(sample))
+
+
+@pytest.mark.parametrize("payload", [[], {"error": "provider"}, {"source": "provider"}])
+@pytest.mark.asyncio
+async def test_pong_malformed_errors_are_not_attributed_to_providers(
+    telemetry_requests: list[httpx.Request],
+    payload: object,
+) -> None:
+    samples = await _run_pair(lambda _request: httpx.Response(503, json=payload))
+    assert all(sample.error_type == "pong_mismatch" for sample in samples)
 
 
 @pytest.mark.asyncio
