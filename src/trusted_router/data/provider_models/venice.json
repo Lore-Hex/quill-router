@@ -75,6 +75,9 @@
       "status": 1,
       "id": "deepseek/deepseek-v4-flash",
       "upstream_id": "deepseek-v4-flash",
+      "retirement_at": "2026-09-15T00:00:00Z",
+      "replacement_model_id": "deepseek/deepseek-v4-1-flash",
+      "retirement_note": "Venice customer notice: switch before September 15, 2026. No hour or time zone supplied; use 00:00 UTC. Replacement is a separate model, not an automatic alias.",
       "features": [
         "function-calling",
         "reasoning",

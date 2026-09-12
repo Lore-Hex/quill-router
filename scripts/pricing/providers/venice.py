@@ -11,6 +11,7 @@ from scripts.pricing.base import ModelPrice, ProviderPricingResult, fetch_json, 
 from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.model_ids import canonicalize_unqualified_model_id
 from scripts.pricing.openai_catalog import positive_int
+from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "venice"
 BASE_URL = "https://api.venice.ai/api/v1"
@@ -90,7 +91,11 @@ def fetch() -> ProviderPricingResult:
             continue
         model_id = _model_id(native_id)
         pricing = spec.get("pricing")
-        if model_id is None or not isinstance(pricing, dict):
+        if (
+            model_id is None
+            or provider_model_retired(SLUG, model_id, native_id)
+            or not isinstance(pricing, dict)
+        ):
             continue
         input_rate = pricing.get("input")
         output_rate = pricing.get("output")
