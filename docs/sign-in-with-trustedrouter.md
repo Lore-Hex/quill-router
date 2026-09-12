@@ -187,6 +187,29 @@ console session).
             "workspace_id": "ws_…", "created_at": "…" } }
 ```
 
+### Company directory affiliations
+
+With `profile` permission, verified email domains can receive an optional
+`company_affiliations` array alongside their identity. It contains the company
+name, `funding_organization`, exact `domain`, sourced `founding_year` (or null),
+`source_url`, `checked_at`, `relationship`, and
+`match_method: "verified_email_domain"`. Multiple investor listings are preserved.
+The RFC `/oauth/token` response exposes this array inside `trustedrouter` when
+the grant includes `profile`; `/auth/keys` exposes it inside `identity`.
+
+This means the verified email domain matches a reviewed public company listing.
+It does **not** verify employment, investor endorsement, funding eligibility, or
+authentication by YC/StartX/a VC. Unmatched, unverified, stale, or unavailable
+directory data omits the field. Do not require it for general sign-in or infer
+that an absent claim disproves an affiliation. Use `/auth/userinfo` for current
+claims rather than relying indefinitely on the initial token exchange.
+
+Supported directories: Y Combinator, StartX, Sequoia Capital, a16z, Lightspeed,
+General Catalyst, Accel, Insight Partners, Bain Capital Ventures, Khosla
+Ventures, Bessemer Venture Partners, and Lux Capital. Coverage is of their
+public listings, not undisclosed investments. Data is managed outside the code
+in a Google Sheet; [matching and refresh policy](design/company-affiliations.md).
+
 ## SDK usage
 
 All three official TrustedRouter SDKs have first-class Sign in with

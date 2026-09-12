@@ -1392,6 +1392,36 @@ class PostgresStore:
 
     # Users + workspaces -----------------------------------------------------
 
+    def get_company_affiliation_document(self, document_id: str) -> dict[str, Any] | None:
+        from trusted_router.company_affiliations import ENTITY_KIND
+
+        return self._read_entity(ENTITY_KIND, document_id, dict)
+
+    def get_company_affiliation_directory(self) -> Any:
+        from trusted_router.company_affiliations import directory_for_store
+
+        return directory_for_store(self)
+
+    def publish_company_affiliation_documents(
+        self, documents: dict[str, dict[str, Any]], *, expected_revision: str | None,
+    ) -> None:
+        from trusted_router.company_affiliations import ENTITY_KIND, validate_documents
+
+        validate_documents(documents)
+
+        def operation(conn: Any) -> None:
+            current = self._read_entity_tx(conn, ENTITY_KIND, "current", dict, for_update=True) or {}
+            if current.get("revision") != expected_revision:
+                raise StoreConflict("Company affiliation directory changed during import")
+            # SELECT FOR UPDATE cannot lock an absent initial pointer.
+            if not current and not self._insert_entity_once_tx(conn, ENTITY_KIND, "current", documents["current"]):
+                raise StoreConflict("Company affiliation directory changed during import")
+            for document_id, document in documents.items():
+                self._write_entity_tx(conn, ENTITY_KIND, document_id, document)
+
+        self._run_transaction(operation)
+        self._company_affiliation_directory = None
+
     def ensure_user(
         self,
         user_id: str,

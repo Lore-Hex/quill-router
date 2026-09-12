@@ -18,12 +18,13 @@ from trusted_router.errors import api_error
 from trusted_router.scopes import SCOPE_PROFILE
 from trusted_router.storage import STORE, User, Workspace
 from trusted_router.types import ErrorType
-from trusted_router.verification import identity_payload
+from trusted_router.verification import enriched_identity_payload
 
 
 def register_auth_routes(router: APIRouter) -> None:
     @router.get("/auth/userinfo")
     async def auth_userinfo(
+        response: Response,
         principal: Annotated[Principal, Depends(require_scope(SCOPE_PROFILE))],
     ) -> dict[str, Any]:
         """OIDC-style userinfo for "Sign in with TrustedRouter". Works with a
@@ -32,6 +33,7 @@ def register_auth_routes(router: APIRouter) -> None:
         A delegated key carries the approving user's id via `creator_user_id`,
         so apps that did the PKCE sign-in can fetch the user's email/profile
         with just the key they received."""
+        response.headers["Cache-Control"] = "private, no-store"
         user = principal.user
         if (
             user is None
@@ -55,7 +57,7 @@ def register_auth_routes(router: APIRouter) -> None:
                 "A user-owned session or API key is required",
                 ErrorType.FORBIDDEN,
             )
-        return {"data": identity_payload(user, principal.workspace.id)}
+        return {"data": await enriched_identity_payload(user, principal.workspace.id)}
 
     @router.get("/auth/session")
     async def auth_session(principal: ManagementPrincipal) -> dict[str, Any]:

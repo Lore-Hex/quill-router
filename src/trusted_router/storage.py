@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import dataclasses
 import datetime as dt
 import hmac
@@ -170,6 +171,8 @@ class InMemoryStore:
             trust_tier3_min_paid_microdollars
         )
         self.users: dict[str, User] = {}
+        self._company_affiliation_documents: dict[str, dict[str, Any]] = {}
+        self._company_affiliation_directory: Any = None
         self.user_ids_by_email: dict[str, str] = {}
         self.user_ids_by_wallet: dict[str, str] = {}
         self.user_ids_by_username: dict[str, str] = {}
@@ -251,6 +254,8 @@ class InMemoryStore:
 
     def reset(self) -> None:
         with self._lock:
+            self._company_affiliation_documents.clear()
+            self._company_affiliation_directory = None
             self.users.clear()
             self.user_ids_by_email.clear()
             self.user_ids_by_wallet.clear()
@@ -1612,6 +1617,28 @@ class InMemoryStore:
 
     def delete_byok_provider(self, workspace_id: str, provider: str) -> bool:
         return self.byok_store.delete(workspace_id, provider)
+
+    def get_company_affiliation_document(self, document_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return copy.deepcopy(self._company_affiliation_documents.get(document_id))
+
+    def get_company_affiliation_directory(self) -> Any:
+        from trusted_router.company_affiliations import directory_for_store
+
+        return directory_for_store(self)
+
+    def publish_company_affiliation_documents(
+        self, documents: dict[str, dict[str, Any]], *, expected_revision: str | None,
+    ) -> None:
+        from trusted_router.company_affiliations import validate_documents
+
+        validate_documents(documents)
+        with self._lock:
+            current = self._company_affiliation_documents.get("current", {})
+            if current.get("revision") != expected_revision:
+                raise StoreConflict("Company affiliation directory changed during import")
+            self._company_affiliation_documents.update(copy.deepcopy(documents))
+            self._company_affiliation_directory = None
 
     def create_custom_model(
         self,
@@ -3849,7 +3876,7 @@ def configure_analytics_sink(sink: AnalyticsSink) -> None:
     _ANALYTICS_SINK = sink
 
 
-def create_store(settings: Any) -> Store:
+def create_store(settings: Any, *, initialize_schema: bool = True) -> Store:
     backend = str(getattr(settings, "storage_backend", "memory")).lower()
     if backend == "memory":
         return InMemoryStore(
@@ -3897,7 +3924,8 @@ def create_store(settings: Any) -> Store:
                 getattr(settings, "trust_tier3_min_paid_microdollars", 50_000_000)
             ),
         )
-        store.apply_schema()
+        if initialize_schema:
+            store.apply_schema()
         return store
     if backend in {"spanner-bigtable", "spanner-clickhouse"}:
         from trusted_router.storage_gcp import SpannerBigtableStore
