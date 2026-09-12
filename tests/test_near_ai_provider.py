@@ -151,9 +151,11 @@ def test_near_ai_fetch_fails_closed_on_direct_domain_drift(
         near_ai.fetch()
 
 
-def test_near_ai_fetch_keeps_last_known_good_when_live_endpoint_loses_price(
-    monkeypatch: pytest.MonkeyPatch,
+def test_near_ai_fetch_isolates_endpoint_without_price(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: datetime(2026, 9, 5, tzinfo=UTC))
+    monkeypatch.setattr(near_ai, "_OPERATOR_HOLD_REASONS", {})
     dsv4 = "deepseek-ai/DeepSeek-V4-Flash"
     glm = "z-ai/glm-5.2"
     gemma = "google/gemma-4-31B-it"
@@ -186,10 +188,41 @@ def test_near_ai_fetch_keeps_last_known_good_when_live_endpoint_loses_price(
     monkeypatch.setenv("NEAR_API_KEY", "test-key")
     monkeypatch.setattr(near_ai.httpx, "Client", FakeClient)
 
-    with pytest.raises(RuntimeError, match="endpoint remains published without a pricing row"):
-        near_ai.fetch()
+    manifest = tmp_path / "near-ai.json"
+    old = json.loads(near_ai.MANIFEST_PATH.read_text())
+    old["models"] = [row for row in old["models"] if row["upstream_id"] in {dsv4, glm, gemma}]
+    for row in old["models"]:
+        row.pop("routable", None)
+        row.pop("routable_reason", None)
+    manifest.write_text(json.dumps(old))
+    monkeypatch.setattr(near_ai, "MANIFEST_PATH", manifest)
+    result = near_ai.fetch()
+    assert set(result.prices) == {"deepseek/deepseek-v4-flash", "z-ai/glm-5.2"}
+    near_ai.write_provider_manifest(result)
+    published = {row["id"]: row for row in json.loads(manifest.read_text())["models"]}
+    assert published["google/gemma-4-31b-it"]["routable"] is False
+    assert published["google/gemma-4-31b-it"]["routable_reason"] == "price-unavailable"
+    assert "input_token_price_per_m" not in published["google/gemma-4-31b-it"]
+    assert published["deepseek/deepseek-v4-flash"].get("routable", True)
     assert near_ai.MANIFEST_STALE_FALLBACK is True
     assert near_ai.INCLUDE_IN_PRICE_INDEX is True
+
+
+def test_near_ai_manifest_preserves_attestation_holds_after_price_refresh(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from scripts.pricing.base import ModelPrice, ProviderPricingResult
+
+    model = "qwen/qwen3.8-27b"
+    path = tmp_path / "near-ai.json"
+    path.write_text(json.dumps({"models": [{"id": model}]}))
+    monkeypatch.setattr(near_ai, "MANIFEST_PATH", path)
+    monkeypatch.setattr(near_ai, "_DISCOVERED_MANIFEST_ROWS", {model: {"id": model, "routable": True}})
+    result = ProviderPricingResult(slug="near-ai", prices={model: ModelPrice(100, 200)}, source="api", fetched_url=near_ai.CATALOG_URL)
+    near_ai.write_provider_manifest(result)
+    row = json.loads(path.read_text())["models"][0]
+    assert row["routable"] is False
+    assert row["routable_reason"] == "attestation-tcb-out-of-date"
 
 
 def test_near_ai_parser_rejects_bad_money_and_untrusted_endpoint_shapes() -> None:
@@ -226,8 +259,9 @@ def test_near_ai_manifest_and_catalog_are_attested_prepaid_only() -> None:
     ]
     assert endpoints
     assert {endpoint.model_id for endpoint in endpoints} == {
-        model_id for model_id in manifest_ids
-        if not provider_lifecycle.provider_model_retired("near-ai", model_id, at=CATALOG_CLOCK)
+        row["id"] for row in raw["models"]
+        if row.get("routable") is not False
+        and not provider_lifecycle.provider_model_retired("near-ai", row["id"], at=CATALOG_CLOCK)
     }
     assert {endpoint.usage_type for endpoint in endpoints} == {"Credits"}
     assert all(not endpoint.is_byok for endpoint in endpoints)
@@ -250,7 +284,7 @@ def test_near_ai_manifest_and_catalog_are_attested_prepaid_only() -> None:
 def test_near_ai_is_e2e_eligible_but_never_satisfies_zdr_or_deny(
     monkeypatch: pytest.MonkeyPatch, expired: bool,
 ) -> None:
-    model_id = "openai/gpt-oss-120b"
+    model_id = "z-ai/glm-5.3-flash"
     # Exercise routing policy independently of the live manifest's refresh age.
     # Expired evidence must still fail closed, even for a pinned E2E provider.
     endpoint = next(
