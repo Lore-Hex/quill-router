@@ -30,6 +30,7 @@ TINFOIL_KIMI_K26_RETIREMENT_AT = datetime(2026, 8, 3, 0, 0, tzinfo=UTC)
 TINFOIL_GLM52_RETIREMENT_AT = datetime(2026, 9, 10, 0, 0, tzinfo=UTC)
 NEAR_AI_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 11, 13, 0, tzinfo=UTC)
 NEAR_AI_DEEPSEEK_V4_FLASH_RETIREMENT_AT = datetime(2026, 9, 17, 13, 0, tzinfo=UTC)
+VENICE_DEEPSEEK_V4_FLASH_RETIREMENT_AT = datetime(2026, 9, 15, 0, 0, tzinfo=UTC)
 PARASAIL_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
 FRIENDLI_QWEN3_235B_RETIREMENT_AT = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
 FRIENDLI_K_EXAONE_236B_RETIREMENT_AT = datetime(2026, 8, 20, 0, 0, tzinfo=UTC)
@@ -124,6 +125,16 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # Venice's September notice replaces deepseek-v4-flash with the separate
+    # deepseek-v4-1-flash model on September 15. No time zone was specified;
+    # use 00:00 UTC. The notice does not identify the dated or fast variants.
+    # Never redirect explicit V4 requests to different V4.1 weights.
+    _Retirement(
+        provider="venice",
+        model_ids=frozenset({"deepseek/deepseek-v4-flash"}),
+        upstream_ids=frozenset({"deepseek-v4-flash"}),
+        effective_at=VENICE_DEEPSEEK_V4_FLASH_RETIREMENT_AT,
+    ),
     # The first-party rolling aliases cease to identify these exact weights.
     # Retire only the dated leaves, not the rolling aliases or other providers.
     # Published combo versions stay frozen; never replace their Pro with Flash.
