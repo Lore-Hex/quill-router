@@ -55,6 +55,8 @@ _SHARED_DOMAINS = frozenset({
     "netlify.app", "vercel.app", "webflow.io", "wixsite.com", "notion.site",
     "framer.website", "framer.app", "substack.com", "medium.com",
     "linkedin.com", "facebook.com", "instagram.com", "twitter.com", "x.com",
+})
+_PUBLIC_SUFFIXES = frozenset({
     "co.uk", "com.au", "co.in", "co.jp", "com.br", "com.cn", "com.sg",
 })
 _ACTIVE_STATUSES = frozenset({"active", "operating", "public", "private", "listed"})
@@ -78,7 +80,9 @@ def normalize_company_domain(value: str) -> str:
         pass
     else:
         raise ValueError("IP addresses are not company domains")
-    if any(domain == shared or domain.endswith("." + shared) for shared in _SHARED_DOMAINS):
+    if domain in _PUBLIC_SUFFIXES or any(
+        domain == shared or domain.endswith("." + shared) for shared in _SHARED_DOMAINS
+    ):
         raise ValueError("Shared domains cannot establish company affiliation")
     return domain
 

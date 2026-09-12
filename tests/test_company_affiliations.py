@@ -78,6 +78,15 @@ def test_invalid_or_shared_domains_are_rejected(domain: str) -> None:
         normalize_company_domain(domain)
 
 
+@pytest.mark.parametrize("domain", ["example.co.uk", "example.com.au", "example.co.in"])
+def test_companies_under_multilabel_public_suffixes_are_valid(domain: str) -> None:
+    assert normalize_company_domain(domain) == domain
+    records = directory([row(domain=domain, company_url=f"https://{domain}")]).lookup(
+        f"person@{domain}", email_verified=True, now=NOW
+    )
+    assert records[0]["domain"] == domain
+
+
 def test_multiple_organizations_are_preserved_and_duplicates_removed() -> None:
     records = [row(), row(), row(
         funding_organization="Accel", directory_url="https://www.accel.com/companies/example"
