@@ -15,6 +15,10 @@ for (const [slug, organization, matchedOrganization = organization] of pages) {
     });
     await page.goto(`/${slug}`);
     await expect(page.getByRole("heading", { level: 1 })).toContainText(organization);
+    const prompt = (await page.locator("#company-agent-prompt").textContent()).trim();
+    expect(prompt.split(/\s+/).length).toBeLessThanOrEqual(40);
+    expect(prompt).not.toContain("\n");
+    expect(prompt).toContain(`https://trustedrouter.com/${slug}`);
     await page.getByText("View the response shape", { exact: true }).click();
     for (const id of ["company-agent-prompt", "company-match-code", "company-response"]) {
       const text = (await page.locator(`#${id}`).textContent()).trim();

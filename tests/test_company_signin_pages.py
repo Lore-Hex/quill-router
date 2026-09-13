@@ -15,6 +15,24 @@ PAGES = [
 ]
 
 
+@pytest.mark.parametrize(("slug", "label"), [
+    ("sign-in-as-ycombinator", "Sign in with Y Combinator"),
+    ("sign-in-as-startx", "Sign in with StartX"),
+    ("sign-in-as-vc", "Sign in as VC-backed"),
+])
+def test_company_signin_prompt_is_short_and_links_to_its_guide(
+    client: TestClient, slug: str, label: str,
+) -> None:
+    page = BeautifulSoup(client.get(f"/{slug}").text, "html.parser")
+    prompt = page.find(id="company-agent-prompt").get_text().strip()
+    assert len(prompt.split()) <= 40
+    assert "\n" not in prompt
+    assert prompt == (
+        f'Add "{label}" to this app using TrustedRouter. '
+        f"Follow the guide and use its button image: https://trustedrouter.com/{slug}"
+    )
+
+
 @pytest.mark.parametrize(("slug", "organization"), PAGES)
 def test_company_signin_developer_page(client: TestClient, slug: str, organization: str) -> None:
     response = client.get(f"/{slug}")
@@ -23,17 +41,14 @@ def test_company_signin_developer_page(client: TestClient, slug: str, organizati
     assert organization in page.h1.get_text()
     assert page.find("link", rel="canonical")["href"] == f"https://trustedrouter.com/{slug}"
     assert page.find("meta", property="og:url")["content"] == f"https://trustedrouter.com/{slug}"
-    prompt = page.find(id="company-agent-prompt").get_text()
     for required in (
         organization, "PKCE S256", "state", "profile", "server", "email_verified",
         "company_affiliations", "funding_organization", "founding_year", "sub",
-        "https://trustedrouter.com/v1/oauth/authorize",
-        "https://trustedrouter.com/v1/oauth/token",
         "https://trustedrouter.com/v1/auth/userinfo",
         "https://github.com/Lore-Hex/quill-router/blob/main/docs/sign-in-with-trustedrouter.md",
-        "not proof of employment", "ordinary sign-in", "localStorage",
+        "does not prove employment", "ordinary sign-in",
     ):
-        assert required in prompt
+        assert required in response.text
     assert "api.quillrouter.com" not in response.text
     button = page.find("button", attrs={"data-copy-prompt-target": "company-agent-prompt"})
     assert button is not None and button.has_attr("hidden")
@@ -121,9 +136,7 @@ def test_company_signin_button_assets_and_embed(client: TestClient, slug: str) -
         assert f"https://trustedrouter.com{path}" in code
         assert 'href="/auth/trustedrouter"' in code
         assert "oauth/authorize?" not in code
-    prompt = page.find(id="company-agent-prompt").get_text()
-    assert "Backed by TrustedRouter / Google" in prompt
-    assert "/auth/trustedrouter" in prompt
+    assert "Backed by TrustedRouter / Google" in section.get_text()
 
 
 def test_vc_guide_lists_policy_firms_and_is_discoverable(client: TestClient) -> None:
@@ -137,10 +150,8 @@ def test_vc_guide_lists_policy_firms_and_is_discoverable(client: TestClient) -> 
     expected = [name for name in SOURCE_HOSTS if name not in {"Y Combinator", "StartX"}]
     assert len(names) == 10
     assert names == expected
-    prompt = page.find(id="company-agent-prompt").get_text()
     code = page.find(id="company-match-code").get_text()
     for name in expected:
-        assert name in prompt
         assert name in code
     assert "email_verified === true" in code
     assert "verified_email_domain" in code
