@@ -191,7 +191,12 @@ console session).
 
 Developer walkthroughs with copyable agent prompts:
 [Y Combinator company sign-in](https://trustedrouter.com/sign-in-as-ycombinator)
-and [StartX company sign-in](https://trustedrouter.com/sign-in-as-startx).
+[StartX company sign-in](https://trustedrouter.com/sign-in-as-startx),
+and [VC-backed company sign-in](https://trustedrouter.com/sign-in-as-vc).
+Each guide includes light/dark SVG button images and an HTML embed, with
+"Backed by TrustedRouter / Google" attribution for the authentication flow.
+Wire the embed's `/auth/trustedrouter` link to your registered OAuth start route;
+the image does not authenticate by itself or imply endorsement by a directory.
 
 With `profile` permission, verified email domains can receive an optional
 `company_affiliations` array alongside their identity. It contains the company

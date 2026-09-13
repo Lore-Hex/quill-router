@@ -1456,6 +1456,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @public_html_route("/sign-in-as-ycombinator")
     @public_html_route("/sign-in-as-startx")
+    @public_html_route("/sign-in-as-vc")
     async def company_signin_guide(request: Request) -> str:
         return public_page_html(settings, request.url.path.strip("/"))
 
