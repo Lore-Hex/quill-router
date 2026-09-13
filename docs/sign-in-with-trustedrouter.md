@@ -189,6 +189,10 @@ console session).
 
 ### Company directory affiliations
 
+Developer walkthroughs with copyable agent prompts:
+[Y Combinator company sign-in](https://trustedrouter.com/sign-in-as-ycombinator)
+and [StartX company sign-in](https://trustedrouter.com/sign-in-as-startx).
+
 With `profile` permission, verified email domains can receive an optional
 `company_affiliations` array alongside their identity. It contains the company
 name, `funding_organization`, exact `domain`, sourced `founding_year` (or null),

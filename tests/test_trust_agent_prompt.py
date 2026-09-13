@@ -44,7 +44,7 @@ def test_agent_verification_prompt_is_first_on_both_trust_surfaces(url: str) -> 
     assert icon.get("alt") == "Copy"
     assert icon.get("aria-hidden") == "true"
     assert first.find(id="trust-copy-status").get("role") == "status"
-    script = page.find("script", src="/static/trust-prompt.js")
+    script = page.find("script", src="/static/copy-prompt.js")
     assert script is not None
     assert script.has_attr("defer")
 

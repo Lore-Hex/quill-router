@@ -70,6 +70,7 @@ from trusted_router.content.blog import (
     FEATURED_SLUGS,
     BlogPost,
 )
+from trusted_router.content.company_signin import COMPANY_SIGNIN_PAGES, company_signin_context
 from trusted_router.content.legal import (
     hipaa_readiness_packet,
     legal_entity,
@@ -219,6 +220,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/badge",
     "/tinfoil-alternative",
     "/sign-in-with-trustedrouter",
+    *(f"/{slug}" for slug in COMPANY_SIGNIN_PAGES),
     "/openai-compatible-llm-api",
     "/kimi-k2-api",
     "/gemini-flash-alternative",
@@ -750,6 +752,19 @@ _NOT_FOUND_PAGE = PublicPage(
 
 
 PUBLIC_PAGES: dict[str, PublicPage] = {
+    **{
+        slug: PublicPage(
+            template="public/company_signin.html",
+            title=f"Sign in as a {organization} company",
+            description=(
+                f"Add {organization} company context to your app with TrustedRouter sign-in. "
+                "Copy an agent prompt, integrate OAuth, and match verified email domains."
+            ),
+            og_card="sign-in-with-trustedrouter.png",
+            og_alt=f"TrustedRouter developer guide to {organization} company sign-in",
+        )
+        for slug, organization in COMPANY_SIGNIN_PAGES.items()
+    },
     "azure-openai-alternative": PublicPage(
         template="public/seo_azure_openai_alternative.html",
         title="Azure OpenAI Alternative \u2014 Attested Private Inference",
@@ -2624,6 +2639,7 @@ def public_page_html(
             canonical_public_url(settings, canonical_path) if canonical_path is not None else None
         ),
         robots_meta=robots_meta,
+        extra_context=company_signin_context(page_key) if page_key in COMPANY_SIGNIN_PAGES else None,
     )
 
 

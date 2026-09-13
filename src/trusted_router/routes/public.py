@@ -1454,6 +1454,11 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def seo_sign_in_with_trustedrouter() -> str:
         return public_page_html(settings, "sign-in-with-trustedrouter")
 
+    @public_html_route("/sign-in-as-ycombinator")
+    @public_html_route("/sign-in-as-startx")
+    async def company_signin_guide(request: Request) -> str:
+        return public_page_html(settings, request.url.path.strip("/"))
+
     @public_html_route("/openai-compatible-llm-api")
     async def seo_openai_compatible_llm_api() -> str:
         return public_page_html(settings, "openai-compatible-llm-api")
