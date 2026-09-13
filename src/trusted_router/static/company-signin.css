@@ -271,12 +271,23 @@
 }
 
 @media (width <= 700px) {
+  .company-eyebrow {
+    margin: 12px 0 8px;
+  }
+
   .company-intro h1 {
     font-size: 32px;
+    margin-bottom: 12px;
   }
 
   .company-lead {
     font-size: 17px;
+    line-height: 1.5;
+  }
+
+  .company-intro-actions {
+    margin-top: 8px;
+    gap: 8px 24px;
   }
 
   .company-flow,
