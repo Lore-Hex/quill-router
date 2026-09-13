@@ -1,5 +1,5 @@
 {% macro copy_button(id, label, status_id="", text="Copy") %}
-<button class="company-copy" type="button" data-copy-prompt-target="{{ id }}" data-copy-prompt-status="{{ status_id or id ~ '-status' }}" aria-controls="{{ id }}" aria-label="Copy {{ label|lower }}" title="Copy {{ label|lower }}" hidden><img src="/static/copy-icon.svg" width="18" height="18" alt="" aria-hidden="true"><span>{{ text }}</span></button>
+<button class="company-copy" type="button" data-copy-prompt-target="{{ id }}" data-copy-prompt-status="{{ status_id or id ~ '-status' }}" aria-controls="{{ id }}" aria-label="Copy {{ label|lower }}" title="Copy {{ label|lower }}" hidden><img src="/static/copy-icon.svg" width="18" height="18" alt="Copy" aria-hidden="true"><span>{{ text }}</span></button>
 {% endmacro %}
 {% macro copy_block(id, label, text, language="") %}
 <div class="company-code">
