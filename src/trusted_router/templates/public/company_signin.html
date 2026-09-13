@@ -6,13 +6,12 @@
 <header class="company-intro">
   <nav class="company-crumbs" aria-label="Company sign-in guides">
     <a href="/sign-in-with-trustedrouter">Sign in with TrustedRouter</a><span aria-hidden="true">/</span>
-    <a href="/sign-in-as-ycombinator" {% if organization == "Y Combinator" %}aria-current="page"{% endif %}>Y Combinator</a>
-    <a href="/sign-in-as-startx" {% if organization == "StartX" %}aria-current="page"{% endif %}>StartX</a>
+    {% for tab in guide_tabs %}<a href="/{{ tab.slug }}" {% if guide_slug == tab.slug %}aria-current="page"{% endif %}>{{ tab.label }}</a>{% endfor %}
   </nav>
   <p class="company-eyebrow">For developers</p>
   <h1>{{ heading }}</h1>
-  <p class="company-lead">Match verified company emails to {{ organization }} listings. Get a company name, domain, and sourced founding year at sign-in.</p>
-  <p class="company-disclosure">Authentication is through TrustedRouter, including Google sign-in. This integration is not operated or endorsed by {{ organization }}.</p>
+  <p class="company-lead">Match verified company emails to {{ listing_label }}. Get a company name, domain, and sourced founding year at sign-in.</p>
+  <p class="company-disclosure">Authentication is through TrustedRouter, including Google sign-in. This integration is not operated or endorsed by {{ directory_label }}.</p>
   <div class="company-intro-actions">
     {{ copy_button("company-agent-prompt", "integration prompt", "company-intro-copy-status", "Copy prompt") }}
     <a class="company-jump" href="#agent-prompt">Read the prompt <span aria-hidden="true">&darr;</span></a>
@@ -26,6 +25,29 @@
   <li><span class="company-step">02</span><div><strong>TrustedRouter sign-in</strong><span>Verified company email + user consent</span></div></li>
   <li><span class="company-step">03</span><div><strong>Company context</strong><span>{{ organization }}, domain, founding year</span></div></li>
 </ol>
+
+<section class="company-section" id="button-assets" aria-labelledby="button-assets-title">
+  <h2 id="button-assets-title">A sign-in button for your app</h2>
+  <p>Download the image or use its public URL. Connect the button to your app's OAuth start route; a static image is not a complete sign-in integration.</p>
+  <div class="company-button-assets">
+    {% for asset in button_assets %}
+    <div class="company-button-asset">
+      <img class="company-signin-button-image" src="{{ asset.path }}" width="360" height="88" alt="{{ button_label }}. {{ button_attribution }}.">
+      <a class="company-download" href="{{ asset.path }}" download>{{ asset.theme|capitalize }} SVG <span aria-hidden="true">&darr;</span></a>
+      <details><summary>HTML embed</summary>{{ copy_block("company-button-" ~ asset.theme, "Button HTML", asset.embed, "HTML") }}</details>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="company-caption">&ldquo;{{ button_attribution }}&rdquo; describes the authentication flow, not a funding relationship or endorsement. Your app checks the verified company-domain claim after sign-in.</p>
+</section>
+
+{% if is_vc %}
+<section class="company-section" aria-labelledby="company-firms-title">
+  <h2 id="company-firms-title">Supported venture firms</h2>
+  <ul class="company-firms">{% for firm in firms %}<li><a href="{{ firm.url }}">{{ firm.name }}</a></li>{% endfor %}</ul>
+  <p class="company-caption">These are directory sources, not a ranking. A match means the company domain appears in a reviewed portfolio listing; it does not establish current ownership, employment, or benefit eligibility.</p>
+</section>
+{% endif %}
 
 <section class="company-section" id="agent-prompt" aria-labelledby="agent-prompt-title">
   <h2 id="agent-prompt-title">Add it with your agent</h2>
@@ -53,7 +75,7 @@
   <h2 id="company-data-title">What your app receives</h2>
   <dl class="company-fields">
     <div><dt>Company + domain</dt><dd>The listed company name and exact verified email domain.</dd></div>
-    <div><dt>Organization</dt><dd><code>funding_organization: "{{ organization }}"</code>, with the directory relationship.</dd></div>
+    <div><dt>Organization</dt><dd>{% if is_vc %}The exact supported firm name in <code>funding_organization</code>, with a <code>portfolio</code> relationship.{% else %}<code>funding_organization: "{{ organization }}"</code>, with the directory relationship.{% endif %}</dd></div>
     <div><dt>Founding year</dt><dd>A sourced year when known. <code>null</code> means unknown, not zero.</dd></div>
     <div><dt>Evidence</dt><dd>A source listing, check timestamp, and <code>verified_email_domain</code> match method.</dd></div>
   </dl>
@@ -64,7 +86,7 @@
   <h2 id="company-boundaries-title">A useful signal, not an employment check.</h2>
   <p>A match means the verified email domain matches a reviewed company listing. It does not prove employment, investor endorsement, funding eligibility, or ownership of the company.{% if organization == "StartX" %} A StartX listing does not mean StartX invested in the company.{% endif %}</p>
   <p>Personal email, an unlisted domain, or stale or unavailable evidence can produce no match. Keep ordinary sign-in working. Offer retry or manual review for company-only benefits rather than treating missing data as proof that someone is ineligible.</p>
-  <p>Use a button labeled <strong>Continue with TrustedRouter</strong>, with nearby text <strong>Check your {{ organization }} company email</strong>. Do not label it official {{ organization }} authentication.</p>
+  <p>The <strong>{{ button_label }}</strong> artwork identifies a company-affiliation sign-in flow, not official authentication operated by {{ directory_label }}. Keep the backing line visible and explain that TrustedRouter checks the company email domain.</p>
 </section>
 
 <nav class="company-section company-links" aria-label="Integration resources">

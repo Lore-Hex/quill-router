@@ -95,3 +95,78 @@ def test_company_signin_is_agent_readable_and_on_public_surface(
         response = public_client.get(f"/{slug}")
     assert response.status_code == 200
     assert organization in response.text
+
+
+@pytest.mark.parametrize("slug", ["ycombinator", "startx"])
+def test_company_signin_button_assets_and_embed(client: TestClient, slug: str) -> None:
+    from defusedxml import ElementTree
+
+    page = BeautifulSoup(client.get(f"/sign-in-as-{slug}").text, "html.parser")
+    section = page.find(id="button-assets")
+    assert section is not None
+    for theme in ("light", "dark"):
+        path = f"/static/sign-in/{slug}-{theme}.svg"
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("image/svg+xml")
+        root = ElementTree.fromstring(response.content)
+        assert root.attrib["viewBox"] == "0 0 360 88"
+        text = " ".join(root.itertext())
+        assert "Sign in with" in text
+        assert "Backed by TrustedRouter / Google" in text
+        assert "<script" not in response.text
+        assert "href=" not in response.text
+        assert section.find("a", href=path).has_attr("download")
+        code = page.find(id=f"company-button-{theme}").get_text()
+        assert f"https://trustedrouter.com{path}" in code
+        assert 'href="/auth/trustedrouter"' in code
+        assert "oauth/authorize?" not in code
+    prompt = page.find(id="company-agent-prompt").get_text()
+    assert "Backed by TrustedRouter / Google" in prompt
+    assert "/auth/trustedrouter" in prompt
+
+
+def test_vc_guide_lists_policy_firms_and_is_discoverable(client: TestClient) -> None:
+    from trusted_router.company_affiliations import SOURCE_HOSTS
+
+    response = client.get("/sign-in-as-vc")
+    assert response.status_code == 200
+    page = BeautifulSoup(response.text, "html.parser")
+    assert page.h1.get_text() == "Sign in as a VC-backed company"
+    names = [node.get_text() for node in page.select(".company-firms a")]
+    expected = [name for name in SOURCE_HOSTS if name not in {"Y Combinator", "StartX"}]
+    assert len(names) == 10
+    assert names == expected
+    prompt = page.find(id="company-agent-prompt").get_text()
+    code = page.find(id="company-match-code").get_text()
+    for name in expected:
+        assert name in prompt
+        assert name in code
+    assert "email_verified === true" in code
+    assert "verified_email_domain" in code
+    assert "funding_organization" in code
+    assert "Sequoia Capital" in page.find(id="company-response").get_text()
+    assert '"relationship": "portfolio"' in page.find(id="company-response").get_text()
+    for source in ("/sign-in-as-ycombinator", "/sign-in-as-startx", "/docs", "/sign-in-with-trustedrouter", "/sitemap-core.xml"):
+        assert "/sign-in-as-vc" in client.get(source).text
+    for path in ("/sign-in-as-vc/", "/sign-in-as-vc?utm_source=test"):
+        variant = client.get(path)
+        assert variant.status_code == 200
+        assert 'href="https://trustedrouter.com/sign-in-as-vc"' in variant.text
+    assert client.head("/sign-in-as-vc").status_code == 200
+    markdown = client.get("/sign-in-as-vc", headers={"Accept": "text/markdown"})
+    assert markdown.status_code == 200
+    assert markdown.headers["content-type"].startswith("text/markdown")
+    assert "Sequoia Capital" in markdown.text
+
+
+def test_signin_artwork_is_generated_from_current_guide_copy() -> None:
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    subprocess.run(  # noqa: S603 - fixed repository generator, no shell or caller input
+        [sys.executable, str(root / "scripts/generate_company_signin_buttons.py"), "--check"],
+        cwd=root, check=True, capture_output=True,
+    )

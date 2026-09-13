@@ -3,9 +3,10 @@ const { test, expect } = require("@playwright/test");
 const pages = [
   ["sign-in-as-ycombinator", "Y Combinator"],
   ["sign-in-as-startx", "StartX"],
+  ["sign-in-as-vc", "VC-backed", "Sequoia Capital"],
 ];
 
-for (const [slug, organization] of pages) {
+for (const [slug, organization, matchedOrganization = organization] of pages) {
   test(`${organization}: copy prompt and examples with the real CSP`, async ({ page }) => {
     await page.addInitScript(() => {
       Object.defineProperty(navigator, "clipboard", {
@@ -45,8 +46,8 @@ for (const [slug, organization] of pages) {
         if (url !== "https://trustedrouter.com/v1/auth/userinfo" || options.headers.Authorization !== "Bearer test-token" || options.cache !== "no-store") throw new Error("Wrong profile request");
         return { ok: true, json: async () => ({ data }) };
       }, "test-token")));
-    }, { code, organization });
-    expect(results[0].companyContext.funding_organization).toBe(organization);
+    }, { code, organization: matchedOrganization });
+    expect(results[0].companyContext.funding_organization).toBe(matchedOrganization);
     for (const result of results.slice(1)) {
       expect(result.userId).toBe("usr_test");
       expect(result.companyContext).toBeNull();
@@ -58,6 +59,7 @@ for (const [slug, organization] of pages) {
       await page.setViewportSize({ width, height: 900 });
       await page.goto(`/${slug}`);
       await page.getByText("View the response shape", { exact: true }).click();
+      for (const summary of await page.locator(".company-button-asset summary").all()) await summary.click();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
       for (const button of await page.locator(".company-copy").all()) {
         const box = await button.boundingBox();
@@ -76,7 +78,64 @@ for (const [slug, organization] of pages) {
       await page.screenshot({ path: testInfo.outputPath(`${slug}-${width}.png`), fullPage: true });
     });
   }
+
+  test(`${organization}: buttons render, embed copies, and downloads`, async ({ page }, testInfo) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "clipboard", { value: { writeText: async (text) => { window.copiedCompanyText = text; } } });
+    });
+    await page.goto(`/${slug}`);
+    const tabs = page.getByRole("navigation", { name: "Company sign-in guides" });
+    await expect(tabs.getByRole("link", { name: "VCs", exact: true })).toBeVisible();
+    for (const theme of ["light", "dark"]) {
+      const asset = page.locator(".company-button-asset").filter({ has: page.getByRole("link", { name: `${theme[0].toUpperCase() + theme.slice(1)} SVG` }) });
+      const preview = asset.locator(".company-signin-button-image");
+      expect(await preview.evaluate((img) => img.complete && img.naturalWidth === 360 && img.naturalHeight === 88)).toBeTruthy();
+      await preview.screenshot({ path: testInfo.outputPath(`${slug}-${theme}-button.png`) });
+      await asset.locator("summary").click();
+      await asset.getByRole("button", { name: "Copy button html" }).click();
+      expect(await page.evaluate(() => window.copiedCompanyText)).toBe((await asset.locator("pre").textContent()).trim());
+      const downloaded = page.waitForEvent("download");
+      await asset.getByRole("link").click();
+      const download = await downloaded;
+      expect(download.suggestedFilename()).toBe(`${slug.replace("sign-in-as-", "")}-${theme}.svg`);
+      expect(await download.failure()).toBeNull();
+    }
+  });
 }
+
+test("VC sample accepts every supported firm and excludes accelerators", async ({ page }) => {
+  await page.goto("/sign-in-as-vc");
+  const code = await page.locator("#company-match-code").textContent();
+  const names = await page.locator(".company-firms a").allTextContents();
+  expect(names).toHaveLength(10);
+  const results = await page.evaluate(async ({ code, names }) => {
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+    const run = new AsyncFunction("fetch", "accessToken", code + "\nreturn companyContext;");
+    return Promise.all([...names, "Y Combinator", "StartX", "sequoia capital", "Unknown"].map((name) => run(async () => ({ ok: true, json: async () => ({ data: { sub: "user", email_verified: true, company_affiliations: [{ funding_organization: name, match_method: "verified_email_domain" }] } }) }), "test")));
+  }, { code, names });
+  expect(results.slice(0, 10).map((claim) => claim.funding_organization)).toEqual(names);
+  expect(results.slice(10)).toEqual([null, null, null, null]);
+});
+
+test("standalone SVG text is inside its image bounds", async ({ page }) => {
+  for (const name of ["ycombinator", "startx", "vc"]) {
+    for (const theme of ["light", "dark"]) {
+      await page.goto(`/static/sign-in/${name}-${theme}.svg`);
+      const boxes = await page.locator("text").evaluateAll((nodes) => nodes.map((node) => {
+        const { x, y, width, height } = node.getBBox();
+        return { x, y, width, height };
+      }));
+      expect(boxes).toHaveLength(2);
+      for (const box of boxes) {
+        expect(box.x).toBeGreaterThanOrEqual(76);
+        expect(box.x + box.width).toBeLessThan(352);
+        expect(box.y).toBeGreaterThan(0);
+        expect(box.y + box.height).toBeLessThan(80);
+      }
+      expect(boxes[0].y + boxes[0].height).toBeLessThan(boxes[1].y);
+    }
+  }
+});
 
 for (const mode of ["denied", "unavailable"]) {
   test(`company prompt clipboard fallback: ${mode}`, async ({ page }) => {
