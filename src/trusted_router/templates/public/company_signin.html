@@ -1,0 +1,78 @@
+{% extends "public/_base.html" %}
+{% from "public/_copy_prompt.html" import copy_block, copy_button %}
+{% block head_extra %}<link rel="stylesheet" href="/static/company-signin.css?v={{ static_version }}">{% endblock %}
+{% block body_attributes %}class="company-signin-page"{% endblock %}
+{% block hero %}
+<header class="company-intro">
+  <nav class="company-crumbs" aria-label="Company sign-in guides">
+    <a href="/sign-in-with-trustedrouter">Sign in with TrustedRouter</a><span aria-hidden="true">/</span>
+    <a href="/sign-in-as-ycombinator" {% if organization == "Y Combinator" %}aria-current="page"{% endif %}>Y Combinator</a>
+    <a href="/sign-in-as-startx" {% if organization == "StartX" %}aria-current="page"{% endif %}>StartX</a>
+  </nav>
+  <p class="company-eyebrow">For developers</p>
+  <h1>{{ heading }}</h1>
+  <p class="company-lead">Match verified company emails to {{ organization }} listings. Get a company name, domain, and sourced founding year at sign-in.</p>
+  <p class="company-disclosure">Authentication is through TrustedRouter, including Google sign-in. This integration is not operated or endorsed by {{ organization }}.</p>
+  <div class="company-intro-actions">
+    {{ copy_button("company-agent-prompt", "integration prompt", "company-intro-copy-status", "Copy prompt") }}
+    <a class="company-jump" href="#agent-prompt">Read the prompt <span aria-hidden="true">&darr;</span></a>
+  </div>
+  <span class="company-copy-status" id="company-intro-copy-status" role="status" aria-live="polite" aria-atomic="true"></span>
+</header>
+{% endblock %}
+{% block body %}
+<ol class="company-flow" aria-label="Sign-in flow">
+  <li><span class="company-step">01</span><div><strong>Your app</strong><span>Continue with TrustedRouter</span></div></li>
+  <li><span class="company-step">02</span><div><strong>TrustedRouter sign-in</strong><span>Verified company email + user consent</span></div></li>
+  <li><span class="company-step">03</span><div><strong>Company context</strong><span>{{ organization }}, domain, founding year</span></div></li>
+</ol>
+
+<section class="company-section" id="agent-prompt" aria-labelledby="agent-prompt-title">
+  <h2 id="agent-prompt-title">Add it with your agent</h2>
+  <p>Paste this into Claude Code, Codex, or your preferred coding agent. It includes the integration contract and the cases your app needs to handle.</p>
+  {{ copy_block("company-agent-prompt", "Integration prompt", agent_prompt) }}
+</section>
+
+<section class="company-section" id="integration" aria-labelledby="integration-title">
+  <h2 id="integration-title">One sign-in flow. Extra company context.</h2>
+  <div class="company-integration">
+    <ol class="company-instructions">
+      <li><h3>Register your app</h3><p>Sign in to TrustedRouter and register your app through <code>POST /v1/oauth/apps</code> with its name, app ID, and exact callback URL. Registration uses your console session, not a provider API key.</p><a href="{{ signin_docs }}">OAuth registration and protocol reference</a></li>
+      <li><h3>Request profile access</h3><p>Use the authorization-code flow with PKCE S256 and state validation. Request <code>profile</code>; add <code>inference</code> only if your app also calls models. The user approves access.</p></li>
+      <li><h3>Read the current identity</h3><p>Exchange the code and fetch <code>/v1/auth/userinfo</code> server-side with the returned access token. Use <code>data.sub</code> as the stable user ID. Do not trust profile JSON sent by the browser.</p></li>
+      <li><h3>Match the organization</h3><p>Require a verified email and an exact <code>funding_organization</code> match. Show the company and its source. Recheck current claims before granting company-only benefits.</p></li>
+    </ol>
+    <div>
+      {{ copy_block("company-match-code", "Read company context", match_code, "JavaScript / server") }}
+      <p class="company-caption">This runs after your OAuth callback. A missing match is <code>null</code>, not a failed login.</p>
+    </div>
+  </div>
+</section>
+
+<section class="company-section" aria-labelledby="company-data-title">
+  <h2 id="company-data-title">What your app receives</h2>
+  <dl class="company-fields">
+    <div><dt>Company + domain</dt><dd>The listed company name and exact verified email domain.</dd></div>
+    <div><dt>Organization</dt><dd><code>funding_organization: "{{ organization }}"</code>, with the directory relationship.</dd></div>
+    <div><dt>Founding year</dt><dd>A sourced year when known. <code>null</code> means unknown, not zero.</dd></div>
+    <div><dt>Evidence</dt><dd>A source listing, check timestamp, and <code>verified_email_domain</code> match method.</dd></div>
+  </dl>
+  <details class="company-response"><summary>View the response shape</summary><p>Illustrative values below, not a real company record. Userinfo wraps the identity in <code>data</code>; the OAuth token exchange includes profile metadata under <code>trustedrouter</code>.</p>{{ copy_block("company-response", "Example response", response_json, "JSON") }}</details>
+</section>
+
+<section class="company-section company-boundaries" aria-labelledby="company-boundaries-title">
+  <h2 id="company-boundaries-title">A useful signal, not an employment check.</h2>
+  <p>A match means the verified email domain matches a reviewed company listing. It does not prove employment, investor endorsement, funding eligibility, or ownership of the company.{% if organization == "StartX" %} A StartX listing does not mean StartX invested in the company.{% endif %}</p>
+  <p>Personal email, an unlisted domain, or stale or unavailable evidence can produce no match. Keep ordinary sign-in working. Offer retry or manual review for company-only benefits rather than treating missing data as proof that someone is ineligible.</p>
+  <p>Use a button labeled <strong>Continue with TrustedRouter</strong>, with nearby text <strong>Check your {{ organization }} company email</strong>. Do not label it official {{ organization }} authentication.</p>
+</section>
+
+<nav class="company-section company-links" aria-label="Integration resources">
+  <a href="{{ signin_docs }}#company-directory-affiliations">Full metadata contract</a>
+  <a href="https://github.com/Lore-Hex/trusted-router-js">JavaScript SDK</a>
+  <a href="https://github.com/Lore-Hex/trusted-router-py">Python SDK</a>
+  <a href="https://github.com/Lore-Hex/trusted-router-swift">Swift SDK</a>
+  <a href="/docs#sdks">All SDKs</a>
+</nav>
+{% endblock %}
+{% block body_scripts %}<script src="/static/copy-prompt.js" defer></script>{% endblock %}

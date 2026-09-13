@@ -1,0 +1,304 @@
+.company-signin-page .public-wrap {
+  max-width: 1120px;
+  padding-top: 16px;
+}
+
+.company-signin-page :is(h1, h2, h3, p, a, code) {
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.company-intro {
+  padding: 12px 0;
+  max-width: 900px;
+}
+
+.company-crumbs,
+.company-links {
+  display: flex;
+  align-items: center;
+  gap: 12px 24px;
+  flex-wrap: wrap;
+  font-size: 14px;
+}
+
+.company-crumbs [aria-current="page"] {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 6px;
+}
+
+.company-eyebrow {
+  margin: 20px 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.company-intro h1 {
+  font-size: 42px;
+  line-height: 1.12;
+  margin: 0 0 20px;
+  max-width: 850px;
+  text-wrap: balance;
+}
+
+.company-lead {
+  font-size: 19px;
+  line-height: 1.6;
+  max-width: 760px;
+}
+
+.company-disclosure,
+.company-caption {
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.company-jump {
+  display: inline-block;
+  padding: 12px 0;
+}
+
+.company-intro-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+  margin-top: 16px;
+}
+
+.company-intro-actions .company-copy {
+  padding-inline: 16px;
+}
+
+.company-intro > .company-copy-status {
+  padding-left: 0;
+}
+
+.company-flow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  padding: 24px 0;
+  margin: 0;
+  list-style: none;
+  border-block: 1px solid var(--line);
+}
+
+.company-flow li {
+  display: flex;
+  gap: 16px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.company-step {
+  color: var(--muted);
+  font: 13px monospace;
+}
+
+.company-flow strong,
+.company-flow div > span {
+  display: block;
+  line-height: 1.6;
+}
+
+.company-flow div > span {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.company-section {
+  padding: 36px 0;
+  scroll-margin-top: 90px;
+}
+
+.company-section + .company-section {
+  border-top: 1px solid var(--line);
+}
+
+.company-section h2 {
+  font-size: 25px;
+  line-height: 1.3;
+  margin: 0 0 16px;
+}
+
+.company-section p {
+  line-height: 1.65;
+}
+
+.company-code {
+  margin-top: 20px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.company-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+
+.company-code-head small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.company-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  min-width: 88px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 120ms, transform 120ms;
+}
+
+.company-copy[hidden] {
+  display: none;
+}
+
+:root[data-theme="light"] .company-copy img {
+  filter: invert(1);
+}
+
+.company-copy:hover {
+  background: var(--line);
+}
+
+.company-copy:active {
+  transform: scale(.96);
+}
+
+.company-copy:focus-visible {
+  outline: 2px solid currentcolor;
+  outline-offset: 2px;
+}
+
+.company-code pre {
+  margin: 0;
+  padding: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.7;
+  tab-size: 2;
+}
+
+.company-code code {
+  white-space: inherit;
+  font: inherit;
+}
+
+.company-copy-status {
+  display: block;
+  min-height: 32px;
+  padding: 0 20px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.company-integration {
+  display: grid;
+  grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr);
+  gap: 40px;
+  align-items: start;
+}
+
+.company-instructions {
+  margin: 0;
+  padding-left: 22px;
+}
+
+.company-instructions li {
+  padding-left: 6px;
+  margin: 20px 0;
+}
+
+.company-instructions h3 {
+  font-size: 17px;
+  margin: 0;
+}
+
+.company-instructions p {
+  margin: 8px 0;
+  font-size: 14px;
+}
+
+.company-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px 40px;
+}
+
+.company-fields dt {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.company-fields dd {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.company-response {
+  margin-top: 28px;
+}
+
+.company-response summary {
+  padding: 12px 0;
+  cursor: pointer;
+}
+
+.company-boundaries p {
+  max-width: 850px;
+}
+
+@media (width <= 700px) {
+  .company-intro h1 {
+    font-size: 32px;
+  }
+
+  .company-lead {
+    font-size: 17px;
+  }
+
+  .company-flow,
+  .company-integration,
+  .company-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .company-flow {
+    gap: 16px;
+  }
+
+  .company-integration {
+    gap: 0;
+  }
+
+  .company-code pre {
+    padding: 16px;
+    font-size: 12px;
+  }
+
+  .company-crumbs {
+    gap: 12px;
+  }
+}
