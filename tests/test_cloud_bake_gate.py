@@ -25,7 +25,7 @@ case "${0##*/}" in
       printf '{"spec":{"template":{"spec":{"containers":[{"image":"repo:%s"}]}}},"status":{"traffic":[{"revisionName":"gcp-traffic-revision","percent":100}]}}\n' \
         "${BAKE_GCP_TEMPLATE_SHA}"
     elif [ "$1 $2 $3" = "run revisions describe" ]; then
-      printf 'us-central1-docker.pkg.dev/quill-cloud-proxy/trusted-router/trusted-router:%s\n' \
+      printf '{"spec":{"containers":[{"image":"us-central1-docker.pkg.dev/quill-cloud-proxy/trusted-router/trusted-router:%s"}]}}\n' \
         "${BAKE_GCP_SHA}"
     else
       exit 2
@@ -156,6 +156,7 @@ class BakeRepo:
             "BAKE_STATUS": status,
             "TR_CLOUD_DEPLOY_MODE": mode,
             "TR_CLOUD_BAKE_HOURS": bake_hours,
+            "TR_CLOUD_BAKE_AWS_BACKEND": "apprunner",
         }
         if override is not None:
             env["TR_CLOUD_BAKE_OVERRIDE"] = override
@@ -179,6 +180,10 @@ def bake_repo(tmp_path: Path) -> BakeRepo:
     bin_dir.mkdir()
     calls.write_text("", encoding="utf-8")
     shutil.copy2(GATE, repo / "scripts/deploy/cloud_bake_gate.sh")
+    shutil.copy2(
+        ROOT / "scripts/deploy/cloud_serving_release.py",
+        repo / "scripts/deploy/cloud_serving_release.py",
+    )
     shutil.copy2(
         ROOT / "scripts/deploy/resolve_active_revision.py",
         repo / "scripts/deploy/resolve_active_revision.py",
@@ -469,7 +474,7 @@ def test_discovery_reads_the_deploy_scripts_production_resources(
     assert (
         "gcloud\trun revisions describe gcp-traffic-revision "
         "--region us-central1 --project quill-cloud-proxy "
-        "--format=value(spec.containers[0].image)"
+        "--format=json(spec.containers[0].image,spec.containers[0].env)"
     ) in calls
     assert (
         "az\tcontainerapp revision list --resource-group tr-azure "

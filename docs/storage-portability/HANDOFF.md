@@ -125,6 +125,20 @@ config looking correct everywhere you think to check.
 `scripts/deploy/aws_eu_control_plane.sh` deploys to **App Runner** and is stale
 with respect to the Fargate API plane. Do not assume it is the deploy path.
 
+**2026-09-14 live check:** `tr-eu` no longer exists in eu-west-3; both
+`tr-cp-euw1` and `tr-cp-euw3` are serving on ECS. The bake gate now verifies
+both ECS regions: completed deployments, actual task definitions and image
+digests, matching source releases, and healthy load-balancer targets. A
+missing/mixed/rolling region is UNKNOWN, not a safety copy. The legacy
+App Runner reader requires explicit `TR_CLOUD_BAKE_AWS_BACKEND=apprunner`;
+it is not a fallback when ECS verification fails. Do not use that legacy
+selection for the current production topology.
+
+GCP's serving revision now contains a digest-pinned image. Its `TR_RELEASE`
+must be read from that same traffic-carrying revision, not from the service
+template. Missing, malformed, or conflicting release evidence fails closed.
+These discovery fixes do not change the 24-hour promotion gate.
+
 ### ClickHouse cluster
 
 * `tr-clickhouse-1/2/3` run in `us-central1-a/b/c`, each on `e2-standard-4`
