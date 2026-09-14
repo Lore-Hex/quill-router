@@ -210,7 +210,21 @@ def test_provider_order_with_fallbacks_disabled_never_escapes_ordered_set() -> N
     assert "provider filters" in ctx.value.detail["error"]["message"].lower()
 
 
-def test_provider_order_with_fallbacks_disabled_selects_first_available_ordered_route() -> None:
+def test_provider_order_with_fallbacks_disabled_selects_first_available_ordered_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import routing
+    from trusted_router.catalog_data import ModelEndpoint
+
+    # Test ordering independently of provider retirement dates and live manifests.
+    endpoints = [
+        ModelEndpoint(
+            id=f"unit-gemma@{provider}", model_id="google/gemma-4-31b-it",
+            provider=provider, usage_type="Credits",
+        )
+        for provider in ("cerebras", "together")
+    ]
+    monkeypatch.setattr(routing, "endpoints_for_model", lambda _model_id: endpoints)
     candidates = chat_route_endpoint_candidates(
         {
             "model": "google/gemma-4-31b-it",

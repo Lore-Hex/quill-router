@@ -757,10 +757,10 @@
   },
   "together": {
     "card_version": 2,
-    "model_count": 13,
+    "model_count": 11,
     "name": "Together",
     "privacy": "Zero retention",
-    "route_count": 26,
+    "route_count": 22,
     "route_mode": "Prepaid + BYOK",
     "slug": "together"
   },

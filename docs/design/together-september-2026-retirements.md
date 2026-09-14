@@ -35,4 +35,6 @@ this exact known feed gap. Do not publish all STOPPED or dedicated models.
 
 Tests cover exact cutoff boundaries, native and canonical IDs, both Credits
 and BYOK routes, preservation of other providers and model identity, stale
-price refreshes, and stale STARTED/STOPPED feeds.
+price refreshes, and stale STARTED/STOPPED feeds. Static embedding allowlists
+apply the same lifecycle rule even when the dynamic manifest is absent or
+malformed; they cannot re-authorize a retired embedding route.

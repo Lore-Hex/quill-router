@@ -10,7 +10,7 @@ import pytest
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import together
-from trusted_router import catalog, provider_lifecycle
+from trusted_router import catalog, catalog_ingest, provider_lifecycle
 from trusted_router.catalog_data import ModelEndpoint
 
 _CUTOFF = datetime(2026, 9, 14, tzinfo=UTC)
@@ -81,6 +81,25 @@ def test_together_stale_prices_cannot_restore_retired_routes(monkeypatch: pytest
     assert set(refresh._index_provider_prices({"together": result})) == retired | {_REPLACEMENT}
     monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
     assert set(refresh._index_provider_prices({"together": result})) == {_REPLACEMENT}
+
+
+@pytest.mark.parametrize("manifest", [None, "broken", '{"models": []}'])
+def test_static_embedding_allowlist_obeys_retirement_even_without_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, manifest: str | None,
+) -> None:
+    model_id, native_id = _RETIRING[-1]
+    monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
+    monkeypatch.setattr(catalog_ingest, "_EMBEDDING_SPECS", [
+        {"id": model_id, "upstream_id": native_id, "provider": provider}
+        for provider in ("together", "deepinfra")
+    ])
+    if manifest is not None:
+        (tmp_path / "together.json").write_text(manifest)
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF - timedelta(microseconds=1))
+    assert catalog_ingest._authoritative_provider_model_ids("together") == {model_id}
+    monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
+    assert not catalog_ingest._authoritative_provider_model_ids("together")
+    assert catalog_ingest._authoritative_provider_model_ids("deepinfra") == {model_id}
 
 
 @pytest.mark.parametrize("after_cutoff", [False, True])
