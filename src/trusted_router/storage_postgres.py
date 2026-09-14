@@ -2137,6 +2137,14 @@ class PostgresStore:
     def claim_user_username(self, user_id: str, username: str) -> User:
         self._not_implemented("claim_user_username")
 
+    def ensure_lightning_key(self, raw_key: str) -> ApiKey:
+        from trusted_router.storage_lightning import postgres_key
+        return postgres_key(self, raw_key)
+
+    def bind_lightning_payment(self, workspace_id: str, payment_hash: str, amount_microdollars: int) -> None:
+        from trusted_router.storage_lightning import postgres_bind
+        postgres_bind(self, workspace_id, payment_hash, amount_microdollars)
+
     def create_wallet_user(self, address: str) -> User:
         normalized = address.strip().lower()
 

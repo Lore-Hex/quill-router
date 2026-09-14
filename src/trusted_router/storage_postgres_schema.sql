@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS tr_trust_event (
     workspace_id TEXT NOT NULL,
     event_id TEXT NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('payment', 'refund', 'dispute', 'abuse', 'grant')),
-    provider TEXT NOT NULL CHECK (provider IN ('stripe', 'paypal', 'adyen', 'x402', 'operator', 'system')),
+    provider TEXT NOT NULL CHECK (provider IN ('stripe', 'paypal', 'adyen', 'x402', 'lightning', 'operator', 'system')),
     amount_micro BIGINT,
     original_payment_ref TEXT,
     adverse_ref TEXT,

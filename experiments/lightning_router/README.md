@@ -1,9 +1,9 @@
 # LightningRouter funding experiment
 
 **Not launched. Mainnet deposits are disabled.** Bitcoin is still syncing; no
-LND wallet or inbound Lightning liquidity exists. The live TrustedRouter credit
-adapter is not wired. Tests use a fake USD backend that neither provisions
-production keys nor grants production credits.
+LND wallet or inbound Lightning liquidity exists. The TrustedRouter USD bridge
+is implemented and conformance-tested, but its dedicated production credential
+and the funding worker are not activated. Browser tests still use a fake backend.
 
 ## Product behavior
 
@@ -106,10 +106,14 @@ local database; never relabel old BTC rows as USD.
    inbound receiving liquidity. Test with real LND on regtest first.
 2. Deploy persistent funding records and secrets with backup/restore checks.
    Schema migration is a separate deploy action, not web-worker startup.
-3. Implement and verify the live `Credits` adapter to TrustedRouter. Use the
-   existing USD credit operation with correct Lightning payment provenance,
-   never a fake Stripe payment or an operator grant. Test against the real
-   storage conformance harness and run a paid-key inference smoke.
+3. Activate the tested `TrustedRouterCredits` HTTPS adapter and the dedicated
+   `TR_LIGHTNING_FUNDING_TOKEN` on the internal billing surface only. The token
+   must differ from every other service credential. No token means no access,
+   including local/test mode. The bridge uses the existing USD credit operation
+   and `lightning`/`invoice` payment provenance, not a grant or fake Stripe fact.
+   Run `scripts/lightning/postgres_provenance.sql` before activation on an
+   existing Postgres deployment. Spanner has no provider-enum DDL change.
+   Run a paid-key inference smoke before enabling mainnet deposits.
 4. Add readiness gates for node sync, wallet availability, receiving capacity,
    DB health and verified credit delivery before removing the mainnet guard.
 5. Deploy `lightningrouter.ai` web HTTPS and `api.lightningrouter.ai` attested
@@ -119,6 +123,21 @@ local database; never relabel old BTC rows as USD.
    redaction and keep wallet/admin macaroons off the web service.
 7. Verify actual OpenCode, Crush and OMP requests. Current tests prove setup
    configuration output, not a working production inference endpoint.
+
+## Payment-disabled web deployment
+
+`scripts/lightning/deploy_web.py --account=DEPLOY_IDENTITY` builds only committed
+experiment files, deploys a 512 MiB Cloud Run service under a no-data-access
+identity, and creates a separate HTTPS load balancer and DNS A record. It does
+not modify TrustedRouter's URL map or install an inference proxy. Mainnet stays
+disabled. Wait for the managed certificate to become ACTIVE and verify public
+HTTPS, `/health`, `/api/config`, `/api/models`, and rejected invoice creation.
+
+The USD bridge has conformance tests across memory, the native Spanner fake,
+and real local PostgreSQL for simultaneous provisioning, exactly-once deposits,
+changed-amount/workspace conflicts, revocation, expiry and sub-cent precision.
+`lightning_key` tombstones prevent deleted funding identities from being recreated;
+`lightning_payment` point-key bindings are permanent payment replay protection.
 
 ## References
 

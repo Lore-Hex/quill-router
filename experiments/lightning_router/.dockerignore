@@ -1,0 +1,14 @@
+*
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!package.json
+!package-lock.json
+!frontend.js
+!setup.mjs
+!lightning_router/
+!lightning_router/**
+!web/
+!web/**
+**/__pycache__
+**/*.pyc

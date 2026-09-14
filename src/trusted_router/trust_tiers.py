@@ -11,7 +11,7 @@ from trusted_router.storage_models import AdverseTrustEvent, CreditProvenance, T
 
 TRUST_EVENT_KINDS = frozenset({"payment", "refund", "dispute", "abuse", "grant"})
 TRUST_EVENT_PROVIDERS = frozenset(
-    {"stripe", "paypal", "adyen", "x402", "operator", "system"}
+    {"stripe", "paypal", "adyen", "x402", "lightning", "operator", "system"}
 )
 TRUST_EVENT_LIFECYCLE_STATUSES = frozenset(
     {
@@ -31,6 +31,7 @@ _PAYMENT_SOURCES = {
     "paypal": frozenset({"capture"}),
     "adyen": frozenset({"authorisation"}),
     "x402": frozenset({"x402"}),
+    "lightning": frozenset({"invoice"}),
 }
 
 TRUST_PAUSE_CAUSES = frozenset(
@@ -195,7 +196,7 @@ def validate_credit_provenance(
         raise ValueError("credit provenance source is required")
     if occurred_at.tzinfo is None or occurred_at.utcoffset() is None:
         raise ValueError("credit provenance occurred_at must be timezone-aware")
-    if provider in {"stripe", "paypal", "adyen", "x402"} and not external_ref:
+    if provider in _PAYMENT_SOURCES and not external_ref:
         raise ValueError("payment credit provenance requires a provider object reference")
     if provider in _PAYMENT_SOURCES and source not in _PAYMENT_SOURCES[provider]:
         raise ValueError("payment credit provenance source does not match its provider")
@@ -226,7 +227,7 @@ def payment_or_grant_event(
         external_ref=provenance.external_ref,
         occurred_at=provenance.occurred_at,
     )
-    is_payment = provenance.provider in {"stripe", "paypal", "adyen", "x402"}
+    is_payment = provenance.provider in _PAYMENT_SOURCES
     credited = int(amount_microdollars)
     payment_amount = (
         int(payment_amount_microdollars)
