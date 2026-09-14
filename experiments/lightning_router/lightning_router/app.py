@@ -118,7 +118,14 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
             origin = request.headers.get("origin")
             if origin and origin != str(request.base_url).rstrip("/"):
                 return JSONResponse({"error": "cross_origin_request"}, status_code=403)
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            # Catch before Starlette's outer ServerErrorMiddleware re-raises to
+            # Uvicorn, which otherwise logs traceback/SQL parameter contents.
+            logger.error("lightning.request_failed error_type=%s", type(exc).__name__)
+            response = JSONResponse({"error": "temporarily_unavailable"}, status_code=503,
+                                    headers={"Retry-After": "10"})
         response.headers.update({
             "Cache-Control": "no-store",
             "Referrer-Policy": "no-referrer",

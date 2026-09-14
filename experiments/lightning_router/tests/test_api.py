@@ -76,3 +76,18 @@ def test_cross_origin_and_unbounded_body_blocked(client, raw_key):
 def test_api_keys_do_not_expose_admin_or_inference_paths(client, raw_key):
     for path in ["/api/settle", "/api/credit", "/v1/chat/completions", "/v1/wallet/send", "/v1/gateway/authorize"]:
         assert client.post(path, headers=headers(raw_key), json={}).status_code == 404
+
+
+def test_private_exception_never_reaches_server_traceback(client, funding, raw_key, monkeypatch, caplog):
+    def unavailable(_):
+        raise RuntimeError("private SQL parameters " + raw_key)
+    monkeypatch.setattr(funding.store, "balance", unavailable)
+    # TestClient defaults to re-raising unhandled server exceptions. A generic
+    # FastAPI Exception handler alone would still raise here after its response.
+    response = client.get("/api/account", headers=headers(raw_key))
+    assert response.status_code == 503
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["retry-after"] == "10"
+    assert raw_key not in response.text + caplog.text
+    assert "private SQL" not in caplog.text
+    assert "RuntimeError" in caplog.text
