@@ -199,7 +199,7 @@ def write_config() -> None:
         "NoNewPrivileges=true\nPrivateTmp=true\nPrivateDevices=true\nProtectHome=true\n"
         "ProtectSystem=strict\nProtectKernelTunables=true\nProtectKernelModules=true\n"
         "ProtectControlGroups=true\nRestrictSUIDSGID=true\nLockPersonality=true\n"
-        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nCapabilityBoundingSet=\n"
+        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK\nCapabilityBoundingSet=\n"
         f"ReadWritePaths={DATA}\nMemoryMax=80%\n"
         "Environment=MALLOC_ARENA_MAX=2\nLimitNOFILE=65536\n"
         "[Install]\nWantedBy=multi-user.target\n"

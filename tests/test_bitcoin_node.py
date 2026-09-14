@@ -89,6 +89,8 @@ def test_bootstrap_is_not_payment_readiness() -> None:
     assert "NoNewPrivileges=true" in source
     assert "MemoryMax=80%" in source
     assert "ForwardToSyslog=no" in source
+    # ZMQ needs netlink interface enumeration even with loopback publishers.
+    assert "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK" in source
 
 
 def test_startup_shell_has_valid_syntax() -> None:

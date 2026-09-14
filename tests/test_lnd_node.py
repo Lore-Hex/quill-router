@@ -79,6 +79,7 @@ def test_only_peer_listener_is_public_and_merchant_cannot_route() -> None:
     assert "no-macaroons" not in config
     assert "noseedbackup" not in config
     assert "wallet-unlock" not in node.config("8.8.8.8", "credential", initialized=False)
+    assert "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK" in Path(node.__file__).read_text()
 
 
 def test_atomic_secret_file_permissions_and_no_overwrite(tmp_path: Path) -> None:
@@ -200,3 +201,96 @@ def test_subprocess_error_does_not_expose_secret(monkeypatch: pytest.MonkeyPatch
 def test_metadata_request_is_exact_allowlist() -> None:
     with pytest.raises(ValueError, match="unexpected"):
         node.request_json("https://example.com")
+
+
+def test_recovery_tool_roundtrip_and_unknown_version(recovery_key: rsa.RSAPrivateKey) -> None:
+    from scripts.lightning.verify_recovery import decrypt
+
+    pem = recovery_key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                     serialization.NoEncryption())
+    blob = node.seal(b"payload", public(recovery_key))
+    assert decrypt(blob, pem) == b"payload"
+    payload = json.loads(blob)
+    payload["version"] = 2
+    with pytest.raises(ValueError, match="format"):
+        decrypt(json.dumps(payload).encode(), pem)
+
+
+def test_upload_only_targets_backup_bucket_and_checks_ack(wallet_paths: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+
+    node.write_private(node.ETC / "node.json", json.dumps({
+        "backup_bucket": "quill-cloud-proxy-lightning-recovery",
+    }).encode())
+    monkeypatch.setattr(node, "request_json", lambda *a, **k: {"access_token": "test-token"})
+    requests: list[Any] = []
+    length = 6
+
+    class Opener:
+        def open(self, request: Any, **kwargs: Any) -> io.BytesIO:
+            from urllib.parse import parse_qs, urlsplit
+
+            requests.append(request)
+            url = urlsplit(request.full_url)
+            assert url.scheme == "https" and url.netloc == "storage.googleapis.com"
+            query = parse_qs(url.query)
+            assert query["ifGenerationMatch"] == ["0"]
+            return io.BytesIO(json.dumps({"name": query["name"][0], "size": str(length)}).encode())
+
+    monkeypatch.setattr(node.urllib.request, "build_opener", lambda *a: Opener())
+    assert node.upload(b"sealed", "seed").startswith("tr-bitcoin-1/seed/")
+    assert requests[0].data == b"sealed"
+    assert requests[0].get_header("Authorization") == "Bearer test-token"
+    length = 1
+    with pytest.raises(RuntimeError, match="acknowledged"):
+        node.upload(b"sealed", "seed")
+    node.write_private(node.ETC / "node.json", b'{"backup_bucket":"other-bucket"}')
+    with pytest.raises(ValueError, match="bucket"):
+        node.upload(b"sealed", "seed")
+
+
+def test_status_is_allowlisted_and_never_enables_payments(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    def rpc(path: str) -> dict[str, Any]:
+        if path == "/v1/getinfo":
+            return {"identity_pubkey": "public", "synced_to_chain": True, "synced_to_graph": True,
+                    "seed": "must-not-log", "num_active_channels": 1}
+        return {"remote_balance": {"sat": "500000"}, "secret": "must-not-log"}
+
+    monkeypatch.setattr(node, "rpc", rpc)
+    node.status()
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["remote_balance_sat"] == "500000"
+    assert payload["customer_payments_enabled"] is False
+    assert "must-not-log" not in json.dumps(payload)
+
+
+def test_mount_rejects_wrong_disk_and_existing_unknown_signatures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(node, "DATA", tmp_path / "data")
+    monkeypatch.setattr(node, "DEVICE", tmp_path / "disk")
+    monkeypatch.setattr(Path, "is_block_device", lambda path: True)
+    monkeypatch.setattr(node.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "/dev/wrong", ""))
+    with pytest.raises(ValueError, match="unexpected"):
+        node.mount_data()
+    monkeypatch.setattr(node.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 1, "", ""))
+    calls: list[tuple[str, ...]] = []
+
+    def run(*args: str) -> str:
+        calls.append(args)
+        assert args[0] == "wipefs"
+        return '{"signatures":[{"type":"xfs"}]}'
+
+    monkeypatch.setattr(node, "run", run)
+    with pytest.raises(ValueError, match="existing disk"):
+        node.mount_data()
+    assert not any(args[0] == "mkfs.ext4" for args in calls)
+
+
+def test_missing_channel_or_seed_backup_fails_closed(wallet_paths: None) -> None:
+    with pytest.raises(ValueError, match="seed backup"):
+        node.backup()
+    node.write_private(node.SEED, b"encrypted-seed")
+    node.write_private(node.DATA / "recovery/seed-upload.json", b'{}')
+    with pytest.raises(ValueError, match="static channel"):
+        node.backup()

@@ -228,7 +228,8 @@ def install(ip: str, bucket: str) -> None:
         "NoNewPrivileges=true\nPrivateTmp=true\nPrivateDevices=true\nProtectSystem=strict\nProtectHome=true\n"
         "ProtectKernelTunables=true\nProtectKernelModules=true\nProtectControlGroups=true\n"
         "RestrictSUIDSGID=true\nLockPersonality=true\nCapabilityBoundingSet=\n"
-        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nReadWritePaths=/srv/lnd\nMemoryMax=2G\n"
+        # Go enumerates interfaces over netlink while generating its TLS cert.
+        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK\nReadWritePaths=/srv/lnd\nMemoryMax=2G\n"
         "LimitCORE=0\n[Install]\nWantedBy=multi-user.target\n"
     )
     Path("/etc/systemd/system/tr-lnd-backup.service").write_text(
