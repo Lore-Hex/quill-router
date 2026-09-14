@@ -25,6 +25,7 @@ LIFECYCLE_CLOCK_OVERRIDE_ENV = "TR_LIFECYCLE_CLOCK_OVERRIDE"
 
 PHALA_JULY_2026_EFFECTIVE_AT = datetime(2026, 7, 29, 18, 0, tzinfo=UTC)
 TOGETHER_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 7, 27, 0, 0, tzinfo=UTC)
+TOGETHER_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 14, 0, 0, tzinfo=UTC)
 BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 BASETEN_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)
 TINFOIL_KIMI_K26_RETIREMENT_AT = datetime(2026, 8, 3, 0, 0, tzinfo=UTC)
@@ -650,6 +651,27 @@ _RETIREMENTS = (
         model_ids=frozenset({"minimax/minimax-m2.7"}),
         upstream_ids=frozenset({"MiniMaxAI/MiniMax-M2.7"}),
         effective_at=TOGETHER_MINIMAX_M27_RETIREMENT_AT,
+    ),
+    # https://docs.together.ai/docs/deprecations lists September 14, one day
+    # earlier than the Gemma email. Use the earlier date at 00:00 UTC, as no
+    # time zone is stated. These serverless routes still answered during the
+    # transition; a stale STARTED feed must not restore them after retirement.
+    # Replacements are recommendations, never cross-model routing aliases.
+    _Retirement(
+        provider="together",
+        model_ids=frozenset({
+            "google/gemma-4-31b-it",
+            "openai/gpt-oss-20b",
+            "thinkingmachines/inkling-small",
+            "intfloat/multilingual-e5-large-instruct",
+        }),
+        upstream_ids=frozenset({
+            "google/gemma-4-31B-it",
+            "openai/gpt-oss-20b",
+            "thinkingmachines/Inkling-Small",
+            "intfloat/multilingual-e5-large-instruct",
+        }),
+        effective_at=TOGETHER_SEPTEMBER_2026_RETIREMENT_AT,
     ),
     _Retirement(
         provider="phala",

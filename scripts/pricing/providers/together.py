@@ -36,6 +36,7 @@ from scripts.pricing.base import (
 from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
 from scripts.pricing.openai_catalog import positive_int
+from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "together"
 URL = "https://api.together.xyz/v1/models"
@@ -57,6 +58,8 @@ MANIFEST_PATH = (
 EXPECTED_MODELS = [
     "minimax/minimax-m3",
     "z-ai/glm-5.2",
+    # Official replacement; live inference works despite a STOPPED feed row.
+    "z-ai/glm-5.3-flash",
 ]
 
 
@@ -83,6 +86,7 @@ _NATIVE_TO_OR_ID = {
     "MiniMaxAI/MiniMax-M2.7": "minimax/minimax-m2.7",
     "MiniMaxAI/MiniMax-M3": "minimax/minimax-m3",
     "zai-org/GLM-5.2": "z-ai/glm-5.2",
+    "zai-org/GLM-5.3-Flash": "z-ai/glm-5.3-flash",
 }
 
 # OR-canonical id -> Together-native id. refresh.py reads this human-only
@@ -203,6 +207,7 @@ def fetch() -> ProviderPricingResult:
             native_id = UPSTREAM_ID_MAP.get(model_id)
             if (
                 native_id is None
+                or provider_model_retired(SLUG, model_id, native_id)
                 or native_id not in catalog_chat_ids
                 or native_id in serverless_model_ids
             ):
@@ -227,7 +232,7 @@ def fetch() -> ProviderPricingResult:
         if native_id not in serverless_model_ids:
             continue
         or_id = mapped_or_canonical_model_id(native_id, _NATIVE_TO_OR_ID)
-        if or_id is None:
+        if or_id is None or provider_model_retired(SLUG, or_id, native_id):
             continue
         remember_upstream_id(UPSTREAM_ID_MAP, or_id, native_id)
         pricing = row.get("pricing") or {}
