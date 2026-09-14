@@ -232,6 +232,15 @@ MODELS: dict[str, Model] = {
         prepaid_available=True,
         byok_available=True,
     ),
+    "trustedrouter/green": Model(
+        id="trustedrouter/green",
+        name="TrustedRouter Green",
+        provider="trustedrouter",
+        context_length=30_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=False,
+    ),
     EU_MODEL_ID: Model(
         id=EU_MODEL_ID,
         name="TrustedRouter EU",

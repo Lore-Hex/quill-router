@@ -192,6 +192,7 @@ def probe_openai_chat(
     max_tokens_field: str = "max_tokens",
     endpoint_path: str = "/chat/completions",
     extra_body: dict[str, Any] | None = None,
+    prompt: str = "Reply PONG",
 ) -> bool:
     """Run a minimal paid-path canary without logging response content."""
 
@@ -210,7 +211,7 @@ def probe_openai_chat(
         payload.update(
             {
                 "model": model,
-                "messages": [{"role": "user", "content": "Reply PONG"}],
+                "messages": [{"role": "user", "content": prompt}],
                 max_tokens_field: max_tokens,
                 "stream": False,
             }

@@ -85,6 +85,7 @@ from trusted_router.catalog_data import (
     ZEUS_MODEL_ID,
     Model,
 )
+from trusted_router.catalog_energy import GREEN_MODEL_ID, renewable_provider_slugs
 from trusted_router.catalog_privacy import (
     endpoint_meets_privacy_requirement,
 )
@@ -329,6 +330,15 @@ def eu_candidate_models(limit: int = 12) -> list[Model]:
     )
 
 
+def green_candidate_models(limit: int = 12) -> list[Model]:
+    return _privacy_candidate_models(
+        requirement=PRIVACY_TIER_STANDARD,
+        preferred_providers=("regolo",),
+        allowed_providers=renewable_provider_slugs(),
+        limit=limit,
+    )
+
+
 def zdr_candidate_models(limit: int = 12) -> list[Model]:
     return _privacy_candidate_models(
         requirement=PRIVACY_TIER_ZERO_RETENTION,
@@ -383,6 +393,8 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return fast_candidate_models()
     if model_id == EU_MODEL_ID:
         return eu_candidate_models()
+    if model_id == GREEN_MODEL_ID:
+        return green_candidate_models()
     if model_id == ZDR_MODEL_ID:
         return zdr_candidate_models()
     if model_id == E2E_MODEL_ID:

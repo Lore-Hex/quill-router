@@ -602,6 +602,15 @@
     "route_mode": "Prepaid",
     "slug": "recraft"
   },
+  "regolo": {
+    "card_version": 2,
+    "model_count": 11,
+    "name": "Regolo",
+    "privacy": "Zero retention",
+    "route_count": 22,
+    "route_mode": "Prepaid + BYOK",
+    "slug": "regolo"
+  },
   "reka": {
     "card_version": 2,
     "model_count": 1,

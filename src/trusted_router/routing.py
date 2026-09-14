@@ -38,6 +38,7 @@ from trusted_router.catalog import (
     endpoints_for_model,
     meta_candidate_models,
 )
+from trusted_router.catalog_energy import GREEN_MODEL_ID, renewable_provider_slugs
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.image_generation import IMAGE_MODEL_ID_SET
@@ -718,6 +719,12 @@ def _routing_for_body(
                 ErrorType.MODEL_NOT_SUPPORTED,
             )
         prefs = dataclasses.replace(prefs, only=effective_only)
+    if overrides.get("renewable_energy_only"):
+        eligible = renewable_provider_slugs()
+        effective_only = eligible if not prefs.only else prefs.only & eligible
+        if not effective_only:
+            raise api_error(400, "No renewable-energy route matches the provider filters", ErrorType.MODEL_NOT_SUPPORTED)
+        prefs = dataclasses.replace(prefs, only=effective_only)
     override_requirements = frozenset(
         int(requirement) for requirement in overrides.get("privacy_requirements", ())
     )
@@ -850,6 +857,8 @@ def _requested_model_ids(
         stripped = resolve_model_alias(stripped)
         if stripped in META_MODEL_IDS:
             overrides["usage"] = "Credits"
+        if stripped == GREEN_MODEL_ID:
+            overrides["renewable_energy_only"] = True
         if stripped in US_PROVIDER_ONLY_MODEL_IDS:
             overrides["provider_jurisdiction"] = PROVIDER_JURISDICTION_US
         if stripped in {

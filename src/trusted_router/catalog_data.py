@@ -47,6 +47,8 @@ class Provider:
     )
     provider_policy_url: str | None = None
     provider_headquarters_country: str | None = None
+    renewable_energy_inference: bool = False
+    energy_policy_url: str | None = None
 
 
 PRIVACY_TIER_STANDARD = 0  # no tracked posture (would store content)
@@ -1803,6 +1805,23 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://docs.io.net/docs/io-intelligence",
     ),
+    "regolo": Provider(
+        slug="regolo",
+        name="Regolo",
+        supports_prepaid=True,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_policy=(
+            "Regolo states that inference prompts and outputs are processed in memory "
+            "and discarded, with no reuse for training. This is a provider policy, "
+            "not verified confidential compute or provider-side E2EE."
+        ),
+        provider_policy_url="https://regolo.ai/zero-data-retention/",
+        # Seeweb S.r.l., Italian VAT IT02043220603: regolo.ai/privacy-policy/.
+        provider_headquarters_country="IT",
+        renewable_energy_inference=True,
+        energy_policy_url="https://regolo.ai/sustainable-ai/",
+    ),
     "scaleway": Provider(
         slug="scaleway",
         name="Scaleway",
@@ -2013,6 +2032,7 @@ PROVIDERS: dict[str, Provider] = {
 
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
+        "regolo",
         "anthropic",
         "openai",
         "google-ai-studio",
@@ -2310,6 +2330,7 @@ MAPREDUCE_MODEL_ID = "trustedrouter/mapreduce"
 
 META_MODEL_IDS = frozenset(
     {
+        "trustedrouter/green",
         AUTO_MODEL_ID,
         FREE_MODEL_ID,
         CHEAP_MODEL_ID,
@@ -2463,6 +2484,7 @@ ORCHESTRATION_PRIMITIVE_MODEL_IDS = frozenset(
 
 EU_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
     "mistral",
+    "regolo",
     "google-vertex",
     "openai",
     "anthropic",

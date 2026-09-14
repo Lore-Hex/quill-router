@@ -71,6 +71,7 @@ class DirectOpenAIProviderSpec:
     canary_expected_content: str | None = None
     canary_endpoint_path: str = "/chat/completions"
     canary_extra_body: dict[str, Any] = field(default_factory=dict)
+    canary_prompt: str = "Reply PONG"
 
 
 def _catalog_rows(payload: object, *, slug: str) -> list[dict[str, Any]]:
@@ -242,6 +243,7 @@ class DirectOpenAIProvider:
                 expected_content=self.spec.canary_expected_content,
                 endpoint_path=self.spec.canary_endpoint_path,
                 extra_body=self.spec.canary_extra_body,
+                prompt=self.spec.canary_prompt,
             )
         }
         apply_canary_results(

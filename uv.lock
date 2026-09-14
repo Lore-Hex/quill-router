@@ -4982,6 +4982,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "defusedxml" },
     { name = "docling" },
     { name = "hypothesis" },
     { name = "mypy" },
@@ -5025,6 +5026,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "docling", specifier = ">=2.58.0" },
     { name = "hypothesis", specifier = ">=6.152.4" },
     { name = "mypy", specifier = ">=1.13" },
