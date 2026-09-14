@@ -8,6 +8,11 @@
   </div>
   <div class="panel-body">
     <p><a href="/providers">All providers</a></p>
+    {% if provider.id == 'trustedrouter' %}
+    <p><strong>Gateway only.</strong> TrustedRouter's attestation covers the router. Compare <a href="/providers">upstream providers</a> for model inference privacy, or <a href="/trust">verify the gateway</a>.</p>
+    {% else %}
+    <p>These privacy labels describe {{ provider.name }}, the upstream model provider. ZDR is a retention policy; verified confidential inference additionally requires attested provider compute and end-to-end encryption.</p>
+    {% endif %}
     <table>
       <tbody>
         <tr><th>Provider</th><td>{{ provider.name }}</td></tr>
@@ -15,9 +20,10 @@
         {% if provider.homepage_url %}<tr><th>Provider website</th><td><a href="{{ provider.homepage_url }}" rel="nofollow noopener">{{ provider.homepage_url }}</a></td></tr>{% endif %}
         <tr><th>Models</th><td>{{ provider.served_model_count }} public model{{ '' if provider.served_model_count == 1 else 's' }}</td></tr>
         <tr><th>Credits routes</th><td>{{ provider.credits_model_count }}</td></tr>
+        {% if provider.id != 'trustedrouter' %}
         <tr><th>Zero data retention</th><td><span class="pill {% if provider.zero_data_retention or provider.prepaid_zero_data_retention %}good{% endif %}">{{ provider.zero_data_retention_label }}</span>{% if provider.zero_data_retention_scope_label %} <span class="provider-scope-note">{{ provider.zero_data_retention_scope_label }}</span>{% endif %}</td></tr>
-        <tr><th>Confidential compute</th><td><span class="pill {% if provider.confidential_compute %}good{% endif %}">{{ provider.confidential_compute_label }}</span></td></tr>
-        <tr><th>Provider E2EE</th><td><span class="pill {% if provider.provider_e2ee %}good{% endif %}">{{ provider.provider_e2ee_label }}</span></td></tr>
+        <tr><th>Verified confidential inference</th><td><span class="pill {% if provider.confidential_inference_verified %}good{% endif %}">{{ provider.confidential_inference_label }}</span></td></tr>
+        {% endif %}
         <tr><th>Policy note</th><td>{{ provider.policy }}{% if provider.policy_url %}<br><a href="{{ provider.policy_url }}">Policy source</a>{% endif %}</td></tr>
       </tbody>
     </table>

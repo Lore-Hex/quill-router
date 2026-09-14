@@ -1,5 +1,22 @@
 const { expect, test } = require("@playwright/test");
 
+test("provider privacy separates retention from verified inference", async ({ page }) => {
+  await page.goto("/providers");
+
+  await expect(page.locator('[data-provider-id="trustedrouter"]')).toHaveCount(0);
+  const phala = page.locator('[data-provider-id="phala"]');
+  await expect(phala.locator(".provider-card-trust")).toContainText("ZDR");
+  await expect(phala.locator(".provider-card-facts")).toContainText("Not verified");
+  await expect(phala.getByText("Confidential compute", { exact: true })).toHaveCount(0);
+  await expect(page.locator('[data-provider-id="tinfoil"] .provider-card-facts')).toContainText("Verified");
+  const search = page.getByRole("searchbox", { name: "Search providers" });
+  await search.fill("phala");
+  await expect(phala).toBeVisible();
+  await expect(page.locator("[data-provider-result-count]")).toHaveText("1 entry");
+  await phala.getByRole("link", { name: /Phala/ }).click();
+  await expect(page.getByRole("row", { name: "Verified confidential inference Not verified" })).toBeVisible();
+});
+
 test("provider catalog searches and expands policy notes", async ({ page }) => {
   await page.goto("/providers");
 

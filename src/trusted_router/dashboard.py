@@ -3852,7 +3852,11 @@ def public_fusion_html(settings: Settings) -> str:
 
 
 def public_providers_html(settings: Settings) -> str:
-    providers = [_provider_view(provider) for provider in providers_for_display()]
+    providers = [
+        _provider_view(provider)
+        for provider in providers_for_display()
+        if provider.slug != "trustedrouter"
+    ]
     return (
         _env()
         .get_template("public/providers.html")
@@ -3863,7 +3867,7 @@ def public_providers_html(settings: Settings) -> str:
             heading="Providers",
             description=(
                 "Compare AI providers by model coverage, token pricing, zero-retention policy, "
-                "region, confidential compute, encrypted routes, live uptime, and throughput."
+                "region, verified confidential inference, live uptime, and throughput."
             ),
             providers=providers,
             json_ld_blob=_json_ld_graph(
@@ -5027,6 +5031,11 @@ def _endpoint_provider_views(
 
 def _provider_view(provider: Provider) -> dict[str, object]:
     routing_status = "active" if provider_is_routable(provider) else "blocked"
+    confidential_verified = (
+        provider.slug != "trustedrouter"
+        and provider.provider_confidential_compute is True
+        and provider.provider_e2ee is True
+    )
     return {
         "id": provider.slug,
         "name": provider.name,
@@ -5062,6 +5071,8 @@ def _provider_view(provider: Provider) -> dict[str, object]:
         ),
         "confidential_compute_label": _policy_label(provider.provider_confidential_compute),
         "provider_e2ee_label": _policy_label(provider.provider_e2ee),
+        "confidential_inference_verified": confidential_verified,
+        "confidential_inference_label": "Verified" if confidential_verified else "Not verified",
         "policy": provider.provider_policy,
         "policy_url": provider.provider_policy_url,
         "privacy_tier": _provider_privacy_tier(provider),
@@ -5117,7 +5128,13 @@ def _provider_faq_items(
             "different eligible route, and review the linked policy source for changes."
         )
 
-    if provider.provider_e2ee and provider.provider_confidential_compute:
+    if provider.slug == "trustedrouter":
+        e2ee_answer = (
+            "TrustedRouter's attestation verifies the gateway, not every downstream model "
+            "provider. Check the selected provider's verified confidential inference status "
+            "and require provider.min_privacy=confidential for the full provider path."
+        )
+    elif provider.provider_e2ee and provider.provider_confidential_compute:
         e2ee_answer = (
             f"TrustedRouter records {provider.name} as supporting provider-side "
             "confidential compute and end-to-end encrypted inference. The route-specific "
@@ -5154,7 +5171,7 @@ def _provider_privacy_tier(provider: Provider) -> str:
     if provider.prepaid_zero_data_retention:
         return "ZDR"
     if provider.provider_confidential_compute:
-        return "Confidential compute"
+        return "Unverified provider claim"
     return "No provider claim"
 
 

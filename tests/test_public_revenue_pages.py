@@ -668,7 +668,7 @@ def test_phala_pages_do_not_claim_verified_provider_e2ee(client: TestClient) -> 
     detail = client.get("/models/z-ai/glm-5.2")
 
     assert provider.status_code == 200
-    assert 'Provider E2EE</th><td><span class="pill ">no</span>' in provider.text
+    assert 'Verified confidential inference</th><td><span class="pill ">Not verified</span>' in provider.text
     assert "does not yet verify the complete receipt chain" in provider.text
     assert detail.status_code == 200
     assert "provider E2EE not verified" in detail.text

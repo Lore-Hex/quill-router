@@ -1,21 +1,14 @@
 {% extends "public/_base.html" %}
 {% from "public/_provider_identity.html" import provider_identity %}
 {% block body %}
-<section class="public-proof-strip">
-  <div><strong>Gateway boundary</strong><span>TLS terminates inside TrustedRouter's attested gateway.</span></div>
-  <div><strong>Provider compute</strong><span>Each upstream provider has its own retention and enclave posture.</span></div>
-  <div><strong>No prompt logs</strong><span>TrustedRouter stores metadata and billing records, not prompts or outputs.</span></div>
-  <div><strong>API metadata</strong><span>Machine readable JSON remains at <span class="mono">{{ api_base_url }}/providers</span>.</span></div>
-</section>
-
 <section class="model-catalog">
   <div class="model-catalog-head">
     <div>
       <span class="eyebrow">Provider transparency</span>
-      <h2>Trusted gateway first, then explicit provider claims.</h2>
+      <h2>Compare the providers running your models.</h2>
     </div>
     <div>
-      <p>TrustedRouter is listed first, followed by verified confidential providers, ZDR providers, and every remaining provider. Claims appear only when explicitly tracked. Unknown stays unknown.</p>
+      <p>Every label below describes the upstream provider. Verified confidential providers appear first, followed by ZDR providers and the rest. ZDR is a retention policy, not proof of confidential computing.</p>
       <a class="btn" href="/providers/marketplace">List your models <span aria-hidden="true">→</span></a>
     </div>
   </div>
@@ -54,12 +47,8 @@
           </dd>
         </div>
         <div>
-          <dt>Confidential compute</dt>
-          <dd><span class="pill {% if provider.confidential_compute %}good{% endif %}">{{ provider.confidential_compute_label }}</span></dd>
-        </div>
-        <div>
-          <dt>Provider E2EE</dt>
-          <dd><span class="pill {% if provider.provider_e2ee %}good{% endif %}">{{ provider.provider_e2ee_label }}</span></dd>
+          <dt>Verified confidential inference</dt>
+          <dd><span class="pill {% if provider.confidential_inference_verified %}good{% endif %}">{{ provider.confidential_inference_label }}</span></dd>
         </div>
       </dl>
       <details class="provider-policy-details">
@@ -84,14 +73,14 @@
 
 <section class="marketing-grid three">
   <div class="marketing-card">
-    <span class="card-label">What TR proves</span>
-    <h3>The router path is verifiable.</h3>
-    <p>The hosted API publishes source commit, image reference, and digest for the attested gateway. The control plane does not terminate prompt traffic.</p>
+    <span class="card-label">Provider verification</span>
+    <h3>Proof through model inference.</h3>
+    <p>Verified means TrustedRouter tracks both attested provider compute and end-to-end encryption for the provider path. A provider's own compute claim alone stays unverified. Check the model's route for its exact scope.</p>
   </div>
   <div class="marketing-card">
-    <span class="card-label">What providers prove</span>
-    <h3>Provider policy is separate.</h3>
-    <p>If compute runs on Anthropic, OpenAI, Gemini, Phala, Tinfoil, or another upstream, that provider's policy controls model handling.</p>
+    <span class="card-label">Provider retention</span>
+    <h3>ZDR is a separate commitment.</h3>
+    <p>Zero data retention describes the provider's handling of your inputs and outputs. It does not establish hardware isolation or attestation. Account-specific commitments are marked TR-funded routes; BYOK uses your provider account's terms.</p>
   </div>
   <div class="marketing-card">
     <span class="card-label">Routing</span>
