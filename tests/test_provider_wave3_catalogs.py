@@ -226,6 +226,29 @@ def test_reka_parser_reads_the_first_party_markdown_feed() -> None:
     assert prices["reka/reka-flash"] == ModelPrice(800_000, 2_000_000)
 
 
+def test_reka_parser_handles_fern_bold_names_and_escaped_dollars() -> None:
+    source = r"""
+    | Model | Input Tokens (per 1M) | Output Tokens (per 1M) | Image |
+    | **Reka Edge** *Compact model* | \$0.10 | \$0.10 | \$0.005 |
+    | **Reka Flash** *Fast model* | \$0.80 | \$2.00 | \$0.01 |
+    | **Reka Core** *Superior model* | \$2.00 | \$6.00 | \$0.02 |
+    """
+    assert reka._parse_pricing(source) == {
+        "reka/reka-edge": ModelPrice(100_000, 100_000),
+        "reka/reka-flash": ModelPrice(800_000, 2_000_000),
+        "reka/reka-core": ModelPrice(2_000_000, 6_000_000),
+    }
+
+
+def test_reka_conflicting_rows_fail_closed() -> None:
+    with pytest.raises(RuntimeError, match="conflicting"):
+        reka._parse_pricing("| **Reka Edge** | $0.10 | $0.10 |\n| **Reka Edge** | $1 | $1 |")
+
+
+def test_reka_does_not_assign_family_prices_to_new_versions() -> None:
+    assert reka._parse_pricing("| **Reka Flash 3** | $0.10 | $0.10 |") == {}
+
+
 def test_sail_parser_uses_asap_not_discounted_completion_windows() -> None:
     source = (FIXTURE_DIR / "sail-research.html").read_text(encoding="utf-8")
     prices = sail_research._parse_pricing(source)
@@ -234,6 +257,28 @@ def test_sail_parser_uses_asap_not_discounted_completion_windows() -> None:
         180_000,
         prompt_cached_micro_per_m=20_000,
     )
+
+
+def test_sail_new_models_discover_from_named_asap_prices_not_allowlist() -> None:
+    source = """
+    <table><tbody data-model="zai-org/GLM-5.3"><tr>
+    <td data-axis="Input" data-window="asap">$0.98</td>
+    <td data-axis="Cached" data-window="asap">$0.182</td>
+    <td data-axis="Output" data-window="asap">$3.08</td>
+    </tr><tr><td data-axis="Input" data-window="flex">$0.40</td></tr></tbody>
+    <tbody data-model="Qwen/Qwen3.6-35B-A3B"><tr>
+    <td data-axis="Input" data-window="flex">$0.05</td>
+    </tr></tbody></table>
+    """
+    assert sail_research._parse_pricing(source) == {
+        "z-ai/glm-5.3": ModelPrice(980_000, 3_080_000, prompt_cached_micro_per_m=182_000)
+    }
+
+
+def test_sail_conflicting_asap_prices_fail_closed() -> None:
+    source = (FIXTURE_DIR / "sail-research.html").read_text(encoding="utf-8")
+    with pytest.raises(RuntimeError, match="conflicting"):
+        sail_research._parse_pricing(source + source.replace(">0.09<", ">0.10<"))
 
 
 def test_mancer_parser_uses_live_token_credits_and_least_discounted_pack() -> None:
@@ -648,6 +693,17 @@ def test_io_net_drops_unpriced_or_one_sided_rows() -> None:
         ]
     )
     assert rows == []
+
+
+@pytest.mark.parametrize("cached", ["NaN", "Infinity", "-1", "bad", "0.000001"])
+def test_io_net_rejects_invalid_explicit_cache_price(cached: str) -> None:
+    with pytest.raises(RuntimeError, match="cached-input"):
+        io_net._normalize_rows([{
+            "id": "deepseek-ai/DeepSeek-V4.1-Flash",
+            "input_token_price": "0.000000315",
+            "output_token_price": "0.00000126",
+            "cache_read_token_price": cached,
+        }])
 
 
 def test_wave3_hourly_discovery_and_provider_aliases_are_registered() -> None:

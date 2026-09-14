@@ -7,6 +7,7 @@ from pathlib import Path
 from bs4 import BeautifulSoup, Tag
 
 from scripts.pricing.base import ModelPrice, fetch_html
+from scripts.pricing.model_ids import canonicalize_native_model_id
 from scripts.pricing.providers._direct_openai import DirectOpenAIProvider, DirectOpenAIProviderSpec
 
 SLUG = "sail-research"
@@ -40,15 +41,20 @@ def _parse_pricing(source: str) -> dict[str, ModelPrice]:
     prices: dict[str, ModelPrice] = {}
     for group in soup.select("tbody[data-model]"):
         native_id = str(group.get("data-model") or "")
-        model_id = EXPLICIT_MODEL_MAP.get(native_id)
+        model_id = EXPLICIT_MODEL_MAP.get(native_id) or canonicalize_native_model_id(native_id)
         if model_id is None:
             continue
         asap = group.select_one('tr [data-axis="Input"][data-window="asap"]')
         cached = group.select_one('tr [data-axis="Cached"][data-window="asap"]')
         output = group.select_one('tr [data-axis="Output"][data-window="asap"]')
+        windows = {node.get("data-window") for node in group.select("[data-window]")}
+        if windows == {"flex"}:
+            # These require a different completion-window contract; never bill
+            # ordinary synchronous requests at an asynchronous discount.
+            continue
         if not isinstance(asap, Tag) or not isinstance(cached, Tag) or not isinstance(output, Tag):
             raise RuntimeError(f"sail-research: no complete ASAP price for {native_id}")
-        prices[model_id] = ModelPrice(
+        price = ModelPrice(
             _micro_per_m(asap, model_id=model_id, axis="input"),
             _micro_per_m(output, model_id=model_id, axis="output"),
             prompt_cached_micro_per_m=_micro_per_m(
@@ -57,6 +63,9 @@ def _parse_pricing(source: str) -> dict[str, ModelPrice]:
                 axis="cached",
             ),
         )
+        if model_id in prices and prices[model_id] != price:
+            raise RuntimeError(f"sail-research: conflicting prices for {model_id}")
+        prices[model_id] = price
     return prices
 
 

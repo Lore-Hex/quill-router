@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
-from scripts.pricing.base import ProviderPricingResult, fetch_provider
+from scripts.pricing.base import ModelPrice, ProviderPricingResult, fetch_json
+from scripts.pricing.parsers.thinkingmachines import _SAMPLER_IDS, _SERVERLESS_IDS
 
 SLUG = "thinkingmachines"
 URL = "https://tinker-docs.thinkingmachines.ai/tinker/models/"
+SERVERLESS_URL = "https://tinker-docs.thinkingmachines.ai/tinker/serverless.json"
+SAMPLER_URL = "https://tinker-docs.thinkingmachines.ai/tinker/models.json"
 EXPECTED_MODELS = [
     "thinkingmachines/inkling",
     "thinkingmachines/inkling-small",
@@ -25,8 +30,54 @@ MANIFEST_PATH = (
 )
 
 
+def _json_prices(
+    payload: object, model_ids: dict[str, str], fields: tuple[str, str, str]
+) -> dict[str, ModelPrice]:
+    if not isinstance(payload, list):
+        raise RuntimeError("thinkingmachines: pricing feed must be a list")
+    prices: dict[str, ModelPrice] = {}
+    for row in payload:
+        if not isinstance(row, dict):
+            raise RuntimeError("thinkingmachines: malformed pricing row")
+        native_id = row.get("tinker_id")
+        if not isinstance(native_id, str) or native_id not in model_ids:
+            continue
+        amounts = []
+        for field in fields:
+            value = row.get(field)
+            if not isinstance(value, str) or re.fullmatch(r"\$\d+(?:\.\d{1,6})?", value) is None:
+                raise RuntimeError(f"thinkingmachines: invalid {field} price for {native_id}")
+            amounts.append(int(Decimal(value[1:]) * 1_000_000))
+        prompt, cached, completion = amounts
+        if prompt <= 0 or completion <= 0 or cached > prompt:
+            raise RuntimeError(f"thinkingmachines: invalid token prices for {native_id}")
+        model_id = model_ids[native_id]
+        price = ModelPrice(prompt, completion, prompt_cached_micro_per_m=cached)
+        if model_id in prices and prices[model_id] != price:
+            raise RuntimeError(f"thinkingmachines: conflicting prices for {native_id}")
+        prices[model_id] = price
+    missing = set(model_ids.values()) - prices.keys()
+    if missing:
+        raise RuntimeError(f"thinkingmachines: missing exact model prices: {sorted(missing)}")
+    return prices
+
+
 def fetch() -> ProviderPricingResult:
-    return fetch_provider(slug=SLUG, url=URL, expected_models=EXPECTED_MODELS)
+    # These are the provider's documented stable interfaces. HTML columns can
+    # move when presentation-only fields such as active parameters are added.
+    prices = _json_prices(
+        fetch_json(SERVERLESS_URL), _SERVERLESS_IDS, ("input", "cached_input", "output")
+    )
+    prices.update(
+        _json_prices(fetch_json(SAMPLER_URL), _SAMPLER_IDS, ("prefill", "cached_prefill", "sample"))
+    )
+    return ProviderPricingResult(
+        slug=SLUG,
+        prices=prices,
+        source="api",
+        fetched_url=URL,
+        notes=["verified exact deployed IDs against official serverless.json and models.json"],
+    )
 
 
 def write_provider_manifest(result: ProviderPricingResult) -> list[str]:

@@ -89,7 +89,17 @@ def _provider_manifest_generated_deadline(raw: dict[str, Any], max_age_days: int
         return EXPIRED_PROVIDER_MANIFEST
     if generated.tzinfo is None:
         return EXPIRED_PROVIDER_MANIFEST
-    return generated.astimezone(UTC) + timedelta(days=max_age_days)
+    deadline = generated.astimezone(UTC) + timedelta(days=max_age_days)
+    # A published promotion may end before the ordinary stale-manifest limit.
+    if "pricing_valid_until" in raw:
+        try:
+            price_deadline = datetime.fromisoformat(raw["pricing_valid_until"].replace("Z", "+00:00"))
+        except (AttributeError, TypeError, ValueError):
+            return EXPIRED_PROVIDER_MANIFEST
+        if price_deadline.tzinfo is None:
+            return EXPIRED_PROVIDER_MANIFEST
+        deadline = min(deadline, price_deadline.astimezone(UTC))
+    return deadline
 
 
 def provider_manifest_valid_until(

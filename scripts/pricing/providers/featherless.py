@@ -27,6 +27,7 @@ MANIFEST_PATH = (
 MANIFEST_STALE_FALLBACK = True
 
 CURATED_NATIVE_MODELS = (
+    "deepseek-ai/DeepSeek-V4.1-Flash",
     "deepseek-ai/DeepSeek-V4-Flash-0731",
     "moonshotai/Kimi-K3",
     "Qwen/Qwen3.8-Flash-Next",
@@ -153,6 +154,14 @@ def _normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for source in rows:
         row = dict(source)
+        # Model detail can advertise image-text-to-text while the legacy
+        # vision_supported flag still says false (V4.1 Flash, verified live).
+        tasks = source.get("tasks")
+        if isinstance(tasks, list) and "image-text-to-text" in tasks:
+            modalities = source.get("input_modalities")
+            row["input_modalities"] = list(
+                dict.fromkeys(["text", *(modalities if isinstance(modalities, list) else []), "image"])
+            )
         normalized.append(row)
         if not isinstance(source.get("pricing"), dict):
             continue
@@ -199,6 +208,7 @@ CATALOG = DirectOpenAIProvider(
         api_key_env="FEATHERLESS_API_KEY",
         explicit_model_map={},
         expected_models=(
+            "deepseek/deepseek-v4.1-flash",
             "deepseek/deepseek-v4-flash-0731",
             "moonshotai/kimi-k3",
             "qwen/qwen3.8-flash-next",

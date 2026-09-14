@@ -53,6 +53,10 @@ def _normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "completion": str(completion),
         }
         cached = _nonnegative_decimal(source.get("cache_read_token_price"))
+        if source.get("cache_read_token_price") is not None and (
+            cached is None or cached > prompt
+        ):
+            raise RuntimeError(f"io-net: invalid cached-input price for {source.get('id')}")
         if cached is not None:
             pricing["input_cache_read"] = str(cached)
         row["pricing"] = pricing

@@ -53,6 +53,19 @@ def test_reordered_columns_do_not_swap_cached_and_output_prices() -> None:
     assert confidential_ai._published_prices(str(soup)) == confidential_ai._published_prices(PRICES)
 
 
+def test_status_column_is_not_a_price_or_availability_signal() -> None:
+    html = PRICES.replace("<th>Model</th>", "<th>Model</th><th>Status</th>")
+    html = html.replace("<td>DeepSeek V4-Flash</td>", "<td>DeepSeek V4-Flash</td><td>Live</td>")
+    html = html.replace("<td>Kimi K3</td>", "<td>Kimi K3</td><td>Request access</td>")
+    assert confidential_ai._published_prices(html) == confidential_ai._published_prices(PRICES)
+
+
+def test_duplicate_price_headers_fail_closed() -> None:
+    html = PRICES.replace("<th>Model</th>", "<th>Model</th><th>Input (per 1M tokens)</th>")
+    with pytest.raises(RuntimeError, match="duplicate"):
+        confidential_ai._published_prices(html)
+
+
 @pytest.mark.parametrize("bad", ["$NaN", "$Infinity", "$-1", "$oops", "$0.0000001", "$0.21"])
 def test_invalid_or_excessive_cached_prices_fail_closed(bad: str) -> None:
     with pytest.raises(RuntimeError, match="confidential-ai"):

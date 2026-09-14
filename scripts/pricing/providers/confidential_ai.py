@@ -42,8 +42,10 @@ def _published_prices(html: str) -> dict[str, ModelPrice]:
         headers = [
             " ".join(c.get_text(" ", strip=True).casefold().split()) for c in table.find_all("th")
         ]
-        if set(headers) != headers_required or len(headers) != len(headers_required):
+        if not headers_required.issubset(headers):
             continue
+        if len(headers) != len(set(headers)):
+            raise RuntimeError("confidential-ai: duplicate token-price column")
         for tr in table.find_all("tr"):
             cells = tr.find_all("td")
             if not cells:

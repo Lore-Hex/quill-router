@@ -2,6 +2,30 @@
   "provider": "featherless",
   "models": [
     {
+      "display_name": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "title": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash",
+      "upstream_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "context_length": 262144,
+      "max_output_tokens": 32768,
+      "routable": true,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 30000
+    },
+    {
       "display_name": "deepseek-ai/DeepSeek-V4-Flash-0731",
       "title": "deepseek-ai/DeepSeek-V4-Flash-0731",
       "model_type": "chat",
@@ -388,7 +412,7 @@
   ],
   "source": "https://api.featherless.ai/v1/models",
   "pricing_source": "https://featherless.ai/docs/request-pricing-and-credits",
-  "generated_at": "2026-09-10T17:53:52Z",
+  "generated_at": "2026-09-14T18:42:09Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 17
+  "model_count": 18
 }

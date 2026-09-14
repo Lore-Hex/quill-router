@@ -2095,9 +2095,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 163840,
           "pricing": {
-            "prompt": "0.0000014861",
-            "completion": "0.0000026583",
-            "input_cache_read": "0.00000074305"
+            "prompt": "0.0000014301",
+            "completion": "0.0000024063",
+            "input_cache_read": "0.00000071505"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -2610,9 +2610,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 1048576,
           "pricing": {
-            "prompt": "0.000000199",
-            "completion": "0.000000512",
-            "input_cache_read": "0.0000000995"
+            "prompt": "0.00000034516",
+            "completion": "0.00000058232",
+            "input_cache_read": "0.00000017258"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -2678,8 +2678,8 @@
           "tr_provider_slug": "mancer",
           "context_length": 1048576,
           "pricing": {
-            "prompt": "0.000000224",
-            "completion": "0.00000072"
+            "prompt": "0.000000303392",
+            "completion": "0.0000007984"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -3159,9 +3159,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 1310720,
           "pricing": {
-            "prompt": "0.00000027784",
-            "completion": "0.00000082352",
-            "input_cache_read": "0.00000013892"
+            "prompt": "0.00000022984",
+            "completion": "0.00000073052",
+            "input_cache_read": "0.00000011492"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -3261,9 +3261,9 @@
           "tr_provider_slug": "nextbit",
           "context_length": 1310720,
           "pricing": {
-            "prompt": "0.00000016",
-            "completion": "0.0000003",
-            "input_cache_read": "0.00000007"
+            "prompt": "0.000000352",
+            "completion": "0.000001056",
+            "input_cache_read": "0.000000012"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -3278,8 +3278,8 @@
           "tr_provider_slug": "mancer",
           "context_length": 1310720,
           "pricing": {
-            "prompt": "0.000000232",
-            "completion": "0.00000072"
+            "prompt": "0.00000031936",
+            "completion": "0.00000095808"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -3890,9 +3890,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 1048576,
           "pricing": {
-            "prompt": "0.000001746",
-            "completion": "0.000003494",
-            "input_cache_read": "0.000000873"
+            "prompt": "0.000001736",
+            "completion": "0.000003474",
+            "input_cache_read": "0.000000868"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -4651,9 +4651,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 1048576,
           "pricing": {
-            "prompt": "0.00000015",
-            "completion": "0.0000012",
-            "input_cache_read": "0.000000003"
+            "prompt": "0.000000315",
+            "completion": "0.00000126",
+            "input_cache_read": "0.0000001575"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -7237,9 +7237,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 262144,
           "pricing": {
-            "prompt": "0.000000122",
-            "completion": "0.00000042",
-            "input_cache_read": "0.000000061"
+            "prompt": "0.0000001",
+            "completion": "0.000000374",
+            "input_cache_read": "0.00000005"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -7270,8 +7270,8 @@
           "tr_provider_slug": "nextbit",
           "context_length": 262144,
           "pricing": {
-            "prompt": "0.0000001",
-            "completion": "0.0000004",
+            "prompt": "0.00000009",
+            "completion": "0.0000003",
             "input_cache_read": "0.00000005"
           },
           "pricing_source": "provider_direct",
@@ -7855,8 +7855,8 @@
           "tr_provider_slug": "mancer",
           "context_length": 8192,
           "pricing": {
-            "prompt": "0.00000064",
-            "completion": "0.00000096"
+            "prompt": "0.00000055888",
+            "completion": "0.00000095808"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -9365,9 +9365,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 204800,
           "pricing": {
-            "prompt": "0.000000348",
-            "completion": "0.000001366",
-            "input_cache_read": "0.000000174"
+            "prompt": "0.000000353",
+            "completion": "0.000001416",
+            "input_cache_read": "0.0000001765"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -9607,9 +9607,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 204800,
           "pricing": {
-            "prompt": "0.000000404",
-            "completion": "0.000001496",
-            "input_cache_read": "0.000000202"
+            "prompt": "0.000000462",
+            "completion": "0.000001728",
+            "input_cache_read": "0.000000231"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -11208,9 +11208,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 262144,
           "pricing": {
-            "prompt": "0.0000005584",
-            "completion": "0.000002935",
-            "input_cache_read": "0.0000002792"
+            "prompt": "0.0000005344",
+            "completion": "0.000002815",
+            "input_cache_read": "0.0000002672"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -11709,9 +11709,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 262144,
           "pricing": {
-            "prompt": "0.0000006552",
-            "completion": "0.00000306592",
-            "input_cache_read": "0.0000003276"
+            "prompt": "0.00000070596",
+            "completion": "0.00000326488",
+            "input_cache_read": "0.00000035298"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -12833,9 +12833,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 1048576,
           "pricing": {
-            "prompt": "0.00000328",
-            "completion": "0.0000164",
-            "input_cache_read": "0.00000164"
+            "prompt": "0.000003229628",
+            "completion": "0.000015706545",
+            "input_cache_read": "0.000001614814"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -18315,8 +18315,8 @@
           "tr_provider_slug": "mancer",
           "context_length": 131072,
           "pricing": {
-            "prompt": "0.000000136",
-            "completion": "0.0000008"
+            "prompt": "0.000000087824",
+            "completion": "0.0000007984"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -18574,9 +18574,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 131072,
           "pricing": {
-            "prompt": "0.000000065",
-            "completion": "0.0000002",
-            "input_cache_read": "0.0000000325"
+            "prompt": "0.000000057",
+            "completion": "0.000000196",
+            "input_cache_read": "0.0000000285"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -18607,8 +18607,8 @@
           "tr_provider_slug": "akashml",
           "context_length": 131072,
           "pricing": {
-            "prompt": "0.00000003",
-            "completion": "0.00000013"
+            "prompt": "0.00000002",
+            "completion": "0.0000001"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -22423,9 +22423,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 262144,
           "pricing": {
-            "prompt": "0.0000001672",
-            "completion": "0.00000110675",
-            "input_cache_read": "0.0000000836"
+            "prompt": "0.000000178",
+            "completion": "0.000001254",
+            "input_cache_read": "0.000000089"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -22922,9 +22922,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 1000000,
           "pricing": {
-            "prompt": "0.0000003428",
-            "completion": "0.00000286",
-            "input_cache_read": "0.0000001714"
+            "prompt": "0.00000031",
+            "completion": "0.0000028",
+            "input_cache_read": "0.000000155"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -22990,8 +22990,8 @@
           "tr_provider_slug": "akashml",
           "context_length": 1000000,
           "pricing": {
-            "prompt": "0.0000004",
-            "completion": "0.00000255",
+            "prompt": "0.00000025",
+            "completion": "0.0000022",
             "input_cache_read": "0.00000005"
           },
           "pricing_source": "provider_direct",
@@ -26187,9 +26187,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 1050000,
           "pricing": {
-            "prompt": "0.0000001934",
-            "completion": "0.0000006268",
-            "input_cache_read": "0.0000000967"
+            "prompt": "0.000000199",
+            "completion": "0.000000638",
+            "input_cache_read": "0.0000000995"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -27047,8 +27047,8 @@
           "tr_provider_slug": "mancer",
           "context_length": 204800,
           "pricing": {
-            "prompt": "0.00000096",
-            "completion": "0.000004"
+            "prompt": "0.00000111776",
+            "completion": "0.000003992"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -27150,9 +27150,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 200000,
           "pricing": {
-            "prompt": "0.000000062625",
+            "prompt": "0.0000000635",
             "completion": "0.0000004",
-            "input_cache_read": "0.000000031313"
+            "input_cache_read": "0.00000003175"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -27360,9 +27360,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 204800,
           "pricing": {
-            "prompt": "0.00000086",
-            "completion": "0.000002784",
-            "input_cache_read": "0.00000043"
+            "prompt": "0.00000094",
+            "completion": "0.000003008",
+            "input_cache_read": "0.00000047"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -27798,9 +27798,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 204800,
           "pricing": {
-            "prompt": "0.000001326",
-            "completion": "0.00000422",
-            "input_cache_read": "0.000000663"
+            "prompt": "0.000001318",
+            "completion": "0.000004268",
+            "input_cache_read": "0.000000659"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -29325,9 +29325,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 1310720,
           "pricing": {
-            "prompt": "0.00000132",
-            "completion": "0.000004312",
-            "input_cache_read": "0.00000066"
+            "prompt": "0.00000142424",
+            "completion": "0.00000478688",
+            "input_cache_read": "0.00000071212"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -30010,9 +30010,9 @@
           "tr_provider_slug": "io-net",
           "context_length": 1310720,
           "pricing": {
-            "prompt": "0.000000149997",
-            "completion": "0.00000049999",
-            "input_cache_read": "0.000000074999"
+            "prompt": "0.000000208",
+            "completion": "0.000000694",
+            "input_cache_read": "0.000000104"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],

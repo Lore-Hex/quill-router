@@ -67,15 +67,15 @@
         "top_p",
         "frequency_penalty",
         "presence_penalty",
-        "repetition_penalty",
         "stop",
         "seed",
         "max_tokens"
       ],
       "routable": true,
-      "input_token_price_per_m": 160000,
-      "output_token_price_per_m": 300000,
-      "cached_input_token_price_per_m": 70000
+      "input_token_price_per_m": 352000,
+      "output_token_price_per_m": 1056000,
+      "cached_input_token_price_per_m": 12000,
+      "max_output_tokens": 1048576
     },
     {
       "display_name": "gemma-2:27b-it",
@@ -153,8 +153,8 @@
         "top_logprobs"
       ],
       "routable": true,
-      "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 400000,
+      "input_token_price_per_m": 90000,
+      "output_token_price_per_m": 300000,
       "cached_input_token_price_per_m": 50000
     },
     {
@@ -354,7 +354,7 @@
     }
   ],
   "source": "https://api.nextbit256.com/v1/models",
-  "generated_at": "2026-08-22T20:15:01Z",
+  "generated_at": "2026-09-14T18:42:12Z",
   "price_scale": "microdollars_per_million",
   "model_count": 9
 }

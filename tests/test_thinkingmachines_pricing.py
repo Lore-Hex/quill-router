@@ -2,10 +2,48 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.parsers.thinkingmachines import parse
 from scripts.pricing.providers import thinkingmachines
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
+
+SERVERLESS = [
+    {"tinker_id": "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4",
+     "input": "$0.30", "cached_input": "$0.06", "output": "$1.20"},
+    {"tinker_id": "thinkingmachines/Inkling:peft:262144:sampling-nvfp4",
+     "input": "$1.00", "cached_input": "$0.17", "output": "$4.05"},
+]
+SAMPLER = [
+    {"tinker_id": "zai-org/GLM-5.3:peft:262144", "prefill": "$4.86",
+     "cached_prefill": "$0.972", "sample": "$12.15", "train": "$14.58",
+     "active_params": 40000000000, "original_sample": "$99.99"},
+]
+
+
+def test_fetch_uses_named_json_prices_not_html_column_positions(monkeypatch):
+    feeds = {thinkingmachines.SERVERLESS_URL: SERVERLESS, thinkingmachines.SAMPLER_URL: SAMPLER}
+    monkeypatch.setattr(thinkingmachines, "fetch_json", feeds.__getitem__)
+    result = thinkingmachines.fetch()
+    assert result.source == "api"
+    assert result.prices["z-ai/glm-5.3"] == ModelPrice(4_860_000, 12_150_000, prompt_cached_micro_per_m=972_000)
+    assert result.prices["thinkingmachines/inkling"] == ModelPrice(1_000_000, 4_050_000, prompt_cached_micro_per_m=170_000)
+    assert set(result.prices) == set(thinkingmachines.EXPECTED_MODELS)
+
+
+@pytest.mark.parametrize("bad", [None, "$NaN", "$-1", "4.86", "$0", "$1.1234567"])
+def test_json_rejects_missing_or_invalid_prices(bad):
+    row = {**SAMPLER[0], "prefill": bad}
+    with pytest.raises(RuntimeError, match="thinkingmachines"):
+        thinkingmachines._json_prices([row], {row["tinker_id"]: "z-ai/glm-5.3"}, ("prefill", "cached_prefill", "sample"))
+
+
+def test_json_rejects_conflicts_missing_models_and_excessive_cache():
+    ids = {SAMPLER[0]["tinker_id"]: "z-ai/glm-5.3"}
+    for rows in [[], {}, [SAMPLER[0], {**SAMPLER[0], "sample": "$99"}], [{**SAMPLER[0], "cached_prefill": "$5"}]]:
+        with pytest.raises(RuntimeError, match="thinkingmachines"):
+            thinkingmachines._json_prices(rows, ids, ("prefill", "cached_prefill", "sample"))
 
 
 def _pricing_html(*, active: str = "old") -> str:

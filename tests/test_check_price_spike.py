@@ -1139,6 +1139,40 @@ def test_confirmed_io_net_price_transitions_are_allowed() -> None:
     assert removed == []
 
 
+@pytest.mark.parametrize("native", ["deepseek/deepseek-v4.1-flash", "deepseek-ai/DeepSeek-V4.1-Flash"])
+def test_verified_io_net_v41_price_transition_is_exact(native: str) -> None:
+    route = f"deepseek/deepseek-v4.1-flash [io-net:io-net:{native}]"
+    before = {route: {"prompt": "0.00000015", "completion": "0.0000012"}}
+    after = {route: {"prompt": "0.000000315", "completion": "0.00000126"}}
+    assert check(before, after)[0] == []
+    after[route]["prompt"] = "0.000000316"
+    assert check(before, after)[0]
+
+
+def test_verified_io_net_v41_cached_price_does_not_approve_other_routes() -> None:
+    route = "deepseek/deepseek-v4.1-flash [io-net:io-net:deepseek-ai/DeepSeek-V4.1-Flash] cached-input"
+    before = {route: {"prompt": "0.000000003", "completion": "0"}}
+    after = {route: {"prompt": "0.0000001575", "completion": "0"}}
+    assert check(before, after)[0] == []
+    after[route]["prompt"] = "0.000000158"
+    assert check(before, after)[0]
+    other = route.replace("io-net:io-net", "other:other")
+    assert check(
+        {other: {"prompt": "0.000000003", "completion": "0"}},
+        {other: {"prompt": "0.0000001575", "completion": "0"}},
+    )[0]
+
+
+@pytest.mark.parametrize("mutate", [False, True])
+def test_verified_nextbit_transition_does_not_allow_further_increases(mutate: bool) -> None:
+    route = "deepseek/deepseek-v4-flash-0731 [nextbit:nextbit:deepseek:v4-flash-0731]"
+    before = {route: {"prompt": "0.00000016", "completion": "0.0000003"}}
+    after = {route: {"prompt": "0.000000352", "completion": "0.000001056"}}
+    if mutate:
+        after[route]["completion"] = "0.000001057"
+    assert bool(check(before, after)[0]) is mutate
+
+
 @pytest.mark.parametrize(
     ("route", "old_price", "unapproved_price"),
     [

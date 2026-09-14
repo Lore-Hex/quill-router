@@ -40,6 +40,44 @@ DEFAULT_SPIKE_RATIO = 2.0  # 100% increase = ≥2× the previous value
 # route, dimension, old value, or new value still fails closed.
 APPROVED_ENDPOINT_PRICE_TRANSITIONS = frozenset(
     {
+        # NextBit's first-party GET https://api.nextbit256.com/v1/models,
+        # verified 2026-09-14: exact deepseek:v4-flash-0731 per-token rates.
+        # Cached input independently fell from $0.07/M to $0.012/M.
+        (
+            "deepseek/deepseek-v4-flash-0731 [nextbit:nextbit:deepseek:v4-flash-0731]",
+            "prompt",
+            Decimal("0.00000016"),
+            Decimal("0.000000352"),
+        ),
+        (
+            "deepseek/deepseek-v4-flash-0731 [nextbit:nextbit:deepseek:v4-flash-0731]",
+            "completion",
+            Decimal("0.0000003"),
+            Decimal("0.000001056"),
+        ),
+        # IO's authenticated /models, verified 2026-09-14, reports USD/token:
+        # input=3.15e-7, output=1.26e-6, cache_read=1.575e-7. Its official
+        # pricing docs designate that endpoint as the current rate source:
+        # https://io.net/docs/guides/payment/io-intelligence-payments
+        (
+            "deepseek/deepseek-v4.1-flash [io-net:io-net:deepseek/deepseek-v4.1-flash]",
+            "prompt",
+            Decimal("0.00000015"),
+            Decimal("0.000000315"),
+        ),
+        (
+            "deepseek/deepseek-v4.1-flash [io-net:io-net:deepseek-ai/DeepSeek-V4.1-Flash]",
+            "prompt",
+            Decimal("0.00000015"),
+            Decimal("0.000000315"),
+        ),
+        (
+            "deepseek/deepseek-v4.1-flash "
+            "[io-net:io-net:deepseek-ai/DeepSeek-V4.1-Flash] cached-input",
+            "prompt",
+            Decimal("0.000000003"),
+            Decimal("0.0000001575"),
+        ),
         # Launch-day docs defer Pro's Flash redirect to September 14.
         # Restore the exact Pro rates incorrectly lowered by the earlier notice.
         # https://api-docs.deepseek.com/quick_start/pricing/ (2026-09-10)

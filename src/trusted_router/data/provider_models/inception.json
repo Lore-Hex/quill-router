@@ -35,7 +35,7 @@
     }
   ],
   "source": "https://api.inceptionlabs.ai/v1/models",
-  "generated_at": "2026-08-22T20:15:21Z",
+  "generated_at": "2026-09-14T18:42:09Z",
   "price_scale": "microdollars_per_million",
   "model_count": 1
 }

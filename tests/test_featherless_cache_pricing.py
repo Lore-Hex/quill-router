@@ -21,6 +21,8 @@ PRICES = """
 <td>$0.03</td><td>$0.5</td></tr>
 <tr><td>Deepseek 4</td><td>deepseek4-284b</td><td>$0.1385 / 1M tok</td>
 <td>$0.03</td><td>$0.279</td></tr>
+<tr><td>Deepseek 4.1</td><td>deepseek4-763b</td><td>$0.3 / 1M tok</td>
+<td>$0.03</td><td>$1.2</td></tr>
 <tr><td>Music</td><td>music</td><td>$22 / 1M chars</td><td>-</td><td>n/a</td></tr>
 </table>
 <table><tr><th>Model</th><th>Family</th><th>Model Class</th><th>Input</th>
@@ -55,6 +57,7 @@ def _normalize(monkeypatch: pytest.MonkeyPatch, rows: list[dict[str, Any]], html
     ("row", "cached"),
     [
         (_row(), 150_000),
+        (_row("deepseek-ai/DeepSeek-V4.1-Flash", "deepseek4-763b", "0.0000003", "0.0000012"), 30_000),
         (_row("zai-org/GLM-5.3", "glm-moe-dsa-753b3"), 260_000),
         (_row("zai-org/GLM-5.3-Flash", "glm5-next-321b3", "0.00000015", "0.0000005"), 30_000),
         (
@@ -86,6 +89,25 @@ def test_explicit_api_cache_price_wins_including_zero(monkeypatch):
         price = openai_model_price(normalized)
         assert price is not None
         assert price.tiers[0].prompt_cached_micro_per_m == (120_000 if value else 0)
+
+
+@pytest.mark.parametrize("tasks", [None, [], ["text-generation"], ["image-text-to-text"]])
+def test_task_metadata_controls_vision_without_changing_limits_or_source(monkeypatch, tasks):
+    row = _row("deepseek-ai/DeepSeek-V4.1-Flash", "deepseek4-763b", "0.0000003", "0.0000012")
+    row.update(
+        tasks=tasks,
+        vision_supported=False,
+        input_modalities=["text"],
+        context_length=262144,
+        max_completion_tokens=32768,
+    )
+    before = deepcopy(row)
+    normalized = _normalize(monkeypatch, [row])[0]
+    expected = ["text", "image"] if tasks == ["image-text-to-text"] else ["text"]
+    assert normalized["input_modalities"] == expected
+    assert normalized["context_length"] == 262144
+    assert normalized["max_completion_tokens"] == 32768
+    assert row == before
 
 
 @pytest.mark.parametrize("bad", ["invalid", "-0.1", "NaN", "Infinity", "0.1"])
