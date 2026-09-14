@@ -386,11 +386,12 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     providers_page = client.get("/providers", headers={"accept": "text/html"})
     assert providers_page.status_code == 200
     assert "Provider transparency" in providers_page.text
-    assert "Provider compute" in providers_page.text
+    assert "Verified confidential inference" in providers_page.text
     assert "Phala" in providers_page.text
     assert "Tinfoil" in providers_page.text
     assert "No provider claim" in providers_page.text
-    assert "Unknown stays unknown" in providers_page.text
+    assert "Every label below describes the upstream provider" in providers_page.text
+    assert "Not verified" in providers_page.text
 
     providers_json = client.get("/providers", headers={"accept": "application/json"})
     assert providers_json.status_code == 200
