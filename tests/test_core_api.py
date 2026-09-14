@@ -5,7 +5,9 @@ from dataclasses import asdict
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.lifecycle_clock import catalog_predates
 from trusted_router.catalog import FAST_MODEL_ORDER, MODELS, PROVIDER_JURISDICTION_US, PROVIDERS
+from trusted_router.provider_lifecycle import BASETEN_SEPTEMBER_2026_RETIREMENT_AT
 from trusted_router.spend_windows import KeyWindowLimitExceeded
 from trusted_router.storage import STORE
 
@@ -799,6 +801,7 @@ def test_disabled_deleted_and_expired_keys_reject(
 
 
 def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict[str, str]) -> None:
+    inkling_1m_available = catalog_predates(BASETEN_SEPTEMBER_2026_RETIREMENT_AT)
     models = client.get("/v1/models").json()["data"]
     model_ids = {model["id"] for model in models}
     assert models
@@ -859,9 +862,9 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/liberty-2.0",
         "trustedrouter/liberty-3.0",
         "thinkingmachines/inkling",
-        "thinkingmachines/inkling-1m",
         "google/gemini-3.1-flash-image-preview",
     }.issubset(model_ids)
+    assert ("thinkingmachines/inkling-1m" in model_ids) is inkling_1m_available
     models_by_id = {model["id"]: model for model in models}
     fast_meta = models_by_id["trustedrouter/fast"]["trustedrouter"]
     assert fast_meta["route_kind"] == "fast_pool"
@@ -1057,7 +1060,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert liberty_1_1m["context_length"] == 1_048_576
     assert liberty_1_1m["trustedrouter"]["route_kind"] == "fusion_panel"
     assert liberty_1_1m["trustedrouter"]["auto_candidates"] == [
-        "thinkingmachines/inkling-1m",
+        *(["thinkingmachines/inkling-1m"] if inkling_1m_available else []),
         "nvidia/nemotron-3-ultra-550b-a55b",
     ]
     assert liberty_2["context_length"] == 262_144
