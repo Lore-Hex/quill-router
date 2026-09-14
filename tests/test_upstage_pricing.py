@@ -99,7 +99,12 @@ def test_writer_persists_and_clears_promotion_expiry(monkeypatch, tmp_path):
     path = tmp_path / "upstage.json"
     path.write_text('{"models": []}')
     monkeypatch.setattr(upstage.CATALOG, "manifest_path", path)
-    monkeypatch.setattr(upstage.CATALOG, "write_provider_manifest", lambda _: ["written"])
+    def write(_):
+        raw = json.loads(path.read_text())
+        raw["revision"] = raw.get("revision", 0) + 1
+        path.write_text(json.dumps(raw))
+        return ["written"]
+    monkeypatch.setattr(upstage.CATALOG, "write_provider_manifest", write)
     deadline = datetime(2026, 10, 10, tzinfo=UTC)
     monkeypatch.setattr(upstage, "_PRICING_VALID_UNTIL", deadline)
     assert upstage.write_provider_manifest(None) == ["written"]
@@ -107,3 +112,14 @@ def test_writer_persists_and_clears_promotion_expiry(monkeypatch, tmp_path):
     monkeypatch.setattr(upstage, "_PRICING_VALID_UNTIL", None)
     upstage.write_provider_manifest(None)
     assert "pricing_valid_until" not in json.loads(path.read_text())
+
+
+def test_guarded_writer_does_not_extend_old_promotion(monkeypatch, tmp_path):
+    path = tmp_path / "upstage.json"
+    original = '{"models": [], "pricing_valid_until": "2026-09-11T00:00:00Z"}'
+    path.write_text(original)
+    monkeypatch.setattr(upstage.CATALOG, "manifest_path", path)
+    monkeypatch.setattr(upstage.CATALOG, "write_provider_manifest", lambda _: ["guarded"])
+    monkeypatch.setattr(upstage, "_PRICING_VALID_UNTIL", None)
+    assert upstage.write_provider_manifest(None) == ["guarded"]
+    assert path.read_text() == original

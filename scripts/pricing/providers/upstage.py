@@ -172,7 +172,11 @@ fetch = CATALOG.fetch
 
 
 def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
+    before = CATALOG.manifest_path.read_bytes() if CATALOG.manifest_path.exists() else None
     notes = CATALOG.write_provider_manifest(result)
+    if before == CATALOG.manifest_path.read_bytes():
+        # A guarded/no-op write must not extend an old promotion's lifetime.
+        return notes
     raw = json.loads(CATALOG.manifest_path.read_text(encoding="utf-8"))
     if _PRICING_VALID_UNTIL is None:
         raw.pop("pricing_valid_until", None)
