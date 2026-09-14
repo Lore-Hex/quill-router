@@ -7,6 +7,7 @@ import pytest
 from scripts.pricing import refresh
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import baseten
+from tests.lifecycle_clock import CATALOG_CLOCK
 from trusted_router import provider_lifecycle
 from trusted_router.catalog import endpoints_for_model
 
@@ -65,9 +66,14 @@ def test_baseten_retirement_is_provider_scoped(
         else:
             assert providers
 
-    for model_id in _SUCCESSORS:
+    for model_id, upstream_id in _SUCCESSORS.items():
         providers = {endpoint.provider for endpoint in endpoints_for_model(model_id)}
-        assert "baseten" in providers
+        # Later retirements are applied when the catalog is imported; rewinding
+        # the runtime clock cannot restore those routes into that snapshot.
+        expected = not provider_lifecycle.provider_model_retired(
+            "baseten", model_id, upstream_id, at=CATALOG_CLOCK
+        )
+        assert ("baseten" in providers) is expected
 
 
 def test_hourly_refresh_cannot_restore_retired_baseten_routes(
