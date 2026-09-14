@@ -99,6 +99,7 @@ from trusted_router.catalog_ingest import _authoritative_provider_model_ids, _mo
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.provider_lifecycle import (
+    BASETEN_SEPTEMBER_2026_RETIREMENT_AT,
     XIAOMI_MIMO_V25_PRO_ULTRASPEED_RETIREMENT_AT,
     provider_model_retired,
 )
@@ -1292,6 +1293,7 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
 
 
 def test_liberty_models_publish_verified_components_and_honest_context_limits() -> None:
+    inkling_1m_available = catalog_predates(BASETEN_SEPTEMBER_2026_RETIREMENT_AT)
     expected = {
         LIBERTY_1_0_MODEL_ID: (
             "fusion_panel",
@@ -1335,6 +1337,8 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
     for model_id, (route_kind, context_length, candidates) in expected.items():
         model = MODELS[model_id]
         metadata = model_to_openrouter_shape(model)["trustedrouter"]
+        if not inkling_1m_available:
+            candidates = [c for c in candidates if c != "thinkingmachines/inkling-1m"]
 
         assert model.context_length == context_length
         assert metadata["route_kind"] == route_kind
@@ -1358,12 +1362,17 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
     assert any(endpoint.usage_type == "Credits" for endpoint in endpoints)
     assert any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
 
-    inkling_1m = MODELS["thinkingmachines/inkling-1m"]
-    assert inkling_1m.context_length == 1_048_576
-    assert inkling_1m.provider == "baseten"
-    assert {
-        (endpoint.provider, endpoint.upstream_id) for endpoint in endpoints_for_model(inkling_1m.id)
-    } == {("baseten", "thinkingmachines/inkling")}
+    if inkling_1m_available:
+        inkling_1m = MODELS["thinkingmachines/inkling-1m"]
+        assert inkling_1m.context_length == 1_048_576
+        assert inkling_1m.provider == "baseten"
+        assert {
+            (endpoint.provider, endpoint.upstream_id)
+            for endpoint in endpoints_for_model(inkling_1m.id)
+        } == {("baseten", "thinkingmachines/inkling")}
+    else:
+        assert "thinkingmachines/inkling-1m" not in MODELS
+        assert endpoints_for_model("thinkingmachines/inkling-1m") == []
 
     inkling_small = MODELS["thinkingmachines/inkling-small"]
     inkling_small_shape = model_to_openrouter_shape(inkling_small)

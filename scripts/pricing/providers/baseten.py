@@ -42,8 +42,8 @@ EXPECTED_MODELS = [
     "deepseek/deepseek-v4-pro-0813",
     "z-ai/glm-5.2",
     "z-ai/glm-5.2-fast",
-    "moonshotai/kimi-k2.7-code",
-    "thinkingmachines/inkling-1m",
+    "moonshotai/kimi-k3",
+    "z-ai/glm-5.3",
 ]
 
 _NATIVE_TO_OR_ID = {

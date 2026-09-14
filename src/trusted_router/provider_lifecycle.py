@@ -26,6 +26,7 @@ LIFECYCLE_CLOCK_OVERRIDE_ENV = "TR_LIFECYCLE_CLOCK_OVERRIDE"
 PHALA_JULY_2026_EFFECTIVE_AT = datetime(2026, 7, 29, 18, 0, tzinfo=UTC)
 TOGETHER_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 7, 27, 0, 0, tzinfo=UTC)
 BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
+BASETEN_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)
 TINFOIL_KIMI_K26_RETIREMENT_AT = datetime(2026, 8, 3, 0, 0, tzinfo=UTC)
 TINFOIL_GLM52_RETIREMENT_AT = datetime(2026, 9, 10, 0, 0, tzinfo=UTC)
 NEAR_AI_SEPTEMBER_2026_RETIREMENT_AT = datetime(2026, 9, 11, 13, 0, tzinfo=UTC)
@@ -125,6 +126,31 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # Baseten's September 13 notice: September 25 at 17:00 PDT is September
+    # 26 at 00:00 UTC. These exact shared Model API ids retire; the distinct
+    # DeepSeek V4 Pro 0813 route, dedicated deployments and other providers
+    # are not named. Never replace a pinned model with different weights.
+    # https://www.baseten.co/resources/changelog/model-api-deprecation-glm-47-kimi-k27-kimi-k26-inkling-inkling-small-deepseek-v4/
+    _Retirement(
+        provider="baseten",
+        model_ids=frozenset({
+            "z-ai/glm-4.7",
+            "moonshotai/kimi-k2.7-code",
+            "moonshotai/kimi-k2.6",
+            "thinkingmachines/inkling-1m",
+            "thinkingmachines/inkling-small",
+            "deepseek/deepseek-v4-pro",
+        }),
+        upstream_ids=frozenset({
+            "zai-org/GLM-4.7",
+            "moonshotai/Kimi-K2.7-Code",
+            "moonshotai/Kimi-K2.6",
+            "thinkingmachines/inkling",
+            "thinkingmachines/inkling-small",
+            "deepseek-ai/DeepSeek-V4-Pro",
+        }),
+        effective_at=BASETEN_SEPTEMBER_2026_RETIREMENT_AT,
+    ),
     # Venice's September notice replaces deepseek-v4-flash with the separate
     # deepseek-v4-1-flash model on September 15. No time zone was specified;
     # use 00:00 UTC. The notice does not identify the dated or fast variants.

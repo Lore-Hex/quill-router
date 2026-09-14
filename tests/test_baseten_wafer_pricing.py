@@ -13,6 +13,9 @@ from trusted_router import provider_lifecycle
 # discovery MECHANICS with fixture rows that include those ids, so they pin the
 # lifecycle clock just before the cutover instead of drifting with the wall clock.
 _BEFORE_WAFER_AUGUST_RETIREMENT = provider_lifecycle.WAFER_AUGUST_2026_RETIREMENT_AT - timedelta(seconds=1)
+_BEFORE_BASETEN_SEPTEMBER_RETIREMENT = (
+    provider_lifecycle.BASETEN_SEPTEMBER_2026_RETIREMENT_AT - timedelta(seconds=1)
+)
 
 
 class FakeResponse:
@@ -27,6 +30,9 @@ class FakeResponse:
 
 
 def test_baseten_fetch_discovers_prices_without_float_drift(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now", lambda: _BEFORE_BASETEN_SEPTEMBER_RETIREMENT
+    )
     payload = {
         "data": [
             {
@@ -136,6 +142,9 @@ def test_baseten_fetch_discovers_prices_without_float_drift(monkeypatch) -> None
 def test_baseten_zero_price_discovery_is_immediately_disabled(
     tmp_path: Path, monkeypatch
 ) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        provider_lifecycle, "_utc_now", lambda: _BEFORE_BASETEN_SEPTEMBER_RETIREMENT
+    )
     payload = {
         "data": [
             {
