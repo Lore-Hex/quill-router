@@ -182,6 +182,8 @@ class InMemoryStore:
         self.credits: dict[str, CreditAccount] = {}
         self.credit_money: dict[str, CreditMoney] = {}
         self.stripe_events: set[str] = set()
+        self.lightning_keys: dict[str, str] = {}
+        self.lightning_payments: dict[str, dict[str, Any]] = {}
         self.trust_events: dict[tuple[str, str], TrustEvent] = {}
         self.trust_inbox: dict[tuple[str, str], TrustInboxRow] = {}
         self.owner_workspaces: set[tuple[str, str]] = set()
@@ -266,6 +268,8 @@ class InMemoryStore:
             self.credits.clear()
             self.credit_money.clear()
             self.stripe_events.clear()
+            self.lightning_keys.clear()
+            self.lightning_payments.clear()
             self.trust_events.clear()
             self.trust_inbox.clear()
             self.owner_workspaces.clear()
@@ -1208,6 +1212,14 @@ class InMemoryStore:
             user.username = normalized
             self.user_ids_by_username[normalized] = user_id
             return user
+
+    def ensure_lightning_key(self, raw_key: str) -> ApiKey:
+        from trusted_router.storage_lightning import memory_key
+        return memory_key(self, raw_key)
+
+    def bind_lightning_payment(self, workspace_id: str, payment_hash: str, amount_microdollars: int) -> None:
+        from trusted_router.storage_lightning import memory_bind
+        memory_bind(self, workspace_id, payment_hash, amount_microdollars)
 
     def create_wallet_user(self, address: str) -> User:
         """Create a fresh user keyed only by wallet address. email and

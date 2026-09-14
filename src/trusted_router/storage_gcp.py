@@ -2131,6 +2131,14 @@ class SpannerBigtableStore:
 
         return self._run_in_transaction(txn)
 
+    def ensure_lightning_key(self, raw_key: str) -> ApiKey:
+        from trusted_router.storage_lightning import spanner_key
+        return spanner_key(self, raw_key)
+
+    def bind_lightning_payment(self, workspace_id: str, payment_hash: str, amount_microdollars: int) -> None:
+        from trusted_router.storage_lightning import spanner_bind
+        spanner_bind(self, workspace_id, payment_hash, amount_microdollars)
+
     def create_wallet_user(self, address: str) -> User:
         normalized = address.strip().lower()
         existing = self.find_user_by_wallet(normalized)

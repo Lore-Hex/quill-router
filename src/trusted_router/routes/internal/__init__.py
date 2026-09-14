@@ -14,6 +14,7 @@ from . import chat_browser_key as chat_browser_key
 from . import federation as federation
 from . import fetch_image as fetch_image
 from . import gateway as gateway
+from . import lightning as lightning
 from . import paypal as paypal
 from . import reconcile as reconcile
 from . import routable as routable
@@ -45,6 +46,7 @@ def register_gateway_internal_routes(router: APIRouter) -> None:
     fetch_image.register(router)
     reconcile.register(router)
     federation.register(router)
+    lightning.register(router)
 
 
 def register_operator_internal_routes(router: APIRouter) -> None:

@@ -29,6 +29,10 @@ def internal_service_credential(
 ) -> tuple[str, str | None]:
     """Return the credential class and configured secret for an internal path."""
     normalized_path = path[3:] if path.startswith("/v1/internal/") else path
+    if normalized_path in {
+        "/internal/lightning/resolve", "/internal/lightning/balance", "/internal/lightning/credit",
+    }:
+        return "lightning", settings.lightning_funding_token
     from trusted_router.routes.internal.admin import is_operator_route
 
     if is_operator_route(normalized_path):

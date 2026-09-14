@@ -250,6 +250,7 @@ SERVICE_SURFACE_SECRET_OWNERS: dict[str, frozenset[str]] = {
     "attribution_cookie_secret": frozenset({"public", "control"}),
     "internal_gateway_token": frozenset({"internal"}),
     "operator_token": frozenset({"internal"}),
+    "lightning_funding_token": frozenset({"internal"}),
     # Internal owns this only for synthetic/Sentry routes; its billing routes
     # still select internal_gateway_token by path.
     "observer_internal_token": frozenset({"internal", "observer"}),
@@ -940,6 +941,7 @@ class Settings(BaseSettings):
     trust_tier3_min_paid_microdollars: int = 50_000_000
     max_workspaces_per_owner: int = 25
     operator_token: str = ""
+    lightning_funding_token: str = ""
     operator_identities: str = ""
     trust_reconcile_interval_seconds: int = 900
     trust_reconcile_max_age_seconds: int = 3_600
@@ -1599,6 +1601,16 @@ class Settings(BaseSettings):
         settlement_tokens = parse_settlement_inbound_tokens(
             self.federation_settlement_inbound_tokens
         )
+        if self.lightning_funding_token:
+            if len(self.lightning_funding_token) < 32:
+                raise ValueError("TR_LIGHTNING_FUNDING_TOKEN must contain at least 32 characters")
+            for field_name in sorted(operator_credential_setting_names(type(self)) | {"operator_token"}):
+                if field_name == "lightning_funding_token":
+                    continue
+                candidate = getattr(self, field_name)
+                funding_conflicts = tuple(settlement_tokens) if field_name == "federation_settlement_inbound_tokens" else (candidate,)
+                if any(isinstance(value, str) and value and hmac.compare_digest(self.lightning_funding_token, value) for value in funding_conflicts):
+                    raise ValueError(f"TR_LIGHTNING_FUNDING_TOKEN must differ from TR_{field_name.upper()}")
         if self.operator_token:
             for field_name in sorted(operator_credential_setting_names(type(self))):
                 raw_value = getattr(self, field_name)
