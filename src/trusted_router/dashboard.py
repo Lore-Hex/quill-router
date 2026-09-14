@@ -14,7 +14,7 @@ from decimal import Decimal
 from functools import lru_cache
 from itertools import combinations
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from xml.sax.saxutils import escape as xml_escape
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -1498,6 +1498,18 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "prompt traffic stays inside the attested API gateway."
         ),
     ),
+    "green-tokens": PublicPage(
+        template="public/green_tokens.html",
+        og_card="green-tokens.png",
+        title="Green Tokens: Renewable-Powered AI Inference",
+        description="Run AI on renewable-powered inference with trustedrouter/green. Regolo models, streaming, clear provider energy policies and one TrustedRouter API key.",
+        faq_items=(
+            ("What does 100% renewable mean here?", "Regolo states that its inference GPU servers run on 100% renewable energy. This is a provider-declared claim about inference electricity, not a lifecycle carbon assessment or a claim about every network, device, and routing server involved in a request."),
+            ("What happens if a green route is unavailable?", "TrustedRouter can try another eligible model route within the renewable-powered provider pool. If none can serve the request, it returns an error. It does not silently switch to an unqualified provider."),
+            ("Does green mean end-to-end confidential inference?", "Energy sourcing and hardware confidentiality are different. Regolo publishes a zero-data-retention policy. Its inference is not currently marked as hardware-verified confidential compute by TrustedRouter."),
+            ("How is usage priced?", "The selected model's provider rate is converted from euros to US dollars using the European Central Bank reference rate, then TrustedRouter's normal inference fee applies. Current model prices are in the catalog. There is no separate green surcharge."),
+        ),
+    ),
     "eu": PublicPage(
         template="public/eu.html",
         og_card="eu.png",
@@ -2639,8 +2651,22 @@ def public_page_html(
             canonical_public_url(settings, canonical_path) if canonical_path is not None else None
         ),
         robots_meta=robots_meta,
-        extra_context=company_signin_context(page_key) if page_key in COMPANY_SIGNIN_PAGES else None,
+        extra_context=(
+            _green_tokens_context() if page_key == "green-tokens"
+            else company_signin_context(page_key) if page_key in COMPANY_SIGNIN_PAGES else None
+        ),
     )
+
+
+def _green_tokens_context() -> dict[str, Any]:
+    from trusted_router.catalog_energy import GREEN_MODEL_ID, renewable_provider_slugs
+
+    return {"green_models": [
+        {"id": candidate.id, "name": candidate.name, "provider": endpoint.provider}
+        for candidate in meta_candidate_models(GREEN_MODEL_ID)
+        for endpoint in endpoints_for_model(candidate.id)
+        if endpoint.usage_type == "Credits" and endpoint.provider in renewable_provider_slugs()
+    ]}
 
 
 def public_openrouter_experiment_html(settings: Settings, variant_slug: str) -> str:
@@ -4693,6 +4719,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
         f"- EU routing: https://{domain}/eu",
+        f"- Renewable inference: https://{domain}/green-tokens",
         f"- TrustedOS for AI clouds: https://{domain}/trustedos",
         f"- Compact LLM docs: https://{domain}/docs/llms.txt",
         f"- Full LLM docs: https://{domain}/docs/llms-full.txt",
@@ -4704,6 +4731,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- trustedrouter/e2e: confidential and provider E2EE routes.",
         "- trustedrouter/confidential: alias for trustedrouter/e2e.",
         "- trustedrouter/eu: EU-focused provider selection.",
+        "- trustedrouter/green: directly hosted models on provider-declared 100% renewable inference electricity. Fallback stays in the qualifying pool; this is not a provider TEE claim.",
         "- trustedrouter/cheap: low-cost paid route pool.",
         "- trustedrouter/free: free pool with no SLA.",
         "- trustedrouter/synth: attested multi-model panel, selectable judge, and final synthesis.",

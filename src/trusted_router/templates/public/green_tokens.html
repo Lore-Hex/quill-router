@@ -1,0 +1,59 @@
+{% extends "public/_base.html" %}
+{% block body_attributes %}class="green-tokens"{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/green-tokens.css?v={{ static_version }}">{% endblock %}
+{% block hero %}
+<section class="green-hero" aria-labelledby="green-title">
+  <img class="green-art" src="/static/green-tokens-hero.webp" alt="Conceptual illustration of wind and solar power connected to an AI server building." width="1536" height="1024" fetchpriority="high">
+  <div class="green-inner green-hero-copy">
+    <p class="green-eyebrow">TrustedRouter / Renewable-powered inference</p>
+    <h1 id="green-title">Green tokens.</h1>
+    <p class="green-lead">Your next million tokens.<br>Powered by renewable energy.</p>
+    <p class="green-intro">Choose AI inference on Regolo's 100% renewable-powered servers.<br class="green-desktop"> Same API. Same workflow. A different source of power.</p>
+    <div class="green-actions"><button class="btn primary" type="button" data-action="open-signin">Get your API key</button><a class="btn" href="#start">See the code</a></div>
+    <a class="green-source" href="#energy-evidence">Provider-declared inference energy. Read the source.</a>
+  </div>
+</section>
+{% endblock %}
+{% block body %}
+<div class="green-facts"><div class="green-inner"><span><strong>100%</strong> Renewable inference electricity*</span><span><strong>Regolo</strong> Direct model provider</span><span><strong>One API</strong> Chat + Responses + streaming</span></div></div>
+<section class="green-section green-inner" id="start" aria-labelledby="start-title">
+  <p class="green-eyebrow">One model name</p><h2 id="start-title">Make energy part<br>of the request.</h2>
+  <p>Set your model to <code>trustedrouter/green</code>. TrustedRouter selects an eligible model and keeps every fallback inside the renewable-powered provider pool.</p>
+  <div class="green-code"><div class="green-code-head"><span>Python / OpenAI SDK</span><button type="button" class="btn" data-action="copy-code" data-copy-target="green-example" aria-label="Copy Python example"><img src="/static/copy-icon.svg" width="18" height="18" alt=""> Copy</button></div>
+<pre id="green-example"><code>import os
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+)
+
+for chunk in client.chat.completions.create(
+    model="trustedrouter/green",
+    messages=[{"role": "user", "content": "What should we build next?"}],
+    max_tokens=512,
+    stream=True,
+):
+    if chunk.choices:
+        print(chunk.choices[0].delta.content or "", end="", flush=True)</code></pre></div>
+  <p class="green-small">Pick a specific model with <code>provider.only = ["regolo"]</code>. <a href="/docs/provider-routing">Provider routing docs</a>.</p>
+</section>
+<section class="green-band" id="models" aria-labelledby="models-title"><div class="green-section green-inner">
+  <p class="green-eyebrow">Ready to route</p><h2 id="models-title">Choose your model.<br>Keep your energy choice.</h2>
+  <p>The current eligible catalog. Prices and model availability refresh from Regolo's API.</p>
+  <div class="green-models">
+    {% for model in green_models %}<a href="/models/{{ model.id }}"><span>{{ model.name }}</span><small>{{ model.provider }}</small></a>{% else %}<p>Eligible routes are temporarily unavailable. <a href="/providers/regolo">Check Regolo availability</a>.</p>{% endfor %}
+  </div>
+  <a class="green-detail-link" href="/providers/regolo">Compare Regolo models and prices</a>
+</div></section>
+<section class="green-section green-inner" id="energy-evidence" aria-labelledby="evidence-title">
+  <p class="green-eyebrow">Follow the evidence</p><h2 id="evidence-title">A power choice.<br>A clear boundary.</h2>
+  <dl class="green-evidence">
+    <div><dt>Inference electricity*</dt><dd><a href="https://regolo.ai/sustainable-ai/" rel="noopener">Regolo's sustainability policy</a> states that its GPU servers use 100% renewable energy. This is the provider's published declaration, reviewed September 14, 2026. It covers inference electricity, rather than model training, hardware manufacturing, your network or TrustedRouter's routing infrastructure.</dd></div>
+    <div><dt>Provider privacy</dt><dd><a href="https://regolo.ai/zero-data-retention/" rel="noopener">Regolo's zero-data-retention policy</a> says prompts and outputs are discarded after processing. This is a separate provider commitment from its renewable-energy claim.</dd></div>
+    <div><dt>Gateway proof</dt><dd>TrustedRouter handles routing inside an attested gateway. Your agent can <a href="/trust">verify the running gateway</a>. That proof covers gateway code and hardware, rather than the electricity source or Regolo's inference hardware.</dd></div>
+    <div><dt>Routing guarantee</dt><dd>The green alias restricts eligible providers. When none can serve your request, the request fails closed. Energy requirements remain in place through model fallbacks, provider preferences and usage settlement.</dd></div>
+  </dl>
+</section>
+<section class="green-final"><div class="green-inner"><h2>A small change<br>in where your AI runs.</h2><div class="green-actions"><button class="btn primary" type="button" data-action="open-signin">Start with green tokens</button><a class="btn" href="/providers/regolo">Explore Regolo</a></div></div></section>
+{% endblock %}

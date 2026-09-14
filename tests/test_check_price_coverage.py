@@ -43,6 +43,8 @@ _NEW_AUTOMATIC_FEED_ROWS = _NEW_AUTOMATIC_FEED_MODELS | _NEW_AUTOMATIC_FEED_ALIA
 
 
 def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict:
+    if "api.regolo.ai" in url:
+        return {"data": [{"model_group": "glm5.2", "mode": "chat"}]}
     if "api.openai.com" in url:
         return {"data": [{"id": "gpt-5.6-sol"}, {"id": "gpt-6-astra"}]}
     if "api.x.ai" in url:
@@ -1213,3 +1215,26 @@ def test_wandb_flash_ci_discovery_replay_has_no_publication_blocker(
     # Both native and normalized IDs resolve to the same verified priced row.
     assert not any(warning.startswith("wandb:") for warning in warnings), warnings
     assert "wandb: model discovery matched catalog (1 id(s)) ✓" in info
+
+
+def test_regolo_discovery_uses_model_groups_and_excludes_nonchat_and_nested_routers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = next(
+        entry for entry in check_price_coverage._DISCOVERABLE_MANIFEST_PROVIDERS
+        if entry[0] == "regolo"
+    )
+    assert provider[3]("glm5.2") == "z-ai/glm-5.2"
+    monkeypatch.setattr(check_price_coverage, "_DISCOVERABLE_MANIFEST_PROVIDERS", (provider,))
+    monkeypatch.setattr(check_price_coverage, "_GLM_DISCOVERABLE_PROVIDER_APIS", ())
+    warnings, info = check_price_coverage._model_discovery_audit(
+        fetch_text=lambda _url: "Supported Models: GLM-5.2",
+        fetch_json=lambda _url, _env_names: {"data": [
+            {"model_group": "glm5.2", "mode": "chat"},
+            {"model_group": "brick-fast", "mode": "chat"},
+            {"model_group": "embedding-new", "mode": "embedding"},
+        ]},
+        published_model_ids=set(),
+    )
+    assert not any(warning.startswith("regolo:") for warning in warnings), warnings
+    assert "regolo: model discovery matched catalog (1 id(s)) ✓" in info

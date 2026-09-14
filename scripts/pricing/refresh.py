@@ -148,6 +148,7 @@ PROVIDER_SLUGS = [
     "inception",
     "io_net",
     "scaleway",
+    "regolo",
     "featherless",
     "sakana",
     "jina",

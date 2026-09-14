@@ -3366,6 +3366,7 @@ def _is_web_search_restricted_model(model_id: str) -> bool:
             "trustedrouter/e2e",
             "trustedrouter/confidential",
             "trustedrouter/eu",
+            "trustedrouter/green",
         )
     )
 

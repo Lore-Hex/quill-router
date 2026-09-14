@@ -33,6 +33,26 @@ def _settings() -> Settings:
     return Settings(environment="test")
 
 
+@pytest.fixture
+def standard_only_model(monkeypatch: pytest.MonkeyPatch) -> str:
+    from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS
+    from trusted_router.catalog_data import Model, ModelEndpoint, Provider
+
+    provider = Provider(slug="unit-standard", name="Standard test provider", supports_prepaid=True)
+    model = Model(
+        id="unit-standard/chat", name="Standard test model", provider=provider.slug,
+        context_length=32768, prepaid_available=True,
+    )
+    endpoint = ModelEndpoint(
+        id="unit-standard/chat:credits", model_id=model.id, provider=provider.slug,
+        usage_type="Credits",
+    )
+    monkeypatch.setitem(PROVIDERS, provider.slug, provider)
+    monkeypatch.setitem(MODELS, model.id, model)
+    monkeypatch.setitem(MODEL_ENDPOINTS, endpoint.id, endpoint)
+    return model.id
+
+
 # ── chat_route_candidates ───────────────────────────────────────────────
 
 
@@ -688,7 +708,9 @@ def test_model_shape_exposes_privacy_tier() -> None:
     assert tr["privacy_tier"] >= 2  # zero retention or better
 
 
-def test_data_collection_deny_soft_fallback_keeps_standard_only_model_and_endpoints() -> None:
+def test_data_collection_deny_soft_fallback_keeps_standard_only_model_and_endpoints(
+    standard_only_model: str,
+) -> None:
     from trusted_router.catalog import (
         MODELS,
         PRIVACY_TIER_NO_STORE,
@@ -697,7 +719,7 @@ def test_data_collection_deny_soft_fallback_keeps_standard_only_model_and_endpoi
         model_max_privacy_tier,
     )
 
-    model_id = "mistralai/mistral-small-2603"
+    model_id = standard_only_model
     catalog_endpoints = endpoints_for_model(model_id)
     assert model_max_privacy_tier(MODELS[model_id]) < PRIVACY_TIER_NO_STORE
     assert all(endpoint_privacy_tier(endpoint) < PRIVACY_TIER_NO_STORE for endpoint in catalog_endpoints)
@@ -712,7 +734,7 @@ def test_data_collection_deny_soft_fallback_keeps_standard_only_model_and_endpoi
     }
 
 
-def test_data_collection_deny_still_filters_when_satisfiable() -> None:
+def test_data_collection_deny_still_filters_when_satisfiable(standard_only_model: str) -> None:
     from trusted_router.catalog import (
         PRIVACY_TIER_NO_STORE,
         endpoint_privacy_tier,
@@ -720,7 +742,7 @@ def test_data_collection_deny_still_filters_when_satisfiable() -> None:
         model_max_privacy_tier,
     )
 
-    standard_model_id = "mistralai/mistral-small-2603"
+    standard_model_id = standard_only_model
     private_model_id = "deepseek/deepseek-v3.2"
     candidates = chat_route_candidates(
         {
@@ -844,11 +866,11 @@ def test_provider_only_stays_hard_when_data_collection_soft_falls_back() -> None
     assert "filters" in exc.value.detail["error"]["message"].lower()
 
 
-def test_min_privacy_stays_hard_when_data_collection_soft_falls_back() -> None:
+def test_min_privacy_stays_hard_when_data_collection_soft_falls_back(standard_only_model: str) -> None:
     with pytest.raises(HTTPException) as exc:
         chat_route_candidates(
             {
-                "model": "mistralai/mistral-small-2603",
+                "model": standard_only_model,
                 "provider": {"data_collection": "deny", "min_privacy": "no_store"},
             },
             _settings(),

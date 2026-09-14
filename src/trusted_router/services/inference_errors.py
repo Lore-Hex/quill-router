@@ -79,6 +79,7 @@ def default_provider_secret_ref(provider: str) -> str:
         "aion-labs": "AION_LABS_API_KEY",
         "io-net": "IONET_API_KEY",
         "scaleway": "SCALEWAY_SECRET_KEY",
+        "regolo": "REGOLO_API_KEY",
         "featherless": "FEATHERLESS_API_KEY",
         "jina": "JINA_API_KEY",
         "wandb": "WANDB_API_KEY",

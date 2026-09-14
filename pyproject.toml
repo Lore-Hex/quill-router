@@ -43,6 +43,7 @@ packages = ["src/trusted_router"]
 
 [dependency-groups]
 dev = [
+  "defusedxml>=0.7.1",
   # Evals can optionally parse PDFs/SEC filings, but these packages pull
   # a large ML/document stack (torch, triton, transformers, OCR). Keep
   # them out of the production API image.

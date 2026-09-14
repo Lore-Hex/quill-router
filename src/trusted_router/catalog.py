@@ -143,6 +143,11 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     Provider,
     _EmbeddingSpec,
 )
+from trusted_router.catalog_energy import (
+    GREEN_MODEL_ID,
+    provider_has_renewable_inference,
+    renewable_provider_slugs,
+)
 from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time build below
     _AUTHOR_TO_PROVIDER_SLUG,
     _INGEST_PATH,
@@ -401,6 +406,16 @@ def _meta_price_range(
     the request lands on whatever model the router picks — so we
     surface the range so /v1/models doesn't show a misleading $0."""
     candidates = meta_candidate_models(model_id)
+    if model_id == GREEN_MODEL_ID:
+        values = [
+            getattr(endpoint, attr)
+            for candidate in candidates
+            for endpoint in endpoints_for_model(candidate.id)
+            if endpoint.usage_type == "Credits"
+            and provider_has_renewable_inference(PROVIDERS[endpoint.provider])
+            and getattr(endpoint, attr, 0) > 0
+        ]
+        return (min(values), max(values)) if values else (0, 0)
     values = [getattr(c, attr) for c in candidates if getattr(c, attr, 0) > 0]
     if not values:
         return (0, 0)
@@ -414,6 +429,14 @@ def _model_max_privacy_tier(model: Model, endpoints: list[ModelEndpoint]) -> int
     claim confidential for Auto. For regular models, the max across the
     model's own provider plus any serving endpoints."""
     tiers: list[int] = []
+    if model.id == GREEN_MODEL_ID:
+        tiers = [
+            endpoint_privacy_tier(endpoint)
+            for candidate in meta_candidate_models(model.id)
+            for endpoint in endpoints_for_model(candidate.id)
+            if endpoint.provider in renewable_provider_slugs()
+        ]
+        return max(tiers, default=PRIVACY_TIER_STANDARD)
     if model.id in META_MODEL_IDS:
         for candidate in meta_candidate_models(model.id):
             tiers.append(model_max_privacy_tier(candidate))
@@ -491,6 +514,13 @@ def _route_provider_slugs(
     """
     if model.hidden_public_metadata:
         return {model.provider}
+    if model.id == GREEN_MODEL_ID:
+        return {
+            endpoint.provider
+            for candidate in meta_candidate_models(model.id)
+            for endpoint in endpoints_for_model(candidate.id)
+            if endpoint.provider in renewable_provider_slugs()
+        }
     if model.id in _seen:
         return set()
     if model.id in META_MODEL_IDS:
@@ -721,6 +751,8 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                 "provider_us_based": PROVIDERS[endpoint.provider].provider_headquarters_country
                 == PROVIDER_JURISDICTION_US,
                 "provider_eu_focused": endpoint.provider in EU_FOCUSED_PROVIDER_ORDER,
+                "renewable_energy_inference": PROVIDERS[endpoint.provider].renewable_energy_inference,
+                "energy_policy_url": PROVIDERS[endpoint.provider].energy_policy_url,
                 "supported_parameters": list(
                     union_supported_parameters(
                         endpoint.supported_parameters,
@@ -734,6 +766,17 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     }
     if documentation is not None:
         tr_block["documentation"] = documentation
+    if model.id == GREEN_MODEL_ID:
+        tr_block.update({
+            "renewable_energy_required": True,
+            "energy_claim_scope": "provider_inference",
+            "energy_evidence_type": "provider_declaration",
+            "eligible_providers": sorted(renewable_provider_slugs()),
+            "provider_confidential_compute": False,
+            "provider_e2ee": False,
+            "provider_policy": "Renewable-powered provider inference under the provider's published energy policy. Gateway attestation is separate from energy sourcing.",
+            "provider_policy_url": "https://trustedrouter.com/green-tokens#energy-evidence",
+        })
     if is_meta:
         tr_block["prompt_price_max_microdollars_per_million_tokens"] = prompt_max
         tr_block["completion_price_max_microdollars_per_million_tokens"] = completion_max
