@@ -31,6 +31,108 @@ def row(funding, invoice, key):
     return funding.store.invoice(invoice["id"], funding.credentials.fingerprint(key))
 
 
+def test_unpaid_checkout_does_not_provision_a_user_or_key(funding, raw_key):
+    invoice = create(funding, raw_key)
+    assert funding.credits.balances == {}
+    assert funding.credits.payments == {}
+    assert invoice["account_created"] is False
+    with pytest.raises(KeyError):
+        funding.account(raw_key)
+    record = row(funding, invoice, raw_key)
+    funding.lnd.pay(record["payment_hash"])
+    result = funding.refresh(record)
+    assert result["account_created"] is True
+    assert result["credited"] is True
+    assert len(funding.credits.balances) == 1
+
+
+def test_pending_recovery_key_is_encrypted_and_removed_after_binding(funding, raw_key):
+    invoice = create(funding, raw_key)
+    record = row(funding, invoice, raw_key)
+    checkout = funding.store.checkout(record["key_hash"])
+    assert checkout["credit_account_id"] is None
+    assert raw_key.encode() not in checkout["pending_key"]
+    assert funding.credentials.open_pending_key(checkout["pending_key"], record["key_hash"]) == raw_key
+    funding.lnd.pay(record["payment_hash"])
+    funding.reconcile()
+    checkout = funding.store.checkout(record["key_hash"])
+    assert checkout["credit_account_id"] is not None
+    assert checkout["pending_key"] is None
+
+
+@pytest.mark.parametrize("tamper", ["owner", "ciphertext", "secret"])
+def test_pending_key_cannot_be_rebound_or_decrypted_with_other_secret(raw_key, tamper):
+    from cryptography.exceptions import InvalidTag
+
+    credentials = Credentials(b"a" * 32)
+    owner = credentials.fingerprint(raw_key)
+    sealed = credentials.seal_pending_key(raw_key)
+    assert sealed != credentials.seal_pending_key(raw_key)
+    if tamper == "owner":
+        owner = "0" * 64
+    elif tamper == "ciphertext":
+        sealed = sealed[:-1] + bytes([sealed[-1] ^ 1])
+    else:
+        credentials = Credentials(b"b" * 32)
+    with pytest.raises(InvalidTag):
+        credentials.open_pending_key(sealed, owner)
+
+
+def test_identity_ack_loss_replays_paid_checkout_without_an_extra_account(funding, raw_key, monkeypatch):
+    invoice = create(funding, raw_key)
+    record = row(funding, invoice, raw_key)
+    original = funding.credits.resolve
+    calls = []
+
+    def resolve(raw, *, new):
+        assert funding.store.invoice(record["id"], record["key_hash"])["state"] == "SETTLED"
+        result = original(raw, new=new)
+        calls.append(new)
+        if len(calls) == 1:
+            raise TimeoutError("lost identity acknowledgement")
+        return result
+
+    monkeypatch.setattr(funding.credits, "resolve", resolve)
+    funding.lnd.pay(record["payment_hash"])
+    assert funding.reconcile()["failed"] == 1
+    assert funding.store.credit_account(record["key_hash"]) is None
+    assert len(funding.credits.balances) == 1
+    assert funding.credits.payments == {}
+    assert funding.reconcile()["failed"] == 0
+    assert calls == [True, True]
+    assert len(funding.credits.balances) == len(funding.credits.payments) == 1
+    assert funding.balance(record["key_hash"])["balance_usd"] == "10.000000"
+
+
+def test_identity_backend_outage_never_turns_unpaid_invoice_into_account(funding, raw_key, monkeypatch):
+    original = funding.credits.resolve
+
+    def unavailable(*args, **kwargs):
+        raise TimeoutError("identity unavailable")
+
+    monkeypatch.setattr(funding.credits, "resolve", unavailable)
+    invoice = create(funding, raw_key)
+    record = row(funding, invoice, raw_key)
+    assert funding.reconcile()["failed"] == 0
+    assert funding.credits.balances == {}
+    funding.lnd.pay(record["payment_hash"])
+    assert funding.reconcile()["failed"] == 1
+    assert funding.credits.balances == {}
+    assert funding.store.pending()[0]["state"] == "SETTLED"
+    monkeypatch.setattr(funding.credits, "resolve", original)
+    assert funding.reconcile()["failed"] == 0
+    assert funding.account(raw_key)["balance_usd"] == "10.000000"
+
+
+def test_rate_failure_does_not_create_account_or_invoice(funding, raw_key):
+    funding.rates.fail = True
+    with pytest.raises(RuntimeError):
+        create(funding, raw_key)
+    assert funding.credits.balances == {}
+    assert funding.store.pending() == []
+    assert funding.lnd.creates == 0
+
+
 def test_payment_creates_balance_exactly_once(funding, raw_key):
     invoice = create(funding, raw_key)
     record = row(funding, invoice, raw_key)
@@ -132,6 +234,7 @@ def test_unsettled_payment_is_not_money(funding, raw_key, state):
     funding.lnd.rows[record["payment_hash"]] = replace(funding.lnd.rows[record["payment_hash"]],
                                                     state=state, amount_msat=10_000_000)
     assert funding.refresh(record)["balance_microdollars"] == "0"
+    assert funding.credits.balances == {}
 
 
 @pytest.mark.parametrize("field,value", [("payment_hash", "e" * 64), ("amount_msat", 1), ("settle_index", 0), ("requested_msat", 1)])
@@ -261,7 +364,9 @@ def test_existing_tr_key_does_not_need_previous_lightning_deposit(funding, raw_k
 
 
 def test_revoked_key_is_not_authenticated_by_local_invoice_metadata(funding, raw_key):
-    create(funding, raw_key)
+    invoice = create(funding, raw_key)
+    funding.lnd.pay(row(funding, invoice, raw_key)["payment_hash"])
+    funding.refresh(row(funding, invoice, raw_key))
     account_id = funding.credits.resolve(raw_key, new=False)
     funding.credits.revoked.add(account_id)
     with pytest.raises(KeyError):
@@ -271,7 +376,9 @@ def test_revoked_key_is_not_authenticated_by_local_invoice_metadata(funding, raw
 
 
 def test_credit_account_binding_cannot_change(funding, raw_key):
-    create(funding, raw_key)
+    invoice = create(funding, raw_key)
+    funding.lnd.pay(row(funding, invoice, raw_key)["payment_hash"])
+    funding.refresh(row(funding, invoice, raw_key))
     with pytest.raises(ValueError, match="cannot change"):
         funding.store.bind_account(funding.credentials.fingerprint(raw_key), "another-workspace")
 
@@ -313,7 +420,9 @@ def test_expired_unissued_quote_is_canceled_without_creating_invoice(funding, ra
     assert funding.refresh(pending)["state"] == "CANCELED"
     assert funding.lnd.creates == 0
     assert funding.store.pending() == []
-    assert funding.account(raw_key)["balance_microdollars"] == "0"
+    assert funding.credits.balances == {}
+    with pytest.raises(KeyError):
+        funding.account(raw_key)
 
 
 def test_delayed_lnd_creation_does_not_extend_fixed_fx_quote(funding, raw_key):
@@ -322,4 +431,6 @@ def test_delayed_lnd_creation_does_not_extend_fixed_fx_quote(funding, raw_key):
     funding.lnd.rows[record["payment_hash"]] = replace(funding.lnd.rows[record["payment_hash"]],
                                                      expires_at=record["expires_at"] + 3600)
     assert funding.refresh(record)["state"] == "CANCELED"
-    assert funding.account(raw_key)["balance_microdollars"] == "0"
+    assert funding.credits.balances == {}
+    with pytest.raises(KeyError):
+        funding.account(raw_key)

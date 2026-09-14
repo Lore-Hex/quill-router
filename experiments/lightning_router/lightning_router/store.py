@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     String,
     Table,
@@ -29,15 +30,18 @@ from .money import MAX_MICRODOLLARS, MAX_MSATS, msats
 from .rates import Rate
 
 metadata = MetaData()
-accounts = Table(
-    "lr_accounts", metadata,
+checkouts = Table(
+    "lr_checkouts", metadata,
     Column("key_hash", String(64), primary_key=True),
-    Column("credit_account_id", String(128), nullable=False),
+    Column("credit_account_id", String(128), nullable=True),
+    Column("pending_key", LargeBinary, nullable=True),
+    CheckConstraint("(credit_account_id IS NULL AND pending_key IS NOT NULL) OR "
+                    "(credit_account_id IS NOT NULL AND pending_key IS NULL)"),
 )
 invoices = Table(
     "lr_invoices", metadata,
     Column("id", String(32), primary_key=True),
-    Column("key_hash", String(64), ForeignKey("lr_accounts.key_hash"), nullable=False),
+    Column("key_hash", String(64), ForeignKey("lr_checkouts.key_hash"), nullable=False),
     Column("request_id", String(32), nullable=False),
     Column("payment_hash", String(64), nullable=False, unique=True),
     Column("bolt11", String(8192), nullable=False, default=""),
@@ -61,7 +65,7 @@ Index("lr_invoice_reconcile", invoices.c.state, invoices.c.last_checked, invoice
 deposits = Table(
     "lr_deposits", metadata,
     Column("payment_hash", String(64), primary_key=True),
-    Column("key_hash", String(64), ForeignKey("lr_accounts.key_hash"), nullable=False),
+    Column("key_hash", String(64), ForeignKey("lr_checkouts.key_hash"), nullable=False),
     Column("amount_msat", BigInteger, nullable=False),
     Column("credit_microdollars", BigInteger, nullable=False),
     Column("usd_per_btc", String(40), nullable=False),
@@ -102,7 +106,7 @@ class Store:
     def _account(self, conn: Connection, key_hash: str) -> Any:
         # PostgreSQL locks serialize invoice creation and settlement per key.
         # SQLite uses BEGIN IMMEDIATE; both run the identical contract tests.
-        row = conn.execute(select(accounts).where(accounts.c.key_hash == key_hash).with_for_update()).mappings().first()
+        row = conn.execute(select(checkouts).where(checkouts.c.key_hash == key_hash).with_for_update()).mappings().first()
         if row is None:
             raise KeyError("Unknown API key")
         return row
@@ -115,14 +119,27 @@ class Store:
         if not credit_account_id or len(credit_account_id) > 128:
             raise ValueError("Invalid credit account")
         with self.transaction() as conn:
-            self._insert_once(conn, accounts, {"key_hash": key_hash, "credit_account_id": credit_account_id})
+            self._insert_once(conn, checkouts, {"key_hash": key_hash, "credit_account_id": credit_account_id})
             row = self._account(conn, key_hash)
-            if row["credit_account_id"] != credit_account_id:
+            if row["credit_account_id"] not in {None, credit_account_id}:
                 raise ValueError("API key cannot change credit accounts")
+            conn.execute(update(checkouts).where(checkouts.c.key_hash == key_hash).values(
+                credit_account_id=credit_account_id, pending_key=None,
+            ))
 
-    def credit_account(self, key_hash: str) -> str:
+    def prepare_checkout(self, key_hash: str, pending_key: bytes) -> None:
+        # This is only invoice ownership/recovery metadata, not a TR identity.
         with self.transaction() as conn:
-            return str(self._account(conn, key_hash)["credit_account_id"])
+            self._insert_once(conn, checkouts, {"key_hash": key_hash, "pending_key": pending_key})
+
+    def checkout(self, key_hash: str) -> dict[str, Any]:
+        with self.transaction() as conn:
+            return dict(self._account(conn, key_hash))
+
+    def credit_account(self, key_hash: str) -> str | None:
+        with self.transaction() as conn:
+            account_id = self._account(conn, key_hash)["credit_account_id"]
+            return str(account_id) if account_id is not None else None
 
     def active(self, key_hash: str) -> str | None:
         with self.transaction() as conn:

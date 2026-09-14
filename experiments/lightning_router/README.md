@@ -27,20 +27,30 @@ This conversion issues USD service credits; it does not automatically sell
 treasury BTC on an exchange.
 
 Keys use the existing `sk-tr-v1-` format. An existing key funds its workspace.
-A new key must provision a zero-credit key-only user without email, password,
-username, OAuth, free grants, or management privileges. `Credits.resolve` defines
-that operation. A revoked key cannot authenticate through stale invoice metadata.
+Opening the page or creating an unpaid invoice does not provision a user,
+workspace, or API key in TrustedRouter. Only verified Lightning settlement
+provisions the key-only account and applies its USD credits. There is no email,
+password, username, OAuth, free grant, or management privilege. An expired or
+canceled unpaid invoice never creates an account. A revoked existing key cannot
+authenticate through stale invoice metadata.
 
-The browser generates the key using Web Crypto and writes it to sessionStorage
-before requesting the invoice. A lost HTTP response or reload preserves access
-in that tab. It reveals a new key after payment. Keep the key: closing the tab
+The browser generates a random pending credential using Web Crypto and writes it
+to sessionStorage before requesting the invoice. It is not a registered API key
+or account until payment. A lost HTTP response or reload preserves checkout
+access in that tab. It reveals the key and account only after USD credit delivery
+is acknowledged. Keep the key: closing the tab
 can lose the local copy and there is no email recovery.
 
 ## Boundaries
 
-* Raw keys never enter the database, URLs, HTML source, logs, or LND memos. The
-  funding store uses HMAC-SHA256 indexes under a persistent server secret.
-* Account identity, payment hash, idempotency key and quote bind durably before
+* Plaintext keys never enter the database, URLs, HTML source, logs, or LND memos.
+  Pending credentials are AES-GCM encrypted using a domain-separated key and
+  their HMAC fingerprint as authenticated context. This lets the worker finish
+  a paid checkout without the browser. Ciphertext is cleared when the funded
+  identity binding is saved. Unpaid checkouts live only in `lr_checkouts`, not
+  the TrustedRouter identity store. Back up the server secret separately from
+  the funding database; both are needed for pending-payment recovery.
+* Checkout ownership, payment hash, idempotency key and quote bind durably before
   contacting LND. Retries recover the same invoice, not a new payment hash.
 * Only LND `SETTLED` with validated `amt_paid_msat` produces a deposit. The invoice,
   immutable BTC receipt and frozen USD amount commit in one transaction.
@@ -98,8 +108,9 @@ docker stop lr-funding-test-pg
 ```
 
 Tests refuse non-loopback database URLs or any other database name before resets.
-The old BTC-balance prototype schema was never deployed. Use a new disposable
-local database; never relabel old BTC rows as USD.
+The old BTC-balance prototype and pre-funded `lr_accounts` schemas were never
+deployed. Use a new disposable local database; never relabel old BTC rows as USD.
+The first production funding database must use the current `lr_checkouts` schema.
 
 ## Mainnet launch gates
 

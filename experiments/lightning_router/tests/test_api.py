@@ -38,14 +38,19 @@ def test_invoice_balance_and_auth_contract(client, funding, raw_key):
     assert invoice["requested_msat"] == "10000000"
     assert invoice["qr"].startswith("data:image/png;base64,")
     assert raw_key not in response.text
-    balance = client.get("/api/account", headers=headers(raw_key)).json()
-    assert balance["balance_usd"] == "0.000000"
-    assert balance["active_invoice"] == invoice["id"]
+    assert invoice["account_created"] is False
+    assert client.get("/api/account", headers=headers(raw_key)).status_code == 401
+    assert funding.credits.balances == {}
     assert client.get("/api/account").status_code == 401
+    record = funding.store.invoice(invoice["id"], funding.credentials.fingerprint(raw_key))
+    funding.lnd.pay(record["payment_hash"])
+    paid = client.post(f"/api/invoices/{invoice['id']}/refresh", json={}, headers=headers(raw_key))
+    assert paid.json()["credited"] is True
     funding.rates.fail = True
     balance = client.get("/api/account", headers=headers(raw_key)).json()
-    assert balance["balance_microdollars"] == "0"
-    assert balance["balance_usd"] == "0.000000"
+    assert balance["balance_microdollars"] == "10000000"
+    assert balance["balance_usd"] == "10.000000"
+    assert balance["active_invoice"] is None
     assert "usd_estimate" not in balance
     assert "balance_btc" not in balance
 
