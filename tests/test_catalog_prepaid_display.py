@@ -96,10 +96,14 @@ def test_fireworks_glm53_flash_published_price_is_prepaid() -> None:
     assert fast.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 411_450
 
 
-def test_wandb_glm53_flash_without_provider_price_stays_dark() -> None:
+def test_wandb_glm53_flash_with_verified_price_is_prepaid() -> None:
     model_id = "z-ai/glm-5.3-flash"
-    assert model_id in _provider_manifest_dark_model_ids()["wandb"]
-    assert not any(endpoint.provider == "wandb" for endpoint in endpoints_for_model(model_id))
+    assert model_id not in _provider_manifest_dark_model_ids().get("wandb", frozenset())
+    endpoint = MODEL_ENDPOINTS[f"{model_id}@wandb/prepaid"]
+    assert endpoint.upstream_id == "zai-org/GLM-5.3-Flash"
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 158_250
+    assert endpoint.completion_price_microdollars_per_million_tokens == 527_500
+    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 52_750
 
 
 def test_cerebras_only_credits_serves_allowlisted_models() -> None:

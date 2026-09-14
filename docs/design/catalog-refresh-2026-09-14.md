@@ -65,3 +65,40 @@ HTTP 200 alone do not justify clearing their existing canary holds.
 
 The anonymous November 2 retirement notice has no identified sender. It must
 not become a global or guessed provider retirement rule.
+
+## Fresh-feed validation follow-up
+
+The first repaired main-branch refresh passed discovery and price guards, then
+failed 11 generated-catalog tests. Publication correctly stopped. Four causes:
+
+- Novita's repeated fresh misses retired old rows, reducing the live catalog
+  below a historical 100-model test floor. The replacement contract compares
+  every eligible priced manifest row and exact native ID with the generated
+  Credits and BYOK endpoints, before independent account restrictions. It does
+  not lower the floor or restore unavailable models.
+- Eight GET/HEAD alias tests assumed MiMo V2 Flash remained globally available.
+  Alias tests now install an explicit target fixture. Separate GET/HEAD tests
+  require 404 without a redirect when the canonical target does not exist.
+- Tinfoil's modality test read the global cross-provider union. Its official
+  catalog still marks `glm-5-3` text-only. Baseten's authenticated `/v1/models`
+  now advertises image input for `zai-org/GLM-5.3` and `zai-org/GLM-5.3-Fast`;
+  both accepted a generated image and returned its correct color. Keep those
+  provider claims separate: Tinfoil's contract is tested against its manifest,
+  not the cross-provider union. No capability is erased to satisfy the test.
+- W&B's September 6 missing-price hold is obsolete. Its
+  [official pricing page](https://wandb.ai/site/pricing/inference/) now lists
+  GLM 5.3 Flash at $0.15 input, $0.05 cached input, and $0.50 output per million.
+  The [model docs](https://docs.wandb.ai/inference/models) list the exact native
+  ID `zai-org/GLM-5.3-Flash`, vision, and 1,048,576 context. A bounded 128-token
+  direct call returned PONG with integer usage (18 prompt, 66 completion).
+  Clear only that reviewed hold and require the existing paid-path canary.
+  The operator-hold regression now uses an explicit fixture hold and continues
+  proving that prices alone cannot lift it.
+
+The full local refresh also picked up first-party price changes, including
+[DeepInfra MiMo V2.5](https://deepinfra.com/XiaomiMiMo/MiMo-V2.5) and
+[DeepSeek V4.1 Flash](https://deepinfra.com/deepseek-ai/DeepSeek-V4.1-Flash),
+and [Telnyx's GLM rates](https://telnyx.com/pricing/inference-api). The existing
+endpoint/axis price-spike audit passed against the merged first repair.
+The strict live discovery/coverage audit also passed. Last-known-good and
+mass-prune protections remain enabled.

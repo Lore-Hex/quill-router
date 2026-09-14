@@ -57,10 +57,11 @@
       "status": 1,
       "id": "google/gemma-4-31b-it",
       "upstream_id": "gemma-4-31b-it",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 320000,
       "output_token_price_per_m": 1600000,
-      "missing_since": "2026-09-14"
+      "missing_since": "2026-09-14",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "MythoMax",
@@ -145,7 +146,7 @@
   ],
   "source": "https://mancer.tech/oai/v1/models",
   "pricing_source": "https://mancer.tech/models",
-  "generated_at": "2026-09-14T18:42:10Z",
+  "generated_at": "2026-09-14T20:00:58Z",
   "price_scale": "microdollars_per_million",
   "model_count": 7
 }

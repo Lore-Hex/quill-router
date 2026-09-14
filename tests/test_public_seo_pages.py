@@ -4,6 +4,7 @@ import html as html_lib
 import json
 import logging
 import re
+from dataclasses import replace
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -1703,12 +1704,36 @@ def test_retired_model_pages_redirect_to_current_catalog_entries(client: TestCli
 )
 def test_model_aliases_redirect_once_to_existing_pages(
     client: TestClient, method: str, requested: str, canonical: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from trusted_router.routes import public
+
+    # Alias behavior must not depend on whether an upstream retired the
+    # target today. Keep an explicitly existing target for this route test.
+    model_id = "/".join(canonical.split("/")[:2])
+    monkeypatch.setitem(
+        public.MODELS, model_id, replace(public.MODELS["z-ai/glm-5.3"], id=model_id),
+    )
     response = client.request(method, f"/models/{requested}", follow_redirects=False)
     assert response.status_code == 301
     assert response.headers["location"] == f"/models/{canonical}"
     target = client.request(method, response.headers["location"], follow_redirects=False)
     assert target.status_code == 200
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize("suffix", ["", "/pricing"])
+def test_model_alias_does_not_redirect_to_a_missing_target(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, method: str, suffix: str,
+) -> None:
+    from trusted_router.routes import public
+
+    monkeypatch.delitem(public.MODELS, "xiaomimimo/mimo-v2-flash", raising=False)
+    response = client.request(
+        method, f"/models/xiaomi/mimo-v2-flash{suffix}", follow_redirects=False,
+    )
+    assert response.status_code == 404
+    assert "location" not in response.headers
 
 
 @pytest.mark.parametrize(

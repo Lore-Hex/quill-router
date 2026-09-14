@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for the Fireworks AI serverless models enabled on the TrustedRouter Fireworks account. Verified against https://api.fireworks.ai/inference/v1/models, Fireworks' first-party pricing page, and direct chat completions. Kimi K3 is a verified launch route served before the account model-list feed caught up. Fireworks uses full accounts/fireworks/models/... upstream IDs, so the enclave preserves upstream_id verbatim for this provider.",
   "provider": "fireworks",
   "source": "https://api.fireworks.ai/inference/v1/models",
-  "generated_at": "2026-09-10T17:53:52Z",
-  "model_count": 24,
+  "generated_at": "2026-09-14T20:00:58Z",
+  "model_count": 25,
   "models": [
     {
       "id": "moonshotai/kimi-k3",
@@ -586,12 +586,34 @@
       "id": "z-ai/glm-5.3-fast",
       "routable": true,
       "upstream_id": "accounts/fireworks/routers/glm-5p3-fast",
-      "pricing_source": "https://app.fireworks.ai/models/fireworks/glm-5p3",
+      "pricing_source": "https://docs.fireworks.ai/serverless/pricing.md",
       "input_token_price_per_m": 2100000,
       "output_token_price_per_m": 6600000,
       "cached_input_token_price_per_m": 390000,
       "context_length": 1048576,
       "created": 1787895551
+    },
+    {
+      "display_name": "Deepseek V4P1 Flash on Fireworks",
+      "title": "accounts/fireworks/models/deepseek-v4p1-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4p1-flash",
+      "upstream_id": "accounts/fireworks/models/deepseek-v4p1-flash",
+      "context_length": 1048576,
+      "created": 1789019014,
+      "input_token_price_per_m": 220000,
+      "output_token_price_per_m": 660000,
+      "cached_input_token_price_per_m": 7000
     }
   ],
   "pricing_source": "https://docs.fireworks.ai/serverless/pricing.md",

@@ -115,6 +115,7 @@ def test_wandb_flash_hold_survives_refresh_until_operator_lifts_it(
     monkeypatch.setenv("WANDB_API_KEY", "test-key")
     checked: list[str] = []
     flash_healthy = False
+    hold_reason = "operator-hold: fixture awaiting reviewed pricing"
 
     def probe(**kwargs: object) -> bool:
         checked.append(str(kwargs["model"]))
@@ -122,7 +123,12 @@ def test_wandb_flash_hold_survives_refresh_until_operator_lifts_it(
 
     monkeypatch.setattr(_direct_openai, "probe_openai_chat", probe)
     catalog = DirectOpenAIProvider(
-        replace(wandb.CATALOG.spec, catalog_loader=lambda _key: rows, price_loader=lambda: prices),
+        replace(
+            wandb.CATALOG.spec,
+            catalog_loader=lambda _key: rows,
+            price_loader=lambda: prices,
+            operator_hold_reasons={model_id: hold_reason},
+        ),
         manifest_path=tmp_path / "wandb.json",
     )
     for _ in range(2):
@@ -133,7 +139,7 @@ def test_wandb_flash_hold_survives_refresh_until_operator_lifts_it(
         row = by_id[model_id]
         assert row["upstream_id"] == native_id
         assert row["routable"] is False
-        assert row["routable_reason"] == wandb.CATALOG.spec.operator_hold_reasons[model_id]
+        assert row["routable_reason"] == hold_reason
         assert row["routable_reason"].startswith("operator-hold")
         assert "unresolved_since" not in row
         assert "input_token_price_per_m" not in row
@@ -215,14 +221,14 @@ def test_wandb_manifest_is_priced_and_preserves_exact_upstream_ids() -> None:
     assert raw["provider"] == wandb.SLUG
     assert raw["model_count"] >= 20
     rows = {row["id"]: row for row in raw["models"]}
-    held = rows.pop("z-ai/glm-5.3-flash")
-    assert held["routable"] is False
-    assert held["routable_reason"].startswith("operator-hold")
-    assert held["routable_reason"] == wandb.CATALOG.spec.operator_hold_reasons[held["id"]]
-    assert "unresolved_since" not in held
-    # Keyed discovery enriches the keyless held row without lifting its hold.
-    assert held.get("upstream_id") in {None, "zai-org/GLM-5.3-Flash"}
-    assert not any("price" in key for key in held)
+    flash = rows["z-ai/glm-5.3-flash"]
+    assert flash["upstream_id"] == "zai-org/GLM-5.3-Flash"
+    assert flash.get("routable") is not False
+    assert "routable_reason" not in flash
+    assert flash["input_modalities"] == ["text", "image"]
+    assert flash["context_length"] == 1_048_576
+    assert flash["cached_input_token_price_per_m"] > 0
+    assert flash["id"] not in wandb.CATALOG.spec.operator_hold_reasons
     assert all(row["upstream_id"] for row in rows.values())
     assert all(row["input_token_price_per_m"] > 0 for row in rows.values())
     assert all(row["output_token_price_per_m"] > 0 for row in rows.values())

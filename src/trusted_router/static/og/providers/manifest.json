@@ -73,10 +73,10 @@
   },
   "baseten": {
     "card_version": 2,
-    "model_count": 16,
+    "model_count": 17,
     "name": "Baseten",
     "privacy": "Zero retention",
-    "route_count": 31,
+    "route_count": 33,
     "route_mode": "Prepaid + BYOK",
     "slug": "baseten"
   },
@@ -181,10 +181,10 @@
   },
   "deepinfra": {
     "card_version": 2,
-    "model_count": 100,
+    "model_count": 101,
     "name": "DeepInfra",
     "privacy": "Policy documented",
-    "route_count": 194,
+    "route_count": 196,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepinfra"
   },
@@ -208,10 +208,10 @@
   },
   "engy": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 8,
     "name": "Engy",
     "privacy": "Zero retention",
-    "route_count": 7,
+    "route_count": 8,
     "route_mode": "Prepaid",
     "slug": "engy"
   },
@@ -235,10 +235,10 @@
   },
   "fireworks": {
     "card_version": 2,
-    "model_count": 18,
+    "model_count": 19,
     "name": "Fireworks AI",
     "privacy": "Policy documented",
-    "route_count": 35,
+    "route_count": 37,
     "route_mode": "Prepaid + BYOK",
     "slug": "fireworks"
   },
@@ -253,19 +253,19 @@
   },
   "gmi": {
     "card_version": 2,
-    "model_count": 73,
+    "model_count": 75,
     "name": "GMI Cloud",
     "privacy": "Policy documented",
-    "route_count": 79,
+    "route_count": 81,
     "route_mode": "Prepaid + BYOK",
     "slug": "gmi"
   },
   "google-ai-studio": {
     "card_version": 2,
-    "model_count": 14,
+    "model_count": 13,
     "name": "Google AI Studio",
     "privacy": "Policy documented",
-    "route_count": 26,
+    "route_count": 24,
     "route_mode": "Prepaid + BYOK",
     "slug": "google-ai-studio"
   },
@@ -397,10 +397,10 @@
   },
   "mancer": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 6,
     "name": "Mancer",
     "privacy": "Policy documented",
-    "route_count": 7,
+    "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "mancer"
   },
@@ -460,10 +460,10 @@
   },
   "nebius": {
     "card_version": 2,
-    "model_count": 20,
+    "model_count": 21,
     "name": "Nebius Token Factory",
     "privacy": "Zero retention",
-    "route_count": 38,
+    "route_count": 40,
     "route_mode": "Prepaid + BYOK",
     "slug": "nebius"
   },
@@ -487,10 +487,10 @@
   },
   "novita": {
     "card_version": 2,
-    "model_count": 121,
+    "model_count": 98,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 224,
+    "route_count": 191,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
@@ -505,10 +505,10 @@
   },
   "nvidia-nim": {
     "card_version": 2,
-    "model_count": 10,
+    "model_count": 13,
     "name": "NVIDIA NIM",
     "privacy": "Policy documented",
-    "route_count": 10,
+    "route_count": 13,
     "route_mode": "Prepaid",
     "slug": "nvidia-nim"
   },
@@ -712,10 +712,10 @@
   },
   "telnyx": {
     "card_version": 2,
-    "model_count": 16,
+    "model_count": 17,
     "name": "Telnyx",
     "privacy": "Policy documented",
-    "route_count": 32,
+    "route_count": 34,
     "route_mode": "Prepaid + BYOK",
     "slug": "telnyx"
   },
@@ -802,19 +802,19 @@
   },
   "wafer": {
     "card_version": 2,
-    "model_count": 5,
+    "model_count": 7,
     "name": "Wafer",
     "privacy": "Policy documented",
-    "route_count": 10,
+    "route_count": 14,
     "route_mode": "Prepaid + BYOK",
     "slug": "wafer"
   },
   "wandb": {
     "card_version": 2,
-    "model_count": 25,
+    "model_count": 26,
     "name": "Weights & Biases",
     "privacy": "Policy documented",
-    "route_count": 25,
+    "route_count": 26,
     "route_mode": "Prepaid",
     "slug": "wandb"
   },
