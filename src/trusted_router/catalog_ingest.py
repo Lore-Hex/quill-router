@@ -268,7 +268,12 @@ def _authoritative_provider_model_ids(provider_slug: str) -> frozenset[str]:
     routes without accidentally disabling a separately verified static embedding.
     """
     allowed = {
-        str(spec["id"]) for spec in _EMBEDDING_SPECS if spec.get("provider") == provider_slug
+        str(spec["id"])
+        for spec in _EMBEDDING_SPECS
+        if spec.get("provider") == provider_slug
+        and not provider_model_retired(
+            provider_slug, str(spec["id"]), str(spec.get("upstream_id") or spec["id"]),
+        )
     }
     path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
     try:
