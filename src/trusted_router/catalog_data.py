@@ -151,6 +151,7 @@ PROVIDER_JURISDICTION_UNVERIFIED: dict[str, str] = {
             "perceptron",
             "perplexity",
             "reka",
+            "redpill",
             "riverflow",
             "poolside",
             "sail-research",
@@ -1248,6 +1249,26 @@ PROVIDERS: dict[str, Provider] = {
         # https://wandb.ai/site/terms/
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "redpill": Provider(
+        slug="redpill",
+        name="RedPill",
+        supports_chat=True,
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=True,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "RedPill aggregates confidential and standard upstream models. "
+            "TrustedRouter currently uses its HTTPS API, not a verified ACI "
+            "transport. Catalog TEE labels alone do not establish end-to-end "
+            "confidentiality. These routes remain Standard and are excluded "
+            "from the ZDR and e2e filters pending verified transport and "
+            "enforced downstream policy."
+        ),
+        provider_policy_url="https://docs.redpill.ai/confidential-ai/trust-boundary",
+    ),
     "confidential-ai": Provider(
         slug="confidential-ai",
         name="Confidential AI",
@@ -2082,6 +2103,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "wandb",
         "nscale",
         "confidential-ai",
+        "redpill",
         "scaledown",
         "databricks",
         "zero-g",

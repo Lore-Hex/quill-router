@@ -10,11 +10,11 @@
   },
   "akashml": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 0,
     "name": "AkashML",
     "privacy": "Policy documented",
-    "route_count": 7,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "akashml"
   },
   "alibaba": {
@@ -37,11 +37,11 @@
   },
   "arcee": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 0,
     "name": "Arcee AI",
     "privacy": "Policy documented",
-    "route_count": 7,
-    "route_mode": "Prepaid",
+    "route_count": 0,
+    "route_mode": "Catalog profile",
     "slug": "arcee"
   },
   "atlas-cloud": {
@@ -145,10 +145,10 @@
   },
   "crusoe": {
     "card_version": 2,
-    "model_count": 15,
+    "model_count": 10,
     "name": "Crusoe",
     "privacy": "Policy documented",
-    "route_count": 30,
+    "route_count": 20,
     "route_mode": "Prepaid + BYOK",
     "slug": "crusoe"
   },
@@ -190,10 +190,10 @@
   },
   "deepseek": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 6,
     "name": "DeepSeek",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 11,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepseek"
   },
@@ -601,6 +601,15 @@
     "route_count": 8,
     "route_mode": "Prepaid",
     "slug": "recraft"
+  },
+  "redpill": {
+    "card_version": 2,
+    "model_count": 56,
+    "name": "RedPill",
+    "privacy": "Policy documented",
+    "route_count": 56,
+    "route_mode": "Prepaid",
+    "slug": "redpill"
   },
   "reka": {
     "card_version": 2,

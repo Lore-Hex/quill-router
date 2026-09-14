@@ -584,15 +584,20 @@ service re-reads on next deploy.
 
 Phala has TWO key tiers behind the same `api.redpill.ai` host:
 - **Upstream pass-through tier**: model ids like `openai/gpt-5.5`,
-  `anthropic/claude-haiku-4.5`. Needs a "redpill" key — TR doesn't have
-  one.
+  `anthropic/claude-haiku-4.5`. The separate `redpill` integration uses
+  `REDPILL_API_KEY` / `trustedrouter-redpill-api-key`, never a Phala key.
 - **GPU-TEE-attested confidential AI tier**: model ids like
   `phala/gpt-oss-120b`, `phala/deepseek-v3.2`. Needs a confidential
   key from `cloud.phala.com` dashboard.
 
-TR uses tier 2. The key lives in:
+The `phala` integration uses tier 2. Its key lives in:
 - `~/.quill_cloud_keys.private` as `PHALA_CONFIDENTIAL_API_KEY`
 - GCP Secret Manager as `trustedrouter-phala-confidential-api-key`
+
+Do not alias the provider IDs or substitute these credentials. RedPill's
+catalog includes ordinary upstreams; its TEE flags do not confer Phala's
+confidential routing policy. See the
+[RedPill verification assessment](design/redpill-provider-verification.md).
 
 If Phala 401s after a re-enable:
 1. Run a direct probe with the keyfile value against `api.redpill.ai/v1/chat/completions`

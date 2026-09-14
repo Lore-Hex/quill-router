@@ -58,6 +58,7 @@ from scripts.pricing.providers import (
     nvidia_nim,
     perplexity,
     recraft,
+    redpill,
     reka,
     relace,
     sail_research,
@@ -503,6 +504,7 @@ _DIRECT_OPENAI_DISCOVERY_MODULES = (
 # an intentionally skipped discovery check.
 _CI_DIRECT_OPENAI_DISCOVERY_MODULES = (
     confidential_ai,
+    redpill,
     perplexity,
     scaleway,
     featherless,
