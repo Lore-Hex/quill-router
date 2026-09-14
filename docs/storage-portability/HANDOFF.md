@@ -122,8 +122,8 @@ definitions AND the App Runner service. Updating only the Fargate pair leaves
 the probes pinned to the old measurement and the status page red, with the
 config looking correct everywhere you think to check.
 
-`scripts/deploy/aws_eu_control_plane.sh` deploys to **App Runner** and is stale
-with respect to the Fargate API plane. Do not assume it is the deploy path.
+`scripts/deploy/aws_eu_control_plane.sh` is the legacy **App Runner** provisioner.
+Do not use it to update the current Fargate fleet.
 
 **2026-09-14 live check:** `tr-eu` no longer exists in eu-west-3; both
 `tr-cp-euw1` and `tr-cp-euw3` are serving on ECS. The bake gate now verifies
@@ -138,6 +138,17 @@ GCP's serving revision now contains a digest-pinned image. Its `TR_RELEASE`
 must be read from that same traffic-carrying revision, not from the service
 template. Missing, malformed, or conflicting release evidence fails closed.
 These discovery fixes do not change the 24-hour promotion gate.
+
+**Current AWS code rollout:** `scripts/deploy/aws_ecs_control_plane.sh`, also
+used by `deploy-aws-control-plane.yml`. It requires successful CI for the exact
+commit and the shared bake/mutex gates; mirrors the CI-built GCP image by
+unchanged digest into native ECR; and updates eu-west-1 then eu-west-3. Runtime
+configuration, native secrets, roles, and attestation pins are cloned unchanged.
+The existing 100% minimum healthy capacity and automatic rollback must already
+be enabled. Each region must serve the exact new image/release with healthy
+targets before the next starts; a failed region is restored to its previous
+task definition and verified before exit. No IAM, DNS, EventBridge, or new
+service provisioning is part of this release path.
 
 ### ClickHouse cluster
 

@@ -142,6 +142,9 @@ def main() -> int:
             release = gcp_release(json.load(sys.stdin))
         elif sys.argv[1:] == ["aws"]:
             release = aws_release()
+        elif (len(sys.argv) == 4 and sys.argv[1] == "aws-region"
+              and tuple(sys.argv[2:]) in AWS_TARGETS):
+            release = ecs_region_release(sys.argv[2], sys.argv[3])
         else:
             return 2
     except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError):
