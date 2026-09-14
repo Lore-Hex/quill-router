@@ -332,18 +332,6 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
     ("provider", "min_model_count", "sample_ids"),
     [
         (
-            "novita",
-            100,
-            [
-                "moonshotai/kimi-k2.6",
-                "deepseek/deepseek-ocr-2",
-                "tencent/hy3",
-                "xiaomimimo/mimo-v2.5-pro",
-                "zai-org/glm-5.1",
-                "Sao10K/L3-8B-Stheno-v3.2",
-            ],
-        ),
-        (
             "nebius",
             18,
             [
@@ -416,6 +404,46 @@ def test_native_provider_catalog_preserves_live_model_ids(
         assert f"{model_id}@{provider}/byok" in MODEL_ENDPOINTS
         assert MODEL_ENDPOINTS[f"{model_id}@{provider}/prepaid"].upstream_id
         assert MODEL_ENDPOINTS[f"{model_id}@{provider}/byok"].upstream_id
+
+
+def test_novita_native_catalog_preserves_every_eligible_manifest_row() -> None:
+    from trusted_router.catalog_ingest import (
+        _PROVIDER_MODELS_DIR,
+        _is_provider_deprecated_model,
+        _supplemental_provider_models_and_endpoints,
+    )
+
+    raw = json.loads((_PROVIDER_MODELS_DIR / "novita.json").read_text(encoding="utf-8"))
+    expected = {
+        row["id"]: row.get("upstream_id") or row["id"]
+        for row in raw["models"]
+        if row.get("routable") is not False
+        and row.get("model_type") in (None, "chat")
+        and "chat/completions" in row.get("endpoints", [])
+        and row.get("input_token_price_per_m", 0) > 0
+        and row.get("output_token_price_per_m", 0) > 0
+        and not _is_provider_deprecated_model(
+            "novita", row["id"], row.get("upstream_id") or row["id"],
+        )
+    }
+    # Test the complete priced native feed before the separate account/health
+    # filters. A fixed count rejects legitimate retirements yet misses dropped
+    # routes whenever enough other models remain.
+    _, endpoints = _supplemental_provider_models_and_endpoints()
+    assert expected
+    for usage in ("Credits", "BYOK"):
+        actual = {
+            endpoint.model_id: endpoint.upstream_id
+            for endpoint in endpoints.values()
+            if endpoint.provider == "novita" and endpoint.usage_type == usage
+        }
+        assert actual == expected
+    for model_id in (
+        "moonshotai/kimi-k2.6", "deepseek/deepseek-ocr-2", "tencent/hy3",
+        "xiaomimimo/mimo-v2.5-pro", "zai-org/glm-5.1", "Sao10K/L3-8B-Stheno-v3.2",
+    ):
+        for usage in ("prepaid", "byok"):
+            assert MODEL_ENDPOINTS[f"{model_id}@novita/{usage}"].upstream_id == expected[model_id]
 
 
 def test_cerebras_native_catalog_preserves_every_live_model_id() -> None:

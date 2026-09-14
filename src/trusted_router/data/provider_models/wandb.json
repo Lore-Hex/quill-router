@@ -348,9 +348,9 @@
       "upstream_id": "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
       "context_length": 262144,
       "routable": true,
-      "input_token_price_per_m": 750000,
-      "output_token_price_per_m": 2750000,
-      "cached_input_token_price_per_m": 150000
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 2150000,
+      "cached_input_token_price_per_m": 100000
     },
     {
       "display_name": "NVIDIA Nemotron 3.5 Lightning",
@@ -370,9 +370,9 @@
       "upstream_id": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B",
       "context_length": 262144,
       "routable": true,
-      "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 250000,
-      "cached_input_token_price_per_m": 50000
+      "input_token_price_per_m": 70000,
+      "output_token_price_per_m": 200000,
+      "cached_input_token_price_per_m": 40000
     },
     {
       "display_name": "OpenAI GPT OSS 120B",
@@ -677,15 +677,17 @@
       ],
       "status": 1,
       "id": "z-ai/glm-5.3-flash",
-      "routable": false,
-      "routable_reason": "operator-hold: W&B has not published a GLM 5.3 Flash price (docs.wandb.ai/inference/models and wandb.ai/site/pricing/inference/ checked 2026-09-06); remove this hold when the price is published",
+      "routable": true,
       "upstream_id": "zai-org/GLM-5.3-Flash",
-      "context_length": 1048576
+      "context_length": 1048576,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 50000
     }
   ],
   "source": "https://api.inference.wandb.ai/v1/models",
   "pricing_source": "https://wandb.ai/site/pricing/inference/",
-  "generated_at": "2026-09-10T17:53:52Z",
+  "generated_at": "2026-09-14T20:09:39Z",
   "price_scale": "microdollars_per_million",
   "model_count": 31
 }

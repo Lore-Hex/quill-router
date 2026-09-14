@@ -317,6 +317,10 @@ def test_tinfoil_glm53_routes_use_live_prices_and_capabilities() -> None:
     glm_model = MODELS["z-ai/glm-5.3"]
     flash_model = MODELS["z-ai/glm-5.3-flash"]
     provider = PROVIDERS["tinfoil"]
+    rows = {
+        row["id"]: row
+        for row in json.loads(tinfoil.MANIFEST_PATH.read_text(encoding="utf-8"))["models"]
+    }
 
     assert glm.upstream_id == "glm-5-3"
     assert glm.prompt_price_microdollars_per_million_tokens == 1_899_000
@@ -327,9 +331,11 @@ def test_tinfoil_glm53_routes_use_live_prices_and_capabilities() -> None:
     assert flash.completion_price_microdollars_per_million_tokens == 1_318_750
     assert flash.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 105_500
     assert glm_model.context_length == 1_048_576
-    assert glm_model.input_modalities == ("text",)
+    # Global model modalities are a union across providers, not Tinfoil's
+    # contract: Baseten's GLM 5.3 also accepts images (live-verified 2026-09-14).
+    assert rows[glm.model_id]["input_modalities"] == ["text"]
     assert flash_model.context_length == 1_048_576
-    assert flash_model.input_modalities == ("text", "image")
+    assert rows[flash.model_id]["input_modalities"] == ["text", "image"]
     assert provider.provider_zero_data_retention is True
     assert provider.provider_confidential_compute is True
     assert provider.provider_e2ee is True

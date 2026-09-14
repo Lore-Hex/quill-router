@@ -27,7 +27,7 @@ MANIFEST_PATH = (
 )
 MANIFEST_STALE_FALLBACK = True
 # The live API can lead the model docs and pricing page. Preserve this
-# reviewed release through the price join so the operator hold can keep it dark.
+# reviewed release through the price join so missing prices keep it dark.
 _PRESERVE_UNPRICED_MODEL_IDS = frozenset({"z-ai/glm-5.3-flash"})
 _PRICE_LABEL_MODEL_IDS = {"Z.AI GLM 5.3 Flash": "z-ai/glm-5.3-flash"}
 
@@ -208,13 +208,6 @@ CATALOG = DirectOpenAIProvider(
         api_key_env="WANDB_API_KEY",
         explicit_model_map={},
         preserve_unpriced_model_ids=_PRESERVE_UNPRICED_MODEL_IDS,
-        operator_hold_reasons={
-            "z-ai/glm-5.3-flash": (
-                "operator-hold: W&B has not published a GLM 5.3 Flash price "
-                "(docs.wandb.ai/inference/models and wandb.ai/site/pricing/inference/ "
-                "checked 2026-09-06); remove this hold when the price is published"
-            ),
-        },
         pricing_source_url=PRICING_URL,
         price_loader=_load_prices,
         normalize_rows=_normalize_rows,

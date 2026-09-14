@@ -168,7 +168,7 @@
       "status": 1,
       "id": "qwen/qwen3.8-27b",
       "upstream_id": "qwen3.8-27b",
-      "context_length": 1000000,
+      "context_length": 1001536,
       "routable": true,
       "supported_features": [
         "chat",
@@ -207,8 +207,37 @@
       "input_token_price_per_m": 980000,
       "output_token_price_per_m": 3080000,
       "cached_input_token_price_per_m": 180000
+    },
+    {
+      "display_name": "deepseek-v4.1-flash",
+      "title": "deepseek-v4.1-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash",
+      "upstream_id": "deepseek-v4.1-flash",
+      "context_length": 327680,
+      "routable": true,
+      "supported_features": [
+        "chat",
+        "completion",
+        "reasoning",
+        "prompt_caching"
+      ],
+      "input_token_price_per_m": 40000,
+      "output_token_price_per_m": 80000,
+      "cached_input_token_price_per_m": 8000
     }
   ],
-  "generated_at": "2026-09-10T17:53:52Z",
-  "model_count": 7
+  "generated_at": "2026-09-14T20:00:58Z",
+  "model_count": 8
 }
