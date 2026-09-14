@@ -397,11 +397,12 @@ ROLLOUT_REGISTRY: dict[str, CloudRollout] = {
     ),
     "aws": CloudRollout(
         cloud="aws",
-        control_plane_script="scripts/deploy/aws_eu_control_plane.sh",
+        control_plane_script="scripts/deploy/aws_ecs_control_plane.sh",
         drain_install_command="bash scripts/deploy/aws_eu_clickhouse_drain_install.sh",
         deploy_scripts=(
             DeployScript("scripts/deploy/aws_eu_clickhouse.sh", PROVEN_BY_EXECUTION),
             DeployScript("scripts/deploy/aws_eu_control_plane.sh", PROVEN_BY_EXECUTION),
+            DeployScript("scripts/deploy/aws_ecs_control_plane.sh", PROVEN_BY_EXECUTION),
             DeployScript("scripts/deploy/aws_eu_north_clickhouse.sh", PROVEN_BY_EXECUTION),
             DeployScript(
                 "scripts/deploy/aws_eu_clickhouse_drain_install.sh",

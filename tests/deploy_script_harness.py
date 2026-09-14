@@ -1873,6 +1873,19 @@ class DeployScriptHarness:
         fixture = SCRIPT_FIXTURES.get(script, ScriptFixture())
         self._runs += 1
         run_dir = self.root / f"run-{self._runs:03d}"
+        if script == "scripts/deploy/aws_ecs_control_plane.sh":
+            # Reuse the regional rollback fixture. Its cloud/bake prerequisites
+            # are simulated; the real shared completeness library and caller
+            # execute against a recording verifier returning the chosen code.
+            from .test_aws_ecs_release import run_ecs_fixture
+
+            if args or omit_env:
+                raise ValueError("ECS fixture does not accept arguments or omitted environment")
+            result, calls = run_ecs_fixture(
+                run_dir, source_root=self.mirror, verifier_rc=verifier_rc,
+                extra_env=extra_env, timeout=timeout,
+            )
+            return HarnessRun(result.returncode, result.stdout, result.stderr, calls, {})
         home = run_dir / "home"
         tmp = run_dir / "tmp"
         home.mkdir(parents=True)

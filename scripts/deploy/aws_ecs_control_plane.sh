@@ -16,6 +16,9 @@ log() { printf '%s\n' "$*" >&2; }
 [ -z "$(git status --porcelain)" ] || die "refusing dirty checkout"
 [ "${TR_CLOUD_BAKE_AWS_BACKEND:-ecs}" = ecs ] || die "this deployment requires the ECS fleet gate"
 RELEASE="$(git rev-parse HEAD)"
+# Required runtime configuration, checked against the cloned task by the
+# builder below. This cannot turn an already-disabled outbox on silently.
+TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true
 # GitHub's shallow build checkout uses seven-character tags. Resolve it
 # unambiguously in the full checkout before trusting the registry lookup.
 IMAGE_TAG="${RELEASE:0:7}"
@@ -105,7 +108,7 @@ PY
     --region "$region" --output json > "${WORK}/previous.json"
   image="330422590279.dkr.ecr.${region}.amazonaws.com/trusted-router@${SOURCE_DIGEST}"
   python3 "${SCRIPT_DIR}/prepare_ecs_release.py" "${WORK}/previous.json" "$image" \
-    "$RELEASE" "${WORK}/next.json"
+    "$RELEASE" "${WORK}/next.json" "$TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED"
   next="$(aws ecs register-task-definition --cli-input-json "file://${WORK}/next.json" \
     --region "$region" --query taskDefinition.taskDefinitionArn --output text)"
   [[ "$next" = arn:aws:ecs:* ]] || die "no registered task definition"

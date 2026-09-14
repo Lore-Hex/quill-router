@@ -129,14 +129,16 @@ else: sys.exit(2)
 '''
 
 
-@pytest.mark.parametrize("failure", ["", "gate", "eu-west-1", "eu-west-3"])
-def test_ecs_rollout_is_gated_sequential_and_rolls_back_failed_region(tmp_path: Path, failure: str) -> None:
+def run_ecs_fixture(
+    tmp_path: Path, *, failure: str = "", verifier_rc: int = 0,
+    source_root: Path = ROOT, extra_env: dict | None = None, timeout: int = 120,
+) -> tuple[subprocess.CompletedProcess, list[list[str]]]:
     scripts = tmp_path / "scripts/deploy"
     scripts.mkdir(parents=True)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for name in ("aws_ecs_control_plane.sh", "prepare_ecs_release.py"):
-        shutil.copy2(ROOT / "scripts/deploy" / name, scripts / name)
+    for name in ("aws_ecs_control_plane.sh", "prepare_ecs_release.py", "cloud_complete_gate.sh"):
+        shutil.copy2(source_root / "scripts/deploy" / name, scripts / name)
     (scripts / "deploy_mutex.sh").write_text(
         'deploy_mutex_acquire() { DEPLOY_MUTEX_SCOPE_OWNS_LOCK=1; }; '
         'deploy_mutex_release() { echo released > "$ECS_UNLOCK"; }\n'
@@ -144,7 +146,12 @@ def test_ecs_rollout_is_gated_sequential_and_rolls_back_failed_region(tmp_path: 
     (scripts / "cloud_bake_gate.sh").write_text(
         'cloud_bake_gate() { [ "${ECS_FAIL_REGION:-}" != gate ]; }\n'
     )
-    (scripts / "cloud_complete_gate.sh").write_text('require_cloud_complete() { return 0; }\n')
+    # Keep the real shared gate library, so its status and diagnostic wording
+    # are exercised by the common completeness harness too.
+    (scripts / "verify_cloud_complete.sh").write_text(
+        'printf \'["verify_cloud_complete.sh","%s"]\\n\' "$1" >> "$ECS_CALLS"\n'
+        'exit "$HARNESS_VERIFIER_RC"\n'
+    )
     (scripts / "cloud_serving_release.py").write_text(
         'import json, os, sys\n'
         'state=json.load(open(os.environ["ECS_STATE"]))\n'
@@ -166,12 +173,19 @@ def test_ecs_rollout_is_gated_sequential_and_rolls_back_failed_region(tmp_path: 
         [shutil.which("bash") or "/bin/bash", str(scripts / "aws_ecs_control_plane.sh")],
         env={**env, "PATH": f"{bin_dir}:{env['PATH']}", "ECS_STATE": str(state),
              "ECS_CALLS": str(calls), "ECS_DEFINITION": str(definition),
-             "ECS_UNLOCK": str(unlock), "ECS_FAIL_REGION": failure},
-        capture_output=True, text=True, check=False,
+             "ECS_UNLOCK": str(unlock), "ECS_FAIL_REGION": failure,
+             "HARNESS_VERIFIER_RC": str(verifier_rc), **(extra_env or {})},
+        capture_output=True, text=True, check=False, timeout=timeout,
     )
-    assert (result.returncode == 0) == (failure == ""), result.stderr
-    assert unlock.read_text().strip() == "released"
     recorded = [json.loads(line) for line in calls.read_text().splitlines()]
+    return result, recorded
+
+
+@pytest.mark.parametrize("failure", ["", "gate", "eu-west-1", "eu-west-3"])
+def test_ecs_rollout_is_gated_sequential_and_rolls_back_failed_region(tmp_path: Path, failure: str) -> None:
+    result, recorded = run_ecs_fixture(tmp_path, failure=failure)
+    assert (result.returncode == 0) == (failure == ""), result.stderr
+    assert (tmp_path / "unlock").read_text().strip() == "released"
     updates = [c for c in recorded if c[:3] == ["aws", "ecs", "update-service"]]
     regions = [c[c.index("--region") + 1] for c in updates]
     expected = {"": ["eu-west-1", "eu-west-3"], "gate": [],

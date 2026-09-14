@@ -150,6 +150,13 @@ targets before the next starts; a failed region is restored to its previous
 task definition and verified before exit. No IAM, DNS, EventBridge, or new
 service provisioning is part of this release path.
 
+The operator/deployment role must be able to pass the existing `tr-eu-app`
+and `tr-cp-exec` roles to ECS. The GitHub role currently covers `tr-eu-*` only;
+its additional `iam:PassRole` grant for the exact `tr-cp-exec` ARN should be
+restricted with `iam:PassedToService=ecs-tasks.amazonaws.com`. Do not apply
+unrelated Terraform drift to obtain that permission. An already-authorized
+operator can run the same script locally.
+
 ### ClickHouse cluster
 
 * `tr-clickhouse-1/2/3` run in `us-central1-a/b/c`, each on `e2-standard-4`
