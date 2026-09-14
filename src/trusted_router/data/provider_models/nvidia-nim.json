@@ -2,7 +2,7 @@
   "provider": "nvidia-nim",
   "source": "https://integrate.api.nvidia.com/v1/models",
   "pricing_source": "https://docs.api.nvidia.com/nim/docs/run-anywhere",
-  "generated_at": "2026-09-14T20:00:58Z",
+  "generated_at": "2026-09-14T21:25:30Z",
   "model_count": 121,
   "models": [
     {
@@ -2095,10 +2095,11 @@
       "status": 1,
       "id": "deepseek/deepseek-v4-pro-0813",
       "upstream_id": "deepseek-ai/deepseek-v4-pro-0813",
-      "routable": true,
+      "routable": false,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
-      "missing_since": "2026-09-14"
+      "missing_since": "2026-09-14",
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "nvidia/nemotron-parse-2.0",
