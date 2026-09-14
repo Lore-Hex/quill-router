@@ -247,7 +247,7 @@ if table_exists tr_trust_event; then log "tr_trust_event exists, skip"; else
     unrecovered_micro INT64,
     provider_ordering_watermark STRING(255),
     CONSTRAINT tr_trust_event_kind CHECK (kind IN ('payment','refund','dispute','abuse','grant')),
-    CONSTRAINT tr_trust_event_provider CHECK (provider IN ('stripe','paypal','adyen','x402','operator','system')),
+    CONSTRAINT tr_trust_event_provider CHECK (provider IN ('stripe','paypal','adyen','x402','lightning','operator','system')),
     CONSTRAINT tr_trust_event_lifecycle CHECK (lifecycle_status IS NULL OR lifecycle_status IN ('pending','succeeded','failed','reversed','won','lost','closed','terminal_by_horizon')),
     CONSTRAINT tr_trust_event_debit CHECK (debit_status IS NULL OR debit_status IN ('debited','partial','unrecovered')),
   ) PRIMARY KEY (workspace_id, event_id)"

@@ -112,7 +112,9 @@ local database; never relabel old BTC rows as USD.
    including local/test mode. The bridge uses the existing USD credit operation
    and `lightning`/`invoice` payment provenance, not a grant or fake Stripe fact.
    Run `scripts/lightning/postgres_provenance.sql` before activation on an
-   existing Postgres deployment. Spanner has no provider-enum DDL change.
+   existing Postgres deployment, or the one-time
+   `scripts/lightning/spanner_provenance.sql` upgrade on existing native Spanner.
+   Both migrations widen only the provider constraint and preserve money rows.
    Run a paid-key inference smoke before enabling mainnet deposits.
 4. Add readiness gates for node sync, wallet availability, receiving capacity,
    DB health and verified credit delivery before removing the mainnet guard.
