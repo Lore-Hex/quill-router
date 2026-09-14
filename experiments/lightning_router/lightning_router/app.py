@@ -2,7 +2,6 @@ import hashlib
 import logging
 import os
 import re
-import ssl
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -17,11 +16,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .credentials import Credentials
-from .lnd import Lnd
 from .rates import Rates
 from .service import Funding
-from .store import Store
 
 STATIC = Path(__file__).resolve().parent.parent / "web"
 logger = logging.getLogger("lightning_router")
@@ -74,10 +70,10 @@ class Catalog:
 def create_app(service: Funding | None = None, *, rates: Rates | None = None,
                catalog: Catalog | None = None, network: str = "mainnet",
                start_worker: bool = True) -> FastAPI:
-    # Mainnet funding is intentionally not launchable until the attested gateway
-    # can enforce this BTC ledger. Never take real deposits for unusable keys.
+    # Mainnet funding needs a live USD credit backend and funded Lightning
+    # receiving capacity. Inference continues to use the existing USD ledger.
     if service is not None and network != "regtest":
-        raise RuntimeError("Mainnet launch blocked: BTC inference billing is not integrated")
+        raise RuntimeError("Mainnet launch blocked: Lightning settlement and USD credit delivery are not verified")
     client = httpx.Client(timeout=8, follow_redirects=False, trust_env=False)
     rates = rates or Rates(client)
     catalog = catalog or Catalog(client)
@@ -191,19 +187,10 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
         if service is None:
             return unavailable()
         try:
-            _, hashed = key(request)
-            balance: dict[str, Any] = service.store.balance(hashed)
-            balance["active_invoice"] = service.store.active(hashed)
+            raw, _ = key(request)
+            balance = service.account(raw)
         except (ValueError, KeyError):
             return JSONResponse({"error": "invalid_api_key"}, status_code=401)
-        assert rates is not None
-        # Rate outages must not hide a customer's exact BTC balance.
-        try:
-            rate = rates.current()
-            balance["usd_estimate"] = rate.usd_estimate(int(balance["balance_msat"]))
-            balance["rate_as_of"] = rate.as_of
-        except Exception:
-            balance["usd_estimate"] = None
         return balance
 
     @app.post("/api/invoices")
@@ -235,7 +222,10 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
         if service is None:
             return unavailable()
         try:
-            _, hashed = key(request)
+            raw, hashed = key(request)
+            # Revalidate revocation at the authoritative key store, not only
+            # against the invoice's historical local key fingerprint.
+            service.account(raw)
             row = service.store.invoice(invoice_id, hashed)
         except (ValueError, KeyError):
             return JSONResponse({"error": "invoice_not_found"}, status_code=404)
@@ -256,18 +246,4 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
 def from_environment() -> FastAPI:
     if os.environ.get("LR_PAYMENTS_ENABLED") != "true":
         return create_app()
-    network = os.environ.get("LR_NETWORK", "mainnet")
-    if network != "regtest":
-        raise RuntimeError("Mainnet payments remain blocked pending BTC inference integration")
-    store = Store(os.environ["LR_DATABASE_URL"])
-    credentials = Credentials(bytes.fromhex(Path(os.environ["LR_SECRET_FILE"]).read_text().strip()))
-    cert = ssl.create_default_context(cafile=os.environ["LR_LND_TLS_CERT"])
-    macaroon = Path(os.environ["LR_LND_INVOICE_MACAROON"]).read_bytes().hex()
-    base_url = os.environ["LR_LND_URL"]
-    if not base_url.startswith("https://"):
-        raise ValueError("LND TLS verification is mandatory")
-    lnd = Lnd(httpx.Client(base_url=base_url, verify=cert, timeout=8, trust_env=False,
-                          headers={"Grpc-Metadata-macaroon": macaroon}), network=network)
-    rates = Rates(httpx.Client(timeout=8, follow_redirects=False, trust_env=False))
-    service = Funding(store, credentials, lnd, rates)
-    return create_app(service, rates=rates, network=network)
+    raise RuntimeError("Payments remain blocked pending a verified TrustedRouter USD credit backend and Lightning readiness")

@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
@@ -16,6 +17,7 @@ from sqlalchemy import (
     create_engine,
     event,
     insert,
+    or_,
     select,
     update,
 )
@@ -23,14 +25,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Connection, Engine
 
-from .money import MAX_MSATS, btc, msats
+from .money import MAX_MICRODOLLARS, MAX_MSATS, msats
+from .rates import Rate
 
 metadata = MetaData()
 accounts = Table(
     "lr_accounts", metadata,
     Column("key_hash", String(64), primary_key=True),
-    Column("balance_msat", BigInteger, nullable=False, default=0),
-    CheckConstraint(f"balance_msat >= 0 AND balance_msat <= {MAX_MSATS}"),
+    Column("credit_account_id", String(128), nullable=False),
 )
 invoices = Table(
     "lr_invoices", metadata,
@@ -47,10 +49,13 @@ invoices = Table(
     Column("usd_cents", BigInteger, nullable=False),
     Column("usd_per_btc", String(40), nullable=False),
     Column("settle_index", BigInteger, nullable=True, unique=True),
+    Column("credit_microdollars", BigInteger, nullable=False, default=0),
+    Column("credited_at", BigInteger, nullable=True),
     Column("last_checked", BigInteger, nullable=False, default=0),
     UniqueConstraint("key_hash", "request_id"),
     CheckConstraint("state IN ('OPEN', 'ACCEPTED', 'SETTLED', 'CANCELED')"),
     CheckConstraint(f"amount_msat >= 0 AND amount_msat <= {MAX_MSATS}"),
+    CheckConstraint(f"credit_microdollars >= 0 AND credit_microdollars <= {MAX_MICRODOLLARS}"),
 )
 Index("lr_invoice_reconcile", invoices.c.state, invoices.c.last_checked, invoices.c.id)
 deposits = Table(
@@ -58,8 +63,11 @@ deposits = Table(
     Column("payment_hash", String(64), primary_key=True),
     Column("key_hash", String(64), ForeignKey("lr_accounts.key_hash"), nullable=False),
     Column("amount_msat", BigInteger, nullable=False),
+    Column("credit_microdollars", BigInteger, nullable=False),
+    Column("usd_per_btc", String(40), nullable=False),
     Column("settled_at", BigInteger, nullable=False),
     CheckConstraint(f"amount_msat > 0 AND amount_msat <= {MAX_MSATS}"),
+    CheckConstraint(f"credit_microdollars > 0 AND credit_microdollars <= {MAX_MICRODOLLARS}"),
 )
 limits = Table(
     "lr_rate_limits", metadata,
@@ -91,11 +99,9 @@ class Store:
         with self.engine.begin() as conn:
             yield conn
 
-    def _account(self, conn: Connection, key_hash: str, *, create: bool) -> Any:
-        # PostgreSQL locks serialize invoice creation and balance updates per key.
+    def _account(self, conn: Connection, key_hash: str) -> Any:
+        # PostgreSQL locks serialize invoice creation and settlement per key.
         # SQLite uses BEGIN IMMEDIATE; both run the identical contract tests.
-        if create:
-            self._insert_once(conn, accounts, {"key_hash": key_hash, "balance_msat": 0})
         row = conn.execute(select(accounts).where(accounts.c.key_hash == key_hash).with_for_update()).mappings().first()
         if row is None:
             raise KeyError("Unknown API key")
@@ -105,10 +111,18 @@ class Store:
         statement = pg_insert(table) if self.engine.dialect.name == "postgresql" else sqlite_insert(table)
         conn.execute(statement.values(**values).on_conflict_do_nothing())
 
-    def balance(self, key_hash: str) -> dict[str, str]:
+    def bind_account(self, key_hash: str, credit_account_id: str) -> None:
+        if not credit_account_id or len(credit_account_id) > 128:
+            raise ValueError("Invalid credit account")
         with self.transaction() as conn:
-            row = self._account(conn, key_hash, create=False)
-            return {"balance_msat": str(row["balance_msat"]), "balance_btc": btc(row["balance_msat"])}
+            self._insert_once(conn, accounts, {"key_hash": key_hash, "credit_account_id": credit_account_id})
+            row = self._account(conn, key_hash)
+            if row["credit_account_id"] != credit_account_id:
+                raise ValueError("API key cannot change credit accounts")
+
+    def credit_account(self, key_hash: str) -> str:
+        with self.transaction() as conn:
+            return str(self._account(conn, key_hash)["credit_account_id"])
 
     def active(self, key_hash: str) -> str | None:
         with self.transaction() as conn:
@@ -124,13 +138,13 @@ class Store:
             return dict(row) if row else None
 
     def prepare(self, key_hash: str, request_id: str, invoice_id: str,
-                payment_hash: str, now: int, *, new: bool, requested_msat: int,
+                payment_hash: str, now: int, *, requested_msat: int,
                 usd_cents: int, usd_per_btc: str) -> dict[str, Any]:
         msats(requested_msat)
         if requested_msat <= 0 or not 1 <= usd_cents <= 100_000:
             raise ValueError("Invalid invoice amount")
         with self.transaction() as conn:
-            self._account(conn, key_hash, create=new)
+            self._account(conn, key_hash)
             previous = conn.execute(select(invoices).where(
                 invoices.c.key_hash == key_hash, invoices.c.request_id == request_id,
             )).mappings().first()
@@ -167,6 +181,15 @@ class Store:
                 bolt11=bolt11, expires_at=expires_at,
             ))
 
+    def expire_unissued(self, invoice_id: str) -> None:
+        # A BOLT11 is only shown after attach+observe. This conditional update
+        # cannot cancel a previously published invoice from a stale caller.
+        with self.transaction() as conn:
+            conn.execute(update(invoices).where(
+                invoices.c.id == invoice_id, invoices.c.bolt11 == "",
+                invoices.c.state == "OPEN",
+            ).values(state="CANCELED"))
+
     def observe(self, invoice_id: str, *, state: str, payment_hash: str,
                 amount_msat: int, settle_index: int, now: int) -> None:
         if state not in {"OPEN", "ACCEPTED", "SETTLED", "CANCELED"}:
@@ -177,7 +200,7 @@ class Store:
             # Lock order is always account then invoice, including concurrent
             # browser polling, cancellation, and background reconciliation.
             owner = conn.execute(select(invoices.c.key_hash).where(invoices.c.id == invoice_id)).scalar_one()
-            account = self._account(conn, owner, create=False)
+            self._account(conn, owner)
             row = conn.execute(select(invoices).where(invoices.c.id == invoice_id).with_for_update()).mappings().one()
             if row["payment_hash"] != payment_hash:
                 raise ValueError("LND returned a different payment hash")
@@ -193,12 +216,14 @@ class Store:
             if state == "SETTLED":
                 if amount < row["requested_msat"] or settle_index <= 0:
                     raise ValueError("Invalid settled invoice")
-                total = msats(account["balance_msat"] + amount)
+                credit = Rate(Decimal(row["usd_per_btc"]), row["created_at"]).credit_microdollars(amount)
+                if credit <= 0:
+                    raise ValueError("Settled invoice has no USD value")
                 conn.execute(insert(deposits).values(
                     payment_hash=payment_hash, key_hash=owner, amount_msat=amount, settled_at=now,
+                    credit_microdollars=credit, usd_per_btc=row["usd_per_btc"],
                 ))
-                conn.execute(update(accounts).where(accounts.c.key_hash == owner).values(balance_msat=total))
-                values.update(amount_msat=amount, settle_index=settle_index)
+                values.update(amount_msat=amount, settle_index=settle_index, credit_microdollars=credit)
             elif row["state"] == "ACCEPTED" and state == "OPEN":
                 values["state"] = "ACCEPTED"
             conn.execute(update(invoices).where(invoices.c.id == invoice_id).values(**values))
@@ -206,8 +231,16 @@ class Store:
     def pending(self, limit: int = 100) -> list[dict[str, Any]]:
         with self.transaction() as conn:
             return [dict(row) for row in conn.execute(select(invoices).where(
-                invoices.c.state.in_(["OPEN", "ACCEPTED"]),
+                or_(invoices.c.state.in_(["OPEN", "ACCEPTED"]),
+                    (invoices.c.state == "SETTLED") & invoices.c.credited_at.is_(None)),
             ).order_by(invoices.c.last_checked, invoices.c.id).limit(min(limit, 100))).mappings()]
+
+    def mark_credited(self, invoice_id: str, now: int) -> None:
+        with self.transaction() as conn:
+            conn.execute(update(invoices).where(
+                invoices.c.id == invoice_id, invoices.c.state == "SETTLED",
+                invoices.c.credited_at.is_(None),
+            ).values(credited_at=now))
 
     def checked(self, invoice_id: str, now: int) -> None:
         with self.transaction() as conn:

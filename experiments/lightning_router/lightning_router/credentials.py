@@ -2,7 +2,7 @@ import hashlib
 import hmac
 import re
 
-KEY_PATTERN = re.compile(r"sk-lr-v1-[A-Za-z0-9_-]{43}\Z")
+KEY_PATTERN = re.compile(r"sk-tr-v1-[A-Za-z0-9_-]{43}\Z")
 
 
 class Credentials:
@@ -13,7 +13,7 @@ class Credentials:
 
     def fingerprint(self, raw_key: str) -> str:
         if not KEY_PATTERN.fullmatch(raw_key):
-            raise ValueError("Use a LightningRouter API key")
+            raise ValueError("Use a TrustedRouter API key")
         return hmac.new(self._secret, b"account\0" + raw_key.encode(), hashlib.sha256).hexdigest()
 
     def invoice_preimage(self, invoice_id: str) -> bytes:

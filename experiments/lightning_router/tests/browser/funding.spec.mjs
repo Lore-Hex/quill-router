@@ -12,7 +12,8 @@ test("QR first, real balance transition, reload and model setup tabs", async ({ 
   await request.post("/_test/pay", { data: {} });
   await expect(page.locator("#key-reveal")).toBeVisible({ timeout: 12000 });
   await expect(page.locator("#balance-usd")).toContainText("$10.00");
-  await expect(page.locator("#balance-btc")).toContainText("0.00010000000 BTC");
+  await expect(page.locator("#balance-usd")).toHaveText("$10.000000 USD");
+  await expect(page.locator("#balance-btc")).toHaveCount(0);
   const key = await page.locator("#your-key").inputValue();
   await page.reload();
   await expect(page.locator("#your-key")).toHaveValue(key);
@@ -24,7 +25,7 @@ test("QR first, real balance transition, reload and model setup tabs", async ({ 
   }
   await page.locator("#copy-key").click();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(key);
-  await page.locator("#your-key").evaluate((node) => { node.value = "sk-lr-v1-test-key"; });
+  await page.locator("#your-key").evaluate((node) => { node.value = "sk-tr-v1-test-key"; });
   await page.locator("#env-code").evaluate((node) => { node.textContent = "export LIGHTNINGROUTER_API_KEY='YOUR_API_KEY'"; });
   await page.screenshot({ path: "test-results/funded-desktop.png", fullPage: true });
   expect(errors).toEqual([]);

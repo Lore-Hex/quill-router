@@ -2,8 +2,8 @@ import { createIcons, ArrowRight, Copy, Eye, LogOut, RefreshCw } from "lucide";
 import { centsFromText, setupFor } from "./setup.mjs";
 
 const $ = (id) => document.getElementById(id);
-const KEY = /^sk-lr-v1-[A-Za-z0-9_-]{43}$/;
-const SESSION = "lightningrouter-session-v1";
+const KEY = /^sk-tr-v1-[A-Za-z0-9_-]{43}$/;
+const SESSION = "lightningrouter-usd-session-v1";
 const icons = () => createIcons({ icons: { ArrowRight, Copy, Eye, LogOut, RefreshCw } });
 let state = null;
 let config = null;
@@ -20,7 +20,7 @@ let amountDirty = false;
 function remember() { sessionStorage.setItem(SESSION, JSON.stringify(state)); }
 function secret() {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return "sk-lr-v1-" + btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+  return "sk-tr-v1-" + btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 function requestId() { return crypto.randomUUID().replaceAll("-", ""); }
 function message(text = "") { $("error").textContent = text; }
@@ -37,7 +37,7 @@ async function api(path, { key = state?.key, body, idempotency } = {}) {
   const result = await response.json();
   if (!response.ok) {
     const errors = {
-      invalid_api_key: "That LightningRouter API key was not found.",
+      invalid_api_key: "That TrustedRouter API key was not found.",
       invoice_conflict: "An invoice is already open for this key. Resume it before creating another.",
       rate_limited: "Too many invoice requests. Please wait before trying again.",
       payments_not_ready: "Lightning payments are not ready yet.",
@@ -74,8 +74,7 @@ function renderSetup() {
 }
 function renderAccount(balance) {
   $("account").hidden = false;
-  $("balance-usd").textContent = balance.usd_estimate == null ? "USD estimate unavailable" : `$${balance.usd_estimate} USD (est.)`;
-  $("balance-btc").textContent = `${balance.balance_btc} BTC`;
+  $("balance-usd").textContent = `$${balance.balance_usd} USD`;
   $("key-reveal").hidden = !state.reveal;
   $("your-key").value = state.reveal ? state.key : "";
   renderSetup();
@@ -99,8 +98,8 @@ async function showInvoice(invoice) {
     $("qr").removeAttribute("src");
     $("wallet-link").removeAttribute("href");
   }
-  if (!amountDirty) $("btc-amount").textContent = `$${invoice.usd_amount} USD target · ${invoice.invoice_btc} BTC invoice`;
-  const labels = { OPEN: invoice.expired ? "Invoice expired. Update to create a new one." : "Waiting for payment", ACCEPTED: "Payment in flight. Waiting for settlement.", SETTLED: "Payment received", CANCELED: "Invoice canceled" };
+  if (!amountDirty) $("btc-amount").textContent = `$${invoice.usd_amount} USD credits · ${invoice.invoice_btc} BTC invoice`;
+  const labels = { OPEN: invoice.expired ? "Invoice expired. Update to create a new one." : "Waiting for payment", ACCEPTED: "Payment in flight. Waiting for settlement.", SETTLED: invoice.credited ? `Added $${invoice.credit_usd} in USD credits` : "Payment received. USD credit is pending.", CANCELED: "Invoice canceled" };
   $("invoice-state").textContent = labels[invoice.state];
   $("qr-empty").textContent = invoice.state === "SETTLED" ? "Payment received" : labels[invoice.state];
   if (amountDirty && invoice.state === "OPEN") $("qr-empty").textContent = "Update the invoice to use the new amount";
@@ -141,7 +140,8 @@ async function finishOrCancel() {
   return ["SETTLED", "CANCELED"].includes(state.invoice.state);
 }
 function schedulePoll() {
-  if (!state?.invoice || !["OPEN", "ACCEPTED"].includes(state.invoice.state) || document.hidden) return;
+  if (!state?.invoice || document.hidden) return;
+  if (!["OPEN", "ACCEPTED"].includes(state.invoice.state) && !(state.invoice.state === "SETTLED" && !state.invoice.credited)) return;
   pollTimer = setTimeout(() => exclusive(async () => {
     await showInvoice(await api(`/api/invoices/${state.invoice.id}/refresh`, { body: {} }));
   }), 5000);
@@ -170,7 +170,7 @@ $("key-form").addEventListener("submit", (event) => {
   event.preventDefault();
   exclusive(async () => {
     const key = $("existing-key").value.trim();
-    if (!KEY.test(key)) throw new Error("Enter an existing LightningRouter API key beginning sk-lr-v1-.");
+    if (!KEY.test(key)) throw new Error("Enter an existing TrustedRouter API key beginning sk-tr-v1-.");
     const balance = await api("/api/account", { key });
     if (state?.key === key) { state.reveal = true; remember(); renderAccount(balance); return; }
     if (!await finishOrCancel()) return;

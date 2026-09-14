@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -60,17 +61,23 @@ class Lnd:
         response.raise_for_status()
         return self._parse(response.json(), payment_hash)
 
-    def ensure(self, preimage: bytes, amount_msat: int) -> Invoice:
+    def ensure(self, preimage: bytes, amount_msat: int, *, expires_at: int) -> Invoice | None:
         payment_hash = hashlib.sha256(preimage).hexdigest()
         existing = self.lookup(payment_hash)
         if existing:
             if existing.requested_msat != amount_msat:
                 raise ValueError("Existing invoice amount differs")
             return existing
+        # Never create a fresh invoice using an old FX quote during retries.
+        # Allow for the configured eight-second RPC deadline when computing
+        # LND's relative expiry; the funding service also checks actual expiry.
+        remaining = min(900, expires_at - int(time.time()) - 8)
+        if remaining <= 0:
+            return None
         try:
             response = self.client.post("/v1/invoices", json={
                 "r_preimage": base64.b64encode(preimage).decode(),
-                "value_msat": str(msats(amount_msat)), "expiry": "900",
+                "value_msat": str(msats(amount_msat)), "expiry": str(remaining),
                 "memo": "LightningRouter API credit", "private": True,
             })
             response.raise_for_status()

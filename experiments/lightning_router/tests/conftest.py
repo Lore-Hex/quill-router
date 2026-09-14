@@ -1,6 +1,7 @@
 import hashlib
 import os
 import secrets
+import threading
 import time
 from dataclasses import replace
 from decimal import Decimal
@@ -10,6 +11,7 @@ from urllib.parse import urlsplit
 import pytest
 from lightning_router.credentials import Credentials
 from lightning_router.lnd import Invoice, Lnd
+from lightning_router.money import microdollars
 from lightning_router.rates import Rate, Rates
 from lightning_router.service import Funding
 from lightning_router.store import Store, metadata
@@ -18,11 +20,53 @@ from lightning_router.store import Store, metadata
 class FakeRates(Rates):
     def __init__(self) -> None:
         self.fail = False
+        self.price = Decimal("100000")
 
     def current(self) -> Rate:
         if self.fail:
             raise RuntimeError("rate unavailable")
-        return Rate(Decimal("100000"), int(time.time()))
+        return Rate(self.price, int(time.time()))
+
+
+class FakeCredits:
+    """Test-only stand-in for the canonical USD ledger. Never deployed."""
+    def __init__(self):
+        self.balances = {}
+        self.payments = {}
+        self.revoked = set()
+        self.fail_before_commit = False
+        self.fail_after_commit = False
+        self.lock = threading.Lock()
+
+    def resolve(self, raw_key, *, new):
+        account_id = hashlib.sha256(raw_key.encode()).hexdigest()
+        with self.lock:
+            if account_id in self.revoked:
+                raise KeyError("Revoked key")
+            if new:
+                self.balances.setdefault(account_id, 0)
+            if account_id not in self.balances:
+                raise KeyError("Unknown key")
+        return account_id
+
+    def balance(self, account_id):
+        with self.lock:
+            return self.balances[account_id]
+
+    def credit(self, account_id, payment_hash, amount_microdollars):
+        with self.lock:
+            if self.fail_before_commit:
+                raise TimeoutError("USD ledger unavailable")
+            amount = microdollars(amount_microdollars)
+            previous = self.payments.get(payment_hash)
+            if previous and previous != (account_id, amount):
+                raise ValueError("Payment binding changed")
+            if previous is None:
+                self.balances[account_id] = microdollars(self.balances[account_id] + amount)
+                self.payments[payment_hash] = (account_id, amount)
+            if self.fail_after_commit:
+                self.fail_after_commit = False
+                raise TimeoutError("Lost USD commit response")
 
 
 class FakeLnd(Lnd):
@@ -32,13 +76,15 @@ class FakeLnd(Lnd):
         self.fail_after_create = False
         self.pay_during_cancel = False
 
-    def ensure(self, preimage: bytes, amount_msat: int) -> Invoice:
+    def ensure(self, preimage: bytes, amount_msat: int, *, expires_at: int) -> Invoice | None:
         payment_hash = hashlib.sha256(preimage).hexdigest()
         if payment_hash not in self.rows:
+            if expires_at <= int(time.time()):
+                return None
             self.creates += 1
             self.rows[payment_hash] = Invoice(
                 payment_hash, "lnbcrt100u1" + "q" * 180, "OPEN", 0, 0,
-                int(time.time()) + 900, amount_msat,
+                expires_at, amount_msat,
             )
         if self.fail_after_create:
             self.fail_after_create = False
@@ -76,9 +122,9 @@ def store(tmp_path: Path, request):
 
 @pytest.fixture
 def funding(store: Store) -> Funding:
-    return Funding(store, Credentials(b"test-only-secret-32-bytes-" + b"x" * 20), FakeLnd(), FakeRates())
+    return Funding(store, Credentials(b"test-only-secret-32-bytes-" + b"x" * 20), FakeLnd(), FakeRates(), FakeCredits())
 
 
 @pytest.fixture
 def raw_key() -> str:
-    return "sk-lr-v1-" + secrets.token_urlsafe(32)
+    return "sk-tr-v1-" + secrets.token_urlsafe(32)

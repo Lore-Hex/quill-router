@@ -21,7 +21,7 @@ def headers(key):
 
 
 def test_no_mainnet_deposits_before_inference_billing(funding):
-    with pytest.raises(RuntimeError, match="BTC inference billing"):
+    with pytest.raises(RuntimeError, match="USD credit delivery"):
         create_app(funding)
 
 
@@ -39,13 +39,15 @@ def test_invoice_balance_and_auth_contract(client, funding, raw_key):
     assert invoice["qr"].startswith("data:image/png;base64,")
     assert raw_key not in response.text
     balance = client.get("/api/account", headers=headers(raw_key)).json()
-    assert balance["usd_estimate"] == "0.00"
+    assert balance["balance_usd"] == "0.000000"
     assert balance["active_invoice"] == invoice["id"]
     assert client.get("/api/account").status_code == 401
     funding.rates.fail = True
     balance = client.get("/api/account", headers=headers(raw_key)).json()
-    assert balance["balance_msat"] == "0"
-    assert balance["usd_estimate"] is None
+    assert balance["balance_microdollars"] == "0"
+    assert balance["balance_usd"] == "0.000000"
+    assert "usd_estimate" not in balance
+    assert "balance_btc" not in balance
 
 
 @pytest.mark.parametrize("body", [{"usd_cents": 1.2}, {"usd_cents": True}, {"usd_cents": 0}, {"usd_cents": 100001}, {"usd_cents": 100, "settled": True}, {"usd_cents": 100, "new_account": "yes"}])
@@ -81,7 +83,7 @@ def test_api_keys_do_not_expose_admin_or_inference_paths(client, raw_key):
 def test_private_exception_never_reaches_server_traceback(client, funding, raw_key, monkeypatch, caplog):
     def unavailable(_):
         raise RuntimeError("private SQL parameters " + raw_key)
-    monkeypatch.setattr(funding.store, "balance", unavailable)
+    monkeypatch.setattr(funding, "account", unavailable)
     # TestClient defaults to re-raising unhandled server exceptions. A generic
     # FastAPI Exception handler alone would still raise here after its response.
     response = client.get("/api/account", headers=headers(raw_key))

@@ -10,12 +10,12 @@ from lightning_router.credentials import Credentials
 from lightning_router.service import Funding
 from lightning_router.store import Store
 
-from tests.conftest import FakeLnd, FakeRates
+from tests.conftest import FakeCredits, FakeLnd, FakeRates
 
 directory = tempfile.TemporaryDirectory(prefix="lr-browser-")
 store = Store(f"sqlite:///{Path(directory.name) / 'ledger.db'}")
 store.migrate()
-funding = Funding(store, Credentials(secrets.token_bytes(32)), FakeLnd(), FakeRates())
+funding = Funding(store, Credentials(secrets.token_bytes(32)), FakeLnd(), FakeRates(), FakeCredits())
 
 
 class Catalog:
@@ -39,7 +39,7 @@ def pay():
 
 @app.post("/_test/existing")
 def existing():
-    key = "sk-lr-v1-" + secrets.token_urlsafe(32)
+    key = "sk-tr-v1-" + secrets.token_urlsafe(32)
     item = funding.create(key, uuid.uuid4().hex, 2000, new=True)
     row = funding.store.invoice(item["id"], funding.credentials.fingerprint(key))
     funding.lnd.pay(row["payment_hash"])

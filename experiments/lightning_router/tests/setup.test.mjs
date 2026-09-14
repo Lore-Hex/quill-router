@@ -17,7 +17,7 @@ for (const agent of ["opencode", "crush", "omp"]) {
     assert.ok(result.config.includes(base));
     assert.ok(result.config.includes(model.id));
     assert.ok(result.config.includes("LIGHTNINGROUTER_API_KEY"));
-    assert.ok(!result.config.includes("sk-lr-"));
+    assert.ok(!result.config.includes("sk-tr-"));
     assert.ok(!result.config.includes("openrouter.ai"));
   });
 }

@@ -24,17 +24,18 @@
         <button id="copy-invoice" class="icon-button" aria-label="Copy invoice" title="Copy invoice"><i data-lucide="copy"></i></button>
       </div>
       <form id="amount-form">
-        <label for="amount">Amount (USD)</label>
+        <label for="amount">USD credits</label>
         <div class="input-row amount-row"><span class="currency">$</span><input id="amount" inputmode="decimal" type="text" value="10.00" autocomplete="off" maxlength="8"><button id="update-invoice" class="icon-button" aria-label="Update invoice amount" title="Update invoice amount"><i data-lucide="refresh-cw"></i></button></div>
         <p id="btc-amount" class="muted">BTC estimate unavailable</p>
+        <p class="muted small">Payment converts once to USD credits at the invoice rate. Your balance stays in USD.</p>
       </form>
       <form id="key-form">
         <label for="existing-key">Existing API key <span class="muted">(optional)</span></label>
-        <div class="input-row"><input id="existing-key" type="password" placeholder="sk-lr-v1-..." autocomplete="off" spellcheck="false" maxlength="60"><button id="use-key" class="icon-button" aria-label="Use API key" title="Use API key"><i data-lucide="arrow-right"></i></button></div>
+        <div class="input-row"><input id="existing-key" type="password" placeholder="sk-tr-v1-..." autocomplete="off" spellcheck="false" maxlength="60"><button id="use-key" class="icon-button" aria-label="Use API key" title="Use API key"><i data-lucide="arrow-right"></i></button></div>
       </form>
       <p class="error" id="error" role="alert"></p>
       <section id="account" aria-label="Your account" hidden>
-        <div class="balance-line"><div><span class="muted">Available balance</span><strong id="balance-usd"></strong><span id="balance-btc" class="muted"></span></div><button id="sign-out" class="icon-button" aria-label="Sign out" title="Sign out"><i data-lucide="log-out"></i></button></div>
+        <div class="balance-line"><div><span class="muted">Available USD credits</span><strong id="balance-usd"></strong></div><button id="sign-out" class="icon-button" aria-label="Sign out" title="Sign out"><i data-lucide="log-out"></i></button></div>
         <div id="key-reveal" hidden><label for="your-key">Your API key</label><div class="input-row"><input id="your-key" readonly type="password" autocomplete="off"><button id="show-key" class="icon-button" title="Show key" aria-label="Show key"><i data-lucide="eye"></i></button><button id="copy-key" class="icon-button" title="Copy API key" aria-label="Copy API key"><i data-lucide="copy"></i></button></div><p class="muted small">Keep your key. It is the only way to access your balance. This tab remembers it until you sign out.</p></div>
       </section>
     </section>

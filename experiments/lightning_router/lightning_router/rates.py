@@ -1,11 +1,11 @@
 import threading
 import time
 from dataclasses import dataclass
-from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
 import httpx
 
-from .money import MSATS_PER_BTC, msats
+from .money import MICRODOLLARS_PER_DOLLAR, MSATS_PER_BTC, microdollars, msats
 
 
 @dataclass(frozen=True)
@@ -24,9 +24,11 @@ class Rate:
         sats = (Decimal(cents) * 1_000_000 / self.usd_per_btc).to_integral_value(rounding=ROUND_CEILING)
         return msats(int(sats) * 1000)
 
-    def usd_estimate(self, amount_msat: int) -> str:
-        value = Decimal(msats(amount_msat)) * self.usd_per_btc / MSATS_PER_BTC
-        return str(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    def credit_microdollars(self, amount_msat: int) -> int:
+        # Conversion happens once, using the immutable invoice quote. Never
+        # revalue account balances or inference charges when BTC prices move.
+        value = Decimal(msats(amount_msat)) * self.usd_per_btc * MICRODOLLARS_PER_DOLLAR / MSATS_PER_BTC
+        return microdollars(int(value.to_integral_value(rounding=ROUND_FLOOR)))
 
 
 class Rates:

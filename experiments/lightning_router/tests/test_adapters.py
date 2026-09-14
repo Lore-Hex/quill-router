@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import time
 from decimal import Decimal
 
 import httpx
@@ -38,9 +39,26 @@ def test_lnd_wire_contract_and_ambiguous_post_recovery():
     client = httpx.Client(base_url="https://lnd.invalid", transport=httpx.MockTransport(handler),
                           headers={"Grpc-Metadata-macaroon": "test-invoice-only"})
     adapter = Lnd(client, "regtest")
-    assert adapter.ensure(PREIMAGE, 10_000_000).payment_hash == PAYMENT_HASH
-    assert adapter.ensure(PREIMAGE, 10_000_000).payment_hash == PAYMENT_HASH
+    assert adapter.ensure(PREIMAGE, 10_000_000, expires_at=int(time.time()) + 900).payment_hash == PAYMENT_HASH
+    assert adapter.ensure(PREIMAGE, 10_000_000, expires_at=int(time.time()) + 900).payment_hash == PAYMENT_HASH
     assert len(posts) == 1
+    assert 0 < int(posts[0]["expiry"]) <= 892
+
+
+def test_expired_quote_never_creates_a_new_payable_invoice():
+    def handler(request):
+        assert request.method == "GET"
+        return httpx.Response(404, json={"code": 5})
+    adapter = Lnd(httpx.Client(base_url="https://lnd.invalid", transport=httpx.MockTransport(handler)), "regtest")
+    assert adapter.ensure(PREIMAGE, 10_000_000, expires_at=int(time.time()) - 1) is None
+
+
+def test_expired_quote_still_recovers_an_already_paid_invoice():
+    def handler(request):
+        assert request.method == "GET"
+        return httpx.Response(200, json=response_data(state="SETTLED", amt_paid_msat="10000000", settle_index="9"))
+    adapter = Lnd(httpx.Client(base_url="https://lnd.invalid", transport=httpx.MockTransport(handler)), "regtest")
+    assert adapter.ensure(PREIMAGE, 10_000_000, expires_at=1).state == "SETTLED"
 
 
 @pytest.mark.parametrize("change", [
