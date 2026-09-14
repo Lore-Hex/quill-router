@@ -501,11 +501,11 @@ def test_azure_declares_the_runtime_computed_outbox() -> None:
 def test_gcp_and_aws_declare_the_outbox() -> None:
     assert crc.declared_outbox_value("gcp") == "true"
     assert crc.outbox_enabled_blockers("gcp") == []
-    # AWS computes it at deploy time; the stage passes and says what it did not prove.
-    assert crc.declared_outbox_value("aws") == "${OUTBOX_ENABLED}"
+    # The image-only ECS release refuses to clone a disabled outbox.
+    assert crc.declared_outbox_value("aws") == "true"
     assert crc.outbox_enabled_blockers("aws") == []
     note = crc.outbox_note("aws")
-    assert note is not None and "computed at deploy time" in note
+    assert note is None
 
 
 def test_instructions_to_set_the_variable_are_not_the_variable(tmp_path: Path) -> None:
@@ -565,7 +565,7 @@ def test_the_three_declaration_shapes_are_all_recognised(tmp_path: Path) -> None
     """App Runner JSON, a quoted array element, and an export — one per cloud."""
     script_dir = tmp_path / "scripts" / "deploy"
     script_dir.mkdir(parents=True)
-    (script_dir / "aws_eu_control_plane.sh").write_text(
+    (script_dir / "aws_ecs_control_plane.sh").write_text(
         '        "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED": "${OUTBOX_ENABLED}",\n'
     )
     (script_dir / "rollout.sh").write_text('  "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true"\n')

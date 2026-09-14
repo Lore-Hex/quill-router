@@ -335,6 +335,7 @@ and the second move is a diff a reviewer reads.
 <!-- PROVEN_BY_EXECUTION:begin -->
 - `scripts/deploy/aws_eu_clickhouse.sh`
 - `scripts/deploy/aws_eu_control_plane.sh`
+- `scripts/deploy/aws_ecs_control_plane.sh`
 - `scripts/deploy/aws_eu_north_clickhouse.sh`
 - `scripts/deploy/azure_control_plane.sh`
 - `scripts/deploy/verify_gcp_complete.sh`

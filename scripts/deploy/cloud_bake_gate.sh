@@ -134,11 +134,11 @@ _cloud_bake_serving_tag() {
         gcloud run revisions describe "$revision" \
           --region us-central1 \
           --project quill-cloud-proxy \
-          --format='value(spec.containers[0].image)' 2>/dev/null
+          --format='json(spec.containers[0].image,spec.containers[0].env)' 2>/dev/null
       )"; then
         return 1
       fi
-      _cloud_bake_image_tag "$value"
+      printf '%s' "$value" | python3 "${script_dir}/cloud_serving_release.py" gcp
       ;;
     azure)
       # Container App templates describe desired configuration. Select the
@@ -169,6 +169,13 @@ _cloud_bake_serving_tag() {
       printf '%s\n' "$release"
       ;;
     aws)
+      # The public API control plane is ECS in both EU regions. App Runner
+      # is a legacy observer, never an automatic substitute for that fleet.
+      case "${TR_CLOUD_BAKE_AWS_BACKEND:-ecs}" in
+        ecs) python3 "${script_dir}/cloud_serving_release.py" aws; return $? ;;
+        apprunner) ;;
+        *) return 1 ;;
+      esac
       # App Runner exposes desired state during an in-flight or failed
       # operation. Only a RUNNING service whose newest operation SUCCEEDED is
       # evidence of what carries traffic now.

@@ -9,6 +9,6 @@ def test_aws_control_plane_installs_uv_before_running_completeness_gate() -> Non
     workflow = (ROOT / ".github/workflows/deploy-aws-control-plane.yml").read_text()
 
     setup_uv = workflow.index("uses: astral-sh/setup-uv@v7")
-    deploy = workflow.index("run: bash scripts/deploy/aws_eu_control_plane.sh")
+    deploy = workflow.index("run: bash scripts/deploy/aws_ecs_control_plane.sh")
 
     assert setup_uv < deploy
