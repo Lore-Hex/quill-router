@@ -88,6 +88,22 @@ def test_claim_without_credit_is_recoverable(store: Store) -> None:
     assert bridge.balance(workspace_id) == 10_000_000
 
 
+@pytest.mark.parametrize("amount", [1, 32_767, 32_768, 2_147_483_647])
+def test_payment_integer_wire_type_boundaries(store: Store, amount: int) -> None:
+    # Last boundary is outside the invoice cap and must leave the book at zero.
+    bridge = LightningCredits(store)
+    workspace_id = bridge.resolve(new_api_key(), new=True)
+    payment = uuid4().hex + uuid4().hex
+    if amount > 1_000_000_000:
+        with pytest.raises(ValueError):
+            bridge.credit(workspace_id, payment, amount)
+        assert bridge.balance(workspace_id) == 0
+        return
+    bridge.credit(workspace_id, payment, amount)
+    bridge.credit(workspace_id, payment, amount)
+    assert bridge.balance(workspace_id) == amount
+
+
 @pytest.mark.parametrize("amount", [True, 1.25, 0, -1, 1_000_000_001])
 def test_payment_validation_precedes_every_write(store: Store, amount: int) -> None:
     bridge = LightningCredits(store)

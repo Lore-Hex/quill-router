@@ -52,3 +52,24 @@ def test_funding_token_cannot_reuse_gateway_token() -> None:
 
     with pytest.raises(ValueError, match="must differ"):
         Settings(environment="test", lightning_funding_token=TOKEN, internal_gateway_token=TOKEN)
+
+
+def test_postgres_rejects_noncanonical_lightning_event_before_sql() -> None:
+    from datetime import UTC, datetime
+    from unittest.mock import Mock
+
+    import pytest
+
+    from trusted_router.storage_models import CreditProvenance
+    from trusted_router.storage_postgres import PostgresStore
+
+    conn = Mock()
+    now = datetime.now(UTC)
+    with pytest.raises(ValueError, match="canonical event ID"):
+        PostgresStore._insert_credit_trust_event_tx(
+            conn, workspace_id="workspace", event_id="arbitrary-id",
+            amount_microdollars=1,
+            provenance=CreditProvenance("invoice", "lightning", "a" * 64, now),
+            recorded_at=now, payment_amount_microdollars=1, currency="USD",
+        )
+    conn.execute.assert_not_called()

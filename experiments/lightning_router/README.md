@@ -1,7 +1,9 @@
 # LightningRouter funding experiment
 
-**Not launched. Mainnet deposits are disabled.** Bitcoin is still syncing; no
-LND wallet or inbound Lightning liquidity exists. The TrustedRouter USD bridge
+**Website deployed. Mainnet deposits are disabled.** `https://lightningrouter.ai`
+is serving over verified public HTTPS. Bitcoin is still syncing; LND 0.21.3-beta
+is installed with five verified release signatures, but no wallet or inbound
+Lightning liquidity exists. The TrustedRouter USD bridge
 is implemented and conformance-tested, but its dedicated production credential
 and the funding worker are not activated. Browser tests still use a fake backend.
 
@@ -118,9 +120,9 @@ local database; never relabel old BTC rows as USD.
    Run a paid-key inference smoke before enabling mainnet deposits.
 4. Add readiness gates for node sync, wallet availability, receiving capacity,
    DB health and verified credit delivery before removing the mainnet guard.
-5. Deploy `lightningrouter.ai` web HTTPS and `api.lightningrouter.ai` attested
-   TLS separately. The Cloud DNS zone exists; no A/AAAA records are set yet.
-   Do not point the public site or API at Bitcoin RPC.
+5. Website HTTPS is deployed on its own Cloud Run service and load balancer.
+   Add `api.lightningrouter.ai` separately with attested TLS; that API hostname
+   is not deployed yet. Do not point the public site or API at Bitcoin RPC.
 6. Add ingress limits, expiry cleanup and monitored reconciliation. Retain
    redaction and keep wallet/admin macaroons off the web service.
 7. Verify actual OpenCode, Crush and OMP requests. Current tests prove setup
@@ -136,7 +138,7 @@ disabled. Wait for the managed certificate to become ACTIVE and verify public
 HTTPS, `/health`, `/api/config`, `/api/models`, and rejected invoice creation.
 
 The USD bridge has conformance tests across memory, the native Spanner fake,
-and real local PostgreSQL for simultaneous provisioning, exactly-once deposits,
+real local PostgreSQL and the Spanner PostgreSQL adapter for simultaneous provisioning, exactly-once deposits,
 changed-amount/workspace conflicts, revocation, expiry and sub-cent precision.
 `lightning_key` tombstones prevent deleted funding identities from being recreated;
 `lightning_payment` point-key bindings are permanent payment replay protection.
