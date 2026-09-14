@@ -1,19 +1,19 @@
 {
   "aion-labs": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 4,
     "name": "Aion Labs",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 4,
+    "route_mode": "Prepaid",
     "slug": "aion-labs"
   },
   "akashml": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 6,
     "name": "AkashML",
     "privacy": "Policy documented",
-    "route_count": 7,
+    "route_count": 6,
     "route_mode": "Prepaid",
     "slug": "akashml"
   },
@@ -37,10 +37,10 @@
   },
   "arcee": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 9,
     "name": "Arcee AI",
     "privacy": "Policy documented",
-    "route_count": 7,
+    "route_count": 9,
     "route_mode": "Prepaid",
     "slug": "arcee"
   },
@@ -145,10 +145,10 @@
   },
   "crusoe": {
     "card_version": 2,
-    "model_count": 15,
+    "model_count": 10,
     "name": "Crusoe",
     "privacy": "Policy documented",
-    "route_count": 30,
+    "route_count": 20,
     "route_mode": "Prepaid + BYOK",
     "slug": "crusoe"
   },
@@ -190,10 +190,10 @@
   },
   "deepseek": {
     "card_version": 2,
-    "model_count": 7,
+    "model_count": 6,
     "name": "DeepSeek",
     "privacy": "Policy documented",
-    "route_count": 12,
+    "route_count": 11,
     "route_mode": "Prepaid + BYOK",
     "slug": "deepseek"
   },
@@ -226,10 +226,10 @@
   },
   "featherless": {
     "card_version": 2,
-    "model_count": 17,
+    "model_count": 18,
     "name": "Featherless AI",
     "privacy": "Policy documented",
-    "route_count": 17,
+    "route_count": 18,
     "route_mode": "Prepaid",
     "slug": "featherless"
   },
@@ -298,11 +298,11 @@
   },
   "inception": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 1,
     "name": "Inception Labs",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 1,
+    "route_mode": "Prepaid",
     "slug": "inception"
   },
   "inceptron": {
@@ -397,11 +397,11 @@
   },
   "mancer": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 7,
     "name": "Mancer",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 7,
+    "route_mode": "Prepaid",
     "slug": "mancer"
   },
   "meta": {
@@ -478,29 +478,29 @@
   },
   "nextbit": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 8,
     "name": "NextBit",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 8,
+    "route_mode": "Prepaid",
     "slug": "nextbit"
   },
   "novita": {
     "card_version": 2,
-    "model_count": 118,
+    "model_count": 121,
     "name": "Novita AI",
     "privacy": "Policy documented",
-    "route_count": 218,
+    "route_count": 224,
     "route_mode": "Prepaid + BYOK",
     "slug": "novita"
   },
   "nscale": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 14,
     "name": "Nscale",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 14,
+    "route_mode": "Prepaid",
     "slug": "nscale"
   },
   "nvidia-nim": {
@@ -604,11 +604,11 @@
   },
   "reka": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 1,
     "name": "Reka AI",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 1,
+    "route_mode": "Prepaid",
     "slug": "reka"
   },
   "relace": {
@@ -640,11 +640,11 @@
   },
   "sail-research": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 9,
     "name": "Sail Research",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 9,
+    "route_mode": "Prepaid",
     "slug": "sail-research"
   },
   "sakana": {
@@ -658,11 +658,11 @@
   },
   "sambanova": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 6,
     "name": "SambaNova",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 6,
+    "route_mode": "Prepaid",
     "slug": "sambanova"
   },
   "scaledown": {
@@ -766,11 +766,11 @@
   },
   "upstage": {
     "card_version": 2,
-    "model_count": 0,
+    "model_count": 3,
     "name": "Upstage",
     "privacy": "Policy documented",
-    "route_count": 0,
-    "route_mode": "Catalog profile",
+    "route_count": 3,
+    "route_mode": "Prepaid",
     "slug": "upstage"
   },
   "venice": {

@@ -52,27 +52,26 @@ def _parse_pricing(source: str) -> dict[str, ModelPrice]:
     prices: dict[str, ModelPrice] = {}
 
     def add_price(display_text: str, prompt_text: str, completion_text: str) -> None:
-        model_id = next(
-            (
-                candidate_id
-                for display_name, candidate_id in _DISPLAY_MODEL_MAP.items()
-                if display_text.startswith(display_name)
-            ),
-            None,
-        )
+        # Fern's Markdown wraps model names in **bold** before their blurb.
+        if display_text.startswith("**"):
+            display_text = display_text[2:].split("**", 1)[0]
+        model_id = _DISPLAY_MODEL_MAP.get(display_text.strip())
         if model_id is None:
             return
-        prices[model_id] = ModelPrice(
+        price = ModelPrice(
             _micro_per_m(prompt_text),
             _micro_per_m(completion_text),
         )
+        if model_id in prices and prices[model_id] != price:
+            raise RuntimeError(f"reka: conflicting prices for {model_id}")
+        prices[model_id] = price
 
     for row in soup.select("tr"):
         cells = row.find_all(["th", "td"])
         if len(cells) < 3:
             continue
         add_price(
-            cells[0].get_text(" ", strip=True),
+            (cells[0].find(["b", "strong"]) or cells[0]).get_text(" ", strip=True),
             cells[1].get_text(" ", strip=True),
             cells[2].get_text(" ", strip=True),
         )
@@ -86,8 +85,9 @@ def _parse_pricing(source: str) -> dict[str, ModelPrice]:
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         if len(cells) < 3:
             continue
+        name = BeautifulSoup(cells[0], "html.parser")
         add_price(
-            BeautifulSoup(cells[0], "html.parser").get_text(" ", strip=True),
+            (name.find(["b", "strong"]) or name).get_text(" ", strip=True),
             cells[1],
             cells[2],
         )

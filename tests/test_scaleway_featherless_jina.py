@@ -42,6 +42,10 @@ def test_scaleway_rejects_missing_fx_rate() -> None:
 
 def test_featherless_uses_shared_canonical_model_ids() -> None:
     assert (
+        featherless.CATALOG.model_id("deepseek-ai/DeepSeek-V4.1-Flash")
+        == "deepseek/deepseek-v4.1-flash"
+    )
+    assert (
         featherless.CATALOG.model_id("deepseek-ai/DeepSeek-V4-Flash-0731")
         == "deepseek/deepseek-v4-flash-0731"
     )
@@ -57,9 +61,24 @@ def test_featherless_uses_shared_canonical_model_ids() -> None:
         == "qwen/qwen3.8-flash-next"
     )
     assert {
+        "deepseek-ai/DeepSeek-V4.1-Flash",
         "Qwen/Qwen3.8-Flash-Next",
         "zai-org/GLM-5.3",
     } <= set(featherless.CURATED_NATIVE_MODELS)
+
+
+def test_featherless_deepseek_v41_route_preserves_provider_limits_and_prices() -> None:
+    endpoint = MODEL_ENDPOINTS["deepseek/deepseek-v4.1-flash@featherless/prepaid"]
+    assert endpoint.upstream_id == "deepseek-ai/DeepSeek-V4.1-Flash"
+    assert endpoint.published_prompt_price_microdollars_per_million_tokens == 316_500
+    assert endpoint.published_completion_price_microdollars_per_million_tokens == 1_266_000
+    manifest = json.loads(featherless.MANIFEST_PATH.read_text())
+    row = next(row for row in manifest["models"] if row["id"] == "deepseek/deepseek-v4.1-flash")
+    assert row["context_length"] == 262144
+    assert row["cached_input_token_price_per_m"] == 30_000
+    assert row["max_output_tokens"] == 32768
+    assert row["input_modalities"] == ["text", "image"]
+    assert row["routable"] is True
 
 
 def test_featherless_qwen38_flash_next_is_routable() -> None:

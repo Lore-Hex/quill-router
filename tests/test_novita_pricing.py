@@ -3,8 +3,42 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import novita
+
+
+def test_api_only_launch_keeps_refreshing_after_first_publication(tmp_path, monkeypatch):
+    model_id = "z-ai/glm-5.3-p"
+    manifest_path = tmp_path / "novita.json"
+    manifest_path.write_text(json.dumps({
+        "models": [], "price_scale_to_microdollars_per_million_tokens": 100,
+    }))
+    monkeypatch.setattr(novita, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(novita, "EXPECTED_MODELS", [])
+    price = ModelPrice(1_400_000, 4_400_000, prompt_cached_micro_per_m=260_000)
+    monkeypatch.setattr(novita, "_live_catalog", lambda: (
+        {model_id: {"id": model_id, "upstream_id": "zai-org/glm-5.3-p", "status": 1}},
+        {model_id: price},
+    ))
+    monkeypatch.setattr(novita, "fetch_provider", lambda **_: ProviderPricingResult(
+        slug="novita", prices={}, source="html", fetched_url=novita.URL,
+    ))
+    first = novita.fetch()
+    novita.write_provider_manifest(first)
+    price = ModelPrice(1_500_000, 4_500_000, prompt_cached_micro_per_m=270_000)
+    second = novita.fetch()
+    assert second.prices[model_id] == price
+    novita.write_provider_manifest(second)
+    row = json.loads(manifest_path.read_text())["models"][0]
+    assert row["input_token_price_per_m"] == 15_000
+    assert row["cached_input_token_price_per_m"] == 2_700
+
+
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity", "-1"])
+def test_api_prices_reject_nonfinite_or_negative_values(value):
+    assert novita._api_price_per_m(value) is None
 
 
 def test_novita_manifest_writer_updates_scaled_prices(

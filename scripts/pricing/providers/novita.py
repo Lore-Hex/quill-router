@@ -88,7 +88,7 @@ def _existing_native_ids() -> dict[str, str]:
     return mapped
 
 
-def _known_manifest_model_ids() -> set[str]:
+def _known_manifest_model_ids(*, priced_only: bool = False) -> set[str]:
     if not MANIFEST_PATH.exists():
         return set()
     try:
@@ -101,7 +101,17 @@ def _known_manifest_model_ids() -> set[str]:
     return {
         model_id
         for row in rows
-        if isinstance(row, dict) and isinstance((model_id := row.get("id")), str) and model_id
+        if isinstance(row, dict)
+        and isinstance((model_id := row.get("id")), str)
+        and model_id
+        and (
+            not priced_only
+            or (
+                row.get("routable") is not False
+                and _positive_int(row.get("input_token_price_per_m")) is not None
+                and _positive_int(row.get("output_token_price_per_m")) is not None
+            )
+        )
     }
 
 
@@ -127,7 +137,7 @@ def _api_price_per_m(value: object) -> int | None:
         scaled = Decimal(str(value)) * _API_PRICE_SCALE_TO_MICRODOLLARS_PER_M
     except (InvalidOperation, ValueError):
         return None
-    if scaled < 0 or scaled != scaled.to_integral_value():
+    if not scaled.is_finite() or scaled < 0 or scaled != scaled.to_integral_value():
         return None
     return int(scaled)
 
@@ -257,7 +267,13 @@ def fetch() -> ProviderPricingResult:
         for model_id, price in result.prices.items()
         if model_id in discovered and discovered[model_id].get("routable") is not False
     }
-    api_fallback_ids = required_price_ids | (set(EXPECTED_MODELS) - set(page_prices))
+    # Newly launched API-priced models must keep refreshing after their first
+    # publication, even while the public HTML pricing table still lags.
+    api_fallback_ids = (
+        required_price_ids
+        | _known_manifest_model_ids(priced_only=True)
+        | (set(EXPECTED_MODELS) - set(page_prices))
+    )
     api_fallback_prices = {
         model_id: price for model_id, price in api_prices.items() if model_id in api_fallback_ids
     }

@@ -200,11 +200,55 @@
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 500000,
       "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "DeepSeek: DeepSeek V4.1 Flash",
+      "title": "deepseek/deepseek-v4.1-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4.1-flash",
+      "upstream_id": "deepseek/deepseek-v4.1-flash",
+      "context_length": 1048576,
+      "routable": true,
+      "input_token_price_per_m": 220000,
+      "output_token_price_per_m": 660000,
+      "cached_input_token_price_per_m": 7000
+    },
+    {
+      "display_name": "GLM 5.3",
+      "title": "zai-org/glm-5.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.3",
+      "upstream_id": "zai-org/glm-5.3",
+      "context_length": 1310720,
+      "routable": true,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000
     }
   ],
   "source": "https://api.arcee.ai/api/v1/models",
   "pricing_source": "https://api.arcee.ai/api/v1/models",
-  "generated_at": "2026-08-29T04:32:09Z",
+  "generated_at": "2026-09-14T18:42:03Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 9
+  "model_count": 11
 }
