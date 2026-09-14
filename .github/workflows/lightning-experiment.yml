@@ -1,0 +1,49 @@
+name: LightningRouter experiment
+
+on:
+  pull_request:
+    paths: ["experiments/lightning_router/**", ".github/workflows/lightning-experiment.yml"]
+  push:
+    branches: [main]
+    paths: ["experiments/lightning_router/**", ".github/workflows/lightning-experiment.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: experiments/lightning_router
+    env:
+      LR_TEST_POSTGRES_URL: postgresql+psycopg://postgres:local-test-only@127.0.0.1:5432/lightning_router_test
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: local-test-only
+          POSTGRES_DB: lightning_router_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run mypy
+      - run: uv run pytest -q --cov=lightning_router --cov-fail-under=70
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: git diff --exit-code -- web/app.js
+      - run: npm test
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser

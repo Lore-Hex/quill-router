@@ -1,0 +1,12 @@
+.venv/
+node_modules/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+test-results/
+playwright-report/
+*.db
+*.db-*

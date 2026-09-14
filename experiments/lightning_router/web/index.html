@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <meta name="description" content="Fund an API key with Bitcoin over Lightning. No email, username, or password.">
+  <title>LightningRouter</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script type="module" src="/assets/app.js"></script>
+</head>
+<body>
+  <header><a href="/" class="brand">LightningRouter</a><span id="connection">Connecting</span></header>
+  <main>
+    <section class="funding" aria-label="Fund your API key">
+      <h1>Fund your API key</h1>
+      <div class="qr-frame" aria-live="polite">
+        <img id="qr" width="280" height="280" alt="Lightning payment invoice" hidden>
+        <div id="qr-empty">Loading payment status</div>
+      </div>
+      <p id="invoice-state" role="status"></p>
+      <div class="invoice-actions" id="invoice-actions" hidden>
+        <a id="wallet-link" class="button primary">Open wallet</a>
+        <button id="copy-invoice" class="icon-button" aria-label="Copy invoice" title="Copy invoice"><i data-lucide="copy"></i></button>
+      </div>
+      <form id="amount-form">
+        <label for="amount">Amount (USD)</label>
+        <div class="input-row amount-row"><span class="currency">$</span><input id="amount" inputmode="decimal" type="text" value="10.00" autocomplete="off" maxlength="8"><button id="update-invoice" class="icon-button" aria-label="Update invoice amount" title="Update invoice amount"><i data-lucide="refresh-cw"></i></button></div>
+        <p id="btc-amount" class="muted">BTC estimate unavailable</p>
+      </form>
+      <form id="key-form">
+        <label for="existing-key">Existing API key <span class="muted">(optional)</span></label>
+        <div class="input-row"><input id="existing-key" type="password" placeholder="sk-lr-v1-..." autocomplete="off" spellcheck="false" maxlength="60"><button id="use-key" class="icon-button" aria-label="Use API key" title="Use API key"><i data-lucide="arrow-right"></i></button></div>
+      </form>
+      <p class="error" id="error" role="alert"></p>
+      <section id="account" aria-label="Your account" hidden>
+        <div class="balance-line"><div><span class="muted">Available balance</span><strong id="balance-usd"></strong><span id="balance-btc" class="muted"></span></div><button id="sign-out" class="icon-button" aria-label="Sign out" title="Sign out"><i data-lucide="log-out"></i></button></div>
+        <div id="key-reveal" hidden><label for="your-key">Your API key</label><div class="input-row"><input id="your-key" readonly type="password" autocomplete="off"><button id="show-key" class="icon-button" title="Show key" aria-label="Show key"><i data-lucide="eye"></i></button><button id="copy-key" class="icon-button" title="Copy API key" aria-label="Copy API key"><i data-lucide="copy"></i></button></div><p class="muted small">Keep your key. It is the only way to access your balance. This tab remembers it until you sign out.</p></div>
+      </section>
+    </section>
+    <section class="setup" aria-labelledby="setup-title">
+      <div class="section-heading"><h2 id="setup-title">Use your key</h2><span id="model-count" class="muted"></span></div>
+      <label for="model">Model</label><select id="model" disabled><option>Loading models</option></select>
+      <div class="tabs" role="tablist" aria-label="Coding agent"><button role="tab" id="tab-opencode" aria-controls="setup-panel" aria-selected="true" data-agent="opencode">OpenCode</button><button role="tab" id="tab-crush" aria-controls="setup-panel" aria-selected="false" tabindex="-1" data-agent="crush">Crush</button><button role="tab" id="tab-omp" aria-controls="setup-panel" aria-selected="false" tabindex="-1" data-agent="omp">OMP</button></div>
+      <div id="setup-panel" role="tabpanel" aria-labelledby="tab-opencode">
+        <table class="instructions"><tbody>
+          <tr><th scope="row">1. API key</th><td><div class="code-heading"><span>Terminal</span><button id="copy-env" class="icon-button" aria-label="Copy environment variable" title="Copy environment variable"><i data-lucide="copy"></i></button></div><pre id="env-code"></pre></td></tr>
+          <tr><th scope="row">2. Configure</th><td><div class="code-heading"><span id="config-path"></span><button id="copy-config" class="icon-button" aria-label="Copy configuration" title="Copy configuration"><i data-lucide="copy"></i></button></div><pre id="config-code"></pre></td></tr>
+          <tr><th scope="row">3. Run</th><td><div class="code-heading"><span>Terminal</span><button id="copy-command" class="icon-button" aria-label="Copy launch command" title="Copy launch command"><i data-lucide="copy"></i></button></div><pre id="command-code"></pre></td></tr>
+        </tbody></table>
+        <a id="agent-docs" rel="noreferrer" target="_blank">Configuration reference</a>
+      </div>
+      <p id="api-readiness" class="muted small">API activation is pending. These are setup previews, not a live inference endpoint.</p>
+    </section>
+  </main>
+  <footer>LightningRouter <span>Bitcoin over Lightning</span></footer>
+  <div id="toast" role="status" hidden>Copied</div>
+</body>
+</html>

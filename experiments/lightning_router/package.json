@@ -1,0 +1,12 @@
+{
+  "name": "lightning-router-page",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild frontend.js --bundle --minify --format=esm --outfile=web/app.js",
+    "test": "node --test tests/*.test.mjs",
+    "test:browser": "playwright test"
+  },
+  "dependencies": { "lucide": "^0.577.0" },
+  "devDependencies": { "@playwright/test": "^1.62.1", "esbuild": "^0.25.0" }
+}
