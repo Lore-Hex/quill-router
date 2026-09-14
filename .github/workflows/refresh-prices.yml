@@ -135,6 +135,7 @@ jobs:
                       GMI_API_KEY:trustedrouter-gmi-api-key \
                       DEEPINFRA_API_KEY:trustedrouter-deepinfra-api-key \
                       PHALA_CONFIDENTIAL_API_KEY:trustedrouter-phala-confidential-api-key \
+                      REDPILL_API_KEY:trustedrouter-redpill-api-key \
                       SILICON_FLOW_API_KEY:trustedrouter-siliconflow-api-key \
                       VENICE_API_KEY:trustedrouter-venice-api-key \
                       OPENAI_API_KEY:trustedrouter-openai-api-key \

@@ -43,6 +43,8 @@ _NEW_AUTOMATIC_FEED_ROWS = _NEW_AUTOMATIC_FEED_MODELS | _NEW_AUTOMATIC_FEED_ALIA
 
 
 def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict:
+    if "api.redpill.ai" in url:
+        return {"data": [{"id": "openai/gpt-oss-120b"}]}
     if "api.openai.com" in url:
         return {"data": [{"id": "gpt-5.6-sol"}, {"id": "gpt-6-astra"}]}
     if "api.x.ai" in url:

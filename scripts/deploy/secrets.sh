@@ -155,7 +155,8 @@ ensure_secret_from_env_file "XIAOMI_API_KEY" "trustedrouter-xiaomi-api-key"
 # to whichever base URL the catalog selects per model.
 ensure_secret_from_env_file "GROK_API_KEY" "trustedrouter-grok-api-key" "XAI_API_KEY"
 ensure_secret_from_env_file "NOVITA_API_KEY" "trustedrouter-novita-api-key"
-ensure_secret_from_env_file "PHALA_API_KEY" "trustedrouter-phala-api-key" "REDPILL_API_KEY"
+ensure_secret_from_env_file "PHALA_API_KEY" "trustedrouter-phala-api-key"
+ensure_secret_from_env_file "REDPILL_API_KEY" "trustedrouter-redpill-api-key"
 # Phala's GPU-TEE-attested confidential AI tier (issued from
 # cloud.phala.com dashboard). This is what the enclave actually
 # routes against now via the `phala/<bare>` model id form per
@@ -326,6 +327,7 @@ grant_tr_deploy_secret_access "trustedrouter-streamlake-api-key"
 grant_tr_deploy_secret_access "trustedrouter-neurometric-api-key"
 grant_tr_deploy_secret_access "trustedrouter-engy-api-key"
 grant_tr_deploy_secret_access "trustedrouter-confidential-ai-api-key"
+grant_tr_deploy_secret_access "trustedrouter-redpill-api-key"
 grant_tr_deploy_secret_access "trustedrouter-scaledown-api-key"
 grant_tr_deploy_secret_access "trustedrouter-pearl-api-key"
 grant_tr_deploy_secret_access "trustedrouter-stepfun-api-key"

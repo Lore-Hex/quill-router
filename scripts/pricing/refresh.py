@@ -94,6 +94,7 @@ PROVIDER_SLUGS = [
     "grok",
     "novita",
     "phala",
+    "redpill",
     "siliconflow",
     "tinfoil",
     "near_ai",

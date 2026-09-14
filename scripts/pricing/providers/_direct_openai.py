@@ -68,7 +68,9 @@ class DirectOpenAIProviderSpec:
     # providers. A fresh price removes this hold, but still requires a canary.
     reviewed_unpriced_model_ids: frozenset[str] = frozenset()
     canary_max_tokens: int = 16
+    canary_max_tokens_field: str | Callable[[str], str] = "max_tokens"
     canary_expected_content: str | None = None
+    canary_require_message: bool = False
     canary_endpoint_path: str = "/chat/completions"
     canary_extra_body: dict[str, Any] = field(default_factory=dict)
 
@@ -239,7 +241,13 @@ class DirectOpenAIProvider:
                 api_key=api_key,
                 model=self.upstream_id_map[model_id],
                 max_tokens=self.spec.canary_max_tokens,
+                max_tokens_field=(
+                    self.spec.canary_max_tokens_field(self.upstream_id_map[model_id])
+                    if callable(self.spec.canary_max_tokens_field)
+                    else self.spec.canary_max_tokens_field
+                ),
                 expected_content=self.spec.canary_expected_content,
+                require_message=self.spec.canary_require_message,
                 endpoint_path=self.spec.canary_endpoint_path,
                 extra_body=self.spec.canary_extra_body,
             )
