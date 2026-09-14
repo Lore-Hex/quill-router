@@ -7,6 +7,7 @@ that is intentional: retries can finish delivery but cannot change its target.
 from __future__ import annotations
 
 import re
+import threading
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -18,12 +19,19 @@ from trusted_router.security import (
     new_key_id,
     verify_api_key,
 )
+from trusted_router.storage_errors import StoreConflict
 from trusted_router.storage_models import ApiKey, CreditAccount, Member, User, Workspace
 
 if TYPE_CHECKING:
     from trusted_router.storage import InMemoryStore
     from trusted_router.storage_gcp import SpannerBigtableStore
     from trusted_router.storage_postgres import PostgresStore
+
+
+# Coalesce same-key browser retries without an unbounded per-key lock cache.
+# This only protects connection capacity; the database claim remains the
+# correctness boundary between independent processes and replicas.
+_PROVISION_LOCKS = tuple(threading.Lock() for _ in range(128))
 
 
 def validate_raw_key(raw: str) -> str:
@@ -160,6 +168,9 @@ def postgres_key(store: PostgresStore, raw: str) -> ApiKey:
     lookup = validate_raw_key(raw)
 
     def txn(conn: Any) -> ApiKey:
+        claim = store._read_entity_tx(conn, "lightning_key", lookup, dict)
+        if claim is not None:
+            return existing_key(raw, store._read_entity_tx(conn, "api_key", claim["key_id"], ApiKey))
         # Unique insertion serializes competing creators even when SELECT FOR
         # UPDATE would find no row. The claim rolls back with account creation.
         key_id = new_key_id()
@@ -188,7 +199,13 @@ def postgres_key(store: PostgresStore, raw: str) -> ApiKey:
         store._write_key_limit_caps_tx(conn, key)
         return key
 
-    return store._run_transaction(txn)
+    lock = _PROVISION_LOCKS[int(lookup[:8], 16) % len(_PROVISION_LOCKS)]
+    if not lock.acquire(timeout=10):
+        raise StoreConflict("Lightning key provisioning is busy; retry the same key")
+    try:
+        return store._run_transaction(txn)
+    finally:
+        lock.release()
 
 
 def postgres_bind(store: PostgresStore, workspace_id: str, payment_hash: str, amount: int) -> None:
