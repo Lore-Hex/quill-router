@@ -103,11 +103,12 @@ async function showInvoice(invoice) {
   $("invoice-state").textContent = labels[invoice.state];
   $("qr-empty").textContent = invoice.state === "SETTLED" ? "Payment received" : labels[invoice.state];
   if (amountDirty && invoice.state === "OPEN") $("qr-empty").textContent = "Update the invoice to use the new amount";
-  if (invoice.state === "SETTLED") {
+  if (invoice.credited) {
     state.reveal = true;
     remember();
   }
-  await showBalance();
+  if (!state.isNew || state.reveal) await showBalance();
+  else $("account").hidden = true;
 }
 async function createInvoice() {
   const cents = centsFromText($("amount").value);
@@ -132,6 +133,10 @@ async function finishOrCancel() {
   if (["OPEN", "ACCEPTED"].includes(before.state)) {
     const invoice = await api(`/api/invoices/${before.id}/cancel`, { body: {} });
     await showInvoice(invoice);
+  }
+  if (state.invoice.state === "SETTLED" && !state.invoice.credited) {
+    message("Payment received. Wait for USD credits before leaving this checkout.");
+    return false;
   }
   if (state.invoice.state === "SETTLED" && state.isNew && !state.saved) {
     message("Payment finished for this key. Copy your new API key before switching accounts or signing out.");

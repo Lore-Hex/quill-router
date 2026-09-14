@@ -7,7 +7,9 @@ class Credits(Protocol):
     def resolve(self, raw_key: str, *, new: bool) -> str:
         """Authenticate an existing key or idempotently provision a zero-credit
         key-only account. Return an immutable account/workspace identifier.
-        Provisioning must not grant management privileges or free credits.
+        Provision only AFTER verified Lightning settlement. Invoice creation
+        must never call this with new=True. Provisioning must not grant
+        management privileges or free credits.
         """
         ...
 

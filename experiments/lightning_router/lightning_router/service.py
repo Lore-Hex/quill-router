@@ -30,14 +30,19 @@ class Funding:
         self.store.bind_account(key_hash, account_id)
         return {**self.balance(key_hash), "active_invoice": self.store.active(key_hash)}
 
-    def balance(self, key_hash: str) -> dict[str, str]:
-        amount = microdollars(self.credits.balance(self.store.credit_account(key_hash)))
-        return {"balance_microdollars": str(amount), "balance_usd": usd(amount), "currency": "USD"}
+    def balance(self, key_hash: str) -> dict[str, Any]:
+        account_id = self.store.credit_account(key_hash)
+        amount = microdollars(self.credits.balance(account_id)) if account_id is not None else 0
+        return {"balance_microdollars": str(amount), "balance_usd": usd(amount), "currency": "USD",
+                "account_created": account_id is not None}
 
     def create(self, raw_key: str, request_id: str, cents: int, *, new: bool) -> dict[str, Any]:
         key_hash = self.credentials.fingerprint(raw_key)
-        account_id = self.credits.resolve(raw_key, new=new)
-        self.store.bind_account(key_hash, account_id)
+        if new:
+            self.store.prepare_checkout(key_hash, self.credentials.seal_pending_key(raw_key))
+        if not new or self.store.credit_account(key_hash) is not None:
+            account_id = self.credits.resolve(raw_key, new=False)
+            self.store.bind_account(key_hash, account_id)
         previous = self.store.by_request(key_hash, request_id)
         if previous:
             if previous["usd_cents"] != cents:
@@ -80,8 +85,16 @@ class Funding:
             return
         # No distributed transaction: the settled invoice IS the durable
         # outbox. A crash after remote commit replays the same payment hash.
-        self.credits.credit(self.store.credit_account(row["key_hash"]),
-                            row["payment_hash"], row["credit_microdollars"])
+        checkout = self.store.checkout(row["key_hash"])
+        account_id = checkout["credit_account_id"]
+        if account_id is None:
+            # Only a verified, durably recorded SETTLED invoice may provision.
+            # Keep encrypted recovery material until the idempotent identity
+            # binding commits so a worker can finish after the browser closes.
+            raw_key = self.credentials.open_pending_key(checkout["pending_key"], row["key_hash"])
+            account_id = self.credits.resolve(raw_key, new=True)
+            self.store.bind_account(row["key_hash"], account_id)
+        self.credits.credit(account_id, row["payment_hash"], row["credit_microdollars"])
         self.store.mark_credited(row["id"], int(time.time()))
 
     def _observe(self, row: dict[str, Any], invoice: Invoice) -> None:

@@ -223,10 +223,11 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
             return unavailable()
         try:
             raw, hashed = key(request)
-            # Revalidate revocation at the authoritative key store, not only
-            # against the invoice's historical local key fingerprint.
-            service.account(raw)
             row = service.store.invoice(invoice_id, hashed)
+            # An unpaid checkout has only a secret ownership capability. Once
+            # it is bound to a real account, still enforce key revocation.
+            if service.store.credit_account(hashed) is not None:
+                service.account(raw)
         except (ValueError, KeyError):
             return JSONResponse({"error": "invoice_not_found"}, status_code=404)
         return service.refresh(row, cancel=cancel)
