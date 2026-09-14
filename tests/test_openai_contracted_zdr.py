@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
 from trusted_router.catalog import (
@@ -114,5 +115,17 @@ def test_public_pages_explain_active_openai_prepaid_scope(client: TestClient) ->
     assert model.status_code == 200
     assert "Credits" in model.text
     assert "BYOK" not in model.text
-    assert ">ZDR<" in model.text
-    assert "no verified privacy claim" not in model.text
+    soup = BeautifulSoup(model.text, "html.parser")
+    routes = next(table for table in soup.select("table") if table.find("th", string="Provider policy"))
+    openai = routes.select_one('tbody a[href="/providers/openai"]')
+    assert openai is not None
+    openai_badges = {badge.get_text(strip=True) for badge in openai.find_parent("tr").select(".pill")}
+    assert "ZDR" in openai_badges
+    assert "no verified privacy claim" not in openai_badges
+
+    # An aggregator serving the same model does not inherit our OpenAI contract.
+    redpill = routes.select_one('tbody a[href="/providers/redpill"]')
+    assert redpill is not None
+    redpill_badges = {badge.get_text(strip=True) for badge in redpill.find_parent("tr").select(".pill")}
+    assert "no verified privacy claim" in redpill_badges
+    assert "ZDR" not in redpill_badges
