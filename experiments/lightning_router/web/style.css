@@ -49,6 +49,7 @@ button:disabled, select:disabled { opacity: .5; cursor: not-allowed; }
 .section-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; gap: 12px; }
 #model-count { font-size: 12px; }
 .reasoning-field { margin-top: 16px; max-width: 240px; }
+#agent-model-settings { padding-top: 24px; }
 .intro { text-align: center; margin-bottom: 24px; }
 .intro h1 { margin-bottom: 10px; }
 .intro p { font-size: 17px; line-height: 1.6; margin: 0; color: #526259; text-wrap: balance; }

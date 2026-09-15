@@ -43,11 +43,6 @@
     </section>
     <section class="setup" aria-labelledby="setup-title">
       <div class="section-heading"><h2 id="setup-title">Use your key</h2><span id="model-count" class="muted"></span></div>
-      <div id="agent-model-settings" hidden>
-      <label for="model">Model</label><select id="model" disabled><option>Loading models</option></select>
-      <p id="model-limits" class="muted small"></p>
-      <div class="reasoning-field"><label for="reasoning-effort">Reasoning effort</label><select id="reasoning-effort" disabled><option value="default">Default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
-      </div>
       <div class="tabs" role="tablist" aria-label="Agent"><button role="tab" id="tab-cowork" aria-controls="setup-panel" aria-selected="true" data-agent="cowork">Trusted Cowork</button><button role="tab" id="tab-opencode" aria-controls="setup-panel" aria-selected="false" tabindex="-1" data-agent="opencode">OpenCode</button><button role="tab" id="tab-crush" aria-controls="setup-panel" aria-selected="false" tabindex="-1" data-agent="crush">Crush</button><button role="tab" id="tab-omp" aria-controls="setup-panel" aria-selected="false" tabindex="-1" data-agent="omp">OMP</button></div>
       <div id="setup-panel" role="tabpanel" aria-labelledby="tab-cowork">
         <div id="cowork-setup">
@@ -60,6 +55,11 @@
           </ol>
         </div>
         <div id="cli-setup" hidden>
+        <div id="agent-model-settings" hidden>
+          <label for="model">Model</label><select id="model" disabled><option>Loading models</option></select>
+          <p id="model-limits" class="muted small"></p>
+          <div class="reasoning-field"><label for="reasoning-effort">Reasoning effort</label><select id="reasoning-effort" disabled><option value="default">Default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
+        </div>
         <table class="instructions"><tbody>
           <tr><th scope="row">1. API key</th><td><div class="code-heading"><span>Terminal</span><button id="copy-env" class="icon-button" aria-label="Copy environment variable" title="Copy environment variable"><i data-lucide="copy"></i></button></div><pre id="env-code"></pre></td></tr>
           <tr><th scope="row">2. Configure</th><td><div class="code-heading"><span id="config-path"></span><button id="copy-config" class="icon-button" aria-label="Copy configuration" title="Copy configuration"><i data-lucide="copy"></i></button></div><pre id="config-code"></pre></td></tr>

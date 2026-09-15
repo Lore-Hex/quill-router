@@ -24,6 +24,7 @@ test("all four tabs support keyboard navigation and preserve CLI model selection
   await expect(page.locator("#qr")).toBeVisible();
   const initial = await page.evaluate(() => JSON.parse(sessionStorage.getItem("lightningrouter-usd-session-v1")));
   const tabs = page.getByRole("tab");
+  const initialTabY = (await tabs.first().boundingBox()).y;
   await tabs.first().focus();
   await page.keyboard.press("ArrowLeft");
   await expect(page.locator("#tab-omp")).toBeFocused();
@@ -39,6 +40,8 @@ test("all four tabs support keyboard navigation and preserve CLI model selection
     await expect(page.locator("#tab-" + id)).toHaveAttribute("aria-selected", "true");
     await expect(page.locator("#cowork-setup")).toBeHidden();
     await expect(page.locator("#config-code")).toContainText("https://api.trustedrouter.com/v1");
+    // Account for scrolling caused by keyboard focus; compare document positions.
+    expect((await tabs.first().boundingBox()).y + await page.evaluate(() => scrollY)).toBe(initialTabY);
   }
   await page.selectOption("#model", "kimi/kimi-k2.7");
   await tabs.first().click();
