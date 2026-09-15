@@ -2,7 +2,7 @@ FROM node:22-bookworm-slim AS frontend
 WORKDIR /build
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
-COPY frontend.js pages.js setup.mjs session.mjs ./
+COPY frontend.js pages.js setup.mjs session.mjs chrome.mjs ./
 RUN npm run build
 
 FROM ghcr.io/astral-sh/uv:0.10.11 AS uv

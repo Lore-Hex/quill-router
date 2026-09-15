@@ -75,6 +75,24 @@ def test_browser_security_headers(client):
     assert "type=\"email\"" not in response.text
 
 
+def test_container_copies_every_local_frontend_import():
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    dockerfile = (root / "Dockerfile").read_text()
+    sources = set(re.findall(r"COPY ([^\n]+) \./", dockerfile)[1].split())
+    pending = ["frontend.js", "pages.js"]
+    visited = set()
+    while pending:
+        source = pending.pop()
+        if source in visited:
+            continue
+        visited.add(source)
+        assert source in sources
+        pending.extend(re.findall(r'from "\./([^"\n]+)"', (root / source).read_text()))
+
+
 def test_cross_origin_and_unbounded_body_blocked(client, raw_key):
     assert client.post("/api/invoices", headers={**headers(raw_key), "Origin": "https://evil.test"}, json={"usd_cents": 1000}).status_code == 403
     assert client.post("/api/invoices", headers=headers(raw_key), content="x" * 1025).status_code == 413
