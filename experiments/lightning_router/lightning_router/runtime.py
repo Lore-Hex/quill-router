@@ -92,9 +92,17 @@ def migrate() -> None:
         driver = connection.connection.driver_connection
         assert driver is not None
         cursor = driver.cursor()
-        cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = 'lr_app'")
-        operation = "ALTER" if cursor.fetchone() else "CREATE"
-        cursor.execute(sql.SQL(operation + " ROLE lr_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD {}").format(sql.Literal(password)))
+        cursor.execute("SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls FROM pg_roles WHERE rolname = 'lr_app'")
+        attributes = cursor.fetchone()
+        if attributes is not None:
+            if any(attributes):
+                raise ValueError("Existing runtime database role has elevated privileges")
+            # Cloud SQL admins cannot restate even NOSUPERUSER on ALTER ROLE.
+            # Verify the privilege boundary, then change only login credentials.
+            statement = "ALTER ROLE lr_app LOGIN PASSWORD {}"
+        else:
+            statement = "CREATE ROLE lr_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD {}"
+        cursor.execute(sql.SQL(statement).format(sql.Literal(password)))
         assert store.engine.url.database is not None
         cursor.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO lr_app").format(sql.Identifier(store.engine.url.database)))
         cursor.execute("GRANT USAGE ON SCHEMA public TO lr_app")

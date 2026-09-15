@@ -137,6 +137,65 @@ def test_postgres_migration_creates_restricted_runtime_role(monkeypatch):
                 cursor.execute("CREATE TABLE public.lr_unwanted (id integer)")
 
 
+def test_postgres_migration_retries_without_superuser(monkeypatch):
+    import os
+
+    import psycopg
+    from lightning_router.store import Store, metadata
+    from sqlalchemy.engine import make_url
+
+    dsn = os.environ.get("LR_TEST_POSTGRES_URL")
+    if not dsn:
+        pytest.skip("requires isolated local PostgreSQL")
+    url = make_url(dsn)
+    assert url.host == "127.0.0.1" and url.database == "lightning_router_test"
+    store = Store(dsn)
+    metadata.drop_all(store.engine)
+    store.engine.dispose()
+    admin_url = url.set(drivername="postgresql").render_as_string(hide_password=False)
+    with psycopg.connect(admin_url, autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            for role in ("lr_app", "lr_migrator_test"):
+                cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,))
+                if cursor.fetchone():
+                    cursor.execute(psycopg.sql.SQL("DROP OWNED BY {}").format(psycopg.sql.Identifier(role)))
+                    cursor.execute(psycopg.sql.SQL("DROP ROLE {}").format(psycopg.sql.Identifier(role)))
+            cursor.execute("CREATE ROLE lr_migrator_test LOGIN CREATEROLE PASSWORD 'local-test-only'")
+            cursor.execute("GRANT USAGE, CREATE ON SCHEMA public TO lr_migrator_test")
+    deployer_url = url.set(username="lr_migrator_test")
+    monkeypatch.setenv("LR_DATABASE_URL", deployer_url.render_as_string(hide_password=False))
+    monkeypatch.setenv("LR_DATABASE_APP_PASSWORD", "e" * 64)
+    migrate()
+    migrate()
+    with psycopg.connect(admin_url, autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls FROM pg_roles WHERE rolname = 'lr_app'")
+            assert cursor.fetchone() == (False, False, False, False, False)
+    app_url = url.set(drivername="postgresql", username="lr_app", password="e" * 64)
+    with psycopg.connect(app_url.render_as_string(hide_password=False), autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1 FROM lr_checkouts LIMIT 1")
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                cursor.execute("CREATE TABLE public.lr_unwanted (id integer)")
+
+
+@pytest.mark.parametrize("privilege", range(5))
+def test_migration_refuses_elevated_existing_runtime_role(monkeypatch, privilege):
+    from unittest.mock import MagicMock
+
+    store = MagicMock()
+    cursor = store.engine.begin.return_value.__enter__.return_value.connection.driver_connection.cursor.return_value
+    attributes = [False] * 5
+    attributes[privilege] = True
+    cursor.fetchone.return_value = tuple(attributes)
+    monkeypatch.setattr("lightning_router.runtime.Store", lambda _: store)
+    monkeypatch.setenv("LR_DATABASE_URL", "postgresql+psycopg://local.test/funding")
+    monkeypatch.setenv("LR_DATABASE_APP_PASSWORD", "f" * 64)
+    with pytest.raises(ValueError, match="elevated privileges"):
+        migrate()
+    assert cursor.execute.call_count == 1
+
+
 def test_edge_limits_do_not_group_all_customers_under_proxy_address(funding, raw_key, monkeypatch):
     calls = []
     original = funding.store.rate_limit
