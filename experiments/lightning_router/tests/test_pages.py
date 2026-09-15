@@ -17,13 +17,13 @@ def test_release_includes_both_frontend_entrypoints_and_shared_dependencies():
     assert "/build/web/pages.js ./web/pages.js" in dockerfile
 
 
-@pytest.mark.parametrize("path,title", [("/usage", "Usage"), ("/pricing", "Pricing"), ("/terms", "Terms of Service"), ("/privacy", "Privacy Policy")])
+@pytest.mark.parametrize("path,title", [("/usage", "Usage"), ("/pricing", "Pricing"), ("/docs", "Docs"), ("/terms", "Terms of Service"), ("/privacy", "Privacy Policy")])
 def test_public_pages_have_navigation_and_need_no_payment(path, title, funding):
     with TestClient(create_app(funding, network="regtest", start_worker=False)) as client:
         response = client.get(path)
     assert response.status_code == 200
     assert f"<h1>{title}</h1>" in response.text
-    for link in ("/", "/usage", "/pricing", "/terms", "/privacy"):
+    for link in ("/", "/usage", "/pricing", "/docs", "/terms", "/privacy"):
         assert f'href="{link}"' in response.text
     assert "{{" not in response.text
     assert response.headers["cache-control"] == "no-store"

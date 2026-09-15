@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.mjs";
 import { parse } from "yaml";
 
 const order = ["deepinfra", "novita"];

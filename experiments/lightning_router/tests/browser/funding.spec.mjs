@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.mjs";
 
 test("QR first, real balance transition, reload and model setup tabs", async ({ page, request }) => {
   const errors = [];
@@ -21,9 +21,9 @@ test("QR first, real balance transition, reload and model setup tabs", async ({ 
   await expect(page.locator("#balance-usd")).toContainText("$10.00");
   await expect(page.locator("#balance-usd")).toHaveText("$10.000800 USD");
   await expect(page.locator("#balance-btc")).toHaveCount(0);
-  const key = await page.locator("#your-key").inputValue();
+  const key = await page.locator("#existing-key").inputValue();
   await page.reload();
-  await expect(page.locator("#your-key")).toHaveValue(key);
+  await expect(page.locator("#existing-key")).toHaveValue(key);
   await page.getByRole("tab", {name: "OpenCode", exact: true}).click();
   await page.selectOption("#model", "kimi/kimi-k2.7");
   for (const label of ["OpenCode", "Crush", "OMP"]) {
@@ -37,7 +37,7 @@ test("QR first, real balance transition, reload and model setup tabs", async ({ 
   await page.getByRole("button", { name: "Update invoice amount" }).click();
   await expect(page.locator("#qr")).toBeVisible();
   await expect(page.locator("#balance-usd")).toHaveText("$10.000800 USD");
-  await page.locator("#your-key").evaluate((node) => { node.value = "sk-tr-v1-test-key"; });
+  await page.locator("#existing-key").evaluate((node) => { node.value = "sk-tr-v1-test-key"; });
   await page.locator("#env-code").evaluate((node) => { node.textContent = "export LIGHTNINGROUTER_API_KEY='YOUR_API_KEY'"; });
   await page.screenshot({ path: "test-results/funded-desktop.png", fullPage: true });
   expect(errors).toEqual([]);
@@ -53,7 +53,7 @@ test("existing key replaces only a confirmed canceled invoice and topup adds bal
   await expect(page.locator("#qr")).toBeVisible();
   await request.post("/_test/pay", { data: {} });
   await expect(page.locator("#balance-usd")).toContainText("$30.00", { timeout: 12000 });
-  await expect(page.locator("#your-key")).toHaveValue(existing.key);
+  await expect(page.locator("#existing-key")).toHaveValue(existing.key);
 });
 
 test("USD edits hide stale QR until invoice is replaced", async ({ page }) => {
@@ -116,7 +116,7 @@ test("payment winning a lost cancel response keeps the funded key", async ({ pag
   const before = await page.evaluate(() => JSON.parse(sessionStorage.getItem("lightningrouter-usd-session-v1")));
   await page.locator("#amount").fill("7.00");
   await page.getByRole("button", { name: "Update invoice amount" }).click();
-  await expect(page.locator("#your-key")).toHaveValue(before.key);
+  await expect(page.locator("#existing-key")).toHaveValue(before.key);
   await expect(page.locator("#error")).toContainText("Copy your new API key");
   const after = await page.evaluate(() => JSON.parse(sessionStorage.getItem("lightningrouter-usd-session-v1")));
   expect(after.invoice.id).toBe(before.invoice.id);

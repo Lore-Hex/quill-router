@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi.responses import HTMLResponse
 
 WEB = Path(__file__).resolve().parent.parent / "web"
-PAGES = {"usage": "Usage", "pricing": "Pricing", "terms": "Terms of Service", "privacy": "Privacy Policy"}
+PAGES = {"usage": "Usage", "pricing": "Pricing", "docs": "Docs", "terms": "Terms of Service", "privacy": "Privacy Policy"}
 
 
 def public_page(name: str) -> HTMLResponse:

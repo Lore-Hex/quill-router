@@ -1,0 +1,15 @@
+<h1>Docs</h1>
+<p class="lead">LightningRouter is the Bitcoin over Lightning funding site for TrustedRouter. Both are operated by Lore Hex Corp. You use the same TrustedRouter API key, models and API docs.</p>
+<h2>Fund a key</h2>
+<p><a href="/">Pay a Lightning invoice</a> to create a funded key, or paste an existing key to add credits to its account. BTC converts once into USD credits at the invoice's quoted rate, including the displayed FX buffer. Your balance stays in USD.</p>
+<p>No email or separate password is needed. Keep your API key safe: it grants access to your balance and inference. This tab remembers it until you sign out. Never send your key to support or put it in a public repository.</p>
+<h2>Connect your app</h2>
+<p>Use your funded key with this API base URL:</p>
+<pre>https://api.trustedrouter.com/v1</pre>
+<p>The <a href="/#setup-title">setup tabs</a> include Trusted Cowork, OpenCode, Crush and OMP. For your own application, follow the <a href="https://trustedrouter.com/docs">TrustedRouter API docs</a>. Those docs apply to your LightningRouter key too.</p>
+<p><a href="/pricing">Pricing</a> lists model costs in USD. <a href="/usage">Usage</a> shows your available credits and total spend when you connect your key.</p>
+<h2>Check the privacy boundary</h2>
+<p>This site handles funding. Inference goes separately to TrustedRouter's attested API. You or your agent can <a href="https://trust.trustedrouter.com">verify gateway attestation</a> before sending requests.</p>
+<p>The selected model provider still processes your request. Retention and confidential computing guarantees vary by provider. Review <a href="https://trustedrouter.com/providers">provider policies</a> and our <a href="/privacy">Privacy Policy</a> before sending sensitive data.</p>
+<h2>Payment help</h2>
+<p>Pay the QR code with a Lightning wallet, not an on-chain Bitcoin transfer. If an invoice expires or is canceled, choose <strong>New invoice</strong>. If payment is in flight or needs review, keep the tab open and wait for its final status. Contact <a href="mailto:support@trustedrouter.com">support@trustedrouter.com</a> for help, without sharing your API key.</p>
