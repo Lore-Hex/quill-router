@@ -48,4 +48,13 @@ jobs:
       - run: npm test
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
+      - name: Verify standalone source export builds identically
+        if: github.repository == 'Lore-Hex/quill-router'
+        run: |
+          python ../../scripts/lightning/export_repository.py --ref "$GITHUB_SHA" --output "$RUNNER_TEMP/lightning-public"
+          cd "$RUNNER_TEMP/lightning-public/experiments/lightning_router"
+          npm ci --ignore-scripts
+          npm run build
+          cmp web/app.js "$GITHUB_WORKSPACE/experiments/lightning_router/web/app.js"
+          cmp web/pages.js "$GITHUB_WORKSPACE/experiments/lightning_router/web/pages.js"
       - run: docker build --tag lightning-router-ci .
