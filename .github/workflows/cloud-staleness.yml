@@ -32,7 +32,7 @@ jobs:
     name: how old is each cloud
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Ages are computed from each commit's own date, so the checkout has
           # to contain the commits the planes report. A shallow clone resolves
