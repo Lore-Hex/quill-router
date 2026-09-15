@@ -10,7 +10,9 @@ from urllib.parse import urlsplit
 
 import pytest
 from lightning_router.credentials import Credentials
+from lightning_router.credits import AccountSummary
 from lightning_router.lnd import Invoice, Lnd
+from lightning_router.lookup import LookupGate
 from lightning_router.money import MAX_CREDIT_RECEIPT, microdollars
 from lightning_router.rates import Rate, Rates
 from lightning_router.service import Funding
@@ -34,6 +36,7 @@ class FakeCredits:
         self.balances = {}
         self.payments = {}
         self.revoked = set()
+        self.feedback_messages = []
         self.fail_before_commit = False
         self.fail_after_commit = False
         self.lock = threading.Lock()
@@ -52,6 +55,17 @@ class FakeCredits:
     def balance(self, account_id):
         with self.lock:
             return self.balances[account_id]
+
+    def account(self, raw_key):
+        account_id = self.resolve(raw_key, new=False)
+        return AccountSummary(account_id, self.balance(account_id), self.balance(account_id) > 0 or
+                              any(account == account_id for account, _ in self.payments.values()))
+
+    def feedback(self, raw_key, email, message):
+        account = self.account(raw_key)
+        if not account.support_eligible:
+            raise KeyError("Funded key required")
+        self.feedback_messages.append({"account_id": account.account_id, "email": email, "message": message})
 
     def usage(self, raw_key):
         self.resolve(raw_key, new=False)
@@ -141,3 +155,11 @@ def funding(store: Store) -> Funding:
 @pytest.fixture
 def raw_key() -> str:
     return "sk-tr-v1-" + secrets.token_urlsafe(32)
+
+
+@pytest.fixture(autouse=True)
+def fast_lookup_delay(monkeypatch):
+    # Delay range/admission are tested separately without slowing all contracts.
+    async def delay(self):
+        pass
+    monkeypatch.setattr(LookupGate, "delay", delay)

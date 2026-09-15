@@ -1,9 +1,25 @@
 """Boundary to the existing USD ledger, not a second inference currency."""
 
+from dataclasses import dataclass
 from typing import Protocol
 
 
+@dataclass(frozen=True)
+class AccountSummary:
+    account_id: str
+    available_microdollars: int
+    support_eligible: bool
+
+
 class Credits(Protocol):
+    def account(self, raw_key: str) -> AccountSummary:
+        """Verify this credential and return authoritative funding eligibility."""
+        ...
+
+    def feedback(self, raw_key: str, email: str, message: str) -> None:
+        """Recheck funding and email support with server-resolved identity."""
+        ...
+
     def resolve(self, raw_key: str, *, new: bool) -> str:
         """Authenticate an existing key or idempotently provision a zero-credit
         key-only account. Return an immutable account/workspace identifier.

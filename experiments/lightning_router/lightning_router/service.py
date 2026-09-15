@@ -32,9 +32,12 @@ class Funding:
 
     def account(self, raw_key: str) -> dict[str, Any]:
         key_hash = self.credentials.fingerprint(raw_key)
-        account_id = self.credits.resolve(raw_key, new=False)
-        self.store.bind_account(key_hash, account_id)
-        return {**self.balance(key_hash), "active_invoice": self.store.active(key_hash)}
+        account = self.credits.account(raw_key)
+        self.store.bind_account(key_hash, account.account_id)
+        amount = microdollars(account.available_microdollars)
+        return {"balance_microdollars": str(amount), "balance_usd": usd(amount), "currency": "USD",
+                "account_created": True, "support_eligible": account.support_eligible,
+                "active_invoice": self.store.active(key_hash)}
 
     def balance(self, key_hash: str) -> dict[str, Any]:
         account_id = self.store.credit_account(key_hash)

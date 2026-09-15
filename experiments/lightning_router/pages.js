@@ -1,5 +1,6 @@
 import { createIcons, ArrowRight, RefreshCw } from "lucide";
 import { KEY, savedSession } from "./session.mjs";
+import { connectSupport } from "./chrome.mjs";
 
 const $ = id => document.getElementById(id);
 createIcons({ icons: { ArrowRight, RefreshCw } });
@@ -13,7 +14,7 @@ function dollars(value) {
 }
 async function read(path, key) {
   const response = await fetch(path, {headers: key ? {Authorization: "Bearer " + key} : {},
-    cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(20000)});
+    cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(25000)});
   if (!response.ok) throw new Error(response.status === 401 ? "That key was not found or is no longer active." : "Temporarily unavailable. Please retry.");
   return response.json();
 }
@@ -29,10 +30,12 @@ if ($("usage-key-form")) {
     $("page-error").textContent = "";
     $("usage-data").hidden = true;
     $("usage-status").textContent = "Checking balance and usage";
-    for (const button of document.querySelectorAll("button")) button.disabled = true;
+    connectSupport(null, false);
+    for (const button of document.querySelectorAll("#usage-key-form button, #refresh-usage")) button.disabled = true;
     try {
       const balance = await read("/api/account", key);
       currentKey = key;
+      connectSupport(key, balance.support_eligible);
       $("usage-key").value = "";
       $("usage-key").placeholder = "Key connected";
       $("usage-balance").textContent = dollars(balance.balance_usd);
@@ -49,13 +52,18 @@ if ($("usage-key-form")) {
     } catch (error) {
       $("page-error").textContent = error.message;
       $("usage-status").textContent = "Could not finish the refresh";
-    } finally { busy = false; for (const button of document.querySelectorAll("button")) button.disabled = false; }
+    } finally { busy = false; for (const button of document.querySelectorAll("#usage-key-form button, #refresh-usage")) button.disabled = false; }
   }
   $("usage-key-form").addEventListener("submit", event => {
     event.preventDefault(); refresh($("usage-key").value.trim() || currentKey);
   });
   $("refresh-usage").addEventListener("click", () => refresh(currentKey));
   if (currentKey) refresh(currentKey);
+} else {
+  const saved = savedSession();
+  if (saved && (!saved.isNew || saved.reveal)) {
+    read("/api/account", saved.key).then(account => connectSupport(saved.key, account.support_eligible)).catch(() => connectSupport(null, false));
+  }
 }
 
 if ($("price-search")) {
