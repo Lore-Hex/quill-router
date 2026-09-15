@@ -47,24 +47,42 @@ Trusted Cowork is selected first and links to its official download page. The
 manual `Use an API key` flow accepts the same funded key; its copy button is
 disabled until a key is connected or credit delivery completes. Keys never
 appear in the download URL. Cowork keeps its confidential-model policy and
-selects models inside the app. The model and reasoning selectors apply to the
-three CLI setup tabs; switching tabs preserves those selections and checkout.
+selects models inside the app. The model selector applies to the three CLI
+setup tabs; switching tabs preserves that selection and checkout.
 Changing the amount hides the old QR until cancellation and replacement finish.
 If the cancellation response is lost, both the LND adapter and browser verify
 the invoice state before continuing. An unresolved invoice keeps its original
 key and request ID. Payment winning the race credits the original key.
 
-The reasoning effort selector offers Default, Low, Medium and High. Explicit
-effort is available only when the catalog advertises `reasoning_effort` support.
-Default leaves the client's existing behavior unchanged. Switching to a model
-without advertised effort support resets the selector to Default. The setting
-changes setup snippets only, not the invoice or funding account.
+There is no global reasoning dropdown. `lightning_router/reasoning.py` associates
+exact reviewed model IDs with native controls, distinct values, source links,
+review dates, defaults and separately verified chat-compatible setup fields.
+New releases and provider-specific aliases do not inherit guessed values from a
+name prefix or the catalog's coarse `reasoning_effort` boolean. Unreviewed models
+are explicitly unverified, not declared incapable of reasoning.
 
-Generated settings follow each client's configuration: OpenCode model
-`options.reasoningEffort`, Crush selected-model `reasoning_effort` with reasoning
-capability metadata, and OMP `thinking` plus `--thinking`. The gateway remains
-responsible for mapping effort to the chosen provider's controls; these levels
-do not promise identical token budgets across models.
+For reviewed chat effort models, generated settings set the documented default:
+OpenCode `options.reasoningEffort` and model variants, Crush selected-model
+`reasoning_effort` plus `reasoning_levels` and `default_reasoning_effort`, and OMP
+model-specific `thinking.efforts` plus an explicit launch effort. OpenCode's
+unsupported built-in variants are disabled, since it merges rather than replaces
+them. OMP's `off` is distinguished from named effort; DeepSeek and GLM configs do
+not invent an off level. Provider-hosted variants can differ from native models.
+
+**Known adapter gaps are not advertised as working controls.** TR's current chat
+adapter maps Anthropic low/medium/high to 1024/4096/8192 thinking tokens, not native
+`output_config.effort`. Native effort defaults to high where supported; that does
+not imply thinking is on. These snippets omit that misleading override and show
+the limitation. `/v1/messages` preserves native output_config, but these CLI tabs
+use chat completions. Gemini Vertex and Google-compatible mappings also differ;
+their native reference is shown without forcing unsupported effort settings.
+MiniMax M3 has disabled/adaptive thinking, while M2.x thinking is always on.
+No backend behavior or payment logic is changed by these setup references.
+
+Node tests use the production Python profile registry and the actual pinned
+OpenAI-compatible AI SDK with a fake HTTP transport. They prove the generated
+effort reaches the HTTP body, not merely a config string. Crush and OMP config
+tests plus their source review are not a live end-to-end provider test.
 References: [OpenCode](https://opencode.ai/docs/models/#configure-models),
 [Crush](https://github.com/charmbracelet/crush/blob/main/internal/agent/coordinator.go),
 [OMP](https://github.com/can1357/oh-my-pi/blob/main/docs/models.md).

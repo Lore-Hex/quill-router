@@ -9,6 +9,7 @@ import uvicorn
 from lightning_router.app import create_app
 from lightning_router.credentials import Credentials
 from lightning_router.rates import Rate
+from lightning_router.reasoning import reasoning_profile
 from lightning_router.service import Funding
 from lightning_router.store import Store
 
@@ -25,9 +26,11 @@ class Catalog:
     def current(self):
         return [
             {"id": "deepseek/deepseek-flash", "name": "DeepSeek Flash", "context": 1048576, "output": 393216,
-             "default_output": 65536, "reasoning_effort": True,
+             "default_output": 65536, "reasoning": reasoning_profile({"id": "deepseek/deepseek-flash"}),
              "pricing": {"input_per_million": "0.042200", "output_per_million": "0.084400", "cached_input_per_million": "0.01"}},
             {"id": "kimi/kimi-k2.7", "name": "Kimi K2.7", "context": 262144, "output": 8192},
+            {"id": "anthropic/claude-opus-4.8", "name": "Claude Opus 4.8",
+             "reasoning": reasoning_profile({"id": "anthropic/claude-opus-4.8"})},
         ]
 
 

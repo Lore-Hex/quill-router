@@ -74,10 +74,17 @@ function renderSetup() {
   if (cowork) { setup = null; return; }
   const model = models.find((item) => item.id === $("model").value);
   if (!model || !config) return;
-  const effort = $("reasoning-effort");
-  effort.disabled = model.reasoning_effort !== true;
-  if (effort.disabled) effort.value = "default";
-  setup = setupFor(agent, model, config.api_base, effort.value);
+  setup = setupFor(agent, model, config.api_base);
+  const reasoning = model.reasoning;
+  $("reasoning-values").textContent = reasoning?.field
+    ? `${reasoning.field}${reasoning.values.length ? ": " + reasoning.values.join(", ") : ""}`
+    : "Not yet verified";
+  $("reasoning-default").textContent = setup.reasoningSummary;
+  $("reasoning-note").textContent = reasoning?.note || "No model-specific effort override is generated.";
+  const reference = $("reasoning-source");
+  reference.hidden = !reasoning?.source;
+  if (reasoning?.source) reference.href = reasoning.source;
+  else reference.removeAttribute("href");
   $("config-path").textContent = setup.path;
   $("config-code").textContent = setup.config;
   $("command-code").textContent = setup.command;
@@ -275,7 +282,6 @@ $("copy-config").addEventListener("click", () => { if (setup) copy(setup.config)
 $("copy-command").addEventListener("click", () => { if (setup) copy(setup.command); });
 $("refresh-balance").addEventListener("click", () => exclusive(showBalance));
 $("model").addEventListener("change", renderSetup);
-$("reasoning-effort").addEventListener("change", renderSetup);
 for (const tab of document.querySelectorAll("[role=tab]")) {
   tab.addEventListener("click", () => {
     agent = tab.dataset.agent;

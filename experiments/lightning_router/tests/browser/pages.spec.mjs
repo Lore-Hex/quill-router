@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test("marketing and documented DeepSeek budgets", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "No account needed." })).toBeVisible();
-  await expect(page.locator(".intro")).toContainText("Load BTC and you're good to go!");
+  await expect(page.locator(".intro")).toContainText("Pay with BTC over Lightning ⚡ and you're good to go!");
   await page.getByRole("tab", {name: "Crush", exact: true}).click();
   await expect(page.locator("#model-limits")).toContainText("393,216 max output");
   await expect(page.locator("#config-code")).toContainText('"default_max_tokens": 65536');
@@ -87,7 +87,7 @@ for (const width of [375, 768, 1440]) {
     for (const path of ["/", "/usage", "/pricing", "/terms", "/privacy"]) {
       await page.goto(path);
       if (path === "/") await expect(page.locator("#qr")).toBeVisible();
-      if (path === "/pricing") await expect(page.locator("#price-rows tr")).toHaveCount(2);
+      if (path === "/pricing") await expect(page.locator("#price-rows tr")).toHaveCount(3);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({path: `test-results/pages-${path.slice(1) || "home"}-${width}.png`, fullPage: true});
     }

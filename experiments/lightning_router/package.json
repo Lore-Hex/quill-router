@@ -7,6 +7,13 @@
     "test": "node --test tests/*.test.mjs",
     "test:browser": "playwright test"
   },
-  "dependencies": { "lucide": "^0.577.0" },
-  "devDependencies": { "@playwright/test": "^1.62.1", "esbuild": "^0.25.0" }
+  "dependencies": {
+    "lucide": "^0.577.0"
+  },
+  "devDependencies": {
+    "@ai-sdk/openai-compatible": "2.0.75",
+    "@playwright/test": "^1.62.1",
+    "esbuild": "^0.25.0",
+    "yaml": "2.9.1"
+  }
 }

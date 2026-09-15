@@ -13,7 +13,7 @@
   <header><a href="/" class="brand">LightningRouter</a><nav aria-label="Main"><a href="/usage">Usage</a><a href="/pricing">Pricing</a></nav><span id="connection">Connecting</span></header>
   <main>
     <section class="funding" aria-label="Fund your API key">
-      <div class="intro"><h1>No account needed.</h1><p>Private inference.<br>Load BTC and you're good to go!</p></div>
+      <div class="intro"><h1>No account needed.</h1><p>Private inference.<br>Pay with BTC over Lightning ⚡ and you're good to go!</p></div>
       <div class="qr-frame" aria-live="polite">
         <img id="qr" width="280" height="280" alt="Lightning payment invoice" hidden>
         <div id="qr-empty">Loading payment status</div>
@@ -58,7 +58,12 @@
         <div id="agent-model-settings" hidden>
           <label for="model">Model</label><select id="model" disabled><option>Loading models</option></select>
           <p id="model-limits" class="muted small"></p>
-          <div class="reasoning-field"><label for="reasoning-effort">Reasoning effort</label><select id="reasoning-effort" disabled><option value="default">Default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
+          <dl id="reasoning-details" class="reasoning-details">
+            <dt>Model reasoning</dt><dd id="reasoning-values"></dd>
+            <dt>This config</dt><dd id="reasoning-default"></dd>
+          </dl>
+          <p id="reasoning-note" class="muted small"></p>
+          <a id="reasoning-source" class="small" target="_blank" rel="noopener noreferrer" hidden>Model reasoning reference</a>
         </div>
         <table class="instructions"><tbody>
           <tr><th scope="row">1. API key</th><td><div class="code-heading"><span>Terminal</span><button id="copy-env" class="icon-button" aria-label="Copy environment variable" title="Copy environment variable"><i data-lucide="copy"></i></button></div><pre id="env-code"></pre></td></tr>
