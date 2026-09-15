@@ -8,8 +8,11 @@ provider-owned sources:
 2. the current inference pricing page;
 3. the public x402 model catalog for the remaining models.
 
-The authenticated feed currently emits zero placeholders for most models.
-Those values are never interpreted as free.
+The authenticated feed now publishes positive, cached-inclusive USD rates.
+Legacy zero placeholders are never interpreted as free. Secondary sources
+are consulted only for missing prices, never as a prerequisite for a complete
+authenticated catalog. Their parsers remain covered by offline fixtures;
+missing fallback evidence must still block publication, not invent prices.
 """
 
 from __future__ import annotations
@@ -108,6 +111,12 @@ def _live_catalog(
             continue
         if str(source.get("task") or "").casefold() != "text-generation":
             continue
+        service_tiers = source.get("service_tiers")
+        if service_tiers is not None:
+            if not isinstance(service_tiers, list):
+                raise RuntimeError("telnyx: invalid service_tiers in authenticated catalog")
+            if "default" not in service_tiers:
+                continue
         native_id = source.get("id")
         if not isinstance(native_id, str) or not native_id:
             continue
@@ -145,6 +154,10 @@ def _live_catalog(
         pricing = source.get("pricing")
         if not isinstance(pricing, dict):
             continue
+        if pricing.get("currency") is None:
+            continue  # Legacy rows require an independently USD-denominated fallback.
+        if str(pricing["currency"]).casefold() != "usd":
+            raise RuntimeError(f"telnyx: unsupported pricing currency for {native_id}")
         if str(pricing.get("unit") or "").casefold() != "1m_tokens":
             continue
         price = _model_price(
@@ -198,30 +211,29 @@ def fetch() -> ProviderPricingResult:
     headers = {"Authorization": f"Bearer {api_key}"}
     live_payload = fetch_json(MODELS_URL, extra_headers=headers)
     discovered, direct_prices = _live_catalog(live_payload)
-    x402_prices = _x402_prices(fetch_json(X402_MODELS_URL))
-    page_result = fetch_provider(
-        slug=SLUG,
-        url=PRICING_URL,
-        expected_models=[
-            "moonshotai/kimi-k2.6",
-            "z-ai/glm-5.2",
-            "minimax/minimax-m3",
-        ],
-    )
-
-    prices = {
-        model_id: price
-        for model_id, price in x402_prices.items()
-        if model_id in discovered
-    }
-    prices.update(
-        {
+    prices = dict(direct_prices)
+    if discovered.keys() - prices.keys():
+        x402_prices = _x402_prices(fetch_json(X402_MODELS_URL))
+        page_result = fetch_provider(
+            slug=SLUG,
+            url=PRICING_URL,
+            expected_models=[
+                "moonshotai/kimi-k2.6",
+                "z-ai/glm-5.2",
+                "minimax/minimax-m3",
+            ],
+        )
+        prices = {
+            model_id: price
+            for model_id, price in x402_prices.items()
+            if model_id in discovered
+        }
+        prices.update({
             model_id: price
             for model_id, price in page_result.prices.items()
             if model_id in discovered
-        }
-    )
-    prices.update(direct_prices)
+        })
+        prices.update(direct_prices)
     errors = validate(prices, EXPECTED_MODELS)
     if errors:
         raise RuntimeError("; ".join(errors))

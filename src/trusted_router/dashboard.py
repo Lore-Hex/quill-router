@@ -88,6 +88,7 @@ from trusted_router.model_regions import MODEL_REGION_SLUGS, model_region_eviden
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR, format_money_precise
 from trusted_router.og import OG_DESCRIPTION, OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, OG_TITLE
 from trusted_router.provider_branding import (
+    PROVIDER_BRANDS,
     provider_homepage_url,
     provider_logo_url,
     provider_og_image_url,
@@ -5117,6 +5118,7 @@ def _provider_detail_view(
     view = _provider_view(provider)
     view["served_model_count"] = len(served_models)
     view["credits_model_count"] = len(served_models)
+    view["profile"] = PROVIDER_BRANDS.get(provider.slug)
     return view
 
 

@@ -49,6 +49,28 @@ def test_unknown_provider_logo_falls_back_locally() -> None:
     assert provider_homepage_url("future-provider") is None
 
 
+def test_telnyx_profile_keeps_application_contacts_private(test_settings) -> None:  # noqa: ANN001
+    from trusted_router.dashboard import public_provider_detail_html
+
+    html = public_provider_detail_html(test_settings, "telnyx")
+    assert html is not None
+    for text in ("Telnyx LLC", "966115342", "27-0273220", "Telnyx-owned GPUs",
+                 "third-party BYOK", "not yet a Provider Reliability Contract v2",
+                 "https://telnyx.com/legal/data-processing-addendum",
+                 "https://api.telnyx.com/v2/pricing/products/inference"):
+        assert text in html
+    profile = PROVIDER_BRANDS["telnyx"]
+    for label, value in (*profile.company_details, *profile.resources):
+        assert "@" not in value
+        assert not re.search(r"\+\d[\d ()-]{6,}", value)
+        assert not value.startswith("mailto:")
+        assert not re.search(r"contact|phone|signer", label, re.I)
+    provider = PROVIDERS["telnyx"]
+    assert provider.provider_e2ee is not True
+    assert provider.provider_zero_data_retention is not True
+    assert provider.prepaid_zero_data_retention is False
+
+
 @_needs_real_clock
 @pytest.mark.provider_health
 def test_provider_social_card_counts_match_current_catalog() -> None:

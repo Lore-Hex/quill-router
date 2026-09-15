@@ -3,8 +3,68 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import telnyx
+
+
+def test_complete_native_prices_do_not_depend_on_secondary_sources(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setenv("TELNYX_API_KEY", "test-key")
+    payload = _live_payload()
+    for row in payload["data"]:
+        row["pricing"] = {
+            "input": "0.135", "output": "0.450", "cached_prompt": "0.027",
+            "currency": "USD", "unit": "1M_tokens",
+        }
+    payload["data"].append(_live_model(
+        "zai-org/GLM-5.3-Flash", pricing=payload["data"][0]["pricing"],
+    ))
+
+    def fetch_native_only(url: str, **_kwargs) -> dict:  # noqa: ANN003
+        assert url == telnyx.MODELS_URL, "complete native prices need no secondary network dependency"
+        return payload
+
+    def no_page(**_kwargs) -> None:  # noqa: ANN003
+        raise AssertionError("pricing page must not be fetched")
+
+    monkeypatch.setattr(telnyx, "fetch_json", fetch_native_only)
+    monkeypatch.setattr(telnyx, "fetch_provider", no_page)
+    result = telnyx.fetch()
+    assert result.prices["z-ai/glm-5.3-flash"] == ModelPrice(
+        135_000, 450_000, prompt_cached_micro_per_m=27_000,
+    )
+    assert "openai/gpt-5.5" not in result.prices
+
+
+def test_telnyx_rejects_foreign_currency_and_excludes_priority_only() -> None:
+    price = {"input": "1", "output": "4", "currency": "EUR", "unit": "1M_tokens"}
+    with pytest.raises(RuntimeError, match="unsupported pricing currency"):
+        telnyx._live_catalog({"data": [_live_model("zai-org/GLM-5.3", pricing=price)]})  # noqa: SLF001
+    priority = _live_model("zai-org/GLM-5.3")
+    priority["service_tiers"] = ["priority"]
+    discovered, _ = telnyx._live_catalog({"data": [  # noqa: SLF001
+        priority, _live_model("moonshotai/Kimi-K3"),
+        _live_model("Groq/gpt-oss-120b", owned_by="Groq"),
+        _live_model("anthropic/claude-haiku-4-5", owned_by="anthropic"),
+        _live_model("google/gemini-3.7-flash", owned_by="google"),
+    ]})
+    assert set(discovered) == {"moonshotai/kimi-k3"}
+
+
+def test_telnyx_currency_and_tier_contract_variants() -> None:
+    row = _live_model("zai-org/GLM-5.3", pricing={
+        "input": "1", "output": "4", "currency": "usd", "unit": "1M_tokens",
+    })
+    _, prices = telnyx._live_catalog({"data": [row]})  # noqa: SLF001
+    assert prices["z-ai/glm-5.3"] == ModelPrice(1_000_000, 4_000_000)
+    del row["pricing"]["currency"]
+    discovered, prices = telnyx._live_catalog({"data": [row]})  # noqa: SLF001
+    assert "z-ai/glm-5.3" in discovered
+    assert not prices
+    row["service_tiers"] = {"default": True}
+    with pytest.raises(RuntimeError, match="invalid service_tiers"):
+        telnyx._live_catalog({"data": [row]})  # noqa: SLF001
 
 
 def _live_model(
@@ -23,13 +83,12 @@ def _live_model(
         "max_completion_tokens": 64_000 if native_id.endswith("Kimi-K3") else None,
         "is_vision_supported": vision,
         "regions": ["us-east-1"],
-        "pricing": pricing
-        or {
+        "pricing": {"currency": "USD", **(pricing or {
             "input": "0.000000",
             "output": "0.000000",
             "cached_prompt": "0.000000",
             "unit": "1M_tokens",
-        },
+        })},
     }
 
 
