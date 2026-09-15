@@ -77,6 +77,9 @@ the limitation. `/v1/messages` preserves native output_config, but these CLI tab
 use chat completions. Gemini Vertex and Google-compatible mappings also differ;
 their native reference is shown without forcing unsupported effort settings.
 MiniMax M3 has disabled/adaptive thinking, while M2.x thinking is always on.
+Reviewed reasoning models retain their reasoning capability metadata even when
+they have no named effort control; lack of effort levels does not mean thinking
+is disabled.
 No backend behavior or payment logic is changed by these setup references.
 
 Node tests use the production Python profile registry and the actual pinned

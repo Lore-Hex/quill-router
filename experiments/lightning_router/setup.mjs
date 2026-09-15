@@ -17,6 +17,7 @@ export function setupFor(agent, model, apiBase) {
   if (!Array.isArray(efforts) || efforts.some(value => !CLIENT_EFFORTS.includes(value)) ||
       (effort != null && !efforts.includes(effort))) throw new Error("Invalid model reasoning metadata");
   const explicit = effort != null && efforts.length > 0;
+  const canReason = profile?.status === "reviewed" && Boolean(profile.field);
   const reasoningSummary = explicit ? `reasoning_effort = ${effort}`
     : "No effort override. Client and selected provider defaults apply.";
   // OpenCode merges built-in variants with custom variants. Explicitly disable
@@ -36,7 +37,7 @@ export function setupFor(agent, model, apiBase) {
         npm: "@ai-sdk/openai-compatible", name: "LightningRouter",
         options: { baseURL: apiBase, apiKey: "{env:LIGHTNINGROUTER_API_KEY}" },
         models: { [model.id]: { name: model.name, ...(context && output ? { limit: { context, output } } : {}),
-          reasoning: explicit, variants,
+          reasoning: canReason, variants,
           ...(explicit ? { options: { reasoningEffort: effort } } : {}),
         } },
       } },
@@ -52,7 +53,7 @@ export function setupFor(agent, model, apiBase) {
         api_key: "$LIGHTNINGROUTER_API_KEY",
         models: [{ id: model.id, name: model.name, ...(context ? { context_window: context } : {}),
           ...(defaultOutput || output ? { default_max_tokens: defaultOutput || output } : {}),
-          can_reason: explicit,
+          can_reason: canReason,
           ...(explicit ? { reasoning_levels: efforts, default_reasoning_effort: effort } : {}),
         }],
       } },
@@ -69,7 +70,7 @@ export function setupFor(agent, model, apiBase) {
       (explicit ? `\n        reasoning: true\n        thinking:\n          mode: effort\n          efforts: [${efforts.filter(value => value !== "none").join(", ")}]\n          requiresEffort: ${!efforts.includes("none")}` +
         (effort !== "none" ? `\n          defaultLevel: ${effort}` : "") +
         "\n        compat:\n          supportsReasoningEffort: true\n          thinkingFormat: openai"
-        : "\n        reasoning: false\n        compat:\n          supportsReasoningParams: false"),
+        : `\n        reasoning: ${canReason}\n        compat:\n          supportsReasoningParams: false`),
     command: `omp --model '${ref}'` + (explicit ? ` --thinking ${effort === "none" ? "off" : effort}` : ""),
     docs: "https://github.com/can1357/oh-my-pi/blob/main/docs/models.md", reasoningSummary,
   };

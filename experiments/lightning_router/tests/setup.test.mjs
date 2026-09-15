@@ -80,6 +80,9 @@ for (const [id, reasoning] of Object.entries(profiles)) {
     const crush = JSON.parse(setupFor("crush", selected, base).config);
     const omp = setupFor("omp", selected, base);
     const pi = parse(omp.config).providers.lightningrouter.models[0];
+    assert.equal(code.reasoning, true);
+    assert.equal(crush.providers.lightningrouter.models[0].can_reason, true);
+    assert.equal(pi.reasoning, true);
     if (reasoning.setup_default) {
       assert.equal(code.options.reasoningEffort, reasoning.setup_default);
       assert.deepEqual(Object.entries(code.variants).filter(([,v]) => !v.disabled).map(([k]) => k), reasoning.setup_efforts);
