@@ -1,11 +1,13 @@
 # LightningRouter funding experiment
 
-**Website deployed. Mainnet deposits are disabled.** `https://lightningrouter.ai`
-is serving over verified public HTTPS. Bitcoin is still syncing; LND 0.21.3-beta
-is installed with five verified release signatures, but no wallet or inbound
-Lightning liquidity exists. The TrustedRouter USD bridge
-is implemented and conformance-tested, but its dedicated production credential
-and the funding worker are not activated. Browser tests still use a fake backend.
+`https://lightningrouter.ai` is the public funding website. Production wiring uses
+a synced Bitcoin/LND node, invoice-only credentials, private verified TLS,
+dedicated PostgreSQL storage, and the TrustedRouter USD credit bridge. Check
+`/health` for live payment readiness; never infer it from this document.
+
+See the [production deployment runbook](../../docs/lightning-funding-production.md)
+for activation, permissions, backups and recovery. Browser tests use a fake
+backend; a real paid-invoice test must be recorded separately.
 
 ## Product behavior
 
@@ -128,18 +130,23 @@ The first production funding database must use the current `lr_checkouts` schema
    existing Postgres deployment, or the one-time
    `scripts/lightning/spanner_provenance.sql` upgrade on existing native Spanner.
    Both migrations widen only the provider constraint and preserve money rows.
-   Run a paid-key inference smoke before enabling mainnet deposits.
+   Run a small operator-paid invoice and paid-key inference smoke as the final
+   launch verification. Never simulate a production settlement.
 4. Add readiness gates for node sync, wallet availability, receiving capacity,
    DB health and verified credit delivery before removing the mainnet guard.
 5. Website HTTPS is deployed on its own Cloud Run service and load balancer.
-   Add `api.lightningrouter.ai` separately with attested TLS; that API hostname
-   is not deployed yet. Do not point the public site or API at Bitcoin RPC.
+   Agent setup uses the attested `https://api.trustedrouter.com/v1` endpoint.
+   `api.lightningrouter.ai` is not deployed. Do not point the public site or
+   an API hostname at Bitcoin RPC.
 6. Add ingress limits, expiry cleanup and monitored reconciliation. Retain
    redaction and keep wallet/admin macaroons off the web service.
 7. Verify actual OpenCode, Crush and OMP requests. Current tests prove setup
    configuration output, not a working production inference endpoint.
 
 ## Payment-disabled web deployment
+
+For production activation use `scripts/lightning/activate_web.py`, not the
+prelaunch tool below, which deliberately disables payments.
 
 `scripts/lightning/deploy_web.py --account=DEPLOY_IDENTITY` builds only committed
 experiment files, deploys a 512 MiB Cloud Run service under a no-data-access

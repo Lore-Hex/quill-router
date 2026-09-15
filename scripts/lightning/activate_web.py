@@ -132,7 +132,12 @@ def edge_policy(operator: Operator) -> None:
     policies = operator.gc("compute", "security-policies", "list", "--format=value(name)").splitlines()
     if name not in policies:
         operator.gc("compute", "security-policies", "create", name, "--description=Lightning funding ingress limits")
-    current = json.loads(operator.gc("compute", "security-policies", "describe", name, "--format=json"))
+    current = json.loads(operator.gc("compute", "security-policies", "describe", name, "--global", "--format=json"))
+    # gcloud versions differ between an object and a singleton result list.
+    if isinstance(current, list) and len(current) == 1:
+        current = current[0]
+    if not isinstance(current, dict) or current.get("name") != name or not isinstance(current.get("rules"), list):
+        raise ValueError("Expected exactly one global funding policy")
     priorities = {rule["priority"] for rule in current["rules"]}
     for priority, expression, count, seconds in (
         (900, "request.method == 'POST' && request.path == '/api/invoices'", 20, 900),
