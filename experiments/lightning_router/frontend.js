@@ -84,6 +84,12 @@ async function showBalance() {
   renderAccount(balance);
   return balance;
 }
+function showFxTerms(quote) {
+  const percent = quote.fx_margin_bps / 100;
+  $("fx-terms").textContent = percent
+    ? `${percent}% FX buffer included. Approx. $${quote.invoice_spot_usd} BTC value at the quoted Coinbase rate; ${100 - percent}% becomes USD credits.`
+    : "No FX buffer on this invoice. Payment converts at its original quoted rate.";
+}
 async function showInvoice(invoice) {
   state.invoice = invoice;
   remember();
@@ -98,7 +104,10 @@ async function showInvoice(invoice) {
     $("qr").removeAttribute("src");
     $("wallet-link").removeAttribute("href");
   }
-  if (!amountDirty) $("btc-amount").textContent = `$${invoice.usd_amount} USD credits · ${invoice.invoice_btc} BTC invoice`;
+  if (!amountDirty) {
+    $("btc-amount").textContent = `$${invoice.usd_amount} USD credits · ${invoice.invoice_btc} BTC invoice`;
+    showFxTerms(invoice);
+  }
   const labels = { OPEN: invoice.expired ? "Invoice expired. Update to create a new one." : "Waiting for payment", ACCEPTED: "Payment in flight. Waiting for settlement.", SETTLED: invoice.credited ? `Added $${invoice.credit_usd} in USD credits` : "Payment received. USD credit is pending.", CANCELED: "Invoice canceled" };
   $("invoice-state").textContent = labels[invoice.state];
   $("qr-empty").textContent = invoice.state === "SETTLED" ? "Payment received" : labels[invoice.state];
@@ -156,9 +165,15 @@ async function quote() {
   try {
     const cents = centsFromText($("amount").value);
     const result = await api(`/api/quote?usd_cents=${cents}`, { key: null });
-    if (version === quoteVersion) $("btc-amount").textContent = `Approximately ${result.btc} BTC`;
+    if (version === quoteVersion) {
+      $("btc-amount").textContent = `Approximately ${result.btc} BTC`;
+      showFxTerms(result);
+    }
   } catch {
-    if (version === quoteVersion) $("btc-amount").textContent = "BTC estimate unavailable";
+    if (version === quoteVersion) {
+      $("btc-amount").textContent = "BTC estimate unavailable";
+      $("fx-terms").textContent = "";
+    }
   }
 }
 async function copy(text) {

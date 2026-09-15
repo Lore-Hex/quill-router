@@ -33,6 +33,21 @@ SETTLED invoice can provision a zero-grant account and deliver USD credits.
 The settled invoice is a durable outbox. Delivery retries preserve its payment
 hash, USD amount, and account, including after a crash or browser disconnect.
 
+New invoices apply a 10% FX buffer to Coinbase's BTC/USD spot quote: 90% of
+the quoted BTC value becomes USD credits. For example, $10 of credits requires
+about $11.11 of BTC at the quoted spot rate, rounded up to a whole satoshi.
+This is a 10% margin on the BTC value, not a 10% surcharge on credits. The
+website discloses the buffer and gross quoted value before payment. The rate
+is cached for at most 60 seconds and frozen for each invoice. Old invoices
+retain their original rate and zero buffer; balances are never revalued.
+
+The stored `usd_per_btc` is the effective credit rate, after the buffer. The
+additive invoice `fx_margin_bps` column is disclosure metadata, defaulting to
+zero for legacy invoices. Older settlement workers still use the same stored
+effective rate during rollback. Never reapply a current margin at settlement.
+The buffer is not a guaranteed realized FX profit: received BTC is not sold
+automatically, and later price changes and conversion costs remain separate.
+
 New invoices fail closed when the database, billing bridge, node sync, or
 receiving capacity is unavailable. Already-issued invoices remain recoverable.
 Channel balance is a capacity check, not a guarantee that every payer has a route.

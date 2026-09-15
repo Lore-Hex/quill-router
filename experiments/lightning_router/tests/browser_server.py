@@ -2,11 +2,13 @@
 import secrets
 import tempfile
 import uuid
+from decimal import Decimal
 from pathlib import Path
 
 import uvicorn
 from lightning_router.app import create_app
 from lightning_router.credentials import Credentials
+from lightning_router.rates import Rate
 from lightning_router.service import Funding
 from lightning_router.store import Store
 
@@ -16,6 +18,7 @@ directory = tempfile.TemporaryDirectory(prefix="lr-browser-")
 store = Store(f"sqlite:///{Path(directory.name) / 'ledger.db'}")
 store.migrate()
 funding = Funding(store, Credentials(secrets.token_bytes(32)), FakeLnd(), FakeRates(), FakeCredits())
+funding.rates.current = lambda: Rate.from_spot(Decimal("100000"), 0)
 
 
 class Catalog:

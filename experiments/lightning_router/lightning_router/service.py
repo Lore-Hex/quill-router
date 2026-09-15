@@ -2,6 +2,7 @@ import hashlib
 import logging
 import time
 import uuid
+from decimal import Decimal
 from typing import Any
 
 import segno
@@ -10,7 +11,7 @@ from .credentials import Credentials
 from .credits import Credits
 from .lnd import Invoice, Lnd
 from .money import btc, microdollars, usd
-from .rates import Rates
+from .rates import Rate, Rates
 from .store import Store
 
 logger = logging.getLogger("lightning_router")
@@ -58,7 +59,7 @@ class Funding:
         row = self.store.prepare(
             key_hash, request_id, invoice_id, hashlib.sha256(preimage).hexdigest(),
             int(time.time()), requested_msat=requested_msat,
-            usd_cents=cents, usd_per_btc=str(rate.usd_per_btc),
+            usd_cents=cents, usd_per_btc=str(rate.usd_per_btc), fx_margin_bps=rate.fx_margin_bps,
         )
         return self.refresh(row)
 
@@ -112,6 +113,7 @@ class Funding:
         )
 
     def public(self, row: dict[str, Any]) -> dict[str, Any]:
+        rate = Rate(Decimal(row["usd_per_btc"]), row["created_at"], row["fx_margin_bps"])
         return {
             "id": row["id"], "state": row["state"], "expires_at": row["expires_at"],
             "expired": int(time.time()) >= row["expires_at"],
@@ -124,6 +126,7 @@ class Funding:
             "credited": row["credited_at"] is not None,
             "bolt11": row["bolt11"],
             "qr": segno.make(row["bolt11"].upper(), error="m").png_data_uri(scale=5, border=4) if row["bolt11"] else None,
+            **rate.quote_fields(row["requested_msat"]),
             **self.balance(row["key_hash"]),
         }
 

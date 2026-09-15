@@ -7,6 +7,8 @@ test("QR first, real balance transition, reload and model setup tabs", async ({ 
   await page.goto("/");
   await expect(page.locator("#qr")).toBeVisible();
   await expect(page.locator("#btc-amount")).toContainText("$10.00 USD");
+  await expect(page.locator("#fx-terms")).toContainText("10% FX buffer included");
+  await expect(page.locator("#fx-terms")).toContainText("90% becomes USD credits");
   expect((await page.locator("#qr").boundingBox()).y).toBeLessThan((await page.locator("#existing-key").boundingBox()).y);
   await expect(page.locator("#key-reveal")).toBeHidden();
   await expect(page.locator("#account")).toBeHidden();
@@ -17,7 +19,7 @@ test("QR first, real balance transition, reload and model setup tabs", async ({ 
   await request.post("/_test/pay", { data: {} });
   await expect(page.locator("#key-reveal")).toBeVisible({ timeout: 12000 });
   await expect(page.locator("#balance-usd")).toContainText("$10.00");
-  await expect(page.locator("#balance-usd")).toHaveText("$10.000000 USD");
+  await expect(page.locator("#balance-usd")).toHaveText("$10.000800 USD");
   await expect(page.locator("#balance-btc")).toHaveCount(0);
   const key = await page.locator("#your-key").inputValue();
   await page.reload();
@@ -33,7 +35,7 @@ test("QR first, real balance transition, reload and model setup tabs", async ({ 
   await page.locator("#amount").fill("5.00");
   await page.getByRole("button", { name: "Update invoice amount" }).click();
   await expect(page.locator("#qr")).toBeVisible();
-  await expect(page.locator("#balance-usd")).toHaveText("$10.000000 USD");
+  await expect(page.locator("#balance-usd")).toHaveText("$10.000800 USD");
   await page.locator("#your-key").evaluate((node) => { node.value = "sk-tr-v1-test-key"; });
   await page.locator("#env-code").evaluate((node) => { node.textContent = "export LIGHTNINGROUTER_API_KEY='YOUR_API_KEY'"; });
   await page.screenshot({ path: "test-results/funded-desktop.png", fullPage: true });
