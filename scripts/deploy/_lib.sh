@@ -26,9 +26,9 @@ TR_CONTROL_PLANE_REGIONS="${TR_CONTROL_PLANE_REGIONS:-us-central1,us-east4,europ
 # per-region map below says otherwise.
 TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4}"
 # Service-level minimums stay allocated across staged revision traffic shifts.
-# US East is deliberately larger: a 2026-08-22 customer burst exhausted the
-# old one-instance / concurrency-two ceiling before Cloud Run could scale.
-TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION="${TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION:-us-central1=2,us-east4=8,europe-west4=2}"
+# Both US regions need burst headroom before autoscaling catches up.
+# Keep concurrency and billing admission bounded, but prewarm capacity.
+TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION="${TR_CLOUD_RUN_MIN_INSTANCES_BY_REGION:-us-central1=8,us-east4=8,europe-west4=2}"
 # Billing handlers are small, synchronous Spanner operations dispatched to a
 # worker thread. Eight concurrent requests fit comfortably in 2 GiB and avoid
 # cold-starting dozens of instances for a short burst.
