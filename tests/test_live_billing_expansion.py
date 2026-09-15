@@ -62,18 +62,44 @@ def test_plan_preserves_metadata_and_never_mutates_old_usage_or_holds():
     assert "reserved" not in new_keys["columns"]
 
 
-@pytest.mark.parametrize("cap", repair.CAP_FIELDS)
-def test_key_cap_refuses_all_mutations(cap):
+def test_management_key_expansion_requires_explicit_operator_opt_in():
     inputs = state()
+    inputs[2]["management"] = True
+    with pytest.raises(ValueError, match="management"):
+        repair.make_plan(*inputs)
+    before = copy.deepcopy(inputs)
+    plan = repair.make_plan(*inputs, allow_management_key=True)
+    assert inputs == before
+    assert plan["key"] == {**before[2], "usage_shard_count": 16}
+    assert plan["totals"] == {
+        name: before[3][0][name] for name in ("total_credits", "total_usage", "reserved")
+    }
+
+
+@pytest.mark.parametrize("flag", ["disabled", "federated_home"])
+def test_management_opt_in_never_allows_disabled_or_federated_keys(flag):
+    inputs = state()
+    inputs[2].update(management=True, **{flag: True})
+    with pytest.raises(ValueError):
+        repair.make_plan(*inputs, allow_management_key=True)
+
+
+@pytest.mark.parametrize("management", [False, True])
+@pytest.mark.parametrize("cap", repair.CAP_FIELDS)
+def test_key_cap_refuses_all_mutations(cap, management):
+    inputs = state()
+    inputs[2]["management"] = management
     inputs[2][cap] = 1000000
     with pytest.raises(ValueError, match="uncapped"):
-        repair.make_plan(*inputs)
+        repair.make_plan(*inputs, allow_management_key=management)
 
 
+@pytest.mark.parametrize("management", [False, True])
 @pytest.mark.parametrize("defect", ["paused", "credit_pause", "wrong_workspace", "wrong_key", "key_hold", "typed_cap", "negative_usage", "inventory", "missing_inventory", "extra_shard", "bad_credit", "federated", "consolidation", "trust_divergence"])
-def test_unsafe_state_fails_closed(defect):
+def test_unsafe_state_fails_closed(defect, management):
     inputs = state()
     ws, credit, key, rows, key_rows, owner, inventory, _ = inputs
+    key["management"] = management
     if defect == "paused":
         ws["billing_pause_causes"] = ["fraud"]
     elif defect == "credit_pause":
@@ -104,7 +130,7 @@ def test_unsafe_state_fails_closed(defect):
         credit["shard_count"] = 2
         rows.append({**rows[0], "shard": 1, "pause_epoch": 4})
     with pytest.raises(ValueError):
-        repair.make_plan(*inputs)
+        repair.make_plan(*inputs, allow_management_key=management)
 
 
 def test_idempotent_rerun_does_not_rebalance_again():
@@ -155,7 +181,8 @@ def test_aborted_commit_recomputes_entire_plan_and_timeout_is_not_retried(monkey
 
 
 @pytest.mark.parametrize("refund_old", [False, True])
-def test_real_billing_primitives_settle_old_holds_and_new_shards_exactly_once(refund_old):
+@pytest.mark.parametrize("management", [False, True])
+def test_real_billing_primitives_settle_old_holds_and_new_shards_exactly_once(refund_old, management):
     store, database, key = _seed(key_shards=1)
     def authorize(index, shard):
         return authorize_atomic(store._database, store._param_types,
@@ -171,10 +198,11 @@ def test_real_billing_primitives_settle_old_holds_and_new_shards_exactly_once(re
     inputs[0] = {"id": key.workspace_id, "owner_user_id": "owner"}
     inputs[1] = {"workspace_id": key.workspace_id, "shard_count": 1}
     inputs[2] = dataclasses.asdict(key)
+    inputs[2]["management"] = management
     inputs[3] = rows
     inputs[4] = list(database.typed[KEY_LIMIT_TABLE].values())
     inputs[6] = {key.workspace_id: inputs[1]}
-    plan = repair.make_plan(*inputs)
+    plan = repair.make_plan(*inputs, allow_management_key=management)
     # Apply the generated mutations through the store's transaction API.
     def apply(tx):
         for change in repair.mutations(plan):
@@ -225,7 +253,8 @@ def test_read_contract_is_exact_key_bounded_and_uses_same_transaction():
     assert call["request"]["request_options"]["priority"] == "PRIORITY_LOW"
 
 
-def test_dry_run_never_commits_or_rolls_back(monkeypatch):
+@pytest.mark.parametrize("management", [False, True])
+def test_dry_run_never_commits_or_rolls_back(monkeypatch, management):
     class Client:
         def begin_transaction(self, **kwargs):
             assert kwargs["request"]["options"] == {"read_only": {"strong": True}}
@@ -234,24 +263,31 @@ def test_dry_run_never_commits_or_rolls_back(monkeypatch):
             pytest.fail("dry-run tried to commit")
         def rollback(self, **kwargs):
             pytest.fail("dry-run tried to mutate transaction state")
-    monkeypatch.setattr(repair.Reader, "plan", lambda *args: repair.make_plan(*state()))
-    result = repair.execute(Client(), "session", "ws", "key", 16, apply=False)
+    def plan(reader, *args):
+        assert reader.allow_management_key is management
+        inputs = state()
+        inputs[2]["management"] = management
+        return repair.make_plan(*inputs, allow_management_key=reader.allow_management_key)
+    monkeypatch.setattr(repair.Reader, "plan", plan)
+    result = repair.execute(Client(), "session", "ws", "key", 16, apply=False, allow_management_key=management)
     assert result["changed"] and not result["applied"]
     assert "secret_hash" not in json.dumps(result)
 
 
-def test_transaction_reads_key_before_credit_to_match_settlement(monkeypatch):
+@pytest.mark.parametrize("management", [False, True])
+def test_transaction_reads_key_before_credit_to_match_settlement(monkeypatch, management):
     from google.cloud.spanner_v1.types import ResultSet
 
     inputs = state()
     ws, credit, key, credit_rows, key_rows, owner, _, _ = inputs
+    key["management"] = management
     entities = {("workspace", "ws"): ws, ("credit", "ws"): credit, ("api_key", "key"): key, ("user", "owner"): owner}
     class Client:
         def execute_sql(self, **kwargs):
             assert "WHERE owner_user_id=@owner" in kwargs["request"]["sql"]
             assert "LIMIT 33" in kwargs["request"]["sql"]
             return ResultSet(rows=[["ws"]])
-    reader = repair.Reader(Client(), "s", {"id": b"tx"}, repair.time.monotonic() + 10)
+    reader = repair.Reader(Client(), "s", {"id": b"tx"}, repair.time.monotonic() + 10, allow_management_key=management)
     monkeypatch.setattr(reader, "entities", lambda keys: {tuple(k): entities[tuple(k)] for k in keys})
     tables = []
     def read(table, columns, keys):
