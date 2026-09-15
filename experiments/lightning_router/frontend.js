@@ -7,7 +7,7 @@ const icons = () => createIcons({ icons: { ArrowRight, Copy, Eye, LogOut, Refres
 let state = null;
 let config = null;
 let models = [];
-let agent = "opencode";
+let agent = "cowork";
 let busy = false;
 let pollTimer;
 let quoteTimer;
@@ -63,18 +63,25 @@ async function exclusive(action) {
   }
 }
 function renderSetup() {
+  const cowork = agent === "cowork";
+  $("cowork-setup").hidden = !cowork;
+  $("cli-setup").hidden = cowork;
+  $("agent-model-settings").hidden = cowork;
+  $("setup-panel").setAttribute("aria-labelledby", "tab-" + agent);
+  $("copy-cowork-key").disabled = !state?.reveal;
+  $("cowork-key-status").hidden = Boolean(state?.reveal);
+  $("env-code").textContent = "export LIGHTNINGROUTER_API_KEY='" + (state?.reveal ? state.key : "YOUR_API_KEY") + "'";
+  if (cowork) { setup = null; return; }
   const model = models.find((item) => item.id === $("model").value);
-  if (!model) return;
+  if (!model || !config) return;
   const effort = $("reasoning-effort");
   effort.disabled = model.reasoning_effort !== true;
   if (effort.disabled) effort.value = "default";
   setup = setupFor(agent, model, config.api_base, effort.value);
-  $("env-code").textContent = "export LIGHTNINGROUTER_API_KEY='" + (state?.reveal ? state.key : "YOUR_API_KEY") + "'";
   $("config-path").textContent = setup.path;
   $("config-code").textContent = setup.config;
   $("command-code").textContent = setup.command;
   $("agent-docs").href = setup.docs;
-  $("setup-panel").setAttribute("aria-labelledby", "tab-" + agent);
   $("model-limits").textContent = [model.context ? `${model.context.toLocaleString()} context` : "Context not published",
     model.output ? `${model.output.toLocaleString()} max output` : "Output limit not published",
     model.default_output ? `${model.default_output.toLocaleString()} default output budget` : ""].filter(Boolean).join(" · ");
@@ -247,7 +254,12 @@ $("amount").addEventListener("input", () => {
   clearTimeout(quoteTimer); quoteTimer = setTimeout(quote, 250);
 });
 $("copy-invoice").addEventListener("click", () => { if (state?.invoice) copy(state.invoice.bolt11); });
-$("copy-key").addEventListener("click", async () => { if (state?.reveal && await copy(state.key)) { state.saved = true; remember(); } });
+async function copyFundedKey() {
+  const key = state?.reveal ? state.key : null;
+  if (key && await copy(key) && state?.key === key && state.reveal) { state.saved = true; remember(); }
+}
+$("copy-key").addEventListener("click", copyFundedKey);
+$("copy-cowork-key").addEventListener("click", copyFundedKey);
 $("show-key").addEventListener("click", () => { const field = $("your-key"); field.type = field.type === "password" ? "text" : "password"; $("show-key").setAttribute("aria-label", field.type === "password" ? "Show key" : "Hide key"); });
 $("sign-out").addEventListener("click", () => exclusive(async () => {
   if (!await finishOrCancel()) return;
@@ -276,7 +288,8 @@ for (const tab of document.querySelectorAll("[role=tab]")) {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
     const tabs = [...document.querySelectorAll("[role=tab]")];
-    const next = event.key === "Home" ? 0 : event.key === "End" ? 2 : (tabs.indexOf(tab) + (event.key === "ArrowRight" ? 1 : 2)) % 3;
+    const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+      : (tabs.indexOf(tab) + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
     tabs[next].click(); tabs[next].focus();
   });
 }

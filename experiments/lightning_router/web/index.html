@@ -43,17 +43,30 @@
     </section>
     <section class="setup" aria-labelledby="setup-title">
       <div class="section-heading"><h2 id="setup-title">Use your key</h2><span id="model-count" class="muted"></span></div>
+      <div id="agent-model-settings" hidden>
       <label for="model">Model</label><select id="model" disabled><option>Loading models</option></select>
       <p id="model-limits" class="muted small"></p>
       <div class="reasoning-field"><label for="reasoning-effort">Reasoning effort</label><select id="reasoning-effort" disabled><option value="default">Default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
-      <div class="tabs" role="tablist" aria-label="Coding agent"><button role="tab" id="tab-opencode" aria-controls="setup-panel" aria-selected="true" data-agent="opencode">OpenCode</button><button role="tab" id="tab-crush" aria-controls="setup-panel" aria-selected="false" tabindex="-1" data-agent="crush">Crush</button><button role="tab" id="tab-omp" aria-controls="setup-panel" aria-selected="false" tabindex="-1" data-agent="omp">OMP</button></div>
-      <div id="setup-panel" role="tabpanel" aria-labelledby="tab-opencode">
+      </div>
+      <div class="tabs" role="tablist" aria-label="Agent"><button role="tab" id="tab-cowork" aria-controls="setup-panel" aria-selected="true" data-agent="cowork">Trusted Cowork</button><button role="tab" id="tab-opencode" aria-controls="setup-panel" aria-selected="false" tabindex="-1" data-agent="opencode">OpenCode</button><button role="tab" id="tab-crush" aria-controls="setup-panel" aria-selected="false" tabindex="-1" data-agent="crush">Crush</button><button role="tab" id="tab-omp" aria-controls="setup-panel" aria-selected="false" tabindex="-1" data-agent="omp">OMP</button></div>
+      <div id="setup-panel" role="tabpanel" aria-labelledby="tab-cowork">
+        <div id="cowork-setup">
+          <ol class="cowork-steps">
+            <li><a href="https://trustedrouter.com/confidential-cowork" target="_blank" rel="noopener noreferrer">Download Trusted Cowork</a> for Mac and open the app.</li>
+            <li>Choose <strong>Use an API key</strong>, paste your funded key, then click <strong>Connect</strong>.
+              <div class="cowork-key-action"><button id="copy-cowork-key" class="button" disabled><i data-lucide="copy"></i>Copy API key</button><span id="cowork-key-status" class="muted small">Fund an invoice or connect your existing key above.</span></div>
+            </li>
+            <li>Start with <code>trustedrouter/confidential</code> or choose an eligible confidential model inside the app.</li>
+          </ol>
+        </div>
+        <div id="cli-setup" hidden>
         <table class="instructions"><tbody>
           <tr><th scope="row">1. API key</th><td><div class="code-heading"><span>Terminal</span><button id="copy-env" class="icon-button" aria-label="Copy environment variable" title="Copy environment variable"><i data-lucide="copy"></i></button></div><pre id="env-code"></pre></td></tr>
           <tr><th scope="row">2. Configure</th><td><div class="code-heading"><span id="config-path"></span><button id="copy-config" class="icon-button" aria-label="Copy configuration" title="Copy configuration"><i data-lucide="copy"></i></button></div><pre id="config-code"></pre></td></tr>
           <tr><th scope="row">3. Run</th><td><div class="code-heading"><span>Terminal</span><button id="copy-command" class="icon-button" aria-label="Copy launch command" title="Copy launch command"><i data-lucide="copy"></i></button></div><pre id="command-code"></pre></td></tr>
         </tbody></table>
         <a id="agent-docs" rel="noreferrer" target="_blank">Configuration reference</a>
+        </div>
       </div>
       <p id="api-readiness" class="muted small">API activation is pending. These are setup previews, not a live inference endpoint.</p>
     </section>

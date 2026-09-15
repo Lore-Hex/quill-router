@@ -4,8 +4,8 @@ test("marketing and documented DeepSeek budgets", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "No account needed." })).toBeVisible();
   await expect(page.locator(".intro")).toContainText("Load BTC and you're good to go!");
-  await expect(page.locator("#model-limits")).toContainText("393,216 max output");
   await page.getByRole("tab", {name: "Crush", exact: true}).click();
+  await expect(page.locator("#model-limits")).toContainText("393,216 max output");
   await expect(page.locator("#config-code")).toContainText('"default_max_tokens": 65536');
 });
 
