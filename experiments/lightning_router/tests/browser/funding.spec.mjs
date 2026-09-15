@@ -65,6 +65,23 @@ test("USD edits hide stale QR until invoice is replaced", async ({ page }) => {
   await expect(page.locator("#btc-amount")).toContainText("$25.00 USD");
 });
 
+test("review-required invoices hide payment and never reveal an unfunded key", async ({ page }) => {
+  await page.route("**/api/invoices/*/refresh", async (route) => {
+    const response = await route.fetch();
+    const invoice = await response.json();
+    await route.fulfill({ response, json: { ...invoice, attention_required: true } });
+  });
+  await page.goto("/");
+  await expect(page.locator("#qr")).toBeVisible();
+  await expect(page.locator("#invoice-state")).toContainText("Checkout needs review", { timeout: 12000 });
+  await expect(page.locator("#qr")).toBeHidden();
+  await expect(page.locator("#invoice-actions")).toBeHidden();
+  await expect(page.locator("#key-reveal")).toBeHidden();
+  await page.reload();
+  await expect(page.locator("#invoice-state")).toContainText("Checkout needs review");
+  await expect(page.locator("#qr")).toBeHidden();
+});
+
 for (const width of [375, 768, 1440]) {
   test(`responsive layout ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });

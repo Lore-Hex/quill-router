@@ -77,6 +77,7 @@ print(json.dumps({"macaroon": macaroon.read_bytes().hex(), "certificate": cert.r
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--account", required=True)
+    parser.add_argument("--rotate-node-secrets", action="store_true", help="Publish changed invoice macaroon/TLS certificate; redeploy web afterward")
     args = parser.parse_args()
     operator = Operator(args.account)
     result = json.loads(operator.gc(
@@ -84,8 +85,8 @@ def main() -> None:
         "--ssh-key-expire-after=30m", "--command=sudo python3 -c " + shlex.quote(NODE_SCRIPT),
     ))
     # Captured credentials never appear in the terminal, argv, or a local file.
-    operator.secret("lightning-router-lnd-invoice-macaroon", result["macaroon"])
-    operator.secret("lightning-router-lnd-tls-cert", result["certificate"])
+    operator.secret("lightning-router-lnd-invoice-macaroon", result["macaroon"], rotate=args.rotate_node_secrets)
+    operator.secret("lightning-router-lnd-tls-cert", result["certificate"], rotate=args.rotate_node_secrets)
     rules = operator.gc("compute", "firewall-rules", "list", "--format=value(name)").splitlines()
     if "tr-lightning-funding-invoices" not in rules:
         operator.gc("compute", "firewall-rules", "create", "tr-lightning-funding-invoices",

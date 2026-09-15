@@ -69,6 +69,7 @@ def production_app() -> FastAPI:
     store = Store(database_url)
     funding = Funding(store, Credentials(bytes.fromhex(os.environ["LR_CHECKOUT_SECRET"])),
                       Lnd(lnd_client), Rates(rate_client), credits, check_capacity=True)
+    store.pin_credentials(funding.credentials)
     readiness = Readiness(funding, credits)
     if not readiness():
         raise RuntimeError("Funding startup preflight failed; previous revision must remain serving")
@@ -106,7 +107,7 @@ def migrate() -> None:
         assert store.engine.url.database is not None
         cursor.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO lr_app").format(sql.Identifier(store.engine.url.database)))
         cursor.execute("GRANT USAGE ON SCHEMA public TO lr_app")
-        cursor.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON lr_checkouts, lr_invoices, lr_deposits, lr_rate_limits TO lr_app")
+        cursor.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON lr_checkouts, lr_invoices, lr_deposits, lr_rate_limits, lr_settings TO lr_app")
 
 
 if __name__ == "__main__":

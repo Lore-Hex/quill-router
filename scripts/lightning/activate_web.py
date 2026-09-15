@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hmac
 import json
 import os
 import re
@@ -45,13 +46,21 @@ class Operator:
             raise RuntimeError(f"gcloud {' '.join(args[:3])} failed ({result.returncode})")
         return result.stdout
 
-    def secret(self, name: str, value: str | None = None) -> str:
+    def secret(self, name: str, value: str | None = None, *, rotate: bool = False) -> str:
+        if rotate and name not in {"lightning-router-lnd-invoice-macaroon", "lightning-router-lnd-tls-cert"}:
+            raise ValueError("Only node transport credentials support explicit rotation")
         names = self.gc("secrets", "list", "--format=value(name)").splitlines()
         if name not in names:
             self.gc("secrets", "create", name, "--replication-policy=automatic")
             self.gc("secrets", "versions", "add", name, "--data-file=-", data=value or secrets.token_hex(32))
         payload = json.loads(self.gc("secrets", "versions", "access", "latest", "--secret=" + name, "--format=json"))
-        return base64.urlsafe_b64decode(payload["payload"]["data"]).decode()
+        current = base64.urlsafe_b64decode(payload["payload"]["data"]).decode()
+        if value is not None and not hmac.compare_digest(current, value):
+            if not rotate:
+                raise ValueError("Secret differs; explicit node credential rotation required")
+            self.gc("secrets", "versions", "add", name, "--data-file=-", data=value)
+            return value
+        return current
 
     def api(self, path: str, body: dict[str, Any], *, method: str = "POST") -> None:
         if not path.startswith(f"https://sqladmin.googleapis.com/sql/v1beta4/projects/{PROJECT}/"):

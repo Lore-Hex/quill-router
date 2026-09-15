@@ -10,6 +10,7 @@ from trusted_router.errors import api_error
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.services.lightning import LightningCredits
 from trusted_router.storage import STORE
+from trusted_router.storage_lightning import MAX_CREDIT_RECEIPT
 from trusted_router.types import ErrorType
 
 
@@ -28,7 +29,7 @@ class Account(Body):
 
 class Credit(Account):
     payment_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    amount_microdollars: StrictInt = Field(gt=0, le=1_000_000_000)
+    amount_microdollars: StrictInt = Field(gt=0, le=MAX_CREDIT_RECEIPT)
 
 
 def funding_authority(request: Request, settings: SettingsDep) -> None:

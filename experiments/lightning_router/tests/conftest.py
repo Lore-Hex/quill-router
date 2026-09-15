@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 import pytest
 from lightning_router.credentials import Credentials
 from lightning_router.lnd import Invoice, Lnd
-from lightning_router.money import microdollars
+from lightning_router.money import MAX_CREDIT_RECEIPT, microdollars
 from lightning_router.rates import Rate, Rates
 from lightning_router.service import Funding
 from lightning_router.store import Store, metadata
@@ -58,6 +58,8 @@ class FakeCredits:
             if self.fail_before_commit:
                 raise TimeoutError("USD ledger unavailable")
             amount = microdollars(amount_microdollars)
+            if not 0 < amount <= MAX_CREDIT_RECEIPT:
+                raise ValueError("Funding credit amount rejected")
             previous = self.payments.get(payment_hash)
             if previous and previous != (account_id, amount):
                 raise ValueError("Payment binding changed")
@@ -75,6 +77,12 @@ class FakeLnd(Lnd):
         self.creates = 0
         self.fail_after_create = False
         self.pay_during_cancel = False
+
+    def lookup(self, payment_hash: str) -> Invoice | None:
+        if self.fail_after_create:
+            self.fail_after_create = False
+            raise TimeoutError("lost LND response")
+        return self.rows.get(payment_hash)
 
     def ensure(self, preimage: bytes, amount_msat: int, *, expires_at: int) -> Invoice | None:
         payment_hash = hashlib.sha256(preimage).hexdigest()
