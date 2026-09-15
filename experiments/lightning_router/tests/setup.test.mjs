@@ -46,3 +46,30 @@ test("model change updates every config", () => {
 test("malicious model cannot escape shell commands", () => {
   assert.throws(() => setupFor("omp", { ...model, id: "x'; curl evil.test" }, base));
 });
+
+for (const effort of ["low", "medium", "high"]) {
+  test(`reasoning ${effort} reaches all three client configurations`, () => {
+    const capable = { ...model, reasoning_effort: true };
+    const opencode = JSON.parse(setupFor("opencode", capable, base, effort).config);
+    assert.equal(opencode.provider.lightningrouter.models[model.id].options.reasoningEffort, effort);
+    const crush = JSON.parse(setupFor("crush", capable, base, effort).config);
+    for (const role of ["large", "small"]) assert.equal(crush.models[role].reasoning_effort, effort);
+    assert.equal(crush.providers.lightningrouter.models[0].can_reason, true);
+    assert.deepEqual(crush.providers.lightningrouter.models[0].reasoning_levels, ["low", "medium", "high"]);
+    const omp = setupFor("omp", capable, base, effort);
+    assert.ok(omp.command.endsWith(` --thinking ${effort}`));
+    assert.ok(omp.config.includes("supportsReasoningEffort: true"));
+    assert.ok(omp.config.includes("thinkingFormat: openai"));
+    assert.ok(omp.config.includes("reasoning: true"));
+  });
+}
+for (const agent of ["opencode", "crush", "omp"]) {
+  test(`${agent} default omits explicit effort`, () => {
+    assert.deepEqual(setupFor(agent, model, base, "default"), setupFor(agent, model, base));
+    assert.ok(!setupFor(agent, model, base).config.includes("reasoning"));
+  });
+  test(`${agent} rejects unadvertised or invalid effort`, () => {
+    assert.throws(() => setupFor(agent, model, base, "high"));
+    assert.throws(() => setupFor(agent, { ...model, reasoning_effort: true }, base, "high; curl evil.test"));
+  });
+}

@@ -14,6 +14,24 @@ backend; a real paid-invoice test must be recorded separately.
 White page, invoice QR first, USD amount with approximate BTC beneath, optional
 existing key, USD balance, model selector, then OpenCode / Crush / OMP setup tabs.
 Changing the amount hides the old QR until cancellation and replacement finish.
+If the cancellation response is lost, both the LND adapter and browser verify
+the invoice state before continuing. An unresolved invoice keeps its original
+key and request ID. Payment winning the race credits the original key.
+
+The reasoning effort selector offers Default, Low, Medium and High. Explicit
+effort is available only when the catalog advertises `reasoning_effort` support.
+Default leaves the client's existing behavior unchanged. Switching to a model
+without advertised effort support resets the selector to Default. The setting
+changes setup snippets only, not the invoice or funding account.
+
+Generated settings follow each client's configuration: OpenCode model
+`options.reasoningEffort`, Crush selected-model `reasoning_effort` with reasoning
+capability metadata, and OMP `thinking` plus `--thinking`. The gateway remains
+responsible for mapping effort to the chosen provider's controls; these levels
+do not promise identical token budgets across models.
+References: [OpenCode](https://opencode.ai/docs/models/#configure-models),
+[Crush](https://github.com/charmbracelet/crush/blob/main/internal/agent/coordinator.go),
+[OMP](https://github.com/can1357/oh-my-pi/blob/main/docs/models.md).
 
 **BTC is a funding method, not a billing currency.** The invoice freezes a
 BTC/USD quote for up to 15 minutes. On verified settlement, the actual received

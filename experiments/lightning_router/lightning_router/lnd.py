@@ -115,12 +115,21 @@ class Lnd:
         return created
 
     def cancel(self, payment_hash: str) -> Invoice:
-        response = self.client.post("/v2/invoices/cancel", json={
-            "payment_hash": base64.b64encode(bytes.fromhex(payment_hash)).decode(),
-        })
-        # Cancellation can lose a race to payment. Always verify actual state.
+        if not re.fullmatch(r"[0-9a-f]{64}", payment_hash):
+            raise ValueError("Invalid payment hash")
+        failure: httpx.HTTPError | None = None
+        try:
+            response = self.client.post("/v2/invoices/cancel", json={
+                "payment_hash": base64.b64encode(bytes.fromhex(payment_hash)).decode(),
+            })
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            failure = exc
+        # A lost response is ambiguous, just like AddInvoice. Read once to
+        # recover a committed cancel or payment, never assume either succeeded.
         invoice = self.lookup(payment_hash)
         if invoice and invoice.state in {"CANCELED", "SETTLED"}:
             return invoice
-        response.raise_for_status()
+        if failure is not None:
+            raise failure
         raise ValueError("Invoice cancellation has not completed")

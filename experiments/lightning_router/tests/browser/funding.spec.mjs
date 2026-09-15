@@ -65,6 +65,86 @@ test("USD edits hide stale QR until invoice is replaced", async ({ page }) => {
   await expect(page.locator("#btc-amount")).toContainText("$25.00 USD");
 });
 
+test("lost cancel response is reconciled before replacing the invoice", async ({ page }) => {
+  let cancellations = 0;
+  await page.route("**/api/invoices/*/cancel", async (route) => {
+    cancellations += 1;
+    const response = await route.fetch();
+    expect((await response.json()).state).toBe("CANCELED");
+    await route.abort("failed");
+  });
+  await page.goto("/");
+  await expect(page.locator("#qr")).toBeVisible();
+  const before = await page.evaluate(() => JSON.parse(sessionStorage.getItem("lightningrouter-usd-session-v1")));
+  await page.locator("#amount").fill("7.00");
+  await page.getByRole("button", { name: "Update invoice amount" }).click();
+  await expect(page.locator("#qr")).toBeVisible();
+  await expect(page.locator("#btc-amount")).toContainText("$7.00 USD");
+  await expect(page.locator("#error")).toBeEmpty();
+  const after = await page.evaluate(() => JSON.parse(sessionStorage.getItem("lightningrouter-usd-session-v1")));
+  expect(after.key).toBe(before.key);
+  expect(after.invoice.id).not.toBe(before.invoice.id);
+  expect(cancellations).toBe(1);
+  await expect(page.locator("#account")).toBeHidden();
+});
+
+test("unconfirmed cancellation preserves the original invoice and key", async ({ page }) => {
+  await page.route("**/api/invoices/*/cancel", (route) => route.abort("failed"));
+  await page.goto("/");
+  await expect(page.locator("#qr")).toBeVisible();
+  const before = await page.evaluate(() => JSON.parse(sessionStorage.getItem("lightningrouter-usd-session-v1")));
+  await page.locator("#amount").fill("7.00");
+  await page.getByRole("button", { name: "Update invoice amount" }).click();
+  await expect(page.locator("#error")).not.toBeEmpty();
+  const after = await page.evaluate(() => JSON.parse(sessionStorage.getItem("lightningrouter-usd-session-v1")));
+  expect(after.key).toBe(before.key);
+  expect(after.invoice.id).toBe(before.invoice.id);
+  expect(after.requestId).toBe(before.requestId);
+  await expect(page.locator("#qr")).toBeHidden();
+});
+
+test("payment winning a lost cancel response keeps the funded key", async ({ page, request }) => {
+  await page.route("**/api/invoices/*/cancel", async (route) => {
+    await request.post("/_test/pay", { data: {} });
+    const response = await route.fetch();
+    expect((await response.json()).state).toBe("SETTLED");
+    await route.abort("failed");
+  });
+  await page.goto("/");
+  await expect(page.locator("#qr")).toBeVisible();
+  const before = await page.evaluate(() => JSON.parse(sessionStorage.getItem("lightningrouter-usd-session-v1")));
+  await page.locator("#amount").fill("7.00");
+  await page.getByRole("button", { name: "Update invoice amount" }).click();
+  await expect(page.locator("#your-key")).toHaveValue(before.key);
+  await expect(page.locator("#error")).toContainText("Copy your new API key");
+  const after = await page.evaluate(() => JSON.parse(sessionStorage.getItem("lightningrouter-usd-session-v1")));
+  expect(after.invoice.id).toBe(before.invoice.id);
+  expect(after.invoice.credited).toBe(true);
+  await expect(page.locator("#balance-usd")).toHaveText("$10.000800 USD");
+  await expect(page.locator("#qr")).toBeHidden();
+});
+
+test("reasoning selection updates snippets without touching payment state", async ({ page }) => {
+  await page.route("**/api/models", (route) => route.fulfill({ json: { data: [
+    { id: "deepseek/deepseek-flash", name: "DeepSeek Flash", reasoning_effort: true },
+    { id: "other/plain", name: "Plain model", reasoning_effort: false },
+  ] } }));
+  await page.goto("/");
+  await expect(page.locator("#qr")).toBeVisible();
+  const before = await page.evaluate(() => sessionStorage.getItem("lightningrouter-usd-session-v1"));
+  await page.getByLabel("Reasoning effort", { exact: true }).selectOption("high");
+  await expect(page.locator("#config-code")).toContainText('"reasoningEffort": "high"');
+  await page.getByRole("tab", { name: "Crush", exact: true }).click();
+  await expect(page.locator("#config-code")).toContainText('"reasoning_effort": "high"');
+  await page.getByRole("tab", { name: "OMP", exact: true }).click();
+  await expect(page.locator("#command-code")).toContainText("--thinking high");
+  expect(await page.evaluate(() => sessionStorage.getItem("lightningrouter-usd-session-v1"))).toBe(before);
+  await page.selectOption("#model", "other/plain");
+  await expect(page.locator("#reasoning-effort")).toBeDisabled();
+  await expect(page.locator("#reasoning-effort")).toHaveValue("default");
+  await expect(page.locator("#command-code")).not.toContainText("--thinking");
+});
+
 test("review-required invoices hide payment and never reveal an unfunded key", async ({ page }) => {
   await page.route("**/api/invoices/*/refresh", async (route) => {
     const response = await route.fetch();

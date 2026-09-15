@@ -64,7 +64,10 @@ async function exclusive(action) {
 function renderSetup() {
   const model = models.find((item) => item.id === $("model").value);
   if (!model) return;
-  setup = setupFor(agent, model, config.api_base);
+  const effort = $("reasoning-effort");
+  effort.disabled = model.reasoning_effort !== true;
+  if (effort.disabled) effort.value = "default";
+  setup = setupFor(agent, model, config.api_base, effort.value);
   $("env-code").textContent = "export LIGHTNINGROUTER_API_KEY='" + (state?.reveal ? state.key : "YOUR_API_KEY") + "'";
   $("config-path").textContent = setup.path;
   $("config-code").textContent = setup.config;
@@ -144,7 +147,18 @@ async function finishOrCancel() {
   if (!state.invoice) await createInvoice(); // recover an ambiguous creation
   const before = state.invoice;
   if (["OPEN", "ACCEPTED"].includes(before.state)) {
-    const invoice = await api(`/api/invoices/${before.id}/cancel`, { body: {} });
+    let invoice;
+    try {
+      invoice = await api(`/api/invoices/${before.id}/cancel`, { body: {} });
+    } catch (error) {
+      // The server may have committed before the response was lost. Preserve
+      // this key and request ID unless a fresh lookup proves a terminal state.
+      invoice = await api(`/api/invoices/${before.id}/refresh`, { body: {} });
+      if (!["CANCELED", "SETTLED"].includes(invoice.state)) {
+        await showInvoice(invoice);
+        throw error;
+      }
+    }
     await showInvoice(invoice);
   }
   if (state.invoice.state === "SETTLED" && !state.invoice.credited) {
@@ -244,6 +258,7 @@ $("copy-env").addEventListener("click", () => copy($("env-code").textContent));
 $("copy-config").addEventListener("click", () => { if (setup) copy(setup.config); });
 $("copy-command").addEventListener("click", () => { if (setup) copy(setup.command); });
 $("model").addEventListener("change", renderSetup);
+$("reasoning-effort").addEventListener("change", renderSetup);
 for (const tab of document.querySelectorAll("[role=tab]")) {
   tab.addEventListener("click", () => {
     agent = tab.dataset.agent;
