@@ -26,7 +26,7 @@ test("QR first, real balance transition, reload and model setup tabs", async ({ 
   for (const label of ["OpenCode", "Crush", "OMP"]) {
     await page.getByRole("tab", { name: label, exact: true }).click();
     await expect(page.locator("#config-code")).toContainText("kimi/kimi-k2.7");
-    await expect(page.locator("#config-code")).toContainText("https://api.lightningrouter.ai/v1");
+    await expect(page.locator("#config-code")).toContainText("https://api.trustedrouter.com/v1");
   }
   await page.locator("#copy-key").click();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(key);

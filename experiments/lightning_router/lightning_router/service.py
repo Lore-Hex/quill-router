@@ -17,12 +17,13 @@ logger = logging.getLogger("lightning_router")
 
 
 class Funding:
-    def __init__(self, store: Store, credentials: Credentials, lnd: Lnd, rates: Rates, credits: Credits) -> None:
+    def __init__(self, store: Store, credentials: Credentials, lnd: Lnd, rates: Rates, credits: Credits, *, check_capacity: bool = False) -> None:
         self.store = store
         self.credentials = credentials
         self.lnd = lnd
         self.rates = rates
         self.credits = credits
+        self.check_capacity = check_capacity
 
     def account(self, raw_key: str) -> dict[str, Any]:
         key_hash = self.credentials.fingerprint(raw_key)
@@ -49,11 +50,14 @@ class Funding:
                 raise ValueError("Idempotency key reused with a different amount")
             return self.refresh(previous)
         rate = self.rates.current()
+        requested_msat = rate.invoice_msats(cents)
+        if self.check_capacity and self.lnd.receiving_capacity() < requested_msat:
+            raise ValueError("Insufficient receiving capacity")
         invoice_id = uuid.uuid4().hex
         preimage = self.credentials.invoice_preimage(invoice_id)
         row = self.store.prepare(
             key_hash, request_id, invoice_id, hashlib.sha256(preimage).hexdigest(),
-            int(time.time()), requested_msat=rate.invoice_msats(cents),
+            int(time.time()), requested_msat=requested_msat,
             usd_cents=cents, usd_per_btc=str(rate.usd_per_btc),
         )
         return self.refresh(row)

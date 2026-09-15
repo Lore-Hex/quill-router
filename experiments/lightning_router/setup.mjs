@@ -8,7 +8,7 @@ export function centsFromText(text) {
 
 export function setupFor(agent, model, apiBase) {
   if (!/^[A-Za-z0-9_./:-]{1,180}$/.test(model.id)) throw new Error("Invalid model ID");
-  if (apiBase !== "https://api.lightningrouter.ai/v1") throw new Error("Unexpected API endpoint");
+  if (!["https://api.lightningrouter.ai/v1", "https://api.trustedrouter.com/v1"].includes(apiBase)) throw new Error("Unexpected API endpoint");
   const context = Number.isSafeInteger(model.context) && model.context > 0 ? model.context : 32768;
   const output = Math.min(Number.isSafeInteger(model.output) && model.output > 0 ? model.output : 4096, context);
   const ref = `lightningrouter/${model.id}`;

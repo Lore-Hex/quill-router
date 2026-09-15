@@ -61,6 +61,27 @@ class Lnd:
         response.raise_for_status()
         return self._parse(response.json(), payment_hash)
 
+    def receiving_capacity(self) -> int:
+        info = self.client.get("/v1/getinfo")
+        info.raise_for_status()
+        data = info.json()
+        if data.get("synced_to_chain") is not True or data.get("synced_to_graph") is not True:
+            return 0
+        if {("bitcoin", self.network)} != {(chain.get("chain"), chain.get("network")) for chain in data.get("chains", [])}:
+            raise ValueError("LND is on the wrong network")
+        response = self.client.get("/v1/channels")
+        response.raise_for_status()
+        capacities = []
+        for channel in response.json()["channels"]:
+            if channel.get("active") is not True:
+                continue
+            pending = sum(msats(htlc["amount"]) * 1000 for htlc in channel.get("pending_htlcs", []))
+            balance = max(0, (msats(channel["remote_balance"]) - msats(channel["remote_constraints"]["chan_reserve_sat"])) * 1000 - pending)
+            inflight = max(0, msats(channel["remote_constraints"]["max_pending_amt_msat"]) - pending)
+            capacities.append(min(balance, inflight))
+        # Do not assume a payer can use MPP across all our channels.
+        return max(capacities, default=0)
+
     def ensure(self, preimage: bytes, amount_msat: int, *, expires_at: int) -> Invoice | None:
         payment_hash = hashlib.sha256(preimage).hexdigest()
         existing = self.lookup(payment_hash)

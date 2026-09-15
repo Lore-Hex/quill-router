@@ -167,6 +167,7 @@ add_secret_env_if_exists "TR_STAGE_D_PROBE_API_KEY" "trustedrouter-stage-d-probe
 # serving ON for this plane (unset = 403 for every peer).
 add_secret_env_if_exists "TR_FEDERATION_PEER_TOKEN" "trustedrouter-federation-peer-token"
 add_secret_env_if_exists "TR_OPERATOR_TOKEN" "trustedrouter-operator-token"
+add_secret_env_if_exists "TR_LIGHTNING_FUNDING_TOKEN" "trustedrouter-lightning-funding-token"
 # HOME side of deferred settlement: the per-peer token map
 # ("plane=token,plane=token"). Which token authenticated IS the source
 # plane's identity; the request body never carries it. Setting this is what

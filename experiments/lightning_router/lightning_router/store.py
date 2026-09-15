@@ -83,7 +83,7 @@ limits = Table(
 
 class Store:
     def __init__(self, url: str) -> None:
-        self.engine: Engine = create_engine(url, pool_pre_ping=True)
+        self.engine: Engine = create_engine(url, pool_pre_ping=True, hide_parameters=True)
         if self.engine.dialect.name == "sqlite":
             @event.listens_for(self.engine, "connect")
             def configure_sqlite(dbapi_connection: Any, _: Any) -> None:
