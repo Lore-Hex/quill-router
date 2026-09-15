@@ -73,7 +73,21 @@ New releases and provider-specific aliases do not inherit guessed values from a
 name prefix or the catalog's coarse `reasoning_effort` boolean. Unreviewed models
 are explicitly unverified, not declared incapable of reasoning.
 
-For reviewed chat effort models, generated settings set the documented default:
+The 2026-09-15 effort audit adds current GPT, Gemini, Claude, Kimi K3, GPT-OSS,
+QwenCloud 3.8 and Mistral Medium 3.5 controls, plus explicit catalog aliases.
+Gemini Flash snippets retain the low-latency TR default rather than silently
+switching to Google's more expensive default. Native defaults are separate
+from the effort selected in the config. MiniMax M2, Kimi K2.7 Code and models
+with only thinking switches deliberately have no invented effort levels.
+
+Gateway contract tests inspect outgoing provider JSON: Claude native
+`output_config.effort`, Gemini `thinkingBudget`/`thinkingLevel`, and direct
+OpenAI-compatible `reasoning_effort`. Client tests serialize every configured
+effort through the actual AI SDK. These prove forwarding, not a promise about
+how much hidden computation a provider performs. Hosted endpoints can support
+fewer controls than the original model publisher. See [reasoning verification](REASONING.md).
+
+For reviewed chat effort models, generated settings set the displayed config default:
 OpenCode `options.reasoningEffort` and model variants, Crush selected-model
 `reasoning_effort` plus `reasoning_levels` and `default_reasoning_effort`, and OMP
 model-specific `thinking.efforts` plus an explicit launch effort. OpenCode's

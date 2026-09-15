@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import mimetypes
 import os
 import re
 import threading
@@ -26,6 +27,7 @@ from .reasoning import reasoning_profile
 from .service import Funding
 
 STATIC = Path(__file__).resolve().parent.parent / "web"
+mimetypes.add_type("image/webp", ".webp")
 logger = logging.getLogger("lightning_router")
 
 

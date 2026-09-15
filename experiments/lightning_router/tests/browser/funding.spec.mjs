@@ -157,9 +157,9 @@ test("Anthropic native effort is not confused with TR's thinking-token budget", 
   await expect(page.locator("#model")).toBeEnabled();
   await page.selectOption("#model", "anthropic/claude-opus-4.8");
   await expect(page.locator("#reasoning-values")).toContainText("output_config.effort: low, medium, high, xhigh, max");
-  await expect(page.locator("#reasoning-note")).toContainText("1024/4096/8192");
-  await expect(page.locator("#reasoning-default")).toContainText("No effort override");
-  await expect(page.locator("#config-code")).not.toContainText('"reasoningEffort"');
+  await expect(page.locator("#reasoning-note")).toContainText("native output_config.effort");
+  await expect(page.locator("#reasoning-default")).toContainText("reasoning_effort = high");
+  await expect(page.locator("#config-code")).toContainText('"reasoningEffort": "high"');
   await expect(page.locator("#reasoning-source")).toHaveAttribute("href", "https://platform.claude.com/docs/en/build-with-claude/effort");
 });
 
