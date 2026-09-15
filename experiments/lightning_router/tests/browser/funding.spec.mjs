@@ -24,6 +24,7 @@ test("QR first, real balance transition, reload and model setup tabs", async ({ 
   const key = await page.locator("#your-key").inputValue();
   await page.reload();
   await expect(page.locator("#your-key")).toHaveValue(key);
+  await page.getByRole("tab", {name: "OpenCode", exact: true}).click();
   await page.selectOption("#model", "kimi/kimi-k2.7");
   for (const label of ["OpenCode", "Crush", "OMP"]) {
     await page.getByRole("tab", { name: label, exact: true }).click();
@@ -132,6 +133,7 @@ test("reasoning selection updates snippets without touching payment state", asyn
   await page.goto("/");
   await expect(page.locator("#qr")).toBeVisible();
   const before = await page.evaluate(() => sessionStorage.getItem("lightningrouter-usd-session-v1"));
+  await page.getByRole("tab", {name: "OpenCode", exact: true}).click();
   await page.getByLabel("Reasoning effort", { exact: true }).selectOption("high");
   await expect(page.locator("#config-code")).toContainText('"reasoningEffort": "high"');
   await page.getByRole("tab", { name: "Crush", exact: true }).click();
@@ -167,6 +169,8 @@ for (const width of [375, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto("/");
     await expect(page.locator("#qr")).toBeVisible();
+    await expect(page.locator("#cowork-setup")).toBeVisible();
+    await page.getByRole("tab", {name: "OpenCode", exact: true}).click();
     await expect(page.locator("#config-code")).toContainText("baseURL");
     const bounds = await page.evaluate(() => ({ width: innerWidth, content: document.documentElement.scrollWidth }));
     expect(bounds.content).toBeLessThanOrEqual(bounds.width);

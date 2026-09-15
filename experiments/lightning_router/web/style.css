@@ -49,6 +49,7 @@ button:disabled, select:disabled { opacity: .5; cursor: not-allowed; }
 .section-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; gap: 12px; }
 #model-count { font-size: 12px; }
 .reasoning-field { margin-top: 16px; max-width: 240px; }
+#agent-model-settings { padding-top: 24px; }
 .intro { text-align: center; margin-bottom: 24px; }
 .intro h1 { margin-bottom: 10px; }
 .intro p { font-size: 17px; line-height: 1.6; margin: 0; color: #526259; text-wrap: balance; }
@@ -77,6 +78,11 @@ nav a[aria-current="page"] { color: #17201e; text-decoration: underline; text-un
 .tabs { display: flex; gap: 24px; margin-top: 24px; border-bottom: 1px solid #dce4de; }
 .tabs button { border: 0; border-radius: 0; background: none; padding: 14px 0; min-height: 46px; color: #657168; font-size: 14px; border-bottom: 2px solid transparent; }
 .tabs button[aria-selected="true"] { color: #17694d; border-bottom-color: #17694d; font-weight: 600; }
+.cowork-steps { margin: 24px 0; padding-left: 24px; font-size: 14px; line-height: 1.7; }
+.cowork-steps li { padding-left: 6px; margin-bottom: 20px; overflow-wrap: anywhere; }
+.cowork-key-action { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.cowork-key-action .button { gap: 8px; }
+.cowork-key-action svg { width: 17px; height: 17px; }
 .instructions { border-collapse: collapse; width: 100%; table-layout: fixed; margin: 0 0 20px; }
 .instructions th { width: 120px; text-align: left; vertical-align: top; font-size: 13px; font-weight: 500; padding: 26px 10px 16px 0; }
 .instructions td { min-width: 0; padding: 16px 0; }
@@ -88,6 +94,6 @@ pre { margin: 4px 0 0; padding: 14px 16px; background: #f5f7f5; border-radius: 4
 #agent-docs { font-size: 12px; }
 footer { font-size: 12px; color: #727b76; border-top: 1px solid #e8ece9; margin-top: 32px; }
 #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); padding: 10px 20px; border-radius: 6px; background: #172d23; color: white; font-size: 13px; }
-@media (max-width: 580px) { header, footer { padding: 20px; } main { padding: 0 20px; } .funding { margin-top: 32px; } .brand { font-size: 17px; } #connection { max-width: 105px; text-align: right; } .instructions th, .instructions td { display: block; width: 100%; } .instructions th { padding: 20px 0 0; } .instructions td { padding: 4px 0 16px; } .tabs { gap: 28px; } }
+@media (max-width: 580px) { header, footer { padding: 20px; } main { padding: 0 20px; } .funding { margin-top: 32px; } .brand { font-size: 17px; } #connection { max-width: 105px; text-align: right; } .instructions th, .instructions td { display: block; width: 100%; } .instructions th { padding: 20px 0 0; } .instructions td { padding: 4px 0 16px; } .tabs { gap: 12px; } .tabs button { font-size: 13px; } }
 @media (prefers-reduced-motion: reduce) { button, .button { transition: none; } }
 @media (max-width: 580px) { header, footer { flex-wrap: wrap; gap: 6px 16px; } header nav { margin-left: auto; gap: 16px; } #connection { width: 100%; max-width: none; text-align: right; } footer nav { gap: 16px; } .document { margin-top: 28px; } .metrics dd { font-size: 21px; } }

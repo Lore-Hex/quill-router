@@ -42,7 +42,13 @@ Lightning-specific key recovery, FX conversion, payment metadata and provider
 privacy boundaries. They are not an external legal compliance certification.
 
 White page, invoice QR first, USD amount with approximate BTC beneath, optional
-existing key, USD balance, model selector, then OpenCode / Crush / OMP setup tabs.
+existing key, USD balance, then Trusted Cowork / OpenCode / Crush / OMP setup tabs.
+Trusted Cowork is selected first and links to its official download page. The
+manual `Use an API key` flow accepts the same funded key; its copy button is
+disabled until a key is connected or credit delivery completes. Keys never
+appear in the download URL. Cowork keeps its confidential-model policy and
+selects models inside the app. The model and reasoning selectors apply to the
+three CLI setup tabs; switching tabs preserves those selections and checkout.
 Changing the amount hides the old QR until cancellation and replacement finish.
 If the cancellation response is lost, both the LND adapter and browser verify
 the invoice state before continuing. An unresolved invoice keeps its original
