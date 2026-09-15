@@ -60,6 +60,10 @@ class Rates:
         self._retry_at = 0.0
 
     def current(self) -> Rate:
+        # Rate is immutable: fresh cache readers need no network-fetch lock.
+        cached = self._rate
+        if cached and 0 <= int(time.time()) - cached.as_of < 60:
+            return cached
         # Single flight without queuing every request behind an upstream stall.
         if not self._lock.acquire(blocking=False):
             raise QuoteUnavailable("Quote refresh in progress")

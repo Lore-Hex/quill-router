@@ -65,6 +65,58 @@ def test_funding_alerts_are_narrow_and_do_not_blend_revisions() -> None:
     absence = configured[-1]["conditions"][0]["conditionAbsent"]
     assert absence["duration"] == "600s"
     assert absence["aggregations"][0]["groupByFields"] == ["resource.label.service_name"]
+    assert 'resource.label.service_name="lightning-router-web"' in absence["filter"]
+    assert "lightning.funding_stalled" in configured[0]["conditions"][0]["conditionMatchedLog"]["filter"]
+
+
+@pytest.mark.parametrize("live", [False, True])
+def test_alert_install_requires_live_post_metric_heartbeat(monkeypatch, live) -> None:
+    import json
+    from unittest.mock import Mock
+
+    from scripts.lightning.reliability import install
+
+    written = []
+    reads = []
+
+    def gc(*args):
+        if args[:3] == ("beta", "monitoring", "channels"):
+            return json.dumps([{"name": "projects/test/notificationChannels/existing", "displayName": "TrustedRouter Spanner on-call", "enabled": True}])
+        if args[:2] == ("logging", "read"):
+            reads.append(args)
+            return "2026-09-15T00:00:00Z" if live else ""
+        if args[:3] == ("monitoring", "policies", "list"):
+            return "[]"
+        if args[:3] == ("monitoring", "policies", "create"):
+            written.append(args)
+        return ""
+
+    operator = Mock(spec=Operator)
+    operator.gc.side_effect = gc
+    monkeypatch.setattr("scripts.lightning.reliability.time.sleep", lambda _: None)
+    if live:
+        install(operator)
+        assert len(written) == 3
+    else:
+        with pytest.raises(RuntimeError, match="No live funding heartbeat"):
+            install(operator)
+        assert len(reads) == 12
+        assert not written
+    assert all('timestamp>"' in call[2] for call in reads)
+
+
+@pytest.mark.parametrize("enabled", [False, None])
+def test_alert_install_refuses_disabled_or_unknown_channel(monkeypatch, enabled) -> None:
+    import json
+    from unittest.mock import Mock
+
+    from scripts.lightning.reliability import install
+
+    operator = Mock(spec=Operator)
+    operator.gc.return_value = json.dumps([{"displayName": "TrustedRouter Spanner on-call", "enabled": enabled}])
+    with pytest.raises(ValueError, match="on-call"):
+        install(operator)
+    assert operator.gc.call_count == 1
 
 
 @pytest.mark.parametrize("as_list", [False, True])

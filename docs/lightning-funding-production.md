@@ -80,6 +80,9 @@ IAM, and does not change unrelated alarms. Review/stuck-payment alerts repeat no
 more than every five minutes. A ten-minute missing heartbeat detects an absent
 worker even if the HTTP process still answers. Monitor the paid/uncredited count
 after deployments; never resolve an alert by dropping its outbox row.
+Installation refuses to complete until a real funding heartbeat appears after
+metric creation, so a never-started worker is not mistaken for a monitored one.
+A stable `lightning.funding_stalled` text trigger also covers wrapped JSON logs.
 
 Quote fetches are single-flight and fail fast rather than queueing behind an
 upstream stall. An upstream failure has a five-second negative cache. Per-key

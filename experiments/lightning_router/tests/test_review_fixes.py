@@ -14,7 +14,8 @@ from lightning_router.rates import Rate, Rates
 from sqlalchemy import select, update
 
 
-def test_rate_failure_has_short_negative_cache():
+def test_rate_failure_has_short_negative_cache(monkeypatch):
+    monkeypatch.setattr("lightning_router.rates.time.monotonic", lambda: 100)
     calls = []
 
     def fail(_):
@@ -225,7 +226,8 @@ def test_upgrade_preserves_rows_and_removes_node_index_uniqueness(store, funding
     # Build the actual previous table shape, then upgrade twice.
     metadata.drop_all(store.engine)
     old = MetaData()
-    checkouts.to_metadata(old)
+    old_checkout = checkouts.to_metadata(old)
+    old_checkout._columns.remove(old_checkout.c.created_at)
     legacy = invoices.to_metadata(old)
     for name in ("settled_at", "failure_code", "failure_since", "next_attempt_at"):
         legacy._columns.remove(legacy.c[name])
@@ -245,6 +247,7 @@ def test_upgrade_preserves_rows_and_removes_node_index_uniqueness(store, funding
     store.migrate()
     assert store.invoice("a" * 32, hashed)["state"] == "CANCELED"
     assert store.invoice("a" * 32, hashed)["fx_margin_bps"] == 0
+    assert store.checkout(hashed)["created_at"] >= int(time.time()) - 60
     assert all(c["column_names"] != ["settle_index"] for c in inspect(store.engine).get_unique_constraints("lr_invoices"))
     test_reused_node_settle_index_is_not_a_payment_identity(funding, raw_key)
 

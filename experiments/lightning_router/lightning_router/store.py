@@ -133,6 +133,8 @@ class Store:
                 for name, definition in columns.items():
                     if name not in current:
                         conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+                        if table == "lr_checkouts" and name == "created_at":
+                            conn.execute(update(checkouts).values(created_at=int(time.time())))
             if inspect(conn).has_table("lr_invoices"):
                 for constraint in inspect(conn).get_unique_constraints("lr_invoices"):
                     if constraint["column_names"] == ["settle_index"]:
@@ -178,7 +180,7 @@ class Store:
         if not credit_account_id or len(credit_account_id) > 128:
             raise ValueError("Invalid credit account")
         with self.transaction() as conn:
-            self._insert_once(conn, checkouts, {"key_hash": key_hash, "credit_account_id": credit_account_id})
+            self._insert_once(conn, checkouts, {"key_hash": key_hash, "credit_account_id": credit_account_id, "created_at": int(time.time())})
             row = self._account(conn, key_hash)
             if row["credit_account_id"] not in {None, credit_account_id}:
                 raise ValueError("API key cannot change credit accounts")
@@ -204,6 +206,8 @@ class Store:
         # This is only invoice ownership/recovery metadata, not a TR identity.
         with self.transaction() as conn:
             self._insert_once(conn, checkouts, {"key_hash": key_hash, "pending_key": pending_key, "created_at": int(time.time())})
+            self._account(conn, key_hash)
+            conn.execute(update(checkouts).where(checkouts.c.key_hash == key_hash).values(created_at=int(time.time())))
 
     def checkout(self, key_hash: str) -> dict[str, Any]:
         with self.transaction() as conn:
@@ -379,6 +383,7 @@ class Store:
                 conn.execute(select(checkouts.c.key_hash).where(checkouts.c.key_hash == owner).with_for_update()).first()
                 conn.execute(delete(checkouts).where(checkouts.c.key_hash == owner,
                     checkouts.c.credit_account_id.is_(None),
+                    checkouts.c.created_at < cutoff,
                     ~select(invoices.c.id).where(invoices.c.key_hash == owner).exists(),
                     ~select(deposits.c.payment_hash).where(deposits.c.key_hash == owner).exists()))
             stale = list(conn.execute(select(limits.c.id).where(

@@ -56,7 +56,7 @@ class Funding:
             return self.refresh(previous)
         rate = self.rates.current()
         requested_msat = rate.invoice_msats(cents)
-        if rate.credit_microdollars(requested_msat) > MAX_CREDIT_RECEIPT:
+        if rate.credit_microdollars(2 * requested_msat) > MAX_CREDIT_RECEIPT:
             raise ValueError("Invoice exceeds receipt ceiling")
         if self.check_capacity and self.lnd.receiving_capacity() < requested_msat:
             raise ValueError("Insufficient receiving capacity")
@@ -71,7 +71,7 @@ class Funding:
 
     def refresh(self, row: dict[str, Any], *, cancel: bool = False) -> dict[str, Any]:
         row = self.store.invoice(row["id"], row["key_hash"])
-        if row["failure_code"] and row["next_attempt_at"] > int(time.time()):
+        if not cancel and row["failure_code"] and row["next_attempt_at"] > int(time.time()):
             return self.public(row)
         try:
             return self._refresh(row, cancel=cancel)
@@ -195,5 +195,9 @@ class Funding:
             unhealthy = health["review_required"] > 0 or health["oldest_uncredited_seconds"] >= 120
             logger.warning(json.dumps({"severity": "ERROR" if unhealthy else "INFO",
                                        "event": "lightning.funding_health", **health}))
+            if unhealthy:
+                # Stable text trigger survives a formatter wrapping the JSON.
+                logger.error("lightning.funding_stalled uncredited_count=%s review_required=%s oldest_uncredited_seconds=%s",
+                             health["uncredited_count"], health["review_required"], health["oldest_uncredited_seconds"])
             self._last_health_log = now
         return counts

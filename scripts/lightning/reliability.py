@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import tempfile
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +25,7 @@ def policies(channel: str) -> list[dict[str, Any]]:
         (
             "LightningRouter: payment needs review",
             SURFACE
-            + ' AND jsonPayload.event="lightning.funding_health" AND (jsonPayload.review_required>0 OR jsonPayload.oldest_uncredited_seconds>=120)',
+            + ' AND ((jsonPayload.event="lightning.funding_health" AND (jsonPayload.review_required>0 OR jsonPayload.oldest_uncredited_seconds>=120)) OR textPayload:"lightning.funding_stalled")',
         ),
         (
             "LightningRouter: reconciliation worker failed",
@@ -55,7 +57,7 @@ def policies(channel: str) -> list[dict[str, Any]]:
                 {
                     "displayName": "No funding heartbeat for 10 minutes",
                     "conditionAbsent": {
-                        "filter": f'metric.type="logging.googleapis.com/user/{HEARTBEAT_METRIC}" AND {SURFACE}',
+                        "filter": f'metric.type="logging.googleapis.com/user/{HEARTBEAT_METRIC}" AND resource.type="cloud_run_revision" AND resource.label.service_name="{WEB}"',
                         "duration": "600s",
                         "aggregations": [
                             {
@@ -80,7 +82,7 @@ def install(operator: Operator) -> None:
         c
         for c in channels
         if c.get("displayName") == "TrustedRouter Spanner on-call"
-        and c.get("enabled", True)
+        and c.get("enabled") is True
         and c.get("verificationStatus", "VERIFICATION_STATUS_UNSPECIFIED")
         in {"VERIFIED", "VERIFICATION_STATUS_UNSPECIFIED"}
     ]
@@ -95,6 +97,17 @@ def install(operator: Operator) -> None:
         "--description=Lightning funding reconciliation heartbeat",
         "--log-filter=" + HEARTBEAT,
     )
+    # An absence policy cannot detect a metric that never existed. Fail the
+    # installation unless the live worker emits after metric creation.
+    since = datetime.now(UTC).isoformat()
+    for _ in range(12):
+        heartbeat = operator.gc("logging", "read", HEARTBEAT + f' AND timestamp>"{since}"',
+                                "--limit=1", "--format=value(timestamp)")
+        if heartbeat.strip():
+            break
+        time.sleep(15)
+    else:
+        raise RuntimeError("No live funding heartbeat; alert installation is not complete")
     current = json.loads(operator.gc("monitoring", "policies", "list", "--format=json"))
     for policy in policies(channels[0]["name"]):
         matches = [p for p in current if p.get("displayName") == policy["displayName"]]
