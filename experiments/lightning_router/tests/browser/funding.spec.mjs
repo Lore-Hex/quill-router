@@ -125,16 +125,20 @@ test("payment winning a lost cancel response keeps the funded key", async ({ pag
   await expect(page.locator("#qr")).toBeHidden();
 });
 
-test("reasoning selection updates snippets without touching payment state", async ({ page }) => {
+test("model-specific reasoning updates snippets without a global dropdown or payment changes", async ({ page }) => {
   await page.route("**/api/models", (route) => route.fulfill({ json: { data: [
-    { id: "deepseek/deepseek-flash", name: "DeepSeek Flash", reasoning_effort: true },
-    { id: "other/plain", name: "Plain model", reasoning_effort: false },
+    { id: "deepseek/deepseek-flash", name: "DeepSeek Flash", reasoning: {
+      status: "reviewed", field: "reasoning_effort", values: ["low", "high", "max"],
+      setup_efforts: ["low", "high", "max"], setup_default: "high", source: "https://api-docs.deepseek.com/guides/thinking_mode/",
+    } },
+    { id: "other/plain", name: "Plain model", reasoning_effort: true },
   ] } }));
   await page.goto("/");
   await expect(page.locator("#qr")).toBeVisible();
   const before = await page.evaluate(() => sessionStorage.getItem("lightningrouter-usd-session-v1"));
   await page.getByRole("tab", {name: "OpenCode", exact: true}).click();
-  await page.getByLabel("Reasoning effort", { exact: true }).selectOption("high");
+  await expect(page.locator("#reasoning-effort")).toHaveCount(0);
+  await expect(page.locator("#reasoning-values")).toHaveText("reasoning_effort: low, high, max");
   await expect(page.locator("#config-code")).toContainText('"reasoningEffort": "high"');
   await page.getByRole("tab", { name: "Crush", exact: true }).click();
   await expect(page.locator("#config-code")).toContainText('"reasoning_effort": "high"');
@@ -142,9 +146,21 @@ test("reasoning selection updates snippets without touching payment state", asyn
   await expect(page.locator("#command-code")).toContainText("--thinking high");
   expect(await page.evaluate(() => sessionStorage.getItem("lightningrouter-usd-session-v1"))).toBe(before);
   await page.selectOption("#model", "other/plain");
-  await expect(page.locator("#reasoning-effort")).toBeDisabled();
-  await expect(page.locator("#reasoning-effort")).toHaveValue("default");
+  await expect(page.locator("#reasoning-values")).toHaveText("Not yet verified");
+  await expect(page.locator("#reasoning-source")).toBeHidden();
   await expect(page.locator("#command-code")).not.toContainText("--thinking");
+});
+
+test("Anthropic native effort is not confused with TR's thinking-token budget", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("tab", {name: "OpenCode", exact: true}).click();
+  await expect(page.locator("#model")).toBeEnabled();
+  await page.selectOption("#model", "anthropic/claude-opus-4.8");
+  await expect(page.locator("#reasoning-values")).toContainText("output_config.effort: low, medium, high, xhigh, max");
+  await expect(page.locator("#reasoning-note")).toContainText("1024/4096/8192");
+  await expect(page.locator("#reasoning-default")).toContainText("No effort override");
+  await expect(page.locator("#config-code")).not.toContainText('"reasoningEffort"');
+  await expect(page.locator("#reasoning-source")).toHaveAttribute("href", "https://platform.claude.com/docs/en/build-with-claude/effort");
 });
 
 test("review-required invoices hide payment and never reveal an unfunded key", async ({ page }) => {

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { execFileSync } from "node:child_process";
+import { parse } from "yaml";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { centsFromText, setupFor } from "../setup.mjs";
 
 const model = { id: "deepseek/deepseek-flash", name: "DeepSeek Flash", context: 128000, output: 8192 };
@@ -67,29 +70,63 @@ test("malicious model cannot escape shell commands", () => {
   assert.throws(() => setupFor("omp", { ...model, id: "x'; curl evil.test" }, base));
 });
 
-for (const effort of ["low", "medium", "high"]) {
-  test(`reasoning ${effort} reaches all three client configurations`, () => {
-    const capable = { ...model, reasoning_effort: true };
-    const opencode = JSON.parse(setupFor("opencode", capable, base, effort).config);
-    assert.equal(opencode.provider.lightningrouter.models[model.id].options.reasoningEffort, effort);
-    const crush = JSON.parse(setupFor("crush", capable, base, effort).config);
-    for (const role of ["large", "small"]) assert.equal(crush.models[role].reasoning_effort, effort);
+// Consume the production registry, not a second set of hand-maintained fixtures.
+const profiles = JSON.parse(execFileSync(".venv/bin/python", ["-c",
+  "import json; from lightning_router.reasoning import PROFILES; print(json.dumps(PROFILES))"], {encoding: "utf8"}));
+for (const [id, reasoning] of Object.entries(profiles)) {
+  test(`${id}: config matches reviewed controls for each client`, () => {
+    const selected = {...model, id, reasoning};
+    const code = JSON.parse(setupFor("opencode", selected, base).config).provider.lightningrouter.models[id];
+    const crush = JSON.parse(setupFor("crush", selected, base).config);
+    const omp = setupFor("omp", selected, base);
+    const pi = parse(omp.config).providers.lightningrouter.models[0];
+    assert.equal(code.reasoning, true);
     assert.equal(crush.providers.lightningrouter.models[0].can_reason, true);
-    assert.deepEqual(crush.providers.lightningrouter.models[0].reasoning_levels, ["low", "medium", "high"]);
-    const omp = setupFor("omp", capable, base, effort);
-    assert.ok(omp.command.endsWith(` --thinking ${effort}`));
-    assert.ok(omp.config.includes("supportsReasoningEffort: true"));
-    assert.ok(omp.config.includes("thinkingFormat: openai"));
-    assert.ok(omp.config.includes("reasoning: true"));
+    assert.equal(pi.reasoning, true);
+    if (reasoning.setup_default) {
+      assert.equal(code.options.reasoningEffort, reasoning.setup_default);
+      assert.deepEqual(Object.entries(code.variants).filter(([,v]) => !v.disabled).map(([k]) => k), reasoning.setup_efforts);
+      assert.deepEqual(crush.providers.lightningrouter.models[0].reasoning_levels, reasoning.setup_efforts);
+      for (const role of ["large", "small"]) assert.equal(crush.models[role].reasoning_effort, reasoning.setup_default);
+      assert.deepEqual(pi.thinking.efforts, reasoning.setup_efforts.filter(value => value !== "none"));
+      assert.equal(pi.thinking.requiresEffort, !reasoning.setup_efforts.includes("none"));
+      assert.ok(omp.command.endsWith(` --thinking ${reasoning.setup_default === "none" ? "off" : reasoning.setup_default}`));
+    } else {
+      assert.equal(code.options, undefined);
+      assert.ok(Object.values(code.variants).every(value => value.disabled));
+      assert.equal(crush.models.large.reasoning_effort, undefined);
+      assert.equal(pi.compat.supportsReasoningParams, false);
+      assert.ok(!omp.command.includes("--thinking"));
+    }
+  });
+  if (reasoning.setup_default) test(`${id}: actual OpenCode provider serializes the effort on the wire`, async () => {
+    const config = JSON.parse(setupFor("opencode", {...model, id, reasoning}, base).config);
+    const providerConfig = config.provider.lightningrouter;
+    for (const effort of reasoning.setup_efforts) {
+      let sent;
+      const provider = createOpenAICompatible({name: "lightningrouter", baseURL: providerConfig.options.baseURL,
+        apiKey: "local-fake-key", fetch: async (url, init) => {
+          assert.equal(url, base + "/chat/completions");
+          sent = JSON.parse(init.body);
+          return new Response('data: [DONE]\n\n', {headers: {"Content-Type": "text/event-stream"}});
+        }});
+      await provider.chatModel(id).doStream({prompt: [{role: "user", content: [{type: "text", text: "hi"}]}],
+        providerOptions: {lightningrouter: providerConfig.models[id].variants[effort]}});
+      assert.equal(sent.reasoning_effort, effort);
+      assert.equal(sent.model, id);
+      assert.equal(sent.reasoningEffort, undefined);
+    }
   });
 }
 for (const agent of ["opencode", "crush", "omp"]) {
-  test(`${agent} default omits explicit effort`, () => {
-    assert.deepEqual(setupFor(agent, model, base, "default"), setupFor(agent, model, base));
-    assert.ok(!setupFor(agent, model, base).config.includes("reasoning"));
+  test(`${agent} advertised boolean alone never generates effort`, () => {
+    const config = setupFor(agent, {...model, reasoning_effort: true}, base).config;
+    assert.ok(!config.includes('"reasoningEffort"'));
+    assert.ok(!config.includes('"reasoning_effort"'));
+    assert.ok(!config.includes("efforts:"));
   });
-  test(`${agent} rejects unadvertised or invalid effort`, () => {
-    assert.throws(() => setupFor(agent, model, base, "high"));
-    assert.throws(() => setupFor(agent, { ...model, reasoning_effort: true }, base, "high; curl evil.test"));
+  test(`${agent} rejects malformed reviewed controls`, () => {
+    assert.throws(() => setupFor(agent, {...model, reasoning: {status: "reviewed", setup_efforts: ["high; curl evil.test"], setup_default: "high; curl evil.test"}}, base));
+    assert.throws(() => setupFor(agent, {...model, reasoning: {status: "reviewed", setup_efforts: ["low"], setup_default: "max"}}, base));
   });
 }

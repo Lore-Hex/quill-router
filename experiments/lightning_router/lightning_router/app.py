@@ -21,6 +21,7 @@ from .catalog import limits, pricing
 from .errors import FundingReviewRequired
 from .pages import public_page
 from .rates import Rates
+from .reasoning import reasoning_profile
 from .service import Funding
 
 STATIC = Path(__file__).resolve().parent.parent / "web"
@@ -64,7 +65,7 @@ class Catalog:
                 models.append({
                     "id": model_id, "name": str(item.get("name") or model_id)[:180],
                     **limits(item), "pricing": pricing(item),
-                    "reasoning_effort": "reasoning_effort" in item.get("supported_parameters", []),
+                    "reasoning": reasoning_profile(item),
                 })
             self.models = sorted(models, key=lambda row: row["name"].lower())
             self.loaded = time.monotonic()

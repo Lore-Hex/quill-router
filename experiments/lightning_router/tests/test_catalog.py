@@ -24,11 +24,23 @@ def test_catalog_only_lists_public_prepaid_chat_tool_candidates():
     assert len(calls) == 1
 
 
-def test_catalog_distinguishes_reasoning_from_effort_control():
+def test_catalog_flag_does_not_invent_effort_values():
     rows = [model("a/effort"), model("b/reasoning-only"), model("c/plain")]
     rows[0]["supported_parameters"] += ["reasoning", "reasoning_effort"]
     rows[1]["supported_parameters"] += ["reasoning"]
     catalog = Catalog(httpx.Client(transport=httpx.MockTransport(
         lambda _: httpx.Response(200, json={"data": rows}))))
-    assert [(row["id"], row["reasoning_effort"]) for row in catalog.current()] == [
-        ("a/effort", True), ("b/reasoning-only", False), ("c/plain", False)]
+    for row in catalog.current():
+        assert "reasoning_effort" not in row
+        assert row["reasoning"]["status"] == "unverified"
+        assert row["reasoning"]["setup_efforts"] == []
+
+
+def test_catalog_includes_exact_reviewed_model_controls():
+    rows = [model("deepseek/deepseek-v4.1-flash"), model("anthropic/claude-opus-4.8")]
+    catalog = Catalog(httpx.Client(transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, json={"data": rows}))))
+    profiles = {row["id"]: row["reasoning"] for row in catalog.current()}
+    assert profiles[rows[0]["id"]]["setup_efforts"] == ["low", "high", "max"]
+    assert profiles[rows[1]["id"]]["field"] == "output_config.effort"
+    assert profiles[rows[1]["id"]]["setup_efforts"] == []

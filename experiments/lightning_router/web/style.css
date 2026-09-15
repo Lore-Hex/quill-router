@@ -48,7 +48,9 @@ button:disabled, select:disabled { opacity: .5; cursor: not-allowed; }
 .setup { border-top: 1px solid #dce4de; padding: 32px 0 20px; }
 .section-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; gap: 12px; }
 #model-count { font-size: 12px; }
-.reasoning-field { margin-top: 16px; max-width: 240px; }
+.reasoning-details { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px 12px; font-size: 13px; }
+.reasoning-details dt { color: var(--muted); }
+.reasoning-details dd { margin: 0; overflow-wrap: anywhere; }
 #agent-model-settings { padding-top: 24px; }
 .intro { text-align: center; margin-bottom: 24px; }
 .intro h1 { margin-bottom: 10px; }
