@@ -8,9 +8,28 @@ export function centsFromText(text) {
 
 const CLIENT_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 
-export function setupFor(agent, model, apiBase) {
+function checkedProviderOrder(value) {
+  if (!Array.isArray(value) || value.length > 16 ||
+      value.some(slug => typeof slug !== "string" || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(slug))) {
+    throw new Error("Use a JSON array of up to 16 lowercase provider slugs.");
+  }
+  if (new Set(value).size !== value.length) throw new Error("Each provider can appear only once.");
+  return [...value];
+}
+
+export function providerOrderFromText(text) {
+  if (typeof text !== "string" || text.length > 2048) throw new Error("Provider order is too long.");
+  let value;
+  try { value = text.trim() ? JSON.parse(text) : []; }
+  catch { throw new Error('Use a JSON array such as ["deepinfra", "novita"].'); }
+  return checkedProviderOrder(value);
+}
+
+export function setupFor(agent, model, apiBase, providerOrder = []) {
   if (!/^[A-Za-z0-9_./:-]{1,180}$/.test(model.id)) throw new Error("Invalid model ID");
   if (!["https://api.lightningrouter.ai/v1", "https://api.trustedrouter.com/v1"].includes(apiBase)) throw new Error("Unexpected API endpoint");
+  const order = checkedProviderOrder(providerOrder);
+  const routing = order.length ? { provider: { order } } : {};
   const profile = model.reasoning;
   const efforts = profile?.status === "reviewed" ? profile.setup_efforts || [] : [];
   const effort = profile?.status === "reviewed" ? profile.setup_default : null;
@@ -38,7 +57,7 @@ export function setupFor(agent, model, apiBase) {
         options: { baseURL: apiBase, apiKey: "{env:LIGHTNINGROUTER_API_KEY}" },
         models: { [model.id]: { name: model.name, ...(context && output ? { limit: { context, output } } : {}),
           reasoning: canReason, variants,
-          ...(explicit ? { options: { reasoningEffort: effort } } : {}),
+          ...(explicit || order.length ? { options: { ...(explicit ? { reasoningEffort: effort } : {}), ...routing } } : {}),
         } },
       } },
     }, null, 2),
@@ -51,6 +70,7 @@ export function setupFor(agent, model, apiBase) {
       providers: { lightningrouter: {
         name: "LightningRouter", type: "openai-compat", base_url: apiBase,
         api_key: "$LIGHTNINGROUTER_API_KEY",
+        ...(order.length ? { extra_body: routing } : {}),
         models: [{ id: model.id, name: model.name, ...(context ? { context_window: context } : {}),
           ...(defaultOutput || output ? { default_max_tokens: defaultOutput || output } : {}),
           can_reason: canReason,
@@ -70,7 +90,8 @@ export function setupFor(agent, model, apiBase) {
       (explicit ? `\n        reasoning: true\n        thinking:\n          mode: effort\n          efforts: [${efforts.filter(value => value !== "none").join(", ")}]\n          requiresEffort: ${!efforts.includes("none")}` +
         (effort !== "none" ? `\n          defaultLevel: ${effort}` : "") +
         "\n        compat:\n          supportsReasoningEffort: true\n          thinkingFormat: openai"
-        : `\n        reasoning: ${canReason}\n        compat:\n          supportsReasoningParams: false`),
+        : `\n        reasoning: ${canReason}\n        compat:\n          supportsReasoningParams: false`) +
+      (order.length ? `\n          extraBody: ${JSON.stringify(routing)}` : ""),
     command: `omp --model '${ref}'` + (explicit ? ` --thinking ${effort === "none" ? "off" : effort}` : ""),
     docs: "https://github.com/can1357/oh-my-pi/blob/main/docs/models.md", reasoningSummary,
   };

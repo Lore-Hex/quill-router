@@ -1,5 +1,5 @@
 import { createIcons, ArrowRight, Copy, Eye, LogOut, RefreshCw } from "lucide";
-import { centsFromText, setupFor } from "./setup.mjs";
+import { centsFromText, providerOrderFromText, setupFor } from "./setup.mjs";
 import { KEY, SESSION, savedSession } from "./session.mjs";
 
 const $ = (id) => document.getElementById(id);
@@ -15,6 +15,7 @@ let quoteVersion = 0;
 let toastTimer;
 let setup = null;
 let amountDirty = false;
+const providerOrders = new Map();
 
 function remember() { sessionStorage.setItem(SESSION, JSON.stringify(state)); }
 function secret() {
@@ -74,7 +75,22 @@ function renderSetup() {
   if (cowork) { setup = null; return; }
   const model = models.find((item) => item.id === $("model").value);
   if (!model || !config) return;
-  setup = setupFor(agent, model, config.api_base);
+  try {
+    setup = setupFor(agent, model, config.api_base, providerOrderFromText($("provider-order").value));
+    $("provider-order-error").textContent = "";
+    $("provider-order").setAttribute("aria-invalid", "false");
+    $("copy-config").disabled = false;
+    $("copy-command").disabled = false;
+  } catch (error) {
+    setup = null;
+    $("provider-order-error").textContent = error.message;
+    $("provider-order").setAttribute("aria-invalid", "true");
+    $("config-code").textContent = "";
+    $("command-code").textContent = "";
+    $("copy-config").disabled = true;
+    $("copy-command").disabled = true;
+    return;
+  }
   const reasoning = model.reasoning;
   $("reasoning-values").textContent = reasoning?.field
     ? `${reasoning.field}${reasoning.values.length ? ": " + reasoning.values.join(", ") : ""}`
@@ -281,7 +297,14 @@ $("copy-env").addEventListener("click", () => copy($("env-code").textContent));
 $("copy-config").addEventListener("click", () => { if (setup) copy(setup.config); });
 $("copy-command").addEventListener("click", () => { if (setup) copy(setup.command); });
 $("refresh-balance").addEventListener("click", () => exclusive(showBalance));
-$("model").addEventListener("change", renderSetup);
+$("model").addEventListener("change", () => {
+  $("provider-order").value = providerOrders.get($("model").value) || "";
+  renderSetup();
+});
+$("provider-order").addEventListener("input", () => {
+  providerOrders.set($("model").value, $("provider-order").value);
+  renderSetup();
+});
 for (const tab of document.querySelectorAll("[role=tab]")) {
   tab.addEventListener("click", () => {
     agent = tab.dataset.agent;
