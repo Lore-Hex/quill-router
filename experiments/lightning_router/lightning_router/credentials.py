@@ -19,6 +19,9 @@ class Credentials:
             raise ValueError("Use a TrustedRouter API key")
         return hmac.new(self._secret, b"account\0" + raw_key.encode(), hashlib.sha256).hexdigest()
 
+    def key_id(self) -> str:
+        return hmac.new(self._secret, b"checkout-secret-pin-v1", hashlib.sha256).hexdigest()
+
     def invoice_preimage(self, invoice_id: str) -> bytes:
         # Persist the hash before calling LND. Retries recover the SAME invoice,
         # including when LND accepted creation but its HTTP response was lost.

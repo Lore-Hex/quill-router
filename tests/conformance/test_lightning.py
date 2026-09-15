@@ -7,6 +7,7 @@ import pytest
 
 from trusted_router.security import new_api_key
 from trusted_router.services.lightning import LightningCredits
+from trusted_router.storage_lightning import MAX_CREDIT_RECEIPT
 from trusted_router.store_protocol import Store
 
 
@@ -94,7 +95,7 @@ def test_payment_integer_wire_type_boundaries(store: Store, amount: int) -> None
     bridge = LightningCredits(store)
     workspace_id = bridge.resolve(new_api_key(), new=True)
     payment = uuid4().hex + uuid4().hex
-    if amount > 1_000_000_000:
+    if amount > MAX_CREDIT_RECEIPT:
         with pytest.raises(ValueError):
             bridge.credit(workspace_id, payment, amount)
         assert bridge.balance(workspace_id) == 0
@@ -104,7 +105,7 @@ def test_payment_integer_wire_type_boundaries(store: Store, amount: int) -> None
     assert bridge.balance(workspace_id) == amount
 
 
-@pytest.mark.parametrize("amount", [True, 1.25, 0, -1, 1_000_000_001])
+@pytest.mark.parametrize("amount", [True, 1.25, 0, -1, MAX_CREDIT_RECEIPT + 1])
 def test_payment_validation_precedes_every_write(store: Store, amount: int) -> None:
     bridge = LightningCredits(store)
     workspace_id = bridge.resolve(new_api_key(), new=True)

@@ -5,6 +5,7 @@ from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
 import httpx
 
+from .errors import QuoteUnavailable
 from .money import MICRODOLLARS_PER_DOLLAR, MSATS_PER_BTC, microdollars, msats, usd
 
 FX_MARGIN_BPS = 1000
@@ -56,16 +57,31 @@ class Rates:
         self.client = client
         self._rate: Rate | None = None
         self._lock = threading.Lock()
+        self._retry_at = 0.0
 
     def current(self) -> Rate:
-        with self._lock:
+        # Single flight without queuing every request behind an upstream stall.
+        if not self._lock.acquire(blocking=False):
+            raise QuoteUnavailable("Quote refresh in progress")
+        fetching = False
+        try:
             now = int(time.time())
             if self._rate and 0 <= now - self._rate.as_of < 60:
                 return self._rate
+            if time.monotonic() < self._retry_at:
+                raise QuoteUnavailable("Quote temporarily unavailable")
+            fetching = True
             response = self.client.get("https://api.coinbase.com/v2/prices/BTC-USD/spot")
             response.raise_for_status()
             data = response.json()["data"]
             if data["base"] != "BTC" or data["currency"] != "USD" or not isinstance(data["amount"], str):
                 raise ValueError("Unexpected exchange-rate response")
             self._rate = Rate.from_spot(Decimal(data["amount"]), now)
+            self._retry_at = 0
             return self._rate
+        except Exception:
+            if fetching:
+                self._retry_at = time.monotonic() + 5
+            raise
+        finally:
+            self._lock.release()

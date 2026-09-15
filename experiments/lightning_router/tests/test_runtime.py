@@ -198,7 +198,7 @@ def test_postgres_migration_retries_without_superuser(monkeypatch):
                     cursor.execute(psycopg.sql.SQL("DROP ROLE {}").format(psycopg.sql.Identifier(role)))
             cursor.execute("CREATE ROLE lr_migrator_test LOGIN CREATEROLE PASSWORD 'local-test-only'")
             cursor.execute("GRANT USAGE, CREATE ON SCHEMA public TO lr_migrator_test")
-    deployer_url = url.set(username="lr_migrator_test")
+    deployer_url = url.set(username="lr_migrator_test", password="local-test-only")  # noqa: S106 - disposable loopback test role
     monkeypatch.setenv("LR_DATABASE_URL", deployer_url.render_as_string(hide_password=False))
     monkeypatch.setenv("LR_DATABASE_APP_PASSWORD", "e" * 64)
     migrate()

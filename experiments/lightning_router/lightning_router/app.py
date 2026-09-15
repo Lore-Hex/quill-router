@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from .errors import FundingReviewRequired
 from .rates import Rates
 from .service import Funding
 
@@ -168,18 +169,22 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
         return FileResponse(STATIC / "index.html")
 
     @app.get("/health")
-    def health() -> dict[str, Any]:
-        return {"status": "up", "payments_ready": payments_ready(), "inference_ready": service is not None}
+    def health() -> JSONResponse:
+        delivery = service.store.delivery_health(int(time.time())) if service else {}
+        ready = payments_ready()
+        degraded = not ready or delivery.get("review_required", 0) > 0 or delivery.get("oldest_uncredited_seconds", 0) >= 120
+        return JSONResponse({"status": "degraded" if degraded else "up", "payments_ready": ready,
+                             "inference_configured": service is not None, "delivery": delivery}, status_code=503 if degraded else 200)
 
     @app.get("/api/config")
     def config() -> dict[str, Any]:
         return {"payments_ready": payments_ready(), "network": network,
-                "inference_ready": service is not None, "api_base": api_base}
+                "inference_configured": service is not None, "api_base": api_base}
 
     @app.get("/api/models")
     def models() -> dict[str, Any]:
         assert catalog is not None
-        return {"data": catalog.current(), "inference_ready": service is not None}
+        return {"data": catalog.current(), "inference_configured": service is not None}
 
     @app.get("/api/quote")
     def quote(usd_cents: int = 1000) -> Any:
@@ -224,6 +229,11 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
             return JSONResponse({"error": "rate_limited"}, status_code=429, headers={"Retry-After": "900"})
         try:
             return service.create(raw, request_id, body.usd_cents, new=body.new_account)
+        except FundingReviewRequired:
+            row = service.store.by_request(hashed, request_id)
+            if row is None:
+                return unavailable()
+            return service.public(row)
         except KeyError:
             return JSONResponse({"error": "invalid_api_key"}, status_code=401)
         except ValueError:
@@ -241,7 +251,10 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
                 service.account(raw)
         except (ValueError, KeyError):
             return JSONResponse({"error": "invoice_not_found"}, status_code=404)
-        return service.refresh(row, cancel=cancel)
+        try:
+            return service.refresh(row, cancel=cancel)
+        except FundingReviewRequired:
+            return service.public(service.store.invoice(invoice_id, hashed))
 
     @app.post("/api/invoices/{invoice_id}/refresh")
     def refresh(invoice_id: str, request: Request) -> Any:

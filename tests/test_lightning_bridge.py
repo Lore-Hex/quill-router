@@ -47,6 +47,32 @@ def test_credit_amount_is_strict_integer() -> None:
     assert response.status_code == 422
 
 
+def test_max_invoice_rounding_and_overpayment_are_credited_exactly_once() -> None:
+    import uuid
+
+    client = client_for()
+    headers = {"Authorization": "Bearer " + TOKEN}
+    account = client.post("/internal/lightning/resolve", headers=headers,
+                          json={"api_key": new_api_key(), "new": True}).json()["account_id"]
+    # $1000 at effective $90000/BTC rounded to a whole sat, then paid twice.
+    amount = 2_000_001_600
+    payment = {"account_id": account, "payment_hash": uuid.uuid4().hex * 2,
+               "amount_microdollars": amount}
+    for _ in range(2):
+        assert client.post("/internal/lightning/credit", headers=headers, json=payment).status_code == 200
+    assert client.post("/internal/lightning/balance", headers=headers, json={"account_id": account}).json()["available_microdollars"] == amount
+
+
+def test_funding_receipt_limit_matches_isolated_service(monkeypatch) -> None:
+    from pathlib import Path
+
+    from trusted_router.storage_lightning import MAX_CREDIT_RECEIPT
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "experiments/lightning_router"))
+    from lightning_router.money import MAX_CREDIT_RECEIPT as FUNDING_LIMIT
+    assert FUNDING_LIMIT == MAX_CREDIT_RECEIPT
+
+
 def test_funding_token_cannot_reuse_gateway_token() -> None:
     import pytest
 

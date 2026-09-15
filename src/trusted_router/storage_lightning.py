@@ -32,6 +32,9 @@ if TYPE_CHECKING:
 # This only protects connection capacity; the database claim remains the
 # correctness boundary between independent processes and replicas.
 _PROVISION_LOCKS = tuple(threading.Lock() for _ in range(128))
+# Receipt headroom: twice a $1000 invoice plus whole-satoshi rounding at the
+# maximum supported quote. Issuance remains capped at $1000.
+MAX_CREDIT_RECEIPT = 2_002_000_000
 
 
 def validate_raw_key(raw: str) -> str:
@@ -65,7 +68,7 @@ def payment_binding(workspace_id: str, payment_hash: str, amount: int) -> dict[s
         raise ValueError("invalid_lightning_payment_hash")
     if not workspace_id or len(workspace_id) > 128:
         raise ValueError("invalid_lightning_workspace")
-    if type(amount) is not int or not 0 < amount <= 1_000_000_000:
+    if type(amount) is not int or not 0 < amount <= MAX_CREDIT_RECEIPT:
         raise ValueError("invalid_lightning_credit_amount")
     return {"workspace_id": workspace_id, "amount_microdollars": amount}
 

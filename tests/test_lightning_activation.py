@@ -33,6 +33,40 @@ def test_ops_identity_cannot_become_a_deployer() -> None:
         Operator("tr-ops-local@quill-cloud-proxy.iam.gserviceaccount.com")
 
 
+def test_secret_mismatch_requires_explicit_node_rotation() -> None:
+    import base64
+    import json
+    from unittest.mock import Mock
+
+    operator = Operator("deployer@example.test")
+    name = "lightning-router-lnd-tls-cert"
+    operator.gc = Mock(side_effect=[name, json.dumps({"payload": {"data": base64.urlsafe_b64encode(b"old").decode()}})])
+    with pytest.raises(ValueError, match="explicit"):
+        operator.secret(name, "new")
+    assert operator.gc.call_count == 2
+    operator.gc = Mock(side_effect=[name, json.dumps({"payload": {"data": base64.urlsafe_b64encode(b"old").decode()}}), ""])
+    assert operator.secret(name, "new", rotate=True) == "new"
+    assert operator.gc.call_args.kwargs == {"data": "new"}
+    with pytest.raises(ValueError, match="Only node"):
+        operator.secret("lightning-router-checkout-secret", "new", rotate=True)
+
+
+def test_funding_alerts_are_narrow_and_do_not_blend_revisions() -> None:
+    import json
+
+    from scripts.lightning.reliability import policies
+
+    configured = policies("projects/test/notificationChannels/existing")
+    assert len(configured) == 3
+    for policy in configured:
+        assert policy["enabled"]
+        assert policy["notificationChannels"] == ["projects/test/notificationChannels/existing"]
+        assert "lightning-router-web" in json.dumps(policy)
+    absence = configured[-1]["conditions"][0]["conditionAbsent"]
+    assert absence["duration"] == "600s"
+    assert absence["aggregations"][0]["groupByFields"] == ["resource.label.service_name"]
+
+
 @pytest.mark.parametrize("as_list", [False, True])
 def test_edge_policy_accepts_single_global_policy_shapes(as_list: bool) -> None:
     import json

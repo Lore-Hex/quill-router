@@ -4,6 +4,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from .errors import FundingReviewRequired
+
 
 class TrustedRouterCredits:
     def __init__(self, endpoint: str, token: str, client: httpx.Client) -> None:
@@ -25,7 +27,7 @@ class TrustedRouterCredits:
         if response.status_code in {401, 403, 404}:
             raise KeyError("Funding account unavailable")
         if response.status_code in {400, 409, 422}:
-            raise ValueError("Funding request rejected")
+            raise FundingReviewRequired("credit_rejected")
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, dict):

@@ -93,7 +93,7 @@ function showFxTerms(quote) {
 async function showInvoice(invoice) {
   state.invoice = invoice;
   remember();
-  const payable = invoice.state === "OPEN" && !invoice.expired && !amountDirty;
+  const payable = invoice.state === "OPEN" && !invoice.expired && !amountDirty && !invoice.attention_required;
   $("qr").hidden = !payable;
   $("qr-empty").hidden = payable;
   $("invoice-actions").hidden = !payable;
@@ -111,6 +111,10 @@ async function showInvoice(invoice) {
   const labels = { OPEN: invoice.expired ? "Invoice expired. Update to create a new one." : "Waiting for payment", ACCEPTED: "Payment in flight. Waiting for settlement.", SETTLED: invoice.credited ? `Added $${invoice.credit_usd} in USD credits` : "Payment received. USD credit is pending.", CANCELED: "Invoice canceled" };
   $("invoice-state").textContent = labels[invoice.state];
   $("qr-empty").textContent = invoice.state === "SETTLED" ? "Payment received" : labels[invoice.state];
+  if (invoice.attention_required) {
+    $("invoice-state").textContent = "Checkout needs review. Keep this tab open and contact support@trustedrouter.com.";
+    $("qr-empty").textContent = "Review required";
+  }
   if (amountDirty && invoice.state === "OPEN") $("qr-empty").textContent = "Update the invoice to use the new amount";
   if (invoice.credited) {
     state.reveal = true;
@@ -264,7 +268,7 @@ async function start() {
     config = await api("/api/config", { key: null });
     $("connection").textContent = config.network === "regtest" ? "Test network" : config.payments_ready ? "Lightning" : "Payments not live yet";
     for (const id of ["use-key", "update-invoice"]) $(id).disabled = !config.payments_ready;
-    $("api-readiness").hidden = config.inference_ready;
+    $("api-readiness").hidden = config.inference_configured;
     const saved = sessionStorage.getItem(SESSION);
     if (saved) {
       const parsed = JSON.parse(saved);

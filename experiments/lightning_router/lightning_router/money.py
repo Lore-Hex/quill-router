@@ -4,6 +4,8 @@ MSATS_PER_BTC = 100_000_000_000
 MAX_MSATS = 21_000_000 * MSATS_PER_BTC
 MICRODOLLARS_PER_DOLLAR = 1_000_000
 MAX_MICRODOLLARS = 2**63 - 1
+# Wire contract with trusted_router.storage_lightning; root CI checks parity.
+MAX_CREDIT_RECEIPT = 2_002_000_000
 
 
 def msats(value: object) -> int:
