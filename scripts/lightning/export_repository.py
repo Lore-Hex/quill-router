@@ -13,7 +13,7 @@ TEMPLATES = "scripts/lightning/public_repository"
 PATHS = (
     APP, "scripts/lightning", "docs/bitcoin-node.md",
     "docs/lightning-receiving-node.md", "docs/lightning-funding-production.md",
-    ".github/workflows/lightning-experiment.yml",
+    ".github/workflows/lightning-experiment.yml", "tsconfig.json",
 )
 BLOCKED = {".private", ".env", ".venv", "node_modules", "__pycache__", "test-results"}
 SUFFIXES = {".db", ".sqlite", ".pem", ".key", ".macaroon", ".wallet", ".pyc"}

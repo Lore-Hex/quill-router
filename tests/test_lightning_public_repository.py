@@ -36,6 +36,7 @@ def source(tmp_path: Path) -> Path:
         "scripts/lightning/node.sh": "#!/bin/sh\nexit 0\n",
         "docs/lightning-funding-production.md": "runbook",
         "unrelated.txt": "not public",
+        "tsconfig.json": '{"compilerOptions": {"strict": true}}',
     }.items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -56,6 +57,7 @@ def test_export_only_committed_allowlisted_files(source: Path, tmp_path: Path) -
     assert not (output / "unrelated.txt").exists()
     assert (output / "LICENSE").read_text() == "BSL fixture"
     assert (output / "README.md").read_text() == "README"
+    assert (output / "tsconfig.json").read_bytes() == (source / "tsconfig.json").read_bytes()
     assert not (output / TEMPLATES).exists()
     assert (output / "scripts/lightning/node.sh").stat().st_mode & 0o111
     manifest = json.loads((output / "SOURCE.json").read_text())
