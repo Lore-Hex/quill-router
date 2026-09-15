@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Venice models whose live /v1/models feed is ahead of the shared snapshot. Verified against https://api.venice.ai/api/v1/models on 2026-06-22.",
   "provider": "venice",
   "source": "https://api.venice.ai/api/v1/models?type=text",
-  "generated_at": "2026-09-15T07:21:58Z",
+  "generated_at": "2026-09-15T13:15:51Z",
   "model_count": 44,
   "models": [
     {
@@ -88,7 +88,9 @@
       "input_token_price_per_m": 138000,
       "output_token_price_per_m": 275000,
       "cached_input_token_price_per_m": 28000,
-      "missing_since": "2026-09-15"
+      "missing_since": "2026-09-15",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "DeepSeek V4 Flash 0731",
