@@ -86,6 +86,7 @@ def make_plan(
     workspace: dict[str, Any], credit: dict[str, Any], key: dict[str, Any],
     credit_rows: list[dict[str, Any]], key_rows: list[dict[str, Any]],
     owner: dict[str, Any], owner_credits: dict[str, dict[str, Any]], target: int,
+    *, allow_management_key: bool = False,
 ) -> dict[str, Any]:
     """Validate one coherent transactional snapshot before staging mutations."""
     ws = workspace["id"]
@@ -95,8 +96,12 @@ def make_plan(
         raise ValueError("workspace is paused")
     if credit.get("workspace_id") != ws or key.get("workspace_id") != ws:
         raise ValueError("workspace mismatch")
-    if key.get("disabled") or key.get("federated_home") or key.get("management"):
-        raise ValueError("key is disabled, federated, or management")
+    if key.get("disabled") or key.get("federated_home"):
+        raise ValueError("key is disabled or federated")
+    # Signup management keys can also serve inference. Explicit operator
+    # selection permits counter expansion, never a change in key privileges.
+    if key.get("management") and not allow_management_key:
+        raise ValueError("management key requires --allow-management-key")
     if any(key.get(name) is not None for name in CAP_FIELDS):
         raise ValueError("only uncapped keys may be expanded without a pause")
     current = _integer(credit.get("shard_count", 1), "credit shard count")
@@ -148,9 +153,10 @@ def make_plan(
 
 
 class Reader:
-    def __init__(self, client: Any, session: str, transaction: dict[str, Any], deadline: float, *, priority: str = "PRIORITY_LOW"):
+    def __init__(self, client: Any, session: str, transaction: dict[str, Any], deadline: float, *, priority: str = "PRIORITY_LOW", allow_management_key: bool = False):
         self.client, self.session, self.transaction, self.deadline = client, session, transaction, deadline
         self.priority = priority
+        self.allow_management_key = allow_management_key
 
     def timeout(self) -> float:
         remaining = self.deadline - time.monotonic()
@@ -202,7 +208,7 @@ class Reader:
         credits = self.read("tr_credit_balance", CREDIT_COLUMNS, [[workspace_id, str(shard)] for shard in range(MAX_CREDIT_SHARDS)])
         credits.sort(key=lambda row: int(row["shard"]))
         key_rows.sort(key=lambda row: int(row["shard"]))
-        return make_plan(workspace, records[("credit", workspace_id)], records[("api_key", key_id)], credits, key_rows, owned[("user", owner_id)], {ws: owned[("credit", ws)] for ws in inventory}, target)
+        return make_plan(workspace, records[("credit", workspace_id)], records[("api_key", key_id)], credits, key_rows, owned[("user", owner_id)], {ws: owned[("credit", ws)] for ws in inventory}, target, allow_management_key=self.allow_management_key)
 
 
 def mutations(plan: dict[str, Any]) -> list[dict[str, Any]]:
@@ -237,7 +243,7 @@ def _wire(value: Any) -> Any:
     return str(value) if isinstance(value, int) and not isinstance(value, bool) else value
 
 
-def execute(client: Any, session: str, ws: str, key: str, target: int, *, apply: bool) -> dict[str, Any]:
+def execute(client: Any, session: str, ws: str, key: str, target: int, *, apply: bool, allow_management_key: bool = False) -> dict[str, Any]:
     from google.api_core.exceptions import Aborted
 
     deadline = time.monotonic() + (APPLY_SECONDS if apply else 30)
@@ -247,7 +253,7 @@ def execute(client: Any, session: str, ws: str, key: str, target: int, *, apply:
             raise TimeoutError("bounded billing expansion deadline expired")
         mode = {"read_write": {}} if apply else {"read_only": {"strong": True}}
         tx = client.begin_transaction(request={"session": session, "options": mode}, timeout=min(READ_SECONDS, remaining), retry=None)
-        reader = Reader(client, session, {"id": tx.id}, deadline, priority="PRIORITY_MEDIUM" if apply else "PRIORITY_LOW")
+        reader = Reader(client, session, {"id": tx.id}, deadline, priority="PRIORITY_MEDIUM" if apply else "PRIORITY_LOW", allow_management_key=allow_management_key)
         committed = False
         aborted = False
         try:
@@ -278,6 +284,7 @@ def main() -> int:
     parser.add_argument("--key-id", required=True)
     parser.add_argument("--shards", type=int, default=16)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--allow-management-key", action="store_true", help="Allow the explicitly selected uncapped management key; preserve all permissions and billing guards")
     parser.add_argument("--account", help="Separate gcloud deployment identity, required for apply")
     args = parser.parse_args()
     from google.cloud.spanner_v1.services.spanner import SpannerClient
@@ -292,7 +299,7 @@ def main() -> int:
         with SpannerClient(credentials=credentials) as client:
             session = client.create_session(request={"database": database}, timeout=READ_SECONDS, retry=None)
             try:
-                return execute(client, session.name, args.workspace, args.key_id, args.shards, apply=apply)
+                return execute(client, session.name, args.workspace, args.key_id, args.shards, apply=apply, allow_management_key=args.allow_management_key)
             finally:
                 client.delete_session(request={"name": session.name}, timeout=READ_SECONDS, retry=None)
 
