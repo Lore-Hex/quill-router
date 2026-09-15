@@ -3395,11 +3395,11 @@ def public_soc2_readiness_html(settings: Settings) -> str:
         .render(
             api_base_url=settings.api_base_url,
             site_url=f"https://{settings.trusted_domain}/legal/soc2-readiness",
-            title="SOC 2 Readiness | TrustedRouter",
-            heading="SOC 2 readiness",
+            title="SOC 2 Type II Observation Window | TrustedRouter",
+            heading="SOC 2 Type II in progress",
             description=(
-                "Review TrustedRouter's SOC 2 Type I readiness package, control ownership, evidence, "
-                "policies, risks, and auditor preparation. No SOC 2 report has been obtained yet."
+                "TrustedRouter is in its SOC 2 Type II observation window. Review the readiness "
+                "documentation and target scope. No independent SOC 2 report has been issued yet."
             ),
             entity=legal_entity(settings),
             packet=packet,
