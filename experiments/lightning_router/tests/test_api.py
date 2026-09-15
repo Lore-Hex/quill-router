@@ -81,6 +81,7 @@ def test_container_copies_every_local_frontend_import():
 
     root = Path(__file__).resolve().parents[1]
     dockerfile = (root / "Dockerfile").read_text()
+    allowed = (root / ".dockerignore").read_text().splitlines()
     sources = set(re.findall(r"COPY ([^\n]+) \./", dockerfile)[1].split())
     pending = ["frontend.js", "pages.js"]
     visited = set()
@@ -90,6 +91,7 @@ def test_container_copies_every_local_frontend_import():
             continue
         visited.add(source)
         assert source in sources
+        assert "!" + source in allowed
         pending.extend(re.findall(r'from "\./([^"\n]+)"', (root / source).read_text()))
 
 

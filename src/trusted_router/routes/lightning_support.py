@@ -22,7 +22,7 @@ class Feedback(BaseModel):
 
 
 def register_lightning_support_routes(router: APIRouter) -> None:
-    @router.post("/lightning/feedback")
+    @router.post("/lightning/feedback", include_in_schema=False)
     def feedback(body: Feedback, request: Request, settings: SettingsDep) -> dict[str, bool]:
         header = request.headers.get("authorization", "")
         if not header.startswith("Bearer ") or len(header) > 256:
