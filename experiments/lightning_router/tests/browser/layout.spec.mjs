@@ -171,7 +171,7 @@ for (const width of [320, 375, 768, 1440]) {
     await expect(page.locator("#qr")).toBeVisible();
     const nav = page.getByRole("navigation", { name: "Main", exact: true });
     await expect(nav.getByRole("link")).toHaveText(["Usage", "Pricing", "Docs"]);
-    await expect(page.locator(".brand")).toContainText("⚡");
+    await expect(page.locator(".brand-mark")).toBeVisible();
     const header = await page.locator("header").boundingBox();
     const bounds = await nav.boundingBox();
     const actions = await page.locator(".header-actions").boundingBox();
@@ -182,6 +182,9 @@ for (const width of [320, 375, 768, 1440]) {
     await page.getByRole("button", { name: "Use API key", exact: true }).click();
     await expect(page.locator("#balance-usd")).toBeVisible();
     await expect(page.locator("#balance-usd")).toHaveText("$1234567.123456 USD");
+    const brand = await page.locator(".brand").boundingBox();
+    const fundedActions = await page.locator(".header-actions").boundingBox();
+    expect(brand.x + brand.width).toBeLessThanOrEqual(fundedActions.x);
     const value = await page.locator("#balance-usd").boundingBox();
     const buttons = await page.locator("#refresh-balance").boundingBox();
     expect(value.x + value.width <= buttons.x || value.y + value.height <= buttons.y).toBe(true);

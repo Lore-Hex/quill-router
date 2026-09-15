@@ -17,6 +17,7 @@ PATHS = (
 )
 BLOCKED = {".private", ".env", ".venv", "node_modules", "__pycache__", "test-results"}
 SUFFIXES = {".db", ".sqlite", ".pem", ".key", ".macaroon", ".wallet", ".pyc"}
+BRAND_MARK = f"{APP}/web/lightningrouter-mark.webp"
 
 
 def git(root: Path, *args: str) -> bytes:
@@ -40,7 +41,15 @@ def export(root: Path, ref: str, output: Path) -> dict[str, str]:
             raise ValueError(f"unsafe public source path: {name}")
         target = name.removeprefix(TEMPLATES + "/") if name.startswith(TEMPLATES + "/") else name
         content = git(root, "cat-file", "blob", oid)
-        content.decode("utf-8")
+        if name == BRAND_MARK:
+            # Only this reviewed raster asset may bypass text validation.
+            if (not 20 <= len(content) <= 100_000 or content[:4] != b"RIFF"
+                    or content[8:12] != b"WEBP"
+                    or content[12:16] not in {b"VP8 ", b"VP8L", b"VP8X"}
+                    or int.from_bytes(content[4:8], "little") != len(content) - 8):
+                raise ValueError("invalid public brand image")
+        else:
+            content.decode("utf-8")
         if path.suffix == ".json":
             json.loads(content)
         if target in files:

@@ -91,3 +91,29 @@ def test_rejects_symlinks_and_existing_destination(source: Path, tmp_path: Path)
     run(source, "commit", "-m", "unsafe symlink fixture")
     with pytest.raises(ValueError, match="unsafe public source"):
         export(source, "HEAD", tmp_path / "export")
+
+
+def test_export_preserves_committed_brand_image(source: Path, tmp_path: Path) -> None:
+    name = f"{APP}/web/lightningrouter-mark.webp"
+    image = (Path(__file__).resolve().parents[1] / name).read_bytes()
+    (source / name).write_bytes(image)
+    run(source, "add", ".")
+    run(source, "commit", "-m", "brand image")
+    output = tmp_path / "export"
+    hashes = export(source, "HEAD", output)
+    assert (output / name).read_bytes() == image
+    assert hashes[name] == hashlib.sha256(image).hexdigest()
+
+
+@pytest.mark.parametrize("name,content", [
+    (f"{APP}/web/other.webp", b"RIFF\x00\x00\x00\x00WEBP\xff"),
+    (f"{APP}/web/lightningrouter-mark.webp", b"not an image"),
+    (f"{APP}/web/lightningrouter-mark.webp", b"RIFF\x00\x00\x00\x00WEBP\xff"),
+    (f"{APP}/web/lightningrouter-mark.webp", b"RIFF\x00\x00\x00\x00WEBP" + b"x" * 100000),
+], ids=["unapproved-path", "not-an-image", "invalid-envelope", "oversized"])
+def test_export_rejects_unapproved_or_invalid_image(source: Path, tmp_path: Path, name: str, content: bytes) -> None:
+    (source / name).write_bytes(content)
+    run(source, "add", ".")
+    run(source, "commit", "-m", "invalid image")
+    with pytest.raises(ValueError):
+        export(source, "HEAD", tmp_path / "export")
