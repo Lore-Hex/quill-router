@@ -1589,23 +1589,23 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "confidential-cowork": PublicPage(
         template="public/confidential_cowork.html",
-        title="TR Confidential Cowork",
+        title="Trusted Cowork",
         description=(
-            "Download the Pi-based terminal coding agent for macOS. TrustedRouter "
-            "confidential inference is the default, with local tools and local sessions."
+            "Download Trusted Cowork, an OpenCode-based desktop agent for macOS. "
+            "Sign in with TrustedRouter, use confidential models, and approve local tools."
         ),
         faq_items=(
             (
                 "Can Confidential Cowork fall back to a normal model provider?",
                 "TrustedRouter requests deny data collection and require confidential "
                 "providers. If no eligible provider is available, they fail closed. "
-                "Other providers can be explicitly configured; their privacy terms are separate.",
+                "This app does not allow other inference backends.",
             ),
             (
                 "Is this the earlier QuillCode desktop app?",
-                "No. This release is built on TRPi and opens in Terminal. Install the new "
-                "signed app directly, then use /login to add your TrustedRouter API key. "
-                "It does not use the earlier app's updater.",
+                "No. Trusted Cowork is an OpenCode-based desktop app with browser sign-in. "
+                "Install the signed app directly and select Sign in with TrustedRouter. "
+                "Updates are manual; earlier app credentials and sessions are not imported.",
             ),
             (
                 "Can an enterprise use its own models and token capacity?",
@@ -1614,7 +1614,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
                 "identity controls, and organization policy.",
             ),
         ),
-        og_alt="TR Confidential Cowork terminal coding agent",
+        og_alt="Trusted Cowork desktop agent with confidential TrustedRouter models",
     ),
     "security": PublicPage(
         template="public/security.html",
