@@ -75,6 +75,7 @@ function renderSetup() {
   $("env-code").textContent = "export LIGHTNINGROUTER_API_KEY='" + (state?.reveal ? state.key : "YOUR_API_KEY") + "'";
   if (cowork) { setup = null; return; }
   const model = models.find((item) => item.id === $("model").value);
+  $("provider-order").disabled = !model || !config;
   if (!model || !config) return;
   try {
     setup = setupFor(agent, model, config.api_base, providerOrderFromText($("provider-order").value));

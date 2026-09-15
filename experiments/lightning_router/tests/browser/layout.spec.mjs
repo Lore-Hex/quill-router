@@ -96,8 +96,11 @@ for (const pending of [
     await page.goto("/");
     await expect(page.locator("#qr")).toBeVisible();
     await page.reload();
+    const expected = pending.attention_required ? "Checkout needs review"
+      : pending.state === "ACCEPTED" ? "Payment in flight" : "USD credit is pending";
+    await expect(page.locator("#invoice-state")).toContainText(expected);
+    await expect(page.locator("#use-key")).toBeEnabled();
     await expect(page.locator("#qr")).toBeHidden();
-    await expect(page.locator("#invoice-state")).not.toHaveText("Waiting for payment");
     await expect(page.locator("#new-invoice")).toBeHidden();
     await expect(page.locator("#existing-key")).toHaveValue("");
     await expect(page.locator("#copy-key")).toBeHidden();
@@ -118,6 +121,24 @@ test("failed sign out keeps the single connected key and invoice", async ({ page
   await expect(page.getByLabel("Your API key", { exact: true })).toHaveValue(existing.key);
   await expect(page.locator("#existing-key")).not.toBeEditable();
   expect((await session(page)).invoice.id).toBe(before.invoice.id);
+});
+
+test("provider preferences wait for the selected model catalog", async ({ page }) => {
+  let release;
+  const catalogReady = new Promise(resolve => { release = resolve; });
+  await page.route("**/api/models", async route => { await catalogReady; await route.continue(); });
+  try {
+    await page.goto("/");
+    await expect(page.locator("#qr")).toBeVisible();
+    await page.getByRole("tab", { name: "Crush", exact: true }).click();
+    await expect(page.locator("#provider-order")).toBeDisabled();
+    release();
+    await expect(page.locator("#provider-order")).toBeEnabled();
+    await page.locator("#provider-order").fill('["deepinfra"]');
+    await page.locator("#model").selectOption("anthropic/claude-opus-4.8");
+    await page.locator("#model").selectOption("deepseek/deepseek-flash");
+    await expect(page.locator("#provider-order")).toHaveValue('["deepinfra"]');
+  } finally { release(); }
 });
 
 test("restored keys remain accessible when balance lookup fails", async ({ page, request }) => {
