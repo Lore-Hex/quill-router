@@ -1,5 +1,7 @@
 *
 !Dockerfile
+!LICENSE
+!THIRD_PARTY_NOTICES
 !pyproject.toml
 !uv.lock
 !package.json

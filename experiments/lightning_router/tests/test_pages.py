@@ -32,6 +32,21 @@ def test_public_pages_have_navigation_and_need_no_payment(path, title, funding):
     assert funding.credits.balances == {}
 
 
+@pytest.mark.parametrize("path", ["/", "/usage", "/pricing", "/docs", "/terms", "/privacy"])
+def test_community_links_are_public_static_and_need_no_payment(path, funding):
+    with TestClient(create_app(funding, network="regtest", start_worker=False)) as client:
+        response = client.get(path)
+    for link in (
+        "https://x.com/lightningrouter", "https://x.com/trustedrouter",
+        "https://discord.gg/FREVts9KAG", "https://github.com/Lore-Hex/lightning-router",
+        "https://github.com/Lore-Hex/lightning-router/issues",
+    ):
+        assert f'href="{link}" rel="noopener noreferrer"' in response.text
+    assert "<iframe" not in response.text
+    assert funding.lnd.creates == 0
+    assert funding.credits.balances == {}
+
+
 def test_usage_authentication_cannot_create_or_fund_account(funding, raw_key):
     with TestClient(create_app(funding, network="regtest", start_worker=False)) as client:
         assert client.get("/api/usage").status_code == 401

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Payment or account help
+    url: mailto:support@trustedrouter.com
+    about: Keep payment details private. Never share your API key.
+  - name: Security vulnerability
+    url: mailto:security@trustedrouter.com
+    about: Report vulnerabilities privately, not in public issues.
+  - name: TrustedRouter Discord
+    url: https://discord.gg/FREVts9KAG
+    about: Community questions and discussion.

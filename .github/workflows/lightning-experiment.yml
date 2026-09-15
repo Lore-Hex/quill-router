@@ -2,10 +2,11 @@ name: LightningRouter experiment
 
 on:
   pull_request:
-    paths: ["experiments/lightning_router/**", ".github/workflows/lightning-experiment.yml"]
+    paths: ["experiments/lightning_router/**", "scripts/lightning/**", "docs/*lightning*.md", "docs/bitcoin-node.md", ".github/workflows/lightning-experiment.yml"]
   push:
     branches: [main]
-    paths: ["experiments/lightning_router/**", ".github/workflows/lightning-experiment.yml"]
+    paths: ["experiments/lightning_router/**", "scripts/lightning/**", "docs/*lightning*.md", "docs/bitcoin-node.md", ".github/workflows/lightning-experiment.yml"]
+  workflow_dispatch:
 
 permissions:
   contents: read

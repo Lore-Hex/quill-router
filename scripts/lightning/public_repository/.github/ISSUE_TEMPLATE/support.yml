@@ -1,0 +1,27 @@
+name: Question, bug or feature request
+description: Community support and feedback. No code submissions.
+body:
+  - type: markdown
+    attributes:
+      value: "Issues are public. Never include keys, invoices, payment details, private prompts or unredacted screenshots. Email support@trustedrouter.com for payment help and security@trustedrouter.com for vulnerabilities."
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Type
+      options: [Question, Bug report, Feature request]
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What can we help with?
+      description: Include expected and actual behavior, device/browser, and safe reproduction steps. Do not submit code patches.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I have not included keys, invoices, payment details or private content.
+          required: true
