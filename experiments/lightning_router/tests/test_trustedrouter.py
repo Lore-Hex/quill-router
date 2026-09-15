@@ -93,12 +93,15 @@ def test_account_and_feedback_use_narrow_authority_and_no_identity_from_form():
     def handle(request):
         import json
         calls.append(request)
-        assert request.headers["authorization"] == "Bearer " + "t" * 32
         body = json.loads(request.content)
-        assert body["api_key"] == "customer-key"
         assert "account_id" not in body and "user_id" not in body
         if request.url.path.endswith("account"):
+            assert request.headers["authorization"] == "Bearer " + "t" * 32
+            assert body["api_key"] == "customer-key"
             return httpx.Response(200, json={"account_id": "verified", "available_microdollars": 0, "support_eligible": True, "user_id": "private"})
+        assert request.url.path == "/v1/lightning/feedback"
+        assert request.headers["authorization"] == "Bearer customer-key"
+        assert body == {"email": "reply@example.com", "message": "hello"}
         return httpx.Response(200, json={"sent": True})
     bridge = TrustedRouterCredits("https://billing.example", "t" * 32, httpx.Client(transport=httpx.MockTransport(handle)))
     account = bridge.account("customer-key")

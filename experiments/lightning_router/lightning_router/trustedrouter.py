@@ -55,7 +55,15 @@ class TrustedRouterCredits:
         return AccountSummary(account, amount, eligible)
 
     def feedback(self, raw_key: str, email: str, message: str) -> None:
-        if self._request("feedback", {"api_key": raw_key, "email": email, "message": message}).get("sent") is not True:
+        # Email lives on the control surface. Use only the customer's key;
+        # the internal funding credential and user IDs never cross this boundary.
+        response = self.client.post(self.endpoint + "/v1/lightning/feedback",
+            headers={"Authorization": "Bearer " + raw_key}, json={"email": email, "message": message},
+            timeout=15, follow_redirects=False)
+        if response.status_code in {401, 403}:
+            raise KeyError("Feedback unavailable for this key")
+        response.raise_for_status()
+        if response.json().get("sent") is not True:
             raise ValueError("Feedback delivery not acknowledged")
 
     def balance(self, account_id: str) -> int:

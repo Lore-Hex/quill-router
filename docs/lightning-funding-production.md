@@ -6,9 +6,11 @@ use `https://api.trustedrouter.com/v1`, whose TLS terminates in the attested API
 
 ## Funded support and lookup protection
 
-Deploy the control-plane `/internal/lightning/account` and `/feedback` bridge
-before the corresponding funding-site image. Both require the dedicated funding
-credential. Feedback rechecks the customer's key and historical positive USD
+Deploy the `/internal/lightning/account` funding bridge and control-plane
+`/v1/lightning/feedback` before the corresponding funding-site image. The account
+bridge requires the dedicated funding credential. Feedback instead authenticates
+with the customer's key, keeping email credentials off the internal funding
+surface. Feedback rechecks the customer's key and historical positive USD
 credits, including spent-down accounts. The browser receives only eligibility;
 the email includes backend-resolved user/workspace IDs, never the raw API key.
 Email goes through the existing support mail pipeline to `TR_SUPPORT_EMAIL`.

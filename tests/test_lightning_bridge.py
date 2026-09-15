@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.routes.internal.lightning import register
+from trusted_router.routes.lightning_support import register_lightning_support_routes
 from trusted_router.security import new_api_key
 
 TOKEN = "lightning-test-only-" + "a" * 32
@@ -11,6 +12,7 @@ TOKEN = "lightning-test-only-" + "a" * 32
 def client_for(token: str = TOKEN) -> TestClient:
     app = FastAPI()
     register(app)
+    register_lightning_support_routes(app)
     app.state.settings = Settings(environment="test", lightning_funding_token=token)
     return TestClient(app)
 
@@ -182,17 +184,18 @@ def test_failed_provisioning_releases_capacity(monkeypatch) -> None:
 def test_feedback_uses_verified_identity_and_existing_mail_pipeline(monkeypatch) -> None:
     from unittest.mock import Mock
 
-    from trusted_router.routes.internal import lightning
+    from trusted_router.routes import lightning_support as lightning
     from trusted_router.services.lightning import LightningAccount
 
     mailer = Mock()
     mailer.send.return_value = True
     monkeypatch.setattr(lightning, "get_email_service", lambda _: mailer)
+    monkeypatch.setattr(lightning, "_inquiry_rate_ok", lambda _: True)
     monkeypatch.setattr(lightning.LightningCredits, "account", lambda self, raw: LightningAccount("verified-workspace", "verified-user", 0, True))
     raw = new_api_key()
     client = client_for()
-    response = client.post("/internal/lightning/feedback", headers={"Authorization": "Bearer " + TOKEN},
-                           json={"api_key": raw, "email": "customer@example.com", "message": "Help with my invoice"})
+    response = client.post("/lightning/feedback", headers={"Authorization": "Bearer " + raw},
+                           json={"email": "customer@example.com", "message": "Help with my invoice"})
     assert response.json() == {"sent": True}
     message = mailer.send.call_args.args[0]
     assert message.to == client.app.state.settings.support_email
@@ -205,32 +208,39 @@ def test_feedback_uses_verified_identity_and_existing_mail_pipeline(monkeypatch)
 def test_feedback_fail_closed_for_unfunded_invalid_and_mail_failure(monkeypatch, caplog) -> None:
     from unittest.mock import Mock
 
-    from trusted_router.routes.internal import lightning
+    from trusted_router.routes import lightning_support as lightning
     from trusted_router.services.lightning import LightningAccount
 
     mailer = Mock()
     monkeypatch.setattr(lightning, "get_email_service", lambda _: mailer)
+    monkeypatch.setattr(lightning, "_inquiry_rate_ok", lambda _: True)
     account = LightningAccount("workspace", "user", 0, False)
     monkeypatch.setattr(lightning.LightningCredits, "account", lambda self, raw: account)
     raw = new_api_key()
     client = client_for()
-    body = {"api_key": raw, "email": "customer@example.com", "message": "private feedback"}
-    headers = {"Authorization": "Bearer " + TOKEN}
-    assert client.post("/internal/lightning/feedback", headers=headers, json=body).status_code == 403
+    body = {"email": "customer@example.com", "message": "private feedback"}
+    headers = {"Authorization": "Bearer " + raw}
+    assert client.post("/lightning/feedback", headers=headers, json=body).status_code == 403
     mailer.send.assert_not_called()
     account = LightningAccount("workspace", "user", 0, True)
-    assert client.post("/internal/lightning/feedback", headers=headers, json={**body, "user_id": "spoofed"}).status_code == 422
+    assert client.post("/lightning/feedback", headers=headers, json={**body, "user_id": "spoofed"}).status_code == 422
     for changes in ({"email": "x@y.com\r\nBcc: a@b.com"}, {"message": " "}, {"message": raw}):
-        assert client.post("/internal/lightning/feedback", headers=headers, json={**body, **changes}).status_code == 400
+        assert client.post("/lightning/feedback", headers=headers, json={**body, **changes}).status_code == 400
     mailer.send.assert_not_called()
     for failure in (False, RuntimeError(raw)):
         mailer.send.return_value = False
         mailer.send.side_effect = failure if isinstance(failure, Exception) else None
-        assert client.post("/internal/lightning/feedback", headers=headers, json=body).status_code == 503
+        assert client.post("/lightning/feedback", headers=headers, json=body).status_code == 503
         assert raw not in caplog.text and body["message"] not in caplog.text
-    for path in ("account", "feedback"):
-        payload = body if path == "feedback" else {"api_key": raw}
-        assert client.post("/internal/lightning/" + path, headers={"Authorization": "Bearer wrong-token"}, json=payload).status_code == 401
+    assert client.post("/internal/lightning/account", headers={"Authorization": "Bearer wrong-token"}, json={"api_key": raw}).status_code == 401
+    assert client.post("/lightning/feedback", json=body).status_code == 401
+    monkeypatch.setattr(lightning, "_inquiry_rate_ok", lambda _: False)
+    assert client.post("/lightning/feedback", headers=headers, json=body).status_code == 429
+
+
+def test_feedback_does_not_accept_funding_authority_as_a_customer_key() -> None:
+    body = {"email": "customer@example.com", "message": "hello"}
+    assert client_for().post("/lightning/feedback", headers={"Authorization": "Bearer " + TOKEN}, json=body).status_code == 401
 
 
 def test_account_funding_uses_historical_credits_and_rejects_revocation(monkeypatch) -> None:

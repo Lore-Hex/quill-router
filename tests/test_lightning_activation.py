@@ -126,15 +126,19 @@ def test_edge_policy_accepts_single_global_policy_shapes(as_list: bool) -> None:
 
     policy = {"name": "lightning-router-funding", "rules": [{"priority": 900}]}
     operator = Mock(spec=Operator)
-    operator.gc.side_effect = ["lightning-router-funding\n", json.dumps([policy] if as_list else policy), "", "", ""]
+    operator.gc.side_effect = ["lightning-router-funding\n", json.dumps([policy] if as_list else policy), "", "", "", ""]
     edge_policy(operator)
     commands = [call.args for call in operator.gc.call_args_list]
     assert "--global" in commands[1]
     assert commands[2][:5] == ("compute", "security-policies", "rules", "update", "900")
-    assert commands[3][:5] == ("compute", "security-policies", "rules", "create", "1000")
+    assert commands[3][:5] == ("compute", "security-policies", "rules", "create", "950")
+    assert "--rate-limit-threshold-count=20" in commands[3]
+    assert "--rate-limit-threshold-interval-sec=60" in commands[3]
+    assert all(path in str(commands[3]) for path in ("/api/account", "/api/usage", "/api/feedback"))
+    assert commands[4][:5] == ("compute", "security-policies", "rules", "create", "1000")
     assert "--rate-limit-threshold-count=20" in commands[2]
-    assert "--rate-limit-threshold-count=180" in commands[3]
-    assert commands[4][:4] == ("compute", "backend-services", "update", "lightning-router-web")
+    assert "--rate-limit-threshold-count=180" in commands[4]
+    assert commands[5][:4] == ("compute", "backend-services", "update", "lightning-router-web")
 
 
 @pytest.mark.parametrize("policy", [[], [{}, {}], {}, {"name": "another-policy", "rules": []}])
