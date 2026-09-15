@@ -197,6 +197,7 @@ def test_internal_surface_route_inventory_matches_capability_audit() -> None:
         ("POST", "/internal/federation/credit-transfers"),
         ("POST", "/internal/federation/credit-transfers/recover"),
         ("POST", "/internal/lightning/resolve"),
+        ("POST", "/internal/lightning/account"),
         ("POST", "/internal/lightning/balance"),
         ("POST", "/internal/lightning/credit"),
         ("POST", "/internal/lightning/health"),
@@ -214,6 +215,9 @@ def test_internal_surface_route_inventory_matches_capability_audit() -> None:
         if not route.path.startswith("/v1")
         for method in (route.methods or set())
     }
+    assert "/lightning/feedback" not in route_paths(internal)
+    assert URL_MAP.route_surface("/v1/lightning/feedback") == "control"
+    assert URL_MAP.route_surface("/lightning/feedback") == "control"
 
     assert actual == expected
     assert {

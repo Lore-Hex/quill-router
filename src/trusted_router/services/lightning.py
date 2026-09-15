@@ -1,11 +1,20 @@
 """Narrow USD ledger bridge for verified Lightning funding workers."""
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from trusted_router.auth import is_api_key_expired
 from trusted_router.storage_models import CreditProvenance
 from trusted_router.store_protocol import Store
 from trusted_router.typed_balance import live_credit_summary
+
+
+@dataclass(frozen=True)
+class LightningAccount:
+    account_id: str
+    user_id: str
+    available_microdollars: int
+    support_eligible: bool
 
 
 class LightningCredits:
@@ -28,6 +37,19 @@ class LightningCredits:
         if summary is None:
             raise ValueError("credit_account_not_found")
         return summary["available"]
+
+    def account(self, raw_key: str) -> LightningAccount:
+        context = self.store.api_key_auth_context(raw_key)
+        if context is None or context.workspace is None:
+            raise ValueError("invalid_api_key")
+        key, workspace = context.api_key, context.workspace
+        if key.disabled or key.federated_home or is_api_key_expired(key.expires_at) or workspace.deleted:
+            raise ValueError("invalid_api_key")
+        summary = live_credit_summary(workspace.id, store=self.store)
+        if summary is None:
+            raise ValueError("invalid_api_key")
+        return LightningAccount(workspace.id, key.creator_user_id or workspace.owner_user_id,
+                                summary["available"], summary["total_credits"] > 0)
 
     def credit(self, account_id: str, payment_hash: str, amount_microdollars: int) -> None:
         # Durable immutable claim first. A process crash here leaves a retryable

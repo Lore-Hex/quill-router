@@ -8,6 +8,7 @@ from pathlib import Path
 import uvicorn
 from lightning_router.app import create_app
 from lightning_router.credentials import Credentials
+from lightning_router.lookup import LookupGate
 from lightning_router.rates import Rate
 from lightning_router.reasoning import reasoning_profile
 from lightning_router.service import Funding
@@ -35,6 +36,11 @@ class Catalog:
         ]
 
 
+async def test_delay(self):
+    pass
+
+
+LookupGate.delay = test_delay
 app = create_app(funding, rates=funding.rates, catalog=Catalog(), network="regtest", start_worker=False)
 
 

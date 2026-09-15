@@ -14,7 +14,7 @@ test("Docs explains the shared API without starting a payment", async ({ page })
   expect(mutations).toEqual([]);
 });
 
-test("a canceled invoice can be renewed without revealing or replacing its unfunded key", async ({ page }) => {
+test("a canceled invoice renews on reload without revealing or replacing its unfunded key", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#qr")).toBeVisible();
   const before = await session(page);
@@ -23,10 +23,9 @@ test("a canceled invoice can be renewed without revealing or replacing its unfun
   });
   expect(response.ok()).toBe(true);
   await page.reload();
-  await expect(page.getByRole("button", { name: "New invoice", exact: true })).toBeVisible();
-  await page.screenshot({ path: "test-results/layout-canceled.png", fullPage: true });
-  await page.getByRole("button", { name: "New invoice", exact: true }).click();
   await expect(page.locator("#qr")).toBeVisible();
+  await expect(page.getByRole("button", { name: "New invoice", exact: true })).toBeHidden();
+  await page.screenshot({ path: "test-results/layout-renewed.png", fullPage: true });
   const after = await session(page);
   expect(after.key).toBe(before.key);
   expect(after.invoice.id).not.toBe(before.invoice.id);
@@ -70,9 +69,9 @@ test("expired invoice renewal preserves the key when cancellation is uncertain",
   await page.goto("/");
   await expect(page.locator("#qr")).toBeVisible();
   const before = await session(page);
+  await page.route("**/api/invoices/*/cancel", route => route.abort("failed"));
   await page.reload();
   await expect(page.getByRole("button", { name: "New invoice", exact: true })).toBeVisible();
-  await page.route("**/api/invoices/*/cancel", route => route.abort("failed"));
   await page.getByRole("button", { name: "New invoice", exact: true }).click();
   await expect(page.locator("#error")).not.toBeEmpty();
   const after = await session(page);
@@ -175,7 +174,10 @@ for (const width of [320, 375, 768, 1440]) {
     await expect(page.locator(".brand")).toContainText("⚡");
     const header = await page.locator("header").boundingBox();
     const bounds = await nav.boundingBox();
-    expect(header.x + header.width - bounds.x - bounds.width).toBeLessThanOrEqual(33);
+    const actions = await page.locator(".header-actions").boundingBox();
+    const rightmost = width <= 580 ? bounds : actions;
+    expect(header.x + header.width - rightmost.x - rightmost.width).toBeLessThanOrEqual(33);
+    if (width > 580) expect(bounds.x + bounds.width).toBeLessThan(actions.x);
     await page.getByLabel("Existing API key").fill(existing.key);
     await page.getByRole("button", { name: "Use API key", exact: true }).click();
     await expect(page.locator("#balance-usd")).toBeVisible();

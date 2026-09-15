@@ -1,6 +1,7 @@
 import { createIcons, ArrowRight, Copy, Eye, LogOut, RefreshCw } from "lucide";
 import { centsFromText, providerOrderFromText, setupFor } from "./setup.mjs";
 import { KEY, SESSION, savedSession } from "./session.mjs";
+import { connectSupport } from "./chrome.mjs";
 
 const $ = (id) => document.getElementById(id);
 const icons = () => createIcons({ icons: { ArrowRight, Copy, Eye, LogOut, RefreshCw } });
@@ -15,6 +16,8 @@ let quoteVersion = 0;
 let toastTimer;
 let setup = null;
 let amountDirty = false;
+let balanceKey = null;
+let creditedInvoice = null;
 const providerOrders = new Map();
 
 function remember() { sessionStorage.setItem(SESSION, JSON.stringify(state)); }
@@ -32,14 +35,14 @@ async function api(path, { key = state?.key, body, idempotency } = {}) {
   const response = await fetch(path, {
     method: body === undefined ? "GET" : "POST", headers,
     body: body === undefined ? undefined : JSON.stringify(body),
-    cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(15000),
+    cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(path === "/api/account" ? 25000 : 15000),
   });
   const result = await response.json();
   if (!response.ok) {
     const errors = {
       invalid_api_key: "That TrustedRouter API key was not found.",
       invoice_conflict: "An invoice is already open for this key. Resume it before creating another.",
-      rate_limited: "Too many invoice requests. Please wait before trying again.",
+      rate_limited: "Too many requests. Please wait before trying again.",
       payments_not_ready: "Lightning payments are not ready yet.",
     };
     throw new Error(errors[result.error] || "The request could not finish. Your existing invoice and key are preserved; please retry.");
@@ -52,7 +55,10 @@ async function exclusive(action) {
   clearTimeout(pollTimer);
   message();
   for (const id of ["use-key", "update-invoice", "new-invoice", "sign-out", "amount", "existing-key"]) $(id).disabled = true;
-  try { await action(); } catch (error) { message(error.message || "Request failed. Please retry."); }
+  try { await action(); } catch (error) {
+    message(error.message || "Request failed. Please retry.");
+    if ($("qr-message").textContent === "Loading payment status") $("qr-message").textContent = "Could not verify payment status. Please retry.";
+  }
   finally {
     busy = false;
     $("use-key").disabled = false;
@@ -121,15 +127,19 @@ function renderKey() {
   $("account").hidden = !connected;
 }
 function renderAccount(balance) {
+  balanceKey = state.key;
+  connectSupport(state.key, balance.support_eligible);
   $("account").hidden = false;
   $("balance-usd").textContent = `$${balance.balance_usd} USD`;
   renderKey();
   renderSetup();
 }
 async function showBalance() {
-  const balance = await api("/api/account");
-  renderAccount(balance);
-  return balance;
+  try {
+    const balance = await api("/api/account");
+    renderAccount(balance);
+    return balance;
+  } catch (error) { connectSupport(null, false); throw error; }
 }
 function showFxTerms(quote) {
   const percent = quote.fx_margin_bps / 100;
@@ -170,8 +180,12 @@ async function showInvoice(invoice) {
   renderKey();
   renderInvoiceRecovery();
   renderSetup();
-  if (!state.isNew || state.reveal) await showBalance();
-  else $("account").hidden = true;
+  if (!state.isNew || state.reveal) {
+    if (balanceKey !== state.key || (invoice.credited && creditedInvoice !== invoice.id)) {
+      await showBalance();
+      if (invoice.credited) creditedInvoice = invoice.id;
+    }
+  } else $("account").hidden = true;
 }
 function renderInvoiceRecovery() {
   const invoice = state?.invoice;
@@ -264,7 +278,10 @@ $("key-form").addEventListener("submit", (event) => {
     if (state?.reveal) return;
     const key = $("existing-key").value.trim();
     if (!KEY.test(key)) throw new Error("Enter an existing TrustedRouter API key beginning sk-tr-v1-.");
+    connectSupport(null, false);
+    message("Checking API key...");
     const balance = await api("/api/account", { key });
+    message();
     if (state?.key === key) { state.reveal = true; remember(); renderAccount(balance); return; }
     if (!await finishOrCancel()) return;
     state = { key, isNew: false, reveal: true, saved: true, invoice: null, requestId: requestId(), cents: centsFromText($("amount").value) };
@@ -315,6 +332,9 @@ $("show-key").addEventListener("click", () => {
 $("sign-out").addEventListener("click", () => exclusive(async () => {
   if (!await finishOrCancel()) return;
   state = null;
+  balanceKey = null;
+  creditedInvoice = null;
+  connectSupport(null, false);
   sessionStorage.removeItem(SESSION);
   $("existing-key").value = "";
   $("existing-key").type = "password";
@@ -374,7 +394,16 @@ async function start() {
       if (!state.isNew || state.reveal) await showBalance();
     }
     if (config.payments_ready) await exclusive(async () => {
-      if (state?.invoice) await showInvoice(await api(`/api/invoices/${state.invoice.id}/refresh`, { body: {} }));
+      if (state?.invoice) {
+        await showInvoice(await api(`/api/invoices/${state.invoice.id}/refresh`, { body: {} }));
+        const invoice = state.invoice;
+        if (!invoice.attention_required && (invoice.state === "CANCELED" || (invoice.state === "OPEN" && invoice.expired))) {
+          if (await finishOrCancel() && state.invoice.state === "CANCELED" && !state.invoice.attention_required) {
+            state.requestId = requestId(); state.invoice = null; remember();
+            await createInvoice();
+          }
+        }
+      }
       else await createInvoice();
     });
     else {

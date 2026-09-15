@@ -4,6 +4,30 @@ The website funds normal TrustedRouter USD credits. It does not proxy prompts,
 hold a BTC inference balance, or automatically sell received BTC. Coding agents
 use `https://api.trustedrouter.com/v1`, whose TLS terminates in the attested API.
 
+## Funded support and lookup protection
+
+Deploy the `/internal/lightning/account` funding bridge and control-plane
+`/v1/lightning/feedback` before the corresponding funding-site image. The account
+bridge requires the dedicated funding credential. Feedback instead authenticates
+with the customer's key, keeping email credentials off the internal funding
+surface. Feedback rechecks the customer's key and historical positive USD
+credits, including spent-down accounts. The browser receives only eligibility;
+the email includes backend-resolved user/workspace IDs, never the raw API key.
+Email goes through the existing support mail pipeline to `TR_SUPPORT_EMAIL`.
+No customer autoresponder is sent. Failure to hand off to SES returns 503.
+
+Public account, usage and feedback lookups wait a random 3 to 5 seconds before
+authentication. Waiting is asynchronous, with 16 admission slots per instance
+and fail-fast 429 responses when full. Cloud Armor additionally limits these
+paths to 20 requests per minute per IP. Shared database limits enforce 60 key
+lookups per 15 minutes and 3 feedback attempts per account per 15 minutes.
+These controls do not delay invoice reconciliation or inference. The funded
+feedback form uses no CAPTCHA or third-party script.
+
+Reload only replaces a canceled invoice after a fresh server check. An expired
+open invoice must first cancel successfully; in-flight, credited, uncredited
+settlements and review-required checkouts are never replaced automatically.
+
 ## Boundaries
 
 * `lightning-router-web` runs as its own non-root Cloud Run identity with 512 MiB,

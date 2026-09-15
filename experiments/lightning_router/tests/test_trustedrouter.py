@@ -86,3 +86,42 @@ def test_usage_requires_integer_money(value):
         httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"data": {"usage_microdollars": value}}))))
     with pytest.raises(ValueError):
         bridge.usage("customer-key")
+
+
+def test_account_and_feedback_use_narrow_authority_and_no_identity_from_form():
+    calls = []
+    def handle(request):
+        import json
+        calls.append(request)
+        body = json.loads(request.content)
+        assert "account_id" not in body and "user_id" not in body
+        if request.url.path.endswith("account"):
+            assert request.headers["authorization"] == "Bearer " + "t" * 32
+            assert body["api_key"] == "customer-key"
+            return httpx.Response(200, json={"account_id": "verified", "available_microdollars": 0, "support_eligible": True, "user_id": "private"})
+        assert request.url.path == "/v1/lightning/feedback"
+        assert request.headers["authorization"] == "Bearer customer-key"
+        assert body == {"email": "reply@example.com", "message": "hello"}
+        return httpx.Response(200, json={"sent": True})
+    bridge = TrustedRouterCredits("https://billing.example", "t" * 32, httpx.Client(transport=httpx.MockTransport(handle)))
+    account = bridge.account("customer-key")
+    assert account.account_id == "verified" and account.support_eligible
+    assert "private" not in str(account)
+    bridge.feedback("customer-key", "reply@example.com", "hello")
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("payload", [{}, {"account_id": "ws", "available_microdollars": True, "support_eligible": True},
+    {"account_id": "ws", "available_microdollars": 0, "support_eligible": "true"}])
+def test_account_requires_typed_support_eligibility(payload):
+    bridge = TrustedRouterCredits("https://billing.example", "t" * 32,
+        httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))))
+    with pytest.raises(ValueError):
+        bridge.account("key")
+
+
+def test_feedback_never_reports_success_without_delivery_ack():
+    bridge = TrustedRouterCredits("https://billing.example", "t" * 32,
+        httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"sent": False}))))
+    with pytest.raises(ValueError):
+        bridge.feedback("key", "reply@example.com", "hello")

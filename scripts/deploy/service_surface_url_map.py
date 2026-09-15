@@ -86,6 +86,7 @@ CONTROL_PATH_PATTERNS = (
     "/credits/*",
     "/billing",
     "/billing/*",
+    "/lightning/feedback",
     "/broadcast",
     "/broadcast/*",
     "/payouts",

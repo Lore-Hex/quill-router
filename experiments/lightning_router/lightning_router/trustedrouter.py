@@ -4,6 +4,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from .credits import AccountSummary
 from .errors import FundingReviewRequired
 from .money import usd
 
@@ -45,6 +46,25 @@ class TrustedRouterCredits:
     def health(self) -> None:
         if self._request("health", {}).get("ready") is not True:
             raise ValueError("Funding authority is not ready")
+
+    def account(self, raw_key: str) -> AccountSummary:
+        data = self._request("account", {"api_key": raw_key})
+        account, amount, eligible = data.get("account_id"), data.get("available_microdollars"), data.get("support_eligible")
+        if not isinstance(account, str) or not 0 < len(account) <= 128 or type(amount) is not int or amount < 0 or type(eligible) is not bool:
+            raise ValueError("Invalid funding account response")
+        return AccountSummary(account, amount, eligible)
+
+    def feedback(self, raw_key: str, email: str, message: str) -> None:
+        # Email lives on the control surface. Use only the customer's key;
+        # the internal funding credential and user IDs never cross this boundary.
+        response = self.client.post(self.endpoint + "/v1/lightning/feedback",
+            headers={"Authorization": "Bearer " + raw_key}, json={"email": email, "message": message},
+            timeout=15, follow_redirects=False)
+        if response.status_code in {401, 403}:
+            raise KeyError("Feedback unavailable for this key")
+        response.raise_for_status()
+        if response.json().get("sent") is not True:
+            raise ValueError("Feedback delivery not acknowledged")
 
     def balance(self, account_id: str) -> int:
         value = self._request("balance", {"account_id": account_id}).get("available_microdollars")

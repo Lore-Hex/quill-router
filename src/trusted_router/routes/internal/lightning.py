@@ -23,6 +23,10 @@ class Resolve(Body):
     new: StrictBool = False
 
 
+class Lookup(Body):
+    api_key: str = Field(min_length=16, max_length=256, repr=False)
+
+
 class Account(Body):
     account_id: str = Field(min_length=1, max_length=128)
 
@@ -42,6 +46,15 @@ Authority = Annotated[None, Depends(funding_authority)]
 
 
 def register(router: APIRouter) -> None:
+    @router.post("/internal/lightning/account")
+    def account(body: Lookup, _authority: Authority) -> dict[str, Any]:
+        try:
+            value = LightningCredits(STORE).account(body.api_key)
+        except ValueError as exc:
+            raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED) from exc
+        return {"account_id": value.account_id, "available_microdollars": value.available_microdollars,
+                "support_eligible": value.support_eligible}
+
     @router.post("/internal/lightning/health")
     def health(_authority: Authority) -> dict[str, bool]:
         # Complete indexed key read only; never create an account or credit.

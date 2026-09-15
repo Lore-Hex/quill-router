@@ -19,6 +19,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .catalog import limits, pricing
 from .errors import FundingReviewRequired
+from .lookup import LookupGate
 from .pages import public_page
 from .rates import Rates
 from .reasoning import reasoning_profile
@@ -32,6 +33,12 @@ class CreateInvoice(BaseModel):
     model_config = ConfigDict(extra="forbid")
     new_account: StrictBool = False
     usd_cents: StrictInt = Field(ge=1, le=100_000)
+
+
+class Feedback(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    email: str = Field(min_length=3, max_length=254, repr=False)
+    message: str = Field(min_length=1, max_length=3000, repr=False)
 
 
 class Catalog:
@@ -86,6 +93,7 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
     rates = rates or Rates(client)
     catalog = catalog or Catalog(client)
     stop = threading.Event()
+    lookup_gate = LookupGate()
 
     def payments_ready() -> bool:
         return service is not None and (readiness is None or readiness())
@@ -120,7 +128,8 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
     async def secure_headers(request: Request, call_next: Any) -> Any:
         if request.method == "POST":
             length = request.headers.get("content-length", "")
-            if not length.isdigit() or int(length) > 1024:
+            maximum = 16_384 if request.url.path == "/api/feedback" else 1024
+            if not length.isdigit() or int(length) > maximum:
                 return JSONResponse({"error": "request_too_large"}, status_code=413)
             origin = request.headers.get("origin")
             host = request.headers.get("host", "")
@@ -129,7 +138,12 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
                 expected_origin = str(request.base_url).rstrip("/")
             if origin and origin != expected_origin:
                 return JSONResponse({"error": "cross_origin_request"}, status_code=403)
+        gated = request.url.path in {"/api/account", "/api/usage", "/api/feedback"}
+        if gated and not lookup_gate.slots.acquire(blocking=False):
+            return JSONResponse({"error": "rate_limited"}, status_code=429, headers={"Retry-After": "10"})
         try:
+            if gated:
+                await lookup_gate.delay()
             response = await call_next(request)
         except Exception as exc:
             # Catch before Starlette's outer ServerErrorMiddleware re-raises to
@@ -137,6 +151,9 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
             logger.error("lightning.request_failed error_type=%s", type(exc).__name__)
             response = JSONResponse({"error": "temporarily_unavailable"}, status_code=503,
                                     headers={"Retry-After": "10"})
+        finally:
+            if gated:
+                lookup_gate.slots.release()
         response.headers.update({
             "Cache-Control": "no-store",
             "Referrer-Policy": "no-referrer",
@@ -166,6 +183,19 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
 
     def unavailable() -> JSONResponse:
         return JSONResponse({"error": "payments_not_ready"}, status_code=503)
+
+    def lookup_limited(request: Request) -> JSONResponse | None:
+        assert service is not None
+        peer = request.client.host if request.client else "unknown"
+        # Production's source-IP limit is enforced by Cloud Armor. Never trust
+        # forwarded headers here or use a proxy's shared IP as a customer ID.
+        raw = request.headers.get("authorization", "")[:512]
+        now = int(time.time())
+        hashed = hashlib.sha256(raw.encode()).hexdigest()
+        identity = hashlib.sha256(peer.encode()).hexdigest()
+        if (not edge_rate_limited and not service.store.rate_limit("lookup-peer:" + identity, now, 120)) or not service.store.rate_limit("lookup-key:" + hashed, now, 60):
+            return JSONResponse({"error": "rate_limited"}, status_code=429, headers={"Retry-After": "900"})
+        return None
 
     @app.get("/")
     def home() -> FileResponse:
@@ -225,6 +255,9 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
     def account(request: Request) -> Any:
         if service is None:
             return unavailable()
+        limited = lookup_limited(request)
+        if limited is not None:
+            return limited
         try:
             raw, _ = key(request)
             balance = service.account(raw)
@@ -236,6 +269,9 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
     def usage(request: Request) -> Any:
         if service is None:
             return unavailable()
+        limited = lookup_limited(request)
+        if limited is not None:
+            return limited
         try:
             raw, _ = key(request)
         except ValueError:
@@ -244,6 +280,35 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
             return service.credits.usage(raw)
         except KeyError:
             return JSONResponse({"error": "invalid_api_key"}, status_code=401)
+
+    @app.post("/api/feedback")
+    def feedback(request: Request, body: Feedback) -> Any:
+        if service is None:
+            return unavailable()
+        limited = lookup_limited(request)
+        if limited is not None:
+            return limited
+        email, message = body.email.strip(), body.message.strip()
+        if not re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,63}", email) or not message:
+            return JSONResponse({"error": "invalid_feedback"}, status_code=400)
+        if re.search(r"sk-tr-v1-", email + message, re.IGNORECASE):
+            return JSONResponse({"error": "remove_api_keys"}, status_code=400)
+        try:
+            raw, _ = key(request)
+        except ValueError:
+            return JSONResponse({"error": "invalid_api_key"}, status_code=401)
+        try:
+            account = service.credits.account(raw)
+            if not account.support_eligible:
+                return JSONResponse({"error": "funded_key_required"}, status_code=403)
+            # Shared database, scoped to account rather than key: rotating keys
+            # or hitting a different web replica cannot multiply the allowance.
+            if not service.store.rate_limit("feedback:" + account.account_id, int(time.time()), 3):
+                return JSONResponse({"error": "rate_limited"}, status_code=429, headers={"Retry-After": "900"})
+            service.credits.feedback(raw, email, message)
+        except KeyError:
+            return JSONResponse({"error": "invalid_api_key"}, status_code=401)
+        return {"sent": True}
 
     @app.post("/api/invoices")
     def create(request: Request, body: CreateInvoice) -> Any:

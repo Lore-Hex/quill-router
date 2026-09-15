@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.routes.internal.lightning import register
+from trusted_router.routes.lightning_support import register_lightning_support_routes
 from trusted_router.security import new_api_key
 
 TOKEN = "lightning-test-only-" + "a" * 32
@@ -11,6 +12,7 @@ TOKEN = "lightning-test-only-" + "a" * 32
 def client_for(token: str = TOKEN) -> TestClient:
     app = FastAPI()
     register(app)
+    register_lightning_support_routes(app)
     app.state.settings = Settings(environment="test", lightning_funding_token=token)
     return TestClient(app)
 
@@ -27,6 +29,9 @@ def test_funding_bridge_commits_real_test_ledger_and_redacts_key() -> None:
     for _ in range(2):
         assert client.post("/internal/lightning/credit", headers=headers, json=payment).json() == {"committed": True}
     assert client.post("/internal/lightning/balance", headers=headers, json={"account_id": account_id}).json() == {"available_microdollars": 1_000_001}
+    summary = client.post("/internal/lightning/account", headers=headers, json={"api_key": raw})
+    assert summary.json() == {"account_id": account_id, "available_microdollars": 1_000_001, "support_eligible": True}
+    assert raw not in summary.text
     payment["amount_microdollars"] = 2
     assert client.post("/internal/lightning/credit", headers=headers, json=payment).status_code == 409
 
@@ -174,3 +179,92 @@ def test_failed_provisioning_releases_capacity(monkeypatch) -> None:
     with pytest.raises(ValueError, match="invalid_lightning_key"):
         storage_lightning.postgres_key(store, new_api_key())
     lock.release.assert_called_once_with()
+
+
+def test_feedback_uses_verified_identity_and_existing_mail_pipeline(monkeypatch) -> None:
+    from unittest.mock import Mock
+
+    from trusted_router.routes import lightning_support as lightning
+    from trusted_router.services.lightning import LightningAccount
+
+    mailer = Mock()
+    mailer.send.return_value = True
+    monkeypatch.setattr(lightning, "get_email_service", lambda _: mailer)
+    monkeypatch.setattr(lightning, "_inquiry_rate_ok", lambda _: True)
+    monkeypatch.setattr(lightning.LightningCredits, "account", lambda self, raw: LightningAccount("verified-workspace", "verified-user", 0, True))
+    raw = new_api_key()
+    client = client_for()
+    response = client.post("/lightning/feedback", headers={"Authorization": "Bearer " + raw},
+                           json={"email": "customer@example.com", "message": "Help with my invoice"})
+    assert response.json() == {"sent": True}
+    message = mailer.send.call_args.args[0]
+    assert message.to == client.app.state.settings.support_email
+    assert message.reply_to == "customer@example.com"
+    assert message.mail_class == "support_inquiry"
+    assert "verified-user" in message.text_body and "verified-workspace" in message.text_body
+    assert raw not in str(message) + response.text
+
+
+def test_feedback_fail_closed_for_unfunded_invalid_and_mail_failure(monkeypatch, caplog) -> None:
+    from unittest.mock import Mock
+
+    from trusted_router.routes import lightning_support as lightning
+    from trusted_router.services.lightning import LightningAccount
+
+    mailer = Mock()
+    monkeypatch.setattr(lightning, "get_email_service", lambda _: mailer)
+    monkeypatch.setattr(lightning, "_inquiry_rate_ok", lambda _: True)
+    account = LightningAccount("workspace", "user", 0, False)
+    monkeypatch.setattr(lightning.LightningCredits, "account", lambda self, raw: account)
+    raw = new_api_key()
+    client = client_for()
+    body = {"email": "customer@example.com", "message": "private feedback"}
+    headers = {"Authorization": "Bearer " + raw}
+    assert client.post("/lightning/feedback", headers=headers, json=body).status_code == 403
+    mailer.send.assert_not_called()
+    account = LightningAccount("workspace", "user", 0, True)
+    assert client.post("/lightning/feedback", headers=headers, json={**body, "user_id": "spoofed"}).status_code == 422
+    for changes in ({"email": "x@y.com\r\nBcc: a@b.com"}, {"message": " "}, {"message": raw}):
+        assert client.post("/lightning/feedback", headers=headers, json={**body, **changes}).status_code == 400
+    mailer.send.assert_not_called()
+    for failure in (False, RuntimeError(raw)):
+        mailer.send.return_value = False
+        mailer.send.side_effect = failure if isinstance(failure, Exception) else None
+        assert client.post("/lightning/feedback", headers=headers, json=body).status_code == 503
+        assert raw not in caplog.text and body["message"] not in caplog.text
+    assert client.post("/internal/lightning/account", headers={"Authorization": "Bearer wrong-token"}, json={"api_key": raw}).status_code == 401
+    assert client.post("/lightning/feedback", json=body).status_code == 401
+    monkeypatch.setattr(lightning, "_inquiry_rate_ok", lambda _: False)
+    assert client.post("/lightning/feedback", headers=headers, json=body).status_code == 429
+
+
+def test_feedback_does_not_accept_funding_authority_as_a_customer_key() -> None:
+    body = {"email": "customer@example.com", "message": "hello"}
+    assert client_for().post("/lightning/feedback", headers={"Authorization": "Bearer " + TOKEN}, json=body).status_code == 401
+
+
+def test_account_funding_uses_historical_credits_and_rejects_revocation(monkeypatch) -> None:
+    from unittest.mock import Mock
+
+    import pytest
+
+    from trusted_router.services import lightning
+    from trusted_router.storage_models import ApiKey, ApiKeyAuthContext, Workspace
+
+    workspace = Workspace(id="workspace", name="Lightning", owner_user_id="owner")
+    key = Mock(spec=ApiKey, disabled=False, federated_home=None, expires_at=None, creator_user_id="creator")
+    store = Mock()
+    store.api_key_auth_context.return_value = ApiKeyAuthContext(key, workspace)
+    monkeypatch.setattr(lightning, "live_credit_summary", lambda *a, **kw: {"total_credits": 100, "total_usage": 100, "reserved": 0, "available": 0})
+    account = lightning.LightningCredits(store).account("raw")
+    assert account.available_microdollars == 0 and account.support_eligible
+    assert account.user_id == "creator"
+    key.creator_user_id = None
+    assert lightning.LightningCredits(store).account("raw").user_id == "owner"
+    key.disabled = True
+    with pytest.raises(ValueError):
+        lightning.LightningCredits(store).account("raw")
+    key.disabled = False
+    workspace.deleted = True
+    with pytest.raises(ValueError):
+        lightning.LightningCredits(store).account("raw")

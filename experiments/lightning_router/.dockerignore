@@ -10,6 +10,7 @@
 !pages.js
 !setup.mjs
 !session.mjs
+!chrome.mjs
 !lightning_router/
 !lightning_router/**
 !web/

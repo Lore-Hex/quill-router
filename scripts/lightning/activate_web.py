@@ -150,6 +150,7 @@ def edge_policy(operator: Operator) -> None:
     priorities = {rule["priority"] for rule in current["rules"]}
     for priority, expression, count, seconds in (
         (900, "request.method == 'POST' && request.path == '/api/invoices'", 20, 900),
+        (950, "request.path == '/api/account' || request.path == '/api/usage' || request.path == '/api/feedback'", 20, 60),
         (1000, "true", 180, 60),
     ):
         action = "update" if priority in priorities else "create"
