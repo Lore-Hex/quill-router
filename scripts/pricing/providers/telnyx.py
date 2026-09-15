@@ -113,9 +113,13 @@ def _live_catalog(
             continue
         service_tiers = source.get("service_tiers")
         if service_tiers is not None:
-            if not isinstance(service_tiers, list):
+            if (
+                not isinstance(service_tiers, list)
+                or not service_tiers
+                or any(not isinstance(tier, str) or not tier.strip() for tier in service_tiers)
+            ):
                 raise RuntimeError("telnyx: invalid service_tiers in authenticated catalog")
-            if "default" not in service_tiers:
+            if "default" not in {tier.strip().casefold() for tier in service_tiers}:
                 continue
         native_id = source.get("id")
         if not isinstance(native_id, str) or not native_id:
@@ -154,9 +158,10 @@ def _live_catalog(
         pricing = source.get("pricing")
         if not isinstance(pricing, dict):
             continue
-        if pricing.get("currency") is None:
+        currency = str(pricing.get("currency") or "").strip().casefold()
+        if not currency:
             continue  # Legacy rows require an independently USD-denominated fallback.
-        if str(pricing["currency"]).casefold() != "usd":
+        if currency != "usd":
             raise RuntimeError(f"telnyx: unsupported pricing currency for {native_id}")
         if str(pricing.get("unit") or "").casefold() != "1m_tokens":
             continue

@@ -56,15 +56,21 @@ def test_telnyx_currency_and_tier_contract_variants() -> None:
     row = _live_model("zai-org/GLM-5.3", pricing={
         "input": "1", "output": "4", "currency": "usd", "unit": "1M_tokens",
     })
+    row["service_tiers"] = ["Default"]
     _, prices = telnyx._live_catalog({"data": [row]})  # noqa: SLF001
     assert prices["z-ai/glm-5.3"] == ModelPrice(1_000_000, 4_000_000)
     del row["pricing"]["currency"]
     discovered, prices = telnyx._live_catalog({"data": [row]})  # noqa: SLF001
     assert "z-ai/glm-5.3" in discovered
     assert not prices
-    row["service_tiers"] = {"default": True}
-    with pytest.raises(RuntimeError, match="invalid service_tiers"):
-        telnyx._live_catalog({"data": [row]})  # noqa: SLF001
+    for missing in (None, "", " "):
+        row["pricing"]["currency"] = missing
+        _, prices = telnyx._live_catalog({"data": [row]})  # noqa: SLF001
+        assert not prices
+    for invalid in ({"default": True}, [], [None], [" "]):
+        row["service_tiers"] = invalid
+        with pytest.raises(RuntimeError, match="invalid service_tiers"):
+            telnyx._live_catalog({"data": [row]})  # noqa: SLF001
 
 
 def _live_model(
