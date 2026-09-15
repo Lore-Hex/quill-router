@@ -4,6 +4,7 @@ import html as html_lib
 import json
 import logging
 import re
+from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -23,6 +24,25 @@ from trusted_router.marketing_experiments import (
     google_search_wave,
 )
 from trusted_router.routes.public import INDEXNOW_KEY
+
+
+@pytest.fixture
+def isolated_comparison_catalog() -> Iterator[None]:
+    from trusted_router.dashboard import (
+        _model_comparison_index,
+        _model_comparison_neighbor_index,
+        _model_comparison_pairs,
+    )
+
+    # Alias tests temporarily alter MODELS; derived indexes must not outlive it.
+    caches = (_model_comparison_pairs, _model_comparison_index, _model_comparison_neighbor_index)
+    for cache in caches:
+        cache.cache_clear()
+    try:
+        yield
+    finally:
+        for cache in caches:
+            cache.cache_clear()
 
 
 def test_robots_and_sitemap_are_public(client: TestClient) -> None:
@@ -1686,6 +1706,7 @@ def test_retired_model_pages_redirect_to_current_catalog_entries(client: TestCli
         assert response.headers["location"] == target
 
 
+@pytest.mark.usefixtures("isolated_comparison_catalog")
 @pytest.mark.parametrize("method", ["GET", "HEAD"])
 @pytest.mark.parametrize(
     ("requested", "canonical"),
@@ -1723,6 +1744,7 @@ def test_model_aliases_redirect_once_to_existing_pages(
 
 @pytest.mark.parametrize("method", ["GET", "HEAD"])
 @pytest.mark.parametrize("suffix", ["", "/pricing"])
+@pytest.mark.usefixtures("isolated_comparison_catalog")
 def test_model_alias_does_not_redirect_to_a_missing_target(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, method: str, suffix: str,
 ) -> None:
