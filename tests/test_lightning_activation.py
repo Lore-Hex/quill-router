@@ -1,6 +1,6 @@
 import pytest
 
-from scripts.lightning.activate_web import CONNECTION, Operator, deployment_commands
+from scripts.lightning.activate_web import CONNECTION, Operator, deployment_commands, edge_policy
 from scripts.lightning.connect_funding_node import NODE_SCRIPT
 
 
@@ -31,6 +31,36 @@ def test_activation_requires_our_digest_pinned_image(image: str) -> None:
 def test_ops_identity_cannot_become_a_deployer() -> None:
     with pytest.raises(ValueError, match="separate deployment"):
         Operator("tr-ops-local@quill-cloud-proxy.iam.gserviceaccount.com")
+
+
+@pytest.mark.parametrize("as_list", [False, True])
+def test_edge_policy_accepts_single_global_policy_shapes(as_list: bool) -> None:
+    import json
+    from unittest.mock import Mock
+
+    policy = {"name": "lightning-router-funding", "rules": [{"priority": 900}]}
+    operator = Mock(spec=Operator)
+    operator.gc.side_effect = ["lightning-router-funding\n", json.dumps([policy] if as_list else policy), "", "", ""]
+    edge_policy(operator)
+    commands = [call.args for call in operator.gc.call_args_list]
+    assert "--global" in commands[1]
+    assert commands[2][:5] == ("compute", "security-policies", "rules", "update", "900")
+    assert commands[3][:5] == ("compute", "security-policies", "rules", "create", "1000")
+    assert "--rate-limit-threshold-count=20" in commands[2]
+    assert "--rate-limit-threshold-count=180" in commands[3]
+    assert commands[4][:4] == ("compute", "backend-services", "update", "lightning-router-web")
+
+
+@pytest.mark.parametrize("policy", [[], [{}, {}], {}, {"name": "another-policy", "rules": []}])
+def test_edge_policy_rejects_missing_or_ambiguous_configuration(policy: object) -> None:
+    import json
+    from unittest.mock import Mock
+
+    operator = Mock(spec=Operator)
+    operator.gc.side_effect = ["lightning-router-funding\n", json.dumps(policy)]
+    with pytest.raises(ValueError, match="global funding policy"):
+        edge_policy(operator)
+    assert operator.gc.call_count == 2
 
 
 def test_node_setup_has_exact_invoice_rpcs_and_no_spending_authority() -> None:
