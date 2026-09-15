@@ -502,7 +502,9 @@ def test_gcp_no_traffic_warm_preprovisions_and_validates_private_candidate(
         if call[0:4] == ["gcloud", "--project", "quill-cloud-proxy", "run"]
         and call[4:7] == ["deploy", "trusted-router", "--region"]
     )
-    assert deploy[deploy.index("--min") + 1] == "2"
+    # The primary must absorb a burst without waiting for new instances.
+    # Keep the staged revision primer small while retaining the service floor.
+    assert deploy[deploy.index("--min") + 1] == "8"
     assert deploy[deploy.index("--min-instances") + 1] == "2"
     assert "--no-traffic" in deploy
     assert any(
