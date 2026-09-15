@@ -40,6 +40,15 @@ def test_cancel_attempt_is_not_delayed_by_review_backoff(funding, raw_key):
     assert funding.refresh(row, cancel=True)["state"] == "CANCELED"
 
 
+def test_unknown_checkout_age_from_old_worker_is_not_expired(funding, raw_key):
+    hashed = funding.credentials.fingerprint(raw_key)
+    funding.store.prepare_checkout(hashed, funding.credentials.seal_pending_key(raw_key))
+    with funding.store.transaction() as conn:
+        conn.execute(update(checkouts).where(checkouts.c.key_hash == hashed).values(created_at=0))
+    funding.store.prune(int(time.time()))
+    assert funding.store.checkout(hashed)["pending_key"] is not None
+
+
 def test_stalled_delivery_has_stable_text_alert_trigger(funding, raw_key, caplog):
     view = funding.create(raw_key, uuid.uuid4().hex, 100, new=True)
     row = funding.store.invoice(view["id"], funding.credentials.fingerprint(raw_key))

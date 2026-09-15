@@ -93,7 +93,9 @@ rate limits replenish gradually rather than resetting at a wall-clock boundary.
 Hourly PostgreSQL maintenance removes at most 100 canceled, unpaid, error-free
 invoices older than 30 days, 100 orphan unfunded checkouts, and 100 expired rate
 limit identities per pass. Paid or unresolved rows and the deposit ledger are
-never pruned by this job. For node-local cleanup, install from a clean committed
+never pruned by this job. Unknown checkout ages are retained, including rows
+written by an old worker during a rolling upgrade. Resuming a checkout refreshes
+its retention timestamp before fetching a quote. For node-local cleanup, install from a clean committed
 checkout:
 
 ```sh

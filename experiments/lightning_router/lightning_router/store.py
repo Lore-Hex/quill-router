@@ -374,7 +374,7 @@ class Store:
                     invoices.c.amount_msat == 0, invoices.c.failure_code == "", invoices.c.expires_at < cutoff).returning(invoices.c.id)).first()
                 removed += int(deleted is not None)
             owners = list(conn.execute(select(checkouts.c.key_hash).where(
-                checkouts.c.credit_account_id.is_(None), checkouts.c.created_at < cutoff,
+                checkouts.c.credit_account_id.is_(None), checkouts.c.created_at > 0, checkouts.c.created_at < cutoff,
                 ~select(invoices.c.id).where(invoices.c.key_hash == checkouts.c.key_hash).exists(),
                 ~select(deposits.c.payment_hash).where(deposits.c.key_hash == checkouts.c.key_hash).exists(),
             ).limit(limit)).scalars())
@@ -383,7 +383,7 @@ class Store:
                 conn.execute(select(checkouts.c.key_hash).where(checkouts.c.key_hash == owner).with_for_update()).first()
                 conn.execute(delete(checkouts).where(checkouts.c.key_hash == owner,
                     checkouts.c.credit_account_id.is_(None),
-                    checkouts.c.created_at < cutoff,
+                    checkouts.c.created_at > 0, checkouts.c.created_at < cutoff,
                     ~select(invoices.c.id).where(invoices.c.key_hash == owner).exists(),
                     ~select(deposits.c.payment_hash).where(deposits.c.key_hash == owner).exists()))
             stale = list(conn.execute(select(limits.c.id).where(
