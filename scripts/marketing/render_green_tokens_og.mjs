@@ -23,7 +23,7 @@ try {
     <div class="brand"><img src="${base}/static/favicon.svg" alt="">TrustedRouter</div>
     <h1>Green tokens.</h1>
     <p>Your next million tokens. Powered by renewable energy.</p>
-    <small>100% renewable inference electricity, declared by Regolo.</small>
+    <small>100% renewable inference electricity. Provider-declared energy sourcing.</small>
   </body></html>`);
   await page.evaluate(() => document.fonts.ready);
   await page.locator(".art").evaluate(img => img.decode());

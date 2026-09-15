@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 
 import pytest
+from bs4 import BeautifulSoup
 from fastapi import HTTPException
 
 from trusted_router.catalog import MODELS, endpoints_for_model, meta_candidate_models
@@ -112,6 +113,22 @@ def test_green_page_has_sources_code_and_a_working_share_image(client):
     assert client.get("/static/green-tokens-hero.webp").status_code == 200
     assert client.get("/static/og/green-tokens.png").status_code == 200
     assert "/green-tokens" in client.get("/").text
+
+
+def test_green_landing_copy_is_provider_neutral_with_energy_sources(client):
+    response = client.get("/green-tokens")
+    assert response.status_code == 200
+    page = BeautifulSoup(response.text, "html.parser")
+    assert "regolo" not in page.get_text(" ", strip=True).lower()
+    for meta in page.select("meta[content]"):
+        assert "regolo" not in str(meta["content"]).lower()
+    for script in page.select('script[type="application/ld+json"]'):
+        assert "regolo" not in script.get_text().lower()
+    assert page.select_one('a[href="https://regolo.ai/sustainable-ai/"]')
+    assert page.select_one('a[href="https://regolo.ai/zero-data-retention/"]')
+    assert "provider-declared" in page.get_text().lower()
+    assert "inference electricity" in page.get_text().lower()
+    assert len(page.select(".green-models a")) >= 11
 
 
 def test_expired_regolo_catalog_fails_closed(monkeypatch):
