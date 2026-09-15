@@ -18,6 +18,7 @@ from sqlalchemy import (
     create_engine,
     event,
     insert,
+    inspect,
     or_,
     select,
     update,
@@ -52,6 +53,7 @@ invoices = Table(
     Column("requested_msat", BigInteger, nullable=False),
     Column("usd_cents", BigInteger, nullable=False),
     Column("usd_per_btc", String(40), nullable=False),
+    Column("fx_margin_bps", Integer, CheckConstraint("fx_margin_bps >= 0 AND fx_margin_bps < 10000"), nullable=False, server_default="0"),
     Column("settle_index", BigInteger, nullable=True, unique=True),
     Column("credit_microdollars", BigInteger, nullable=False, default=0),
     Column("credited_at", BigInteger, nullable=True),
@@ -97,6 +99,14 @@ class Store:
 
     def migrate(self) -> None:
         metadata.create_all(self.engine)
+        with self.engine.begin() as conn:
+            if "fx_margin_bps" not in {column["name"] for column in inspect(conn).get_columns("lr_invoices")}:
+                # Existing invoices keep their original full-value quote.
+                if self.engine.dialect.name == "postgresql":
+                    conn.exec_driver_sql("SET LOCAL lock_timeout = '5s'")
+                    conn.exec_driver_sql("SET LOCAL statement_timeout = '30s'")
+                conn.exec_driver_sql("ALTER TABLE lr_invoices ADD COLUMN fx_margin_bps INTEGER NOT NULL "
+                                     "DEFAULT 0 CHECK (fx_margin_bps >= 0 AND fx_margin_bps < 10000)")
 
     @contextmanager
     def transaction(self) -> Iterator[Connection]:
@@ -156,8 +166,9 @@ class Store:
 
     def prepare(self, key_hash: str, request_id: str, invoice_id: str,
                 payment_hash: str, now: int, *, requested_msat: int,
-                usd_cents: int, usd_per_btc: str) -> dict[str, Any]:
+                usd_cents: int, usd_per_btc: str, fx_margin_bps: int = 0) -> dict[str, Any]:
         msats(requested_msat)
+        Rate(Decimal(usd_per_btc), now, fx_margin_bps)
         if requested_msat <= 0 or not 1 <= usd_cents <= 100_000:
             raise ValueError("Invalid invoice amount")
         with self.transaction() as conn:
@@ -180,6 +191,7 @@ class Store:
                 id=invoice_id, key_hash=key_hash, request_id=request_id,
                 payment_hash=payment_hash, created_at=now, expires_at=now + 900,
                 requested_msat=requested_msat, usd_cents=usd_cents, usd_per_btc=usd_per_btc,
+                fx_margin_bps=fx_margin_bps,
             ))
             return dict(conn.execute(select(invoices).where(invoices.c.id == invoice_id)).mappings().one())
 

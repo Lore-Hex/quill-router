@@ -191,7 +191,7 @@ def create_app(service: Funding | None = None, *, rates: Rates | None = None,
             return JSONResponse({"error": "invalid_amount"}, status_code=400)
         from .money import btc
         return {"usd_cents": str(usd_cents), "btc": btc(amount), "amount_msat": str(amount),
-                "usd_per_btc": str(rate.usd_per_btc), "as_of": rate.as_of}
+                **rate.quote_fields(amount), "as_of": rate.as_of}
 
     @app.get("/api/account")
     def account(request: Request) -> Any:

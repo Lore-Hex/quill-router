@@ -99,8 +99,8 @@ def test_rate_cache_and_currency_validation():
         assert "Grpc-Metadata-macaroon" not in request.headers
         return httpx.Response(200, json={"data": {"base": "BTC", "currency": "USD", "amount": "98765.43"}})
     rates = Rates(httpx.Client(transport=httpx.MockTransport(handler)))
-    assert rates.current().usd_per_btc == Decimal("98765.43")
-    assert rates.current().usd_per_btc == Decimal("98765.43")
+    assert rates.current().usd_per_btc == Decimal("88888.887")
+    assert rates.current().spot_usd_per_btc == Decimal("98765.43")
     assert len(calls) == 1
 
 
