@@ -63,6 +63,7 @@ class Catalog:
                     "id": model_id, "name": str(item.get("name") or model_id)[:180],
                     "context": item.get("context_length") or 32768,
                     "output": (item.get("top_provider") or {}).get("max_completion_tokens") or 4096,
+                    "reasoning_effort": "reasoning_effort" in item.get("supported_parameters", []),
                 })
             self.models = sorted(models, key=lambda row: row["name"].lower())
             self.loaded = time.monotonic()

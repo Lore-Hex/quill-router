@@ -84,6 +84,57 @@ def test_cancel_paid_race_is_not_a_false_cancellation():
     assert Lnd(client, "regtest").cancel(PAYMENT_HASH).state == "SETTLED"
 
 
+@pytest.mark.parametrize("state", ["CANCELED", "SETTLED"])
+@pytest.mark.parametrize("failure", [httpx.ReadTimeout, httpx.ConnectError])
+def test_cancel_recovers_terminal_state_after_lost_response(state, failure):
+    calls = []
+    def handler(request):
+        calls.append(request.method)
+        if request.method == "POST":
+            raise failure("lost cancellation response")
+        return httpx.Response(200, json=response_data(
+            state=state, amt_paid_msat="10000000" if state == "SETTLED" else "0",
+            settle_index="9" if state == "SETTLED" else "0"))
+    client = httpx.Client(base_url="https://lnd.invalid", transport=httpx.MockTransport(handler))
+    assert Lnd(client, "regtest").cancel(PAYMENT_HASH).state == state
+    assert calls == ["POST", "GET"]
+
+
+@pytest.mark.parametrize("state", ["OPEN", "ACCEPTED", None])
+def test_ambiguous_cancel_never_reports_success_without_terminal_state(state):
+    calls = []
+    def handler(request):
+        calls.append(request.method)
+        if request.method == "POST":
+            raise httpx.ReadTimeout("lost cancellation response")
+        return (httpx.Response(404, json={"code": 5}) if state is None else
+                httpx.Response(200, json=response_data(state=state)))
+    client = httpx.Client(base_url="https://lnd.invalid", transport=httpx.MockTransport(handler))
+    with pytest.raises(httpx.ReadTimeout):
+        Lnd(client, "regtest").cancel(PAYMENT_HASH)
+    assert calls == ["POST", "GET"]
+
+
+def test_cancel_and_lookup_outage_does_not_retry_mutation():
+    calls = []
+    def handler(request):
+        calls.append(request.method)
+        raise httpx.ReadTimeout("LND unavailable")
+    client = httpx.Client(base_url="https://lnd.invalid", transport=httpx.MockTransport(handler))
+    with pytest.raises(httpx.ReadTimeout):
+        Lnd(client, "regtest").cancel(PAYMENT_HASH)
+    assert calls == ["POST", "GET"]
+
+
+@pytest.mark.parametrize("payment_hash", ["", "a", "FF" * 32, "0 " * 32])
+def test_cancel_validates_identity_before_rpc(payment_hash):
+    calls = []
+    client = httpx.Client(base_url="https://lnd.invalid", transport=httpx.MockTransport(calls.append))
+    with pytest.raises(ValueError, match="Invalid payment hash"):
+        Lnd(client, "regtest").cancel(payment_hash)
+    assert calls == []
+
+
 def test_missing_invoice_requires_grpc_not_found():
     client = httpx.Client(base_url="https://lnd.invalid", transport=httpx.MockTransport(
         lambda _: httpx.Response(404, json={"code": 7})))
