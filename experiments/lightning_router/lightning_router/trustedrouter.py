@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from .errors import FundingReviewRequired
+from .money import usd
 
 
 class TrustedRouterCredits:
@@ -58,3 +59,24 @@ class TrustedRouterCredits:
         })
         if payload.get("committed") is not True:
             raise ValueError("USD credit not acknowledged")
+
+    def usage(self, raw_key: str) -> dict[str, str | None]:
+        # Self-introspection uses the customer's key, never funding authority.
+        # Do not forward the response wholesale: it can include identifiers.
+        response = self.client.get(self.endpoint + "/v1/key", headers={
+            "Authorization": "Bearer " + raw_key,
+        }, timeout=15, follow_redirects=False)
+        if response.status_code in {401, 403, 404}:
+            raise KeyError("Usage unavailable for this key")
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, dict):
+            raise ValueError("Invalid key usage response")
+        result: dict[str, str | None] = {}
+        for field in ("usage", "byok_usage", "reserved", "limit", "limit_remaining"):
+            value = data.get(field + "_microdollars")
+            if value is not None and (type(value) is not int or value < 0):
+                raise ValueError("Invalid key usage")
+            result[field + "_usd"] = usd(value) if value is not None else None
+        return result

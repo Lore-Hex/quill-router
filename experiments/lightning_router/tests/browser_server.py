@@ -24,7 +24,9 @@ funding.rates.current = lambda: Rate.from_spot(Decimal("100000"), 0)
 class Catalog:
     def current(self):
         return [
-            {"id": "deepseek/deepseek-flash", "name": "DeepSeek Flash", "context": 128000, "output": 8192},
+            {"id": "deepseek/deepseek-flash", "name": "DeepSeek Flash", "context": 1048576, "output": 393216,
+             "default_output": 65536, "reasoning_effort": True,
+             "pricing": {"input_per_million": "0.042200", "output_per_million": "0.084400", "cached_input_per_million": "0.01"}},
             {"id": "kimi/kimi-k2.7", "name": "Kimi K2.7", "context": 262144, "output": 8192},
         ]
 

@@ -43,7 +43,8 @@ jobs:
       - run: uv run pytest -q --cov=lightning_router --cov-fail-under=70
       - run: npm ci --ignore-scripts
       - run: npm run build
-      - run: git diff --exit-code -- web/app.js
+      - run: git diff --exit-code -- web/app.js web/pages.js
       - run: npm test
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
+      - run: docker build --tag lightning-router-ci .

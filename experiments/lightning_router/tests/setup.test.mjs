@@ -43,6 +43,26 @@ test("model change updates every config", () => {
     assert.ok(result.config.includes("kimi/kimi-k2.7"));
   }
 });
+
+test("DeepSeek default budget is separate from its documented output capacity", () => {
+  const deepseek = { ...model, id: "deepseek/deepseek-v4.1-flash", context: 1048576, output: 393216, default_output: 65536 };
+  const crush = JSON.parse(setupFor("crush", deepseek, base).config);
+  assert.equal(crush.providers.lightningrouter.models[0].default_max_tokens, 65536);
+  const opencode = JSON.parse(setupFor("opencode", deepseek, base).config);
+  assert.equal(opencode.provider.lightningrouter.models[deepseek.id].limit.output, 393216);
+  assert.ok(setupFor("omp", deepseek, base).config.includes("maxTokens: 393216"));
+});
+
+test("unknown limits never become a fictional 4096 token model cap", () => {
+  for (const agent of ["opencode", "crush", "omp"]) {
+    const result = setupFor(agent, { ...model, context: null, output: null }, base);
+    assert.ok(!result.config.includes("4096"));
+    assert.ok(!result.config.includes("32768"));
+    assert.ok(!result.config.includes("default_max_tokens"));
+    assert.ok(!result.config.includes("maxTokens:"));
+    assert.ok(!result.config.includes('"limit"'));
+  }
+});
 test("malicious model cannot escape shell commands", () => {
   assert.throws(() => setupFor("omp", { ...model, id: "x'; curl evil.test" }, base));
 });

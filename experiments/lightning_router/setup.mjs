@@ -13,8 +13,10 @@ export function setupFor(agent, model, apiBase, effort = "default") {
   if (!["https://api.lightningrouter.ai/v1", "https://api.trustedrouter.com/v1"].includes(apiBase)) throw new Error("Unexpected API endpoint");
   const explicit = effort !== "default";
   if (explicit && (!EFFORTS.includes(effort) || model.reasoning_effort !== true)) throw new Error("Unsupported reasoning effort");
-  const context = Number.isSafeInteger(model.context) && model.context > 0 ? model.context : 32768;
-  const output = Math.min(Number.isSafeInteger(model.output) && model.output > 0 ? model.output : 4096, context);
+  const context = Number.isSafeInteger(model.context) && model.context > 0 ? model.context : null;
+  const output = Number.isSafeInteger(model.output) && model.output > 0 ? Math.min(model.output, context || model.output) : null;
+  const defaultOutput = Number.isSafeInteger(model.default_output) && model.default_output > 0
+    ? Math.min(model.default_output, output || model.default_output) : null;
   const ref = `lightningrouter/${model.id}`;
   if (agent === "opencode") return {
     path: "~/.config/opencode/opencode.json",
@@ -23,7 +25,7 @@ export function setupFor(agent, model, apiBase, effort = "default") {
       provider: { lightningrouter: {
         npm: "@ai-sdk/openai-compatible", name: "LightningRouter",
         options: { baseURL: apiBase, apiKey: "{env:LIGHTNINGROUTER_API_KEY}" },
-        models: { [model.id]: { name: model.name, limit: { context, output },
+        models: { [model.id]: { name: model.name, ...(context && output ? { limit: { context, output } } : {}),
           ...(explicit ? { reasoning: true, options: { reasoningEffort: effort } } : {}),
         } },
       } },
@@ -37,7 +39,8 @@ export function setupFor(agent, model, apiBase, effort = "default") {
       providers: { lightningrouter: {
         name: "LightningRouter", type: "openai-compat", base_url: apiBase,
         api_key: "$LIGHTNINGROUTER_API_KEY",
-        models: [{ id: model.id, name: model.name, context_window: context, default_max_tokens: output,
+        models: [{ id: model.id, name: model.name, ...(context ? { context_window: context } : {}),
+          ...(defaultOutput || output ? { default_max_tokens: defaultOutput || output } : {}),
           ...(explicit ? { can_reason: true, reasoning_levels: EFFORTS } : {}),
         }],
       } },
@@ -49,7 +52,8 @@ export function setupFor(agent, model, apiBase, effort = "default") {
   };
   if (agent === "omp") return {
     path: "~/.omp/agent/models.yml",
-    config: `providers:\n  lightningrouter:\n    baseUrl: ${apiBase}\n    api: openai-completions\n    apiKey: LIGHTNINGROUTER_API_KEY\n    authHeader: true\n    models:\n      - id: ${JSON.stringify(model.id)}\n        name: ${JSON.stringify(model.name)}\n        contextWindow: ${context}\n        maxTokens: ${output}` +
+    config: `providers:\n  lightningrouter:\n    baseUrl: ${apiBase}\n    api: openai-completions\n    apiKey: LIGHTNINGROUTER_API_KEY\n    authHeader: true\n    models:\n      - id: ${JSON.stringify(model.id)}\n        name: ${JSON.stringify(model.name)}` +
+      (context ? `\n        contextWindow: ${context}` : "") + (output ? `\n        maxTokens: ${output}` : "") +
       (explicit ? `\n        reasoning: true\n        thinking:\n          mode: effort\n          efforts: [low, medium, high]\n          defaultLevel: ${effort}\n        compat:\n          supportsReasoningEffort: true\n          thinkingFormat: openai` : ""),
     command: `omp --model '${ref}'` + (explicit ? ` --thinking ${effort}` : ""), docs: "https://github.com/can1357/oh-my-pi/blob/main/docs/models.md",
   };
