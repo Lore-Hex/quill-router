@@ -1501,13 +1501,14 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     "green-tokens": PublicPage(
         template="public/green_tokens.html",
         og_card="green-tokens.png",
+        og_alt="TrustedRouter Green Tokens: renewable-powered AI inference",
         title="Green Tokens: Renewable-Powered AI Inference",
-        description="Run AI on renewable-powered inference with trustedrouter/green. Regolo models, streaming, clear provider energy policies and one TrustedRouter API key.",
+        description="Run AI on renewable-powered inference with trustedrouter/green. A growing model catalog, streaming, published energy policies and one TrustedRouter API key.",
         faq_items=(
-            ("What does 100% renewable mean here?", "Regolo states that its inference GPU servers run on 100% renewable energy. This is a provider-declared claim about inference electricity, not a lifecycle carbon assessment or a claim about every network, device, and routing server involved in a request."),
+            ("What does 100% renewable mean here?", "Eligible providers publish a commitment to 100% renewable inference electricity. This provider-declared claim covers electricity used by inference servers. Model training, hardware manufacturing, your network and routing infrastructure have separate energy footprints."),
             ("What happens if a green route is unavailable?", "TrustedRouter can try another eligible model route within the renewable-powered provider pool. If none can serve the request, it returns an error. It does not silently switch to an unqualified provider."),
-            ("Does green mean end-to-end confidential inference?", "Energy sourcing and hardware confidentiality are different. Regolo publishes a zero-data-retention policy. Its inference is not currently marked as hardware-verified confidential compute by TrustedRouter."),
-            ("How is usage priced?", "The selected model's provider rate is converted from euros to US dollars using the European Central Bank reference rate, then TrustedRouter's normal inference fee applies. Current model prices are in the catalog. There is no separate green surcharge."),
+            ("Does green mean end-to-end confidential inference?", "Energy sourcing and hardware confidentiality are different. Green tokens select for renewable inference electricity. Check each provider's privacy and hardware-verification status in the catalog; the green alias itself makes an energy commitment, rather than a confidential-compute commitment."),
+            ("How is usage priced?", "The selected model's provider rate and TrustedRouter's normal inference fee apply. Published prices are in US dollars, with currency conversion where needed. Current model prices are in the catalog. Green routing is included in the normal fee."),
         ),
     ),
     "eu": PublicPage(
