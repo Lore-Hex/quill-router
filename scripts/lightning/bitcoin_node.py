@@ -179,6 +179,8 @@ def write_config() -> None:
         "prune=30000\ntxindex=0\nmaxmempool=100\nrpcthreads=2\n"
         "maxuploadtarget=512\nlogips=0\nnodebuglogfile=1\nprinttoconsole=1\n"
         "dbcache=512\npar=2\n"
+        + ("includeconf=/etc/bitcoin/lightning.conf\n" if Path("/etc/bitcoin/lightning.conf").is_file() else "")
+        +
         "[main]\nrpcbind=127.0.0.1\nrpcallowip=127.0.0.1\n"
     )
     CONFIG.chmod(0o640)
@@ -197,7 +199,7 @@ def write_config() -> None:
         "NoNewPrivileges=true\nPrivateTmp=true\nPrivateDevices=true\nProtectHome=true\n"
         "ProtectSystem=strict\nProtectKernelTunables=true\nProtectKernelModules=true\n"
         "ProtectControlGroups=true\nRestrictSUIDSGID=true\nLockPersonality=true\n"
-        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nCapabilityBoundingSet=\n"
+        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK\nCapabilityBoundingSet=\n"
         f"ReadWritePaths={DATA}\nMemoryMax=80%\n"
         "Environment=MALLOC_ARENA_MAX=2\nLimitNOFILE=65536\n"
         "[Install]\nWantedBy=multi-user.target\n"
