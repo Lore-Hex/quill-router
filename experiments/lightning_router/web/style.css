@@ -8,6 +8,7 @@ a:hover { text-decoration: underline; }
 header, footer { max-width: 1000px; margin: auto; padding: 24px 32px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 header { border-bottom: 1px solid #e8ece9; }
 .brand { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; font-size: 19px; font-weight: 650; color: #17201e; white-space: nowrap; }
+.brand-mark { display: block; width: 40px; height: 40px; object-fit: contain; flex: 0 0 40px; }
 header nav { margin-left: auto; justify-content: flex-end; }
 #connection { font-size: 12px; color: #727b76; text-align: center; }
 main { max-width: 880px; margin: auto; padding: 0 32px; }
