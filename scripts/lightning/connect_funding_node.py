@@ -59,6 +59,12 @@ def check(path):
         with urllib.request.urlopen(request, context=context, timeout=8) as result:
             return result.status
     except urllib.error.HTTPError as error:
+        # LND wraps macaroon denial as gRPC UNKNOWN (2), which grpc-gateway
+        # maps to HTTP 500. Accept only that exact authenticated denial, not
+        # arbitrary server errors, as the negative permission check.
+        body = json.loads(error.read())
+        if error.code == 500 and body.get("code") == 2 and body.get("message") == "permission denied":
+            return 403
         return error.code
 if check("/v1/getinfo") != 200 or check("/v1/channels") != 200:
     raise SystemExit("Invoice credential health permissions failed")

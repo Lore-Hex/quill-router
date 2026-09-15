@@ -48,3 +48,25 @@ def test_node_setup_has_exact_invoice_rpcs_and_no_spending_authority() -> None:
     assert "restlisten=10.92.0.2:8080" in NODE_SCRIPT
     assert 'check("/v1/balance/blockchain") not in (401, 403)' in NODE_SCRIPT
     assert "SendPayment" not in NODE_SCRIPT
+
+
+@pytest.mark.parametrize("status,body,expected", [
+    (500, {"code": 2, "message": "permission denied"}, 403),
+    (500, {"code": 2, "message": "database unavailable"}, 500),
+    (500, {"code": 13, "message": "permission denied"}, 500),
+])
+def test_node_negative_control_accepts_only_exact_lnd_denial(status, body, expected) -> None:
+    import ast
+    import io
+    import json
+    import urllib.error
+    from unittest.mock import Mock
+
+    module = ast.parse(NODE_SCRIPT)
+    function = next(node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == "check")
+    opener = Mock()
+    opener.error.HTTPError = urllib.error.HTTPError
+    opener.request.urlopen.side_effect = urllib.error.HTTPError("https://node.test", status, "failure", {}, io.BytesIO(json.dumps(body).encode()))
+    namespace = {"urllib": opener, "context": None, "macaroon": Mock(), "json": json}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), "node-check", "exec"), namespace)  # noqa: S102 - fixed repository function under test
+    assert namespace["check"]("/v1/balance/blockchain") == expected
