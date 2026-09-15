@@ -247,10 +247,17 @@ def test_confidential_cowork_is_self_serve_and_fail_closed(client: TestClient) -
     response = client.get("/confidential-cowork")
 
     assert response.status_code == 200
-    assert "Confidential Cowork by TrustedRouter" in response.text
-    assert "Confidential-Cowork-Desktop-universal.dmg" in response.text
+    assert "Trusted Cowork by TrustedRouter" in response.text
+    assert "Built on OpenCode" in response.text
     assert "trustedrouter/confidential" in response.text
-    assert "https://github.com/Lore-Hex/confidential-cowork-desktop/releases/download/v0.2.0-alpha/TR-Confidential-Cowork-Desktop-universal.dmg" in response.text
+    for arch in ("arm64", "x64"):
+        assert (
+            "https://github.com/Lore-Hex/confidential-cowork-desktop/releases/download/"
+            f"v0.3.0-alpha.1/Trusted-Cowork-0.3.0-alpha.1-mac-{arch}.dmg"
+        ) in response.text
+    assert "TRPi" not in response.text
+    assert "terminal coding agent" not in response.text
+    assert "Other providers can be explicitly configured" not in response.text
     assert "Lore-Hex/QuillCode/releases" not in response.text
     assert "Opens in Terminal" not in response.text
     assert "Choose an eligible confidential model by name" in response.text
@@ -260,7 +267,7 @@ def test_confidential_cowork_is_self_serve_and_fail_closed(client: TestClient) -
     assert "No eligible confidential provider means no model request" in response.text
     assert "Plan an enterprise deployment" in response.text
     assert "/static/confidential-cowork-desktop.png" not in response.text
-    screenshot = client.get("/static/tr-confidential-cowork-icon.png")
+    screenshot = client.get("/static/trusted-cowork-icon.png")
     assert screenshot.status_code == 200
     assert screenshot.headers["content-type"] == "image/png"
 

@@ -784,10 +784,10 @@
   },
   "venice": {
     "card_version": 2,
-    "model_count": 59,
+    "model_count": 58,
     "name": "Venice",
     "privacy": "Policy documented",
-    "route_count": 101,
+    "route_count": 99,
     "route_mode": "Prepaid + BYOK",
     "slug": "venice"
   },
