@@ -9,6 +9,18 @@ test("marketing and documented DeepSeek budgets", async ({ page }) => {
   await expect(page.locator("#config-code")).toContainText('"default_max_tokens": 65536');
 });
 
+test("default selects V4.1 Flash instead of an alphabetically earlier retired Flash", async ({page}) => {
+  await page.route("**/api/models", route => route.fulfill({json: {data: [
+    {id: "deepseek/deepseek-v4-flash-0731-fast", name: "DeepSeek V4 Flash Fast"},
+    {id: "deepseek/deepseek-flash", name: "DeepSeek Flash (rolling)"},
+    {id: "deepseek/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", context: 1048576, output: 393216, default_output: 65536},
+  ]}}));
+  await page.goto("/");
+  await expect(page.locator("#model")).toHaveValue("deepseek/deepseek-v4.1-flash");
+  await page.getByRole("tab", {name: "Crush", exact: true}).click();
+  await expect(page.locator("#config-code")).toContainText('"default_max_tokens": 65536');
+});
+
 test("existing key balance survives an invoice creation outage", async ({ page, request }) => {
   const existing = await (await request.post("/_test/existing", {data: {}})).json();
   await page.goto("/");

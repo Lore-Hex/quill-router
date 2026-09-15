@@ -311,7 +311,10 @@ async function start() {
     models = result.data;
     $("model").replaceChildren(...models.map((model) => new Option(model.name, model.id)));
     const requested = new URLSearchParams(location.search).get("model");
-    const preferred = models.find(model => model.id === requested) || models.find((model) => model.id.includes("deepseek") && model.id.includes("flash"));
+    const preferred = models.find(model => model.id === requested)
+      || models.find(model => model.id === "deepseek/deepseek-v4.1-flash")
+      || models.find(model => model.id === "deepseek/deepseek-flash")
+      || models.find((model) => model.id.includes("deepseek") && model.id.includes("flash"));
     if (preferred) $("model").value = preferred.id;
     $("model").disabled = !models.length;
     $("model-count").textContent = `${models.length} models`;
