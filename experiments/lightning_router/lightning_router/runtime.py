@@ -27,13 +27,13 @@ class Readiness:
     def __init__(self, funding: Funding, credits: TrustedRouterCredits) -> None:
         self.funding = funding
         self.credits = credits
-        self.checked = 0.0
+        self.checked: float | None = None
         self.ready = False
         self.lock = threading.Lock()
 
     def __call__(self) -> bool:
         with self.lock:
-            if time.monotonic() - self.checked < 5:
+            if self.checked is not None and time.monotonic() - self.checked < 5:
                 return self.ready
             try:
                 with self.funding.store.transaction() as connection:

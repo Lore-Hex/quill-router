@@ -74,6 +74,42 @@ def test_readiness_recovers_after_cache_expiry(funding):
     assert check() is False
 
 
+@pytest.mark.parametrize("started", [0.0, 0.25, 4.99])
+def test_readiness_checks_dependencies_on_fresh_process_clock(funding, monkeypatch, started):
+    clock = [started]
+    monkeypatch.setattr("lightning_router.runtime.time.monotonic", lambda: clock[0])
+    credits = Mock()
+    funding.lnd = node()
+    check = Readiness(funding, credits)
+    assert check() is True
+    assert credits.health.call_count == 1
+    funding.lnd = node(active=False)
+    clock[0] += 4.0
+    assert check() is True
+    assert credits.health.call_count == 1
+    clock[0] += 1.0
+    assert check() is False
+    assert credits.health.call_count == 2
+
+
+def test_readiness_failure_at_clock_zero_stays_closed_until_rechecked(funding, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr("lightning_router.runtime.time.monotonic", lambda: clock[0])
+    credits = Mock()
+    credits.health.side_effect = RuntimeError("private-error-do-not-log")
+    funding.lnd = node()
+    check = Readiness(funding, credits)
+    assert check() is False
+    assert credits.health.call_count == 1
+    credits.health.side_effect = None
+    clock[0] = 4.0
+    assert check() is False
+    assert credits.health.call_count == 1
+    clock[0] = 5.0
+    assert check() is True
+    assert credits.health.call_count == 2
+
+
 def test_disabled_readiness_blocks_new_invoice_but_keeps_recovery(funding, raw_key):
     ready = [True]
     with TestClient(create_app(funding, rates=funding.rates, readiness=lambda: ready[0], start_worker=False),
